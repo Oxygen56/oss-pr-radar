@@ -1,0 +1,3501 @@
+#!/usr/bin/env python3
+"""OSS PR opportunity radar.
+
+Reads GitHub via `gh`, sends Feishu notifications via bot env vars, and keeps a
+local seen file so hourly overlapping windows do not repeat candidates.
+"""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor, wait
+from datetime import datetime, timedelta, timezone
+from pathlib import Path, PurePosixPath
+from typing import Any
+
+from .llm import DeepSeekEvaluator
+from .messages import add_chinese_explanations
+from .policy import SCANNER_DECISION_REVISION
+
+BASE_DIR = Path(__file__).resolve().parents[2]
+DEFAULT_REPORTS = BASE_DIR / "reports"
+DEFAULT_SEEN = DEFAULT_REPORTS / "oss_pr_radar_seen.json"
+DEFAULT_STATE = DEFAULT_REPORTS / "pr_radar_runtime_state.json"
+DEFAULT_CHAT_ID = os.environ.get("FEISHU_CHAT_ID", "")
+PROFILE = "agent_ai_infra_v2"
+SCANNER_VERSION = SCANNER_DECISION_REVISION
+MIN_ACTIONABLE_SCORE = 8
+SEEN_RECHECK_HOURS = 24
+SEARCH_MIN_INTERVAL_SECONDS = 1.5
+SEARCH_RETRY_DELAYS_SECONDS = (3.0, 10.0, 30.0)
+FEISHU_RETRY_DELAYS_SECONDS = (0.0, 1.0, 3.0)
+SCAN_DEEP_INSPECTION_DEADLINE_SECONDS = 240.0
+REPO_COLLECTION_WORKERS = 4
+MAX_ISSUES_TO_INSPECT = 16
+MAX_SEEN_RECHECKS = 8
+MAX_SCANNER_MIGRATION_RECHECKS = 8
+SCANNER_MIGRATION_RECHECK_STATUSES = frozenset(
+    {
+        "frontend_interaction_issue",
+        "no_bug_or_maintainer_actionability",
+        "notified",
+    }
+)
+MAX_ISSUES_PER_REPO_PER_SCAN = 4
+EXCLUDED_REPOS = {"openai/codex"}
+UNAVAILABLE_HARDWARE_REPOS = {"vllm-project/vllm-ascend"}
+EXCLUDED_REPO_QUERY = " ".join(f"-repo:{repo}" for repo in sorted(EXCLUDED_REPOS))
+
+KNOWN_REPOS = [
+    "deepseek-ai/DeepSeek-V3",
+    "deepseek-ai/DeepEP",
+    "deepseek-ai/3FS",
+    "deepseek-ai/DeepSeek-R1",
+    "deepseek-ai/DeepGEMM",
+    "vllm-project/vllm",
+    "sgl-project/sglang",
+    "lm-sys/FastChat",
+    "langchain-ai/langgraph",
+    "pydantic/pydantic-ai",
+    "microsoft/autogen",
+    "microsoft/agent-framework",
+    "huggingface/smolagents",
+    "run-llama/llama_index",
+    "agno-agi/agno",
+    "browser-use/browser-use",
+    "crewAIInc/crewAI",
+    "mem0ai/mem0",
+    "All-Hands-AI/OpenHands",
+    "modelcontextprotocol/python-sdk",
+    "modelcontextprotocol/typescript-sdk",
+    "modelcontextprotocol/java-sdk",
+    "modelcontextprotocol/csharp-sdk",
+    "vercel/ai",
+    "letta-ai/letta",
+    "openai/openai-agents-python",
+    "NVIDIA/TensorRT-LLM",
+    "ray-project/ray",
+    "bentoml/BentoML",
+    "deepset-ai/haystack",
+    "langchain-ai/langchain",
+    "microsoft/semantic-kernel",
+    "microsoft/markitdown",
+    "lobehub/lobe-chat",
+    "continuedev/continue",
+    "qdrant/qdrant",
+    "milvus-io/milvus",
+    "weaviate/weaviate",
+    "chroma-core/chroma",
+    "apify/crawlee",
+    "stanfordnlp/dspy",
+    "microsoft/promptflow",
+    "elastic/elasticsearch",
+    "opensearch-project/OpenSearch",
+    "PrefectHQ/fastmcp",
+    "ai-dynamo/dynamo",
+]
+
+AGENT_INFRA_PRIORITY_REPOS = {
+    "langchain-ai/langgraph",
+    "pydantic/pydantic-ai",
+    "microsoft/autogen",
+    "microsoft/agent-framework",
+    "huggingface/smolagents",
+    "run-llama/llama_index",
+    "agno-agi/agno",
+    "browser-use/browser-use",
+    "crewAIInc/crewAI",
+    "modelcontextprotocol/python-sdk",
+    "modelcontextprotocol/typescript-sdk",
+    "modelcontextprotocol/java-sdk",
+    "modelcontextprotocol/csharp-sdk",
+    "openai/openai-agents-python",
+    "microsoft/semantic-kernel",
+    "PrefectHQ/fastmcp",
+    "vllm-project/vllm",
+    "sgl-project/sglang",
+    "ai-dynamo/dynamo",
+}
+
+AGENT_INFRA_SCAN_REPOS = [
+    repo for repo in KNOWN_REPOS if repo in AGENT_INFRA_PRIORITY_REPOS
+]
+AGENT_INFRA_SCAN_REPOS = [
+    repo for repo in AGENT_INFRA_SCAN_REPOS if repo.casefold() not in EXCLUDED_REPOS
+]
+SEARCH_REPO_CHUNK_SIZE = 4
+
+AGENT_INFRA_TERMS = [
+    '"tool call"',
+    '"function call"',
+    '"tool approval"',
+    '"human in the loop"',
+    '"agent runtime"',
+    '"agent framework"',
+    '"handoff"',
+    '"checkpoint"',
+    '"trace"',
+    '"replay"',
+    '"MCP"',
+    '"structured output"',
+    '"streaming" "tool"',
+    '"agent" "state"',
+    '"session" "agent"',
+]
+
+AGENT_INFRA_DISCOVERY_QUERIES = [
+    '("tool call" OR "agent runtime" OR MCP OR "structured output")',
+    '(inference OR "KV cache" OR scheduler OR "streaming tool")',
+]
+
+BROAD_TERMS = AGENT_INFRA_TERMS + [
+    '"tool call"',
+    '"structured output"',
+    '"MCP"',
+    '"KV cache"',
+    '"agent" "streaming"',
+    '"inference" "regression"',
+    '"reasoning" "streaming"',
+]
+
+SKIP_LABEL_RE = re.compile(
+    r"\b(docs?|documentation|question|duplicate|invalid|wontfix|dependencies|"
+    r"ci|test|flake|typo|good first issue|good-first-issue|easy|beginner|stale)\b",
+    re.I,
+)
+WAIT_LABEL_RE = re.compile(
+    r"\b(needs?[- ](?:confirmation|repro(?:duction)?|info(?:rmation)?|triage)|"
+    r"awaiting[- ](?:response|confirmation|repro(?:duction)?|info(?:rmation)?)|"
+    r"needs?\s*:\s*(?:design|product decision)|blocked|on hold)\b",
+    re.I,
+)
+HIGH_RE = re.compile(
+    r"\b(agent|tool[- ]call|function[- ]call|structured output|mcp|memory|workflow|"
+    r"human[- ]?in[- ]?the[- ]?loop|ag[- ]ui|interrupt|resume payload|deferred tool|"
+    r"streaming|scheduler|kv cache|prefix cache|"
+    r"cuda graph|distributed|parallel|routing|speculative|inference|serving|"
+    r"throughput|latency|batch|token|reasoning|executor|runtime|eval|benchmark|"
+    r"vector|retrieval|embedding|rerank|multimodal|audio|video|fps|mrope|rope)\b",
+    re.I,
+)
+CORE_AGENT_INFRA_RE = re.compile(
+    r"\b(agent|llm|model context protocol|mcp|tool[- ]call|function[- ]call|"
+    r"structured output|ag[- ]ui|interrupt|resume payload|deferred tool|"
+    r"kv cache|prefix cache|cuda graph|inference|serving|"
+    r"speculative decoding|tensor parallel|pipeline parallel|multimodal|"
+    r"retrieval|embedding|rerank|prompt|completion|attention|transformer|"
+    r"context window|language model)\b",
+    re.I,
+)
+IMPACT_RE = re.compile(
+    r"\b(crash|incorrect|corrupt|regression|hang|deadlock|oom|memory leak|"
+    r"performance|latency|throughput|validation|data loss|security|production|"
+    r"blocks|breaks|failing|fails)\b",
+    re.I,
+)
+TRIVIAL_RE = re.compile(
+    r"\b(typo|readme|docs only|documentation only|minor docs|comment only|"
+    r"chore|dependency bump)\b",
+    re.I,
+)
+ACTIVE_RE = re.compile(
+    r"\b(i can take|i will take|i(?:'m| am) working|we(?:'re| are) working|"
+    r"working on this|already working|opened a pr|draft pr|submitted pr|"
+    r"my pr|assigned to me|fix is in progress|implementation is in progress|"
+    r"happy to contribute|can contribute (?:a )?fix|contribute (?:a )?fix pr|"
+    r"offer(?:ing)? (?:a )?fix pr|i(?:['’]d| would) like to submit|"
+    r"i(?:['’]d| would) like to (?:take|claim|work on|investigate)|"
+    r"can i (?:take|claim|work on)|"
+    r"plan(?:ning)? to submit|submit (?:a )?fix|i will submit|"
+    r"assign (?:this|it) to me|ready locally|"
+    r"(?:fixed|implemented|addressed) in (?:pr\s*)?#\d+|"
+    r"(?:reopen|reopening|restore) (?:pr\s*)?#\d+|"
+    r"existing (?:repair|patch|fix) in (?:pr\s*)?#\d+|"
+    r"(?:patch|fix)(?: plus (?:a )?regression test)? (?:is )?ready|"
+    r"(?:have|prepared) (?:a )?(?:focused )?(?:patch|fix)|"
+    r"take the implementation|have (?:a )?pr up|"
+    r"(?:i(?:['’]ll| will)|we(?:['’]ll| will)).{0,100}(?:implement|prepare|open|submit|send|"
+    r"add (?:a )?(?:regression )?test|put up).{0,80}(?:fix|patch|pr|pull request|test)?|"
+    r"(?:i(?:'m| am)|we(?:'re| are)) implementing|"
+    r"confirmed (?:the )?(?:same )?(?:root cause|bug).{0,120}(?:implement|fix|patch|test)|"
+    r"i can (?:implement|prepare|open|send|have) (?:a )?(?:fix |patch |pr))\b",
+    re.I,
+)
+RFC_RE = re.compile(
+    r"\b(rfc|dep(?:\s*\((?:light|full)\))?|roadmap|tracking issue|meta issue|epic|design proposal|"
+    r"architecture proposal|architecture question|mapping check|migration plan|"
+    r"umbrella issue|feature request|integration proposal|new integration|"
+    r"p0\s*[-–]\s*p[1-9]|dep:draft)\b",
+    re.I,
+)
+PROMOTIONAL_UPDATE_RE = re.compile(
+    r"^(?:update|announcement)\s*:.*\b(?:now (?:has|supports?)|integration|platform)\b|"
+    r"\b(?:introducing|announce(?:ment|d)?)\b.{0,100}\b(?:integration|platform|product)\b",
+    re.I | re.S,
+)
+INTERNAL_AUTOMATION_ISSUE_RE = re.compile(
+    r"^dependency validation failed\s*:|"
+    r"\b(?:automated|scheduled|weekly)\s+(?:dependency|compatibility|range|upper[- ]bound)"
+    r".{0,100}(?:validation|check|maintenance)\b",
+    re.I | re.S,
+)
+BUG_ACTIONABILITY_RE = re.compile(
+    r"\b(bug|regression|crash|exception|error|fail(?:s|ed|ure|ing)?|break(?:s|ing)?|broken|"
+    r"incorrect|corrupt|hang(?:s|ed|ing)?|stall(?:s|ed|ing)?|freeze(?:s|frozen)?|"
+    r"deadlock|oom|memory leak|garbled|mismatch|collapse(?:s|d)?|"
+    r"unbounded|runaway|catastrophic|degrad(?:e|es|ed|ation)|slowdown|"
+    r"discard(?:s|ed|ing)?|silent(?:ly)?|missing|never|livelock(?:s|ed|ing)?)\b|"
+    r"\b(?:does not|doesn't|cannot|can't|fails? to|no way to)\b",
+    re.I,
+)
+HELP_WANTED_RE = re.compile(
+    r"\b(help wanted|contributions? welcome|good to implement)\b", re.I
+)
+MAINTAINER_APPROVAL_RE = re.compile(
+    r"\b(go ahead|please implement|contributions? welcome|help wanted|"
+    r"happy to accept|sounds good|approved|please send a pr|feel free to open)\b",
+    re.I,
+)
+PUBLIC_REPRO_RE = re.compile(
+    r"(steps? to reproduce|repro(?:duction|ducer|ducible)?|minimal example|"
+    r"expected (?:behavior|result|output)|actual (?:behavior|result|output)|"
+    r"traceback|stack trace|"
+    r"python\s+-m|pytest\s+|curl\s+|docker\s+run)",
+    re.I,
+)
+ROOT_CAUSE_RE = re.compile(
+    r"\b(root cause|caused by|regression from|bisect(?:ed)? to|because|"
+    r"(?:combine\s+to\s+)?cause(?:s|d)?\s+this|incorrectly|should instead|"
+    r"mismatch|overflow|race condition|invariant|discard(?:s|ed|ing)?)\b",
+    re.I,
+)
+PRIVATE_REPRO_RE = re.compile(
+    r"\b(internal only|private repo|private link|intranet|内网|公司内部|"
+    r"cannot share|can't share|not publicly available)\b",
+    re.I,
+)
+RETRACTED_RE = re.compile(
+    r"\b(i was wrong|my (?:assumption|analysis|premise) was wrong|mistaken|"
+    r"false alarm|not actually a bug|works as intended|cannot reproduce|"
+    r"can't reproduce|unable to reproduce|original report is invalid)\b",
+    re.I,
+)
+RESOLVED_UPSTREAM_RE = re.compile(
+    r"\b(already (?:been )?fixed|fixed in (?:main|master|nightly)|"
+    r"(?:this|that|it|pr\s*#?\d+)?\s*should (?:already )?have (?:resolved|fixed)(?: this)?|"
+    r"resolved in (?:main|master)|landed in (?:main|master)|"
+    r"(?:fully )?resolved by (?:pr\s*)?#\d+|"
+    r"(?:the )?fix (?:has )?shipped in|"
+    r"included in (?:the )?next release|will be in (?:the )?next release)\b",
+    re.I,
+)
+WRONG_REPOSITORY_RE = re.compile(
+    r"\b(?:(?:this|the) (?:issue|bug|failure) (?:is|appears to be) .{0,100}"
+    r"(?:client|downstream|upstream)[- ]side (?:issue|bug)|"
+    r"(?:not|isn't|is not) (?:an? )?(?:mcp |python )?"
+    r"(?:sdk|framework|server|repository|repo) (?:issue|bug)|"
+    r"(?:belongs|should be reported) (?:on|to|in) .{0,120}(?:tracker|repository|repo)|"
+    r"(?:the )?(?:error|failure|bug|behavior) (?:is|comes|originates)\s+not from "
+    r"(?:the )?.{0,100}(?:server|binary|repository|repo)|"
+    r"definitively downstream of .{0,100}|"
+    r"more (?:an? )?.{0,80} issue than (?:an? )?.{0,80} issue)\b",
+    re.I | re.S,
+)
+UPSTREAM_ROOT_CAUSE_RE = re.compile(
+    r"(?:root cause|bug)\s+(?:is\s+)?(?:not|isn't)\s+in\s+.{0,100}\b|"
+    r"(?:real|actual|proper)\s+fix\s*(?::|is)?\s*(?:in\s+)?upstream\b|"
+    r"\bfix\s+is\s+upstream\b",
+    re.I | re.S,
+)
+EXTERNAL_MODEL_CAUSE_RE = re.compile(
+    r"\b(model|provider|upstream)[- ]side (?:issue|bug|behavior)|"
+    r"rather than (?:an? )?(?:framework|sdk|runtime|server) (?:issue|bug)|"
+    r"framework correctly .{0,120} but the model\b|"
+    r"(?:requested )?model .{0,120}(?:not supported by any provider|not (?:served|available) "
+    r"(?:on|through|via) (?:the )?(?:router|provider))|"
+    r"(?:router|provider).{0,120}(?:does not|doesn't|no longer) "
+    r"(?:serve|support|offer).{0,80}(?:model|checkpoint)",
+    re.I | re.S,
+)
+HOSTED_MODEL_QUALITY_RE = re.compile(
+    r"(?::cloud|hosted (?:cloud )?model|cloud[- ]hosted model).{0,180}"
+    r"(?:quality|degrad|worse|regress|hallucin|reasoning|output)|"
+    r"(?:quality|degrad|worse|regress).{0,180}(?::cloud|hosted (?:cloud )?model)",
+    re.I | re.S,
+)
+USAGE_AMBIGUITY_RE = re.compile(
+    r"\b(?:invalid|unknown|unrecognized|unsupported|no such|command not found)\s+command\b|"
+    r"\bcommand\s+(?:is\s+)?(?:invalid|unknown|unrecognized|not found)\b|"
+    r"\bquestions?\s*:|"
+    r"\bshould\s+[\w.-]+\s+be\s+set\b|"
+    r"\bis\s+(?:the\s+)?[\w.-]+\s+(?:calculation|configuration|setting)\s+correct\b",
+    re.I,
+)
+USAGE_QUESTION_RE = re.compile(
+    r"\bhow (?:do|can|should|to)\b|\bis there (?:a|any) way\b|"
+    r"\b(?:could|can) not find (?:it |anything )?in (?:the )?documentation\b|"
+    r"\bdo not know how (?:to )?(?:configure|proceed|set up|use)\b|"
+    r"\bthis is (?:mostly|mainly) about (?:updating )?documentation\b",
+    re.I,
+)
+MODEL_ARTIFACT_FAILURE_RE = re.compile(
+    r"(?:safetensors?|checkpoint|model (?:file|weight|artifact)).{0,180}"
+    r"(?:incomplete|corrupt|download|checksum|invalid for input of size)|"
+    r"(?:incomplete|corrupt|download|checksum|invalid for input of size).{0,180}"
+    r"(?:safetensors?|checkpoint|model (?:file|weight|artifact))",
+    re.I | re.S,
+)
+AI_DISCLOSURE_POLICY_RE = re.compile(
+    r"(?:agents?|ai[- ]assisted|llms?).{0,120}(?:must|required|always).{0,100}"
+    r"(?:identify|attribute|disclos)|"
+    r"(?:identify|attribute|disclos).{0,100}(?:agents?|ai[- ]assisted|llms?)|"
+    r"(?:ai[- ]generated|ai agents?|coding assistants?|llms?).{0,180}"
+    r"(?:labels?|tags?).{0,60}(?:required|mandatory|must)|"
+    r"(?:required|mandatory|must).{0,60}(?:labels?|tags?).{0,180}"
+    r"(?:ai[- ]generated|ai agents?|coding assistants?|llms?)|"
+    r"(?:ai[- ]generated|ai agents?|coding assistants?|llms?).{0,180}"
+    r"(?:reviewed line[- ]by[- ]line|human (?:pr )?author)|"
+    r"\bai\b.{0,120}(?:must|required|always).{0,100}(?:identify|attribute|disclos)|"
+    r"disclos(?:e|ure).{0,40}significant\s+ai\s+assistance",
+    re.I | re.S,
+)
+SECURITY_SENSITIVE_RE = re.compile(
+    r"\b(?:security vulnerabilit(?:y|ies)|vulnerability disclosure|cve[- :#]?\d*|"
+    r"remote code execution|arbitrary code execution|privilege escalation|"
+    r"supply chain (?:attack|risk|vulnerability)|credential exfiltration|"
+    r"sandbox escape|authentication bypass|command injection|"
+    r"indirect prompt injection|unauthorized (?:code )?execution)\b",
+    re.I,
+)
+LOW_IMPACT_SELF_ASSESSMENT_RE = re.compile(
+    r"(?:^|\n)\s*(?:#{1,6}\s*)?impact\s*[:\-–—]?\s*(?:low|minor|negligible)\b|"
+    r"(?:^|\n)\s*(?:#{1,6}\s*)?priority(?:\s+note)?\s*[:\-–—]?\s*"
+    r"(?:\n\s*)?(?:low|minor|negligible)\b|"
+    r"\b(?:nothing|no(?:thing)?)\s+(?:actually\s+)?breaks\b|"
+    r"\b(?:happens|occurs|fires|runs)\s+(?:only\s+)?once\s+per\s+(?:thread|process|start|reload)\b",
+    re.I | re.M,
+)
+EMPTY_TEMPLATE_VALUE_RE = re.compile(
+    r"^\s*(?:_?no response_?|n/?a|none|[.\-–—])\s*$",
+    re.I | re.M,
+)
+REACTIVATED_STALE_LABEL_RE = re.compile(r"\bunstale\b", re.I)
+CONFIGURATION_CONTEXT_RE = re.compile(
+    r"(?:--[a-z0-9][a-z0-9-]*|\bconfig(?:uration)?\b|\brequires?\b.{0,100}\benable\b)",
+    re.I | re.S,
+)
+MAINTAINER_CONFIGURATION_GUIDANCE_RE = re.compile(
+    r"\b(?:try|use|set|enable|add|pass|run)\s+(?:this|the following|these|--[a-z0-9])",
+    re.I,
+)
+MAINTAINER_ACTIVE_INVESTIGATION_RE = re.compile(
+    r"(?:\b(?:i|we)\b.{0,100}\b(?:reproduc|investigat|debug|trac|bisect|compar))"
+    r".{0,700}\b(?:root cause|caused by|points? to|isolat(?:ed|ing) to|"
+    r"narrow(?:ed|ing) down|discrepanc(?:y|ies) seem|selected algo|kernel)\b|"
+    r"\b(?:root cause|caused by|points? to|isolat(?:ed|ing) to|"
+    r"narrow(?:ed|ing) down)\b.{0,700}"
+    r"(?:\b(?:i|we)\b.{0,100}\b(?:reproduc|investigat|debug|trac|bisect|compar))",
+    re.I | re.S,
+)
+MAINTAINER_REVALIDATION_REQUEST_RE = re.compile(
+    r"\bworth\s+(?:re)?testing\b.{0,240}\b(?:recent|latest|current)\b"
+    r".{0,80}\b(?:nightly|main|build\s+from\s+source|container\s+image)\b|"
+    r"\b(?:can|could|would)\s+you\b.{0,140}\b(?:test|retest|reproduce|confirm)\b"
+    r".{0,240}\b(?:recent|latest|current|nightly|main)\b|"
+    r"\b(?:please|kindly)\b.{0,80}\b(?:test|retest|reproduce|confirm)\b"
+    r".{0,240}\b(?:recent|latest|current|nightly|main)\b",
+    re.I | re.S,
+)
+ASSIGNMENT_POLICY_RE = re.compile(
+    r"(?:issue|pull request|pr).{0,180}(?:must|required).{0,120}assign|"
+    r"\bwait for assignment\b|"
+    r"\bmaintainer\b.{0,80}\bassign\b.{0,100}\bbefore\b.{0,80}"
+    r"\b(?:open(?:ing)?|submit(?:ting)?)\b.{0,40}\b(?:pull request|pr)\b|"
+    r"(?:not assigned|without assignment).{0,180}(?:closed automatically|auto(?:matically)?[- ]closed)|"
+    r"ask (?:a )?maintainer to assign|"
+    r"pull requests?.{0,120}(?:invitation only|only (?:from|for) invited|invited contributors?)|"
+    r"(?:request|grant).{0,80}contributor access|"
+    r"(?:do not|don't|must not).{0,80}(?:open|submit).{0,40}(?:pull request|pr)"
+    r".{0,120}(?:unless|until).{0,80}(?:approved|approval|lgtm)|"
+    r"(?:only|must).{0,60}(?:lgtm|maintainer approval).{0,100}"
+    r"(?:grant|allow|permit|rights?).{0,80}(?:pull request|pr|contribut)",
+    re.I | re.S,
+)
+LEGAL_CONFIRMATION_RE = re.compile(
+    r"\bcontributor license agreement\b|\bCLA\b.{0,100}\b(?:agree|accept|sign|required)\b|"
+    r"\bdeveloper certificate of origin\b|\bDCO\b.{0,100}\b(?:sign|sign-off|required)\b",
+    re.I | re.S,
+)
+CONTRIBUTION_CLOSED_RE = re.compile(
+    r"(?:not|no longer|currently not|not currently)\s+(?:accepting|taking)\s+"
+    r"(?:external\s+)?(?:code\s+)?contributions?|"
+    r"(?:code\s+)?contributions?\s+(?:are|is)\s+(?:currently\s+)?(?:closed|paused)|"
+    r"(?:do not|don't|won't|will not)\s+accept\s+(?:external\s+)?(?:code\s+)?"
+    r"(?:contributions?|pull requests?|prs?)|"
+    r"(?:pull requests?|prs?)\s+(?:from external contributors\s+)?"
+    r"(?:are\s+)?not\s+(?:currently\s+)?accepted",
+    re.I | re.S,
+)
+UNTRUSTED_TRIAGE_INSTRUCTION_RE = re.compile(
+    r"(?:\b(?:please|must|should)\s+run\b.{0,500}\b(?:as part of|during)\s+"
+    r"(?:automated )?triage\b.{0,500}\b(?:print|dump|report|show|include)\b.{0,160}"
+    r"\b(?:environment|env(?:ironment)? variable|endpoint|token|credential|secret|"
+    r"configuration)\b|"
+    r"\b(?:length[- ]only|value never printed|configuration fingerprint|"
+    r"endpoint fingerprint)\b.{0,180}\b(?:environment|endpoint|token|credential|"
+    r"secret|config(?:uration)?)\b)",
+    re.I | re.S,
+)
+UNAVAILABLE_HARDWARE_RE = re.compile(
+    r"\b(rocm|gfx9\d+|mi(?:250|300|325|350)x?|xpu|gaudi|habana|tpu|"
+    r"ascend|cann|apple metal|mps|b200|b300|gb10|gb200|gb300|h100|h200|"
+    r"sm121|dgx[ -]spark)\b",
+    re.I,
+)
+AVAILABLE_HARDWARE_RE = re.compile(r"\b(rtx\s*)?(4090|5090)|\b(a100|v100)\b", re.I)
+KERNEL_RE = re.compile(
+    r"\b(kernel|rmsnorm|layernorm|triton|cuda|flashinfer|flash attention|"
+    r"fp8|mxfp4|quantization|numerical|argmax|batch invariant)\b",
+    re.I,
+)
+
+
+def public_reproduction_signal_count(body: str) -> int:
+    """Count concrete reproduction evidence without rewarding empty templates."""
+    text_signals = len(PUBLIC_REPRO_RE.findall(body))
+    fenced_blocks = re.findall(r"```[^\n]*\n(.*?)```", body, re.I | re.S)
+    meaningful_blocks = sum(
+        1
+        for block in fenced_blocks
+        if len(re.sub(r"\s+", "", block)) >= 8
+        and re.search(r"[A-Za-z0-9_./:=(){}\[\]-]", block)
+    )
+    return text_signals + meaningful_blocks
+
+
+def incomplete_template_value_count(body: str) -> int:
+    """Count empty template placeholders only in prose, never in repro output."""
+    prose = re.sub(r"```[^\n]*\n.*?```", "", body, flags=re.I | re.S)
+    return len(EMPTY_TEMPLATE_VALUE_RE.findall(prose))
+
+
+BOT_RE = re.compile(
+    r"\b(bot|github-actions\[bot\]|stale\[bot\]|dependabot\[bot\])\b", re.I
+)
+DESKTOP_PLATFORM_RE = re.compile(
+    r"\b(windows|macos|desktop app|electron|microsoft store|chatgpt\.exe|gui)\b",
+    re.I,
+)
+PERIPHERAL_INTEGRATION_RE = re.compile(
+    r"\b(hid|usb|keyboard|mouse|serialport|device kit|accessory)\b",
+    re.I,
+)
+FRONTEND_INTERACTION_RE = re.compile(
+    r"\b(web\s*ui|webui|front[- ]?end|browser|chrome|edge|text\s*box|textarea|typing|"
+    r"terminal|tui|viewport|scrollback|tool\s*card)\b",
+    re.I,
+)
+FRONTEND_RENDERING_SYMPTOM_RE = re.compile(
+    r"\b(laggy|sluggish|slow(?:ly)?|input lag|(?:re-?)?render(?:s|ing)?|repaint(?:s|ing)?|"
+    r"flicker(?:ing)?|fullrender|"
+    r"does(?:n['’]t| not) appear|chunk(?:ed)? text|letters?/words? appear)\b",
+    re.I,
+)
+ISSUE_CODE_PATH_RE = re.compile(
+    r"\b(?:[A-Za-z0-9_.-]+/)+(?:[A-Za-z0-9_.-]+\.(?:py|rs|ts|tsx|js|jsx|java|cs|cc|cpp|c|h|hpp))\b",
+    re.I,
+)
+RELATED_FAILURE_SIGNATURE_RE = re.compile(
+    r"\b(?:nvcc|cicc|ptxas|clang|gcc|segmentation\s+fault|bus\s+error|"
+    r"illegal\s+memory\s+access|core\s+dumped|signal\s+\d+)\b|"
+    r"\b(?:exit|status|return)(?:\s+code)?\s*[=:]?\s*-?\d+\b",
+    re.I,
+)
+API_DESIGN_RE = re.compile(
+    r"\b(?:add|introduc(?:e|ing)|new|expose|public)\b.{0,80}"
+    r"\b(?:public\s+)?(?:api|parameter|argument|option|constructor)\b|"
+    r"\b(?:api|constructor)\b.{0,80}\b(?:change|design|proposal)\b|"
+    r"\b(?:needs?|requires?)\s+(?:a\s+)?maintainer\s+"
+    r"(?:design|scope|behavior)\s+(?:call|decision|confirmation)\b|"
+    r"\bopen\s+design\s+questions?\b",
+    re.I | re.S,
+)
+SEMANTIC_STOPWORDS = {
+    "actual",
+    "behavior",
+    "breaking",
+    "client",
+    "completion",
+    "crash",
+    "default",
+    "does",
+    "effective",
+    "error",
+    "expected",
+    "fails",
+    "failed",
+    "failure",
+    "first",
+    "fix",
+    "hybrid",
+    "ignore",
+    "ignores",
+    "issue",
+    "model",
+    "models",
+    "openai",
+    "python",
+    "server",
+    "serving",
+    "states",
+    "support",
+    "using",
+    "with",
+}
+SEMANTIC_TECHNICAL_TERMS = {
+    "audience",
+    "checkpoint",
+    "conv",
+    "conv_states",
+    "credential",
+    "cuda",
+    "dtype",
+    "index_put",
+    "mamba",
+    "nvfp4",
+    "piecewise",
+    "prefill",
+    "scheduler",
+    "scope",
+    "streaming",
+}
+SEMANTIC_STRONG_TECHNICAL_TERMS = {
+    "checkpoint",
+    "conv_states",
+    "cuda",
+    "dtype",
+    "index_put",
+    "mamba",
+    "nvfp4",
+    "piecewise",
+    "prefill",
+    "scheduler",
+}
+TEST_FILE_RE = re.compile(
+    r"(^|/)(tests?|specs?)(/|$)|(^|/)test_|(_test|\.test|\.spec)\.",
+    re.I,
+)
+
+
+def repo_is_excluded(repo: str) -> bool:
+    return repo.casefold() in EXCLUDED_REPOS
+
+
+def semantic_terms(text: str) -> set[str]:
+    """Normalize prose and identifiers for conservative duplicate-PR matching."""
+
+    raw = text.casefold()
+    identifiers = {
+        re.sub(r"[_./-]+", "_", token)
+        for token in re.findall(r"[a-z][a-z0-9]*(?:[_./-][a-z0-9]+)+", raw)
+    }
+    if re.search(r"\bconv[\s_-]+states?\b", raw):
+        identifiers.add("conv_states")
+    normalized = re.sub(r"[_./-]+", " ", raw)
+    words = {
+        token
+        for token in re.findall(r"[a-z0-9]{4,}", normalized)
+        if token not in SEMANTIC_STOPWORDS and not token.isdigit()
+    }
+    return words | identifiers
+
+
+def semantic_overlap_strength(left: str, right: str) -> tuple[int, bool]:
+    left_terms = semantic_terms(left)
+    right_terms = semantic_terms(right)
+    overlap = left_terms & right_terms
+    code_like = bool(
+        overlap & SEMANTIC_TECHNICAL_TERMS
+        or any("_" in term or any(char.isdigit() for char in term) for term in overlap)
+    )
+    return len(overlap), code_like
+
+
+def semantic_distinctive_overlap(left: str, right: str) -> set[str]:
+    overlap = semantic_terms(left) & semantic_terms(right)
+    return {
+        term
+        for term in overlap
+        if term in SEMANTIC_STRONG_TECHNICAL_TERMS
+        or "_" in term
+        or any(char.isdigit() for char in term)
+    }
+
+
+def related_issue_stack_signatures(text: str) -> set[str]:
+    signatures = {
+        "failure:" + re.sub(r"\s+", "_", match.group(0).casefold())
+        for match in RELATED_FAILURE_SIGNATURE_RE.finditer(text)
+    }
+    for raw_path in ISSUE_CODE_PATH_RE.findall(text):
+        parts = raw_path.casefold().split("/")
+        # Drop host-specific prefixes while retaining package/module identity.
+        if "site-packages" in parts:
+            parts = parts[parts.index("site-packages") + 1 :]
+        signatures.add("path:" + "/".join(parts[-5:]))
+    return signatures
+
+
+def is_dependency_update_pr(hit: dict[str, Any]) -> bool:
+    """Identify routine dependency bumps that should not create semantic collisions."""
+
+    title = str(hit.get("title") or "").strip()
+    user = hit.get("user") or hit.get("author") or {}
+    author = (
+        str(user.get("login") or user.get("name") or "")
+        if isinstance(user, dict)
+        else str(user)
+    )
+    return bool(
+        re.search(r"^(?:build|chore)(?:\([^)]*deps?[^)]*\))?\s*:", title, re.I)
+        or re.search(r"^bump\s+\S+.*\s+from\s+\S+\s+to\s+\S+", title, re.I)
+        or re.search(r"(?:dependabot|renovate)", author, re.I)
+    )
+
+
+def issue_body_pr_link_relation(issue_context: str, repo: str, pr_num: int) -> str:
+    """Classify an issue-body PR link as coverage, reference, or non-covering."""
+
+    pattern = re.compile(
+        rf"(?:https?://github\.com/{re.escape(repo)}/pull/{pr_num}\b|\bPR\s*#{pr_num}\b)",
+        re.I,
+    )
+    matches = list(pattern.finditer(issue_context))
+    if not matches:
+        return "reference"
+
+    for match in matches:
+        snippet = issue_context[max(0, match.start() - 500) : match.end() + 500]
+        if re.search(
+            r"does(?:n['’]t| not)\s+(?:cover|address|fix|resolve)|"
+            r"not\s+(?:cover(?:ing)?|address(?:ing)?|fix(?:ing)?|resolv(?:e|ing))|"
+            r"different\s+(?:failure|scope|path|issue)|not\s+a\s+duplicate|"
+            r"did\s+not\s+find\s+(?:one|a\s+(?:pr|pull request))\s+covering",
+            snippet,
+            re.I,
+        ):
+            return "non_covering"
+        if re.search(
+            rf"(?:fix(?:ed|es)?|implement(?:ed|s)?|address(?:ed|es)?|"
+            rf"resolv(?:ed|es)?|cover(?:ed|s)?)\s*(?::|is\s+in|by|in)?\s*"
+            rf"(?:\[?#?{pr_num}\]?|PR\s*#?{pr_num}|https?://github\.com/)",
+            snippet,
+            re.I,
+        ):
+            return "coverage"
+        # Bug reports often describe the proposed repair first and then use
+        # "Ref to <PR>" without adding a closing keyword to the PR itself.
+        # Treat that link as coverage when it appears in an explicit repair
+        # section; a non-covering disclaimer above still wins.
+        if re.search(
+            r"(?:how\s+to\s+fix|proposed\s+(?:fix|repair|solution)|"
+            r"(?:first|second)\s+modification\s+approach|"
+            r"fix\s+approach|solution)"
+            r".{0,500}(?:ref(?:er(?:ence)?)?\s+to|see)\s*$",
+            snippet[: match.start() - max(0, match.start() - 500)],
+            re.I | re.S,
+        ):
+            return "coverage"
+    return "reference"
+
+
+def base_priority(item: dict[str, Any]) -> tuple[int, int, int, int, int, str]:
+    labels = " ".join(item.get("labels", []))
+    title = item.get("title") or ""
+    return (
+        int(bool(item.get("_explicit_recheck"))),
+        int(item.get("repo") in AGENT_INFRA_PRIORITY_REPOS),
+        int(
+            bool(re.search(r"\b(bug|regression|performance|refactor)\b", labels, re.I))
+        ),
+        len({match.group(0).lower() for match in HIGH_RE.finditer(title)}),
+        item.get("updated") or "",
+    )
+
+
+def select_inspection_bases(
+    bases: list[dict[str, Any]],
+    *,
+    limit: int = MAX_ISSUES_TO_INSPECT,
+    per_repo_limit: int = MAX_ISSUES_PER_REPO_PER_SCAN,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Reserve first-pass inspection capacity across repositories, then backfill."""
+    selected: list[dict[str, Any]] = []
+    deferred: list[dict[str, Any]] = []
+    repo_counts: Counter[str] = Counter()
+    for base in bases:
+        repo = str(base.get("repo") or "")
+        if len(selected) < limit and repo_counts[repo] < per_repo_limit:
+            selected.append(base)
+            repo_counts[repo] += 1
+        else:
+            deferred.append(base)
+    if len(selected) < limit and deferred:
+        capacity = limit - len(selected)
+        selected.extend(deferred[:capacity])
+        deferred = deferred[capacity:]
+    return selected, deferred
+
+
+def parse_github_time(value: str | None, default: datetime) -> datetime:
+    if not value:
+        return default
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(
+            timezone.utc
+        )
+    except Exception:
+        return default
+
+
+CODE_MARKERS = {
+    "src",
+    "python",
+    "packages",
+    "pkg",
+    "lib",
+    "server",
+    "client",
+    "csrc",
+    "vllm",
+    "sgl-kernel",
+    "typescript",
+    "java",
+    "dotnet",
+    "sdk",
+    "llama_index",
+    "autogen",
+    "semantic-kernel",
+}
+
+RELATED_ISSUE_BEHAVIOR_TERMS = {
+    "assignment",
+    "authentication",
+    "batch",
+    "cache",
+    "cancellation",
+    "checkpoint",
+    "concat",
+    "cpu",
+    "crash",
+    "deadlock",
+    "discovery",
+    "endpoint",
+    "hang",
+    "idle",
+    "latency",
+    "leak",
+    "memory",
+    "oom",
+    "parsing",
+    "replay",
+    "retry",
+    "routing",
+    "scheduler",
+    "schema",
+    "serialization",
+    "shape",
+    "shutdown",
+    "streaming",
+    "timeout",
+    "tool",
+    "trace",
+    "wakeup",
+}
+
+RELATED_ISSUE_SIGNATURE_PAIRS = (
+    frozenset(("cpu", "idle")),
+    frozenset(("memory", "leak")),
+    frozenset(("shutdown", "cancellation")),
+    frozenset(("endpoint", "discovery")),
+    frozenset(("batch", "shape")),
+    frozenset(("tool", "streaming")),
+    frozenset(("schema", "parsing")),
+    frozenset(("retry", "timeout")),
+    frozenset(("trace", "replay")),
+    frozenset(("scheduler", "cache")),
+)
+
+RELATED_ISSUE_GENERIC_IDENTIFIERS = {
+    "agent_run",
+    "function_call",
+    "run_sync",
+    "structured_output",
+    "tool_call",
+}
+
+
+def related_issue_behavior_terms(text: str) -> set[str]:
+    words = set(re.findall(r"[a-z][a-z0-9_-]{2,}", text.casefold()))
+    return words & RELATED_ISSUE_BEHAVIOR_TERMS
+
+
+def gh(args: list[str], timeout: int = 18) -> tuple[Any | None, str | None]:
+    started = time.monotonic()
+    direct_env = os.environ.copy()
+    for name in (
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+    ):
+        direct_env.pop(name, None)
+
+    def invoke(
+        env: dict[str, str], call_timeout: float
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["gh", *args],
+            text=True,
+            capture_output=True,
+            timeout=max(1.0, call_timeout),
+            env=env,
+        )
+
+    proxy_configured = any(
+        os.environ.get(name)
+        for name in (
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "ALL_PROXY",
+            "http_proxy",
+            "https_proxy",
+            "all_proxy",
+        )
+    )
+    try:
+        proc = invoke(direct_env, min(float(timeout), 10.0))
+    except subprocess.TimeoutExpired:
+        if not proxy_configured:
+            return None, "timeout"
+        remaining = timeout - (time.monotonic() - started)
+        if remaining <= 1.0:
+            return None, "timeout"
+        try:
+            proc = invoke(os.environ.copy(), remaining)
+        except subprocess.TimeoutExpired:
+            return None, "timeout"
+        except Exception as exc:  # pragma: no cover - operational fallback
+            return None, str(exc)[:200]
+    except Exception as exc:  # pragma: no cover - operational fallback
+        return None, str(exc)[:200]
+
+    error_text = (proc.stderr or proc.stdout or "").strip()
+    connectivity_failure = bool(
+        proc.returncode
+        and re.search(
+            r"tls handshake timeout|connection (?:refused|reset)|network is unreachable|"
+            r"i/o timeout|context deadline exceeded|no route to host",
+            error_text,
+            re.I,
+        )
+    )
+    if connectivity_failure and proxy_configured:
+        remaining = timeout - (time.monotonic() - started)
+        if remaining > 1.0:
+            try:
+                proc = invoke(os.environ.copy(), remaining)
+            except subprocess.TimeoutExpired:
+                return None, "timeout"
+            except Exception as exc:  # pragma: no cover - operational fallback
+                return None, str(exc)[:200]
+
+    if proc.returncode:
+        return None, (proc.stderr or proc.stdout or "").strip()[:250]
+    try:
+        return json.loads(proc.stdout or "{}"), None
+    except json.JSONDecodeError as exc:
+        return None, f"json_decode:{exc}"
+
+
+def load_json(path: Path, default: Any) -> Any:
+    try:
+        return json.loads(path.read_text()) if path.exists() else default
+    except Exception:
+        return default
+
+
+def atomic_write_json(path: Path, data: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+    tmp.replace(path)
+
+
+def candidate_notification_digest(candidate: dict[str, Any]) -> str:
+    """Hash material opportunity judgment while ignoring scan-time churn."""
+
+    volatile = {
+        "analyzed",
+        "fetched_at",
+        "issue_updated",
+        "now",
+        "updated",
+        "updated_at",
+    }
+
+    def normalized(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {
+                key: normalized(item)
+                for key, item in sorted(value.items())
+                if key not in volatile
+            }
+        if isinstance(value, list):
+            return [normalized(item) for item in value]
+        return value
+
+    payload = json.dumps(
+        normalized(candidate),
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def should_skip_seen(
+    old: Any,
+    issue_updated: str | None = None,
+    now: datetime | None = None,
+    scanner_version: str | None = None,
+) -> bool:
+    if not isinstance(old, dict):
+        return False
+    if old.get("status") in {"send_failed", "status_update"}:
+        return False
+    if not (old.get("analyzed") or old.get("notified")):
+        return False
+    if scanner_version and old.get("scanner_version") != scanner_version:
+        return False
+
+    old_updated = old.get("issue_updated")
+    if issue_updated and old_updated:
+        return issue_updated == old_updated
+
+    analyzed = parse_github_time(
+        old.get("analyzed"), datetime.min.replace(tzinfo=timezone.utc)
+    )
+    current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    return current - analyzed < timedelta(hours=SEEN_RECHECK_HOURS)
+
+
+def requires_unavailable_hardware(title: str, labels_text: str, body: str) -> bool:
+    """Skip only issues whose unavailable hardware is part of the actual scope."""
+
+    scoped = f"{title}\n{labels_text}"
+    if UNAVAILABLE_HARDWARE_RE.search(scoped):
+        return True
+    if not UNAVAILABLE_HARDWARE_RE.search(body):
+        return False
+    if AVAILABLE_HARDWARE_RE.search(f"{scoped}\n{body}"):
+        return False
+    requirement = re.compile(
+        rf"(?:requires?|only|exclusively|specific to|reproduc(?:e|ed|ible) on|tested on|run(?:ning)? on|on one)"
+        rf".{{0,50}}{UNAVAILABLE_HARDWARE_RE.pattern}|"
+        rf"{UNAVAILABLE_HARDWARE_RE.pattern}.{{0,35}}(?:only|required|specific)",
+        re.I | re.S,
+    )
+    return bool(requirement.search(body[:3000]))
+
+
+def is_desktop_peripheral_issue(title: str, labels_text: str, body: str) -> bool:
+    """Keep desktop peripheral failures out of the Agent/AI Infra implementation queue."""
+
+    scoped = f"{title}\n{labels_text}\n{body[:4000]}"
+    return bool(
+        DESKTOP_PLATFORM_RE.search(scoped) and PERIPHERAL_INTEGRATION_RE.search(scoped)
+    )
+
+
+def is_frontend_interaction_issue(title: str, labels_text: str, body: str) -> bool:
+    """Exclude browser/UI interaction bugs from the Agent/AI Infra implementation queue."""
+
+    heading = re.sub(
+        r"\bterminal\s+(?:state|outcome|status)\b",
+        "",
+        f"{title}\n{labels_text}",
+        flags=re.I,
+    )
+    if FRONTEND_INTERACTION_RE.search(heading) and FRONTEND_RENDERING_SYMPTOM_RE.search(
+        heading
+    ):
+        return True
+    prose = re.sub(r"```[^\n]*\n.*?```", "", body[:4000], flags=re.I | re.S)
+    prose = re.sub(r"\bterminal\s+(?:state|outcome|status)\b", "", prose, flags=re.I)
+    interaction_matches = list(FRONTEND_INTERACTION_RE.finditer(prose))
+    symptom_matches = list(FRONTEND_RENDERING_SYMPTOM_RE.finditer(prose))
+    return any(
+        abs(interaction.start() - symptom.start()) <= 180
+        for interaction in interaction_matches
+        for symptom in symptom_matches
+    )
+
+
+def effective_window_hours(
+    now: datetime,
+    requested_hours: float,
+    state: dict[str, Any],
+    max_backfill_hours: float,
+) -> tuple[float, str | None]:
+    last_success = (
+        state.get("last_successful_scan") if isinstance(state, dict) else None
+    )
+    if not last_success:
+        return requested_hours, None
+    parsed = parse_github_time(last_success, now)
+    elapsed = max(0.0, (now - parsed).total_seconds() / 3600.0)
+    return min(max_backfill_hours, max(requested_hours, elapsed + 1.0)), last_success
+
+
+def repo_rules(repo: str) -> str:
+    lower = repo.lower()
+    if lower in {"langchain-ai/langgraph", "pydantic/pydantic-ai"}:
+        return "needs_assignment"
+    if lower in {
+        "agno-agi/agno",
+        "crewaiinc/crewai",
+        "letta-ai/letta",
+        "run-llama/llama_index",
+        "vllm-project/vllm",
+        "prefecthq/fastmcp",
+    }:
+        return "ai_disclosure_conflict"
+    return "normal"
+
+
+class Radar:
+    def __init__(
+        self,
+        now: datetime,
+        window_hours: float,
+        seen_path: Path,
+        chat_id: str,
+        dry_run: bool = False,
+        requested_window_hours: float | None = None,
+        last_successful_scan: str | None = None,
+        sleep_fn: Any = time.sleep,
+        monotonic_fn: Any = time.monotonic,
+        pending_rechecks: dict[str, Any] | None = None,
+        deep_inspection_deadline_seconds: float = SCAN_DEEP_INSPECTION_DEADLINE_SECONDS,
+    ):
+        self.now = now.astimezone(timezone.utc)
+        self.since = self.now - timedelta(hours=window_hours)
+        self.seen_path = seen_path
+        self.chat_id = chat_id
+        self.dry_run = dry_run
+        self.window_hours = window_hours
+        self.requested_window_hours = requested_window_hours or window_hours
+        self.last_successful_scan = last_successful_scan
+        self.seen: dict[str, Any] = load_json(seen_path, {})
+        self.errors: list[str] = []
+        self.repo_cache: dict[str, tuple[bool, str]] = {}
+        self.policy_cache: dict[str, str] = {}
+        self.related_issue_cache: dict[
+            str, tuple[list[dict[str, Any]] | None, str | None]
+        ] = {}
+        self.search_failed = False
+        self.rate_limited = False
+        self.sleep_fn = sleep_fn
+        self.monotonic_fn = monotonic_fn
+        self.scan_started_at = self.monotonic_fn()
+        self.deep_inspection_deadline_seconds = max(
+            0.0, float(deep_inspection_deadline_seconds)
+        )
+        self.scan_deadline_reached = False
+        self.pending_rechecks = pending_rechecks or {}
+        self.forced_recheck_keys: set[str] = set()
+        self.issue_outcomes: dict[str, dict[str, Any]] = {}
+        self._last_search_at: float | None = None
+        self.rejection_summary: dict[str, int] = {}
+        self.rejection_examples: dict[str, list[dict[str, Any]]] = {}
+
+    def deep_inspection_deadline_reached(self) -> bool:
+        reached = (
+            self.monotonic_fn() - self.scan_started_at
+            >= self.deep_inspection_deadline_seconds
+        )
+        self.scan_deadline_reached = self.scan_deadline_reached or reached
+        return reached
+
+    @property
+    def analyzed(self) -> str:
+        return self.now.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    @property
+    def since_str(self) -> str:
+        return self.since.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def add_search(
+        self,
+        items: dict[str, dict[str, Any]],
+        query: str,
+        per_page: int,
+        required: bool = True,
+    ) -> None:
+        data: Any | None = None
+        err: str | None = None
+        retry_delays = SEARCH_RETRY_DELAYS_SECONDS if required else ()
+        for attempt in range(len(retry_delays) + 1):
+            if self._last_search_at is not None:
+                elapsed = self.monotonic_fn() - self._last_search_at
+                if elapsed < SEARCH_MIN_INTERVAL_SECONDS:
+                    self.sleep_fn(SEARCH_MIN_INTERVAL_SECONDS - elapsed)
+            data, err = gh(
+                [
+                    "api",
+                    "-X",
+                    "GET",
+                    "search/issues",
+                    "-f",
+                    f"q={query}",
+                    "-f",
+                    "sort=updated",
+                    "-f",
+                    "order=desc",
+                    "-f",
+                    f"per_page={per_page}",
+                ],
+                timeout=25,
+            )
+            self._last_search_at = self.monotonic_fn()
+            if not err:
+                break
+            is_rate_limit = (
+                "rate limit" in err.lower() or "abuse detection" in err.lower()
+            )
+            if not is_rate_limit or attempt >= len(retry_delays):
+                break
+            self.sleep_fn(retry_delays[attempt])
+        if err:
+            prefix = "search" if required else "discovery_degraded"
+            self.errors.append(f"{prefix}:{err}:{query[:90]}")
+            if required:
+                self.search_failed = True
+                if "secondary rate limit" in err.lower() or "rate limit" in err.lower():
+                    self.rate_limited = True
+            return
+        for item in (data or {}).get("items", []):
+            if item.get("pull_request") or item.get("state") != "open":
+                continue
+            repo_url = item.get("repository_url", "")
+            repo = "/".join(repo_url.rsplit("/", 2)[-2:]) if repo_url else ""
+            if not repo or repo_is_excluded(repo):
+                continue
+            key = f"{repo}#{item.get('number')}"
+            items.setdefault(
+                key,
+                {
+                    "repo": repo,
+                    "num": item.get("number"),
+                    "title": item.get("title") or "",
+                    "url": item.get("html_url") or "",
+                    "updated": item.get("updated_at") or "",
+                    "created": item.get("created_at") or "",
+                    "labels": [
+                        label.get("name", "") for label in item.get("labels", [])
+                    ],
+                    "assignees": [
+                        a.get("login", "") for a in item.get("assignees", [])
+                    ],
+                    "body": item.get("body") or "",
+                },
+            )
+
+    def add_repo_issues(
+        self,
+        items: dict[str, dict[str, Any]],
+        repo: str,
+        per_page: int = 30,
+    ) -> None:
+        if repo_is_excluded(repo):
+            return
+        data: Any | None = None
+        err: str | None = None
+        retry_delays = (1.0, 3.0)
+        for attempt in range(len(retry_delays) + 1):
+            data, err = gh(
+                [
+                    "api",
+                    "-X",
+                    "GET",
+                    f"repos/{repo}/issues",
+                    "-f",
+                    "state=open",
+                    "-f",
+                    f"since={self.since_str}",
+                    "-f",
+                    "sort=updated",
+                    "-f",
+                    "direction=desc",
+                    "-f",
+                    f"per_page={per_page}",
+                ],
+                timeout=15,
+            )
+            if not err:
+                break
+            if attempt < len(retry_delays):
+                self.sleep_fn(retry_delays[attempt])
+        if err or not isinstance(data, list):
+            self.errors.append(f"repo_issues:{repo}:{err or 'invalid_response'}")
+            self.search_failed = True
+            if err and (
+                "rate limit" in err.lower() or "abuse detection" in err.lower()
+            ):
+                self.rate_limited = True
+            return
+
+        for item in data:
+            if item.get("pull_request") or item.get("state") != "open":
+                continue
+            key = f"{repo}#{item.get('number')}"
+            items.setdefault(
+                key,
+                {
+                    "repo": repo,
+                    "num": item.get("number"),
+                    "title": item.get("title") or "",
+                    "url": item.get("html_url") or "",
+                    "updated": item.get("updated_at") or "",
+                    "created": item.get("created_at") or "",
+                    "labels": [
+                        label.get("name", "") for label in item.get("labels", [])
+                    ],
+                    "assignees": [
+                        a.get("login", "") for a in item.get("assignees", [])
+                    ],
+                    "body": item.get("body") or "",
+                },
+            )
+
+    def collect_items(self) -> dict[str, dict[str, Any]]:
+        items: dict[str, dict[str, Any]] = {}
+        base = (
+            f"is:issue is:open archived:false no:assignee updated:>={self.since_str} "
+            f"-label:stale {EXCLUDED_REPO_QUERY}"
+        )
+        # Repository issue feeds are independent. Bound concurrency so one slow
+        # endpoint cannot make the whole hourly scan exceed the outer harness
+        # timeout, while retaining the same fail-closed completeness contract.
+        with ThreadPoolExecutor(max_workers=REPO_COLLECTION_WORKERS) as executor:
+            futures = [
+                executor.submit(self.add_repo_issues, items, repo)
+                for repo in AGENT_INFRA_SCAN_REPOS
+            ]
+            done, _ = wait(futures)
+            for future in done:
+                try:
+                    future.result()
+                except Exception as exc:
+                    self.errors.append(
+                        f"repo_issues_worker:{type(exc).__name__}:{str(exc)[:120]}"
+                    )
+                    self.search_failed = True
+        discovery_index = int(self.now.timestamp() // 3600) % len(
+            AGENT_INFRA_DISCOVERY_QUERIES
+        )
+        discovery_query = AGENT_INFRA_DISCOVERY_QUERIES[discovery_index]
+        self.add_search(
+            items, f"{base} label:bug {discovery_query}", 15, required=False
+        )
+        rechecks = sorted(
+            (
+                (key, value)
+                for key, value in self.seen.items()
+                if isinstance(value, dict)
+                and value.get("status")
+                in {"send_failed", "status_update", "inspection_budget_deferred"}
+            ),
+            key=lambda pair: str(
+                pair[1].get("requeued_at") or pair[1].get("analyzed") or ""
+            ),
+        )[:MAX_SEEN_RECHECKS]
+        recheck_keys = {key for key, _ in rechecks}
+        migration_rechecks = sorted(
+            (
+                (key, value)
+                for key, value in self.seen.items()
+                if key not in recheck_keys
+                and isinstance(value, dict)
+                and value.get("scanner_version") != SCANNER_VERSION
+                and value.get("status") in SCANNER_MIGRATION_RECHECK_STATUSES
+            ),
+            key=lambda pair: str(pair[1].get("issue_updated") or ""),
+            reverse=True,
+        )[:MAX_SCANNER_MIGRATION_RECHECKS]
+        self.forced_recheck_keys.update(key for key, _ in migration_rechecks)
+        rechecks.extend(migration_rechecks)
+        for key, entry in rechecks:
+            repo, separator, number_text = key.rpartition("#")
+            if not separator or not number_text.isdigit() or repo_is_excluded(repo):
+                continue
+            items.setdefault(
+                key,
+                {
+                    "repo": repo,
+                    "num": int(number_text),
+                    "title": entry.get("title") or key,
+                    "url": entry.get("url")
+                    or f"https://github.com/{repo}/issues/{number_text}",
+                    "labels": [],
+                    "assignees": [],
+                    "updated": entry.get("issue_updated") or "",
+                    "_explicit_recheck": True,
+                    "_recheck_status": entry.get("status"),
+                },
+            )
+            items[key]["_explicit_recheck"] = True
+            items[key]["_recheck_status"] = entry.get("status")
+        for key, entry in list(self.pending_rechecks.items())[:MAX_SEEN_RECHECKS]:
+            repo, separator, number_text = key.rpartition("#")
+            if not separator or not number_text.isdigit() or repo_is_excluded(repo):
+                continue
+            self.forced_recheck_keys.add(key)
+            items[key] = {
+                "repo": repo,
+                "num": int(number_text),
+                "title": entry.get("issueTitle") or key,
+                "url": entry.get("issueUrl")
+                or f"https://github.com/{repo}/issues/{number_text}",
+                "labels": [],
+                "assignees": [],
+                "updated": entry.get("issueUpdated") or "",
+                "_explicit_recheck": True,
+                "_recheck_status": "pending_queue",
+            }
+        return items
+
+    def repo_quality(self, repo: str, known: bool) -> tuple[bool, str]:
+        if repo in self.repo_cache:
+            return self.repo_cache[repo]
+        if known:
+            self.repo_cache[repo] = (True, "curated_mature_repo")
+            return self.repo_cache[repo]
+        meta, err = gh(
+            [
+                "repo",
+                "view",
+                repo,
+                "--json",
+                "stargazerCount,isArchived,isFork,description,nameWithOwner",
+            ],
+            timeout=15,
+        )
+        if err or not isinstance(meta, dict):
+            self.repo_cache[repo] = (False, "repo_meta_failed")
+            return self.repo_cache[repo]
+        if meta.get("isArchived") or meta.get("isFork"):
+            self.repo_cache[repo] = (False, "archived_or_fork")
+            return self.repo_cache[repo]
+        stars = int(meta.get("stargazerCount") or 0)
+        if not known and stars < 500:
+            self.repo_cache[repo] = (False, f"low_stars:{stars}")
+            return self.repo_cache[repo]
+        contents, contents_err = gh(["api", f"repos/{repo}/contents"], timeout=15)
+        if contents_err or not isinstance(contents, list):
+            self.repo_cache[repo] = (False, "repo_contents_failed")
+            return self.repo_cache[repo]
+        names = {
+            str(entry.get("name") or "").casefold()
+            for entry in contents
+            if isinstance(entry, dict)
+        }
+        has_code = bool(names & CODE_MARKERS) or any(
+            name
+            in {
+                "pyproject.toml",
+                "package.json",
+                "cargo.toml",
+                "go.mod",
+                "pom.xml",
+                "build.gradle",
+                "csproj",
+                "cmakelists.txt",
+            }
+            for name in names
+        )
+        if not has_code:
+            self.repo_cache[repo] = (False, "no_code_surface")
+            return self.repo_cache[repo]
+        self.repo_cache[repo] = (True, f"stars:{stars}")
+        return self.repo_cache[repo]
+
+    def submission_policy(self, repo: str) -> str:
+        static_rule = repo_rules(repo)
+        if repo in self.policy_cache:
+            return self.policy_cache[repo]
+
+        root, err = gh(["api", f"repos/{repo}/contents"], timeout=15)
+        if err or not isinstance(root, list):
+            self.policy_cache[repo] = (
+                static_rule if static_rule != "normal" else "policy_unknown"
+            )
+            return self.policy_cache[repo]
+
+        entries = [entry for entry in root if isinstance(entry, dict)]
+        github_dir = next(
+            (
+                entry
+                for entry in entries
+                if str(entry.get("name") or "").casefold() == ".github"
+            ),
+            None,
+        )
+        if github_dir:
+            github_entries, github_err = gh(
+                ["api", f"repos/{repo}/contents/.github"], timeout=15
+            )
+            if github_err:
+                self.policy_cache[repo] = "policy_unknown"
+                return self.policy_cache[repo]
+            if isinstance(github_entries, list):
+                entries.extend(
+                    entry for entry in github_entries if isinstance(entry, dict)
+                )
+
+        policy_names = {
+            "agents.md",
+            "cla.md",
+            "claude.md",
+            "contributing.md",
+            "contributing.rst",
+            "dco.md",
+            "pull_request_template.md",
+            "ai_usage_policy.md",
+            "ai-usage-policy.md",
+            "ai_policy.md",
+            "ai-policy.md",
+            "ai_disclosure.md",
+        }
+        policy_paths = [
+            str(entry.get("path"))
+            for entry in entries
+            if str(entry.get("name") or "").casefold() in policy_names
+            and entry.get("path")
+        ][:6]
+        policy_text: list[str] = []
+        for path in policy_paths:
+            payload, payload_err = gh(
+                ["api", f"repos/{repo}/contents/{path}"], timeout=15
+            )
+            if payload_err or not isinstance(payload, dict):
+                self.policy_cache[repo] = "policy_unknown"
+                return self.policy_cache[repo]
+            encoded = payload.get("content")
+            if not encoded:
+                continue
+            try:
+                decoded = base64.b64decode(encoded).decode("utf-8", errors="replace")
+            except (TypeError, ValueError):
+                self.policy_cache[repo] = "policy_unknown"
+                return self.policy_cache[repo]
+            policy_text.append(decoded)
+
+            # GitHub sometimes stores a one-line relative pointer instead of a
+            # symlink (for example CONTRIBUTING.md -> docs/contributing.md).
+            # Follow one safe repository-local markdown pointer so policy gates
+            # are not silently lost.
+            pointer = decoded.strip()
+            if re.fullmatch(r"[A-Za-z0-9_./-]+\.(?:md|rst)", pointer, re.I):
+                target = PurePosixPath(path).parent / pointer
+                normalized = str(target)
+                if ".." not in target.parts and normalized != path:
+                    linked, linked_err = gh(
+                        ["api", f"repos/{repo}/contents/{normalized}"], timeout=15
+                    )
+                    if (
+                        linked_err
+                        or not isinstance(linked, dict)
+                        or not linked.get("content")
+                    ):
+                        self.policy_cache[repo] = "policy_unknown"
+                        return self.policy_cache[repo]
+                    try:
+                        policy_text.append(
+                            base64.b64decode(linked["content"]).decode(
+                                "utf-8", errors="replace"
+                            )
+                        )
+                    except (TypeError, ValueError):
+                        self.policy_cache[repo] = "policy_unknown"
+                        return self.policy_cache[repo]
+
+        combined = "\n".join(policy_text)
+        has_ai_disclosure = static_rule == "ai_disclosure_conflict" or bool(
+            AI_DISCLOSURE_POLICY_RE.search(combined)
+        )
+        needs_assignment = static_rule == "needs_assignment" or bool(
+            ASSIGNMENT_POLICY_RE.search(combined)
+        )
+        if CONTRIBUTION_CLOSED_RE.search(combined):
+            result = "contributions_closed"
+        elif has_ai_disclosure and needs_assignment:
+            result = "ai_disclosure_and_assignment"
+        elif has_ai_disclosure:
+            result = "ai_disclosure_conflict"
+        elif needs_assignment:
+            result = "needs_assignment"
+        elif LEGAL_CONFIRMATION_RE.search(combined):
+            result = "legal_confirmation"
+        else:
+            result = "normal"
+        self.policy_cache[repo] = result
+        return result
+
+    def issue(self, repo: str, num: int) -> dict[str, Any] | None:
+        data, err = gh(["api", f"repos/{repo}/issues/{num}"], timeout=15)
+        return data if isinstance(data, dict) and not err else None
+
+    def assess_related_issues(
+        self,
+        repo: str,
+        num: int,
+        title: str,
+        issue_context: str,
+    ) -> dict[str, Any]:
+        if repo not in self.related_issue_cache:
+            data, err = gh(
+                [
+                    "api",
+                    "-X",
+                    "GET",
+                    f"repos/{repo}/issues",
+                    "-f",
+                    "state=open",
+                    "-f",
+                    "sort=updated",
+                    "-f",
+                    "direction=desc",
+                    "-f",
+                    "per_page=100",
+                ],
+                timeout=20,
+            )
+            self.related_issue_cache[repo] = (
+                data if isinstance(data, list) and not err else None,
+                err,
+            )
+        data, err = self.related_issue_cache[repo]
+        if err or data is None:
+            return {
+                "status": "lookup_failed",
+                "issues": [],
+                "summary": f"相关 issue 审计失败：{err or 'invalid_response'}",
+            }
+
+        source_text = f"{title}\n{issue_context}"
+        compiler_match = re.search(
+            r"\b(nvcc|cicc|ptxas|clang|gcc)\b", source_text, re.I
+        )
+        failure_match = re.search(
+            r"\b(segmentation\s+fault|bus\s+error|illegal\s+memory\s+access|core\s+dumped)\b",
+            source_text,
+            re.I,
+        )
+        related_items = list(data)
+        if compiler_match and failure_match:
+            query = (
+                f"repo:{repo} is:issue is:open {compiler_match.group(1)} "
+                f'"{failure_match.group(1)}"'
+            )
+            search_data, search_err = gh(
+                [
+                    "api",
+                    "-X",
+                    "GET",
+                    "search/issues",
+                    "-f",
+                    f"q={query}",
+                    "-f",
+                    "sort=updated",
+                    "-f",
+                    "order=desc",
+                    "-f",
+                    "per_page=20",
+                ],
+                timeout=20,
+            )
+            if search_err or not isinstance(search_data, dict):
+                return {
+                    "status": "lookup_failed",
+                    "issues": [],
+                    "summary": f"相关 issue 精确搜索失败：{search_err or 'invalid_response'}",
+                }
+            by_number = {
+                int(item.get("number") or 0): item
+                for item in related_items
+                if isinstance(item, dict) and item.get("number")
+            }
+            for item in search_data.get("items") or []:
+                if isinstance(item, dict) and item.get("number"):
+                    by_number[int(item["number"])] = item
+            related_items = list(by_number.values())
+
+        source_signals = related_issue_behavior_terms(source_text)
+        source_title_signals = related_issue_behavior_terms(title)
+        source_stack_signatures = related_issue_stack_signatures(source_text)
+        overlaps: list[dict[str, Any]] = []
+        for item in related_items:
+            if not isinstance(item, dict) or item.get("pull_request"):
+                continue
+            if int(item.get("number") or 0) == num:
+                continue
+            other_text = f"{item.get('title') or ''}\n{item.get('body') or ''}"
+            shared_signals = sorted(
+                source_signals & related_issue_behavior_terms(other_text)
+            )
+            title_shared_signals = sorted(
+                source_title_signals
+                & related_issue_behavior_terms(str(item.get("title") or ""))
+            )
+            semantic_overlap, _ = semantic_overlap_strength(source_text, other_text)
+            title_overlap, title_code_like = semantic_overlap_strength(
+                title, str(item.get("title") or "")
+            )
+            title_distinctive_overlap = (
+                semantic_distinctive_overlap(title, str(item.get("title") or ""))
+                - RELATED_ISSUE_GENERIC_IDENTIFIERS
+            )
+            shared_stack_signatures = sorted(
+                source_stack_signatures & related_issue_stack_signatures(other_text)
+            )
+            shared_stack_paths = [
+                signal
+                for signal in shared_stack_signatures
+                if signal.startswith("path:")
+            ]
+            shared_failures = [
+                signal
+                for signal in shared_stack_signatures
+                if signal.startswith("failure:")
+            ]
+            shared_signal_set = set(shared_signals)
+            has_signature_pair = bool(title_shared_signals) and any(
+                pair <= shared_signal_set for pair in RELATED_ISSUE_SIGNATURE_PAIRS
+            )
+            has_title_identity = bool(
+                title_code_like and title_overlap >= 2 and title_distinctive_overlap
+            )
+            has_stack_identity = bool(shared_stack_paths) and len(shared_failures) >= 2
+            if semantic_overlap < 3 or not (
+                has_signature_pair
+                or len(title_shared_signals) >= 2
+                or has_title_identity
+                or has_stack_identity
+            ):
+                continue
+            overlaps.append(
+                {
+                    "number": int(item.get("number") or 0),
+                    "url": item.get("html_url") or "",
+                    "title": item.get("title") or "",
+                    "sharedBehaviorSignals": shared_signals,
+                    "titleSharedBehaviorSignals": title_shared_signals,
+                    "semanticOverlap": semantic_overlap,
+                    "titleSemanticOverlap": title_overlap,
+                    "sharedStackSignatures": shared_stack_signatures[:12],
+                    "matchBasis": (
+                        "stack_failure_signature"
+                        if has_stack_identity
+                        else "title_behavior_signature"
+                    ),
+                }
+            )
+        overlaps.sort(
+            key=lambda item: (
+                len(item["titleSharedBehaviorSignals"]),
+                len(item["sharedBehaviorSignals"]),
+                item["semanticOverlap"],
+                len(item["sharedStackSignatures"]),
+            ),
+            reverse=True,
+        )
+        if overlaps:
+            best = overlaps[0]
+            return {
+                "status": "potential_overlap",
+                "issues": overlaps[:5],
+                "best_url": best["url"],
+                "summary": (
+                    f"发现潜在重复 issue #{best['number']}，"
+                    + (
+                        "共享堆栈/失败签名："
+                        if best["matchBasis"] == "stack_failure_signature"
+                        else "共享行为信号："
+                    )
+                    + (
+                        ", ".join(best["sharedStackSignatures"][:4])
+                        if best["matchBasis"] == "stack_failure_signature"
+                        else ", ".join(best["sharedBehaviorSignals"])
+                    )
+                ),
+            }
+        return {"status": "none", "issues": [], "summary": "未发现相关开放 issue"}
+
+    def comments(self, repo: str, num: int) -> list[dict[str, Any]]:
+        data, err = gh(
+            [
+                "api",
+                "-X",
+                "GET",
+                f"repos/{repo}/issues/{num}/comments",
+                "-f",
+                "per_page=100",
+            ],
+            timeout=15,
+        )
+        return data if isinstance(data, list) and not err else []
+
+    def events(self, repo: str, num: int) -> list[dict[str, Any]]:
+        data, err = gh(
+            [
+                "api",
+                "-X",
+                "GET",
+                f"repos/{repo}/issues/{num}/events",
+                "-f",
+                "per_page=30",
+            ],
+            timeout=15,
+        )
+        return data if isinstance(data, list) and not err else []
+
+    def only_bot_refreshed(
+        self, repo: str, num: int, issue: dict[str, Any], comments: list[dict[str, Any]]
+    ) -> bool:
+        try:
+            created = datetime.fromisoformat(
+                (issue.get("created_at") or "").replace("Z", "+00:00")
+            )
+        except Exception:
+            created = self.now
+        if created >= self.since:
+            return False
+
+        for comment in comments:
+            try:
+                created_at = datetime.fromisoformat(
+                    (comment.get("created_at") or "").replace("Z", "+00:00")
+                )
+            except Exception:
+                continue
+            user = (comment.get("user") or {}).get("login", "")
+            if created_at >= self.since and not BOT_RE.search(user):
+                return False
+
+        for event in self.events(repo, num):
+            try:
+                event_at = datetime.fromisoformat(
+                    (event.get("created_at") or "").replace("Z", "+00:00")
+                )
+            except Exception:
+                continue
+            actor = (event.get("actor") or {}).get("login", "")
+            if (
+                event_at >= self.since
+                and not BOT_RE.search(actor)
+                and event.get("event")
+                in {
+                    "reopened",
+                    "commented",
+                    "renamed",
+                }
+            ):
+                return False
+        return True
+
+    def open_pr_hits(
+        self,
+        repo: str,
+        num: int,
+        title: str,
+        issue_context: str = "",
+    ) -> list[dict[str, Any]]:
+        hits_by_url: dict[str, dict[str, Any]] = {}
+        self._last_open_pr_lookup_errors = []
+
+        escaped_repo = re.escape(repo)
+        issue_body_linked_numbers = {
+            int(match)
+            for match in re.findall(
+                rf"github\.com/{escaped_repo}/pull/(\d+)",
+                issue_context,
+                re.I,
+            )
+        }
+        issue_body_link_relations = {
+            pr_num: issue_body_pr_link_relation(issue_context, repo, pr_num)
+            for pr_num in issue_body_linked_numbers
+        }
+        linked_numbers = set(issue_body_linked_numbers)
+        linked_numbers.update(
+            int(match)
+            for match in re.findall(
+                r"\b(?:pr|pull request)\s*#(\d+)\b", issue_context, re.I
+            )
+        )
+        timeline, timeline_error = gh(
+            [
+                "api",
+                "-X",
+                "GET",
+                f"repos/{repo}/issues/{num}/timeline",
+                "-f",
+                "per_page=100",
+            ],
+            timeout=20,
+        )
+        if timeline_error:
+            self._last_open_pr_lookup_errors.append(f"timeline:{timeline_error}")
+        for event in timeline if isinstance(timeline, list) else []:
+            source_issue = (event.get("source") or {}).get("issue") or {}
+            source_repo = (source_issue.get("repository") or {}).get("full_name") or ""
+            source_url = source_issue.get("html_url") or ""
+            same_repo = source_repo.casefold() == repo.casefold() or bool(
+                re.search(rf"github\.com/{re.escape(repo)}/pull/\d+", source_url, re.I)
+            )
+            if (
+                same_repo
+                and "pull_request" in source_issue
+                and source_issue.get("number")
+            ):
+                linked_numbers.add(int(source_issue["number"]))
+        linked_numbers.update(
+            int(match)
+            for groups in re.findall(
+                r"\b(?:fixed|implemented|addressed|repaired|patch(?:ed)?|fix)"
+                r"\s+(?:is\s+)?(?:in|by)\s+(?:pr\s*)?#(\d+)\b|"
+                r"\b(?:reopen|reopening|restore)\s+(?:pr\s*)?#(\d+)\b|"
+                r"\bexisting\s+(?:repair|patch|fix)\s+in\s+(?:pr\s*)?#(\d+)\b",
+                issue_context,
+                re.I,
+            )
+            for match in groups
+            if match
+        )
+        for pr_num in list(linked_numbers)[:6]:
+            detail, detail_error = gh(
+                ["api", f"repos/{repo}/pulls/{pr_num}"], timeout=15
+            )
+            if detail_error:
+                self._last_open_pr_lookup_errors.append(
+                    f"linked_pr_{pr_num}:{detail_error}"
+                )
+            if not isinstance(detail, dict):
+                continue
+            relation = issue_body_link_relations.get(pr_num)
+            detail_text = f"{detail.get('title') or ''}\n{detail.get('body') or ''}"
+            detail_direct = bool(
+                re.search(
+                    rf"\b(fix(e[sd])?|close[sd]?|resolve[sd]?)\s+#?{num}\b|#{num}\b",
+                    detail_text,
+                    re.I,
+                )
+            )
+            if relation == "non_covering" and not detail_direct:
+                continue
+            url = detail.get("html_url")
+            if url:
+                hits_by_url[url] = {
+                    **detail,
+                    "number": pr_num,
+                    "html_url": url,
+                    "_linked_from_issue": (
+                        pr_num not in issue_body_linked_numbers
+                        or relation == "coverage"
+                        or detail_direct
+                    ),
+                    "_issue_body_link": relation == "coverage",
+                    "_issue_body_reference": pr_num in issue_body_linked_numbers,
+                    "_issue_body_link_relation": relation,
+                }
+
+        data, list_error = gh(
+            [
+                "api",
+                "-X",
+                "GET",
+                f"repos/{repo}/pulls",
+                "-f",
+                "state=open",
+                "-f",
+                "sort=updated",
+                "-f",
+                "direction=desc",
+                "-f",
+                "per_page=100",
+            ],
+            timeout=20,
+        )
+        if list_error:
+            self._last_open_pr_lookup_errors.append(f"open_pr_list:{list_error}")
+        for hit in data if isinstance(data, list) else []:
+            hit_text = f"{hit.get('title') or ''}\n{hit.get('body') or ''}"
+            direct = bool(
+                re.search(
+                    rf"\b(fix(e[sd])?|close[sd]?|resolve[sd]?)\s+#?{num}\b|#{num}\b",
+                    hit_text,
+                    re.I,
+                )
+            )
+            if not direct and is_dependency_update_pr(hit):
+                continue
+            overlap_count, code_like_overlap = semantic_overlap_strength(
+                title, hit_text
+            )
+            if not direct and not (overlap_count >= 3 and code_like_overlap):
+                continue
+            url = hit.get("html_url")
+            if url:
+                hits_by_url[url] = {
+                    **hit,
+                    "_semantic_overlap_count": overlap_count,
+                    "_semantic_code_like": code_like_overlap,
+                }
+
+        technical_terms = [
+            term for term in semantic_terms(title) if term in SEMANTIC_TECHNICAL_TERMS
+        ]
+        if len(technical_terms) >= 2:
+            search_terms = sorted(
+                technical_terms,
+                key=lambda term: (
+                    term not in {"mamba", "dtype", "credential", "audience"},
+                    term,
+                ),
+            )[:2]
+            search_data, search_error = gh(
+                [
+                    "api",
+                    "-X",
+                    "GET",
+                    "search/issues",
+                    "-f",
+                    f"q=repo:{repo} is:pr {' '.join(search_terms)}",
+                    "-f",
+                    "sort=updated",
+                    "-f",
+                    "order=desc",
+                    "-f",
+                    "per_page=20",
+                ],
+                timeout=20,
+            )
+            if search_error:
+                self._last_open_pr_lookup_errors.append(
+                    f"semantic_search:{search_error}"
+                )
+            for hit in (
+                (search_data or {}).get("items", [])
+                if isinstance(search_data, dict)
+                else []
+            ):
+                hit_text = f"{hit.get('title') or ''}\n{hit.get('body') or ''}"
+                direct = bool(
+                    re.search(
+                        rf"\b(fix(e[sd])?|close[sd]?|resolve[sd]?)\s+#?{num}\b|#{num}\b",
+                        hit_text,
+                        re.I,
+                    )
+                )
+                if not direct and is_dependency_update_pr(hit):
+                    continue
+                overlap_count, code_like_overlap = semantic_overlap_strength(
+                    title, hit_text
+                )
+                if overlap_count < 3 or not code_like_overlap:
+                    continue
+                url = hit.get("html_url")
+                if url:
+                    hits_by_url[url] = {
+                        **hit,
+                        "_semantic_overlap_count": overlap_count,
+                        "_semantic_code_like": code_like_overlap,
+                    }
+
+        return sorted(
+            hits_by_url.values(),
+            key=lambda hit: (
+                bool(hit.get("_linked_from_issue")),
+                int(hit.get("_semantic_overlap_count") or 0),
+            ),
+            reverse=True,
+        )[:5]
+
+    def pr_detail(self, repo: str, pr_num: int) -> dict[str, Any]:
+        fields = (
+            "number,title,url,body,state,isDraft,updatedAt,createdAt,closedAt,mergedAt,author,files,"
+            "additions,deletions,changedFiles,statusCheckRollup,reviewDecision,"
+            "latestReviews,comments,closingIssuesReferences"
+        )
+        data, err = gh(
+            ["pr", "view", str(pr_num), "--repo", repo, "--json", fields], timeout=25
+        )
+        if isinstance(data, dict) and not err:
+            return data
+        data, err = gh(["api", f"repos/{repo}/pulls/{pr_num}"], timeout=15)
+        if not isinstance(data, dict) or err:
+            return {}
+        files, files_err = gh(
+            ["api", f"repos/{repo}/pulls/{pr_num}/files", "-f", "per_page=100"],
+            timeout=20,
+        )
+        normalized_files = (
+            [
+                {**entry, "path": entry.get("path") or entry.get("filename") or ""}
+                for entry in files
+                if isinstance(entry, dict)
+            ]
+            if isinstance(files, list) and not files_err
+            else []
+        )
+        return {
+            **data,
+            "url": data.get("html_url") or data.get("url"),
+            "isDraft": bool(data.get("draft")),
+            "updatedAt": data.get("updated_at"),
+            "createdAt": data.get("created_at"),
+            "closedAt": data.get("closed_at"),
+            "mergedAt": data.get("merged_at"),
+            "changedFiles": data.get("changed_files"),
+            "files": normalized_files,
+            "comments": [],
+            "statusCheckRollup": [],
+            "closingIssuesReferences": [],
+        }
+
+    def assess_single_pr(
+        self,
+        repo: str,
+        issue_num: int,
+        issue_title: str,
+        hit: dict[str, Any],
+        issue_context: str = "",
+    ) -> dict[str, Any]:
+        pr_num = int(hit.get("number") or 0)
+        detail = self.pr_detail(repo, pr_num) if pr_num else {}
+        title = detail.get("title") or hit.get("title") or ""
+        body = detail.get("body") or hit.get("body") or ""
+        url = detail.get("url") or hit.get("html_url") or ""
+        text = f"{title}\n{body}".lower()
+        state = str(detail.get("state") or hit.get("state") or "").upper()
+        merged = bool(detail.get("mergedAt") or detail.get("merged_at"))
+        comments_value = detail.get("comments")
+        comments = comments_value if isinstance(comments_value, list) else []
+        comment_text = "\n".join(
+            comment.get("body") or ""
+            for comment in comments
+            if isinstance(comment, dict)
+        )
+        rule_closed = bool(
+            state == "CLOSED"
+            and re.search(
+                r"automatically closed.{0,300}(?:not assigned|must be assigned)|"
+                r"assigned to (?:an?|the) (?:linked )?issue before opening|"
+                r"missing-issue-link|require-issue-link",
+                comment_text,
+                re.I | re.S,
+            )
+        )
+        files_value = detail.get("files")
+        files = files_value if isinstance(files_value, list) else []
+        file_paths = [
+            entry.get("path", "") for entry in files if isinstance(entry, dict)
+        ]
+        test_files = [path for path in file_paths if TEST_FILE_RE.search(path)]
+        closing_value = detail.get("closingIssuesReferences")
+        closing = closing_value if isinstance(closing_value, list) else []
+        references_issue = any(
+            ref.get("number") == issue_num for ref in closing if isinstance(ref, dict)
+        )
+        references_issue = (
+            references_issue
+            or bool(hit.get("_linked_from_issue"))
+            or bool(
+                re.search(
+                    rf"\b(fix(e[sd])?|close[sd]?|resolve[sd]?)\s+#?{issue_num}\b|#{issue_num}\b",
+                    text,
+                    re.I,
+                )
+            )
+        )
+        issue_body_link = bool(hit.get("_issue_body_link"))
+        issue_body_link_relation = str(hit.get("_issue_body_link_relation") or "")
+
+        checks_value = detail.get("statusCheckRollup")
+        checks = checks_value if isinstance(checks_value, list) else []
+        check_states = [
+            str(
+                check.get("conclusion")
+                or check.get("state")
+                or check.get("status")
+                or ""
+            ).upper()
+            for check in checks
+            if isinstance(check, dict)
+        ]
+        failed_checks = [
+            state
+            for state in check_states
+            if state in {"FAILURE", "FAILED", "ERROR", "TIMED_OUT"}
+        ]
+        successful_checks = [
+            state for state in check_states if state in {"SUCCESS", "COMPLETED"}
+        ]
+        updated = parse_github_time(
+            detail.get("updatedAt") or hit.get("updated_at"), self.now
+        )
+        age_days = max(0, (self.now - updated).days)
+        changed_files = int(detail.get("changedFiles") or len(file_paths) or 0)
+        additions = int(detail.get("additions") or 0)
+        deletions = int(detail.get("deletions") or 0)
+
+        keyword_hits, code_like_overlap = semantic_overlap_strength(issue_title, text)
+        distinctive_overlap = semantic_distinctive_overlap(issue_title, text)
+        issue_paths = {
+            match.lower() for match in ISSUE_CODE_PATH_RE.findall(issue_context)
+        }
+        overlapping_paths = sorted(
+            path for path in file_paths if path.lower() in issue_paths
+        )
+        semantic_overlap = (bool(overlapping_paths) and keyword_hits >= 2) or (
+            keyword_hits >= 3 and code_like_overlap and len(distinctive_overlap) >= 2
+        )
+
+        score = 0
+        strengths: list[str] = []
+        gaps: list[str] = []
+        if references_issue:
+            score += 25
+            strengths.append("明确关联 issue")
+        else:
+            score -= 10
+            gaps.append("未明确 closing/reference 目标 issue")
+        if test_files:
+            score += 20
+            strengths.append(f"包含测试文件 {len(test_files)} 个")
+        else:
+            score -= 20
+            gaps.append("缺少测试文件")
+        if successful_checks and not failed_checks:
+            score += 12
+            strengths.append("已有成功 CI/check")
+        elif failed_checks:
+            score -= 18
+            gaps.append("存在失败 CI/check")
+        else:
+            gaps.append("CI/check 信息不足")
+        if detail.get("reviewDecision") == "APPROVED":
+            score += 18
+            strengths.append("已有 review approval")
+        elif detail.get("reviewDecision") == "CHANGES_REQUESTED":
+            score -= 12
+            gaps.append("已有 changes requested")
+        if detail.get("isDraft"):
+            score -= 10
+            gaps.append("仍是 draft")
+        if age_days <= 7:
+            score += 8
+            strengths.append("近期仍活跃")
+        elif age_days >= 30:
+            score -= 20
+            gaps.append("超过 30 天未更新")
+        elif age_days >= 14:
+            score -= 10
+            gaps.append("超过 14 天未更新")
+        if keyword_hits >= 2:
+            score += 8
+            strengths.append("标题/正文与 issue 关键词匹配")
+        elif keyword_hits == 0:
+            score -= 6
+            gaps.append("与 issue 关键词匹配弱")
+        if changed_files > 18 or additions + deletions > 900:
+            score -= 12
+            gaps.append("改动面偏大")
+        if len(body.strip()) < 80:
+            score -= 5
+            gaps.append("PR 描述过短")
+        if semantic_overlap:
+            score += 8
+            strengths.append("改动文件与 issue 代码路径重合")
+
+        technical_complete = bool(
+            references_issue
+            and test_files
+            and changed_files > 0
+            and len(body.strip()) >= 160
+            and (successful_checks or rule_closed)
+        )
+
+        return {
+            "number": pr_num,
+            "url": url,
+            "title": title,
+            "score": score,
+            "references_issue": references_issue,
+            "issue_body_link": issue_body_link,
+            "issue_body_link_relation": issue_body_link_relation,
+            "semantic_overlap": semantic_overlap,
+            "semantic_overlap_count": keyword_hits,
+            "semantic_distinctive_overlap": sorted(distinctive_overlap),
+            "overlapping_paths": overlapping_paths[:3],
+            "test_files": len(test_files),
+            "changed_files": changed_files,
+            "additions": additions,
+            "deletions": deletions,
+            "age_days": age_days,
+            "is_draft": bool(detail.get("isDraft")),
+            "state": "MERGED" if merged else state,
+            "rule_closed": rule_closed,
+            "technical_complete": technical_complete,
+            "strengths": strengths[:4],
+            "gaps": gaps[:5],
+        }
+
+    def assess_open_prs(
+        self,
+        repo: str,
+        num: int,
+        title: str,
+        issue_context: str = "",
+    ) -> dict[str, Any]:
+        self._last_open_pr_lookup_errors = []
+        hits = self.open_pr_hits(repo, num, title, issue_context)
+        lookup_errors = list(getattr(self, "_last_open_pr_lookup_errors", []))
+        if not hits:
+            if lookup_errors:
+                return {
+                    "status": "lookup_failed",
+                    "prs": [],
+                    "summary": "open PR 检索不完整，禁止将未知当成无重复实现",
+                    "errors": lookup_errors[:3],
+                }
+            return {"status": "none", "prs": [], "summary": "未发现相关 open PR"}
+
+        assessments = [
+            self.assess_single_pr(repo, num, title, hit, issue_context) for hit in hits
+        ]
+        assessments = [item for item in assessments if item.get("url")]
+        if not assessments:
+            return {
+                "status": "lookup_failed",
+                "prs": [],
+                "summary": "open PR 命中但无法读取有效详情",
+                "errors": lookup_errors[:3],
+            }
+
+        direct_assessments = [item for item in assessments if item["references_issue"]]
+        if not direct_assessments:
+            if lookup_errors:
+                return {
+                    "status": "lookup_failed",
+                    "prs": assessments[:3],
+                    "summary": "open PR 检索不完整，需等待下轮重试后再判断碰撞",
+                    "errors": lookup_errors[:3],
+                }
+            active_assessments = [
+                item for item in assessments if item.get("state") in {None, "OPEN"}
+            ]
+            if not active_assessments:
+                return {
+                    "status": "none",
+                    "prs": assessments[:3],
+                    "summary": "未发现相关 open PR；仅发现未直接关联 issue 的历史 PR",
+                }
+            semantic_assessments = [
+                item for item in active_assessments if item.get("semantic_overlap")
+            ]
+            if semantic_assessments:
+                best = max(
+                    semantic_assessments,
+                    key=lambda item: (
+                        item.get("semantic_overlap_count", 0),
+                        item["score"],
+                    ),
+                )
+                return {
+                    "status": "semantic_overlap_requires_review",
+                    "best_score": best["score"],
+                    "best_url": best["url"],
+                    "summary": (
+                        f"发现 PR #{best['number']} 与 issue 代码路径和关键语义重合，"
+                        "但未直接关联 issue；需人工比较，禁止自动创建重复任务"
+                    ),
+                    "prs": active_assessments[:3],
+                }
+            best = max(active_assessments, key=lambda item: item["score"])
+            return {
+                "status": "none",
+                "best_score": best["score"],
+                "best_url": best["url"],
+                "keywordOverlapOnly": True,
+                "summary": (
+                    f"仅发现未直接关联、无代码路径或强机制重合的 PR #{best['number']}；"
+                    "保留为搜索上下文，不阻止实现"
+                ),
+                "prs": active_assessments[:3],
+            }
+
+        best = max(
+            direct_assessments,
+            key=lambda item: (
+                bool(item.get("issue_body_link")),
+                bool(item.get("technical_complete") and item.get("rule_closed")),
+                item.get("state") == "MERGED",
+                item["score"],
+            ),
+        )
+        active_direct = [
+            item
+            for item in direct_assessments
+            if str(item.get("state") or "OPEN").upper() == "OPEN"
+        ]
+        strong = (
+            best.get("state") == "MERGED"
+            or bool(best.get("issue_body_link"))
+            or bool(best.get("rule_closed") and best.get("technical_complete"))
+            or len(active_direct) == 1
+            or (
+                best["score"] >= 55
+                and best["references_issue"]
+                and best["test_files"] > 0
+                and "存在失败 CI/check" not in best["gaps"]
+                and "超过 30 天未更新" not in best["gaps"]
+            )
+        )
+        competition_saturated = len(active_direct) >= 2
+        if competition_saturated:
+            status = "competition_saturated"
+            numbers = ", ".join(f"#{item['number']}" for item in active_direct[:5])
+            summary = (
+                f"已有 {len(active_direct)} 个活跃直接关联 PR（{numbers}）；"
+                "竞争已饱和，不应再创建重复实现"
+            )
+        elif strong:
+            status = "covered_strong"
+            if active_direct:
+                summary = (
+                    f"已有活跃且直接关联 issue 的 PR #{best['number']}；"
+                    "Draft、CI 失败、缺测试或活跃度不足只是现有 PR 的改进点，"
+                    "不是自动创建竞争 PR 的理由"
+                )
+            elif best.get("issue_body_link"):
+                summary = (
+                    f"issue 正文已直接链接现有 PR #{best['number']}；"
+                    "应跟进该实现，不应自动创建竞争 PR"
+                )
+            elif best.get("rule_closed"):
+                summary = (
+                    f"已有完整修复 PR #{best['number']}，仅因仓库分配规则被关闭；"
+                    "应由维护者分配并重开原 PR，不应竞争重做"
+                )
+            else:
+                summary = f"已有较强 PR：#{best['number']} score={best['score']}，{'; '.join(best['strengths'])}"
+        elif repo_rules(repo) == "needs_assignment":
+            status = "human_review_required"
+            summary = f"已有 PR 但强度不足，且仓库通常需要先分配/确认：#{best['number']} score={best['score']}"
+        else:
+            status = "human_review_required"
+            summary = (
+                f"发现关键词相关 PR，但未确认直接覆盖：#{best['number']}；需人工核对"
+            )
+
+        return {
+            "status": status,
+            "best_score": best["score"],
+            "best_url": best["url"],
+            "summary": summary,
+            "prs": assessments[:3],
+        }
+
+    def score_issue(
+        self,
+        base: dict[str, Any],
+        issue: dict[str, Any],
+        comments: list[dict[str, Any]],
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        labels = [label.get("name", "") for label in issue.get("labels", [])]
+        labels_text = " ".join(labels)
+        title = issue.get("title") or base["title"]
+        issue_kind_text = f"{title}\n{labels_text}"
+        body = issue.get("body") or ""
+        text = f"{title}\n{body}\n" + "\n".join(
+            (comment.get("body") or "") for comment in comments[-8:]
+        )
+        maintainer_approved = any(
+            (comment.get("author_association") or "").upper()
+            in {"MEMBER", "OWNER", "COLLABORATOR"}
+            and MAINTAINER_APPROVAL_RE.search(comment.get("body") or "")
+            for comment in comments
+        )
+        recent_maintainer_approved = any(
+            (comment.get("author_association") or "").upper()
+            in {"MEMBER", "OWNER", "COLLABORATOR"}
+            and MAINTAINER_APPROVAL_RE.search(comment.get("body") or "")
+            and parse_github_time(comment.get("created_at"), self.now)
+            >= self.now - timedelta(days=30)
+            for comment in comments
+        )
+        maintainer_configuration_guidance = any(
+            (comment.get("author_association") or "").upper()
+            in {"MEMBER", "OWNER", "COLLABORATOR"}
+            and MAINTAINER_CONFIGURATION_GUIDANCE_RE.search(comment.get("body") or "")
+            and CONFIGURATION_CONTEXT_RE.search(comment.get("body") or "")
+            for comment in comments
+        ) and bool(CONFIGURATION_CONTEXT_RE.search(title + "\n" + body[:5000]))
+        maintainer_active_investigation = any(
+            (comment.get("author_association") or "").upper()
+            in {"MEMBER", "OWNER", "COLLABORATOR"}
+            and MAINTAINER_ACTIVE_INVESTIGATION_RE.search(comment.get("body") or "")
+            and parse_github_time(comment.get("created_at"), self.now)
+            >= self.now - timedelta(days=3)
+            for comment in comments
+        )
+        maintainer_revalidation_requested = any(
+            (comment.get("author_association") or "").upper()
+            in {"MEMBER", "OWNER", "COLLABORATOR"}
+            and MAINTAINER_REVALIDATION_REQUEST_RE.search(comment.get("body") or "")
+            and parse_github_time(comment.get("created_at"), self.now)
+            >= self.now - timedelta(days=7)
+            for comment in comments
+        )
+        help_wanted = bool(HELP_WANTED_RE.search(labels_text))
+        needs_confirmation = bool(WAIT_LABEL_RE.search(labels_text))
+        public_repro_signals = public_reproduction_signal_count(body)
+        root_cause_signal = bool(ROOT_CAUSE_RE.search(title + "\n" + body))
+        design_confirmation = bool(
+            re.search(r"\btriage\b", labels_text, re.I)
+            or API_DESIGN_RE.search(title + "\n" + body[:3000])
+        ) and not (maintainer_approved or help_wanted)
+        usage_confirmation = bool(
+            USAGE_AMBIGUITY_RE.search(title + "\n" + body[:3000])
+        ) and not (maintainer_approved or help_wanted)
+        needs_confirmation = (
+            needs_confirmation
+            or design_confirmation
+            or usage_confirmation
+            or (
+                maintainer_active_investigation
+                and not (maintainer_approved or help_wanted)
+            )
+            or (
+                maintainer_revalidation_requested
+                and not (maintainer_approved or help_wanted)
+            )
+        )
+        issue_author = ((issue.get("user") or {}).get("login") or "").lower()
+        report_retracted = any(
+            RETRACTED_RE.search(comment.get("body") or "")
+            and (
+                ((comment.get("user") or {}).get("login") or "").lower() == issue_author
+                or (comment.get("author_association") or "").upper()
+                in {"MEMBER", "OWNER", "COLLABORATOR"}
+            )
+            for comment in comments
+        )
+        resolved_upstream = any(
+            RESOLVED_UPSTREAM_RE.search(comment.get("body") or "")
+            and (comment.get("author_association") or "").upper()
+            in {"MEMBER", "OWNER", "COLLABORATOR", "CONTRIBUTOR"}
+            for comment in comments
+        )
+        wrong_repository = bool(
+            WRONG_REPOSITORY_RE.search(title + "\n" + body[:5000])
+        ) or any(
+            WRONG_REPOSITORY_RE.search(comment.get("body") or "")
+            and (
+                ((comment.get("user") or {}).get("login") or "").lower() == issue_author
+                or (
+                    (comment.get("author_association") or "").upper()
+                    in {"MEMBER", "OWNER", "COLLABORATOR", "CONTRIBUTOR"}
+                    and not BOT_RE.search(
+                        ((comment.get("user") or {}).get("login") or "")
+                    )
+                )
+            )
+            for comment in comments
+        )
+
+        if (issue.get("state") or "").lower() not in {"", "open"}:
+            return None, "not_open"
+        if issue.get("assignees"):
+            return None, "assigned"
+        if SKIP_LABEL_RE.search(labels_text):
+            return None, "low_value_label"
+        if TRIVIAL_RE.search(title + "\n" + body[:1500]):
+            return None, "trivial"
+        if SECURITY_SENSITIVE_RE.search(title + "\n" + body[:3000]):
+            return None, "security_disclosure_required"
+        if LOW_IMPACT_SELF_ASSESSMENT_RE.search(body) and not (
+            maintainer_approved or help_wanted
+        ):
+            return None, "explicitly_low_impact"
+        if incomplete_template_value_count(body) >= 2 and not (
+            maintainer_approved or help_wanted
+        ):
+            return None, "incomplete_issue_template"
+        if REACTIVATED_STALE_LABEL_RE.search(labels_text) and not (
+            recent_maintainer_approved or help_wanted
+        ):
+            return None, "reactivated_stale_without_recent_maintainer_confirmation"
+        if maintainer_configuration_guidance and not (
+            maintainer_approved or help_wanted
+        ):
+            return None, "maintainer_configuration_guidance"
+        if UNTRUSTED_TRIAGE_INSTRUCTION_RE.search(body):
+            return None, "untrusted_triage_instruction"
+        if base[
+            "repo"
+        ].casefold() == "microsoft/autogen" and not BUG_ACTIONABILITY_RE.search(
+            title + "\n" + labels_text
+        ):
+            return None, "maintenance_mode_non_bug"
+        if base["repo"].casefold() in UNAVAILABLE_HARDWARE_REPOS:
+            return None, "hardware_unavailable_repo"
+        if not base.get("_explicit_recheck") and self.only_bot_refreshed(
+            base["repo"], base["num"], issue, comments
+        ):
+            return None, "bot_or_stale_refresh"
+        if ACTIVE_RE.search(body) or any(
+            ACTIVE_RE.search(comment.get("body") or "") for comment in comments
+        ):
+            return None, "someone_active"
+        if RFC_RE.search(title + "\n" + labels_text + "\n" + body[:1200]) and not (
+            maintainer_approved or help_wanted
+        ):
+            return None, "rfc_or_roadmap_without_maintainer_split"
+        if PROMOTIONAL_UPDATE_RE.search(title + "\n" + body[:600]) and not (
+            maintainer_approved or help_wanted
+        ):
+            return None, "promotional_or_external_integration"
+        if INTERNAL_AUTOMATION_ISSUE_RE.search(title + "\n" + body[:1600]) and not (
+            maintainer_approved or help_wanted
+        ):
+            return None, "automated_maintenance_issue"
+        if (
+            re.search(r"\b(feature|enhancement|proposal)\b", labels_text, re.I)
+            and not BUG_ACTIONABILITY_RE.search(title)
+            and not (maintainer_approved or help_wanted)
+        ):
+            return None, "feature_without_maintainer_approval"
+        if not (
+            BUG_ACTIONABILITY_RE.search(title + "\n" + labels_text)
+            or maintainer_approved
+            or help_wanted
+        ):
+            return None, "no_bug_or_maintainer_actionability"
+        if PRIVATE_REPRO_RE.search(body):
+            return None, "private_reproduction"
+        if report_retracted:
+            return None, "report_retracted"
+        if resolved_upstream:
+            return None, "resolved_upstream"
+        if wrong_repository:
+            return None, "wrong_repository_or_downstream_bug"
+        if UPSTREAM_ROOT_CAUSE_RE.search(title + "\n" + body[:12000]) and not (
+            maintainer_approved or help_wanted
+        ):
+            return None, "upstream_root_cause_without_maintainer_scope"
+        if EXTERNAL_MODEL_CAUSE_RE.search(
+            title + "\n" + body
+        ) or HOSTED_MODEL_QUALITY_RE.search(title + "\n" + body):
+            return None, "external_model_or_provider_issue"
+        if (
+            USAGE_QUESTION_RE.search(title + "\n" + body[:4000])
+            and not root_cause_signal
+        ):
+            return None, "usage_or_documentation_question"
+        if MODEL_ARTIFACT_FAILURE_RE.search(title + "\n" + body[:8000]):
+            return None, "external_model_artifact_failure"
+        if requires_unavailable_hardware(title, labels_text, body):
+            return None, "hardware_unavailable"
+        if is_desktop_peripheral_issue(title, labels_text, body):
+            return None, "desktop_peripheral_issue"
+        if is_frontend_interaction_issue(title, labels_text, body):
+            return None, "frontend_interaction_issue"
+        if re.search(r"\b(bug|regression|performance)\b", issue_kind_text, re.I) and (
+            public_repro_signals < 2 and not root_cause_signal
+        ):
+            return None, "no_public_reproduction_or_root_cause"
+        if not HIGH_RE.search(title + "\n" + body):
+            return None, "off_topic"
+        if base["repo"] not in set(KNOWN_REPOS) and not CORE_AGENT_INFRA_RE.search(
+            title + "\n" + body[:12000]
+        ):
+            return None, "off_topic_dynamic_repo"
+
+        high_hits = len({match.group(0).lower() for match in HIGH_RE.finditer(text)})
+        impact_hits = len(
+            {match.group(0).lower() for match in IMPACT_RE.finditer(text)}
+        )
+        score = 0
+        if high_hits >= 5 or len(body) > 1800:
+            score += 3
+            difficulty = "高"
+        elif high_hits >= 2 or len(body) > 700:
+            score += 2
+            difficulty = "中"
+        else:
+            score += 1
+            difficulty = "低"
+
+        if impact_hits >= 2 or re.search(
+            r"\b(bug|performance|regression)\b", issue_kind_text, re.I
+        ):
+            score += 3
+            impact = "高"
+        elif impact_hits >= 1 or re.search(
+            r"\b(enhancement|feature)\b", issue_kind_text, re.I
+        ):
+            score += 2
+            impact = "中"
+        else:
+            score += 1
+            impact = "低"
+
+        if re.search(
+            r"\b(bug|feature|performance|refactor|regression)\b", issue_kind_text, re.I
+        ):
+            score += 2
+        elif BUG_ACTIONABILITY_RE.search(title):
+            # A precise failure mechanism in the title is equivalent evidence
+            # to a missing bug label; many mature repositories triage labels later.
+            score += 2
+        elif re.search(r"\benhancement\b", issue_kind_text, re.I):
+            score += 1
+        score += 1
+        if base["repo"] in AGENT_INFRA_PRIORITY_REPOS:
+            score += 1
+        if repo_rules(base["repo"]) == "needs_assignment":
+            score -= 2
+        if public_repro_signals >= 2:
+            score += 1
+        if root_cause_signal:
+            score += 1
+        if design_confirmation and public_repro_signals >= 1:
+            # Explicit maintainer design gates are valuable review opportunities
+            # even when the repository has not added a bug label yet. They can
+            # only become WAIT_MAINTAINER, never an automatic implementation.
+            score += 3
+        if score < MIN_ACTIONABLE_SCORE:
+            return None, "score_low"
+
+        lower = text.lower()
+        why: list[str] = []
+        if re.search(r"\b(bug|regression|performance)\b", issue_kind_text, re.I):
+            why.append("用户可见 bug/性能问题，合并动机明确")
+        if any(
+            term in lower
+            for term in [
+                "streaming",
+                "tool call",
+                "function call",
+                "structured output",
+                "mcp",
+                "workflow",
+                "agent",
+                "kv cache",
+                "inference",
+                "serving",
+                "retrieval",
+                "embedding",
+            ]
+        ):
+            why.append("命中 agent/inference/RAG 关键路径")
+        if impact == "高":
+            why.append("影响面高，适合做可复现修复")
+        if not why:
+            why.append("问题边界清楚且无人认领")
+
+        title_lower = title.lower()
+        expected = "先补失败用例，再沿相关 runtime/provider/scheduler 路径做最小修复。"
+        test_path = "用 issue 的公开最小复现先建立失败测试，再运行目标 package 的定向单测和静态检查。"
+        if KERNEL_RE.search(title):
+            expected = "复现数值或批次不变量，定位 kernel 选择/块大小/数据布局根因，并补确定性正确性回归测试。"
+            test_path = "先用 CPU/mock 或现有 kernel 单测固定输入输出不变量；具备匹配 GPU 时再补真实硬件复现。"
+        elif "stream" in title_lower:
+            expected = "复现 streaming 事件序列，修正 chunk/finish/tool-call 状态传播，并补流式回归测试。"
+        elif re.search(r"\b(tool|function)[- ]call\b", title_lower):
+            expected = "复现 tool-call 序列化/路由问题，修正转换层或 agent runtime 状态机，并补 provider/runtime 测试。"
+        elif "structured output" in title_lower or "schema" in title_lower:
+            expected = "复现 schema/structured-output 校验问题，修正 schema 生成或解析兼容性，并补模型无关单测。"
+        elif (
+            "kv cache" in title_lower
+            or "inference" in title_lower
+            or "serving" in title_lower
+        ):
+            expected = "用现有 serving 测试或最小 benchmark 复现，修正调度/cache 路径，并补性能或正确性回归。"
+
+        rules = repo_rules(base["repo"])
+        if rules == "ai_disclosure_conflict" and not needs_confirmation:
+            bucket = "conflict"
+            category = "LOCAL_FIX_ONLY"
+        else:
+            bucket = (
+                "immediate"
+                if rules == "normal" and not needs_confirmation
+                else "needs_approval"
+            )
+            category = (
+                "NEW_CLEAN_CANDIDATE" if bucket == "immediate" else "WAIT_MAINTAINER"
+            )
+        return {
+            "repo": base["repo"],
+            "num": base["num"],
+            "title": title,
+            "url": issue.get("html_url") or base["url"],
+            "issue_updated": issue.get("updated_at") or base.get("updated") or "",
+            "profile": PROFILE,
+            "scanner_version": SCANNER_VERSION,
+            "category": category,
+            "gate_decision": (
+                "ALLOW_TO_WORK"
+                if bucket == "immediate"
+                else "ALLOW_PRIVATE_WORK" if bucket == "conflict" else "HUMAN_REVIEW"
+            ),
+            "score": score,
+            "difficulty": difficulty,
+            "impact": impact,
+            "labels": labels[:6],
+            "bucket": bucket,
+            "auto_spawn": bucket in {"immediate", "conflict"},
+            "public_submission_allowed": bucket != "conflict",
+            "hardware_compatible": True,
+            "actionability_evidence": {
+                "public_repro_signals": public_repro_signals,
+                "root_cause_signal": root_cause_signal,
+                "maintainer_approved": maintainer_approved,
+                "help_wanted": help_wanted,
+                "needs_confirmation": needs_confirmation,
+                "design_confirmation": design_confirmation,
+                "usage_confirmation": usage_confirmation,
+                "maintainer_active_investigation": maintainer_active_investigation,
+                "maintainer_revalidation_requested": maintainer_revalidation_requested,
+            },
+            "why": "；".join(why[:3]),
+            "expected_changes": expected,
+            "test_path": test_path,
+            "risk": "需确认是否已有 maintainer 设计偏好；避免扩大 API 行为变更。",
+            "next_step": (
+                "阅读相关实现和测试，先本地复现，再决定是否开 PR。"
+                if bucket == "immediate"
+                else (
+                    "仅准备本地修复和私有提交包，不执行任何公开 GitHub 动作。"
+                    if bucket == "conflict"
+                    else "先在 issue 下请求分配/确认方案，获批后再开 PR。"
+                )
+            ),
+            "role_eta": f"{difficulty}难度 / 预计 4-12 小时，适合作为 runtime/provider 修复型 PR。",
+            "open_pr_assessment": None,
+            "related_issue_assessment": None,
+        }, None
+
+    def shortlist(
+        self, items: dict[str, dict[str, Any]]
+    ) -> tuple[list[dict[str, Any]], int, int]:
+        known = set(KNOWN_REPOS)
+        bases: list[dict[str, Any]] = []
+        rejection_counts: Counter[str] = Counter()
+        rejection_examples: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
+        deadline_deferred_bases: list[dict[str, Any]] = []
+
+        def reject(reason: str, base: dict[str, Any]) -> None:
+            key = f"{base.get('repo')}#{base.get('num')}"
+            self.issue_outcomes[key] = {"status": "rejected", "reason": reason}
+            rejection_counts[reason] += 1
+            if len(rejection_examples[reason]) < 2:
+                rejection_examples[reason].append(
+                    {
+                        "repo": base.get("repo"),
+                        "num": base.get("num"),
+                        "title": base.get("title"),
+                        "url": base.get("url"),
+                    }
+                )
+
+        def defer(base: dict[str, Any], reason: str) -> None:
+            key = f"{base['repo']}#{base['num']}"
+            self.issue_outcomes[key] = {"status": "deferred", "reason": reason}
+            self.seen[key] = {
+                "analyzed": self.analyzed,
+                "requeued_at": self.analyzed,
+                "status": "inspection_budget_deferred",
+                "reason": reason,
+                "title": base.get("title") or key,
+                "url": base.get("url")
+                or f"https://github.com/{base['repo']}/issues/{base['num']}",
+                "issue_updated": base.get("updated") or "",
+            }
+
+        for base in items.values():
+            if repo_is_excluded(base["repo"]):
+                reject("excluded_repo", base)
+                continue
+            key = f"{base['repo']}#{base['num']}"
+            if not base.get("_explicit_recheck") and should_skip_seen(
+                self.seen.get(key),
+                base.get("updated"),
+                self.now,
+                scanner_version=SCANNER_VERSION,
+            ):
+                reject("seen_recently", base)
+                continue
+            if base.get("assignees") or SKIP_LABEL_RE.search(
+                " ".join(base.get("labels", []))
+            ):
+                reject("prefilter_assigned_or_low_value_label", base)
+                self.seen[key] = {
+                    "analyzed": self.analyzed,
+                    "issue_updated": base.get("updated") or "",
+                    "status": "skip_prefilter",
+                    "title": base["title"],
+                }
+                continue
+            if self.deep_inspection_deadline_reached():
+                deadline_deferred_bases.append(base)
+                continue
+            ok, reason = self.repo_quality(base["repo"], base["repo"] in known)
+            if not ok:
+                reject(f"repo_quality:{reason}", base)
+                if reason in {"repo_meta_failed", "repo_contents_failed"}:
+                    self.seen[key] = {
+                        "analyzed": self.analyzed,
+                        "status": "status_update",
+                        "reason": reason,
+                        "requeue_reason": "transient_repo_quality_failure",
+                        "requeued_at": self.analyzed,
+                        "title": base["title"],
+                        "issue_updated": base.get("updated") or "",
+                    }
+                else:
+                    self.seen[key] = {
+                        "analyzed": self.analyzed,
+                        "status": "skip_repo_quality",
+                        "reason": reason,
+                        "title": base["title"],
+                        "issue_updated": base.get("updated") or "",
+                    }
+                continue
+            bases.append(base)
+
+        bases.sort(key=base_priority, reverse=True)
+        inspection_bases, deferred_bases = select_inspection_bases(bases)
+        for base in deferred_bases:
+            defer(base, "inspection_budget_deferred")
+        for base in deadline_deferred_bases:
+            defer(base, "scan_deadline_deferred")
+        inspected = 0
+        candidates: list[dict[str, Any]] = []
+        for index, base in enumerate(inspection_bases):
+            if self.deep_inspection_deadline_reached():
+                for remaining in inspection_bases[index:]:
+                    defer(remaining, "scan_deadline_deferred")
+                deadline_deferred_bases.extend(inspection_bases[index:])
+                break
+            key = f"{base['repo']}#{base['num']}"
+            issue = self.issue(base["repo"], base["num"])
+            if not issue:
+                reject("issue_fetch_failed", base)
+                continue
+            if issue.get("state") != "open" or issue.get("pull_request"):
+                reject("not_open_or_pull_request", base)
+                continue
+            comments = self.comments(base["repo"], base["num"])
+            inspected += 1
+            scored, reason = self.score_issue(base, issue, comments)
+            if not scored:
+                reject(reason or "score_rejected", base)
+                self.seen[key] = {
+                    "analyzed": self.analyzed,
+                    "status": reason,
+                    "title": issue.get("title") or base["title"],
+                    "issue_updated": issue.get("updated_at")
+                    or base.get("updated")
+                    or "",
+                }
+                continue
+            policy = self.submission_policy(base["repo"])
+            scored["submission_policy"] = policy
+            if policy == "contributions_closed":
+                reject("repository_not_accepting_code_contributions", base)
+                self.seen[key] = {
+                    "analyzed": self.analyzed,
+                    "status": "repository_not_accepting_code_contributions",
+                    "title": issue.get("title") or base["title"],
+                    "issue_updated": issue.get("updated_at")
+                    or base.get("updated")
+                    or "",
+                }
+                continue
+            if policy == "ai_disclosure_conflict":
+                scored["bucket"] = "conflict"
+                scored["category"] = "LOCAL_FIX_ONLY"
+                scored["gate_decision"] = "ALLOW_PRIVATE_WORK"
+                scored["auto_spawn"] = True
+                scored["public_submission_allowed"] = False
+                scored["risk"] = (
+                    f"{scored['risk']}；仓库要求公开 AI 使用披露，自动公开动作被硬禁用。"
+                )
+                scored["next_step"] = (
+                    "仅完成本地复现、修复、测试和私有提交包；由用户自行决定公开提交。"
+                )
+            elif policy in {
+                "needs_assignment",
+                "ai_disclosure_and_assignment",
+                "policy_unknown",
+            }:
+                scored["bucket"] = "needs_approval"
+                scored["category"] = "WAIT_MAINTAINER"
+                scored["gate_decision"] = "HUMAN_REVIEW"
+                scored["auto_spawn"] = False
+                scored["submission_policy"] = policy
+                scored["next_step"] = (
+                    "先请求维护者分配/确认方案，获批后再开 PR。"
+                    if policy == "needs_assignment"
+                    else (
+                        "先等待维护者分配/确认方案；即使获批，公开 PR 的 AI 复核/披露确认仍必须由用户本人处理。"
+                        if policy == "ai_disclosure_and_assignment"
+                        else "仓库贡献政策读取失败；先人工确认 CONTRIBUTING/PR 模板后再行动。"
+                    )
+                )
+                if policy == "ai_disclosure_and_assignment":
+                    scored["public_submission_allowed"] = False
+                    scored["risk"] = (
+                        f"{scored['risk']}；仓库同时要求先分配，并要求用户本人完成 AI 代码复核/披露确认。"
+                    )
+            elif policy == "legal_confirmation":
+                scored["risk"] = (
+                    f"{scored['risk']}；DCO 将自动使用已配置 Git 身份 sign-off；"
+                    "CLA 不阻止创建 PR，但协议接受仍需用户本人完成。"
+                )
+                scored["next_step"] = (
+                    "按正常流程实现并验证；如要求 DCO 则自动 sign-off，PR 创建后报告 CLA 状态。"
+                )
+            issue_context = (
+                (issue.get("body") or "")
+                + "\n"
+                + "\n".join((comment.get("body") or "") for comment in comments[-12:])
+            )
+            related_issue_assessment = self.assess_related_issues(
+                base["repo"],
+                base["num"],
+                issue.get("title") or base["title"],
+                issue_context,
+            )
+            scored["related_issue_assessment"] = related_issue_assessment
+            if related_issue_assessment["status"] != "none":
+                scored["bucket"] = "needs_approval"
+                scored["category"] = "WAIT_MAINTAINER"
+                scored["gate_decision"] = "HUMAN_REVIEW"
+                scored["auto_spawn"] = False
+                scored["risk"] = (
+                    f"{scored['risk']}；{related_issue_assessment['summary']}"
+                )
+                scored["next_step"] = (
+                    "先人工比较相关 issue 的根因、维护者归并方向和可提交代码路径；"
+                    "确认不是重复后再进入实现。"
+                    if related_issue_assessment["status"] == "potential_overlap"
+                    else "相关 issue 审计失败；恢复审计并确认无重复后再进入实现。"
+                )
+            pr_assessment = self.assess_open_prs(
+                base["repo"],
+                base["num"],
+                issue.get("title") or base["title"],
+                issue_context,
+            )
+            # Persist a successful negative duplicate check as evidence. Omitting
+            # status=none makes the downstream policy correctly treat the audit as
+            # missing, which would hold every otherwise-clean candidate forever.
+            scored["open_pr_assessment"] = pr_assessment
+            if pr_assessment["status"] in {"covered_strong", "competition_saturated"}:
+                rejection_reason = (
+                    "open_pr_strong"
+                    if pr_assessment["status"] == "covered_strong"
+                    else "open_pr_competition_saturated"
+                )
+                reject(rejection_reason, base)
+                self.seen[key] = {
+                    "analyzed": self.analyzed,
+                    "status": f"skip_{rejection_reason}",
+                    "title": issue.get("title") or base["title"],
+                    "pr": pr_assessment.get("best_url"),
+                    "pr_assessment": pr_assessment.get("summary"),
+                    "issue_updated": issue.get("updated_at")
+                    or base.get("updated")
+                    or "",
+                }
+                continue
+            if pr_assessment["status"] == "lookup_failed":
+                scored["bucket"] = "needs_approval"
+                scored["category"] = "WAIT_MAINTAINER"
+                scored["gate_decision"] = "HUMAN_REVIEW"
+                scored["auto_spawn"] = False
+                scored["risk"] = (
+                    f"{scored['risk']}；open PR 检索失败，当前无法排除重复实现。"
+                )
+                scored["next_step"] = (
+                    "恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。"
+                )
+            elif pr_assessment["status"] == "weak_pr_competition_possible":
+                scored["open_pr_assessment"] = pr_assessment
+                if scored["bucket"] == "immediate":
+                    scored["bucket"] = "competition"
+                    scored["category"] = "PR_COMPETITION_OPPORTUNITY"
+                    scored["gate_decision"] = "ALLOW_TO_WORK"
+                    scored["auto_spawn"] = True
+                    scored["why"] = (
+                        f"{scored['why']}；已有 open PR 但证据/测试/活跃度不足，仍有竞争空间"
+                    )
+                    scored["risk"] = (
+                        f"{scored['risk']}；需要先对比已有 PR，避免重复实现。"
+                    )
+                    scored["next_step"] = (
+                        "先复现 issue，再逐项对比已有 PR 的缺口；只有能提供更小改动、更强测试或更完整边界覆盖时才开 PR。"
+                    )
+            elif pr_assessment["status"] == "human_review_required":
+                scored["bucket"] = "needs_approval"
+                scored["category"] = "WAIT_MAINTAINER"
+                scored["gate_decision"] = "HUMAN_REVIEW"
+                scored["auto_spawn"] = False
+                scored["open_pr_assessment"] = pr_assessment
+                scored["next_step"] = (
+                    "已有 PR 但强度不足；先看维护者规则和 issue 讨论，必要时先请求确认方案或分配。"
+                )
+            elif pr_assessment["status"] == "semantic_overlap_requires_review":
+                scored["open_pr_assessment"] = pr_assessment
+                scored["bucket"] = "competition"
+                scored["category"] = "PR_COMPETITION_OPPORTUNITY"
+                scored["gate_decision"] = "HUMAN_REVIEW"
+                scored["auto_spawn"] = False
+                scored["why"] = (
+                    f"{scored['why']}；已有 PR 与 issue 代码路径和关键语义重合"
+                )
+                scored["risk"] = (
+                    f"{scored['risk']}；现有 PR 可能已覆盖根因，需先比较实现边界。"
+                )
+                scored["next_step"] = (
+                    "先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。"
+                )
+            elif pr_assessment["status"] == "keyword_overlap_only":
+                scored["open_pr_assessment"] = pr_assessment
+                scored["bucket"] = "competition"
+                scored["category"] = "PR_COMPETITION_OPPORTUNITY"
+                scored["gate_decision"] = "HUMAN_REVIEW"
+                scored["auto_spawn"] = False
+                scored["why"] = f"{scored['why']}；存在未直接关联的关键词相似 PR"
+                scored["risk"] = (
+                    f"{scored['risk']}；存在未直接关联的关键词相似 PR，实施前需快速对比。"
+                )
+                scored["next_step"] = (
+                    "先人工比较相似 PR 的根因、改动路径和测试；"
+                    "确认没有覆盖后才能创建 issue 会话或实现。"
+                )
+            scored["_llm_context"] = {
+                "issue_body": (issue.get("body") or "")[:16000],
+                "recent_comments": [
+                    {
+                        "author": (comment.get("user") or {}).get("login")
+                        or (comment.get("author") or {}).get("login")
+                        or "unknown",
+                        "association": comment.get("author_association")
+                        or comment.get("authorAssociation")
+                        or "",
+                        "body": (comment.get("body") or "")[:4000],
+                    }
+                    for comment in comments[-8:]
+                    if isinstance(comment, dict)
+                ],
+            }
+            candidates.append(scored)
+            self.issue_outcomes[key] = {
+                "status": "candidate",
+                "auto_spawn": bool(scored.get("auto_spawn")),
+                "category": scored.get("category"),
+                "gate_decision": scored.get("gate_decision"),
+                "submission_policy": scored.get("submission_policy"),
+                "reason": (
+                    "maintainer_active_investigation"
+                    if (scored.get("actionability_evidence") or {}).get(
+                        "maintainer_active_investigation"
+                    )
+                    else scored.get("gate_decision")
+                ),
+            }
+
+        bucket_rank = {
+            "immediate": 0,
+            "competition": 1,
+            "needs_approval": 2,
+            "conflict": 3,
+        }
+        candidates.sort(
+            key=lambda item: (
+                bucket_rank.get(item["bucket"], 9),
+                -item["score"],
+                item["repo"],
+            )
+        )
+        if deferred_bases:
+            rejection_counts["inspection_budget_deferred"] += len(deferred_bases)
+        if deadline_deferred_bases:
+            rejection_counts["scan_deadline_deferred"] += len(deadline_deferred_bases)
+        self.rejection_summary = dict(
+            sorted(rejection_counts.items(), key=lambda row: (-row[1], row[0]))
+        )
+        self.rejection_examples = dict(rejection_examples)
+        forced_candidates = [
+            item
+            for item in candidates
+            if f"{item['repo']}#{item['num']}" in self.forced_recheck_keys
+        ]
+        regular_candidates = [
+            item
+            for item in candidates
+            if f"{item['repo']}#{item['num']}" not in self.forced_recheck_keys
+        ]
+        selected = (
+            forced_candidates + regular_candidates[: max(0, 4 - len(forced_candidates))]
+        )
+        return selected, len(bases), inspected
+
+    def feishu_post(
+        self, url: str, payload: dict[str, Any], token: str | None = None
+    ) -> dict[str, Any]:
+        data = json.dumps(payload).encode("utf-8")
+        last_error: Exception | None = None
+        for delay in FEISHU_RETRY_DELAYS_SECONDS:
+            if delay:
+                time.sleep(delay)
+            req = urllib.request.Request(
+                url,
+                data=data,
+                headers={"Content-Type": "application/json; charset=utf-8"},
+            )
+            if token:
+                req.add_header("Authorization", f"Bearer {token}")
+            try:
+                with urllib.request.urlopen(req, timeout=18) as response:
+                    return json.loads(response.read().decode("utf-8"))
+            except urllib.error.HTTPError:
+                raise
+            except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+                last_error = exc
+        assert last_error is not None
+        raise last_error
+
+    def card(self, candidates: list[dict[str, Any]]) -> dict[str, Any]:
+        elements: list[dict[str, Any]] = []
+        groups = [
+            ("immediate", "🟢 可立即做"),
+            ("competition", "🔵 已有 PR 但可竞争"),
+            ("needs_approval", "🟡 需要先申请分配/维护者确认"),
+            ("conflict", "⚠️ 规则冲突"),
+        ]
+        for bucket, title in groups:
+            bucket_items = [
+                candidate for candidate in candidates if candidate["bucket"] == bucket
+            ]
+            if not bucket_items:
+                continue
+            elements.append(
+                {"tag": "div", "text": {"tag": "lark_md", "content": f"**{title}**"}}
+            )
+            for candidate in bucket_items:
+                content = (
+                    f"**{candidate['repo']}#{candidate['num']}** "
+                    f"[{candidate['title']}]({candidate['url']})\n"
+                    f"类型：{candidate['category']} | Done-Gate：{candidate['gate_decision']}\n"
+                    f"含金量分：{candidate['score']} | 难度：{candidate['difficulty']} | "
+                    f"Impact：{candidate['impact']}\n"
+                    f"为什么值得做：{candidate['why']}\n"
+                    f"预计改动：{candidate['expected_changes']}\n"
+                    f"复现/测试路径：{candidate['test_path']}\n"
+                    f"风险：{candidate['risk']}\n"
+                    f"下一步：{candidate['next_step']}\n"
+                    f"建议角色和预计工时：{candidate['role_eta']}"
+                )
+                if candidate.get("open_pr_assessment"):
+                    pr_assessment = candidate["open_pr_assessment"]
+                    content += (
+                        f"\n已有 PR 评估：{pr_assessment['summary']}\n"
+                        f"最佳相关 PR：{pr_assessment.get('best_url')}"
+                    )
+                elements.append(
+                    {"tag": "div", "text": {"tag": "lark_md", "content": content}}
+                )
+                elements.append({"tag": "hr"})
+        if elements and elements[-1].get("tag") == "hr":
+            elements.pop()
+        card = {
+            "config": {"wide_screen_mode": True},
+            "header": {
+                "title": {"tag": "plain_text", "content": "OSS PR Opportunity Radar"},
+                "template": "green",
+            },
+            "elements": elements,
+        }
+        json.loads(json.dumps(card, ensure_ascii=False))
+        return card
+
+    def send_feishu(self, candidates: list[dict[str, Any]]) -> tuple[bool, str | None]:
+        if not candidates:
+            return False, None
+        if self.dry_run:
+            return False, None
+        app_id = os.environ.get("FEISHU_APP_ID")
+        app_secret = os.environ.get("FEISHU_APP_SECRET")
+        if not app_id or not app_secret:
+            return False, "missing_feishu_env"
+        try:
+            token_resp = self.feishu_post(
+                "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
+                {"app_id": app_id, "app_secret": app_secret},
+            )
+            token = token_resp.get("tenant_access_token")
+            if not token:
+                return False, f"token_failed:{token_resp.get('code')}"
+            resp = self.feishu_post(
+                "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id",
+                {
+                    "receive_id": self.chat_id,
+                    "msg_type": "interactive",
+                    "content": json.dumps(self.card(candidates), ensure_ascii=False),
+                },
+                token,
+            )
+            if resp.get("code") == 0:
+                return True, None
+            text = "OSS PR Opportunity Radar\n" + "\n\n".join(
+                f"{c['repo']}#{c['num']} {c['title']} {c['url']} score={c['score']}"
+                for c in candidates
+            )
+            fallback = self.feishu_post(
+                "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id",
+                {
+                    "receive_id": self.chat_id,
+                    "msg_type": "text",
+                    "content": json.dumps({"text": text}, ensure_ascii=False),
+                },
+                token,
+            )
+            if fallback.get("code") == 0:
+                return True, None
+            return False, f"send_failed:{resp.get('code')}/{fallback.get('code')}"
+        except Exception as exc:  # pragma: no cover - operational fallback
+            return False, f"{type(exc).__name__}:{str(exc)[:120]}"
+
+    def run(self, scan_path: Path | None) -> dict[str, Any]:
+        items = self.collect_items()
+        if self.search_failed:
+            candidates: list[dict[str, Any]] = []
+            qualified_repos = 0
+            inspected = 0
+            sent = False
+            send_error = (
+                "github_secondary_rate_limit"
+                if self.rate_limited
+                else "github_search_incomplete"
+            )
+        else:
+            candidates, qualified_repos, inspected = self.shortlist(items)
+            evaluator = DeepSeekEvaluator.from_environment(BASE_DIR / "state" / "llm_cache.json")
+            candidates = evaluator.evaluate_candidates(candidates)
+            notification_candidates = []
+            for candidate in candidates:
+                key = f"{candidate['repo']}#{candidate['num']}"
+                digest = candidate_notification_digest(candidate)
+                previous = self.seen.get(key)
+                if (
+                    isinstance(previous, dict)
+                    and previous.get("notified") is True
+                    and previous.get("notification_digest") == digest
+                ):
+                    continue
+                candidate["notification_digest"] = digest
+                notification_candidates.append(candidate)
+            sent, send_error = self.send_feishu(notification_candidates)
+        if self.search_failed:
+            notification_candidates = []
+        if sent:
+            for candidate in notification_candidates:
+                self.seen[f"{candidate['repo']}#{candidate['num']}"] = {
+                    "analyzed": self.analyzed,
+                    "notified": True,
+                    "status": "notified",
+                    "score": candidate["score"],
+                    "title": candidate["title"],
+                    "url": candidate["url"],
+                    "issue_updated": candidate.get("issue_updated") or "",
+                    "notification_digest": candidate["notification_digest"],
+                }
+        elif notification_candidates and send_error:
+            for candidate in notification_candidates:
+                self.seen[f"{candidate['repo']}#{candidate['num']}"] = {
+                    "analyzed": self.analyzed,
+                    "status": "send_failed",
+                    "score": candidate["score"],
+                    "title": candidate["title"],
+                    "url": candidate["url"],
+                    "issue_updated": candidate.get("issue_updated") or "",
+                }
+
+        for entry in self.seen.values():
+            if isinstance(entry, dict) and entry.get("analyzed") == self.analyzed:
+                entry["scanner_version"] = SCANNER_VERSION
+
+        atomic_write_json(self.seen_path, self.seen)
+        auto_spawn_candidates = [
+            candidate for candidate in candidates if candidate.get("auto_spawn")
+        ]
+        result = {
+            "profile": PROFILE,
+            "scanner_version": SCANNER_VERSION,
+            "now": self.analyzed,
+            "since": self.since_str,
+            "requested_window_hours": self.requested_window_hours,
+            "effective_window_hours": self.window_hours,
+            "last_successful_scan": self.last_successful_scan,
+            "items": len(items),
+            "scan_ok": not self.search_failed,
+            "scan_error": None if not self.search_failed else send_error,
+            "qualified_repos": qualified_repos,
+            "inspected": inspected,
+            "scan_deadline_reached": self.scan_deadline_reached,
+            "deep_inspection_deadline_seconds": self.deep_inspection_deadline_seconds,
+            "candidates": len(candidates),
+            "sent": sent,
+            "send_error": send_error,
+            "notification_candidate_count": len(notification_candidates),
+            "notification_suppressed_count": len(candidates)
+            - len(notification_candidates),
+            "dry_run": self.dry_run,
+            "auto_spawn_candidates": len(auto_spawn_candidates),
+            "forced_recheck_results": {
+                key: self.issue_outcomes.get(
+                    key, {"status": "rejected", "reason": "inspection_budget_deferred"}
+                )
+                for key in sorted(self.forced_recheck_keys)
+            },
+            "rejection_summary": self.rejection_summary,
+            "rejection_examples": self.rejection_examples,
+            "titles": [
+                (
+                    c["repo"],
+                    c["num"],
+                    c["score"],
+                    c.get("category"),
+                    c.get("gate_decision"),
+                )
+                for c in candidates
+            ],
+            "auto_spawn_titles": [
+                (
+                    c["repo"],
+                    c["num"],
+                    c["score"],
+                    c.get("category"),
+                    c.get("gate_decision"),
+                )
+                for c in auto_spawn_candidates
+            ],
+        }
+        if scan_path:
+            atomic_write_json(
+                scan_path,
+                {
+                    **result,
+                    "candidate_details": candidates,
+                    "errors": self.errors[:8],
+                },
+            )
+        return result
+
+
+def parse_now(value: str | None) -> datetime:
+    if not value:
+        return datetime.now(timezone.utc)
+    if value.endswith("Z"):
+        value = value[:-1] + "+00:00"
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--now", default=None)
+    parser.add_argument("--window-hours", type=float, default=2.0)
+    parser.add_argument("--seen", type=Path, default=DEFAULT_SEEN)
+    parser.add_argument("--state", type=Path, default=DEFAULT_STATE)
+    parser.add_argument("--pending-rechecks", type=Path, default=None)
+    parser.add_argument("--max-backfill-hours", type=float, default=24.0)
+    parser.add_argument("--chat-id", default=DEFAULT_CHAT_ID)
+    parser.add_argument("--scan-out", type=Path, default=None)
+    parser.add_argument("--dry-run", action="store_true")
+    args = parser.parse_args()
+
+    now = parse_now(args.now)
+    state = load_json(args.state, {})
+    window_hours, last_success = effective_window_hours(
+        now,
+        args.window_hours,
+        state,
+        max(args.window_hours, args.max_backfill_hours),
+    )
+    radar = Radar(
+        now,
+        window_hours,
+        args.seen,
+        args.chat_id,
+        dry_run=args.dry_run,
+        requested_window_hours=args.window_hours,
+        last_successful_scan=last_success,
+        pending_rechecks=(
+            load_json(args.pending_rechecks, {}) if args.pending_rechecks else {}
+        ),
+    )
+    result = radar.run(args.scan_out)
+    next_state = dict(state) if isinstance(state, dict) else {}
+    next_state.update(
+        {
+            "last_attempt": result["now"],
+            "last_scan_ok": result["scan_ok"],
+            "last_scan_error": result["scan_error"],
+            "last_effective_window_hours": result["effective_window_hours"],
+        }
+    )
+    if result["scan_ok"]:
+        next_state["last_successful_scan"] = result["now"]
+        next_state["last_successful_candidates"] = result["candidates"]
+    atomic_write_json(args.state, next_state)
+    print(json.dumps(add_chinese_explanations(result), ensure_ascii=False))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

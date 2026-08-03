@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "oss-pr-radar"
+version = "0.1.0"
+description = "High-signal OSS issue and competing-PR radar for agent and inference infrastructure"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Oxygen56" }]
+dependencies = []
+
+[project.scripts]
+oss-pr-radar = "oss_pr_radar.scanner:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/oss_pr_radar"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

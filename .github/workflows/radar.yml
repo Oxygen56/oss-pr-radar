@@ -1,0 +1,72 @@
+name: OSS PR Radar
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+      timezone: "Asia/Shanghai"
+  workflow_dispatch:
+    inputs:
+      window_hours:
+        description: "GitHub update window in hours"
+        required: false
+        default: "2"
+
+concurrency:
+  group: oss-pr-radar
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  issues: read
+  pull-requests: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      DEEPSEEK_MODEL: deepseek-v4-flash
+      FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
+      FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+      FEISHU_CHAT_ID: ${{ secrets.FEISHU_CHAT_ID }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Restore durable state
+        run: python scripts/state_branch.py restore
+
+      - name: Install radar
+        run: python -m pip install .
+
+      - name: Scan and review candidates
+        run: >-
+          oss-pr-radar
+          --window-hours "${{ inputs.window_hours || '2' }}"
+          --seen state/seen.json
+          --state state/runtime.json
+          --scan-out reports/latest_scan.json
+
+      - name: Validate report contract
+        run: python scripts/validate_report.py reports/latest_scan.json
+
+      - name: Upload scan evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-radar-${{ github.run_id }}
+          path: reports/latest_scan.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Persist state
+        if: success()
+        run: python scripts/state_branch.py publish
