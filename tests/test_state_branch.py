@@ -78,3 +78,40 @@ def test_migrate_adds_manifest_without_rewriting_legacy_state(tmp_path):
     assert json.loads((restored / "state" / "seen.json").read_text()) == {
         "legacy": True
     }
+
+
+def test_migrate_repairs_manifest_after_legacy_writer_updates_state(tmp_path):
+    root, origin = initialized_repo(tmp_path)
+    MODULE.publish(root, "radar-state")
+    legacy_writer = tmp_path / "legacy-writer"
+    git(
+        "clone",
+        "--branch",
+        "radar-state",
+        str(origin),
+        str(legacy_writer),
+        cwd=tmp_path,
+    )
+    (legacy_writer / "seen.json").write_text(
+        '{"updated_by_legacy_writer": true}\n', encoding="utf-8"
+    )
+    git("add", "seen.json", cwd=legacy_writer)
+    git(
+        "-c",
+        "user.name=test",
+        "-c",
+        "user.email=test@example.com",
+        "commit",
+        "-m",
+        "legacy writer update",
+        cwd=legacy_writer,
+    )
+    git("push", "origin", "radar-state", cwd=legacy_writer)
+
+    MODULE.migrate(root, "radar-state")
+    restored = tmp_path / "restored"
+    git("clone", str(origin), str(restored), cwd=tmp_path)
+    MODULE.restore(restored, "radar-state")
+    assert json.loads((restored / "state" / "seen.json").read_text()) == {
+        "updated_by_legacy_writer": True
+    }

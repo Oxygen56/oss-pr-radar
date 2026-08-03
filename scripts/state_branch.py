@@ -41,6 +41,17 @@ def git(
     )
 
 
+def git_bytes(
+    *args: str, cwd: Path | None = None, check: bool = True
+) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        check=check,
+        capture_output=True,
+    )
+
+
 def digest_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
@@ -61,12 +72,14 @@ def restore(root: Path, branch: str, *, allow_missing: bool = False) -> None:
             return
         raise RuntimeError(f"state branch fetch failed: {fetched.stderr[:300]}")
     sha = git("rev-parse", "FETCH_HEAD", cwd=root).stdout.strip()
-    manifest_result = git("show", f"FETCH_HEAD:{MANIFEST}", cwd=root, check=False)
+    manifest_result = git_bytes(
+        "show", f"FETCH_HEAD:{MANIFEST}", cwd=root, check=False
+    )
     if manifest_result.returncode != 0:
         raise RuntimeError("state manifest is missing; migrate the state branch first")
     try:
-        manifest = json.loads(manifest_result.stdout)
-    except json.JSONDecodeError as exc:
+        manifest = json.loads(manifest_result.stdout.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise RuntimeError("state manifest is invalid") from exc
     if manifest.get("version") != MANIFEST_VERSION:
         raise RuntimeError("unsupported state manifest")
@@ -74,10 +87,12 @@ def restore(root: Path, branch: str, *, allow_missing: bool = False) -> None:
     for remote_name, metadata in listed.items():
         if remote_name not in FILES or not isinstance(metadata, dict):
             raise RuntimeError(f"unexpected state file: {remote_name}")
-        result = git("show", f"FETCH_HEAD:{remote_name}", cwd=root, check=False)
+        result = git_bytes(
+            "show", f"FETCH_HEAD:{remote_name}", cwd=root, check=False
+        )
         if result.returncode != 0:
             raise RuntimeError(f"state file is missing: {remote_name}")
-        raw = result.stdout.encode("utf-8")
+        raw = result.stdout
         if digest_bytes(raw) != metadata.get("sha256"):
             raise RuntimeError(f"state file digest mismatch: {remote_name}")
         try:
@@ -173,18 +188,39 @@ def publish(root: Path, branch: str) -> None:
 
 
 def migrate(root: Path, branch: str) -> None:
-    """Add the v2 integrity manifest to a legacy state branch without rewriting state."""
+    """Add or repair the v2 manifest without changing state JSON bytes."""
 
     fetched = git("fetch", "origin", branch, cwd=root, check=False)
     if fetched.returncode != 0:
         raise RuntimeError(f"state branch fetch failed: {fetched.stderr[:300]}")
     actual = git("rev-parse", "FETCH_HEAD", cwd=root).stdout.strip()
-    existing = git("show", f"FETCH_HEAD:{MANIFEST}", cwd=root, check=False)
+    available_raw: dict[str, bytes] = {}
+    for remote_name in FILES:
+        result = git_bytes(
+            "show", f"FETCH_HEAD:{remote_name}", cwd=root, check=False
+        )
+        if result.returncode == 0:
+            json.loads(result.stdout.decode("utf-8"))
+            available_raw[remote_name] = result.stdout
+    if not available_raw:
+        raise RuntimeError("legacy state branch has no recognized JSON state")
+
+    expected_files = {
+        name: {"sha256": digest_bytes(raw), "bytes": len(raw)}
+        for name, raw in available_raw.items()
+    }
+    existing = git_bytes(
+        "show", f"FETCH_HEAD:{MANIFEST}", cwd=root, check=False
+    )
     if existing.returncode == 0:
-        manifest = json.loads(existing.stdout)
+        try:
+            manifest = json.loads(existing.stdout.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError("state branch manifest is invalid") from exc
         if manifest.get("version") != MANIFEST_VERSION:
             raise RuntimeError("state branch has an unsupported manifest")
-        return
+        if manifest.get("files") == expected_files:
+            return
     with tempfile.TemporaryDirectory(prefix="oss-pr-radar-state-migration-") as raw:
         work = Path(raw)
         git("init", cwd=work)
@@ -198,14 +234,10 @@ def migrate(root: Path, branch: str) -> None:
         git("fetch", "origin", branch, cwd=work)
         git("checkout", "-B", branch, "FETCH_HEAD", cwd=work)
         available: dict[str, Path] = {}
-        for remote_name in FILES:
+        for remote_name, raw in available_raw.items():
             source = work / remote_name
-            if not source.exists():
-                continue
-            json.loads(source.read_text(encoding="utf-8"))
+            atomic_write(source, raw)
             available[remote_name] = source
-        if not available:
-            raise RuntimeError("legacy state branch has no recognized JSON state")
         manifest = build_manifest(work, available)
         (work / MANIFEST).write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
