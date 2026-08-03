@@ -1,0 +1,87 @@
+"""Deterministic authorization; semantic models have no positive vote."""
+
+from __future__ import annotations
+
+import re
+from dataclasses import asdict, dataclass
+from typing import Any
+
+from .evidence import EvidenceBundle
+
+SECURITY_RE = re.compile(r"\b(?:security|vulnerab(?:ility|le)|CVE-\d+|zero[- ]day)\b", re.I)
+DESIGN_RE = re.compile(r"\b(?:RFC|design proposal|architecture proposal|breaking API|roadmap)\b", re.I)
+
+
+@dataclass(frozen=True)
+class AuthorizationDecision:
+    status: str
+    reason_code: str
+    checks: dict[str, str]
+    evidence_digest: str
+
+    def as_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def authorize(candidate: dict[str, Any], evidence: EvidenceBundle) -> AuthorizationDecision:
+    checks = {
+        "issueState": "PASS",
+        "ownership": "PASS",
+        "duplicate": "PASS",
+        "design": "PASS",
+        "policy": "PASS",
+        "hardware": "PASS",
+        "evidence": "PASS",
+    }
+
+    def decision(status: str, reason: str, check: str | None = None) -> AuthorizationDecision:
+        if check:
+            checks[check] = status
+        return AuthorizationDecision(status, reason, checks, evidence.digest)
+
+    if not evidence.complete:
+        checks["evidence"] = "HOLD"
+        return decision("HOLD", "EVIDENCE_INCOMPLETE")
+    issue = evidence.issue
+    if str(issue.get("state") or "").lower() != "open":
+        return decision("BLOCK", "ISSUE_NOT_OPEN", "issueState")
+    assignees = issue.get("assignees") or []
+    if assignees:
+        return decision("BLOCK", "ISSUE_ASSIGNED", "ownership")
+    if evidence.claims:
+        return decision("BLOCK", "ACTIVE_OR_CONDITIONAL_CLAIM", "ownership")
+    text = f"{issue.get('title') or ''}\n{issue.get('body') or ''}"
+    if SECURITY_RE.search(text):
+        return decision("BLOCK", "SECURITY_SENSITIVE")
+    policy = evidence.policy
+    if policy.get("status") == "CONTRIBUTIONS_CLOSED":
+        return decision("BLOCK", "UNSOLICITED_PRS_BLOCKED", "policy")
+    if policy.get("ai_prohibited"):
+        return decision("BLOCK", "AI_USE_PROHIBITED", "policy")
+    if policy.get("ai_disclosure"):
+        return decision("HOLD", "AI_DISCLOSURE_REQUIRES_USER", "policy")
+    if policy.get("status") == "UNKNOWN":
+        return decision("HOLD", "POLICY_UNKNOWN", "policy")
+    if policy.get("assignment_required") and not evidence.maintainer_approvals:
+        return decision("HOLD", "MAINTAINER_APPROVAL_REQUIRED", "policy")
+    relations = {item.get("relation") for item in evidence.pull_relations}
+    if relations & {"STRONG_EXACT_DUPLICATE", "STRONG_MERGED_COVERAGE"}:
+        return decision("BLOCK", "STRONG_EXISTING_PR", "duplicate")
+    if "WEAK_OR_PARTIAL_EXACT" in relations and candidate.get("category") != "PR_COMPETITION_OPPORTUNITY":
+        return decision("HOLD", "EXISTING_PR_REQUIRES_COMPETITION_REVIEW", "duplicate")
+    if "SEMANTIC_OVERLAP" in relations and candidate.get("category") != "PR_COMPETITION_OPPORTUNITY":
+        return decision("HOLD", "SEMANTIC_PR_OVERLAP_REQUIRES_REVIEW", "duplicate")
+    if not evidence.hardware.get("compatible"):
+        return decision("HOLD", "HARDWARE_UNAVAILABLE", "hardware")
+    if DESIGN_RE.search(text) and not evidence.maintainer_approvals:
+        return decision("HOLD", "DESIGN_APPROVAL_REQUIRED", "design")
+    review = candidate.get("llm_review") or {}
+    if candidate.get("gate_decision") != "ALLOW_TO_WORK" or candidate.get("auto_spawn") is not True:
+        return decision("HOLD", "SCAN_GATE_NOT_AUTHORIZED")
+    if review.get("status") != "ok" or review.get("decision") not in {
+        "NEW_CLEAN_CANDIDATE", "PR_COMPETITION_OPPORTUNITY"
+    }:
+        return decision("HOLD", "SEMANTIC_REVIEW_NOT_ACTIONABLE")
+    if float(review.get("confidence") or 0.0) < 0.65:
+        return decision("HOLD", "SEMANTIC_CONFIDENCE_LOW")
+    return decision("ALLOW", "LIVE_EVIDENCE_PASSED")

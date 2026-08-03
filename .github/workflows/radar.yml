@@ -12,70 +12,235 @@ on:
         default: "2"
 
 concurrency:
-  group: oss-pr-radar
+  group: oss-pr-radar-state-writer
   cancel-in-progress: false
 
-permissions:
-  contents: write
-  issues: read
-  pull-requests: read
+permissions: {}
 
 jobs:
   scan:
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
     env:
       GH_TOKEN: ${{ github.token }}
       DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
       DEEPSEEK_MODEL: deepseek-v4-flash
-      FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
-      FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
-      FEISHU_CHAT_ID: ${{ secrets.FEISHU_CHAT_ID }}
+      WINDOW_HOURS: ${{ inputs.window_hours || '2' }}
 
     steps:
-      - uses: actions/checkout@v5
-        with:
-          fetch-depth: 1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
 
-      - name: Restore durable state
+      - name: Validate manual input
+        run: |
+          python - <<'PY'
+          import os
+          value = float(os.environ["WINDOW_HOURS"])
+          if not 0.25 <= value <= 24:
+              raise SystemExit("window_hours must be between 0.25 and 24")
+          PY
+
+      - name: Restore integrity-checked state
         run: python scripts/state_branch.py restore
 
-      - name: Install radar
-        run: python -m pip install .
+      - name: Recheck held opportunities and policy drift
+        run: >-
+          python scripts/recheck_watchlist.py
+          state/watchlist.json
+          state/pending_rechecks.json
+          reports/watch_updates.json
+          --limit 20
+
+      - name: Check open PR reviews, CI, and conflicts
+        continue-on-error: true
+        run: >-
+          python scripts/check_open_prs.py
+          state/pr_followup.json
+          reports/pr_updates.json
 
       - name: Scan and review candidates
         run: >-
-          oss-pr-radar
-          --window-hours "${{ inputs.window_hours || '2' }}"
+          PYTHONPATH=src python -m oss_pr_radar.scanner
+          --window-hours "$WINDOW_HOURS"
           --seen state/seen.json
           --state state/runtime.json
+          --pending-rechecks state/pending_rechecks.json
           --scan-out reports/latest_scan.json
+          --no-notify
 
       - name: Validate report contract
         run: python scripts/validate_report.py reports/latest_scan.json
 
-      - name: Build local dispatch handoff
+      - name: Upload scan bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: scan-bundle-${{ github.run_id }}
+          path: |
+            reports/latest_scan.json
+            reports/watch_updates.json
+            reports/pr_updates.json
+            state/*.json
+            state/base_sha.txt
+          if-no-files-found: error
+          retention-days: 14
+
+  build-state:
+    needs: scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      RADAR_DISPATCH_HMAC_KEY: ${{ secrets.RADAR_DISPATCH_HMAC_KEY }}
+      RADAR_DISPATCH_MODE: ${{ vars.RADAR_DISPATCH_MODE || 'shadow' }}
+      GITHUB_SHA: ${{ github.sha }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: scan-bundle-${{ github.run_id }}
+          path: .
+
+      - name: Build signed dispatch queue
         run: >-
           python scripts/build_dispatch_intents.py
           reports/latest_scan.json
           reports/dispatch_intents.json
           --queue state/dispatch_queue.json
+          --mode "$RADAR_DISPATCH_MODE"
 
-      - name: Upload scan evidence
-        if: always()
-        uses: actions/upload-artifact@v6
+      - name: Build idempotent notification outbox
+        run: >-
+          python scripts/build_notification_outbox.py
+          reports/latest_scan.json
+          state/notification_outbox.json
+          --kind immediate
+
+      - name: Add new maintainer-review opportunities to outbox
+        run: >-
+          python scripts/build_notification_outbox.py
+          reports/latest_scan.json
+          state/notification_outbox.json
+          --kind review
+
+      - name: Add maintainer and policy status updates to outbox
+        run: >-
+          python scripts/build_notification_outbox.py
+          reports/watch_updates.json
+          state/notification_outbox.json
+          --kind watch
+
+      - name: Add actionable open PR updates to outbox
+        run: >-
+          python scripts/build_notification_outbox.py
+          reports/pr_updates.json
+          state/notification_outbox.json
+          --kind watch
+
+      - name: Refresh durable opportunity watchlist
+        run: >-
+          python scripts/build_watchlist.py
+          reports/latest_scan.json
+          state/watchlist.json
+
+      - name: Upload pending state
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: pr-radar-${{ github.run_id }}
+          name: pending-state-${{ github.run_id }}
           path: |
-            reports/latest_scan.json
-            reports/dispatch_intents.json
+            reports/*.json
+            state/*.json
+            state/base_sha.txt
           if-no-files-found: error
           retention-days: 14
 
-      - name: Persist state
-        if: success()
+  persist-pending:
+    needs: build-state
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: pending-state-${{ github.run_id }}
+          path: .
+      - name: Commit pending outbox and signed queue
+        run: python scripts/state_branch.py publish
+
+  notify:
+    needs: persist-pending
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    env:
+      FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
+      FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+      FEISHU_CHAT_ID: ${{ secrets.FEISHU_CHAT_ID }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: pending-state-${{ github.run_id }}
+          path: .
+      - name: Send pending messages with Feishu UUID deduplication
+        continue-on-error: true
+        run: >-
+          python scripts/send_notification_outbox.py
+          state/notification_outbox.json
+          receipt/notification_outbox.json
+      - name: Upload notification receipt
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: notification-receipt-${{ github.run_id }}
+          path: receipt/notification_outbox.json
+          if-no-files-found: error
+          retention-days: 14
+
+  persist-receipt:
+    needs: notify
+    if: always() && needs.notify.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Restore latest committed state
+        run: python scripts/state_branch.py restore
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: notification-receipt-${{ github.run_id }}
+          path: receipt
+      - name: Merge notification receipt without losing newer state
+        run: >-
+          python scripts/merge_notification_receipt.py
+          receipt/notification_outbox.json
+          state/notification_outbox.json
+      - name: Commit receipt checkpoint
         run: python scripts/state_branch.py publish

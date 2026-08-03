@@ -9,40 +9,57 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-
-POLICY_VERSION = "safe_publication_external_v20"
-SCANNER_DECISION_REVISION = "oss_pr_radar_v13"
-DISPATCH_DECISION_REVISION = "issue_thread_v3_no_revalidation_cooldown"
-DECISION_CONTRACT_SCHEMA = 3
+POLICY_VERSION = "submit_ready_quality_v1"
+SCANNER_DECISION_REVISION = "oss_pr_radar_v14_trust_core"
+DISPATCH_DECISION_REVISION = "signed_intent_v3_commit_bound_publication"
+DECISION_CONTRACT_SCHEMA = 4
 DECISION_CONTRACT_MANIFEST = {
     "schema": DECISION_CONTRACT_SCHEMA,
     "policyVersion": POLICY_VERSION,
     "scannerDecisionRevision": SCANNER_DECISION_REVISION,
     "dispatchDecisionRevision": DISPATCH_DECISION_REVISION,
     "tiers": ["TIER_A", "BUILD_AND_HOLD", "WATCH", "DROP"],
+    "northStar": "rolling_submit_ready_rate",
+    "externalMergeCountIsKpi": False,
     "calibration": {
-        "requiredMature": 20,
-        "requiredPrecision": 0.70,
-        "maxEnrollment": 60,
+        "requiredMature": 50,
+        "requiredPrecision": 0.80,
+        "maxEnrollment": 100,
         "hardGateEscapes": 0,
     },
     "holdout": {
         "requiredMature": 20,
         "requiredPrecision": 0.90,
-        "maxEnrollment": 20,
+        "maxEnrollment": 40,
         "hardGateEscapes": 0,
     },
-    "releaseStabilityDays": 14,
-    "externalTerminalRequired": 30,
+    "releaseStabilityDays": 7,
+    "requiredSubmitReadyEvidence": [
+        "fresh_state_verified",
+        "ownership_verified",
+        "policy_verified",
+        "reproduction_verified",
+        "root_cause_verified",
+        "minimal_fix_verified",
+        "regression_test_verified",
+        "relevant_tests_green",
+        "independent_review_passed",
+    ],
 }
 RUNTIME_BUILD_FILES = (
-    "oss_pr_radar.py",
-    "pr_radar_policy.py",
-    "pr_radar_dispatch_queue.py",
-    "run_pr_radar_automation.py",
-    "pr_radar_health.py",
-    "pr_radar_ledger.py",
-    "pr_radar_thread_contract.py",
+    "scanner.py",
+    "policy.py",
+    "contracts.py",
+    "claims.py",
+    "decision.py",
+    "dispatch.py",
+    "evidence.py",
+    "github_client.py",
+    "ledger.py",
+    "metrics.py",
+    "relations.py",
+    "repo_policy.py",
+    "publication.py",
 )
 
 
@@ -156,7 +173,7 @@ def predict_candidate(
         "competition_saturated",
     }:
         return Prediction("DROP", "DUPLICATE")
-    if direct_pr:
+    if direct_pr and not weak_competition:
         return Prediction("DROP", "DUPLICATE")
     if weak_competition and pr_status != "weak_pr_competition_possible":
         return Prediction("WATCH", "COMPETITION_EVIDENCE_INCOMPLETE")
@@ -164,8 +181,7 @@ def predict_candidate(
         return Prediction("BUILD_AND_HOLD", "WEAK_PR_COMPETITION_PRIVATE_AUDIT")
     if pr_status in {
         "keyword_overlap_only", "semantic_overlap_requires_review",
-        "human_review_required", "weak_pr_competition_possible",
-        "lookup_failed",
+        "human_review_required", "lookup_failed",
     } and not live_gate_complete:
         return Prediction("WATCH", "PR_OVERLAP_REVIEW_REQUIRED")
 

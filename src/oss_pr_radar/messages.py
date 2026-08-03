@@ -132,7 +132,9 @@ def describe_code_zh(value: Any) -> str:
         word for word in text.replace("-", "_").replace(":", "_").split("_") if word
     ]
     translated = [TOKEN_MESSAGES_ZH.get(word.casefold(), word) for word in words]
-    if translated and all(part != word for part, word in zip(translated, words)):
+    if translated and all(
+        part != word for part, word in zip(translated, words, strict=True)
+    ):
         return "".join(translated)
     return "未能识别的内部状态；详细代码已保留供程序排错"
 

@@ -1,114 +1,113 @@
 # OSS PR Radar
 
-High-signal discovery for code-level pull-request opportunities in agent runtimes,
-tool calling, MCP, structured output, workflow engines, and inference serving.
+OSS PR Radar discovers high-value code contributions in agent runtimes and AI
+infrastructure, then carries qualified work through a local, evidence-gated PR
+workflow. Its primary metric is the rolling **SubmitReady hit rate**. Merge count
+is recorded as a lagging outcome, never used to judge discovery quality.
 
-The radar combines deterministic GitHub evidence collection with a constrained
-DeepSeek semantic review. It is intentionally conservative: the model may reject
-or downgrade a candidate, but it cannot override repository policy or upgrade a
-`HUMAN_REVIEW` gate.
+## What Runs Automatically
 
-## What It Checks
+- Hourly GitHub discovery across agent runtime, MCP, tool calling, structured
+  output, workflow/state, inference serving, scheduling, and cache projects.
+- Full issue comments and timeline reads, recursive repository-policy discovery,
+  claim detection, related PR strength analysis, and hardware checks.
+- DeepSeek semantic review as a negative/re-ranking signal. It cannot authorize
+  work or override a deterministic gate.
+- Signed, expiring cloud-to-local intents that contain no executable prompt.
+- Local live revalidation before a Codex task is created.
+- Exact source-repository projects and isolated worktrees for implementation;
+  the radar project never substitutes for the target repository.
+- Publication requests and short-lived permits bound to the exact commit,
+  branch, fork owner, base branch, PR title, and PR body digest.
+- Maintainer/policy watch, existing-PR follow-up, Feishu outbox delivery, state
+  integrity checks, and natural-schedule health alerts.
 
-- Open, recently created or updated issues in mature AI infrastructure repositories
-- Assignment, stale, support, docs-only, and low-value signals
-- Full issue body and recent comments, including maintainer associations
-- Repository contribution, assignment, CLA/DCO, and AI disclosure policies
-- Directly linked and semantically overlapping open pull requests
-- Competing PR tests, CI, activity, scope, and root-cause coverage
-- Reproduction path, expected code surface, hardware compatibility, and impact
+## Trust Boundaries
 
-## Decision Pipeline
+```mermaid
+flowchart LR
+  G["GitHub read-only scan"] --> S["Validated scan artifact"]
+  S --> Q["HMAC-signed dispatch intent"]
+  Q --> L["Local SQLite ledger"]
+  L --> V["Live issue, policy, PR, hardware recheck"]
+  V --> T["Codex worktree task"]
+  T --> R["SubmitReady evidence"]
+  R --> B["Independent publication broker"]
+  B --> P["Short-lived commit and PR-payload permit"]
+  P --> E["Idempotent push and PR executor"]
+```
 
-1. GitHub search finds recently updated open issues.
-2. Deterministic gates remove assigned, stale, trivial, unsupported, or covered work.
-3. Deep inspection reads issue discussion, repository policy, and competing PRs.
-4. DeepSeek reviews the remaining small candidate set as untrusted data.
-5. Deterministic post-gates prevent model upgrades and validate the report contract.
-6. Qualified candidates are sent to Feishu and written to the scan artifact.
+Cloud jobs cannot create local tasks. Issue text cannot select a prompt, project,
+worktree, branch, or publication command. The local bridge generates the exact
+two-line task input only after signature and live-evidence checks:
 
-The DeepSeek stage returns one of:
+```text
+[$gh-issue-pr](/Users/oxygen/.codex/skills/gh-issue-pr/SKILL.md)
+https://github.com/owner/repo/issues/123
+```
 
-- `NEW_CLEAN_CANDIDATE`
-- `PR_COMPETITION_OPPORTUNITY`
-- `WAIT_MAINTAINER`
-- `REJECT`
+Repositories that explicitly require AI-use disclosure or prohibit AI-assisted
+contributions are held for the user. CLA requirements do not block PR creation,
+but the system never accepts a CLA. DCO sign-off is permitted only with the
+user's configured Git identity and is revalidated before publication.
 
-## Local Run
+## Setup
 
-Requirements:
-
-- Python 3.11+
-- GitHub CLI (`gh`) authenticated with public repository read access
-- `DEEPSEEK_API_KEY`
+Requirements: Python 3.11+, authenticated `gh`, macOS Codex Desktop for local
+dispatch, and the repository secrets listed below.
 
 ```bash
 python -m pip install -e .
-oss-pr-radar \
-  --window-hours 2 \
-  --seen state/seen.json \
-  --state state/runtime.json \
-  --scan-out reports/latest_scan.json \
-  --dry-run
+python scripts/configure_dispatch_signing.py \
+  --repo Oxygen56/oss-pr-radar --mode canary
+python scripts/state_branch.py migrate
 ```
 
-Optional notification variables:
-
-- `FEISHU_APP_ID`
-- `FEISHU_APP_SECRET`
-- `FEISHU_CHAT_ID`
-
-The API endpoint defaults to `https://api.deepseek.com` and the model defaults to
-`deepseek-v4-flash`. Override them with `DEEPSEEK_BASE_URL` and `DEEPSEEK_MODEL`.
-
-## GitHub Actions
-
-The included workflow runs at minute 17 of every hour in `Asia/Shanghai` and can
-also be started manually from the Actions page. Minute 17 avoids GitHub's busier
-top-of-hour scheduling window.
-
-Configure these repository secrets:
+GitHub Actions secrets:
 
 - `DEEPSEEK_API_KEY`
 - `FEISHU_APP_ID`
 - `FEISHU_APP_SECRET`
 - `FEISHU_CHAT_ID`
+- `RADAR_DISPATCH_HMAC_KEY`
 
-The `radar-state` branch stores only the seen ledger, runtime watermark, and LLM
-cache. Scan reports are uploaded as short-lived Actions artifacts. No API key is
-written to either location.
+The signing setup stores the local copy in macOS Keychain and sends the same
+value to GitHub Actions without writing it to the repository. `canary` mode
+allows one active implementation at a time. `shadow` performs live audits
+without creating tasks; `active` removes the one-task limit.
 
-## Safety Boundaries
-
-- GitHub issue and comment content is treated as prompt-injection-capable input.
-- The LLM has no tools, credentials, shell, GitHub write access, or publication path.
-- Missing or failed LLM review disables automatic dispatch for that candidate.
-- Repository policy and duplicate-PR gates remain deterministic.
-- This cloud workflow does not create local Codex tasks or modify local worktrees.
-
-Creating Codex tasks requires a separate local bridge because GitHub-hosted runners
-cannot operate the desktop app or local repositories. Every run publishes a
-`dispatch_intents.json` handoff containing only candidates that passed both the
-deterministic gate and DeepSeek review. Each prompt is exactly the `gh-issue-pr`
-skill entry followed by the issue URL.
-
-On the Mac, the consumer automation runs:
+## Local Commands
 
 ```bash
+# Read, verify, and ingest the latest signed cloud queue
+python scripts/local_dispatch_bridge.py sync
+
+# Pure local read: no clone, project lookup, or task creation
 python scripts/local_dispatch_bridge.py list
+
+# Rolling controllable quality metrics
+python scripts/local_dispatch_bridge.py metrics --days 30
+
+# Independent natural-schedule check
+python scripts/check_workflow_health.py --notify
 ```
 
-The bridge reads the durable `radar-state` queue, rechecks that the issue remains
-open and unassigned, finds or clones the exact source repository, and registers it
-with Codex. After the desktop automation creates and renames a worktree task, it
-calls `local_dispatch_bridge.py commit`. The commit step independently checks the
-Codex SQLite record, first prompt, title, GitHub origin, and Git common directory
-before recording the dispatch receipt.
+The hourly Codex automation calls `sync`, claims each pending intent through a
+fresh live audit, creates only the authorized worktree task in the exact source
+repository project, verifies its timestamped lifecycle title, prompt, repository
+origin, and worktree identity, then commits a receipt. It retries an obviously
+empty task at most once through a write-ahead recovery receipt. It archives a
+task only after that task records `AUDIT_NO_GO`.
 
 ## Development
 
 ```bash
-python -m pip install pytest
-pytest
+python -m pip install pytest==9.1.1 ruff==0.16.1
+ruff check src scripts tests
+PYTHONPATH=src pytest -q
 python -m compileall -q src scripts
+actionlint .github/workflows/*.yml
 ```
+
+See [architecture](docs/architecture.md), [operations](docs/operations.md), and
+[threat model](docs/threat-model.md) for the complete contract.

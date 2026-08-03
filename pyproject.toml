@@ -12,6 +12,12 @@ license = { text = "MIT" }
 authors = [{ name = "Oxygen56" }]
 dependencies = []
 
+[project.optional-dependencies]
+dev = [
+  "pytest==9.1.1",
+  "ruff==0.16.1",
+]
+
 [project.scripts]
 oss-pr-radar = "oss_pr_radar.scanner:main"
 
@@ -21,3 +27,12 @@ packages = ["src/oss_pr_radar"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+extend-exclude = ["state", "reports"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B"]
+ignore = ["E501"]

@@ -24,9 +24,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from .claims import detect_claims
+from .contracts import SCAN_SCHEMA, contract_digest
 from .llm import DeepSeekEvaluator
 from .messages import add_chinese_explanations
 from .policy import SCANNER_DECISION_REVISION
+from .util import sha256_json
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_REPORTS = BASE_DIR / "reports"
@@ -42,8 +45,8 @@ SEARCH_RETRY_DELAYS_SECONDS = (3.0, 10.0, 30.0)
 FEISHU_RETRY_DELAYS_SECONDS = (0.0, 1.0, 3.0)
 SCAN_DEEP_INSPECTION_DEADLINE_SECONDS = 240.0
 REPO_COLLECTION_WORKERS = 4
-MAX_ISSUES_TO_INSPECT = 16
-MAX_SEEN_RECHECKS = 8
+MAX_ISSUES_TO_INSPECT = 24
+MAX_SEEN_RECHECKS = 12
 MAX_SCANNER_MIGRATION_RECHECKS = 8
 SCANNER_MIGRATION_RECHECK_STATUSES = frozenset(
     {
@@ -189,13 +192,27 @@ HIGH_RE = re.compile(
     r"vector|retrieval|embedding|rerank|multimodal|audio|video|fps|mrope|rope)\b",
     re.I,
 )
-CORE_AGENT_INFRA_RE = re.compile(
-    r"\b(agent|llm|model context protocol|mcp|tool[- ]call|function[- ]call|"
-    r"structured output|ag[- ]ui|interrupt|resume payload|deferred tool|"
-    r"kv cache|prefix cache|cuda graph|inference|serving|"
-    r"speculative decoding|tensor parallel|pipeline parallel|multimodal|"
-    r"retrieval|embedding|rerank|prompt|completion|attention|transformer|"
-    r"context window|language model)\b",
+DYNAMIC_AGENT_INFRA_STRONG_RE = re.compile(
+    r"\b(?:llm|large language model|model context protocol|mcp|tool[- ]call|"
+    r"function[- ]call|structured output|ag[- ]ui|human[- ]in[- ]the[- ]loop|"
+    r"agent runtime|agent framework|multi[- ]agent|kv cache|prefix cache|"
+    r"speculative decoding|tensor parallel|pipeline parallel|context window|"
+    r"tokenizer|transformer|attention kernel|language model)\b",
+    re.I,
+)
+MODEL_RUNTIME_CONTEXT_RE = re.compile(
+    r"\b(?:model|llm|token|transformer|attention|gpu|cuda|rocm|tensor|decoder|"
+    r"generation|batching|quantization)\b",
+    re.I,
+)
+RETRIEVAL_CONTEXT_RE = re.compile(
+    r"\b(?:rag|vector|embedding|rerank|semantic search|vector database|"
+    r"retrieval augmented)\b",
+    re.I,
+)
+AGENT_CONTEXT_RE = re.compile(
+    r"\b(?:tool|workflow|handoff|checkpoint|memory|planner|executor|session|"
+    r"human[- ]in[- ]the[- ]loop)\b",
     re.I,
 )
 IMPACT_RE = re.compile(
@@ -364,8 +381,6 @@ AI_DISCLOSURE_POLICY_RE = re.compile(
     r"(?:labels?|tags?).{0,60}(?:required|mandatory|must)|"
     r"(?:required|mandatory|must).{0,60}(?:labels?|tags?).{0,180}"
     r"(?:ai[- ]generated|ai agents?|coding assistants?|llms?)|"
-    r"(?:ai[- ]generated|ai agents?|coding assistants?|llms?).{0,180}"
-    r"(?:reviewed line[- ]by[- ]line|human (?:pr )?author)|"
     r"\bai\b.{0,120}(?:must|required|always).{0,100}(?:identify|attribute|disclos)|"
     r"disclos(?:e|ure).{0,40}significant\s+ai\s+assistance",
     re.I | re.S,
@@ -720,9 +735,9 @@ def issue_body_pr_link_relation(issue_context: str, repo: str, pr_num: int) -> s
     return "reference"
 
 
-def base_priority(item: dict[str, Any]) -> tuple[int, int, int, int, int, str]:
+def base_priority(item: dict[str, Any]) -> tuple[int, int, int, int, str]:
     labels = " ".join(item.get("labels", []))
-    title = item.get("title") or ""
+    title = str(item.get("title") or "").replace("_", " ").replace("-", " ")
     return (
         int(bool(item.get("_explicit_recheck"))),
         int(item.get("repo") in AGENT_INFRA_PRIORITY_REPOS),
@@ -846,6 +861,20 @@ RELATED_ISSUE_GENERIC_IDENTIFIERS = {
 }
 
 
+def is_dynamic_agent_infra_issue(text: str) -> bool:
+    """Require an AI-specific mechanism for repositories outside the curated set."""
+
+    if DYNAMIC_AGENT_INFRA_STRONG_RE.search(text):
+        return True
+    if re.search(r"\b(?:inference|serving)\b", text, re.I) and MODEL_RUNTIME_CONTEXT_RE.search(
+        text
+    ):
+        return True
+    if re.search(r"\bretrieval\b", text, re.I) and RETRIEVAL_CONTEXT_RE.search(text):
+        return True
+    return bool(re.search(r"\bagents?\b", text, re.I) and AGENT_CONTEXT_RE.search(text))
+
+
 def related_issue_behavior_terms(text: str) -> set[str]:
     words = set(re.findall(r"[a-z][a-z0-9_-]{2,}", text.casefold()))
     return words & RELATED_ISSUE_BEHAVIOR_TERMS
@@ -929,6 +958,27 @@ def gh(args: list[str], timeout: int = 18) -> tuple[Any | None, str | None]:
         return json.loads(proc.stdout or "{}"), None
     except json.JSONDecodeError as exc:
         return None, f"json_decode:{exc}"
+
+
+def gh_paginated(
+    args: list[str], timeout: int = 30
+) -> tuple[list[dict[str, Any]] | None, str | None]:
+    """Read every REST page and flatten the `gh api --slurp` response."""
+
+    data, error = gh([*args, "--paginate", "--slurp"], timeout=timeout)
+    if error:
+        return None, error
+    if not isinstance(data, list):
+        return None, "invalid_paginated_response"
+    pages = data if all(isinstance(page, list) for page in data) else [data]
+    flattened: list[dict[str, Any]] = []
+    for page in pages:
+        if not isinstance(page, list):
+            return None, "invalid_paginated_page"
+        for item in page:
+            if isinstance(item, dict):
+                flattened.append(item)
+    return flattened, None
 
 
 def load_json(path: Path, default: Any) -> Any:
@@ -1075,15 +1125,6 @@ def repo_rules(repo: str) -> str:
     lower = repo.lower()
     if lower in {"langchain-ai/langgraph", "pydantic/pydantic-ai"}:
         return "needs_assignment"
-    if lower in {
-        "agno-agi/agno",
-        "crewaiinc/crewai",
-        "letta-ai/letta",
-        "run-llama/llama_index",
-        "vllm-project/vllm",
-        "prefecthq/fastmcp",
-    }:
-        return "ai_disclosure_conflict"
     return "normal"
 
 
@@ -1101,6 +1142,7 @@ class Radar:
         monotonic_fn: Any = time.monotonic,
         pending_rechecks: dict[str, Any] | None = None,
         deep_inspection_deadline_seconds: float = SCAN_DEEP_INSPECTION_DEADLINE_SECONDS,
+        notify: bool = True,
     ):
         self.now = now.astimezone(timezone.utc)
         self.since = self.now - timedelta(hours=window_hours)
@@ -1127,11 +1169,13 @@ class Radar:
         )
         self.scan_deadline_reached = False
         self.pending_rechecks = pending_rechecks or {}
+        self.notify = notify
         self.forced_recheck_keys: set[str] = set()
         self.issue_outcomes: dict[str, dict[str, Any]] = {}
         self._last_search_at: float | None = None
         self.rejection_summary: dict[str, int] = {}
         self.rejection_examples: dict[str, list[dict[str, Any]]] = {}
+        self._last_comments_lookup_error: str | None = None
 
     def deep_inspection_deadline_reached(self) -> bool:
         reached = (
@@ -1229,7 +1273,7 @@ class Radar:
         self,
         items: dict[str, dict[str, Any]],
         repo: str,
-        per_page: int = 30,
+        per_page: int = 100,
     ) -> None:
         if repo_is_excluded(repo):
             return
@@ -1237,7 +1281,7 @@ class Radar:
         err: str | None = None
         retry_delays = (1.0, 3.0)
         for attempt in range(len(retry_delays) + 1):
-            data, err = gh(
+            data, err = gh_paginated(
                 [
                     "api",
                     "-X",
@@ -1254,7 +1298,7 @@ class Radar:
                     "-f",
                     f"per_page={per_page}",
                 ],
-                timeout=15,
+                timeout=30,
             )
             if not err:
                 break
@@ -1578,7 +1622,7 @@ class Radar:
         issue_context: str,
     ) -> dict[str, Any]:
         if repo not in self.related_issue_cache:
-            data, err = gh(
+            data, err = gh_paginated(
                 [
                     "api",
                     "-X",
@@ -1593,7 +1637,7 @@ class Radar:
                     "-f",
                     "per_page=100",
                 ],
-                timeout=20,
+                timeout=30,
             )
             self.related_issue_cache[repo] = (
                 data if isinstance(data, list) and not err else None,
@@ -1697,8 +1741,17 @@ class Radar:
             has_signature_pair = bool(title_shared_signals) and any(
                 pair <= shared_signal_set for pair in RELATED_ISSUE_SIGNATURE_PAIRS
             )
+            # A single shared scenario slug (for example, ``large-over-small``)
+            # is useful search context but is not enough to call two defects
+            # duplicates. Require either multiple distinctive identifiers or a
+            # shared behavioral mechanism in the titles.
             has_title_identity = bool(
-                title_code_like and title_overlap >= 2 and title_distinctive_overlap
+                title_code_like
+                and title_overlap >= 2
+                and (
+                    len(title_distinctive_overlap) >= 2
+                    or (title_distinctive_overlap and title_shared_signals)
+                )
             )
             has_stack_identity = bool(shared_stack_paths) and len(shared_failures) >= 2
             if semantic_overlap < 3 or not (
@@ -1757,7 +1810,7 @@ class Radar:
         return {"status": "none", "issues": [], "summary": "未发现相关开放 issue"}
 
     def comments(self, repo: str, num: int) -> list[dict[str, Any]]:
-        data, err = gh(
+        data, err = gh_paginated(
             [
                 "api",
                 "-X",
@@ -1766,21 +1819,22 @@ class Radar:
                 "-f",
                 "per_page=100",
             ],
-            timeout=15,
+            timeout=30,
         )
+        self._last_comments_lookup_error = err
         return data if isinstance(data, list) and not err else []
 
     def events(self, repo: str, num: int) -> list[dict[str, Any]]:
-        data, err = gh(
+        data, err = gh_paginated(
             [
                 "api",
                 "-X",
                 "GET",
                 f"repos/{repo}/issues/{num}/events",
                 "-f",
-                "per_page=30",
+                "per_page=100",
             ],
-            timeout=15,
+            timeout=30,
         )
         return data if isinstance(data, list) and not err else []
 
@@ -1858,7 +1912,7 @@ class Radar:
                 r"\b(?:pr|pull request)\s*#(\d+)\b", issue_context, re.I
             )
         )
-        timeline, timeline_error = gh(
+        timeline, timeline_error = gh_paginated(
             [
                 "api",
                 "-X",
@@ -1867,7 +1921,7 @@ class Radar:
                 "-f",
                 "per_page=100",
             ],
-            timeout=20,
+            timeout=30,
         )
         if timeline_error:
             self._last_open_pr_lookup_errors.append(f"timeline:{timeline_error}")
@@ -1934,7 +1988,7 @@ class Radar:
                     "_issue_body_link_relation": relation,
                 }
 
-        data, list_error = gh(
+        data, list_error = gh_paginated(
             [
                 "api",
                 "-X",
@@ -1949,7 +2003,7 @@ class Radar:
                 "-f",
                 "per_page=100",
             ],
-            timeout=20,
+            timeout=30,
         )
         if list_error:
             self._last_open_pr_lookup_errors.append(f"open_pr_list:{list_error}")
@@ -2374,19 +2428,24 @@ class Radar:
             for item in direct_assessments
             if str(item.get("state") or "OPEN").upper() == "OPEN"
         ]
-        strong = (
-            best.get("state") == "MERGED"
-            or bool(best.get("issue_body_link"))
-            or bool(best.get("rule_closed") and best.get("technical_complete"))
-            or len(active_direct) == 1
-            or (
-                best["score"] >= 55
-                and best["references_issue"]
-                and best["test_files"] > 0
-                and "存在失败 CI/check" not in best["gaps"]
-                and "超过 30 天未更新" not in best["gaps"]
-            )
+        merged_direct = [
+            item
+            for item in direct_assessments
+            if str(item.get("state") or "").upper() == "MERGED"
+        ]
+        if merged_direct:
+            best = max(merged_direct, key=lambda item: item["score"])
+        elif active_direct:
+            best = max(active_direct, key=lambda item: item["score"])
+        strong_active = any(
+            item.get("technical_complete")
+            and item.get("score", 0) >= 55
+            and not item.get("is_draft")
+            and "存在失败 CI/check" not in item.get("gaps", [])
+            and "超过 30 天未更新" not in item.get("gaps", [])
+            for item in active_direct
         )
+        strong = best.get("state") == "MERGED" or strong_active
         competition_saturated = len(active_direct) >= 2
         if competition_saturated:
             status = "competition_saturated"
@@ -2403,18 +2462,15 @@ class Radar:
                     "Draft、CI 失败、缺测试或活跃度不足只是现有 PR 的改进点，"
                     "不是自动创建竞争 PR 的理由"
                 )
-            elif best.get("issue_body_link"):
-                summary = (
-                    f"issue 正文已直接链接现有 PR #{best['number']}；"
-                    "应跟进该实现，不应自动创建竞争 PR"
-                )
-            elif best.get("rule_closed"):
-                summary = (
-                    f"已有完整修复 PR #{best['number']}，仅因仓库分配规则被关闭；"
-                    "应由维护者分配并重开原 PR，不应竞争重做"
-                )
             else:
                 summary = f"已有较强 PR：#{best['number']} score={best['score']}，{'; '.join(best['strengths'])}"
+        elif active_direct and repo_rules(repo) != "needs_assignment":
+            status = "weak_pr_competition_possible"
+            summary = (
+                f"已有直接关联但证据不完整的 PR #{best['number']}："
+                f"{'; '.join(best.get('gaps') or ['缺少完整验证'])}；"
+                "只有能补足根因、测试或关键路径覆盖时才值得竞争"
+            )
         elif repo_rules(repo) == "needs_assignment":
             status = "human_review_required"
             summary = f"已有 PR 但强度不足，且仓库通常需要先分配/确认：#{best['number']} score={best['score']}"
@@ -2446,6 +2502,8 @@ class Radar:
         text = f"{title}\n{body}\n" + "\n".join(
             (comment.get("body") or "") for comment in comments[-8:]
         )
+        topic_text = re.sub(r"[_-]+", " ", f"{title}\n{body}")
+        scoring_text = re.sub(r"[_-]+", " ", text)
         maintainer_approved = any(
             (comment.get("author_association") or "").upper()
             in {"MEMBER", "OWNER", "COLLABORATOR"}
@@ -2580,9 +2638,11 @@ class Radar:
             base["repo"], base["num"], issue, comments
         ):
             return None, "bot_or_stale_refresh"
-        if ACTIVE_RE.search(body) or any(
-            ACTIVE_RE.search(comment.get("body") or "") for comment in comments
-        ):
+        claims = detect_claims(
+            comments,
+            current_actor=os.environ.get("RADAR_GITHUB_ACTOR", "Oxygen56"),
+        )
+        if ACTIVE_RE.search(body) or claims:
             return None, "someone_active"
         if RFC_RE.search(title + "\n" + labels_text + "\n" + body[:1200]) and not (
             maintainer_approved or help_wanted
@@ -2641,16 +2701,18 @@ class Radar:
             public_repro_signals < 2 and not root_cause_signal
         ):
             return None, "no_public_reproduction_or_root_cause"
-        if not HIGH_RE.search(title + "\n" + body):
+        if not HIGH_RE.search(topic_text):
             return None, "off_topic"
-        if base["repo"] not in set(KNOWN_REPOS) and not CORE_AGENT_INFRA_RE.search(
-            title + "\n" + body[:12000]
+        if base["repo"] not in set(KNOWN_REPOS) and not is_dynamic_agent_infra_issue(
+            topic_text[:12000]
         ):
             return None, "off_topic_dynamic_repo"
 
-        high_hits = len({match.group(0).lower() for match in HIGH_RE.finditer(text)})
+        high_hits = len(
+            {match.group(0).lower() for match in HIGH_RE.finditer(scoring_text)}
+        )
         impact_hits = len(
-            {match.group(0).lower() for match in IMPACT_RE.finditer(text)}
+            {match.group(0).lower() for match in IMPACT_RE.finditer(scoring_text)}
         )
         score = 0
         if high_hits >= 5 or len(body) > 1800:
@@ -2782,7 +2844,7 @@ class Radar:
             "impact": impact,
             "labels": labels[:6],
             "bucket": bucket,
-            "auto_spawn": bucket in {"immediate", "conflict"},
+            "auto_spawn": bucket == "immediate",
             "public_submission_allowed": bucket != "conflict",
             "hardware_compatible": True,
             "actionability_evidence": {
@@ -2925,6 +2987,20 @@ class Radar:
                 reject("not_open_or_pull_request", base)
                 continue
             comments = self.comments(base["repo"], base["num"])
+            if self._last_comments_lookup_error:
+                reject("comments_lookup_failed", base)
+                self.seen[key] = {
+                    "analyzed": self.analyzed,
+                    "status": "status_update",
+                    "reason": "comments_lookup_failed",
+                    "requeue_reason": "critical_evidence_fetch_failure",
+                    "requeued_at": self.analyzed,
+                    "title": issue.get("title") or base["title"],
+                    "issue_updated": issue.get("updated_at")
+                    or base.get("updated")
+                    or "",
+                }
+                continue
             inspected += 1
             scored, reason = self.score_issue(base, issue, comments)
             if not scored:
@@ -2955,7 +3031,7 @@ class Radar:
                 scored["bucket"] = "conflict"
                 scored["category"] = "LOCAL_FIX_ONLY"
                 scored["gate_decision"] = "ALLOW_PRIVATE_WORK"
-                scored["auto_spawn"] = True
+                scored["auto_spawn"] = False
                 scored["public_submission_allowed"] = False
                 scored["risk"] = (
                     f"{scored['risk']}；仓库要求公开 AI 使用披露，自动公开动作被硬禁用。"
@@ -3337,7 +3413,11 @@ class Radar:
                     continue
                 candidate["notification_digest"] = digest
                 notification_candidates.append(candidate)
-            sent, send_error = self.send_feishu(notification_candidates)
+            sent, send_error = (
+                self.send_feishu(notification_candidates)
+                if self.notify
+                else (False, None)
+            )
         if self.search_failed:
             notification_candidates = []
         if sent:
@@ -3371,7 +3451,31 @@ class Radar:
         auto_spawn_candidates = [
             candidate for candidate in candidates if candidate.get("auto_spawn")
         ]
+        run_id = f"scan-{self.now.strftime('%Y%m%dT%H%M%SZ')}-{sha256_json({'since': self.since_str, 'items': sorted(items)})[:12]}"
+        for candidate in candidates:
+            candidate["schema_version"] = "oss-pr-radar.candidate.v2"
+            candidate["evidence_digest"] = sha256_json(
+                {
+                    "repo": candidate.get("repo"),
+                    "num": candidate.get("num"),
+                    "issueUpdated": candidate.get("issue_updated"),
+                    "labels": candidate.get("labels"),
+                    "actionability": candidate.get("actionability_evidence"),
+                    "openPrAssessment": candidate.get("open_pr_assessment"),
+                    "relatedIssueAssessment": candidate.get("related_issue_assessment"),
+                }
+            )
+            candidate["policy_digest"] = sha256_json(
+                {
+                    "repo": candidate.get("repo"),
+                    "submissionPolicy": candidate.get("submission_policy"),
+                    "publicSubmissionAllowed": candidate.get("public_submission_allowed"),
+                }
+            )
         result = {
+            "schema_version": SCAN_SCHEMA,
+            "contract_digest": contract_digest(),
+            "run_id": run_id,
             "profile": PROFILE,
             "scanner_version": SCANNER_VERSION,
             "now": self.analyzed,
@@ -3393,6 +3497,7 @@ class Radar:
             "notification_suppressed_count": len(candidates)
             - len(notification_candidates),
             "dry_run": self.dry_run,
+            "notification_mode": "direct" if self.notify else "outbox",
             "auto_spawn_candidates": len(auto_spawn_candidates),
             "forced_recheck_results": {
                 key: self.issue_outcomes.get(
@@ -3423,15 +3528,17 @@ class Radar:
                 for c in auto_spawn_candidates
             ],
         }
+        report = {
+            **result,
+            "candidate_details": candidates,
+            "errors": self.errors[:8],
+        }
+        report["snapshot_id"] = sha256_json(report)
+        report["report_digest"] = sha256_json(report)
+        result["snapshot_id"] = report["snapshot_id"]
+        result["report_digest"] = report["report_digest"]
         if scan_path:
-            atomic_write_json(
-                scan_path,
-                {
-                    **result,
-                    "candidate_details": candidates,
-                    "errors": self.errors[:8],
-                },
-            )
+            atomic_write_json(scan_path, report)
         return result
 
 
@@ -3457,6 +3564,7 @@ def main() -> int:
     parser.add_argument("--chat-id", default=DEFAULT_CHAT_ID)
     parser.add_argument("--scan-out", type=Path, default=None)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--no-notify", action="store_true")
     args = parser.parse_args()
 
     now = parse_now(args.now)
@@ -3478,6 +3586,7 @@ def main() -> int:
         pending_rechecks=(
             load_json(args.pending_rechecks, {}) if args.pending_rechecks else {}
         ),
+        notify=not args.no_notify,
     )
     result = radar.run(args.scan_out)
     next_state = dict(state) if isinstance(state, dict) else {}

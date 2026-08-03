@@ -5,29 +5,28 @@ import json
 import sys
 from pathlib import Path
 
+ROOT = Path(__file__).parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+
+from oss_pr_radar.contracts import ContractError, validate_report  # noqa: E402
+
 
 def main() -> int:
     path = Path(sys.argv[1])
     report = json.loads(path.read_text(encoding="utf-8"))
-    if report.get("scan_ok") is not True:
-        raise SystemExit(f"scan failed: {report.get('scan_error')}")
-    details = report.get("candidate_details")
-    if not isinstance(details, list):
-        raise SystemExit("candidate_details is missing")
-    for candidate in details:
-        if "_llm_context" in candidate:
-            raise SystemExit("untrusted LLM context leaked into report")
-        review = candidate.get("llm_review") or {}
-        if review.get("status") != "ok":
-            candidate["auto_spawn"] = False
+    try:
+        validation = validate_report(report, require_v2=True)
+    except ContractError as exc:
+        raise SystemExit(str(exc)) from exc
     print(
         json.dumps(
             {
                 "scan_ok": True,
-                "candidates": len(details),
-                "auto_spawn_candidates": sum(
-                    bool(item.get("auto_spawn")) for item in details
-                ),
+                "schema_version": report.get("schema_version"),
+                "run_id": report.get("run_id"),
+                "report_digest": validation.digest,
+                "candidates": validation.candidate_count,
+                "auto_spawn_candidates": validation.auto_dispatch_count,
             }
         )
     )

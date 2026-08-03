@@ -17,7 +17,35 @@ def test_compact_title_matches_desktop_limit():
     assert result.endswith("…")
 
 
+def test_lifecycle_title_keeps_timestamp_and_value_prefix():
+    result = MODULE.lifecycle_title(
+        "FIX_READY", "08-04 05:25", "repo/project#42", "Runtime correctness"
+    )
+    assert result.startswith("[有价值·本地修复就绪] 08-04 05:25 repo/project#42")
+    assert len(result) <= 59
+
+
 def test_canonical_prompt_unwraps_delegation():
     prompt = "[$gh-issue-pr](/tmp/SKILL.md)\nhttps://github.com/a/b/issues/1"
     wrapped = f"<codex_delegation><source_thread_id>x</source_thread_id><input>{prompt}</input></codex_delegation>"
     assert MODULE.canonical_prompt(wrapped) == prompt
+
+
+def test_pr_lifecycle_prefers_merge_review_and_green_checks():
+    assert MODULE.pr_lifecycle_stage({"state": "MERGED"}) == "MERGED"
+    assert (
+        MODULE.pr_lifecycle_stage({"state": "OPEN", "reviewDecision": "APPROVED"})
+        == "MAINTAINER_ACCEPTED"
+    )
+    assert (
+        MODULE.pr_lifecycle_stage(
+            {
+                "state": "OPEN",
+                "statusCheckRollup": [
+                    {"conclusion": "SUCCESS"},
+                    {"conclusion": "SKIPPED"},
+                ],
+            }
+        )
+        == "CI_GREEN"
+    )
