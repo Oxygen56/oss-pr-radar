@@ -1,4 +1,31 @@
 {
+  "811580dbec57b0c5aaecf3a0702132258e6bf6c914b6aa5a28a7b416860e8e5b": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Add failing test for nested model serialization",
+      "Fix serialization logic to respect serialize_by_alias for nested models"
+    ],
+    "risks": [
+      "Potential behavior change for existing users relying on aliases",
+      "Need maintainer design confirmation"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "test_plan": [
+      "Reproduce with provided minimal example",
+      "Run targeted unit tests for tool return serialization"
+    ],
+    "unknowns": [
+      "Maintainer preference on fix approach",
+      "Exact code path causing the issue"
+    ],
+    "why": "Issue reports a clear bug: nested Pydantic models in dicts ignore serialize_by_alias=False. No open PR or related issue found, but the repository requires assignment and AI disclosure. Root cause is not yet confirmed; likely in serialization path for nested models."
+  },
   "ae5841585ce6e1f648a203913ce6a20911d34f6c9f855023e8553450f23109a4": {
     "confidence": 0.8,
     "decision": "WAIT_MAINTAINER",
@@ -29,6 +56,34 @@
     ],
     "why": "The issue gives a precise root cause (snapshot assigns fresh ids to re-factored tool-call messages, breaking the client's id-keyed merge and causing ordering displacement) and proposes a concrete fix. However, maintainer triage is required: the gate says HUMAN_REVIEW, there are overlapping open PRs (#7423, #7479) that touch AG-UI snapshot/support paths, and a potential duplicate issue #7490 with shared behavior signals. The fix may also involve design choices about message identity that need maintainer confirmation."
   },
+  "b88373a689e668ed0b081ec77c5a4fa1e4767501ce368bd26ec2b7bde892d789": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "AG-UI adapter message id allocation",
+      "streaming event handling in _agent_run.py and _workflow.py"
+    ],
+    "risks": [
+      "May conflict with existing PR #7423",
+      "Changing id allocation could affect client compatibility"
+    ],
+    "root_cause_clarity": "high",
+    "score": 14,
+    "test_plan": [
+      "Reproduce with provided wire evidence",
+      "Add regression test for snapshot id stability and ordering"
+    ],
+    "unknowns": [
+      "Maintainer design preference",
+      "Whether PR #7423 already addresses the root cause"
+    ],
+    "why": "Issue provides a detailed root cause and proposed fix, but the deterministic gate requires HUMAN_REVIEW and there is an existing PR (#7423) with semantic overlap that needs maintainer comparison. Also, potential duplicate issue #7490 and design confirmation are needed."
+  },
   "ba469bd5c94418bd3fdf7ff2f217e4cac4ca0cb69587f3c0ea186546a5cf99b6": {
     "confidence": 0.82,
     "decision": "WAIT_MAINTAINER",
@@ -56,5 +111,62 @@
       "Run the existing ag-ui test suite and static checks to ensure no regression in valid snapshot emission cases."
     ],
     "why": "The issue provides a precise root cause, a deterministic no-LLM repro, production impact metrics, and a concrete suggested fix. However, the deterministic gate requires HUMAN_REVIEW, and maintainer triage is needed to confirm design preferences (e.g., whether to use pending-updates check vs. tool-name filter, and whether to introduce StateDeltaEvent at the boundary) and to disambiguate potential overlap with issue #7491."
+  },
+  "cb6324d4034f42904d94291b1bac3a9d8313e6bab0c118ddb6115e2c011c48bc": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Maintainer comment suggests queue latency, but user comment provides evidence of uuid ordering bug"
+    ],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify get_episodes to order by valid_at DESC or use reference_time",
+      "Add regression tests for recency ordering",
+      "Update MCP tool implementation"
+    ],
+    "risks": [
+      "Potential maintainer preference for queue-latency explanation; need to confirm root cause",
+      "Changing ordering may affect pagination behavior or existing consumers"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "test_plan": [
+      "Create failing test that adds episodes with different timestamps and asserts get_episodes returns most recent first",
+      "Run existing test suite for MCP and episodic node"
+    ],
+    "unknowns": [
+      "Whether PR #1726's failing CI is due to test issues or code problems",
+      "Maintainer's stance on proposed fix in #1724"
+    ],
+    "why": "Issue reports stale data in get_episodes; maintainer attributes to queue latency, but a user comment identifies a concrete root cause: keyset pagination hardcodes ORDER BY uuid DESC, returning arbitrary stable subset. Existing PR #1726 addresses this but has failing CI and lacks explicit issue link. A materially better PR with robust tests and clear root-cause fix is plausible."
+  },
+  "f9388995937b1e55bd8977335851a0e9859696c4056b203c018e1a8a6a848547": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Maintainer states not a duplicate of #1296, but initial comment suggested closing as duplicate."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "No new code changes; the fix is already in RC1. Potential follow-up: improve change-visibility latency and document watch scope."
+    ],
+    "risks": [
+      "Duplicate of #1296 if not properly distinguished; potential scope creep from secondary observations."
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "test_plan": [
+      "Retest the dirty-to-clean sequence on v0.9.1-rc.1 or current main as requested by maintainer."
+    ],
+    "unknowns": [
+      "Reporter verification on RC1/current main is pending; maintainer has not confirmed final resolution."
+    ],
+    "why": "The issue is a well-documented bug with independent reproductions and a confirmed fix in RC1, but the maintainer has explicitly requested verification on RC1/current main and marked it awaiting-reporter. The candidate is not a new clean contribution; it is a regression case already routed for RC. Work should wait for maintainer confirmation and reporter verification."
   }
 }

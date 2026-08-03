@@ -1,0 +1,217 @@
+{
+  "digest": "9a99573f8b7a31f2cf7d25b6e9baa02a787edff7605028fbb14c5b5c0cdde5d7",
+  "events": [
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "microsoft/agent-framework#7491",
+        "getzep/graphiti#1062",
+        "PrefectHQ/fastmcp#4744",
+        "DeusData/codebase-memory-mcp#1339"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[microsoft/agent-framework#7491](https://github.com/microsoft/agent-framework/issues/7491) Python: [Bug]: AG-UI `MESSAGES_SNAPSHOT` re-factors streamed messages under fresh ids — the reference `@ag-ui/client` merge then renders every mid-run tool call after the final text**\n建议：WAIT_MAINTAINER | 分数：14\n价值：Issue provides a detailed root cause and proposed fix, but the deterministic gate requires HUMAN_REVIEW and there is an existing PR (#7423) with semantic overlap that needs maintainer comparison. Also, potential duplicate issue #7490 and design confirmation are needed.\n改动：AG-UI adapter message id allocation；streaming event handling in _agent_run.py and _workflow.py\n验证：Reproduce with provided wire evidence；Add regression test for snapshot id stability and ordering\n风险：May conflict with existing PR #7423；Changing id allocation could affect client compatibility\n竞争：发现 PR #7423 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 5，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[getzep/graphiti#1062](https://github.com/getzep/graphiti/issues/1062) [BUG] get_episodes from graphiti-mcp returns stale/old data when used in n8n**\n建议：WAIT_MAINTAINER | 分数：9\n价值：Issue reports stale data in get_episodes; maintainer attributes to queue latency, but a user comment identifies a concrete root cause: keyset pagination hardcodes ORDER BY uuid DESC, returning arbitrary stable subset. Existing PR #1726 addresses this but has failing CI and lacks explicit issue link. A materially better PR with robust tests and clear root-cause fix is plausible.\n改动：Modify get_episodes to order by valid_at DESC or use reference_time；Add regression tests for recency ordering；Update MCP tool implementation\n验证：Create failing test that adds episodes with different timestamps and asserts get_episodes returns most recent first；Run existing test suite for MCP and episodic node\n风险：Potential maintainer preference for queue-latency explanation; need to confirm root cause；Changing ordering may affect pagination behavior or existing consumers\n竞争：已有直接关联但证据不完整的 PR #1726：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：先复现 issue，再逐项对比已有 PR 的缺口；只有能提供更小改动、更强测试或更完整边界覆盖时才开 PR。\n证据：复现信号 7，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[PrefectHQ/fastmcp#4744](https://github.com/PrefectHQ/fastmcp/issues/4744) serialize_by_alias=False ignored for nested Pydantic models**\n建议：WAIT_MAINTAINER | 分数：10\n价值：Issue reports a clear bug: nested Pydantic models in dicts ignore serialize_by_alias=False. No open PR or related issue found, but the repository requires assignment and AI disclosure. Root cause is not yet confirmed; likely in serialization path for nested models.\n改动：Add failing test for nested model serialization；Fix serialization logic to respect serialize_by_alias for nested models\n验证：Reproduce with provided minimal example；Run targeted unit tests for tool return serialization\n风险：Potential behavior change for existing users relying on aliases；Need maintainer design confirmation\n竞争：未发现相关 open PR\n下一步：先等待维护者分配/确认方案；即使获批，公开 PR 的 AI 复核/披露确认仍必须由用户本人处理。\n证据：复现信号 2，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[DeusData/codebase-memory-mcp#1339](https://github.com/DeusData/codebase-memory-mcp/issues/1339) Graph not updated when the working tree returns to clean (revert leaves false negatives)**\n建议：WAIT_MAINTAINER | 分数：11\n价值：The issue is a well-documented bug with independent reproductions and a confirmed fix in RC1, but the maintainer has explicitly requested verification on RC1/current main and marked it awaiting-reporter. The candidate is not a new clean contribution; it is a regression case already routed for RC. Work should wait for maintainer confirmation and reporter verification.\n改动：No new code changes; the fix is already in RC1. Potential follow-up: improve change-visibility latency and document watch scope.\n验证：Retest the dirty-to-clean sequence on v0.9.1-rc.1 or current main as requested by maintainer.\n风险：Duplicate of #1296 if not properly distinguished; potential scope creep from secondary observations.\n竞争：未发现相关 open PR\n下一步：按正常流程实现并验证；如要求 DCO 则自动 sign-off，PR 创建后报告 CLA 状态。\n证据：复现信号 2，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-03T21:54:14.617555Z",
+      "eventId": "acb365de0451a65ba15f2f94e62ac920e5a68d62df7cc0b986fca45c1bede06e",
+      "idempotencyKey": "acb365de0451a65ba15f2f94e62ac920e5a68d62df7cc0b986",
+      "kind": "review",
+      "runId": "scan-20260803T215151Z-87e9911c16d1",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "vllm-project/vllm#48109",
+        "anthropics/skills#1231",
+        "sgl-project/sglang#33217",
+        "vllm-project/vllm#45522",
+        "camel-ai/camel#4103",
+        "sgl-project/sglang#30554",
+        "vllm-project/vllm#44231",
+        "multica-ai/multica#4163",
+        "flashinfer-ai/flashinfer#3551",
+        "kyegomez/swarms#1664",
+        "cline/cline#11317"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#48109](https://github.com/vllm-project/vllm/pull/48109) [Bugfix][XPU] Fix Mamba state pointer overflow**\n建议：PR_FOLLOWUP | 分数：None\n价值：CI 检查失败\n改动：尚未定位\n验证：查看正式 review、失败检查或冲突详情后处理\n风险：尚未识别\n竞争：未发现直接覆盖\n下一步：按贡献规则复核\n证据：复现信号 0，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[anthropics/skills#1231](https://github.com/anthropics/skills/pull/1231) fix(pptx): add Keynote/macOS OOXML compliance sanitizer**\n建议：PR_FOLLOWUP | 分数：None\n价值：分支存在合并冲突\n改动：尚未定位\n验证：查看正式 review、失败检查或冲突详情后处理\n风险：尚未识别\n竞争：未发现直接覆盖\n下一步：按贡献规则复核\n证据：复现信号 0，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33217](https://github.com/sgl-project/sglang/pull/33217) Fix non-EP DeepSeek-V4 TBO for attention TP > 1**\n建议：PR_FOLLOWUP | 分数：None\n价值：CI 检查失败\n改动：尚未定位\n验证：查看正式 review、失败检查或冲突详情后处理\n风险：尚未识别\n竞争：未发现直接覆盖\n下一步：按贡献规则复核\n证据：复现信号 0，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#45522](https://github.com/vllm-project/vllm/pull/45522) fix: cache bad_words tokenization to avoid 'Already borrowed' errors under concurrency**\n建议：PR_FOLLOWUP | 分数：None\n价值：CI 检查失败\n改动：尚未定位\n验证：查看正式 review、失败检查或冲突详情后处理\n风险：尚未识别\n竞争：未发现直接覆盖\n下一步：按贡献规则复核\n证据：复现信号 0，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[camel-ai/camel#4103](https://github.com/camel-ai/camel/pull/4103) feat: Add ComputerUseToolkit for GUI automation via vision models**\n建议：PR_FOLLOWUP | 分数：None\n价值：CI 检查失败\n改动：尚未定位\n验证：查看正式 review、失败检查或冲突详情后处理\n风险：尚未识别\n竞争：未发现直接覆盖\n下一步：按贡献规则复核\n证据：复现信号 0，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#30554](https://github.com/sgl-project/sglang/pull/30554) [Spec] Size shared logits buffer for adaptive candidates**\n建议：PR_FOLLOWUP | 分数：None\n价值：CI 检查失败；分支存在合并冲突\n改动：尚未定位\n验证：查看正式 review、失败检查或冲突详情后处理\n风险：尚未识别\n竞争：未发现直接覆盖\n下一步：按贡献规则复核\n证据：复现信号 0，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#44231](https://github.com/vllm-project/vllm/pull/44231) [MoE Refactor] Add MoEKernelOracle ABC base class and migrate Unquantized oracle**\n建议：PR_FOLLOWUP | 分数：None\n价值：CI 检查失败\n改动：尚未定位\n验证：查看正式 review、失败检查或冲突详情后处理\n风险：尚未识别\n竞争：未发现直接覆盖\n下一步：按贡献规则复核\n证据：复现信号 0，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[multica-ai/multica#4163](https://github.com/multica-ai/multica/pull/4163) fix(codex): add Windows blind-run warning and detection for upstream openai/codex#20874 [MUL-4291]**\n建议：PR_FOLLOWUP | 分数：None\n价值：分支存在合并冲突\n改动：尚未定位\n验证：查看正式 review、失败检查或冲突详情后处理\n风险：尚未识别\n竞争：未发现直接覆盖\n下一步：按贡献规则复核\n证据：复现信号 0，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[flashinfer-ai/flashinfer#3551](https://github.com/flashinfer-ai/flashinfer/pull/3551) fix: handle negative draft_token_ids in ChainSpeculativeSampling**\n建议：PR_FOLLOWUP | 分数：None\n价值：CI 检查失败\n改动：尚未定位\n验证：查看正式 review、失败检查或冲突详情后处理\n风险：尚未识别\n竞争：未发现直接覆盖\n下一步：按贡献规则复核\n证据：复现信号 0，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[kyegomez/swarms#1664](https://github.com/kyegomez/swarms/pull/1664) fix: correct 'hiearchical' spelling to 'hierarchical'**\n建议：PR_FOLLOWUP | 分数：None\n价值：分支存在合并冲突\n改动：尚未定位\n验证：查看正式 review、失败检查或冲突详情后处理\n风险：尚未识别\n竞争：未发现直接覆盖\n下一步：按贡献规则复核\n证据：复现信号 0，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[cline/cline#11317](https://github.com/cline/cline/pull/11317) fix: add DeepSeek V4 support to OpenAI-compatible handler + provider-neutral mistake-limit message**\n建议：PR_FOLLOWUP | 分数：None\n价值：CI 检查失败\n改动：尚未定位\n验证：查看正式 review、失败检查或冲突详情后处理\n风险：尚未识别\n竞争：未发现直接覆盖\n下一步：按贡献规则复核\n证据：复现信号 0，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-03T21:54:14.829777Z",
+      "eventId": "a13653a865547739acb16c4b9a756e99c5f9169d54cc3152e10e55256a90ca84",
+      "idempotencyKey": "a13653a865547739acb16c4b9a756e99c5f9169d54cc3152e1",
+      "kind": "watch",
+      "runId": "pr-followup-1785793829",
+      "status": "PENDING"
+    }
+  ],
+  "generatedAt": "2026-08-03T21:54:14.829777Z",
+  "newEventCount": 1,
+  "version": "notification_outbox_v1"
+}
