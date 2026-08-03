@@ -3,8 +3,8 @@
 ## Schedules
 
 - `radar.yml`: every hour at minute 17 in `Asia/Shanghai`.
-- Local Codex dispatcher: every hour at minute 25.
-- `health.yml`: every hour at minute 47.
+- Local Codex dispatcher: every hour at minute 45, after the GitHub scan's delay budget.
+- Health watchdog: every hour at minute 55.
 - The local dispatcher also runs the health check, so scheduler failure is not
   monitored only by another workflow on the same scheduler.
 
