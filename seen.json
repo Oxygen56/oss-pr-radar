@@ -152,11 +152,11 @@
     "scanner_version": "oss_pr_radar_v14_trust_core"
   },
   "sgl-project/sglang#33415": {
-    "analyzed": "2026-08-03T18:06:21Z",
+    "analyzed": "2026-08-03T21:58:25Z",
     "status": "no_bug_or_maintainer_actionability",
     "title": "OLMo-2 bypasses its own fused QK norm on every path except cuda-graph capture",
     "issue_updated": "2026-08-03T17:29:04Z",
-    "scanner_version": "oss_pr_radar_v13"
+    "scanner_version": "oss_pr_radar_v14_trust_core"
   },
   "pydantic/pydantic-ai#7090": {
     "analyzed": "2026-08-03T18:06:21Z",
@@ -173,18 +173,18 @@
     "scanner_version": "oss_pr_radar_v14_trust_core"
   },
   "pydantic/pydantic-ai#6977": {
-    "analyzed": "2026-08-03T18:06:21Z",
+    "analyzed": "2026-08-03T21:58:25Z",
     "status": "no_bug_or_maintainer_actionability",
     "title": "Support Kimi K3 dynamic tool loading as a native `ToolAvailabilityDeltaPart` renderer",
     "issue_updated": "2026-08-03T17:06:20Z",
-    "scanner_version": "oss_pr_radar_v13"
+    "scanner_version": "oss_pr_radar_v14_trust_core"
   },
   "pydantic/pydantic-ai#7087": {
-    "analyzed": "2026-08-03T18:06:21Z",
+    "analyzed": "2026-08-03T21:58:25Z",
     "status": "no_bug_or_maintainer_actionability",
     "title": "Reveal Anthropic capability tools via lazy advertisement instead of pre-advertising the deferred pool",
     "issue_updated": "2026-08-03T17:03:23Z",
-    "scanner_version": "oss_pr_radar_v13"
+    "scanner_version": "oss_pr_radar_v14_trust_core"
   },
   "sgl-project/sglang#33397": {
     "analyzed": "2026-08-03T18:06:21Z",
@@ -293,12 +293,9 @@
     "scanner_version": "oss_pr_radar_v13"
   },
   "vllm-project/vllm#50901": {
-    "analyzed": "2026-08-03T21:51:51Z",
-    "requeued_at": "2026-08-03T21:51:51Z",
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-03T21:58:25Z",
+    "status": "someone_active",
     "title": "[Bug]: `BaseThinkingReasoningParser.extract_reasoning` silently discards output text when `<think>` appears mid-stream",
-    "url": "https://github.com/vllm-project/vllm/issues/50901",
     "issue_updated": "2026-08-03T21:38:55Z",
     "scanner_version": "oss_pr_radar_v14_trust_core"
   },
@@ -583,12 +580,11 @@
     "scanner_version": "oss_pr_radar_v13"
   },
   "vllm-project/vllm#50705": {
-    "analyzed": "2026-08-03T21:51:51Z",
-    "requeued_at": "2026-08-03T21:51:51Z",
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-03T21:58:25Z",
+    "status": "skip_open_pr_competition_saturated",
     "title": "[Bug]: sm_120 + local CUDA toolkit < 12.9: FlashInfer JIT failures kill engine init in three default paths (sampler, fused-MoE, FP8 KV) instead of falling back",
-    "url": "https://github.com/vllm-project/vllm/issues/50705",
+    "pr": "https://github.com/vllm-project/vllm/pull/48956",
+    "pr_assessment": "已有 2 个活跃直接关联 PR（#48956, #50751）；竞争已饱和，不应再创建重复实现",
     "issue_updated": "2026-08-03T19:56:40Z",
     "scanner_version": "oss_pr_radar_v14_trust_core"
   },
@@ -682,12 +678,11 @@
     "scanner_version": "oss_pr_radar_v13"
   },
   "vllm-project/vllm#50706": {
-    "analyzed": "2026-08-03T21:51:51Z",
-    "requeued_at": "2026-08-03T21:51:51Z",
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-03T21:58:25Z",
+    "status": "skip_open_pr_competition_saturated",
     "title": "[Bug]: Mistral3 (HF format): default text-only LLM() init fails in multimodal profiling — \"Failed to apply PixtralProcessor on data={'text': '[IMG]'}\"",
-    "url": "https://github.com/vllm-project/vllm/issues/50706",
+    "pr": "https://github.com/vllm-project/vllm/pull/50752",
+    "pr_assessment": "已有 2 个活跃直接关联 PR（#50752, #45525）；竞争已饱和，不应再创建重复实现",
     "issue_updated": "2026-08-03T19:56:34Z",
     "scanner_version": "oss_pr_radar_v14_trust_core"
   },
@@ -917,51 +912,39 @@
     "scanner_version": "oss_pr_radar_v14_trust_core"
   },
   "sgl-project/sglang#33245": {
-    "analyzed": "2026-08-03T21:51:51Z",
-    "requeued_at": "2026-08-03T21:51:51Z",
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-03T21:58:25Z",
+    "status": "someone_active",
     "title": "[Bug] Quantized DeepSeek-V4: fused wq_a+wkv path silently drops every layer's packed weights (server runs, output is garbage)",
-    "url": "https://github.com/sgl-project/sglang/issues/33245",
     "issue_updated": "2026-08-03T20:39:24Z",
     "scanner_version": "oss_pr_radar_v14_trust_core"
   },
   "crewAIInc/crewAI#6694": {
-    "analyzed": "2026-08-03T21:51:51Z",
-    "requeued_at": "2026-08-03T21:51:51Z",
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-03T21:58:25Z",
+    "status": "someone_active",
     "title": "[Security] SSRF via urllib.request.urlopen() in arxiv_paper_tool",
-    "url": "https://github.com/crewAIInc/crewAI/issues/6694",
     "issue_updated": "2026-08-03T20:35:01Z",
     "scanner_version": "oss_pr_radar_v14_trust_core"
   },
   "sgl-project/sglang#32607": {
-    "analyzed": "2026-08-03T21:51:51Z",
-    "requeued_at": "2026-08-03T21:51:51Z",
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-03T21:58:25Z",
+    "status": "rfc_or_roadmap_without_maintainer_split",
     "title": "[Feature] Kimi K3 Roadmap",
-    "url": "https://github.com/sgl-project/sglang/issues/32607",
     "issue_updated": "2026-08-03T20:29:27Z",
     "scanner_version": "oss_pr_radar_v14_trust_core"
   },
   "openai/openai-agents-python#4154": {
-    "analyzed": "2026-08-03T21:51:51Z",
-    "requeued_at": "2026-08-03T21:51:51Z",
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-03T21:58:25Z",
+    "status": "someone_active",
     "title": "Anthropic thinking signatures are replayed on the wrong thinking block",
-    "url": "https://github.com/openai/openai-agents-python/issues/4154",
     "issue_updated": "2026-08-03T20:17:49Z",
     "scanner_version": "oss_pr_radar_v14_trust_core"
   },
   "digithings-ai/digithings#1833": {
-    "analyzed": "2026-08-03T21:51:51Z",
+    "analyzed": "2026-08-03T21:58:25Z",
     "status": "skip_repo_quality",
     "reason": "low_stars:1",
     "title": "[olympus] Current book shows no live metrics until 22:00 UTC daily — current_price is a nightly batch value, and prices_live is the available fix",
-    "issue_updated": "2026-08-03T21:51:32Z",
+    "issue_updated": "2026-08-03T21:55:11Z",
     "scanner_version": "oss_pr_radar_v14_trust_core"
   },
   "caelo-cms/caelo-cms#410": {
@@ -1036,32 +1019,23 @@
     "scanner_version": "oss_pr_radar_v14_trust_core"
   },
   "vllm-project/vllm#50913": {
-    "analyzed": "2026-08-03T21:51:51Z",
-    "requeued_at": "2026-08-03T21:51:51Z",
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-03T21:58:25Z",
+    "status": "incomplete_issue_template",
     "title": "[RFC]: Cutting P/D-disaggregation TTFT: first-token seeding, fast KV side channels, and concurrent router dispatch (NixlConnector)",
-    "url": "https://github.com/vllm-project/vllm/issues/50913",
     "issue_updated": "2026-08-03T20:13:40Z",
     "scanner_version": "oss_pr_radar_v14_trust_core"
   },
   "vllm-project/vllm#50576": {
-    "analyzed": "2026-08-03T21:51:51Z",
-    "requeued_at": "2026-08-03T21:51:51Z",
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-03T21:58:25Z",
+    "status": "someone_active",
     "title": "[Feature]: SM8x (Ampere A100/A800) support for DeepSeek-V4-Flash / DeepSeek-V4-Flash-0731 DSpark",
-    "url": "https://github.com/vllm-project/vllm/issues/50576",
     "issue_updated": "2026-08-03T21:43:30Z",
     "scanner_version": "oss_pr_radar_v14_trust_core"
   },
   "pydantic/pydantic-ai#7102": {
-    "analyzed": "2026-08-03T21:51:51Z",
-    "requeued_at": "2026-08-03T21:51:51Z",
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-03T21:58:25Z",
+    "status": "no_bug_or_maintainer_actionability",
     "title": "Realtime: separate the codec and session event vocabularies",
-    "url": "https://github.com/pydantic/pydantic-ai/issues/7102",
     "issue_updated": "2026-08-03T21:37:58Z",
     "scanner_version": "oss_pr_radar_v14_trust_core"
   },
@@ -1087,6 +1061,44 @@
     "status": "no_bug_or_maintainer_actionability",
     "title": "`MistralModel` sends malformed tool-call args verbatim, bypassing both `args_as_dict` and `args_as_json_str`",
     "issue_updated": "2026-08-03T21:33:36Z",
+    "scanner_version": "oss_pr_radar_v14_trust_core"
+  },
+  "bradbrok/PinkyBot#991": {
+    "analyzed": "2026-08-03T21:58:25Z",
+    "status": "skip_repo_quality",
+    "reason": "low_stars:4",
+    "title": "Scheduler: proven-live outbox drain replay-storms — no attempt cap + FIFO head-of-line break re-pastes a never-confirming wake every tick and immortalizes zombie rows (live incident: 7+ dup deliveries/hr on Pi)",
+    "issue_updated": "2026-08-03T21:54:18Z",
+    "scanner_version": "oss_pr_radar_v14_trust_core"
+  },
+  "mattiasbrandt/protoArtoo#65": {
+    "analyzed": "2026-08-03T21:58:25Z",
+    "status": "skip_repo_quality",
+    "reason": "low_stars:2",
+    "title": "Establish a live A/B baseline for ordinary single-tab HTTP blackout and execute the rollback gate",
+    "issue_updated": "2026-08-03T21:53:39Z",
+    "scanner_version": "oss_pr_radar_v14_trust_core"
+  },
+  "mattiasbrandt/protoArtoo#52": {
+    "analyzed": "2026-08-03T21:58:25Z",
+    "status": "skip_repo_quality",
+    "reason": "low_stars:2",
+    "title": "Restore reliable controller web access and decide page-load recovery direction",
+    "issue_updated": "2026-08-03T21:53:38Z",
+    "scanner_version": "oss_pr_radar_v14_trust_core"
+  },
+  "portainer/portainer#13127": {
+    "analyzed": "2026-08-03T21:58:25Z",
+    "issue_updated": "2026-08-03T21:53:26Z",
+    "status": "skip_prefilter",
+    "title": "Error Invalid Swarm ID",
+    "scanner_version": "oss_pr_radar_v14_trust_core"
+  },
+  "pydantic/pydantic-ai#7105": {
+    "analyzed": "2026-08-03T21:58:25Z",
+    "status": "score_low",
+    "title": "AG-UI `RunAgentInput.context` is silently dropped",
+    "issue_updated": "2026-08-03T21:57:55Z",
     "scanner_version": "oss_pr_radar_v14_trust_core"
   }
 }

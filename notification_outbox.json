@@ -1,5 +1,5 @@
 {
-  "digest": "9a99573f8b7a31f2cf7d25b6e9baa02a787edff7605028fbb14c5b5c0cdde5d7",
+  "digest": "70b63794ba06372f0557e791f8781102773fe9bcced1a13f0b8c5ddd22ea51f8",
   "events": [
     {
       "attempts": 0,
@@ -209,9 +209,218 @@
       "kind": "watch",
       "runId": "pr-followup-1785793829",
       "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "DeusData/codebase-memory-mcp#1339",
+        "microsoft/agent-framework#7491",
+        "getzep/graphiti#1062",
+        "microsoft/agent-framework#7490",
+        "PrefectHQ/fastmcp#4744"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[DeusData/codebase-memory-mcp#1339](https://github.com/DeusData/codebase-memory-mcp/issues/1339) Graph not updated when the working tree returns to clean (revert leaves false negatives)**\n建议：WAIT_MAINTAINER | 分数：11\n价值：The issue is a well-documented bug with independent reproductions and a confirmed fix in RC1, but the maintainer has explicitly requested verification on RC1/current main and marked it awaiting-reporter. The candidate is not a new clean contribution; it is a regression case already routed for RC. Work should wait for maintainer confirmation and reporter verification.\n改动：No new code changes; the fix is already in RC1. Potential follow-up: improve change-visibility latency and document watch scope.\n验证：Retest the dirty-to-clean sequence on v0.9.1-rc.1 or current main as requested by maintainer.\n风险：Duplicate of #1296 if not properly distinguished; potential scope creep from secondary observations.\n竞争：未发现相关 open PR\n下一步：按正常流程实现并验证；如要求 DCO 则自动 sign-off，PR 创建后报告 CLA 状态。\n证据：复现信号 2，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[microsoft/agent-framework#7491](https://github.com/microsoft/agent-framework/issues/7491) Python: [Bug]: AG-UI `MESSAGES_SNAPSHOT` re-factors streamed messages under fresh ids — the reference `@ag-ui/client` merge then renders every mid-run tool call after the final text**\n建议：WAIT_MAINTAINER | 分数：14\n价值：Issue provides a detailed root cause and proposed fix, but the deterministic gate requires HUMAN_REVIEW and there is an existing PR (#7423) with semantic overlap that needs maintainer comparison. Also, potential duplicate issue #7490 and design confirmation are needed.\n改动：AG-UI adapter message id allocation；streaming event handling in _agent_run.py and _workflow.py\n验证：Reproduce with provided wire evidence；Add regression test for snapshot id stability and ordering\n风险：May conflict with existing PR #7423；Changing id allocation could affect client compatibility\n竞争：发现 PR #7423 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 5，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[getzep/graphiti#1062](https://github.com/getzep/graphiti/issues/1062) [BUG] get_episodes from graphiti-mcp returns stale/old data when used in n8n**\n建议：WAIT_MAINTAINER | 分数：9\n价值：Issue reports stale get_episodes results; maintainer comment attributes to queue latency, but user analysis identifies a concrete root cause: get_episodes uses keyset pagination with ORDER BY uuid DESC, returning arbitrary stable subset instead of most recent episodes. Existing PR #1726 addresses this but has failing CI and lacks full evidence. A materially better PR with robust tests and root-cause analysis is plausible.\n改动：Modify get_episodes in graphiti-mcp to order by valid_at DESC or equivalent recency ordering；Add regression tests for recency ordering and pagination\n验证：Reproduce issue by adding episodes with known timestamps and verifying get_episodes returns most recent first；Run existing test suite for graphiti-mcp and add targeted tests for ordering\n风险：Potential maintainer preference for queue-latency explanation; need to confirm root cause with maintainers；Changing ordering may affect pagination semantics; ensure backward compatibility\n竞争：已有直接关联但证据不完整的 PR #1726：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：先复现 issue，再逐项对比已有 PR 的缺口；只有能提供更小改动、更强测试或更完整边界覆盖时才开 PR。\n证据：复现信号 7，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[microsoft/agent-framework#7490](https://github.com/microsoft/agent-framework/issues/7490) Python: [Bug]: with `predict_state_config` set, EVERY tool result emits a full `StateSnapshotEvent` — including for tools the config never names**\n建议：WAIT_MAINTAINER | 分数：15\n价值：Issue provides a clear root cause and minimal repro, but requires maintainer design confirmation due to potential overlap with #7491 and need to align with maintainer preferences on fix scope.\n改动：Add failing test for snapshot emission per tool result；Modify _emit_tool_result_common to check pending_state_updates before emitting snapshot\n验证：Run provided repro script to confirm failure；Add regression test asserting no StateSnapshotEvent for non-predictive tool results\n风险：Potential behavior change if other code relies on snapshot emission for non-updating tools；Overlap with issue #7491 may require coordinated fix\n竞争：未发现相关 open PR\n下一步：先人工比较相关 issue 的根因、维护者归并方向和可提交代码路径；确认不是重复后再进入实现。\n证据：复现信号 8，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[PrefectHQ/fastmcp#4744](https://github.com/PrefectHQ/fastmcp/issues/4744) serialize_by_alias=False ignored for nested Pydantic models**\n建议：WAIT_MAINTAINER | 分数：10\n价值：Issue reports a clear bug: nested Pydantic models in dicts ignore serialize_by_alias=False. No open PR or related issue found, but the repository requires assignment and AI disclosure. Root cause is not yet confirmed; likely in serialization path for nested models.\n改动：Add failing test for nested model serialization；Fix serialization logic to respect serialize_by_alias for nested models\n验证：Reproduce with provided minimal example；Run targeted unit tests for tool return serialization\n风险：Potential behavior change for existing users relying on aliases；Need maintainer design confirmation\n竞争：未发现相关 open PR\n下一步：先等待维护者分配/确认方案；即使获批，公开 PR 的 AI 复核/披露确认仍必须由用户本人处理。\n证据：复现信号 2，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-03T22:01:05.486207Z",
+      "eventId": "f611775eeabf4c664c821510310a1ac08bafc6d4eefd9cf641556b37bd0ec7d5",
+      "idempotencyKey": "f611775eeabf4c664c821510310a1ac08bafc6d4eefd9cf641",
+      "kind": "review",
+      "runId": "scan-20260803T215825Z-fc8a0671569c",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "DeusData/codebase-memory-mcp#1339",
+        "PrefectHQ/fastmcp#4744",
+        "getzep/graphiti#1062",
+        "microsoft/agent-framework#7491"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[DeusData/codebase-memory-mcp#1339](https://github.com/DeusData/codebase-memory-mcp/issues/1339) Graph not updated when the working tree returns to clean (revert leaves false negatives)**\n建议：WAIT_MAINTAINER | 分数：None\n价值：POLICY_REVALIDATION_REQUIRED\n改动：尚未定位\n验证：重新运行完整扫描和贡献规则检查\n风险：尚未识别\n竞争：未发现直接覆盖\n下一步：按贡献规则复核\n证据：复现信号 0，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[PrefectHQ/fastmcp#4744](https://github.com/PrefectHQ/fastmcp/issues/4744) serialize_by_alias=False ignored for nested Pydantic models**\n建议：WAIT_MAINTAINER | 分数：None\n价值：POLICY_REVALIDATION_REQUIRED\n改动：尚未定位\n验证：重新运行完整扫描和贡献规则检查\n风险：尚未识别\n竞争：未发现直接覆盖\n下一步：按贡献规则复核\n证据：复现信号 0，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[getzep/graphiti#1062](https://github.com/getzep/graphiti/issues/1062) [BUG] get_episodes from graphiti-mcp returns stale/old data when used in n8n**\n建议：WAIT_MAINTAINER | 分数：None\n价值：POLICY_REVALIDATION_REQUIRED\n改动：尚未定位\n验证：重新运行完整扫描和贡献规则检查\n风险：尚未识别\n竞争：未发现直接覆盖\n下一步：按贡献规则复核\n证据：复现信号 0，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[microsoft/agent-framework#7491](https://github.com/microsoft/agent-framework/issues/7491) Python: [Bug]: AG-UI `MESSAGES_SNAPSHOT` re-factors streamed messages under fresh ids — the reference `@ag-ui/client` merge then renders every mid-run tool call after the final text**\n建议：WAIT_MAINTAINER | 分数：None\n价值：POLICY_REVALIDATION_REQUIRED\n改动：尚未定位\n验证：重新运行完整扫描和贡献规则检查\n风险：尚未识别\n竞争：未发现直接覆盖\n下一步：按贡献规则复核\n证据：复现信号 0，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-03T22:01:05.634617Z",
+      "eventId": "5e58d81255025547e9421556f654c5c5930b85206c8b5e8725a19f254acd945c",
+      "idempotencyKey": "5e58d81255025547e9421556f654c5c5930b85206c8b5e8725",
+      "kind": "watch",
+      "runId": "watch-1785794183",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "vllm-project/vllm#48109",
+        "vllm-project/vllm#45522",
+        "vllm-project/vllm#44231",
+        "flashinfer-ai/flashinfer#3551"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#48109](https://github.com/vllm-project/vllm/pull/48109) [Bugfix][XPU] Fix Mamba state pointer overflow**\n建议：PR_FOLLOWUP | 分数：None\n价值：CI 检查失败\n改动：尚未定位\n验证：查看正式 review、失败检查或冲突详情后处理\n风险：尚未识别\n竞争：未发现直接覆盖\n下一步：按贡献规则复核\n证据：复现信号 0，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#45522](https://github.com/vllm-project/vllm/pull/45522) fix: cache bad_words tokenization to avoid 'Already borrowed' errors under concurrency**\n建议：PR_FOLLOWUP | 分数：None\n价值：CI 检查失败\n改动：尚未定位\n验证：查看正式 review、失败检查或冲突详情后处理\n风险：尚未识别\n竞争：未发现直接覆盖\n下一步：按贡献规则复核\n证据：复现信号 0，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#44231](https://github.com/vllm-project/vllm/pull/44231) [MoE Refactor] Add MoEKernelOracle ABC base class and migrate Unquantized oracle**\n建议：PR_FOLLOWUP | 分数：None\n价值：CI 检查失败\n改动：尚未定位\n验证：查看正式 review、失败检查或冲突详情后处理\n风险：尚未识别\n竞争：未发现直接覆盖\n下一步：按贡献规则复核\n证据：复现信号 0，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[flashinfer-ai/flashinfer#3551](https://github.com/flashinfer-ai/flashinfer/pull/3551) fix: handle negative draft_token_ids in ChainSpeculativeSampling**\n建议：PR_FOLLOWUP | 分数：None\n价值：CI 检查失败\n改动：尚未定位\n验证：查看正式 review、失败检查或冲突详情后处理\n风险：尚未识别\n竞争：未发现直接覆盖\n下一步：按贡献规则复核\n证据：复现信号 0，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-03T22:01:05.730484Z",
+      "eventId": "0d62e9b8e8fb455e713b6c310bc586b5f1596dc0550f80d06af18e221b7b7b59",
+      "idempotencyKey": "0d62e9b8e8fb455e713b6c310bc586b5f1596dc0550f80d06a",
+      "kind": "watch",
+      "runId": "pr-followup-1785794224",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-03T21:54:14.829777Z",
+  "generatedAt": "2026-08-03T22:01:05.730484Z",
   "newEventCount": 1,
   "version": "notification_outbox_v1"
 }

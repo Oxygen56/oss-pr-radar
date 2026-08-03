@@ -26,6 +26,34 @@
     ],
     "why": "Issue reports a clear bug: nested Pydantic models in dicts ignore serialize_by_alias=False. No open PR or related issue found, but the repository requires assignment and AI disclosure. Root cause is not yet confirmed; likely in serialization path for nested models."
   },
+  "abd0dc83190a49c628ea83f21d4e43004b4b2cac3d2f627613be493686ec1dd3": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add failing test for snapshot emission per tool result",
+      "Modify _emit_tool_result_common to check pending_state_updates before emitting snapshot"
+    ],
+    "risks": [
+      "Potential behavior change if other code relies on snapshot emission for non-updating tools",
+      "Overlap with issue #7491 may require coordinated fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 15,
+    "test_plan": [
+      "Run provided repro script to confirm failure",
+      "Add regression test asserting no StateSnapshotEvent for non-predictive tool results"
+    ],
+    "unknowns": [
+      "Maintainer preference on fix scope (minimal vs broader delta event usage)",
+      "Whether #7491 is a duplicate or requires separate handling"
+    ],
+    "why": "Issue provides a clear root cause and minimal repro, but requires maintainer design confirmation due to potential overlap with #7491 and need to align with maintainer preferences on fix scope."
+  },
   "ae5841585ce6e1f648a203913ce6a20911d34f6c9f855023e8553450f23109a4": {
     "confidence": 0.8,
     "decision": "WAIT_MAINTAINER",
@@ -142,6 +170,35 @@
       "Maintainer's stance on proposed fix in #1724"
     ],
     "why": "Issue reports stale data in get_episodes; maintainer attributes to queue latency, but a user comment identifies a concrete root cause: keyset pagination hardcodes ORDER BY uuid DESC, returning arbitrary stable subset. Existing PR #1726 addresses this but has failing CI and lacks explicit issue link. A materially better PR with robust tests and clear root-cause fix is plausible."
+  },
+  "e76172b60f1b9591da21eeb4a217fd494af10bb87e29c1175a4a5bbee74d3a27": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Maintainer comment suggests queue latency, but user analysis contradicts with concrete code path"
+    ],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify get_episodes in graphiti-mcp to order by valid_at DESC or equivalent recency ordering",
+      "Add regression tests for recency ordering and pagination"
+    ],
+    "risks": [
+      "Potential maintainer preference for queue-latency explanation; need to confirm root cause with maintainers",
+      "Changing ordering may affect pagination semantics; ensure backward compatibility"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce issue by adding episodes with known timestamps and verifying get_episodes returns most recent first",
+      "Run existing test suite for graphiti-mcp and add targeted tests for ordering"
+    ],
+    "unknowns": [
+      "Whether maintainers accept the root cause analysis; status of PR #1726 and its failing CI details"
+    ],
+    "why": "Issue reports stale get_episodes results; maintainer comment attributes to queue latency, but user analysis identifies a concrete root cause: get_episodes uses keyset pagination with ORDER BY uuid DESC, returning arbitrary stable subset instead of most recent episodes. Existing PR #1726 addresses this but has failing CI and lacks full evidence. A materially better PR with robust tests and root-cause analysis is plausible."
   },
   "f9388995937b1e55bd8977335851a0e9859696c4056b203c018e1a8a6a848547": {
     "confidence": 0.8,
