@@ -87,8 +87,10 @@ written to either location.
 - This cloud workflow does not create local Codex tasks or modify local worktrees.
 
 Creating Codex tasks requires a separate local bridge because GitHub-hosted runners
-cannot operate the desktop app or local repositories. The scan artifact's
-`candidate_details` array is the handoff contract for that bridge.
+cannot operate the desktop app or local repositories. Every run publishes a
+`dispatch_intents.json` handoff containing only candidates that passed both the
+deterministic gate and DeepSeek review. Each prompt is exactly the `gh-issue-pr`
+skill entry followed by the issue URL.
 
 ## Development
 

@@ -58,12 +58,20 @@ jobs:
       - name: Validate report contract
         run: python scripts/validate_report.py reports/latest_scan.json
 
+      - name: Build local dispatch handoff
+        run: >-
+          python scripts/build_dispatch_intents.py
+          reports/latest_scan.json
+          reports/dispatch_intents.json
+
       - name: Upload scan evidence
         if: always()
         uses: actions/upload-artifact@v6
         with:
           name: pr-radar-${{ github.run_id }}
-          path: reports/latest_scan.json
+          path: |
+            reports/latest_scan.json
+            reports/dispatch_intents.json
           if-no-files-found: error
           retention-days: 14
 
