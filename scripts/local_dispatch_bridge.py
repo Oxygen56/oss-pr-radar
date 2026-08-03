@@ -22,6 +22,8 @@ GITHUB_ROOT = Path.home() / "Documents" / "github"
 WORKTREE_ROOT = Path.home() / ".codex" / "worktrees"
 REPO = "Oxygen56/oss-pr-radar"
 ISSUE_URL = re.compile(r"^https://github\.com/([^/]+/[^/]+)/issues/(\d+)$")
+DELEGATED_INPUT = re.compile(r"<input>(.*?)</input>", re.DOTALL)
+MAX_TITLE_CHARS = 59
 
 
 def command(args: list[str], cwd: Path | None = None, timeout: int = 300) -> str:
@@ -65,6 +67,17 @@ def normalize_origin(value: str) -> str:
         if normalized.lower().startswith(prefix):
             return normalized[len(prefix) :].strip("/").casefold()
     return ""
+
+
+def compact_title(value: str) -> str:
+    return (
+        value if len(value) <= MAX_TITLE_CHARS else value[: MAX_TITLE_CHARS - 1] + "…"
+    )
+
+
+def canonical_prompt(value: str) -> str:
+    match = DELEGATED_INPUT.search(value)
+    return (match.group(1) if match else value).strip()
 
 
 def source_repo(repo: str) -> Path:
@@ -151,7 +164,7 @@ def list_pending() -> dict[str, Any]:
         prepared = {
             **intent,
             "sourceRepoPath": str(path),
-            "desiredTitle": f"{title_time} {key} {intent['title']}"[:100],
+            "desiredTitle": compact_title(f"{title_time} {key} {intent['title']}"),
         }
         pending[key] = prepared
     write_json(PENDING, pending)
@@ -190,7 +203,7 @@ def commit_receipt(args: argparse.Namespace) -> dict[str, Any]:
         raise RuntimeError("thread cwd mismatch")
     if row["title"] != intent["desiredTitle"]:
         raise RuntimeError("thread title mismatch")
-    if (row["first_user_message"] or "").strip() != intent["prompt"].strip():
+    if canonical_prompt(row["first_user_message"] or "") != intent["prompt"].strip():
         raise RuntimeError("thread prompt mismatch")
     if normalize_origin(row["git_origin_url"] or "") != str(intent["repo"]).casefold():
         raise RuntimeError("thread origin mismatch")
