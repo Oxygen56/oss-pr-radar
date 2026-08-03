@@ -39,6 +39,29 @@ def test_publish_and_restore_verify_manifest(tmp_path):
     assert (restored / "state" / "base_sha.txt").read_text().strip()
 
 
+def test_publish_fetches_existing_state_through_authenticated_root(tmp_path, monkeypatch):
+    root, _origin = initialized_repo(tmp_path)
+    MODULE.publish(root, "radar-state")
+    MODULE.restore(root, "radar-state")
+    (root / "state" / "seen.json").write_text('{"next": true}\n', encoding="utf-8")
+
+    original_git = MODULE.git
+
+    def guarded_git(*args, cwd=None, check=True):
+        if args[:2] == ("fetch", "origin") and cwd != root:
+            raise AssertionError("remote fetch escaped the authenticated checkout")
+        return original_git(*args, cwd=cwd, check=check)
+
+    monkeypatch.setattr(MODULE, "git", guarded_git)
+    MODULE.publish(root, "radar-state")
+    monkeypatch.setattr(MODULE, "git", original_git)
+
+    restored = tmp_path / "restored-authenticated"
+    git("clone", str(root.parent / "origin.git"), str(restored), cwd=tmp_path)
+    MODULE.restore(restored, "radar-state")
+    assert json.loads((restored / "state" / "seen.json").read_text()) == {"next": True}
+
+
 def test_restore_rejects_file_changed_without_manifest_update(tmp_path):
     root, origin = initialized_repo(tmp_path)
     MODULE.publish(root, "radar-state")

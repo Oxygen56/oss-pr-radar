@@ -125,6 +125,14 @@ def publish(root: Path, branch: str) -> None:
     expected = (
         (root / BASE_SHA).read_text(encoding="utf-8").strip() if (root / BASE_SHA).exists() else ""
     )
+    fetched = git("fetch", "origin", branch, cwd=root, check=False)
+    actual = ""
+    if fetched.returncode == 0:
+        actual = git("rev-parse", "FETCH_HEAD", cwd=root).stdout.strip()
+        if expected and actual != expected:
+            raise RuntimeError("state branch changed since restore")
+    elif expected:
+        raise RuntimeError("authenticated state branch fetch failed")
     manifest = build_manifest(root, available)
     with tempfile.TemporaryDirectory(prefix="oss-pr-radar-state-") as raw:
         work = Path(raw)
@@ -148,15 +156,9 @@ def publish(root: Path, branch: str) -> None:
             key, separator, value = line.partition(" ")
             if separator and key and value:
                 git("config", "--local", key, value, cwd=work)
-        fetched = git("fetch", "origin", branch, cwd=work, check=False)
-        actual = ""
-        if fetched.returncode == 0:
-            actual = git("rev-parse", "FETCH_HEAD", cwd=work).stdout.strip()
-            if expected and actual != expected:
-                raise RuntimeError("state branch changed since restore")
-            git("checkout", "-B", branch, "FETCH_HEAD", cwd=work)
-        elif expected:
-            raise RuntimeError("expected state branch no longer exists")
+        if actual:
+            git("fetch", str(root.resolve()), actual, cwd=work)
+            git("checkout", "--detach", "FETCH_HEAD", cwd=work)
         else:
             git("checkout", "--orphan", branch, cwd=work)
         for remote_name, source in available.items():
