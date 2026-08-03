@@ -13,6 +13,7 @@ FILES = {
     "seen.json": Path("state/seen.json"),
     "runtime.json": Path("state/runtime.json"),
     "llm_cache.json": Path("state/llm_cache.json"),
+    "dispatch_queue.json": Path("state/dispatch_queue.json"),
 }
 
 

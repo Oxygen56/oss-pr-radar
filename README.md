@@ -92,6 +92,19 @@ cannot operate the desktop app or local repositories. Every run publishes a
 deterministic gate and DeepSeek review. Each prompt is exactly the `gh-issue-pr`
 skill entry followed by the issue URL.
 
+On the Mac, the consumer automation runs:
+
+```bash
+python scripts/local_dispatch_bridge.py list
+```
+
+The bridge reads the durable `radar-state` queue, rechecks that the issue remains
+open and unassigned, finds or clones the exact source repository, and registers it
+with Codex. After the desktop automation creates and renames a worktree task, it
+calls `local_dispatch_bridge.py commit`. The commit step independently checks the
+Codex SQLite record, first prompt, title, GitHub origin, and Git common directory
+before recording the dispatch receipt.
+
 ## Development
 
 ```bash

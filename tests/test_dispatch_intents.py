@@ -48,3 +48,10 @@ def test_human_review_and_llm_failure_are_not_dispatched():
         }
     )
     assert result["intents"] == []
+
+
+def test_existing_unconsumed_intent_survives_empty_scan():
+    existing = MODULE.build({"candidate_details": [candidate()]})
+    result = MODULE.build({"candidate_details": []}, existing)
+    assert [item["key"] for item in result["intents"]] == ["example/project#42"]
+    assert result["newIntentCount"] == 0

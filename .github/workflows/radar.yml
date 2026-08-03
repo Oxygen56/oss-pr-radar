@@ -63,6 +63,7 @@ jobs:
           python scripts/build_dispatch_intents.py
           reports/latest_scan.json
           reports/dispatch_intents.json
+          --queue state/dispatch_queue.json
 
       - name: Upload scan evidence
         if: always()

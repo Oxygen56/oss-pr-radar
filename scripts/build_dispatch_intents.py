@@ -19,7 +19,15 @@ def digest(value: Any) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
-def build(report: dict[str, Any]) -> dict[str, Any]:
+def build(
+    report: dict[str, Any], existing: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    now = datetime.now(UTC)
+    queued = {
+        item.get("key"): item
+        for item in (existing or {}).get("intents", [])
+        if isinstance(item, dict) and item.get("key")
+    }
     intents = []
     for candidate in report.get("candidate_details") or []:
         review = candidate.get("llm_review") or {}
@@ -44,12 +52,21 @@ def build(report: dict[str, Any]) -> dict[str, Any]:
             "scannerVersion": report.get("scanner_version"),
         }
         item["intentDigest"] = digest(item)
+        previous = queued.get(item["key"])
+        item["queuedAt"] = (
+            previous.get("queuedAt")
+            if isinstance(previous, dict)
+            and previous.get("intentDigest") == item["intentDigest"]
+            else now.isoformat().replace("+00:00", "Z")
+        )
         intents.append(item)
+        queued[item["key"]] = item
     return {
         "version": "dispatch_intents_v1",
-        "generatedAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        "generatedAt": now.isoformat().replace("+00:00", "Z"),
         "scanNow": report.get("now"),
-        "intents": intents,
+        "intents": sorted(queued.values(), key=lambda item: item["key"]),
+        "newIntentCount": len(intents),
     }
 
 
@@ -68,11 +85,24 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("report", type=Path)
     parser.add_argument("output", type=Path)
+    parser.add_argument("--queue", type=Path)
     args = parser.parse_args()
     report = json.loads(args.report.read_text(encoding="utf-8"))
-    intents = build(report)
+    existing = None
+    if args.queue and args.queue.exists():
+        existing = json.loads(args.queue.read_text(encoding="utf-8"))
+    intents = build(report, existing)
     write_json(args.output, intents)
-    print(json.dumps({"dispatch_intents": len(intents["intents"])}))
+    if args.queue:
+        write_json(args.queue, intents)
+    print(
+        json.dumps(
+            {
+                "dispatch_intents": len(intents["intents"]),
+                "new_dispatch_intents": intents["newIntentCount"],
+            }
+        )
+    )
     return 0
 
 
