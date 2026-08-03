@@ -47,10 +47,10 @@ def test_publish_fetches_existing_state_through_authenticated_root(tmp_path, mon
 
     original_git = MODULE.git
 
-    def guarded_git(*args, cwd=None, check=True):
+    def guarded_git(*args, cwd=None, check=True, env=None):
         if args[:2] == ("fetch", "origin") and cwd != root:
             raise AssertionError("remote fetch escaped the authenticated checkout")
-        return original_git(*args, cwd=cwd, check=check)
+        return original_git(*args, cwd=cwd, check=check, env=env)
 
     monkeypatch.setattr(MODULE, "git", guarded_git)
     MODULE.publish(root, "radar-state")

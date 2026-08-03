@@ -7,7 +7,6 @@ import argparse
 import hashlib
 import json
 import os
-import shutil
 import subprocess
 import tempfile
 from datetime import UTC, datetime
@@ -30,7 +29,10 @@ MANIFEST_VERSION = "radar_state_v2"
 
 
 def git(
-    *args: str, cwd: Path | None = None, check: bool = True
+    *args: str,
+    cwd: Path | None = None,
+    check: bool = True,
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", *args],
@@ -38,6 +40,7 @@ def git(
         check=check,
         text=True,
         capture_output=True,
+        env={**os.environ, **(env or {})},
     )
 
 
@@ -134,56 +137,55 @@ def publish(root: Path, branch: str) -> None:
     elif expected:
         raise RuntimeError("authenticated state branch fetch failed")
     manifest = build_manifest(root, available)
-    with tempfile.TemporaryDirectory(prefix="oss-pr-radar-state-") as raw:
-        work = Path(raw)
-        git("init", cwd=work)
-        git(
-            "remote",
-            "add",
-            "origin",
-            git("remote", "get-url", "origin", cwd=root).stdout.strip(),
-            cwd=work,
-        )
-        auth = git(
-            "config",
-            "--local",
-            "--get-regexp",
-            r"^http\..*\.extraheader$",
-            cwd=root,
-            check=False,
-        )
-        for line in auth.stdout.splitlines():
-            key, separator, value = line.partition(" ")
-            if separator and key and value:
-                git("config", "--local", key, value, cwd=work)
-        if actual:
-            git("fetch", str(root.resolve()), actual, cwd=work)
-            git("checkout", "--detach", "FETCH_HEAD", cwd=work)
-        else:
-            git("checkout", "--orphan", branch, cwd=work)
+    manifest_bytes = (
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
+    with tempfile.TemporaryDirectory(prefix="oss-pr-radar-state-index-") as raw:
+        temporary = Path(raw)
+        index_env = {"GIT_INDEX_FILE": str(temporary / "index")}
+        git("read-tree", "--empty", cwd=root, env=index_env)
         for remote_name, source in available.items():
-            shutil.copy2(source, work / remote_name)
-        (work / MANIFEST).write_text(
-            json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-        git("add", *available.keys(), MANIFEST, cwd=work)
-        if git("diff", "--cached", "--quiet", cwd=work, check=False).returncode == 0:
-            return
+            blob = git("hash-object", "-w", str(source), cwd=root).stdout.strip()
+            git(
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                "100644",
+                blob,
+                remote_name,
+                cwd=root,
+                env=index_env,
+            )
+        manifest_path = temporary / MANIFEST
+        atomic_write(manifest_path, manifest_bytes)
+        manifest_blob = git("hash-object", "-w", str(manifest_path), cwd=root).stdout.strip()
         git(
-            "-c",
-            "user.name=github-actions[bot]",
-            "-c",
-            "user.email=41898282+github-actions[bot]@users.noreply.github.com",
-            "commit",
-            "-m",
-            "Update radar state",
-            cwd=work,
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            "100644",
+            manifest_blob,
+            MANIFEST,
+            cwd=root,
+            env=index_env,
         )
-        push = ["push", "origin", f"HEAD:{branch}"]
-        if actual:
-            push.insert(1, f"--force-with-lease=refs/heads/{branch}:{actual}")
-        git(*push, cwd=work)
+        tree = git("write-tree", cwd=root, env=index_env).stdout.strip()
+
+    parent = ("-p", actual) if actual else ()
+    commit = git(
+        "-c",
+        "user.name=github-actions[bot]",
+        "-c",
+        "user.email=41898282+github-actions[bot]@users.noreply.github.com",
+        "commit-tree",
+        tree,
+        *parent,
+        "-m",
+        "Update radar state",
+        cwd=root,
+    ).stdout.strip()
+    lease = f"--force-with-lease=refs/heads/{branch}:{actual}"
+    git("push", lease, "origin", f"{commit}:refs/heads/{branch}", cwd=root)
 
 
 def migrate(root: Path, branch: str) -> None:
