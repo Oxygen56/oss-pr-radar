@@ -131,9 +131,7 @@ AGENT_INFRA_PRIORITY_REPOS = {
     "ai-dynamo/dynamo",
 }
 
-AGENT_INFRA_SCAN_REPOS = [
-    repo for repo in KNOWN_REPOS if repo in AGENT_INFRA_PRIORITY_REPOS
-]
+AGENT_INFRA_SCAN_REPOS = [repo for repo in KNOWN_REPOS if repo in AGENT_INFRA_PRIORITY_REPOS]
 AGENT_INFRA_SCAN_REPOS = [
     repo for repo in AGENT_INFRA_SCAN_REPOS if repo.casefold() not in EXCLUDED_REPOS
 ]
@@ -276,9 +274,7 @@ BUG_ACTIONABILITY_RE = re.compile(
     r"\b(?:does not|doesn't|cannot|can't|fails? to|no way to)\b",
     re.I,
 )
-HELP_WANTED_RE = re.compile(
-    r"\b(help wanted|contributions? welcome|good to implement)\b", re.I
-)
+HELP_WANTED_RE = re.compile(r"\b(help wanted|contributions? welcome|good to implement)\b", re.I)
 MAINTAINER_APPROVAL_RE = re.compile(
     r"\b(go ahead|please implement|contributions? welcome|help wanted|"
     r"happy to accept|sounds good|approved|please send a pr|feel free to open)\b",
@@ -493,8 +489,7 @@ def public_reproduction_signal_count(body: str) -> int:
     meaningful_blocks = sum(
         1
         for block in fenced_blocks
-        if len(re.sub(r"\s+", "", block)) >= 8
-        and re.search(r"[A-Za-z0-9_./:=(){}\[\]-]", block)
+        if len(re.sub(r"\s+", "", block)) >= 8 and re.search(r"[A-Za-z0-9_./:=(){}\[\]-]", block)
     )
     return text_signals + meaningful_blocks
 
@@ -505,9 +500,7 @@ def incomplete_template_value_count(body: str) -> int:
     return len(EMPTY_TEMPLATE_VALUE_RE.findall(prose))
 
 
-BOT_RE = re.compile(
-    r"\b(bot|github-actions\[bot\]|stale\[bot\]|dependabot\[bot\])\b", re.I
-)
+BOT_RE = re.compile(r"\b(bot|github-actions\[bot\]|stale\[bot\]|dependabot\[bot\])\b", re.I)
 DESKTOP_PLATFORM_RE = re.compile(
     r"\b(windows|macos|desktop app|electron|microsoft store|chatgpt\.exe|gui)\b",
     re.I,
@@ -678,9 +671,7 @@ def is_dependency_update_pr(hit: dict[str, Any]) -> bool:
     title = str(hit.get("title") or "").strip()
     user = hit.get("user") or hit.get("author") or {}
     author = (
-        str(user.get("login") or user.get("name") or "")
-        if isinstance(user, dict)
-        else str(user)
+        str(user.get("login") or user.get("name") or "") if isinstance(user, dict) else str(user)
     )
     return bool(
         re.search(r"^(?:build|chore)(?:\([^)]*deps?[^)]*\))?\s*:", title, re.I)
@@ -741,9 +732,7 @@ def base_priority(item: dict[str, Any]) -> tuple[int, int, int, int, str]:
     return (
         int(bool(item.get("_explicit_recheck"))),
         int(item.get("repo") in AGENT_INFRA_PRIORITY_REPOS),
-        int(
-            bool(re.search(r"\b(bug|regression|performance|refactor)\b", labels, re.I))
-        ),
+        int(bool(re.search(r"\b(bug|regression|performance|refactor)\b", labels, re.I))),
         len({match.group(0).lower() for match in HIGH_RE.finditer(title)}),
         item.get("updated") or "",
     )
@@ -777,9 +766,7 @@ def parse_github_time(value: str | None, default: datetime) -> datetime:
     if not value:
         return default
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(
-            timezone.utc
-        )
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
     except Exception:
         return default
 
@@ -893,9 +880,7 @@ def gh(args: list[str], timeout: int = 18) -> tuple[Any | None, str | None]:
     ):
         direct_env.pop(name, None)
 
-    def invoke(
-        env: dict[str, str], call_timeout: float
-    ) -> subprocess.CompletedProcess[str]:
+    def invoke(env: dict[str, str], call_timeout: float) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             ["gh", *args],
             text=True,
@@ -1010,9 +995,7 @@ def candidate_notification_digest(candidate: dict[str, Any]) -> str:
     def normalized(value: Any) -> Any:
         if isinstance(value, dict):
             return {
-                key: normalized(item)
-                for key, item in sorted(value.items())
-                if key not in volatile
+                key: normalized(item) for key, item in sorted(value.items()) if key not in volatile
             }
         if isinstance(value, list):
             return [normalized(item) for item in value]
@@ -1046,9 +1029,7 @@ def should_skip_seen(
     if issue_updated and old_updated:
         return issue_updated == old_updated
 
-    analyzed = parse_github_time(
-        old.get("analyzed"), datetime.min.replace(tzinfo=timezone.utc)
-    )
+    analyzed = parse_github_time(old.get("analyzed"), datetime.min.replace(tzinfo=timezone.utc))
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     return current - analyzed < timedelta(hours=SEEN_RECHECK_HOURS)
 
@@ -1076,9 +1057,7 @@ def is_desktop_peripheral_issue(title: str, labels_text: str, body: str) -> bool
     """Keep desktop peripheral failures out of the Agent/AI Infra implementation queue."""
 
     scoped = f"{title}\n{labels_text}\n{body[:4000]}"
-    return bool(
-        DESKTOP_PLATFORM_RE.search(scoped) and PERIPHERAL_INTEGRATION_RE.search(scoped)
-    )
+    return bool(DESKTOP_PLATFORM_RE.search(scoped) and PERIPHERAL_INTEGRATION_RE.search(scoped))
 
 
 def is_frontend_interaction_issue(title: str, labels_text: str, body: str) -> bool:
@@ -1090,9 +1069,7 @@ def is_frontend_interaction_issue(title: str, labels_text: str, body: str) -> bo
         f"{title}\n{labels_text}",
         flags=re.I,
     )
-    if FRONTEND_INTERACTION_RE.search(heading) and FRONTEND_RENDERING_SYMPTOM_RE.search(
-        heading
-    ):
+    if FRONTEND_INTERACTION_RE.search(heading) and FRONTEND_RENDERING_SYMPTOM_RE.search(heading):
         return True
     prose = re.sub(r"```[^\n]*\n.*?```", "", body[:4000], flags=re.I | re.S)
     prose = re.sub(r"\bterminal\s+(?:state|outcome|status)\b", "", prose, flags=re.I)
@@ -1111,9 +1088,7 @@ def effective_window_hours(
     state: dict[str, Any],
     max_backfill_hours: float,
 ) -> tuple[float, str | None]:
-    last_success = (
-        state.get("last_successful_scan") if isinstance(state, dict) else None
-    )
+    last_success = state.get("last_successful_scan") if isinstance(state, dict) else None
     if not last_success:
         return requested_hours, None
     parsed = parse_github_time(last_success, now)
@@ -1156,17 +1131,13 @@ class Radar:
         self.errors: list[str] = []
         self.repo_cache: dict[str, tuple[bool, str]] = {}
         self.policy_cache: dict[str, str] = {}
-        self.related_issue_cache: dict[
-            str, tuple[list[dict[str, Any]] | None, str | None]
-        ] = {}
+        self.related_issue_cache: dict[str, tuple[list[dict[str, Any]] | None, str | None]] = {}
         self.search_failed = False
         self.rate_limited = False
         self.sleep_fn = sleep_fn
         self.monotonic_fn = monotonic_fn
         self.scan_started_at = self.monotonic_fn()
-        self.deep_inspection_deadline_seconds = max(
-            0.0, float(deep_inspection_deadline_seconds)
-        )
+        self.deep_inspection_deadline_seconds = max(0.0, float(deep_inspection_deadline_seconds))
         self.scan_deadline_reached = False
         self.pending_rechecks = pending_rechecks or {}
         self.notify = notify
@@ -1179,8 +1150,7 @@ class Radar:
 
     def deep_inspection_deadline_reached(self) -> bool:
         reached = (
-            self.monotonic_fn() - self.scan_started_at
-            >= self.deep_inspection_deadline_seconds
+            self.monotonic_fn() - self.scan_started_at >= self.deep_inspection_deadline_seconds
         )
         self.scan_deadline_reached = self.scan_deadline_reached or reached
         return reached
@@ -1228,9 +1198,7 @@ class Radar:
             self._last_search_at = self.monotonic_fn()
             if not err:
                 break
-            is_rate_limit = (
-                "rate limit" in err.lower() or "abuse detection" in err.lower()
-            )
+            is_rate_limit = "rate limit" in err.lower() or "abuse detection" in err.lower()
             if not is_rate_limit or attempt >= len(retry_delays):
                 break
             self.sleep_fn(retry_delays[attempt])
@@ -1259,12 +1227,8 @@ class Radar:
                     "url": item.get("html_url") or "",
                     "updated": item.get("updated_at") or "",
                     "created": item.get("created_at") or "",
-                    "labels": [
-                        label.get("name", "") for label in item.get("labels", [])
-                    ],
-                    "assignees": [
-                        a.get("login", "") for a in item.get("assignees", [])
-                    ],
+                    "labels": [label.get("name", "") for label in item.get("labels", [])],
+                    "assignees": [a.get("login", "") for a in item.get("assignees", [])],
                     "body": item.get("body") or "",
                 },
             )
@@ -1307,9 +1271,7 @@ class Radar:
         if err or not isinstance(data, list):
             self.errors.append(f"repo_issues:{repo}:{err or 'invalid_response'}")
             self.search_failed = True
-            if err and (
-                "rate limit" in err.lower() or "abuse detection" in err.lower()
-            ):
+            if err and ("rate limit" in err.lower() or "abuse detection" in err.lower()):
                 self.rate_limited = True
             return
 
@@ -1326,12 +1288,8 @@ class Radar:
                     "url": item.get("html_url") or "",
                     "updated": item.get("updated_at") or "",
                     "created": item.get("created_at") or "",
-                    "labels": [
-                        label.get("name", "") for label in item.get("labels", [])
-                    ],
-                    "assignees": [
-                        a.get("login", "") for a in item.get("assignees", [])
-                    ],
+                    "labels": [label.get("name", "") for label in item.get("labels", [])],
+                    "assignees": [a.get("login", "") for a in item.get("assignees", [])],
                     "body": item.get("body") or "",
                 },
             )
@@ -1355,17 +1313,11 @@ class Radar:
                 try:
                     future.result()
                 except Exception as exc:
-                    self.errors.append(
-                        f"repo_issues_worker:{type(exc).__name__}:{str(exc)[:120]}"
-                    )
+                    self.errors.append(f"repo_issues_worker:{type(exc).__name__}:{str(exc)[:120]}")
                     self.search_failed = True
-        discovery_index = int(self.now.timestamp() // 3600) % len(
-            AGENT_INFRA_DISCOVERY_QUERIES
-        )
+        discovery_index = int(self.now.timestamp() // 3600) % len(AGENT_INFRA_DISCOVERY_QUERIES)
         discovery_query = AGENT_INFRA_DISCOVERY_QUERIES[discovery_index]
-        self.add_search(
-            items, f"{base} label:bug {discovery_query}", 15, required=False
-        )
+        self.add_search(items, f"{base} label:bug {discovery_query}", 15, required=False)
         rechecks = sorted(
             (
                 (key, value)
@@ -1374,9 +1326,7 @@ class Radar:
                 and value.get("status")
                 in {"send_failed", "status_update", "inspection_budget_deferred"}
             ),
-            key=lambda pair: str(
-                pair[1].get("requeued_at") or pair[1].get("analyzed") or ""
-            ),
+            key=lambda pair: str(pair[1].get("requeued_at") or pair[1].get("analyzed") or ""),
         )[:MAX_SEEN_RECHECKS]
         recheck_keys = {key for key, _ in rechecks}
         migration_rechecks = sorted(
@@ -1403,8 +1353,7 @@ class Radar:
                     "repo": repo,
                     "num": int(number_text),
                     "title": entry.get("title") or key,
-                    "url": entry.get("url")
-                    or f"https://github.com/{repo}/issues/{number_text}",
+                    "url": entry.get("url") or f"https://github.com/{repo}/issues/{number_text}",
                     "labels": [],
                     "assignees": [],
                     "updated": entry.get("issue_updated") or "",
@@ -1423,8 +1372,7 @@ class Radar:
                 "repo": repo,
                 "num": int(number_text),
                 "title": entry.get("issueTitle") or key,
-                "url": entry.get("issueUrl")
-                or f"https://github.com/{repo}/issues/{number_text}",
+                "url": entry.get("issueUrl") or f"https://github.com/{repo}/issues/{number_text}",
                 "labels": [],
                 "assignees": [],
                 "updated": entry.get("issueUpdated") or "",
@@ -1464,9 +1412,7 @@ class Radar:
             self.repo_cache[repo] = (False, "repo_contents_failed")
             return self.repo_cache[repo]
         names = {
-            str(entry.get("name") or "").casefold()
-            for entry in contents
-            if isinstance(entry, dict)
+            str(entry.get("name") or "").casefold() for entry in contents if isinstance(entry, dict)
         }
         has_code = bool(names & CODE_MARKERS) or any(
             name
@@ -1495,31 +1441,21 @@ class Radar:
 
         root, err = gh(["api", f"repos/{repo}/contents"], timeout=15)
         if err or not isinstance(root, list):
-            self.policy_cache[repo] = (
-                static_rule if static_rule != "normal" else "policy_unknown"
-            )
+            self.policy_cache[repo] = static_rule if static_rule != "normal" else "policy_unknown"
             return self.policy_cache[repo]
 
         entries = [entry for entry in root if isinstance(entry, dict)]
         github_dir = next(
-            (
-                entry
-                for entry in entries
-                if str(entry.get("name") or "").casefold() == ".github"
-            ),
+            (entry for entry in entries if str(entry.get("name") or "").casefold() == ".github"),
             None,
         )
         if github_dir:
-            github_entries, github_err = gh(
-                ["api", f"repos/{repo}/contents/.github"], timeout=15
-            )
+            github_entries, github_err = gh(["api", f"repos/{repo}/contents/.github"], timeout=15)
             if github_err:
                 self.policy_cache[repo] = "policy_unknown"
                 return self.policy_cache[repo]
             if isinstance(github_entries, list):
-                entries.extend(
-                    entry for entry in github_entries if isinstance(entry, dict)
-                )
+                entries.extend(entry for entry in github_entries if isinstance(entry, dict))
 
         policy_names = {
             "agents.md",
@@ -1538,14 +1474,11 @@ class Radar:
         policy_paths = [
             str(entry.get("path"))
             for entry in entries
-            if str(entry.get("name") or "").casefold() in policy_names
-            and entry.get("path")
+            if str(entry.get("name") or "").casefold() in policy_names and entry.get("path")
         ][:6]
         policy_text: list[str] = []
         for path in policy_paths:
-            payload, payload_err = gh(
-                ["api", f"repos/{repo}/contents/{path}"], timeout=15
-            )
+            payload, payload_err = gh(["api", f"repos/{repo}/contents/{path}"], timeout=15)
             if payload_err or not isinstance(payload, dict):
                 self.policy_cache[repo] = "policy_unknown"
                 return self.policy_cache[repo]
@@ -1571,18 +1504,12 @@ class Radar:
                     linked, linked_err = gh(
                         ["api", f"repos/{repo}/contents/{normalized}"], timeout=15
                     )
-                    if (
-                        linked_err
-                        or not isinstance(linked, dict)
-                        or not linked.get("content")
-                    ):
+                    if linked_err or not isinstance(linked, dict) or not linked.get("content"):
                         self.policy_cache[repo] = "policy_unknown"
                         return self.policy_cache[repo]
                     try:
                         policy_text.append(
-                            base64.b64decode(linked["content"]).decode(
-                                "utf-8", errors="replace"
-                            )
+                            base64.b64decode(linked["content"]).decode("utf-8", errors="replace")
                         )
                     except (TypeError, ValueError):
                         self.policy_cache[repo] = "policy_unknown"
@@ -1652,9 +1579,7 @@ class Radar:
             }
 
         source_text = f"{title}\n{issue_context}"
-        compiler_match = re.search(
-            r"\b(nvcc|cicc|ptxas|clang|gcc)\b", source_text, re.I
-        )
+        compiler_match = re.search(r"\b(nvcc|cicc|ptxas|clang|gcc)\b", source_text, re.I)
         failure_match = re.search(
             r"\b(segmentation\s+fault|bus\s+error|illegal\s+memory\s+access|core\s+dumped)\b",
             source_text,
@@ -1663,8 +1588,7 @@ class Radar:
         related_items = list(data)
         if compiler_match and failure_match:
             query = (
-                f"repo:{repo} is:issue is:open {compiler_match.group(1)} "
-                f'"{failure_match.group(1)}"'
+                f'repo:{repo} is:issue is:open {compiler_match.group(1)} "{failure_match.group(1)}"'
             )
             search_data, search_err = gh(
                 [
@@ -1709,12 +1633,9 @@ class Radar:
             if int(item.get("number") or 0) == num:
                 continue
             other_text = f"{item.get('title') or ''}\n{item.get('body') or ''}"
-            shared_signals = sorted(
-                source_signals & related_issue_behavior_terms(other_text)
-            )
+            shared_signals = sorted(source_signals & related_issue_behavior_terms(other_text))
             title_shared_signals = sorted(
-                source_title_signals
-                & related_issue_behavior_terms(str(item.get("title") or ""))
+                source_title_signals & related_issue_behavior_terms(str(item.get("title") or ""))
             )
             semantic_overlap, _ = semantic_overlap_strength(source_text, other_text)
             title_overlap, title_code_like = semantic_overlap_strength(
@@ -1728,14 +1649,10 @@ class Radar:
                 source_stack_signatures & related_issue_stack_signatures(other_text)
             )
             shared_stack_paths = [
-                signal
-                for signal in shared_stack_signatures
-                if signal.startswith("path:")
+                signal for signal in shared_stack_signatures if signal.startswith("path:")
             ]
             shared_failures = [
-                signal
-                for signal in shared_stack_signatures
-                if signal.startswith("failure:")
+                signal for signal in shared_stack_signatures if signal.startswith("failure:")
             ]
             shared_signal_set = set(shared_signals)
             has_signature_pair = bool(title_shared_signals) and any(
@@ -1842,9 +1759,7 @@ class Radar:
         self, repo: str, num: int, issue: dict[str, Any], comments: list[dict[str, Any]]
     ) -> bool:
         try:
-            created = datetime.fromisoformat(
-                (issue.get("created_at") or "").replace("Z", "+00:00")
-            )
+            created = datetime.fromisoformat((issue.get("created_at") or "").replace("Z", "+00:00"))
         except Exception:
             created = self.now
         if created >= self.since:
@@ -1908,9 +1823,7 @@ class Radar:
         linked_numbers = set(issue_body_linked_numbers)
         linked_numbers.update(
             int(match)
-            for match in re.findall(
-                r"\b(?:pr|pull request)\s*#(\d+)\b", issue_context, re.I
-            )
+            for match in re.findall(r"\b(?:pr|pull request)\s*#(\d+)\b", issue_context, re.I)
         )
         timeline, timeline_error = gh_paginated(
             [
@@ -1932,11 +1845,7 @@ class Radar:
             same_repo = source_repo.casefold() == repo.casefold() or bool(
                 re.search(rf"github\.com/{re.escape(repo)}/pull/\d+", source_url, re.I)
             )
-            if (
-                same_repo
-                and "pull_request" in source_issue
-                and source_issue.get("number")
-            ):
+            if same_repo and "pull_request" in source_issue and source_issue.get("number"):
                 linked_numbers.add(int(source_issue["number"]))
         linked_numbers.update(
             int(match)
@@ -1952,13 +1861,9 @@ class Radar:
             if match
         )
         for pr_num in list(linked_numbers)[:6]:
-            detail, detail_error = gh(
-                ["api", f"repos/{repo}/pulls/{pr_num}"], timeout=15
-            )
+            detail, detail_error = gh(["api", f"repos/{repo}/pulls/{pr_num}"], timeout=15)
             if detail_error:
-                self._last_open_pr_lookup_errors.append(
-                    f"linked_pr_{pr_num}:{detail_error}"
-                )
+                self._last_open_pr_lookup_errors.append(f"linked_pr_{pr_num}:{detail_error}")
             if not isinstance(detail, dict):
                 continue
             relation = issue_body_link_relations.get(pr_num)
@@ -2018,9 +1923,7 @@ class Radar:
             )
             if not direct and is_dependency_update_pr(hit):
                 continue
-            overlap_count, code_like_overlap = semantic_overlap_strength(
-                title, hit_text
-            )
+            overlap_count, code_like_overlap = semantic_overlap_strength(title, hit_text)
             if not direct and not (overlap_count >= 3 and code_like_overlap):
                 continue
             url = hit.get("html_url")
@@ -2060,13 +1963,9 @@ class Radar:
                 timeout=20,
             )
             if search_error:
-                self._last_open_pr_lookup_errors.append(
-                    f"semantic_search:{search_error}"
-                )
+                self._last_open_pr_lookup_errors.append(f"semantic_search:{search_error}")
             for hit in (
-                (search_data or {}).get("items", [])
-                if isinstance(search_data, dict)
-                else []
+                (search_data or {}).get("items", []) if isinstance(search_data, dict) else []
             ):
                 hit_text = f"{hit.get('title') or ''}\n{hit.get('body') or ''}"
                 direct = bool(
@@ -2078,9 +1977,7 @@ class Radar:
                 )
                 if not direct and is_dependency_update_pr(hit):
                     continue
-                overlap_count, code_like_overlap = semantic_overlap_strength(
-                    title, hit_text
-                )
+                overlap_count, code_like_overlap = semantic_overlap_strength(title, hit_text)
                 if overlap_count < 3 or not code_like_overlap:
                     continue
                 url = hit.get("html_url")
@@ -2106,9 +2003,7 @@ class Radar:
             "additions,deletions,changedFiles,statusCheckRollup,reviewDecision,"
             "latestReviews,comments,closingIssuesReferences"
         )
-        data, err = gh(
-            ["pr", "view", str(pr_num), "--repo", repo, "--json", fields], timeout=25
-        )
+        data, err = gh(["pr", "view", str(pr_num), "--repo", repo, "--json", fields], timeout=25)
         if isinstance(data, dict) and not err:
             return data
         data, err = gh(["api", f"repos/{repo}/pulls/{pr_num}"], timeout=15)
@@ -2161,9 +2056,7 @@ class Radar:
         comments_value = detail.get("comments")
         comments = comments_value if isinstance(comments_value, list) else []
         comment_text = "\n".join(
-            comment.get("body") or ""
-            for comment in comments
-            if isinstance(comment, dict)
+            comment.get("body") or "" for comment in comments if isinstance(comment, dict)
         )
         rule_closed = bool(
             state == "CLOSED"
@@ -2177,9 +2070,7 @@ class Radar:
         )
         files_value = detail.get("files")
         files = files_value if isinstance(files_value, list) else []
-        file_paths = [
-            entry.get("path", "") for entry in files if isinstance(entry, dict)
-        ]
+        file_paths = [entry.get("path", "") for entry in files if isinstance(entry, dict)]
         test_files = [path for path in file_paths if TEST_FILE_RE.search(path)]
         closing_value = detail.get("closingIssuesReferences")
         closing = closing_value if isinstance(closing_value, list) else []
@@ -2203,26 +2094,15 @@ class Radar:
         checks_value = detail.get("statusCheckRollup")
         checks = checks_value if isinstance(checks_value, list) else []
         check_states = [
-            str(
-                check.get("conclusion")
-                or check.get("state")
-                or check.get("status")
-                or ""
-            ).upper()
+            str(check.get("conclusion") or check.get("state") or check.get("status") or "").upper()
             for check in checks
             if isinstance(check, dict)
         ]
         failed_checks = [
-            state
-            for state in check_states
-            if state in {"FAILURE", "FAILED", "ERROR", "TIMED_OUT"}
+            state for state in check_states if state in {"FAILURE", "FAILED", "ERROR", "TIMED_OUT"}
         ]
-        successful_checks = [
-            state for state in check_states if state in {"SUCCESS", "COMPLETED"}
-        ]
-        updated = parse_github_time(
-            detail.get("updatedAt") or hit.get("updated_at"), self.now
-        )
+        successful_checks = [state for state in check_states if state in {"SUCCESS", "COMPLETED"}]
+        updated = parse_github_time(detail.get("updatedAt") or hit.get("updated_at"), self.now)
         age_days = max(0, (self.now - updated).days)
         changed_files = int(detail.get("changedFiles") or len(file_paths) or 0)
         additions = int(detail.get("additions") or 0)
@@ -2230,12 +2110,8 @@ class Radar:
 
         keyword_hits, code_like_overlap = semantic_overlap_strength(issue_title, text)
         distinctive_overlap = semantic_distinctive_overlap(issue_title, text)
-        issue_paths = {
-            match.lower() for match in ISSUE_CODE_PATH_RE.findall(issue_context)
-        }
-        overlapping_paths = sorted(
-            path for path in file_paths if path.lower() in issue_paths
-        )
+        issue_paths = {match.lower() for match in ISSUE_CODE_PATH_RE.findall(issue_context)}
+        overlapping_paths = sorted(path for path in file_paths if path.lower() in issue_paths)
         semantic_overlap = (bool(overlapping_paths) and keyword_hits >= 2) or (
             keyword_hits >= 3 and code_like_overlap and len(distinctive_overlap) >= 2
         )
@@ -2350,9 +2226,7 @@ class Radar:
                 }
             return {"status": "none", "prs": [], "summary": "未发现相关 open PR"}
 
-        assessments = [
-            self.assess_single_pr(repo, num, title, hit, issue_context) for hit in hits
-        ]
+        assessments = [self.assess_single_pr(repo, num, title, hit, issue_context) for hit in hits]
         assessments = [item for item in assessments if item.get("url")]
         if not assessments:
             return {
@@ -2429,9 +2303,7 @@ class Radar:
             if str(item.get("state") or "OPEN").upper() == "OPEN"
         ]
         merged_direct = [
-            item
-            for item in direct_assessments
-            if str(item.get("state") or "").upper() == "MERGED"
+            item for item in direct_assessments if str(item.get("state") or "").upper() == "MERGED"
         ]
         if merged_direct:
             best = max(merged_direct, key=lambda item: item["score"])
@@ -2476,9 +2348,7 @@ class Radar:
             summary = f"已有 PR 但强度不足，且仓库通常需要先分配/确认：#{best['number']} score={best['score']}"
         else:
             status = "human_review_required"
-            summary = (
-                f"发现关键词相关 PR，但未确认直接覆盖：#{best['number']}；需人工核对"
-            )
+            summary = f"发现关键词相关 PR，但未确认直接覆盖：#{best['number']}；需人工核对"
 
         return {
             "status": status,
@@ -2505,37 +2375,32 @@ class Radar:
         topic_text = re.sub(r"[_-]+", " ", f"{title}\n{body}")
         scoring_text = re.sub(r"[_-]+", " ", text)
         maintainer_approved = any(
-            (comment.get("author_association") or "").upper()
-            in {"MEMBER", "OWNER", "COLLABORATOR"}
+            (comment.get("author_association") or "").upper() in {"MEMBER", "OWNER", "COLLABORATOR"}
             and MAINTAINER_APPROVAL_RE.search(comment.get("body") or "")
             for comment in comments
         )
         recent_maintainer_approved = any(
-            (comment.get("author_association") or "").upper()
-            in {"MEMBER", "OWNER", "COLLABORATOR"}
+            (comment.get("author_association") or "").upper() in {"MEMBER", "OWNER", "COLLABORATOR"}
             and MAINTAINER_APPROVAL_RE.search(comment.get("body") or "")
             and parse_github_time(comment.get("created_at"), self.now)
             >= self.now - timedelta(days=30)
             for comment in comments
         )
         maintainer_configuration_guidance = any(
-            (comment.get("author_association") or "").upper()
-            in {"MEMBER", "OWNER", "COLLABORATOR"}
+            (comment.get("author_association") or "").upper() in {"MEMBER", "OWNER", "COLLABORATOR"}
             and MAINTAINER_CONFIGURATION_GUIDANCE_RE.search(comment.get("body") or "")
             and CONFIGURATION_CONTEXT_RE.search(comment.get("body") or "")
             for comment in comments
         ) and bool(CONFIGURATION_CONTEXT_RE.search(title + "\n" + body[:5000]))
         maintainer_active_investigation = any(
-            (comment.get("author_association") or "").upper()
-            in {"MEMBER", "OWNER", "COLLABORATOR"}
+            (comment.get("author_association") or "").upper() in {"MEMBER", "OWNER", "COLLABORATOR"}
             and MAINTAINER_ACTIVE_INVESTIGATION_RE.search(comment.get("body") or "")
             and parse_github_time(comment.get("created_at"), self.now)
             >= self.now - timedelta(days=3)
             for comment in comments
         )
         maintainer_revalidation_requested = any(
-            (comment.get("author_association") or "").upper()
-            in {"MEMBER", "OWNER", "COLLABORATOR"}
+            (comment.get("author_association") or "").upper() in {"MEMBER", "OWNER", "COLLABORATOR"}
             and MAINTAINER_REVALIDATION_REQUEST_RE.search(comment.get("body") or "")
             and parse_github_time(comment.get("created_at"), self.now)
             >= self.now - timedelta(days=7)
@@ -2549,21 +2414,15 @@ class Radar:
             re.search(r"\btriage\b", labels_text, re.I)
             or API_DESIGN_RE.search(title + "\n" + body[:3000])
         ) and not (maintainer_approved or help_wanted)
-        usage_confirmation = bool(
-            USAGE_AMBIGUITY_RE.search(title + "\n" + body[:3000])
-        ) and not (maintainer_approved or help_wanted)
+        usage_confirmation = bool(USAGE_AMBIGUITY_RE.search(title + "\n" + body[:3000])) and not (
+            maintainer_approved or help_wanted
+        )
         needs_confirmation = (
             needs_confirmation
             or design_confirmation
             or usage_confirmation
-            or (
-                maintainer_active_investigation
-                and not (maintainer_approved or help_wanted)
-            )
-            or (
-                maintainer_revalidation_requested
-                and not (maintainer_approved or help_wanted)
-            )
+            or (maintainer_active_investigation and not (maintainer_approved or help_wanted))
+            or (maintainer_revalidation_requested and not (maintainer_approved or help_wanted))
         )
         issue_author = ((issue.get("user") or {}).get("login") or "").lower()
         report_retracted = any(
@@ -2581,18 +2440,14 @@ class Radar:
             in {"MEMBER", "OWNER", "COLLABORATOR", "CONTRIBUTOR"}
             for comment in comments
         )
-        wrong_repository = bool(
-            WRONG_REPOSITORY_RE.search(title + "\n" + body[:5000])
-        ) or any(
+        wrong_repository = bool(WRONG_REPOSITORY_RE.search(title + "\n" + body[:5000])) or any(
             WRONG_REPOSITORY_RE.search(comment.get("body") or "")
             and (
                 ((comment.get("user") or {}).get("login") or "").lower() == issue_author
                 or (
                     (comment.get("author_association") or "").upper()
                     in {"MEMBER", "OWNER", "COLLABORATOR", "CONTRIBUTOR"}
-                    and not BOT_RE.search(
-                        ((comment.get("user") or {}).get("login") or "")
-                    )
+                    and not BOT_RE.search(((comment.get("user") or {}).get("login") or ""))
                 )
             )
             for comment in comments
@@ -2608,27 +2463,19 @@ class Radar:
             return None, "trivial"
         if SECURITY_SENSITIVE_RE.search(title + "\n" + body[:3000]):
             return None, "security_disclosure_required"
-        if LOW_IMPACT_SELF_ASSESSMENT_RE.search(body) and not (
-            maintainer_approved or help_wanted
-        ):
+        if LOW_IMPACT_SELF_ASSESSMENT_RE.search(body) and not (maintainer_approved or help_wanted):
             return None, "explicitly_low_impact"
-        if incomplete_template_value_count(body) >= 2 and not (
-            maintainer_approved or help_wanted
-        ):
+        if incomplete_template_value_count(body) >= 2 and not (maintainer_approved or help_wanted):
             return None, "incomplete_issue_template"
         if REACTIVATED_STALE_LABEL_RE.search(labels_text) and not (
             recent_maintainer_approved or help_wanted
         ):
             return None, "reactivated_stale_without_recent_maintainer_confirmation"
-        if maintainer_configuration_guidance and not (
-            maintainer_approved or help_wanted
-        ):
+        if maintainer_configuration_guidance and not (maintainer_approved or help_wanted):
             return None, "maintainer_configuration_guidance"
         if UNTRUSTED_TRIAGE_INSTRUCTION_RE.search(body):
             return None, "untrusted_triage_instruction"
-        if base[
-            "repo"
-        ].casefold() == "microsoft/autogen" and not BUG_ACTIONABILITY_RE.search(
+        if base["repo"].casefold() == "microsoft/autogen" and not BUG_ACTIONABILITY_RE.search(
             title + "\n" + labels_text
         ):
             return None, "maintenance_mode_non_bug"
@@ -2680,14 +2527,11 @@ class Radar:
             maintainer_approved or help_wanted
         ):
             return None, "upstream_root_cause_without_maintainer_scope"
-        if EXTERNAL_MODEL_CAUSE_RE.search(
+        if EXTERNAL_MODEL_CAUSE_RE.search(title + "\n" + body) or HOSTED_MODEL_QUALITY_RE.search(
             title + "\n" + body
-        ) or HOSTED_MODEL_QUALITY_RE.search(title + "\n" + body):
-            return None, "external_model_or_provider_issue"
-        if (
-            USAGE_QUESTION_RE.search(title + "\n" + body[:4000])
-            and not root_cause_signal
         ):
+            return None, "external_model_or_provider_issue"
+        if USAGE_QUESTION_RE.search(title + "\n" + body[:4000]) and not root_cause_signal:
             return None, "usage_or_documentation_question"
         if MODEL_ARTIFACT_FAILURE_RE.search(title + "\n" + body[:8000]):
             return None, "external_model_artifact_failure"
@@ -2708,12 +2552,8 @@ class Radar:
         ):
             return None, "off_topic_dynamic_repo"
 
-        high_hits = len(
-            {match.group(0).lower() for match in HIGH_RE.finditer(scoring_text)}
-        )
-        impact_hits = len(
-            {match.group(0).lower() for match in IMPACT_RE.finditer(scoring_text)}
-        )
+        high_hits = len({match.group(0).lower() for match in HIGH_RE.finditer(scoring_text)})
+        impact_hits = len({match.group(0).lower() for match in IMPACT_RE.finditer(scoring_text)})
         score = 0
         if high_hits >= 5 or len(body) > 1800:
             score += 3
@@ -2730,18 +2570,14 @@ class Radar:
         ):
             score += 3
             impact = "高"
-        elif impact_hits >= 1 or re.search(
-            r"\b(enhancement|feature)\b", issue_kind_text, re.I
-        ):
+        elif impact_hits >= 1 or re.search(r"\b(enhancement|feature)\b", issue_kind_text, re.I):
             score += 2
             impact = "中"
         else:
             score += 1
             impact = "低"
 
-        if re.search(
-            r"\b(bug|feature|performance|refactor|regression)\b", issue_kind_text, re.I
-        ):
+        if re.search(r"\b(bug|feature|performance|refactor|regression)\b", issue_kind_text, re.I):
             score += 2
         elif BUG_ACTIONABILITY_RE.search(title):
             # A precise failure mechanism in the title is equivalent evidence
@@ -2795,21 +2631,21 @@ class Radar:
 
         title_lower = title.lower()
         expected = "先补失败用例，再沿相关 runtime/provider/scheduler 路径做最小修复。"
-        test_path = "用 issue 的公开最小复现先建立失败测试，再运行目标 package 的定向单测和静态检查。"
+        test_path = (
+            "用 issue 的公开最小复现先建立失败测试，再运行目标 package 的定向单测和静态检查。"
+        )
         if KERNEL_RE.search(title):
             expected = "复现数值或批次不变量，定位 kernel 选择/块大小/数据布局根因，并补确定性正确性回归测试。"
             test_path = "先用 CPU/mock 或现有 kernel 单测固定输入输出不变量；具备匹配 GPU 时再补真实硬件复现。"
         elif "stream" in title_lower:
-            expected = "复现 streaming 事件序列，修正 chunk/finish/tool-call 状态传播，并补流式回归测试。"
+            expected = (
+                "复现 streaming 事件序列，修正 chunk/finish/tool-call 状态传播，并补流式回归测试。"
+            )
         elif re.search(r"\b(tool|function)[- ]call\b", title_lower):
             expected = "复现 tool-call 序列化/路由问题，修正转换层或 agent runtime 状态机，并补 provider/runtime 测试。"
         elif "structured output" in title_lower or "schema" in title_lower:
             expected = "复现 schema/structured-output 校验问题，修正 schema 生成或解析兼容性，并补模型无关单测。"
-        elif (
-            "kv cache" in title_lower
-            or "inference" in title_lower
-            or "serving" in title_lower
-        ):
+        elif "kv cache" in title_lower or "inference" in title_lower or "serving" in title_lower:
             expected = "用现有 serving 测试或最小 benchmark 复现，修正调度/cache 路径，并补性能或正确性回归。"
 
         rules = repo_rules(base["repo"])
@@ -2818,13 +2654,9 @@ class Radar:
             category = "LOCAL_FIX_ONLY"
         else:
             bucket = (
-                "immediate"
-                if rules == "normal" and not needs_confirmation
-                else "needs_approval"
+                "immediate" if rules == "normal" and not needs_confirmation else "needs_approval"
             )
-            category = (
-                "NEW_CLEAN_CANDIDATE" if bucket == "immediate" else "WAIT_MAINTAINER"
-            )
+            category = "NEW_CLEAN_CANDIDATE" if bucket == "immediate" else "WAIT_MAINTAINER"
         return {
             "repo": base["repo"],
             "num": base["num"],
@@ -2837,7 +2669,9 @@ class Radar:
             "gate_decision": (
                 "ALLOW_TO_WORK"
                 if bucket == "immediate"
-                else "ALLOW_PRIVATE_WORK" if bucket == "conflict" else "HUMAN_REVIEW"
+                else "ALLOW_PRIVATE_WORK"
+                if bucket == "conflict"
+                else "HUMAN_REVIEW"
             ),
             "score": score,
             "difficulty": difficulty,
@@ -2876,9 +2710,7 @@ class Radar:
             "related_issue_assessment": None,
         }, None
 
-    def shortlist(
-        self, items: dict[str, dict[str, Any]]
-    ) -> tuple[list[dict[str, Any]], int, int]:
+    def shortlist(self, items: dict[str, dict[str, Any]]) -> tuple[list[dict[str, Any]], int, int]:
         known = set(KNOWN_REPOS)
         bases: list[dict[str, Any]] = []
         rejection_counts: Counter[str] = Counter()
@@ -2908,8 +2740,7 @@ class Radar:
                 "status": "inspection_budget_deferred",
                 "reason": reason,
                 "title": base.get("title") or key,
-                "url": base.get("url")
-                or f"https://github.com/{base['repo']}/issues/{base['num']}",
+                "url": base.get("url") or f"https://github.com/{base['repo']}/issues/{base['num']}",
                 "issue_updated": base.get("updated") or "",
             }
 
@@ -2926,9 +2757,7 @@ class Radar:
             ):
                 reject("seen_recently", base)
                 continue
-            if base.get("assignees") or SKIP_LABEL_RE.search(
-                " ".join(base.get("labels", []))
-            ):
+            if base.get("assignees") or SKIP_LABEL_RE.search(" ".join(base.get("labels", []))):
                 reject("prefilter_assigned_or_low_value_label", base)
                 self.seen[key] = {
                     "analyzed": self.analyzed,
@@ -2996,9 +2825,7 @@ class Radar:
                     "requeue_reason": "critical_evidence_fetch_failure",
                     "requeued_at": self.analyzed,
                     "title": issue.get("title") or base["title"],
-                    "issue_updated": issue.get("updated_at")
-                    or base.get("updated")
-                    or "",
+                    "issue_updated": issue.get("updated_at") or base.get("updated") or "",
                 }
                 continue
             inspected += 1
@@ -3009,9 +2836,7 @@ class Radar:
                     "analyzed": self.analyzed,
                     "status": reason,
                     "title": issue.get("title") or base["title"],
-                    "issue_updated": issue.get("updated_at")
-                    or base.get("updated")
-                    or "",
+                    "issue_updated": issue.get("updated_at") or base.get("updated") or "",
                 }
                 continue
             policy = self.submission_policy(base["repo"])
@@ -3022,9 +2847,7 @@ class Radar:
                     "analyzed": self.analyzed,
                     "status": "repository_not_accepting_code_contributions",
                     "title": issue.get("title") or base["title"],
-                    "issue_updated": issue.get("updated_at")
-                    or base.get("updated")
-                    or "",
+                    "issue_updated": issue.get("updated_at") or base.get("updated") or "",
                 }
                 continue
             if policy == "ai_disclosure_conflict":
@@ -3088,9 +2911,7 @@ class Radar:
                 scored["category"] = "WAIT_MAINTAINER"
                 scored["gate_decision"] = "HUMAN_REVIEW"
                 scored["auto_spawn"] = False
-                scored["risk"] = (
-                    f"{scored['risk']}；{related_issue_assessment['summary']}"
-                )
+                scored["risk"] = f"{scored['risk']}；{related_issue_assessment['summary']}"
                 scored["next_step"] = (
                     "先人工比较相关 issue 的根因、维护者归并方向和可提交代码路径；"
                     "确认不是重复后再进入实现。"
@@ -3120,9 +2941,7 @@ class Radar:
                     "title": issue.get("title") or base["title"],
                     "pr": pr_assessment.get("best_url"),
                     "pr_assessment": pr_assessment.get("summary"),
-                    "issue_updated": issue.get("updated_at")
-                    or base.get("updated")
-                    or "",
+                    "issue_updated": issue.get("updated_at") or base.get("updated") or "",
                 }
                 continue
             if pr_assessment["status"] == "lookup_failed":
@@ -3130,9 +2949,7 @@ class Radar:
                 scored["category"] = "WAIT_MAINTAINER"
                 scored["gate_decision"] = "HUMAN_REVIEW"
                 scored["auto_spawn"] = False
-                scored["risk"] = (
-                    f"{scored['risk']}；open PR 检索失败，当前无法排除重复实现。"
-                )
+                scored["risk"] = f"{scored['risk']}；open PR 检索失败，当前无法排除重复实现。"
                 scored["next_step"] = (
                     "恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。"
                 )
@@ -3146,9 +2963,7 @@ class Radar:
                     scored["why"] = (
                         f"{scored['why']}；已有 open PR 但证据/测试/活跃度不足，仍有竞争空间"
                     )
-                    scored["risk"] = (
-                        f"{scored['risk']}；需要先对比已有 PR，避免重复实现。"
-                    )
+                    scored["risk"] = f"{scored['risk']}；需要先对比已有 PR，避免重复实现。"
                     scored["next_step"] = (
                         "先复现 issue，再逐项对比已有 PR 的缺口；只有能提供更小改动、更强测试或更完整边界覆盖时才开 PR。"
                     )
@@ -3167,12 +2982,8 @@ class Radar:
                 scored["category"] = "PR_COMPETITION_OPPORTUNITY"
                 scored["gate_decision"] = "HUMAN_REVIEW"
                 scored["auto_spawn"] = False
-                scored["why"] = (
-                    f"{scored['why']}；已有 PR 与 issue 代码路径和关键语义重合"
-                )
-                scored["risk"] = (
-                    f"{scored['risk']}；现有 PR 可能已覆盖根因，需先比较实现边界。"
-                )
+                scored["why"] = f"{scored['why']}；已有 PR 与 issue 代码路径和关键语义重合"
+                scored["risk"] = f"{scored['risk']}；现有 PR 可能已覆盖根因，需先比较实现边界。"
                 scored["next_step"] = (
                     "先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。"
                 )
@@ -3253,9 +3064,7 @@ class Radar:
             for item in candidates
             if f"{item['repo']}#{item['num']}" not in self.forced_recheck_keys
         ]
-        selected = (
-            forced_candidates + regular_candidates[: max(0, 4 - len(forced_candidates))]
-        )
+        selected = forced_candidates + regular_candidates[: max(0, 4 - len(forced_candidates))]
         return selected, len(bases), inspected
 
     def feishu_post(
@@ -3292,14 +3101,10 @@ class Radar:
             ("conflict", "⚠️ 规则冲突"),
         ]
         for bucket, title in groups:
-            bucket_items = [
-                candidate for candidate in candidates if candidate["bucket"] == bucket
-            ]
+            bucket_items = [candidate for candidate in candidates if candidate["bucket"] == bucket]
             if not bucket_items:
                 continue
-            elements.append(
-                {"tag": "div", "text": {"tag": "lark_md", "content": f"**{title}**"}}
-            )
+            elements.append({"tag": "div", "text": {"tag": "lark_md", "content": f"**{title}**"}})
             for candidate in bucket_items:
                 content = (
                     f"**{candidate['repo']}#{candidate['num']}** "
@@ -3320,9 +3125,7 @@ class Radar:
                         f"\n已有 PR 评估：{pr_assessment['summary']}\n"
                         f"最佳相关 PR：{pr_assessment.get('best_url')}"
                     )
-                elements.append(
-                    {"tag": "div", "text": {"tag": "lark_md", "content": content}}
-                )
+                elements.append({"tag": "div", "text": {"tag": "lark_md", "content": content}})
                 elements.append({"tag": "hr"})
         if elements and elements[-1].get("tag") == "hr":
             elements.pop()
@@ -3392,9 +3195,7 @@ class Radar:
             inspected = 0
             sent = False
             send_error = (
-                "github_secondary_rate_limit"
-                if self.rate_limited
-                else "github_search_incomplete"
+                "github_secondary_rate_limit" if self.rate_limited else "github_search_incomplete"
             )
         else:
             candidates, qualified_repos, inspected = self.shortlist(items)
@@ -3414,9 +3215,7 @@ class Radar:
                 candidate["notification_digest"] = digest
                 notification_candidates.append(candidate)
             sent, send_error = (
-                self.send_feishu(notification_candidates)
-                if self.notify
-                else (False, None)
+                self.send_feishu(notification_candidates) if self.notify else (False, None)
             )
         if self.search_failed:
             notification_candidates = []
@@ -3494,8 +3293,7 @@ class Radar:
             "sent": sent,
             "send_error": send_error,
             "notification_candidate_count": len(notification_candidates),
-            "notification_suppressed_count": len(candidates)
-            - len(notification_candidates),
+            "notification_suppressed_count": len(candidates) - len(notification_candidates),
             "dry_run": self.dry_run,
             "notification_mode": "direct" if self.notify else "outbox",
             "auto_spawn_candidates": len(auto_spawn_candidates),
@@ -3583,9 +3381,7 @@ def main() -> int:
         dry_run=args.dry_run,
         requested_window_hours=args.window_hours,
         last_successful_scan=last_success,
-        pending_rechecks=(
-            load_json(args.pending_rechecks, {}) if args.pending_rechecks else {}
-        ),
+        pending_rechecks=(load_json(args.pending_rechecks, {}) if args.pending_rechecks else {}),
         notify=not args.no_notify,
     )
     result = radar.run(args.scan_out)

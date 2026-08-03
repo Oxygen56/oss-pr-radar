@@ -78,8 +78,7 @@ def validate_candidate(candidate: dict[str, Any]) -> None:
         _require(candidate["gate_decision"] == "ALLOW_TO_WORK", "auto spawn requires ALLOW_TO_WORK")
         _require(review.get("status") == "ok", "auto spawn requires successful LLM review")
         _require(
-            review.get("decision")
-            in {"NEW_CLEAN_CANDIDATE", "PR_COMPETITION_OPPORTUNITY"},
+            review.get("decision") in {"NEW_CLEAN_CANDIDATE", "PR_COMPETITION_OPPORTUNITY"},
             "auto spawn requires an actionable LLM decision",
         )
 

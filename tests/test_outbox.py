@@ -37,9 +37,7 @@ def test_outbox_is_idempotent_across_rebuilds():
 
 
 def test_review_and_immediate_are_separate():
-    report = {
-        "candidate_details": [candidate(), candidate(num=2, key="a/b#2", auto_spawn=False)]
-    }
+    report = {"candidate_details": [candidate(), candidate(num=2, key="a/b#2", auto_spawn=False)]}
     immediate = build_outbox(report, now=NOW, kind="immediate")
     review = build_outbox(report, now=NOW, kind="review")
     assert immediate["events"][0]["candidateKeys"] == ["a/b#1"]

@@ -14,9 +14,7 @@ from oss_pr_radar.util import iso_z
 
 
 def git(*args, cwd):
-    result = subprocess.run(
-        ["git", *args], cwd=cwd, check=True, capture_output=True, text=True
-    )
+    result = subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True)
     return result.stdout.strip()
 
 
@@ -138,9 +136,7 @@ class Client:
 def test_broker_grants_commit_bound_permit(monkeypatch, tmp_path):
     store, request, _ = prepared_request(tmp_path)
     monkeypatch.setattr(publication, "_changed_files", lambda *args: ["file.txt"])
-    result = broker_publication_request(
-        store, request["request_id"], client=Client()
-    )
+    result = broker_publication_request(store, request["request_id"], client=Client())
     assert result["granted"] is True
     permit = result["permit"]
     assert store.publication_permit(
@@ -154,23 +150,17 @@ def test_evidence_digest_drift_blocks_publication(monkeypatch, tmp_path):
     store, request, evidence_path = prepared_request(tmp_path)
     evidence_path.write_text("{}", encoding="utf-8")
     monkeypatch.setattr(publication, "_changed_files", lambda *args: ["file.txt"])
-    result = broker_publication_request(
-        store, request["request_id"], client=Client()
-    )
+    result = broker_publication_request(store, request["request_id"], client=Client())
     assert result["granted"] is False
     assert result["audit"]["reason"] == "EVIDENCE_DIGEST_DRIFT"
 
 
 def test_pr_body_drift_blocks_publication(monkeypatch, tmp_path):
     store, request, evidence_path = prepared_request(tmp_path)
-    body_path = json.loads(evidence_path.read_text(encoding="utf-8"))["publication"][
-        "bodyFile"
-    ]
+    body_path = json.loads(evidence_path.read_text(encoding="utf-8"))["publication"]["bodyFile"]
     publication.Path(body_path).write_text("Fixes #7\n\nDifferent body.\n", encoding="utf-8")
     monkeypatch.setattr(publication, "_changed_files", lambda *args: ["file.txt"])
-    result = broker_publication_request(
-        store, request["request_id"], client=Client()
-    )
+    result = broker_publication_request(store, request["request_id"], client=Client())
     assert result["granted"] is False
     assert result["audit"]["reason"] == "PUBLICATION_PAYLOAD_DRIFT"
 

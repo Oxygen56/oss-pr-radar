@@ -37,9 +37,7 @@ def main() -> int:
         event["attempts"] = int(event.get("attempts") or 0) + 1
         event["lastAttemptAt"] = iso_z(datetime.now(UTC))
         try:
-            response = client.send_card(
-                event["card"], idempotency_key=event["idempotencyKey"]
-            )
+            response = client.send_card(event["card"], idempotency_key=event["idempotencyKey"])
             event["status"] = "SENT"
             event["sentAt"] = iso_z(datetime.now(UTC))
             event["messageId"] = str((response.get("data") or {}).get("message_id") or "")
@@ -49,9 +47,7 @@ def main() -> int:
             event["status"] = "FAILED"
             event["lastError"] = str(exc)[:200]
             failed += 1
-    outbox["digest"] = sha256_json(
-        {key: value for key, value in outbox.items() if key != "digest"}
-    )
+    outbox["digest"] = sha256_json({key: value for key, value in outbox.items() if key != "digest"})
     atomic_write_json(args.output, outbox)
     print(json.dumps({"sent": sent, "failed": failed}))
     return 1 if failed else 0
@@ -59,4 +55,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

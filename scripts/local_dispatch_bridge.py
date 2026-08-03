@@ -68,9 +68,7 @@ def command(
         timeout=timeout,
     )
     if completed.returncode != 0:
-        raise RuntimeError(
-            (completed.stderr or completed.stdout or "command failed")[:800]
-        )
+        raise RuntimeError((completed.stderr or completed.stdout or "command failed")[:800])
     return completed.stdout.strip()
 
 
@@ -102,9 +100,7 @@ def normalize_origin(value: str) -> str:
 
 
 def compact_title(value: str) -> str:
-    return (
-        value if len(value) <= MAX_TITLE_CHARS else value[: MAX_TITLE_CHARS - 1] + "…"
-    )
+    return value if len(value) <= MAX_TITLE_CHARS else value[: MAX_TITLE_CHARS - 1] + "…"
 
 
 def lifecycle_title(state: str, title_time: str, key: str, title: str) -> str:
@@ -125,9 +121,7 @@ def source_repo(repo: str) -> Path:
         if not path.is_dir() or not (path / ".git").exists():
             continue
         try:
-            origin = command(
-                ["git", "remote", "get-url", "origin"], cwd=path, timeout=15
-            )
+            origin = command(["git", "remote", "get-url", "origin"], cwd=path, timeout=15)
         except RuntimeError:
             continue
         if normalize_origin(origin) == repo.casefold():
@@ -220,9 +214,7 @@ def claim_intent(args: argparse.Namespace) -> dict[str, Any]:
     repo, number = match.groups()
     inventory = {
         item.strip().casefold()
-        for item in os.environ.get(
-            "RADAR_HARDWARE", "4090,5090,a100,v100"
-        ).split(",")
+        for item in os.environ.get("RADAR_HARDWARE", "4090,5090,a100,v100").split(",")
         if item.strip()
     }
     evidence = collect_evidence(
@@ -276,9 +268,9 @@ def claim_intent(args: argparse.Namespace) -> dict[str, Any]:
         max_active=1 if canary else None,
     )
     if not claimed:
-        wip_limited = canary and store.active_dispatch_count(
-            exclude_intent_id=intent["intentId"]
-        ) >= 1
+        wip_limited = (
+            canary and store.active_dispatch_count(exclude_intent_id=intent["intentId"]) >= 1
+        )
         return {
             "ok": True,
             "authorized": True,
@@ -300,9 +292,7 @@ def claim_intent(args: argparse.Namespace) -> dict[str, Any]:
         title_time = datetime.now().astimezone().strftime("%m-%d %H:%M")
         result["sourceRepoPath"] = str(path)
         result["titleTime"] = title_time
-        result["desiredTitle"] = lifecycle_title(
-            "GO", title_time, intent["key"], intent["title"]
-        )
+        result["desiredTitle"] = lifecycle_title("GO", title_time, intent["key"], intent["title"])
     return result
 
 
@@ -320,9 +310,7 @@ def commit_receipt(args: argparse.Namespace) -> dict[str, Any]:
     cwd = Path(args.cwd).resolve()
     if cwd == source or WORKTREE_ROOT.resolve() not in cwd.parents:
         raise RuntimeError("thread cwd is not a Codex worktree")
-    if git_path(
-        "rev-parse", "--path-format=absolute", "--git-common-dir", cwd=cwd
-    ) != git_path(
+    if git_path("rev-parse", "--path-format=absolute", "--git-common-dir", cwd=cwd) != git_path(
         "rev-parse", "--path-format=absolute", "--git-dir", cwd=source
     ):
         raise RuntimeError("worktree does not belong to source repository")
@@ -330,28 +318,21 @@ def commit_receipt(args: argparse.Namespace) -> dict[str, Any]:
     connection.row_factory = sqlite3.Row
     try:
         row = connection.execute(
-            "SELECT cwd,title,first_user_message,git_origin_url,archived "
-            "FROM threads WHERE id=?",
+            "SELECT cwd,title,first_user_message,git_origin_url,archived FROM threads WHERE id=?",
             (args.thread_id,),
         ).fetchone()
     finally:
         connection.close()
-    expected_title = lifecycle_title(
-        "GO", args.title_time, intent["key"], intent["title"]
-    )
+    expected_title = lifecycle_title("GO", args.title_time, intent["key"], intent["title"])
     if row is None or int(row["archived"] or 0) != 0:
         raise RuntimeError("thread is missing or archived")
     if Path(row["cwd"]).resolve() != cwd:
         raise RuntimeError("thread cwd mismatch")
     if row["title"] != expected_title:
         raise RuntimeError("thread title mismatch")
-    if canonical_prompt(row["first_user_message"] or "") != issue_prompt(
-        intent["issueUrl"]
-    ):
+    if canonical_prompt(row["first_user_message"] or "") != issue_prompt(intent["issueUrl"]):
         raise RuntimeError("thread prompt mismatch")
-    if normalize_origin(row["git_origin_url"] or "") != str(
-        intent["repo"]
-    ).casefold():
+    if normalize_origin(row["git_origin_url"] or "") != str(intent["repo"]).casefold():
         raise RuntimeError("thread origin mismatch")
     store.commit_dispatch(
         intent["intentId"],
@@ -376,9 +357,7 @@ def record_outcome(args: argparse.Namespace) -> dict[str, Any]:
     if args.stage == "FIX_READY":
         assessment = assess_submit_ready(evidence)
         if not assessment.ready:
-            raise RuntimeError(
-                f"submit-ready evidence missing: {','.join(assessment.missing)}"
-            )
+            raise RuntimeError(f"submit-ready evidence missing: {','.join(assessment.missing)}")
     store.record_stage(
         args.key,
         args.stage,
@@ -499,13 +478,10 @@ def pr_lifecycle_stage(value: dict[str, Any]) -> str:
         return "CLOSED"
     if str(value.get("reviewDecision") or "").upper() == "APPROVED":
         return "MAINTAINER_ACCEPTED"
-    checks = [
-        item for item in value.get("statusCheckRollup") or [] if isinstance(item, dict)
-    ]
+    checks = [item for item in value.get("statusCheckRollup") or [] if isinstance(item, dict)]
     if checks:
         conclusions = {
-            str(item.get("conclusion") or item.get("state") or "").upper()
-            for item in checks
+            str(item.get("conclusion") or item.get("state") or "").upper() for item in checks
         }
         if conclusions and conclusions <= {"SUCCESS", "NEUTRAL", "SKIPPED"}:
             return "CI_GREEN"
@@ -554,9 +530,7 @@ def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
     recoverable: list[dict[str, Any]] = []
     blocked: list[dict[str, Any]] = []
     try:
-        for candidate in store.recovery_candidates(
-            min_age_minutes=args.min_age_minutes
-        ):
+        for candidate in store.recovery_candidates(min_age_minutes=args.min_age_minutes):
             row = connection.execute(
                 "SELECT archived,title,first_user_message,cwd,git_origin_url,updated_at "
                 "FROM threads WHERE id=?",
@@ -573,9 +547,10 @@ def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
             ):
                 blocked.append(candidate | {"reason": "thread_prompt_mismatch"})
                 continue
-            if normalize_origin(row["git_origin_url"] or "") != candidate["key"].rsplit(
-                "#", 1
-            )[0].casefold():
+            if (
+                normalize_origin(row["git_origin_url"] or "")
+                != candidate["key"].rsplit("#", 1)[0].casefold()
+            ):
                 blocked.append(candidate | {"reason": "thread_origin_mismatch"})
                 continue
             recoverable.append(

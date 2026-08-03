@@ -17,16 +17,10 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("report", type=Path)
     parser.add_argument("outbox", type=Path)
-    parser.add_argument(
-        "--kind", choices=("immediate", "review", "watch"), default="immediate"
-    )
+    parser.add_argument("--kind", choices=("immediate", "review", "watch"), default="immediate")
     args = parser.parse_args()
     report = json.loads(args.report.read_text(encoding="utf-8"))
-    existing = (
-        json.loads(args.outbox.read_text(encoding="utf-8"))
-        if args.outbox.exists()
-        else None
-    )
+    existing = json.loads(args.outbox.read_text(encoding="utf-8")) if args.outbox.exists() else None
     outbox = build_outbox(report, existing, kind=args.kind)
     atomic_write_json(args.outbox, outbox)
     print(

@@ -59,4 +59,3 @@ def read_json(path: Path, *, missing: Any = None) -> Any:
         return json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return missing
-

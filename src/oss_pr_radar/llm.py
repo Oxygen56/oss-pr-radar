@@ -68,9 +68,7 @@ class DeepSeekEvaluator:
             timeout=float(os.environ.get("DEEPSEEK_TIMEOUT_SECONDS", "90")),
         )
 
-    def evaluate_candidates(
-        self, candidates: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
+    def evaluate_candidates(self, candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
         cache = self._load_cache()
         accepted: list[dict[str, Any]] = []
         changed = False
@@ -131,9 +129,7 @@ class DeepSeekEvaluator:
             self._write_cache(cache)
         return accepted
 
-    def _payload(
-        self, candidate: dict[str, Any], context: dict[str, Any]
-    ) -> dict[str, Any]:
+    def _payload(self, candidate: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         return {
             "candidate": {
                 key: candidate.get(key)
@@ -171,9 +167,7 @@ class DeepSeekEvaluator:
                 last_error = exc
                 if attempt < 2:
                     time.sleep(1.0 + attempt)
-        raise RuntimeError(
-            "DeepSeek returned invalid JSON after retries"
-        ) from last_error
+        raise RuntimeError("DeepSeek returned invalid JSON after retries") from last_error
 
     def _request_once(self, payload: dict[str, Any], attempt: int) -> dict[str, Any]:
         body = json.dumps(
@@ -241,13 +235,9 @@ class DeepSeekEvaluator:
             "decision": decision,
             "score": score,
             "confidence": confidence,
-            "root_cause_clarity": str(review.get("root_cause_clarity") or "unknown")[
-                :32
-            ],
+            "root_cause_clarity": str(review.get("root_cause_clarity") or "unknown")[:32],
             "why": str(review.get("why") or "")[:1000],
-            "expected_changes": DeepSeekEvaluator._strings(
-                review.get("expected_changes")
-            ),
+            "expected_changes": DeepSeekEvaluator._strings(review.get("expected_changes")),
             "test_plan": DeepSeekEvaluator._strings(review.get("test_plan")),
             "risks": DeepSeekEvaluator._strings(review.get("risks")),
             "evidence_ids": DeepSeekEvaluator._strings(

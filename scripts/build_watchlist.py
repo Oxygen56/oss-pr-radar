@@ -20,9 +20,7 @@ def main() -> int:
     args = parser.parse_args()
     report = json.loads(args.report.read_text(encoding="utf-8"))
     existing = (
-        json.loads(args.watchlist.read_text(encoding="utf-8"))
-        if args.watchlist.exists()
-        else None
+        json.loads(args.watchlist.read_text(encoding="utf-8")) if args.watchlist.exists() else None
     )
     value = build_watchlist(report, existing)
     atomic_write_json(args.watchlist, value)
@@ -32,4 +30,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

@@ -8,8 +8,23 @@ from typing import Any, Iterable
 
 WORD_RE = re.compile(r"[a-z][a-z0-9_+-]{2,}", re.I)
 STOP = {
-    "the", "and", "for", "with", "from", "this", "that", "issue", "pull",
-    "request", "fix", "fixed", "fixes", "close", "closes", "update", "add",
+    "the",
+    "and",
+    "for",
+    "with",
+    "from",
+    "this",
+    "that",
+    "issue",
+    "pull",
+    "request",
+    "fix",
+    "fixed",
+    "fixes",
+    "close",
+    "closes",
+    "update",
+    "add",
 }
 
 
@@ -68,14 +83,20 @@ def assess_relations(
         overlap = _overlap(issue_title, title)
         files = pr.get("files") or []
         has_tests = any(
-            re.search(r"(?:^|/)(?:test|tests|spec)(?:/|_|\.)", str(item.get("filename") or ""), re.I)
+            re.search(
+                r"(?:^|/)(?:test|tests|spec)(?:/|_|\.)", str(item.get("filename") or ""), re.I
+            )
             for item in files
             if isinstance(item, dict)
         )
         checks = pr.get("checks")
         checks_green: bool | None = None
         if isinstance(checks, list) and checks:
-            conclusions = {str(item.get("conclusion") or "").lower() for item in checks if isinstance(item, dict)}
+            conclusions = {
+                str(item.get("conclusion") or "").lower()
+                for item in checks
+                if isinstance(item, dict)
+            }
             checks_green = bool(conclusions) and conclusions <= {"success", "neutral", "skipped"}
         draft = bool(pr.get("draft") or pr.get("isDraft"))
         state = str(pr.get("state") or "open").upper()

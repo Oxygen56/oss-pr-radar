@@ -31,9 +31,13 @@ def _latest_reviews_by_author(reviews: list[dict[str, Any]]) -> list[dict[str, A
         )
         previous = latest.get(login)
         previous_ordering = (
-            str(previous.get("submitted_at") or ""),
-            int(previous.get("id") or 0),
-        ) if previous else ("", 0)
+            (
+                str(previous.get("submitted_at") or ""),
+                int(previous.get("id") or 0),
+            )
+            if previous
+            else ("", 0)
+        )
         if previous is None or ordering >= previous_ordering:
             latest[login] = review
     return list(latest.values())
@@ -81,8 +85,7 @@ def collect_followup(
             review
             for review in _latest_reviews_by_author(reviews)
             if str(review.get("state") or "").upper() == "CHANGES_REQUESTED"
-            and str(review.get("author_association") or "").upper()
-            in MAINTAINER_ASSOCIATIONS
+            and str(review.get("author_association") or "").upper() in MAINTAINER_ASSOCIATIONS
         ]
         failing_checks = [
             check
@@ -137,9 +140,7 @@ def collect_followup(
         "generatedAt": iso_z(current),
         "items": sorted(state_items, key=lambda item: item["key"]),
     }
-    state["digest"] = sha256_json(
-        {key: value for key, value in state.items() if key != "digest"}
-    )
+    state["digest"] = sha256_json({key: value for key, value in state.items() if key != "digest"})
     report = {
         "scan_ok": not errors,
         "run_id": f"pr-followup-{int(current.timestamp())}",

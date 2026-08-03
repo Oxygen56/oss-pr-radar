@@ -53,11 +53,7 @@ def test_unedited_llm_boilerplate_quality_rule_is_not_total_ai_prohibition():
 def test_explicit_ai_disclosure_is_held_for_user_review():
     policy = discover_policy(
         FakeClient(
-            {
-                "CONTRIBUTING.md": (
-                    "Contributors must disclose significant AI assistance in the PR."
-                )
-            }
+            {"CONTRIBUTING.md": ("Contributors must disclose significant AI assistance in the PR.")}
         ),
         "example/project",
     )
@@ -67,18 +63,14 @@ def test_explicit_ai_disclosure_is_held_for_user_review():
 
 def test_ai_prohibition_and_external_contribution_closure_are_distinct():
     prohibited = discover_policy(
-        FakeClient(
-            {"AI_POLICY.md": "AI-generated contributions are not accepted."}
-        ),
+        FakeClient({"AI_POLICY.md": "AI-generated contributions are not accepted."}),
         "example/project",
     )
     assert prohibited.ai_prohibited is True
     assert prohibited.unsolicited_pr_blocked is False
 
     closed = discover_policy(
-        FakeClient(
-            {"CONTRIBUTING.md": "We are not accepting external pull requests."}
-        ),
+        FakeClient({"CONTRIBUTING.md": "We are not accepting external pull requests."}),
         "example/project",
     )
     assert closed.status == "CONTRIBUTIONS_CLOSED"

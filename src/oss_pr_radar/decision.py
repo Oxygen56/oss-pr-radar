@@ -9,7 +9,9 @@ from typing import Any
 from .evidence import EvidenceBundle
 
 SECURITY_RE = re.compile(r"\b(?:security|vulnerab(?:ility|le)|CVE-\d+|zero[- ]day)\b", re.I)
-DESIGN_RE = re.compile(r"\b(?:RFC|design proposal|architecture proposal|breaking API|roadmap)\b", re.I)
+DESIGN_RE = re.compile(
+    r"\b(?:RFC|design proposal|architecture proposal|breaking API|roadmap)\b", re.I
+)
 
 
 @dataclass(frozen=True)
@@ -67,9 +69,15 @@ def authorize(candidate: dict[str, Any], evidence: EvidenceBundle) -> Authorizat
     relations = {item.get("relation") for item in evidence.pull_relations}
     if relations & {"STRONG_EXACT_DUPLICATE", "STRONG_MERGED_COVERAGE"}:
         return decision("BLOCK", "STRONG_EXISTING_PR", "duplicate")
-    if "WEAK_OR_PARTIAL_EXACT" in relations and candidate.get("category") != "PR_COMPETITION_OPPORTUNITY":
+    if (
+        "WEAK_OR_PARTIAL_EXACT" in relations
+        and candidate.get("category") != "PR_COMPETITION_OPPORTUNITY"
+    ):
         return decision("HOLD", "EXISTING_PR_REQUIRES_COMPETITION_REVIEW", "duplicate")
-    if "SEMANTIC_OVERLAP" in relations and candidate.get("category") != "PR_COMPETITION_OPPORTUNITY":
+    if (
+        "SEMANTIC_OVERLAP" in relations
+        and candidate.get("category") != "PR_COMPETITION_OPPORTUNITY"
+    ):
         return decision("HOLD", "SEMANTIC_PR_OVERLAP_REQUIRES_REVIEW", "duplicate")
     if not evidence.hardware.get("compatible"):
         return decision("HOLD", "HARDWARE_UNAVAILABLE", "hardware")
@@ -79,7 +87,8 @@ def authorize(candidate: dict[str, Any], evidence: EvidenceBundle) -> Authorizat
     if candidate.get("gate_decision") != "ALLOW_TO_WORK" or candidate.get("auto_spawn") is not True:
         return decision("HOLD", "SCAN_GATE_NOT_AUTHORIZED")
     if review.get("status") != "ok" or review.get("decision") not in {
-        "NEW_CLEAN_CANDIDATE", "PR_COMPETITION_OPPORTUNITY"
+        "NEW_CLEAN_CANDIDATE",
+        "PR_COMPETITION_OPPORTUNITY",
     }:
         return decision("HOLD", "SEMANTIC_REVIEW_NOT_ACTIONABLE")
     if float(review.get("confidence") or 0.0) < 0.65:

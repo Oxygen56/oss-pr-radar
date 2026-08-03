@@ -46,7 +46,16 @@ def test_restore_rejects_file_changed_without_manifest_update(tmp_path):
     git("clone", "--branch", "radar-state", str(origin), str(attacker), cwd=tmp_path)
     (attacker / "seen.json").write_text('{"tampered": true}\n', encoding="utf-8")
     git("add", "seen.json", cwd=attacker)
-    git("-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-m", "tamper", cwd=attacker)
+    git(
+        "-c",
+        "user.name=test",
+        "-c",
+        "user.email=test@example.com",
+        "commit",
+        "-m",
+        "tamper",
+        cwd=attacker,
+    )
     git("push", "origin", "radar-state", cwd=attacker)
     restored = tmp_path / "restored"
     git("clone", str(origin), str(restored), cwd=tmp_path)
@@ -75,9 +84,7 @@ def test_migrate_adds_manifest_without_rewriting_legacy_state(tmp_path):
     restored = tmp_path / "restored"
     git("clone", str(origin), str(restored), cwd=tmp_path)
     MODULE.restore(restored, "radar-state")
-    assert json.loads((restored / "state" / "seen.json").read_text()) == {
-        "legacy": True
-    }
+    assert json.loads((restored / "state" / "seen.json").read_text()) == {"legacy": True}
 
 
 def test_migrate_repairs_manifest_after_legacy_writer_updates_state(tmp_path):

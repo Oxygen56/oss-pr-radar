@@ -34,4 +34,3 @@ def test_recent_successful_schedule_is_healthy():
         now=NOW,
     )
     assert result["healthy"] is True
-

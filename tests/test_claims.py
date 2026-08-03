@@ -20,17 +20,17 @@ def test_conditional_claim_from_liteparse_case_is_detected():
 
 def test_own_and_bot_comments_do_not_block():
     signals = detect_claims(
-        [comment("I will take this", author="Oxygen56"), comment("working on this", author="bot[bot]")],
+        [
+            comment("I will take this", author="Oxygen56"),
+            comment("working on this", author="bot[bot]"),
+        ],
         current_actor="Oxygen56",
     )
     assert signals == []
 
 
 def test_maintainer_approval_requires_privileged_association():
-    assert detect_maintainer_approval(
-        [comment("Please open a PR for this", association="MEMBER")]
-    )
+    assert detect_maintainer_approval([comment("Please open a PR for this", association="MEMBER")])
     assert not detect_maintainer_approval(
         [comment("Please open a PR for this", association="NONE")]
     )
-

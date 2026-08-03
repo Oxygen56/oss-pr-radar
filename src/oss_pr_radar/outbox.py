@@ -47,8 +47,7 @@ def build_outbox(
             "candidates": [
                 {
                     "key": f"{item['repo']}#{item['num']}",
-                    "digest": item.get("notification_digest")
-                    or item.get("evidence_digest"),
+                    "digest": item.get("notification_digest") or item.get("evidence_digest"),
                     "category": item.get("category"),
                 }
                 for item in candidates
@@ -83,25 +82,19 @@ def build_outbox(
         "events": sorted(retained.values(), key=lambda item: item["createdAt"]),
         "newEventCount": new_count,
     }
-    result["digest"] = sha256_json(
-        {key: value for key, value in result.items() if key != "digest"}
-    )
+    result["digest"] = sha256_json({key: value for key, value in result.items() if key != "digest"})
     return result
 
 
 def validate_outbox(outbox: dict[str, Any]) -> None:
     if outbox.get("version") != OUTBOX_VERSION:
         raise ValueError("unsupported notification outbox")
-    expected = sha256_json(
-        {key: value for key, value in outbox.items() if key != "digest"}
-    )
+    expected = sha256_json({key: value for key, value in outbox.items() if key != "digest"})
     if outbox.get("digest") != expected:
         raise ValueError("notification outbox digest mismatch")
 
 
-def merge_receipts(
-    current: dict[str, Any], receipt: dict[str, Any]
-) -> dict[str, Any]:
+def merge_receipts(current: dict[str, Any], receipt: dict[str, Any]) -> dict[str, Any]:
     validate_outbox(current)
     validate_outbox(receipt)
     receipt_by_id = {
@@ -115,7 +108,5 @@ def merge_receipts(
         for item in current.get("events") or []
         if isinstance(item, dict)
     ]
-    merged["digest"] = sha256_json(
-        {key: value for key, value in merged.items() if key != "digest"}
-    )
+    merged["digest"] = sha256_json({key: value for key, value in merged.items() if key != "digest"})
     return merged

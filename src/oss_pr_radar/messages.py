@@ -128,13 +128,9 @@ def describe_code_zh(value: Any) -> str:
     upper = text.upper()
     if upper in CODE_MESSAGES_ZH:
         return CODE_MESSAGES_ZH[upper]
-    words = [
-        word for word in text.replace("-", "_").replace(":", "_").split("_") if word
-    ]
+    words = [word for word in text.replace("-", "_").replace(":", "_").split("_") if word]
     translated = [TOKEN_MESSAGES_ZH.get(word.casefold(), word) for word in words]
-    if translated and all(
-        part != word for part, word in zip(translated, words, strict=True)
-    ):
+    if translated and all(part != word for part, word in zip(translated, words, strict=True)):
         return "".join(translated)
     return "未能识别的内部状态；详细代码已保留供程序排错"
 

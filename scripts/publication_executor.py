@@ -83,7 +83,7 @@ def existing_pr(repo: str, head_owner: str, branch: str) -> dict[str, Any] | Non
         raise RuntimeError("pull-request lookup returned invalid JSON") from exc
     matches = []
     for value in values if isinstance(values, list) else []:
-        owner = ((value.get("headRepositoryOwner") or {}).get("login") or "")
+        owner = (value.get("headRepositoryOwner") or {}).get("login") or ""
         if owner.casefold() == head_owner.casefold() and value.get("headRefName") == branch:
             matches.append(value)
     return next(
@@ -160,9 +160,7 @@ def push(args: argparse.Namespace, store: RadarLedger) -> dict[str, Any]:
     publication = permit_publication(permit)
     if args.head_owner.casefold() != publication["headOwner"].casefold():
         raise RuntimeError("push owner does not match the publication permit")
-    expected_fork = (
-        f"{publication['headOwner']}/{upstream_repo.rsplit('/', 1)[1]}".casefold()
-    )
+    expected_fork = f"{publication['headOwner']}/{upstream_repo.rsplit('/', 1)[1]}".casefold()
     remote_url = output(run(["git", "remote", "get-url", args.remote], cwd=worktree))
     if normalize_origin(remote_url) != expected_fork:
         raise RuntimeError("push remote is not the expected user fork")

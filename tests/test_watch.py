@@ -58,9 +58,7 @@ class GreenLightClient:
 
 
 def test_actionable_candidate_is_removed_from_watchlist():
-    existing = build_watchlist(
-        {"candidate_details": [held_candidate()]}, now=NOW
-    )
+    existing = build_watchlist({"candidate_details": [held_candidate()]}, now=NOW)
     updated = build_watchlist(
         {"candidate_details": [held_candidate(auto_spawn=True)]}, existing, now=NOW
     )
@@ -71,8 +69,6 @@ def test_maintainer_green_light_creates_forced_recheck():
     watchlist = build_watchlist(
         {"candidate_details": [held_candidate(policy_digest="different")]}, now=NOW
     )
-    updated, report = recheck_watchlist(
-        watchlist, GreenLightClient(), now=NOW
-    )
+    updated, report = recheck_watchlist(watchlist, GreenLightClient(), now=NOW)
     assert updated["items"][0]["status"] in {"POLICY_CHANGED", "RESCAN_REQUIRED"}
     assert report["pending_rechecks"]["a/b#1"]

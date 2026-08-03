@@ -112,12 +112,18 @@ def build_queue(
             "key": key,
             "category": candidate.get("category"),
             "gateDecision": candidate.get("gate_decision"),
-            "evidenceDigest": candidate.get("evidence_digest") or candidate.get("notification_digest") or "",
-            "policyDigest": candidate.get("policy_digest") or report.get("contract_digest") or contract_digest(),
+            "evidenceDigest": candidate.get("evidence_digest")
+            or candidate.get("notification_digest")
+            or "",
+            "policyDigest": candidate.get("policy_digest")
+            or report.get("contract_digest")
+            or contract_digest(),
             "llmReview": candidate.get("llm_review"),
         }
         decision_digest = sha256_json(decision_basis)
-        intent_id = sha256_text(f"{key}|{report.get('snapshot_id') or report.get('now')}|{decision_digest}")
+        intent_id = sha256_text(
+            f"{key}|{report.get('snapshot_id') or report.get('now')}|{decision_digest}"
+        )
         item = {
             "version": INTENT_VERSION,
             "intentId": intent_id,
@@ -132,8 +138,7 @@ def build_queue(
             "autoSpawn": candidate.get("auto_spawn") is True,
             "publicSubmissionAllowed": candidate.get("public_submission_allowed") is True,
             "autoSubmitAuthorized": (
-                mode in {"canary", "active"}
-                and candidate.get("public_submission_allowed") is True
+                mode in {"canary", "active"} and candidate.get("public_submission_allowed") is True
             ),
             "authorizationSource": "signed_live_revalidation_required",
             "publicationMode": mode,

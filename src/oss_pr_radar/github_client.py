@@ -130,9 +130,7 @@ class GitHubClient:
         ]
         unique_terms = list(dict.fromkeys(terms))[:3]
         if len(unique_terms) >= 2:
-            queries.append(
-                f"repo:{repo} is:pr is:open {' '.join(unique_terms[:2])} in:title"
-            )
+            queries.append(f"repo:{repo} is:pr is:open {' '.join(unique_terms[:2])} in:title")
         found: dict[int, dict[str, Any]] = {}
         for event in timeline or []:
             source = (event.get("source") or {}).get("issue") or {}
@@ -203,9 +201,7 @@ class GitHubClient:
         return [item for item in value["tree"] if isinstance(item, dict)]
 
     def file_text(self, repo: str, path: str, ref: str) -> str:
-        value = self.api(
-            f"repos/{repo}/contents/{quote(path, safe='/')}", params={"ref": ref}
-        )
+        value = self.api(f"repos/{repo}/contents/{quote(path, safe='/')}", params={"ref": ref})
         if not isinstance(value, dict) or value.get("encoding") != "base64":
             raise GitHubError(f"cannot read repository file: {path}")
         try:

@@ -72,9 +72,7 @@ def restore(root: Path, branch: str, *, allow_missing: bool = False) -> None:
             return
         raise RuntimeError(f"state branch fetch failed: {fetched.stderr[:300]}")
     sha = git("rev-parse", "FETCH_HEAD", cwd=root).stdout.strip()
-    manifest_result = git_bytes(
-        "show", f"FETCH_HEAD:{MANIFEST}", cwd=root, check=False
-    )
+    manifest_result = git_bytes("show", f"FETCH_HEAD:{MANIFEST}", cwd=root, check=False)
     if manifest_result.returncode != 0:
         raise RuntimeError("state manifest is missing; migrate the state branch first")
     try:
@@ -87,9 +85,7 @@ def restore(root: Path, branch: str, *, allow_missing: bool = False) -> None:
     for remote_name, metadata in listed.items():
         if remote_name not in FILES or not isinstance(metadata, dict):
             raise RuntimeError(f"unexpected state file: {remote_name}")
-        result = git_bytes(
-            "show", f"FETCH_HEAD:{remote_name}", cwd=root, check=False
-        )
+        result = git_bytes("show", f"FETCH_HEAD:{remote_name}", cwd=root, check=False)
         if result.returncode != 0:
             raise RuntimeError(f"state file is missing: {remote_name}")
         raw = result.stdout
@@ -112,8 +108,7 @@ def build_manifest(root: Path, available: dict[str, Path]) -> dict[str, object]:
     return {
         "version": MANIFEST_VERSION,
         "generatedAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-        "runId": os.environ.get("RADAR_RUN_ID")
-        or os.environ.get("GITHUB_RUN_ID", ""),
+        "runId": os.environ.get("RADAR_RUN_ID") or os.environ.get("GITHUB_RUN_ID", ""),
         "sourceSha": os.environ.get("GITHUB_SHA", ""),
         "files": files,
     }
@@ -127,7 +122,9 @@ def publish(root: Path, branch: str) -> None:
     }
     if not available:
         raise RuntimeError("no state files are available to publish")
-    expected = (root / BASE_SHA).read_text(encoding="utf-8").strip() if (root / BASE_SHA).exists() else ""
+    expected = (
+        (root / BASE_SHA).read_text(encoding="utf-8").strip() if (root / BASE_SHA).exists() else ""
+    )
     manifest = build_manifest(root, available)
     with tempfile.TemporaryDirectory(prefix="oss-pr-radar-state-") as raw:
         work = Path(raw)
@@ -196,9 +193,7 @@ def migrate(root: Path, branch: str) -> None:
     actual = git("rev-parse", "FETCH_HEAD", cwd=root).stdout.strip()
     available_raw: dict[str, bytes] = {}
     for remote_name in FILES:
-        result = git_bytes(
-            "show", f"FETCH_HEAD:{remote_name}", cwd=root, check=False
-        )
+        result = git_bytes("show", f"FETCH_HEAD:{remote_name}", cwd=root, check=False)
         if result.returncode == 0:
             json.loads(result.stdout.decode("utf-8"))
             available_raw[remote_name] = result.stdout
@@ -209,9 +204,7 @@ def migrate(root: Path, branch: str) -> None:
         name: {"sha256": digest_bytes(raw), "bytes": len(raw)}
         for name, raw in available_raw.items()
     }
-    existing = git_bytes(
-        "show", f"FETCH_HEAD:{MANIFEST}", cwd=root, check=False
-    )
+    existing = git_bytes("show", f"FETCH_HEAD:{MANIFEST}", cwd=root, check=False)
     if existing.returncode == 0:
         try:
             manifest = json.loads(existing.stdout.decode("utf-8"))

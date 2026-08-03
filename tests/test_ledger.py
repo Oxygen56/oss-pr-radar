@@ -145,22 +145,16 @@ def test_stalled_dispatch_gets_one_write_ahead_recovery(tmp_path):
 
     candidate = store.recovery_candidates(min_age_minutes=90)[0]
     assert candidate["threadId"] == "thread-1"
-    store.reserve_recovery(
-        thread_id="thread-1", nonce=candidate["recoveryNonce"]
-    )
+    store.reserve_recovery(thread_id="thread-1", nonce=candidate["recoveryNonce"])
     assert store.recovery_candidates(min_age_minutes=90) == []
     assert store.unresolved_recoveries()[0]["threadId"] == "thread-1"
 
-    store.commit_recovery(
-        thread_id="thread-1", nonce=candidate["recoveryNonce"]
-    )
+    store.commit_recovery(thread_id="thread-1", nonce=candidate["recoveryNonce"])
     assert store.unresolved_recoveries() == []
     store.record_stage("a/b#1", "AUDIT_NO_GO", reason="DUPLICATE")
     candidate = store.cleanup_candidates()[0]
     assert candidate["threadId"] == "thread-1"
-    store.commit_cleanup(
-        thread_id="thread-1", nonce=candidate["cleanupNonce"]
-    )
+    store.commit_cleanup(thread_id="thread-1", nonce=candidate["cleanupNonce"])
     assert store.cleanup_candidates() == []
 
 

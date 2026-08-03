@@ -39,10 +39,14 @@ def build_watchlist(
         if candidate.get("auto_spawn") is True:
             retained.pop(key, None)
             continue
-        if candidate.get("category") not in {
-            "WAIT_MAINTAINER",
-            "PR_COMPETITION_OPPORTUNITY",
-        } and candidate.get("gate_decision") != "HUMAN_REVIEW":
+        if (
+            candidate.get("category")
+            not in {
+                "WAIT_MAINTAINER",
+                "PR_COMPETITION_OPPORTUNITY",
+            }
+            and candidate.get("gate_decision") != "HUMAN_REVIEW"
+        ):
             retained.pop(key, None)
             continue
         previous = retained.get(key) or {}
@@ -68,9 +72,7 @@ def build_watchlist(
         "generatedAt": iso_z(current),
         "items": sorted(retained.values(), key=lambda item: item["key"]),
     }
-    value["digest"] = sha256_json(
-        {key: item for key, item in value.items() if key != "digest"}
-    )
+    value["digest"] = sha256_json({key: item for key, item in value.items() if key != "digest"})
     return value
 
 
@@ -111,8 +113,7 @@ def recheck_watchlist(
             new_status = "COVERED"
             reason = "OWNERSHIP_CHANGED"
         elif any(
-            relation.get("relation")
-            in {"STRONG_EXACT_DUPLICATE", "STRONG_MERGED_COVERAGE"}
+            relation.get("relation") in {"STRONG_EXACT_DUPLICATE", "STRONG_MERGED_COVERAGE"}
             for relation in evidence.pull_relations
         ):
             new_status = "COVERED"

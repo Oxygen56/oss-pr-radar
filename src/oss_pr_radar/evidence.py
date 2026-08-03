@@ -77,7 +77,9 @@ def collect_evidence(
     comments = load("comments", lambda: client.comments(repo, issue_number), [])
     timeline = load("timeline", lambda: client.timeline(repo, issue_number), [])
     policy = discover_policy(client, repo)
-    completeness["repositoryPolicy"] = "COMPLETE" if policy.status != "UNKNOWN" else f"ERROR:{policy.error or 'unknown'}"
+    completeness["repositoryPolicy"] = (
+        "COMPLETE" if policy.status != "UNKNOWN" else f"ERROR:{policy.error or 'unknown'}"
+    )
     raw_prs = load(
         "relatedPullRequests",
         lambda: client.related_open_prs(

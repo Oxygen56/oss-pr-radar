@@ -69,9 +69,7 @@ def _author(comment: dict[str, Any]) -> str:
 
 def _association(comment: dict[str, Any]) -> str:
     return str(
-        comment.get("authorAssociation")
-        or comment.get("author_association")
-        or "NONE"
+        comment.get("authorAssociation") or comment.get("author_association") or "NONE"
     ).upper()
 
 

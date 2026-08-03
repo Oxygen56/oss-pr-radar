@@ -87,9 +87,7 @@ class FeishuClient:
             raise NotificationError(f"Feishu token failed: {value.get('code')}")
         return str(token)
 
-    def send_card(
-        self, card: dict[str, Any], *, idempotency_key: str
-    ) -> dict[str, Any]:
+    def send_card(self, card: dict[str, Any], *, idempotency_key: str) -> dict[str, Any]:
         value = self._post(
             "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id",
             {

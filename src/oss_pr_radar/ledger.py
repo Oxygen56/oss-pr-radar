@@ -164,9 +164,7 @@ class RadarLedger:
                 );
                 """
             )
-            columns = {
-                str(row[1]) for row in connection.execute("PRAGMA table_info(intents)")
-            }
+            columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(intents)")}
             if "title_time" not in columns:
                 connection.execute("ALTER TABLE intents ADD COLUMN title_time TEXT")
             if "title_synced_state" not in columns:
@@ -268,7 +266,11 @@ class RadarLedger:
                     (now, intent_id),
                 )
                 return None
-            if row["lease_until"] and parse_time(row["lease_until"]) > now_dt and row["lease_owner"] != owner:
+            if (
+                row["lease_until"]
+                and parse_time(row["lease_until"]) > now_dt
+                and row["lease_owner"] != owner
+            ):
                 return None
             if max_active is not None:
                 active = connection.execute(
@@ -385,15 +387,9 @@ class RadarLedger:
         return values
 
     def commit_title(self, *, thread_id: str, state: str, nonce: str) -> None:
-        candidates = {
-            item["threadId"]: item for item in self.title_candidates()
-        }
+        candidates = {item["threadId"]: item for item in self.title_candidates()}
         candidate = candidates.get(thread_id)
-        if (
-            not candidate
-            or candidate["titleState"] != state
-            or candidate["titleNonce"] != nonce
-        ):
+        if not candidate or candidate["titleState"] != state or candidate["titleNonce"] != nonce:
             raise LedgerError("title authorization is stale or invalid")
         now = iso_z(datetime.now(UTC))
         with self.transaction() as connection:
@@ -450,9 +446,7 @@ class RadarLedger:
             raise ValueError(f"unsupported lifecycle stage: {stage}")
         now = iso_z(datetime.now(UTC))
         with self.transaction() as connection:
-            row = connection.execute(
-                "SELECT key FROM opportunities WHERE key=?", (key,)
-            ).fetchone()
+            row = connection.execute("SELECT key FROM opportunities WHERE key=?", (key,)).fetchone()
             if row is None:
                 raise LedgerError("opportunity not found")
             connection.execute(
@@ -529,8 +523,7 @@ class RadarLedger:
 
     def recovery_candidates(self, *, min_age_minutes: int = 90) -> list[dict[str, Any]]:
         cutoff = iso_z(
-            datetime.now(UTC)
-            - timedelta(minutes=max(30, min(int(min_age_minutes), 24 * 60)))
+            datetime.now(UTC) - timedelta(minutes=max(30, min(int(min_age_minutes), 24 * 60)))
         )
         with self.connect() as connection:
             rows = connection.execute(
@@ -663,7 +656,7 @@ class RadarLedger:
                 f"""SELECT o.key,o.stage,o.issue_url,i.intent_id,i.thread_id,
                            i.worktree_path,i.status,i.payload_json
                     FROM opportunities o JOIN intents i ON i.opportunity_key=o.key
-                    WHERE {' AND '.join(clauses)}
+                    WHERE {" AND ".join(clauses)}
                     ORDER BY i.updated_at DESC LIMIT 1""",
                 tuple(params),
             ).fetchone()
@@ -725,9 +718,7 @@ class RadarLedger:
                 raise LedgerError("opportunity is not submit-ready")
             if row["thread_id"] != thread_id:
                 raise LedgerError("publication thread identity mismatch")
-            if Path(str(row["worktree_path"] or "")).resolve() != Path(
-                worktree_path
-            ).resolve():
+            if Path(str(row["worktree_path"] or "")).resolve() != Path(worktree_path).resolve():
                 raise LedgerError("publication worktree mismatch")
             payload = json.loads(row["payload_json"])
             if payload.get("autoSubmitAuthorized") is not True:
@@ -763,9 +754,7 @@ class RadarLedger:
                 (request_id,),
             ).fetchone()
             if existing:
-                return dict(existing) | {
-                    "request": json.loads(existing["request_json"])
-                }
+                return dict(existing) | {"request": json.loads(existing["request_json"])}
             connection.execute(
                 """INSERT INTO publication_requests
                    (request_id,opportunity_key,thread_id,commit_sha,branch,worktree_path,
@@ -804,9 +793,7 @@ class RadarLedger:
                 "SELECT * FROM publication_requests WHERE request_id=?",
                 (request_id,),
             ).fetchone()
-        return (
-            dict(row) | {"request": json.loads(row["request_json"])} if row else None
-        )
+        return dict(row) | {"request": json.loads(row["request_json"])} if row else None
 
     def defer_publication_request(self, request_id: str, reason: str) -> None:
         now = iso_z(datetime.now(UTC))
@@ -864,9 +851,11 @@ class RadarLedger:
                 "SELECT * FROM publication_permits WHERE request_id=?",
                 (request_id,),
             ).fetchone()
-            if existing and existing["status"] == "ACTIVE" and parse_time(
-                existing["expires_at"]
-            ) > current:
+            if (
+                existing
+                and existing["status"] == "ACTIVE"
+                and parse_time(existing["expires_at"]) > current
+            ):
                 return dict(existing)
             if existing:
                 unresolved = connection.execute(
@@ -1084,9 +1073,7 @@ class RadarLedger:
         ]
 
     def commit_cleanup(self, *, thread_id: str, nonce: str) -> None:
-        candidates = {
-            item["threadId"]: item for item in self.cleanup_candidates()
-        }
+        candidates = {item["threadId"]: item for item in self.cleanup_candidates()}
         candidate = candidates.get(thread_id)
         if not candidate or candidate["cleanupNonce"] != nonce:
             raise LedgerError("cleanup authorization is stale or invalid")

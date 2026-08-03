@@ -38,4 +38,3 @@ def test_auto_spawn_requires_actionable_review():
 def test_failed_scan_is_rejected():
     with pytest.raises(ContractError):
         validate_report({"scan_ok": False, "scan_error": "incomplete", "candidate_details": []})
-

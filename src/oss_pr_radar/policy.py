@@ -108,9 +108,7 @@ def predict_candidate(
     raw_assessment = candidate.get("open_pr_assessment")
     assessment = raw_assessment if isinstance(raw_assessment, dict) else {}
     raw_related_assessment = candidate.get("related_issue_assessment")
-    related_assessment = (
-        raw_related_assessment if isinstance(raw_related_assessment, dict) else {}
-    )
+    related_assessment = raw_related_assessment if isinstance(raw_related_assessment, dict) else {}
     live_checks = (
         live_gate.get("checks")
         if isinstance(live_gate, dict) and isinstance(live_gate.get("checks"), dict)
@@ -123,26 +121,25 @@ def predict_candidate(
         and all(live_checks.get(name) == "PASS" for name in required_live_checks)
     )
     labels = " ".join(str(item) for item in candidate.get("labels") or [])
-    snapshot_text = " ".join(
-        str(candidate.get(field) or "")
-        for field in ("title", "risk", "expected_changes", "next_step")
-    ) + " " + labels
+    snapshot_text = (
+        " ".join(
+            str(candidate.get(field) or "")
+            for field in ("title", "risk", "expected_changes", "next_step")
+        )
+        + " "
+        + labels
+    )
 
     if re.search(r"security|vulnerab|安全披露|漏洞|CVE", snapshot_text, re.I):
         return Prediction("DROP", "SECURITY_BLOCKED")
-    legacy_normal_policy = (
-        raw_policy is None and candidate.get("public_submission_allowed") is True
-    )
+    legacy_normal_policy = raw_policy is None and candidate.get("public_submission_allowed") is True
     private_only = bool(
         category == "LOCAL_FIX_ONLY"
         and gate == "ALLOW_PRIVATE_WORK"
         and policy.startswith("ai_disclosure")
         and candidate.get("public_submission_allowed") is False
     )
-    weak_competition = bool(
-        category == "PR_COMPETITION_OPPORTUNITY"
-        and gate == "ALLOW_TO_WORK"
-    )
+    weak_competition = bool(category == "PR_COMPETITION_OPPORTUNITY" and gate == "ALLOW_TO_WORK")
     if (
         policy not in {"normal", "legal_confirmation"}
         and not legacy_normal_policy
@@ -153,9 +150,7 @@ def predict_candidate(
         return Prediction("WATCH", "POLICY_BLOCKED")
     if candidate.get("hardware_compatible") is not True:
         return Prediction("WATCH", "HARDWARE_BLOCKED")
-    clean_candidate = bool(
-        category == "NEW_CLEAN_CANDIDATE" and gate == "ALLOW_TO_WORK"
-    )
+    clean_candidate = bool(category == "NEW_CLEAN_CANDIDATE" and gate == "ALLOW_TO_WORK")
     if not private_only and not clean_candidate and not weak_competition:
         return Prediction("WATCH", "RADAR_GATE_NOT_CLEAN")
 
@@ -169,7 +164,10 @@ def predict_candidate(
         if isinstance(item, dict)
     )
     if pr_status in {
-        "direct_open_pr", "strong_existing_pr", "covered", "covered_strong",
+        "direct_open_pr",
+        "strong_existing_pr",
+        "covered",
+        "covered_strong",
         "competition_saturated",
     }:
         return Prediction("DROP", "DUPLICATE")
@@ -179,10 +177,16 @@ def predict_candidate(
         return Prediction("WATCH", "COMPETITION_EVIDENCE_INCOMPLETE")
     if private_only and pr_status == "weak_pr_competition_possible":
         return Prediction("BUILD_AND_HOLD", "WEAK_PR_COMPETITION_PRIVATE_AUDIT")
-    if pr_status in {
-        "keyword_overlap_only", "semantic_overlap_requires_review",
-        "human_review_required", "lookup_failed",
-    } and not live_gate_complete:
+    if (
+        pr_status
+        in {
+            "keyword_overlap_only",
+            "semantic_overlap_requires_review",
+            "human_review_required",
+            "lookup_failed",
+        }
+        and not live_gate_complete
+    ):
         return Prediction("WATCH", "PR_OVERLAP_REVIEW_REQUIRED")
 
     related_status = str(related_assessment.get("status") or "")
@@ -208,7 +212,10 @@ def predict_candidate(
     if live_gate is not None:
         if live_gate.get("status") != "PASS":
             return Prediction("WATCH", str(live_gate.get("reasonCode") or "LIVE_GATE_FAILED"))
-        if any(live_checks.get(name) != "PASS" for name in ("issueState", "ownership", "duplicate", "design", "policy")):
+        if any(
+            live_checks.get(name) != "PASS"
+            for name in ("issueState", "ownership", "duplicate", "design", "policy")
+        ):
             return Prediction("WATCH", "LIVE_GATE_INCOMPLETE")
 
     if weak_competition:

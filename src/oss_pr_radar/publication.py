@@ -166,27 +166,19 @@ def _changed_files(worktree: Path, repo: str, default_branch: str) -> list[str]:
         cwd=worktree,
         timeout=300,
     )
-    base = command(
-        ["git", "merge-base", "HEAD", f"{remote}/{default_branch}"], cwd=worktree
-    )
-    value = command(
-        ["git", "diff", "--name-only", f"{base}..HEAD"], cwd=worktree
-    )
+    base = command(["git", "merge-base", "HEAD", f"{remote}/{default_branch}"], cwd=worktree)
+    value = command(["git", "diff", "--name-only", f"{base}..HEAD"], cwd=worktree)
     return sorted(line for line in value.splitlines() if line)
 
 
 def _dco_valid(worktree: Path, repo: str, default_branch: str) -> bool:
     remote = _upstream_remote(worktree, repo)
-    base = command(
-        ["git", "merge-base", "HEAD", f"{remote}/{default_branch}"], cwd=worktree
-    )
+    base = command(["git", "merge-base", "HEAD", f"{remote}/{default_branch}"], cwd=worktree)
     name = command(["git", "config", "user.name"], cwd=worktree)
     email = command(["git", "config", "user.email"], cwd=worktree)
     if not name or not email:
         return False
-    raw = command(
-        ["git", "log", "--format=%B%x00", f"{base}..HEAD"], cwd=worktree
-    )
+    raw = command(["git", "log", "--format=%B%x00", f"{base}..HEAD"], cwd=worktree)
     messages = [message for message in raw.split("\x00") if message.strip()]
     expected = f"Signed-off-by: {name} <{email}>".casefold()
     return bool(messages) and all(expected in message.casefold() for message in messages)

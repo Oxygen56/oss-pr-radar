@@ -51,9 +51,7 @@ def report(*candidates):
 
 
 def test_builds_signed_promptless_envelope():
-    result = MODULE.build(
-        report(candidate()), signing_key=KEY, now=NOW, source_sha="abc123"
-    )
+    result = MODULE.build(report(candidate()), signing_key=KEY, now=NOW, source_sha="abc123")
     intent = result["intents"][0]
     assert "prompt" not in intent
     assert intent["sourceSha"] == "abc123"
@@ -88,9 +86,7 @@ def test_human_review_and_llm_failure_are_not_dispatched():
 
 def test_existing_unconsumed_intent_survives_unobserved_scan_until_expiry():
     existing = MODULE.build(report(candidate()), signing_key=KEY, now=NOW)
-    result = MODULE.build(
-        report(), existing, signing_key=KEY, now=NOW + timedelta(minutes=30)
-    )
+    result = MODULE.build(report(), existing, signing_key=KEY, now=NOW + timedelta(minutes=30))
     assert [item["key"] for item in result["intents"]] == ["example/project#42"]
     assert result["newIntentCount"] == 0
 
