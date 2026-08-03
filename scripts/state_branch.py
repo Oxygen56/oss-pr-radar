@@ -58,6 +58,18 @@ def publish(root: Path, branch: str) -> None:
             git("remote", "get-url", "origin", cwd=root).stdout.strip(),
             cwd=work,
         )
+        auth = git(
+            "config",
+            "--local",
+            "--get-regexp",
+            r"^http\..*\.extraheader$",
+            cwd=root,
+            check=False,
+        )
+        for line in auth.stdout.splitlines():
+            key, separator, value = line.partition(" ")
+            if separator and key and value:
+                git("config", "--local", key, value, cwd=work)
         fetched = git("fetch", "origin", branch, cwd=work, check=False)
         if fetched.returncode == 0:
             git("checkout", "-B", branch, "FETCH_HEAD", cwd=work)
