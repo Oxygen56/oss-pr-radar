@@ -188,7 +188,8 @@ jobs:
     needs: persist-pending
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    permissions: {}
+    permissions:
+      contents: read
     env:
       FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
       FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
