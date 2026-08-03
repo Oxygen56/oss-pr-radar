@@ -1,0 +1,60 @@
+{
+  "ae5841585ce6e1f648a203913ce6a20911d34f6c9f855023e8553450f23109a4": {
+    "confidence": 0.8,
+    "decision": "WAIT_MAINTAINER",
+    "evidence": [
+      "Issue body describes stream and snapshot using incompatible message ids: snapshot re-factors into separate messages with fresh generate_event_id()",
+      "Reference client @ag-ui/client applies MESSAGES_SNAPSHOT as id-keyed merge, causing tail-appending of unknown tool-call ids after final text",
+      "Proposed fix matches _workflow.py's opposite factoring, suggesting internal inconsistency",
+      "Gate decision is HUMAN_REVIEW and labels include needs-maintainer-triage",
+      "Potential duplicate issue #7490 shares behavior signals shape/streaming/tool",
+      "Open PRs #7423 and #7479 have semantic overlap with AG-UI/snapshot code paths but do not directly reference this issue"
+    ],
+    "expected_changes": [
+      "Modify _agent_run.py snapshot builder to reuse streamed tool-call message ids instead of generate_event_id()",
+      "Align _workflow.py ToolCallStart handling so parent_message_id consistently refers to the tool-call message id",
+      "Possibly adjust stream emission order/segmentation to match #3619 layout at stream time"
+    ],
+    "risks": [
+      "Overlapping open PRs (#7423, #7479) may already alter the snapshot lifecycle or support paths, creating merge conflicts or requiring different implementation boundaries",
+      "Changing message id semantics could affect clients that rely on current behavior or the #3619 split layout",
+      "Maintainer may prefer a spec-level fix (snapshot is order-authoritative) instead of the stream-id approach"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "test_plan": [
+      "Create a reproduction test with a run that emits text + tool call + text and assert the client-side array order after applying MESSAGES_SNAPSHOT with the reference merge logic",
+      "Add or update unit tests for _append_segmented_snapshot_messages verifying id stability for tool-call-only messages",
+      "Run targeted AG-UI SDK tests and the package's existing streaming regression suite"
+    ],
+    "why": "The issue gives a precise root cause (snapshot assigns fresh ids to re-factored tool-call messages, breaking the client's id-keyed merge and causing ordering displacement) and proposes a concrete fix. However, maintainer triage is required: the gate says HUMAN_REVIEW, there are overlapping open PRs (#7423, #7479) that touch AG-UI snapshot/support paths, and a potential duplicate issue #7490 with shared behavior signals. The fix may also involve design choices about message identity that need maintainer confirmation."
+  },
+  "ba469bd5c94418bd3fdf7ff2f217e4cac4ca0cb69587f3c0ea186546a5cf99b6": {
+    "confidence": 0.82,
+    "decision": "WAIT_MAINTAINER",
+    "evidence": [
+      "Issue body identifies exact code location `python/packages/ag-ui/agent_framework_ag_ui/_run_common.py:735-748` where the snapshot emit condition checks for handler existence rather than actual state update.",
+      "Minimal repro output shows 2 tool results produce 3 snapshots with `predict_state_config` set vs. 1 snapshot without it, scaling linearly with tool calls.",
+      "Production metrics in the issue: 1,632 snapshots vs. 1,600 TOOL_CALL_START events over two days; `StateSnapshotEvent` alone accounted for 44% of streamed bytes.",
+      "Related issue #7491 identified with 78% semantic overlap (shared signals: shape, streaming, tool), supporting the need for maintainer triage."
+    ],
+    "expected_changes": [
+      "Modify `_emit_tool_result_common` in `python/packages/ag-ui/agent_framework_ag_ui/_run_common.py` to emit `StateSnapshotEvent` only when predictive state actually applied pending updates or the tool result carried a deterministic `state_update`.",
+      "Potentially add a regression test in the ag-ui package that reproduces the issue using a fake chat client and a tool not named in `predict_state_config`.",
+      "Optionally explore using `StateDeltaEvent` at the tool-result boundary to bound payload size."
+    ],
+    "risks": [
+      "Changing the emit condition may suppress a snapshot that some consumers rely on even when no state changed; requires maintainer confirmation.",
+      "Potential overlap with issue #7491 suggests a shared underlying behavior; a fix here might need to be coordinated or scoped to avoid conflicting changes.",
+      "If the fix is implemented as a narrow tool-name filter, it may miss the case where a predictive tool produces no change; the broader pending-updates check is preferred but could alter behavior in edge cases."
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "test_plan": [
+      "Run the provided repro script `docs/issues/repros/repro_agui_predictive_snapshot_per_tool_result.py` and confirm the snapshot-to-tool-result ratio drops to the expected run-boundary-only behavior.",
+      "Add a unit/integration test that asserts no `StateSnapshotEvent` is emitted after a tool result when the predictive handler did not update state.",
+      "Run the existing ag-ui test suite and static checks to ensure no regression in valid snapshot emission cases."
+    ],
+    "why": "The issue provides a precise root cause, a deterministic no-LLM repro, production impact metrics, and a concrete suggested fix. However, the deterministic gate requires HUMAN_REVIEW, and maintainer triage is needed to confirm design preferences (e.g., whether to use pending-updates check vs. tool-name filter, and whether to introduce StateDeltaEvent at the boundary) and to disambiguate potential overlap with issue #7491."
+  }
+}
