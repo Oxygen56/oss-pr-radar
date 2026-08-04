@@ -1,5 +1,5 @@
 {
-  "digest": "48cdfa324517b4409d39ed32ca7d5505685506fe74efd0b250f89d50707ad341",
+  "digest": "9f5438d23d7bd42ba13f1b60cde33035337957ab09e435b2c3f06ccd9183f3ef",
   "events": [
     {
       "attempts": 1,
@@ -2037,9 +2037,152 @@
       "runId": "watch-1785825400",
       "sentAt": "2026-08-04T06:45:53.973305Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "pydantic/pydantic-ai#7109",
+        "pydantic/pydantic-ai#7108",
+        "PrefectHQ/fastmcp#4748",
+        "sgl-project/sglang#33408",
+        "vllm-project/vllm#50891",
+        "BerriAI/litellm#35711",
+        "can1357/oh-my-pi#7601"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[pydantic/pydantic-ai#7109](https://github.com/pydantic/pydantic-ai/issues/7109) Durable-exec leaf-toolset `id` error never mentions the capability `id` that would fix it**\n建议：WAIT_MAINTAINER | 分数：8\n价值：Issue clearly identifies a missing capability id hint in error message with a concrete repro and root cause. However, existing PR #6696 has semantic overlap and may already address the code path; maintainer design confirmation is needed before starting work.\n改动：Update error message in durable_exec/_base.py generic branch to include capability id hint；Fix typo 'activitys' to 'activities'\n验证：Add regression test using repro: Agent with WebSearch(local='duckduckgo') and TemporalDurability, assert error message contains capability id hint；Run targeted unit tests for durable_exec\n风险：Existing PR #6696 may already change this code path, causing merge conflict or duplicate work；Maintainer may prefer different wording or approach\n竞争：发现 PR #6696 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 2，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[pydantic/pydantic-ai#7108](https://github.com/pydantic/pydantic-ai/issues/7108) `include_binary_content=False` is not honored for tool returns, `final_result`, or output-function arguments**\n建议：WAIT_MAINTAINER | 分数：8\n价值：Issue clearly identifies a real bug with a minimal repro and root cause in messages.py, but the deterministic gate requires HUMAN_REVIEW and an open PR (#7053) has semantic overlap that must be manually compared before creating a new task.\n改动：Fix messages.py::BaseToolReturnPart.otel_message_parts to honor include_binary_content；Fix capabilities/instrumentation.py sinks for final_result and tool_arguments；Add regression tests for binary content stripping in tool returns and output functions\n验证：Use the provided repro to create a failing test for ToolReturnPart.otel_message_parts；Add tests for final_result and tool_arguments serialization with include_binary_content=False；Run targeted tests in tests/test_capabilities.py, tests/test_logfire.py, tests/test_images.py, tests/models/test_instrumented.py, tests/test_temporal.py\n风险：Potential overlap with PR #7053 may require coordination or supersede this work；Changing serialization behavior could affect existing traces or snapshots, though issue claims no tests break\n竞争：发现 PR #7053 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 2，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[PrefectHQ/fastmcp#4748](https://github.com/PrefectHQ/fastmcp/issues/4748) OAuth consent cookie is rejected behind Azure Functions**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue reports a clear bug: Azure Functions adds Domain attribute to __Host- cookie, causing browser rejection and 403. Root cause is well understood and reproducible. However, the deterministic gate says HUMAN_REVIEW, and there is no maintainer approval or help-wanted signal. The fix may involve design choices about cookie handling, so maintainer confirmation is needed.\n改动：Modify OAuth consent cookie handling to be compatible with hosting layers that rewrite cookie attributes, possibly by using a non-__Host- cookie or adjusting cookie attributes.\n验证：Create a failing test that simulates Azure Functions adding Domain attribute to the consent cookie and verifies the OAuth flow completes.\n风险：Changing cookie attributes may weaken security if not done carefully; need to preserve CSRF and browser-session binding.\n竞争：未发现相关 open PR\n下一步：先请求维护者分配/确认方案，获批后再开 PR。\n证据：复现信号 9，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33408](https://github.com/sgl-project/sglang/issues/33408) [Bug] Unlimited-OCR: server crashes when batching images with different gundam tile counts**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue provides a clear root cause (torch.stack on variable-size crops) and a reproducible test, but the deterministic gate requires HUMAN_REVIEW and an existing PR (#33458) has failed CI checks, so maintainer confirmation is needed before starting new work.\n改动：python/sglang/srt/models/unlimited_ocr.py；python/sglang/srt/managers/mm_utils.py\n验证：Add a regression test that sends two images with different gundam tile counts concurrently and asserts both requests succeed.；Run existing unit tests for unlimited_ocr and mm_utils.\n风险：Existing PR #33458 may already address the issue; new work could duplicate or conflict.；Per-item encoding fallback may impact performance for batched requests.\n竞争：已有直接关联但证据不完整的 PR #33458：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 10，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50891](https://github.com/vllm-project/vllm/issues/50891) [Bug]: AOT compile cache key ignores limit_mm_per_prompt, so image:0 and image:1 runs collide and crash with AttributeError: 'NoneType' object has no attribute 'size'**\n建议：WAIT_MAINTAINER | 分数：12\n价值：The issue provides a clear root cause: AOT compile cache key ignores limit_mm_per_prompt and multimodal_config, causing cache collisions between image-enabled and image-disabled runs. An existing PR #50908 attempts to fix this by including disabled multimodal modalities in the model config hash, but it has failed CI checks and may not fully address the root cause. A materially better PR could provide a more robust fix with comprehensive tests and ensure CI passes.\n改动：Modify AOT compile cache key generation to include multimodal configuration factors；Possibly adjust ModelConfig.compute_hash() to not ignore limit_mm_per_prompt and multimodal_config；Add regression tests for cache collision scenarios\n验证：Reproduce the issue using the provided steps: run with image:1 then image:0 and verify crash；Add a unit test that verifies cache keys differ for different limit_mm_per_prompt settings；Run existing test suite for compilation and config modules\n风险：Changing cache key may invalidate existing caches, causing recompilation overhead；Potential impact on performance if cache key becomes too sensitive；Need to ensure backward compatibility with existing cache entries\n竞争：已有直接关联但证据不完整的 PR #50908：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 6，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#35711](https://github.com/BerriAI/litellm/issues/35711) [Bug]: `ollama/` streaming never reconstructs tool calls — tool call arrives as plain `delta.content` text with `finish_reason: \"stop\"`, while the non-streaming path reconstructs it correctly**\n建议：WAIT_MAINTAINER | 分数：11\n价值：The issue provides a clear, reproducible bug with a precise root cause: the streaming path in the ollama/ completion transformation never reconstructs tool calls, unlike the non-streaming path. However, the deterministic gate is HUMAN_REVIEW, and open PR and related issue lookups timed out, so we cannot rule out existing implementations or maintainer preferences. The submission policy also conflicts with AI disclosure requirements, blocking automatic action.\n改动：Add tool-call reconstruction to OllamaTextCompletionResponseIterator.chunk_parser；Set finish_reason to 'tool_calls' when reconstructed tool call is detected；Possibly handle 'parameters' key variant in reconstruction condition\n验证：Create a regression test that streams a tool call via ollama/ prefix and asserts delta.tool_calls is populated and finish_reason is 'tool_calls'；Run existing ollama completion tests to ensure no regressions\n风险：Changing streaming behavior may affect existing consumers expecting text-only output；Potential edge cases in parsing partial JSON chunks during streaming\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 10，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[can1357/oh-my-pi#7601](https://github.com/can1357/oh-my-pi/issues/7601) [Windows] Shared headless browser daemon exits with code 21: system Chrome 150 silently exits on --remote-debugging-port=0**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue provides a clear root cause and repro, but a maintainer (roboomp) is actively investigating and has already submitted PR #7604 with a fix and regression tests. The PR has failed CI checks, so it may be weak, but the maintainer's involvement and existing PR make a new candidate premature until the PR is reviewed or closed.\n改动：packages/coding-agent/src/tools/browser/launch.ts；browser daemon configuration\n验证：Reproduce the issue on Windows with system Chrome and PUPPETEER_EXECUTABLE_PATH set; verify the fix selects the override.；Run existing browser tool tests and add regression test for executable selection precedence.\n风险：PR #7604 may be merged, making a new PR redundant.；Potential maintainer preference for a different fix approach.\n竞争：已有直接关联但证据不完整的 PR #7604：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 5，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T06:56:32.686259Z",
+      "eventId": "5069af97c84b87362eb1ea7c0f76e39ced4249909edba303a876a0d23185d5c7",
+      "idempotencyKey": "5069af97c84b87362eb1ea7c0f76e39ced4249909edba303a8",
+      "kind": "review",
+      "runId": "scan-20260804T065305Z-2adc063ca794",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "openclaw/openclaw#92199",
+        "vllm-project/vllm#50159"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[openclaw/openclaw#92199](https://github.com/openclaw/openclaw/issues/92199) [Bug]: [ACP] Text before tool calls is lost in WeChat (intermediate messages dropped, not merged)**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50159](https://github.com/vllm-project/vllm/issues/50159) [Bug]: Model Runner V2 + Gemma-4: memory profiler reports ~0.9 GiB more \"available KV\" than MRv1 → no runtime headroom → CUDA OOM under saturating load (no spec involved); with EAGLE it crashes earlier at cudagraph capture (stable-ABI aten::empty)**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T06:56:32.801511Z",
+      "eventId": "a67f3205ebacbddfba81b603d2f78d8b541dd2915573cfaaaa432fc13ea08ffd",
+      "idempotencyKey": "a67f3205ebacbddfba81b603d2f78d8b541dd2915573cfaaaa",
+      "kind": "watch",
+      "runId": "watch-1785825982",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-04T06:45:08.974891Z",
+  "generatedAt": "2026-08-04T06:56:32.901988Z",
   "newEventCount": 0,
   "version": "notification_outbox_v1"
 }
