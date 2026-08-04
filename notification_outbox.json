@@ -1,5 +1,5 @@
 {
-  "digest": "e718fcec1c62935d800219c28123c38098d1cc8013bd061922021cf9436f5e4b",
+  "digest": "e682e0a38992e470739706dff5dae508078f5849b83cc953893959c6f334fdaf",
   "events": [
     {
       "attempts": 1,
@@ -4013,9 +4013,152 @@
       "runId": "watch-1785846068",
       "sentAt": "2026-08-04T12:25:22.925179Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "fastmachinelearning/hls4ml#1515"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[fastmachinelearning/hls4ml#1515](https://github.com/fastmachinelearning/hls4ml/issues/1515) profiling.numerical() fails for multi-input models**\n建议：NEW_CLEAN_CANDIDATE | 分数：10\n价值：The issue clearly identifies a bug in profiling.numerical() for multi-input models, with a reproducible traceback showing np.ascontiguousarray(X) fails on a list of arrays with different shapes. The fix is localized to the profiling code path, and no competing PR exists.\n改动：Modify profiling.numerical() and activations_hlsmodel() to handle list-of-arrays input for multi-input models, likely by converting to a list of contiguous arrays or using a different tracing method.\n验证：Create a minimal multi-input Keras model, convert to hls4ml, and call profiling.numerical() with a list of arrays of different shapes; assert it does not raise and returns expected activations.\n风险：Potential changes to profiling API behavior for single-input models; need to ensure backward compatibility.\n竞争：仅发现未直接关联、无代码路径或强机制重合的 PR #1439；保留为搜索上下文，不阻止实现\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 6，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "green",
+          "title": {
+            "content": "OSS PR Radar: 可立即执行",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T12:50:39.920192Z",
+      "eventId": "6bc6fdc5507a434cc6f4bc2c046b658a49d1d0e7bc194ea02496d9624eea4344",
+      "idempotencyKey": "6bc6fdc5507a434cc6f4bc2c046b658a49d1d0e7bc194ea024",
+      "kind": "immediate",
+      "runId": "scan-20260804T124506Z-d4de0f3c1b6f",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "ai-dynamo/dynamo#12630",
+        "vllm-project/vllm#51016",
+        "vllm-project/vllm#50959"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[ai-dynamo/dynamo#12630](https://github.com/ai-dynamo/dynamo/issues/12630) [Bug] sglang chat processor streaming detokenizer emits U+FFFD and drops completed characters on multi-byte UTF-8 (CJK) at chunk boundaries**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue provides a clear root cause and a verified fix for a user-visible streaming corruption bug, but the deterministic gate requires HUMAN_REVIEW and there is potential overlap with issue #11997. Maintainer confirmation is needed before starting work.\n改动：Modify _incremental_decode in sglang_prepost.py to use emitted-character marker and hold back trailing U+FFFD；Add streaming regression tests for multi-byte UTF-8 chunk boundaries\n验证：Reproduce with the issue's minimal example and assert zero U+FFFD in streamed output；Run existing sglang frontend unit tests and static checks\n风险：Potential overlap with issue #11997 requires maintainer triage；Holding back legitimate U+FFFD at finish may need flush handling\n竞争：仅发现未直接关联、无代码路径或强机制重合的 PR #12562；保留为搜索上下文，不阻止实现\n下一步：先人工比较相关 issue 的根因、维护者归并方向和可提交代码路径；确认不是重复后再进入实现。\n证据：复现信号 2，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#51016](https://github.com/vllm-project/vllm/issues/51016) [Bug]: extract_hidden_states fails with TP>1 when KV page size < hidden-state per-token cost**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue reports a clear crash with root cause and repro, but the deterministic gate requires HUMAN_REVIEW and the related issue audit timed out. Existing PR #50894 is a draft with partial coverage, so a new PR could compete but needs maintainer confirmation.\n改动：Fix KV cache group alignment for hidden-state extraction with TP>1；Add regression test for TP>1 with hidden-state per-token cost exceeding KV page size\n验证：Run the provided repro command with TP=4 and extract_hidden_states; expect no assertion error；Add a unit test that constructs a model with TP>1 and hidden-state cost > KV page size, verifying startup and extraction\n风险：Potential design preference for how to scale block sizes; risk of changing behavior for other cache groups；Draft PR #50894 may already be accepted, making new work redundant\n竞争：已有直接关联但证据不完整的 PR #50894：仍是 draft；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 4，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50959](https://github.com/vllm-project/vllm/issues/50959) [Bug] fastsafetensors ParallelLoader broadcasts on group.WORLD; PP-scoped draft loads deadlock**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue reports a deterministic deadlock in fastsafetensors ParallelLoader when loading draft models under pipeline parallelism, with a clear root cause (hard-coded WORLD group) and a suggested fix. However, the deterministic gate is HUMAN_REVIEW, and there is an existing PR (#50514) with failed CI that may already address the area. Maintainer has acknowledged the issue but no design confirmation or assignment yet.\n改动：Scope the process group in fastsafetensors weight loading to the participating ranks (e.g., TP group) or refuse fastsafetensors for sub-engine loads.\n验证：Create a minimal reproduction with TP8×PP2 and fastsafetensors draft load to confirm deadlock; then add a regression test that verifies no hang and correct loading.\n风险：Changing process group scoping may affect engine-wide loads; need to ensure fallback to WORLD when appropriate.\n竞争：已有直接关联但证据不完整的 PR #50514：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 4，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T12:50:39.999873Z",
+      "eventId": "cae7d53f49a2a2725ab512df05517fd945bf2e8f2b48f59818612d2a2255eb7a",
+      "idempotencyKey": "cae7d53f49a2a2725ab512df05517fd945bf2e8f2b48f59818",
+      "kind": "review",
+      "runId": "scan-20260804T124506Z-d4de0f3c1b6f",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "can1357/oh-my-pi#7601",
+        "pydantic/pydantic-ai#7109",
+        "sgl-project/sglang#27937"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[can1357/oh-my-pi#7601](https://github.com/can1357/oh-my-pi/issues/7601) [Windows] Shared headless browser daemon exits with code 21: system Chrome 150 silently exits on --remote-debugging-port=0**\n建议：WAIT_MAINTAINER\n价值：STRONG_PR_APPEARED\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[pydantic/pydantic-ai#7109](https://github.com/pydantic/pydantic-ai/issues/7109) Durable-exec leaf-toolset `id` error never mentions the capability `id` that would fix it**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#27937](https://github.com/sgl-project/sglang/issues/27937) [Failure Tracker] PR Test (AMD)**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T12:50:40.091792Z",
+      "eventId": "1e1c6c7704d49dba58d2671b4d655ce27ba65d740e592efb88773e131c13e25a",
+      "idempotencyKey": "1e1c6c7704d49dba58d2671b4d655ce27ba65d740e592efb88",
+      "kind": "watch",
+      "runId": "watch-1785847444",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-04T12:24:35.340641Z",
+  "generatedAt": "2026-08-04T12:50:40.169367Z",
   "newEventCount": 0,
   "version": "notification_outbox_v1"
 }

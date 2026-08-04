@@ -103,6 +103,32 @@
     ],
     "why": "Issue reports a clear user-facing bug: profiling.numerical() fails for multi-input models due to np.ascontiguousarray(X) on a list of arrays with different shapes. Root cause is likely in activations_hlsmodel where X is passed to np.ascontiguousarray without handling list-of-arrays. No competing PR or maintainer assignment blocks work."
   },
+  "075c1ce45c2c1de2f03f215c87e3fdc833743ce69edec75e6190ec6af68ac1ac": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify _incremental_decode in sglang_prepost.py to use emitted-character marker and hold back trailing U+FFFD",
+      "Add streaming regression tests for multi-byte UTF-8 chunk boundaries"
+    ],
+    "risks": [
+      "Potential overlap with issue #11997 requires maintainer triage",
+      "Holding back legitimate U+FFFD at finish may need flush handling"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Reproduce with the issue's minimal example and assert zero U+FFFD in streamed output",
+      "Run existing sglang frontend unit tests and static checks"
+    ],
+    "unknowns": [
+      "Maintainer confirmation on approach and overlap with #11997"
+    ],
+    "why": "Issue provides a clear root cause and a verified fix for a user-visible streaming corruption bug, but the deterministic gate requires HUMAN_REVIEW and there is potential overlap with issue #11997. Maintainer confirmation is needed before starting work."
+  },
   "09825a63c7595dbc0ab01b0f35ce09e3128060df67572bc7681e652c013b6039": {
     "confidence": 0.7,
     "contradictions": [],
@@ -1200,6 +1226,35 @@
     ],
     "why": "Issue provides a clear root cause (torch.stack on variable-size crops) and a reproducible test, but the deterministic gate requires HUMAN_REVIEW. An existing PR #33458 directly addresses the issue but has failing CI checks, and a commenter has proposed a focused fix. Maintainer direction is not confirmed."
   },
+  "68c2888be696321cd2321d0fccfd08aeddd7a30bdae02ec845e32a28b3bac952": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix KV cache group alignment for hidden-state extraction with TP>1",
+      "Add regression test for TP>1 with hidden-state per-token cost exceeding KV page size"
+    ],
+    "risks": [
+      "Potential design preference for how to scale block sizes; risk of changing behavior for other cache groups",
+      "Draft PR #50894 may already be accepted, making new work redundant"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Run the provided repro command with TP=4 and extract_hidden_states; expect no assertion error",
+      "Add a unit test that constructs a model with TP>1 and hidden-state cost > KV page size, verifying startup and extraction"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred fix approach",
+      "Whether PR #50894 will be merged or is insufficient",
+      "Full related issue audit results (timeout)"
+    ],
+    "why": "Issue reports a clear crash with root cause and repro, but the deterministic gate requires HUMAN_REVIEW and the related issue audit timed out. Existing PR #50894 is a draft with partial coverage, so a new PR could compete but needs maintainer confirmation."
+  },
   "696e02a999f1d011ae915149f892da85ad6d48baaeb77c7118e9f6f1d84d1d0e": {
     "confidence": 0.7,
     "contradictions": [
@@ -2224,6 +2279,29 @@
     ],
     "why": "Issue clearly identifies a real bug with a minimal repro and root cause in messages.py, but an open PR (#7053) has semantic overlap and the deterministic gate requires human review. Need maintainer confirmation on design and PR comparison before starting work."
   },
+  "c998e2e23395bea890e86932adcd2a03fd4beacc85b9c67017a830139e667254": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify profiling.numerical() and activations_hlsmodel() to handle list-of-arrays input for multi-input models, likely by converting to a list of contiguous arrays or using a different tracing method."
+    ],
+    "risks": [
+      "Potential changes to profiling API behavior for single-input models; need to ensure backward compatibility."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a minimal multi-input Keras model, convert to hls4ml, and call profiling.numerical() with a list of arrays of different shapes; assert it does not raise and returns expected activations."
+    ],
+    "unknowns": [
+      "Exact internal structure of activations_hlsmodel and how model.trace expects input; maintainer preference on handling multi-input profiling."
+    ],
+    "why": "The issue clearly identifies a bug in profiling.numerical() for multi-input models, with a reproducible traceback showing np.ascontiguousarray(X) fails on a list of arrays with different shapes. The fix is localized to the profiling code path, and no competing PR exists."
+  },
   "cad64f1b75bd66c21f7cebf442c1a21d1ebca66db58c873b4c656e05db8dba73": {
     "confidence": 0.6,
     "contradictions": [],
@@ -2400,6 +2478,30 @@
       "Maintainer preference on whether input_tokens should become total or remain remainder"
     ],
     "why": "Issue clearly identifies a real bug in native Anthropic provider token accounting with a concrete reproduction and suggested fix. However, an open PR #6770 already addresses the same code path and semantics, and a duplicate issue #6768 exists. The deterministic gate requires HUMAN_REVIEW, and the existing PR may already cover the fix, so starting new work without maintainer confirmation risks duplication."
+  },
+  "d74892feb9bc84de4ca56b7d9ee2f99ade78bbe3f11c8e820388f15389ffd240": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Scope the process group in fastsafetensors weight loading to the participating ranks (e.g., TP group) or refuse fastsafetensors for sub-engine loads."
+    ],
+    "risks": [
+      "Changing process group scoping may affect engine-wide loads; need to ensure fallback to WORLD when appropriate."
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Create a minimal reproduction with TP8×PP2 and fastsafetensors draft load to confirm deadlock; then add a regression test that verifies no hang and correct loading."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the scoping fix or the defensive refusal; whether PR #50514's failed CI is related and will be fixed."
+    ],
+    "why": "Issue reports a deterministic deadlock in fastsafetensors ParallelLoader when loading draft models under pipeline parallelism, with a clear root cause (hard-coded WORLD group) and a suggested fix. However, the deterministic gate is HUMAN_REVIEW, and there is an existing PR (#50514) with failed CI that may already address the area. Maintainer has acknowledged the issue but no design confirmation or assignment yet."
   },
   "df415d8405e9e398e78a2e1e0ac591cd9353fd22f263ec5549f4fe01c26291b5": {
     "confidence": 0.85,
