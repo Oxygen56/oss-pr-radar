@@ -1,5 +1,5 @@
 {
-  "digest": "c8b539af0a7504b45a39c7ebf35a090792ce52d6b71b2023f92d0b2c9b2fbcca",
+  "digest": "6e54d8f49557316af39b3a5bb6959c6953a44ab6ac17101b688b995da6df1244",
   "events": [
     {
       "attempts": 1,
@@ -4328,9 +4328,229 @@
       "runId": "watch-1785848149",
       "sentAt": "2026-08-04T13:02:26.975126Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "modelcontextprotocol/inspector#1859"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[modelcontextprotocol/inspector#1859](https://github.com/modelcontextprotocol/inspector/issues/1859) Sanbox not loaded: ENOENT: no such file or directory, open ..../@modelcontextprotocol/inspector/clients/web/static/sandbox_proxy.html**\n建议：NEW_CLEAN_CANDIDATE | 分数：10\n价值：The issue reports a clear packaging defect: the published npm package lacks the static/sandbox_proxy.html file, causing the Apps tab to fail for all npx users. A maintainer triaged it as High priority, and a user confirmed a local fix. No competing PR exists, and the fix is straightforward: include the missing static file in the npm package.\n改动：Add static/sandbox_proxy.html to the npm package files；Add a packaging verification step to prevent recurrence\n验证：Reproduce by installing the published package and attempting to open an app；Verify the fix by checking the file exists in the installed package；Add a CI check that asserts the required static files are present in the packed artifact\n风险：Potential need to update related sandbox URL configuration (issue #1862)；Ensure the fix is applied to the correct build/publish pipeline\n竞争：未发现相关 open PR\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 3，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "green",
+          "title": {
+            "content": "OSS PR Radar: 可立即执行",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T14:54:39.672574Z",
+      "eventId": "f4d199e08dfeb8b949cd398463f239fe61c8e26673abb203e76fb9b0da1009ad",
+      "idempotencyKey": "f4d199e08dfeb8b949cd398463f239fe61c8e26673abb203e7",
+      "kind": "immediate",
+      "runId": "scan-20260804T144715Z-831a97088ce7",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "mastra-ai/mastra#20682",
+        "openabdev/openab#1464",
+        "google/adk-python#6584",
+        "fastmachinelearning/hls4ml#1515",
+        "BerriAI/litellm#35780",
+        "sgl-project/sglang#33549",
+        "vllm-project/vllm#51016",
+        "vllm-project/vllm#50959",
+        "PrefectHQ/fastmcp#4749",
+        "cline/cline#12913",
+        "mem0ai/mem0#6783"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[mastra-ai/mastra#20682](https://github.com/mastra-ai/mastra/issues/20682) [BUG] Thread title is silently lost when generateTitle is used on serverless runtimes that freeze after the response (e.g. AWS Lambda)**\n建议：WAIT_MAINTAINER | 分数：15\n价值：Issue clearly identifies a detached promise causing silent title loss on serverless runtimes, with a minimal repro. However, the deterministic gate requires HUMAN_REVIEW, and existing PRs (e.g., #16218) overlap semantically, requiring maintainer comparison before creating a new task.\n改动：Modify Agent#executeOnFinish to await or make title generation configurable；Add regression test simulating freeze-after-response\n验证：Use the provided repro script to create a failing test that exits immediately after generate() resolves and asserts title persistence；Run targeted unit tests for @mastra/core and related packages\n风险：Potential API behavior change if making title generation inline by default；Existing PRs may already address the root cause, leading to duplicate work\n竞争：发现 PR #16218 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 14，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[openabdev/openab#1464](https://github.com/openabdev/openab/issues/1464) bug(gateway/feishu): v0.9.0 unified mode broke all Feishu streaming modes + delete recovery**\n建议：WAIT_MAINTAINER | 分数：13\n价值：Issue provides a detailed root-cause analysis and clear reproduction steps, but the deterministic gate requires HUMAN_REVIEW and there is an existing PR (#1458) with semantic overlap that needs maintainer comparison before new work starts.\n改动：UnifiedGatewayAdapter delete_message override；Existing::Finalized success:false；keep_full_text decoupling\n验证：Reproduce post/auto fake streaming with >3s prompt；Reproduce card mode idle reaper drop with sleep 15；Reproduce delete recovery after 20-edit cap\n风险：Behavior change in send-once content may break existing users；Idle reaper fix may require design confirmation\n竞争：发现 PR #1458 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 1，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[google/adk-python#6584](https://github.com/google/adk-python/issues/6584) RemoteA2aAgent: a terminal A2A task carrying tool activity fails is_final_response(), so the turn cannot be detected as finished (non-streaming peer)**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue clearly identifies a bug in is_final_response() for non-streaming A2A responses, with a concrete reproduction and two proposed fixes. Existing PR #5006 overlaps semantically but is not directly linked and may not fully address the issue; a new PR could provide a more targeted fix.\n改动：Modify is_final_response() to recognize terminal A2A task states；Or modify _handle_a2a_response_v2 to emit per-artifact events for non-streaming responses\n验证：Create a failing test using the provided reproduction scenario；Run targeted unit tests for event handling and A2A integration\n风险：Potential overlap with existing PR #5006 requires careful comparison；Changing event emission shape may affect consumers relying on current behavior\n竞争：发现 PR #5006 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 5，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[fastmachinelearning/hls4ml#1515](https://github.com/fastmachinelearning/hls4ml/issues/1515) profiling.numerical() fails for multi-input models**\n建议：WAIT_MAINTAINER | 分数：10\n价值：Issue reports a clear user-facing bug in profiling.numerical() for multi-input models, with a reproducible traceback. Existing PR #1439 overlaps in code path and semantics but is incomplete and not directly linked, leaving room for a better PR.\n改动：Fix profiling.numerical() to handle list of arrays for multi-input models；Add regression test for multi-input profiling\n验证：Reproduce with provided multi-input model and shapes；Run profiling.numerical() and assert no ValueError；Add unit test with mock multi-input model\n风险：Existing PR #1439 may already address the issue; need to compare implementations；Potential maintainer preference on API changes\n竞争：发现 PR #1439 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 6，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#35780](https://github.com/BerriAI/litellm/issues/35780) [Bug]: Responses API sends metadata to a strict OpenAI-compatible upstream although the client does not pass metadata**\n建议：WAIT_MAINTAINER | 分数：14\n价值：Issue reports a clear user-visible bug with a workaround, but root cause is unconfirmed and open PR/related issue lookups timed out, so duplicate implementation cannot be excluded.\n改动：Identify where metadata is injected in Proxy /v1/responses path；Ensure internal metadata is not serialized to upstream；Add regression test for strict upstream without metadata\n验证：Reproduce with provided config and strict upstream；Add test asserting no metadata in upstream request when not supplied；Run existing responses API tests\n风险：May alter API behavior if not carefully scoped；Potential duplicate PR exists due to lookup failure\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 10，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33549](https://github.com/sgl-project/sglang/issues/33549) [Bug] DeepSeek-V4 (dsv4 backend + DSPARK) TP=8 on 8×H20: decode forward hangs indefinitely at ~245K context — all GPUs spin at 100% util / low power, watchdog kills server**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue reports a severe hang in dsv4/DSPARK at long context with TP=8, but lacks deterministic reproducer and root cause. Open PR and related issue lookups timed out, so duplicate work cannot be excluded. Maintainer input needed for design and bisection guidance.\n改动：Add regression test for long-context decode hang；Investigate DSPARK accept-length handling and collective desync；Improve py-spy diagnostics in container\n验证：Run long-context decode with DSPARK and TP=8 to reproduce hang；Capture stack with SYS_PTRACE and NCCL_DEBUG=INFO；Bisect by disabling DSPARK/CUDA graph\n风险：Non-deterministic hang may be hard to reproduce；Potential duplicate fix in progress；Requires maintainer design confirmation for backend changes\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 13，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#51016](https://github.com/vllm-project/vllm/issues/51016) [Bug]: extract_hidden_states fails with TP>1 when KV page size < hidden-state per-token cost**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue reports a clear crash with root cause and repro, but the deterministic gate says HUMAN_REVIEW and the related issue audit timed out. An existing draft PR (#50894) directly addresses the bug but has failed CI and is incomplete, so a better PR may be possible. However, maintainer design preference and PR status need confirmation.\n改动：Fix KV cache page size alignment for hidden-state extraction under TP；Add regression test for TP>1 with extract_hidden_states\n验证：Reproduce with the provided command on TP=4 and assert no crash；Run existing KV cache and speculative decoding tests\n风险：Potential API behavior changes if fix is too broad；Draft PR #50894 may be superseded or have design issues\n竞争：已有直接关联但证据不完整的 PR #50894：存在失败 CI/check; 仍是 draft；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 4，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50959](https://github.com/vllm-project/vllm/issues/50959) [Bug] fastsafetensors ParallelLoader broadcasts on group.WORLD; PP-scoped draft loads deadlock**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue provides a clear root cause (WORLD-group broadcast deadlock in fastsafetensors under PP-scoped draft loads) and a concrete repro, but the deterministic gate requires HUMAN_REVIEW and the related issue audit timed out. Existing PR #50514 is directly related but has failing CI and incomplete evidence, so a new PR may be premature until maintainer confirms design direction.\n改动：vllm/model_executor/model_loader/weight_utils.py；fastsafetensors/frameworks/_torch.py；vllm/v1/worker/gpu/spec_decode/dspark/utils.py\n验证：Reproduce with the provided flags (TP8 PP2, fastsafetensors, DSpark) and assert no hang; add a unit test simulating PP-scoped draft load with fastsafetensors to verify broadcast group scoping.\n风险：Changing broadcast group may affect engine-wide loads; need to ensure fallback to WORLD when appropriate.；Existing PR #50514 has failing CI; competing PR may conflict.\n竞争：已有直接关联但证据不完整的 PR #50514：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 4，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[PrefectHQ/fastmcp#4749](https://github.com/PrefectHQ/fastmcp/issues/4749) Resource list do not match the actual resource**\n建议：WAIT_MAINTAINER | 分数：10\n价值：Issue reports a resource list mismatch in FastMCP HTTP transport, but lacks a minimal reproducer and root cause analysis. No maintainer confirmation or design direction exists, and the deterministic gate requires human review.\n改动：Investigate resource listing in HTTP transport；Add regression test for resource list with dynamic URI templates\n验证：Create a minimal FastMCP server with a dynamic resource and verify resource list via HTTP client；Run existing FastMCP test suite for resource listing\n风险：Potential API behavior change if fix alters resource listing semantics；Incomplete reproducer may lead to incorrect fix\n竞争：未发现相关 open PR\n下一步：先请求维护者分配/确认方案，获批后再开 PR。\n证据：复现信号 2，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[cline/cline#12913](https://github.com/cline/cline/issues/12913) Bedrock prompt caching never engages: routing layer emits anthropic cache_control but @ai-sdk/amazon-bedrock only reads providerMetadata.bedrock.cachePoint (zero writers in binary)**\n建议：WAIT_MAINTAINER | 分数：10\n价值：Issue provides a detailed root cause (cache_control vs cachePoint mismatch) with binary evidence and a public repro, but the deterministic gate requires HUMAN_REVIEW and related-issue audit timed out, so maintainer confirmation is needed before implementation.\n改动：Add failing test for Bedrock cache_control translation；Implement translation from cache_control to providerMetadata.bedrock.cachePoint in routing layer or SDK wrapper；Fix model catalog alias cache capability/pricing\n验证：Use the issue's repro steps to create a test asserting non-zero cacheWriteTokens；Run targeted unit tests for the Bedrock provider and routing layer\n风险：Potential maintainer design preference for native Bedrock cache emission；Risk of unintended API behavior changes if translation is broad\n竞争：未发现相关 open PR\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 1，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[mem0ai/mem0#6783](https://github.com/mem0ai/mem0/issues/6783) [Codex plugin] Exported MEM0_API_KEY is filtered before MCP startup in managed environments**\n建议：WAIT_MAINTAINER | 分数：15\n价值：Issue clearly identifies root cause: Codex filters env vars matching *KEY* before MCP startup, and plugin hardcodes MEM0_API_KEY. However, maintainers explicitly request design confirmation on credential contract (rename vs. allowlist), and existing PR #6792 is weak (no tests, failing CI). Work should wait for maintainer direction.\n改动：integrations/mem0-plugin/.codex-mcp.json；docs/integrations/codex.mdx\n验证：Add a test that verifies the plugin manifest uses a non-filtered env var name or that docs provide a narrow allowlist configuration.\n风险：Breaking change if renaming env var; need migration note.；Broad allowlist may expose other secrets.\n竞争：已有直接关联但证据不完整的 PR #6792：缺少测试文件; 存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：仅完成本地复现、修复、测试和私有提交包；由用户自行决定公开提交。\n证据：复现信号 13，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T14:54:39.838052Z",
+      "eventId": "ff1c80fad5e9073cb79e60bcba2c72b3f8df35f0aae33d64926e8c7b0763868f",
+      "idempotencyKey": "ff1c80fad5e9073cb79e60bcba2c72b3f8df35f0aae33d6492",
+      "kind": "review",
+      "runId": "scan-20260804T144715Z-831a97088ce7",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "openclaw/openclaw#92199",
+        "sgl-project/sglang#33470"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[openclaw/openclaw#92199](https://github.com/openclaw/openclaw/issues/92199) [Bug]: [ACP] Text before tool calls is lost in WeChat (intermediate messages dropped, not merged)**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33470](https://github.com/sgl-project/sglang/issues/33470) inference_mode mismatch can break lazy buffers**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T14:54:39.990400Z",
+      "eventId": "b79c1c0d105ac8f30a74e559575b3ae887e26cc6e48a2f5619774c7d319bde97",
+      "idempotencyKey": "b79c1c0d105ac8f30a74e559575b3ae887e26cc6e48a2f5619",
+      "kind": "watch",
+      "runId": "watch-1785854786",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-04T13:01:55.926793Z",
+  "generatedAt": "2026-08-04T14:54:40.136309Z",
   "newEventCount": 0,
   "version": "notification_outbox_v1"
 }

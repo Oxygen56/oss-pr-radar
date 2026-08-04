@@ -129,6 +129,34 @@
     ],
     "why": "Issue provides a clear root cause and a verified fix for a user-visible streaming corruption bug, but the deterministic gate requires HUMAN_REVIEW and there is potential overlap with issue #11997. Maintainer confirmation is needed before starting work."
   },
+  "07c0530f49902fb9c00bd9a8684de9cd7eef3d96c5ecc0ea35ef755c6db2a457": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/model_executor/model_loader/weight_utils.py",
+      "fastsafetensors/frameworks/_torch.py",
+      "vllm/v1/worker/gpu/spec_decode/dspark/utils.py"
+    ],
+    "risks": [
+      "Changing broadcast group may affect engine-wide loads; need to ensure fallback to WORLD when appropriate.",
+      "Existing PR #50514 has failing CI; competing PR may conflict."
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Reproduce with the provided flags (TP8 PP2, fastsafetensors, DSpark) and assert no hang; add a unit test simulating PP-scoped draft load with fastsafetensors to verify broadcast group scoping."
+    ],
+    "unknowns": [
+      "Maintainer design preference for scoping vs. refusing fastsafetensors for draft loads.",
+      "Whether related issue audit failure hides additional context."
+    ],
+    "why": "Issue provides a clear root cause (WORLD-group broadcast deadlock in fastsafetensors under PP-scoped draft loads) and a concrete repro, but the deterministic gate requires HUMAN_REVIEW and the related issue audit timed out. Existing PR #50514 is directly related but has failing CI and incomplete evidence, so a new PR may be premature until maintainer confirms design direction."
+  },
   "09825a63c7595dbc0ab01b0f35ce09e3128060df67572bc7681e652c013b6039": {
     "confidence": 0.7,
     "contradictions": [],
@@ -335,6 +363,36 @@
       "Status of PR #50955 and whether it will be merged or needs competition"
     ],
     "why": "Issue provides a clear root cause and minimal reproduction for a user-visible bug in Qwen parser routing. However, an existing PR #50955 directly references this issue but has failing CI and incomplete evidence, and the deterministic gate requires HUMAN_REVIEW. Maintainer design preference is unconfirmed, so work should wait for maintainer guidance."
+  },
+  "1a78df8fd06c33660a4083f30e4e00c4f7294e39ffc3c714f7ca1e3b8f2ff0b1": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Existing PR #5006 is titled about retry with resume message, not directly about is_final_response, yet semantic overlap is reported"
+    ],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify is_final_response() to recognize terminal A2A task states",
+      "Or modify _handle_a2a_response_v2 to emit per-artifact events for non-streaming responses"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #5006 requires careful comparison",
+      "Changing event emission shape may affect consumers relying on current behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a failing test using the provided reproduction scenario",
+      "Run targeted unit tests for event handling and A2A integration"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred fix approach",
+      "Exact implementation details of existing PR #5006 and its coverage of this issue"
+    ],
+    "why": "Issue clearly identifies a bug in is_final_response() for non-streaming A2A responses, with a concrete reproduction and two proposed fixes. Existing PR #5006 overlaps semantically but is not directly linked and may not fully address the issue; a new PR could provide a more targeted fix."
   },
   "1adba1c39fdb23739085d01b4d82eb47c876d4ca45cd83642f6811454d6e145e": {
     "confidence": 0.7,
@@ -574,6 +632,38 @@
     ],
     "why": "Issue reports a high-impact Windows bug with multiple commands failing, but root cause is unclear: one reporter sees activation error, another sees daemon timeout, and Windows-level file access denials suggest OS-level issues. Maintainer has acknowledged and routed as high-priority, but no design confirmation or active investigation. A PR could be premature without maintainer direction on the intended fix."
   },
+  "299193e33be75e17c4de14a725267dadb6b46592dacd4bdf988adf4aa81509ad": {
+    "confidence": 0.7,
+    "contradictions": [
+      "PR #1458 claims to fix card streaming but issue says it exposes idle reaper bug"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "UnifiedGatewayAdapter delete_message override",
+      "Existing::Finalized success:false",
+      "keep_full_text decoupling"
+    ],
+    "risks": [
+      "Behavior change in send-once content may break existing users",
+      "Idle reaper fix may require design confirmation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 13,
+    "test_plan": [
+      "Reproduce post/auto fake streaming with >3s prompt",
+      "Reproduce card mode idle reaper drop with sleep 15",
+      "Reproduce delete recovery after 20-edit cap"
+    ],
+    "unknowns": [
+      "Maintainer preference on proposed fix scope",
+      "Whether PR #1458 will be merged or needs rework"
+    ],
+    "why": "Issue provides a detailed root-cause analysis and clear reproduction steps, but the deterministic gate requires HUMAN_REVIEW and there is an existing PR (#1458) with semantic overlap that needs maintainer comparison before new work starts."
+  },
   "2aff874b834f495c7a007eca6558cfbf89933744f31c556db7af0de08e516c48": {
     "confidence": 0.85,
     "contradictions": [
@@ -680,6 +770,35 @@
     ],
     "why": "The issue clearly identifies a silent failure in RemoteA2aAgent when the A2A stream ends before a terminal state, with a concrete reproduction and expected behavior. No competing PR addresses this exact problem; existing PRs are keyword-overlap only."
   },
+  "32bcd9c53c33e159e71f189d21e4a30676345998e43eaed2724bed9a786b9b6f": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add failing test for Bedrock cache_control translation",
+      "Implement translation from cache_control to providerMetadata.bedrock.cachePoint in routing layer or SDK wrapper",
+      "Fix model catalog alias cache capability/pricing"
+    ],
+    "risks": [
+      "Potential maintainer design preference for native Bedrock cache emission",
+      "Risk of unintended API behavior changes if translation is broad"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Use the issue's repro steps to create a test asserting non-zero cacheWriteTokens",
+      "Run targeted unit tests for the Bedrock provider and routing layer"
+    ],
+    "unknowns": [
+      "Maintainer confirmation on desired fix approach",
+      "Status of related issues due to audit timeout"
+    ],
+    "why": "Issue provides a detailed root cause (cache_control vs cachePoint mismatch) with binary evidence and a public repro, but the deterministic gate requires HUMAN_REVIEW and related-issue audit timed out, so maintainer confirmation is needed before implementation."
+  },
   "32f5fc06678f82b383376a3f90234880a031f6abdebc29e6c04dd5698d01dc15": {
     "confidence": 0.7,
     "contradictions": [],
@@ -736,6 +855,34 @@
       "Maintainer design preferences for synchronization behavior"
     ],
     "why": "Issue reports a clear user-visible bug with a detailed root cause: delayed registry-to-GUI projection overwrites newly added models. The bug is reproducible and affects key provider configuration paths. No competing PR or issue found, and the maintainer gate allows work."
+  },
+  "3d0361391570622fede68057f4bb0740c07182310bb67c59a54c55ee87b65870": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify categorize.py to strip reasoning tags (e.g., </think>) from LLM output before category matching",
+      "Possibly add a system prompt to suppress reasoning"
+    ],
+    "risks": [
+      "Truncation may fail for models that use different reasoning delimiters or no tags",
+      "Changing output parsing could affect other components that rely on full LLM response"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Create a unit test for categorize.py with a mocked LLM response containing reasoning tags and verify correct category selection",
+      "Run existing categorize tests and integration tests for agent component"
+    ],
+    "unknowns": [
+      "Whether maintainers have already addressed this in later releases (the contributor asked if issue still occurs)",
+      "Whether there are existing open PRs or issues addressing this (related issue audit timed out)"
+    ],
+    "why": "The issue describes a plausible bug in categorize.py where LLM reasoning output may cause misclassification, but the proposed fix is a simple string truncation that may not be robust across different LLM formats. The deterministic gate requires HUMAN_REVIEW, and there is no maintainer confirmation or active investigation. The related issue audit timed out, leaving unknowns about existing duplicates or ongoing work."
   },
   "424899631d80208034e39c85ad19d3383780c6dbf4a291c55b94bf74b2a8b44c": {
     "confidence": 0.7,
@@ -891,6 +1038,36 @@
       "Whether the loss is in generic ACP lifecycle or WeChat adapter"
     ],
     "why": "The issue is a real user-facing bug with a clear repro and fresh evidence, but the deterministic gate requires HUMAN_REVIEW and the maintainer bot explicitly states a product decision is needed on cross-channel delivery policy. Existing PRs are closed/unmerged and do not settle the design. A new PR would be premature without maintainer direction."
+  },
+  "4b3aee146f076609481d5cc61c8f1cb6b982b62e131e3d3336feba1ff85f5671": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Identify where metadata is injected in Proxy /v1/responses path",
+      "Ensure internal metadata is not serialized to upstream",
+      "Add regression test for strict upstream without metadata"
+    ],
+    "risks": [
+      "May alter API behavior if not carefully scoped",
+      "Potential duplicate PR exists due to lookup failure"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 14,
+    "test_plan": [
+      "Reproduce with provided config and strict upstream",
+      "Add test asserting no metadata in upstream request when not supplied",
+      "Run existing responses API tests"
+    ],
+    "unknowns": [
+      "Root cause location in Proxy code",
+      "Whether an open PR already addresses this",
+      "Maintainer design preference for metadata handling"
+    ],
+    "why": "Issue reports a clear user-visible bug with a workaround, but root cause is unconfirmed and open PR/related issue lookups timed out, so duplicate implementation cannot be excluded."
   },
   "4b43bb22065fc24a8b05e08b244f805f977b1dff9f37b0e2de3a3c022bea49ef": {
     "confidence": 0.7,
@@ -1225,6 +1402,58 @@
     ],
     "why": "Issue provides a detailed root cause and a working fix, but the deterministic gate requires HUMAN_REVIEW and the related issue audit timed out. Existing PR #50882 is weak (draft, no tests, failing CI), but a materially better PR is plausible. However, the lack of maintainer confirmation and the unresolved audit block actionability."
   },
+  "62f7e949f9b37e73e95c2d0803e0feb1b48c3259960172ce67b5995842d4adac": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Fix profiling.numerical() to handle list of arrays for multi-input models",
+      "Add regression test for multi-input profiling"
+    ],
+    "risks": [
+      "Existing PR #1439 may already address the issue; need to compare implementations",
+      "Potential maintainer preference on API changes"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "test_plan": [
+      "Reproduce with provided multi-input model and shapes",
+      "Run profiling.numerical() and assert no ValueError",
+      "Add unit test with mock multi-input model"
+    ],
+    "unknowns": [
+      "Whether PR #1439 actually fixes this issue",
+      "Maintainer interest in accepting a new PR"
+    ],
+    "why": "Issue reports a clear user-facing bug in profiling.numerical() for multi-input models, with a reproducible traceback. Existing PR #1439 overlaps in code path and semantics but is incomplete and not directly linked, leaving room for a better PR."
+  },
+  "64589d857c8cea3d36c0cea4d7fa2d30fd6b9a954f96aeb8ec35a6a3e9cea16f": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "No code changes expected; possibly documentation clarification or support for VS Code's model discovery pattern."
+    ],
+    "risks": [
+      "Potential misunderstanding if maintainers decide to support VS Code's specific URL handling, which could require API changes."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "No code tests applicable; verify that configuring the base URL resolves the issue in VS Code."
+    ],
+    "unknowns": [
+      "Whether the user confirmed the suggested configuration works; open PR/related issue status unknown due to lookup failures."
+    ],
+    "why": "The issue is a user configuration problem, not a LiteLLM bug. A commenter identified that VS Code appends '/models' to the configured URL, so the user should set the base URL instead. No code change in LiteLLM is needed. The deterministic gate is HUMAN_REVIEW, and open PR/related issue lookups failed, so we cannot rule out duplicates. Maintainer confirmation is required before any action."
+  },
   "684ee8688f348de5ece7552a2b00443acc5faca9c330f44ba30d645a0f0e2374": {
     "confidence": 0.7,
     "contradictions": [
@@ -1428,6 +1657,64 @@
       "Maintainer preference on error message wording"
     ],
     "why": "Issue clearly identifies a missing capability id hint in error message with a concrete repro and root cause. However, existing PR #6696 has semantic overlap and may already address the code path; maintainer design confirmation is needed before starting work."
+  },
+  "6b983fa83ce940a2f77f01b0307b1e13c54d8d88efe6b530356e279bf0eafbe0": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify Agent#executeOnFinish to await or make title generation configurable",
+      "Add regression test simulating freeze-after-response"
+    ],
+    "risks": [
+      "Potential API behavior change if making title generation inline by default",
+      "Existing PRs may already address the root cause, leading to duplicate work"
+    ],
+    "root_cause_clarity": "high",
+    "score": 15,
+    "test_plan": [
+      "Use the provided repro script to create a failing test that exits immediately after generate() resolves and asserts title persistence",
+      "Run targeted unit tests for @mastra/core and related packages"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a specific fix approach (e.g., configurable vs always awaited)",
+      "Whether existing PR #16218 actually fixes this issue or only partially overlaps"
+    ],
+    "why": "Issue clearly identifies a detached promise causing silent title loss on serverless runtimes, with a minimal repro. However, the deterministic gate requires HUMAN_REVIEW, and existing PRs (e.g., #16218) overlap semantically, requiring maintainer comparison before creating a new task."
+  },
+  "7064df3b525479e3d19215ef46074fec08ad5384af52536831c99ae029864eba": {
+    "confidence": 0.7,
+    "contradictions": [
+      "The issue claims distinct from #36766, but a bot comment suggests possible overlap with #39881"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add a failing test reproducing the missing finish_reason/[DONE] for gpt-5.6-luna via the Go gateway",
+      "Investigate and fix the gateway's response termination logic for this model"
+    ],
+    "risks": [
+      "Potential duplicate with #39881 or other existing PRs not found due to lookup timeout",
+      "Fix may require changes to the hosted gateway, which may not be in this repository's scope"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Create a test that posts a non-streaming chat completion with model gpt-5.6-luna and asserts finish_reason is not null",
+      "Create a test that streams the same model and asserts a [DONE] marker is received"
+    ],
+    "unknowns": [
+      "Whether a fix is expected in this repo or the gateway is external",
+      "Whether maintainers have already started work or have design preferences"
+    ],
+    "why": "The issue reports a clear user-visible bug with a reproducible API behavior, but the root cause is not identified and the related issue audit and open PR lookup failed, leaving uncertainty about duplicates and existing work. The deterministic gate requires HUMAN_REVIEW."
   },
   "729fb5120d96ea7ed0fed61d1b2de361a41ccdff9040fcb8f3c36839b27e73d1": {
     "confidence": 0.7,
@@ -1822,6 +2109,34 @@
     ],
     "why": "Issue provides a clear root cause and a verified fix for a user-visible bug, but the deterministic gate requires HUMAN_REVIEW and there are multiple open PRs with semantic overlap (e.g., #10344, #12562) that may already address the same code path. The issue itself offers to turn into a PR, but the presence of overlapping PRs and the need to compare implementations makes it premature to start new work without maintainer guidance."
   },
+  "92796e4b67b22f85a0a2c6b2e876c0fc06f29c75524d782fde3faca6454e9fc8": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add static/sandbox_proxy.html to the npm package files",
+      "Add a packaging verification step to prevent recurrence"
+    ],
+    "risks": [
+      "Potential need to update related sandbox URL configuration (issue #1862)",
+      "Ensure the fix is applied to the correct build/publish pipeline"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce by installing the published package and attempting to open an app",
+      "Verify the fix by checking the file exists in the installed package",
+      "Add a CI check that asserts the required static files are present in the packed artifact"
+    ],
+    "unknowns": [
+      "Exact npm packaging configuration and whether the fix requires changes to the build script or package.json"
+    ],
+    "why": "The issue reports a clear packaging defect: the published npm package lacks the static/sandbox_proxy.html file, causing the Apps tab to fail for all npx users. A maintainer triaged it as High priority, and a user confirmed a local fix. No competing PR exists, and the fix is straightforward: include the missing static file in the npm package."
+  },
   "976b4ba1dc070c3b4427e1660bc07cdd14958c14ad095a6f32d90fd3bce68e5b": {
     "confidence": 0.7,
     "contradictions": [],
@@ -1907,6 +2222,35 @@
       "Maintainer's stance on the existing PR"
     ],
     "why": "The issue provides a clear root cause and reproduction, but a collaborator has already submitted PR #7598 that directly addresses the issue with tests and is actively maintained. The existing PR appears technically complete, though it has failed CI checks. Without evidence that the PR is weak or abandoned, starting a competing PR risks duplication. Maintainer review is needed to confirm whether the existing PR is acceptable or if a better approach is required."
+  },
+  "9b7e782a5f19922258991bd78154e2935bf12429fe07f17b85132a97b67e85f5": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix KV cache page size alignment for hidden-state extraction under TP",
+      "Add regression test for TP>1 with extract_hidden_states"
+    ],
+    "risks": [
+      "Potential API behavior changes if fix is too broad",
+      "Draft PR #50894 may be superseded or have design issues"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Reproduce with the provided command on TP=4 and assert no crash",
+      "Run existing KV cache and speculative decoding tests"
+    ],
+    "unknowns": [
+      "Maintainer preference on fix approach",
+      "Status of related issue audit (timeout)",
+      "Whether PR #50894 is viable or needs replacement"
+    ],
+    "why": "Issue reports a clear crash with root cause and repro, but the deterministic gate says HUMAN_REVIEW and the related issue audit timed out. An existing draft PR (#50894) directly addresses the bug but has failed CI and is incomplete, so a better PR may be possible. However, maintainer design preference and PR status need confirmation."
   },
   "9f56014d00bc17e68f460b2d1b643185db72b637b6cff4202360ce6076790957": {
     "confidence": 0.85,
@@ -2332,6 +2676,64 @@
       "Maintainer preferences on design approach"
     ],
     "why": "Issue provides a clear user-visible bug with detailed reproduction steps, logs, and a specific root cause (registry-to-GUI projection overwrites newly added models). No competing PR or issue found. The fix is localized and actionable."
+  },
+  "bd2168b96864ba519fd5a894e41ab9a0b3d77a50912b5b7c10e5bb78317716ce": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add regression test for long-context decode hang",
+      "Investigate DSPARK accept-length handling and collective desync",
+      "Improve py-spy diagnostics in container"
+    ],
+    "risks": [
+      "Non-deterministic hang may be hard to reproduce",
+      "Potential duplicate fix in progress",
+      "Requires maintainer design confirmation for backend changes"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 12,
+    "test_plan": [
+      "Run long-context decode with DSPARK and TP=8 to reproduce hang",
+      "Capture stack with SYS_PTRACE and NCCL_DEBUG=INFO",
+      "Bisect by disabling DSPARK/CUDA graph"
+    ],
+    "unknowns": [
+      "Open PR status unknown due to timeout",
+      "Related issue audit failed",
+      "Root cause not identified"
+    ],
+    "why": "Issue reports a severe hang in dsv4/DSPARK at long context with TP=8, but lacks deterministic reproducer and root cause. Open PR and related issue lookups timed out, so duplicate work cannot be excluded. Maintainer input needed for design and bisection guidance."
+  },
+  "be72e5ed70b5db940444bf630f4e6e22c4320ae7c1cf8387fb9adcb9f0e09468": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "integrations/mem0-plugin/.codex-mcp.json",
+      "docs/integrations/codex.mdx"
+    ],
+    "risks": [
+      "Breaking change if renaming env var; need migration note.",
+      "Broad allowlist may expose other secrets."
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "test_plan": [
+      "Add a test that verifies the plugin manifest uses a non-filtered env var name or that docs provide a narrow allowlist configuration."
+    ],
+    "unknowns": [
+      "Maintainer's chosen direction (rename vs. allowlist) not yet decided."
+    ],
+    "why": "Issue clearly identifies root cause: Codex filters env vars matching *KEY* before MCP startup, and plugin hardcodes MEM0_API_KEY. However, maintainers explicitly request design confirmation on credential contract (rename vs. allowlist), and existing PR #6792 is weak (no tests, failing CI). Work should wait for maintainer direction."
   },
   "bf7a7492d3eaa127d552d503815d6210dab8778071dc4024972f8b10166ebc98": {
     "confidence": 0.7,
