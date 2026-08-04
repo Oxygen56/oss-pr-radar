@@ -361,6 +361,17 @@ HOSTED_MODEL_QUALITY_RE = re.compile(
     r"(?:quality|degrad|worse|regress).{0,180}(?::cloud|hosted (?:cloud )?model)",
     re.I | re.S,
 )
+MANAGED_INFERENCE_INCIDENT_RE = re.compile(
+    r"(?:livekit inference|managed inference|hosted inference|cloud inference)"
+    r".{0,500}(?:timeouts?|outage|service unavailable|availability|provider incident|"
+    r"private (?:trace|session)|cloud\.[a-z0-9.-]+/(?:projects|sessions))|"
+    r"(?:timeouts?|outage|service unavailable|availability|provider incident)"
+    r".{0,500}(?:livekit inference|managed inference|hosted inference|cloud inference)|"
+    r"(?:third[- ]party provider|direct provider|provider api).{0,180}"
+    r"(?:works?|fine|succeeds?).{0,260}(?:livekit inference|managed inference|"
+    r"hosted inference|cloud inference)",
+    re.I | re.S,
+)
 USAGE_AMBIGUITY_RE = re.compile(
     r"\b(?:invalid|unknown|unrecognized|unsupported|no such|command not found)\s+command\b|"
     r"\bcommand\s+(?:is\s+)?(?:invalid|unknown|unrecognized|not found)\b|"
@@ -2544,6 +2555,10 @@ class Radar:
             title + "\n" + body
         ):
             return None, "external_model_or_provider_issue"
+        if MANAGED_INFERENCE_INCIDENT_RE.search(title + "\n" + body) and not (
+            maintainer_approved or help_wanted
+        ):
+            return None, "managed_inference_service_incident"
         if USAGE_QUESTION_RE.search(title + "\n" + body[:4000]) and not root_cause_signal:
             return None, "usage_or_documentation_question"
         if MODEL_ARTIFACT_FAILURE_RE.search(title + "\n" + body[:8000]):

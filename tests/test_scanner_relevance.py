@@ -120,6 +120,42 @@ def test_environment_dump_does_not_make_commerce_issue_ai_infra(tmp_path):
     assert reason == "off_topic_dynamic_repo"
 
 
+def test_managed_inference_incident_is_not_an_oss_pr_candidate(tmp_path):
+    radar = Radar(
+        datetime(2026, 8, 4, tzinfo=UTC),
+        2,
+        tmp_path / "seen.json",
+        "chat",
+        dry_run=True,
+        notify=False,
+    )
+    base = {
+        "repo": "livekit/agents",
+        "num": 6675,
+        "title": "Livekit inference timeouts since 14th july",
+        "url": "https://github.com/livekit/agents/issues/6675",
+    }
+    issue = {
+        "state": "open",
+        "title": base["title"],
+        "body": (
+            "We see intermittent timeouts when using LiveKit Inference in production. "
+            "Steps to reproduce: deploy a voice agent in LiveKit Cloud and inspect "
+            "the private cloud.livekit.io/projects/example/sessions/example trace. "
+            "Expected behavior: minimal timeouts. Actual behavior: requests stall. "
+            "If I use a third-party provider directly via its SDK then it works fine."
+        ),
+        "labels": [{"name": "bug"}],
+        "assignees": [],
+        "user": {"login": "reporter"},
+    }
+
+    candidate, reason = radar.score_issue(base, issue, [])
+
+    assert candidate is None
+    assert reason == "managed_inference_service_incident"
+
+
 def test_single_shared_scenario_slug_is_not_a_duplicate_issue(tmp_path):
     radar = Radar(
         datetime(2026, 8, 4, tzinfo=UTC),
