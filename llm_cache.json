@@ -81,6 +81,34 @@
     ],
     "why": "Issue reports a tool call error when switching moe-runner-backend from marlin to flashinfer_mxfp4, but lacks a minimal reproduction and root cause analysis. Open PR lookup timed out, and related PRs may overlap. Maintainer input needed."
   },
+  "150fc25a81cebf519c84fbf5ebf5bb4084f6a8d4fdba5ebbb102e8f838fb12f0": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify MiniMaxM3SparseAttention._insert_kv to use eager_break_during_capture",
+      "Route dense-layer KV writes through reshape_and_cache_flash",
+      "Relax SM89 guards to SM80 for fp8 KV cache"
+    ],
+    "risks": [
+      "Potential performance impact of eager break during capture",
+      "Need to ensure compatibility with existing attention backends and maintainer design preferences"
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Add a regression test that runs MiniMax-M3 with fp8_e5m2 KV cache under CUDA graphs and verifies output coherence",
+      "Add a unit test for _insert_kv under graph capture to ensure no corruption"
+    ],
+    "unknowns": [
+      "Maintainer feedback on the proposed fix",
+      "Status of related issue audit (timeout)"
+    ],
+    "why": "Issue provides a detailed root cause and a working fix, but the deterministic gate is HUMAN_REVIEW and the related issue audit timed out. Existing PR #50882 is draft, lacks tests, and has failed CI, so a better PR is plausible, but maintainer confirmation is needed before starting."
+  },
   "162068556e534947cd14fb52fbc76e377d2cb25378c8eabd666948395d84aba4": {
     "confidence": 0.6,
     "contradictions": [
@@ -252,6 +280,34 @@
     ],
     "why": "Issue is a CI failure tracker with multiple distinct AMD failures, some with clear root causes (e.g., gated HF model, JIT compile errors) but others are infra flakiness. No maintainer approval or help-wanted signal. Open PR lookup timed out, so duplicate work cannot be excluded. The candidate is a tracking issue, not a code change, and requires maintainer triage to prioritize actionable fixes."
   },
+  "3b30db525367b290cee6f4b77cd1785221d7c49c860939589f0e03cde3182a41": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify GUI-settings-bridge.js to merge models instead of overwriting",
+      "Ensure synchronization across config.json, model-connections.v1.json, and kun-settings.json",
+      "Possibly adjust background process lifecycle to avoid stale writes"
+    ],
+    "risks": [
+      "Potential unintended behavior changes in synchronization logic",
+      "Need to ensure merge logic handles all provider types and edge cases"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a failing test that simulates adding a model via GUI and then triggers the delayed projection, verifying the model persists",
+      "Run existing unit tests for the GUI-settings bridge and provider configuration"
+    ],
+    "unknowns": [
+      "Exact code structure and version of the bridge file",
+      "Maintainer design preferences for synchronization behavior"
+    ],
+    "why": "Issue reports a clear user-visible bug with a detailed root cause: delayed registry-to-GUI projection overwrites newly added models. The bug is reproducible and affects key provider configuration paths. No competing PR or issue found, and the maintainer gate allows work."
+  },
   "42cacd63189d813a89aa61fe6d1456cbb557a674ce16d03aeacc2b1a8506be6d": {
     "confidence": 0.7,
     "contradictions": [
@@ -282,6 +338,37 @@
       "Maintainer interest in fixing this specific issue"
     ],
     "why": "Issue reports a user-visible regression in LiveKit inference timeouts since mid-July, with public reproduction steps and session links. No competing PR or issue found. The bug is in the inference path, which is critical for real-time voice agents. The root cause is not yet identified, but the issue provides enough signal to start a reproducible investigation."
+  },
+  "46ab74884ce598c08f8d5fc5bb1e394a46ad2b9d15c1d9b1c3520dcbd2e767d2": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/utils/common.py: apply EXIF orientation in all three decode paths",
+      "python/sglang/srt/utils/common.py: add decoder routing logic to fall back to PIL when orientation is non-trivial",
+      "tests: add regression tests for all 8 orientation values and decoder routing"
+    ],
+    "risks": [
+      "Potential performance impact on GPU decode path if not carefully short-circuited",
+      "Risk of missing edge cases like multi-frame images or malformed EXIF",
+      "Existing PR #33449 has failed CI; need to ensure new PR passes all checks"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Run the provided CPU-only reproduction script to confirm the bug",
+      "Add unit tests asserting pixel-identical parity with PIL.ImageOps.exif_transpose for all 8 orientations",
+      "Add tests for decoder routing (nvJPEG vs PIL) without CUDA",
+      "Run existing serving tests to ensure no regression"
+    ],
+    "unknowns": [
+      "Maintainer preference on whether to fix via PR or wait for existing PR to be updated",
+      "Whether the related issue audit failure indicates missing context that could affect actionability"
+    ],
+    "why": "Issue provides a clear root cause and reproduction, but the supplied deterministic gate says HUMAN_REVIEW and the related issue audit failed with timeout. An existing PR (#33449) directly addresses the issue but has failed CI checks, so a materially better PR may be possible, but maintainer confirmation is needed."
   },
   "488e2abc1dbcead55bb28287a563c398d6a89430c60fb5b8a21b28c7e8a0fba0": {
     "confidence": 0.9,
@@ -942,6 +1029,34 @@
       "Maintainer's design preference for the fix"
     ],
     "why": "Issue provides a clear root cause and repro, but the deterministic gate requires HUMAN_REVIEW and an existing PR (#7598) already addresses it with failing CI. Competition is possible only if the PR's gaps are filled, but maintainer confirmation is needed."
+  },
+  "bf7a7492d3eaa127d552d503815d6210dab8778071dc4024972f8b10166ebc98": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Standardize inference_mode boundary across warmup/autotune and real forward",
+      "Add explicit eager initialization for backend workspaces before autotune/capture"
+    ],
+    "risks": [
+      "Changing inference_mode behavior may affect performance or correctness in other backends",
+      "Design choice between no_grad and no_grad+inference_mode needs maintainer confirmation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Reproduce with provided launch command and FlashInfer MegaMOE branch",
+      "Add regression test for inplace update on lazy buffers across inference_mode contexts"
+    ],
+    "unknowns": [
+      "Whether an existing PR already addresses this issue (open PR lookup failed)",
+      "Maintainer preference on which inference_mode alignment option to adopt"
+    ],
+    "why": "Issue identifies a clear inconsistency in inference_mode usage between warmup/autotune and real forward, with a concrete failure mode and reproduction. However, open PR lookup timed out and related issue audit failed, so duplicate implementation cannot be excluded. Maintainer comment raises design question about aligning modes, requiring maintainer decision."
   },
   "c31f56ba0affaf935cc3daa11cb6d52389718f19b63c8feb6ccec90f65f1ab61": {
     "confidence": 0.7,
