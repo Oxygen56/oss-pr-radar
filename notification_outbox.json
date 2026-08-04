@@ -1,5 +1,5 @@
 {
-  "digest": "786c32117732df04473dd38d3cc2fc2117b447c5ce9a42aa13bc050f59fe2b4e",
+  "digest": "26a8c6b7b0ecc8ec6131e1fd6903b4963906a74d9c9f8728956437780b7036b4",
   "events": [
     {
       "attempts": 1,
@@ -1587,9 +1587,240 @@
       "runId": "watch-1785821959",
       "sentAt": "2026-08-04T05:45:48.089388Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "getzep/graphiti#1062"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[getzep/graphiti#1062](https://github.com/getzep/graphiti/issues/1062) [BUG] get_episodes from graphiti-mcp returns stale/old data when used in n8n**\n建议：PR_COMPETITION_OPPORTUNITY | 分数：9\n价值：Issue reports stale get_episodes data; maintainer attributes to queue latency, but a commenter identifies a concrete root cause: get_episodes uses keyset pagination with ORDER BY uuid DESC, returning arbitrary stable subset instead of most recent. Existing PR #1726 claims to fix this but has failing CI/check and lacks evidence of root-cause analysis. A materially better PR with proper tests and root-cause explanation is plausible.\n改动：Modify get_episodes in graphiti-mcp to order by recency (e.g., valid_at DESC) instead of uuid DESC；Update or add tests covering recency ordering and regression for stale data\n验证：Reproduce issue by adding episodes with known timestamps and calling get_episodes; assert most recent returned；Run existing test suite for graphiti-mcp and add unit tests for ordering behavior\n风险：Potential behavior change affecting existing consumers expecting uuid ordering；Need to ensure compatibility with pagination cursor semantics\n竞争：已有直接关联但证据不完整的 PR #1726：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：先复现 issue，再逐项对比已有 PR 的缺口；只有能提供更小改动、更强测试或更完整边界覆盖时才开 PR。\n证据：复现信号 7，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "green",
+          "title": {
+            "content": "OSS PR Radar: 可立即执行",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T06:09:11.830293Z",
+      "eventId": "c824cd3b6d6327820e953884a2747d17194dc0af388ad6babb914d171e03575d",
+      "idempotencyKey": "c824cd3b6d6327820e953884a2747d17194dc0af388ad6babb",
+      "kind": "immediate",
+      "runId": "scan-20260804T060339Z-e79febfc6fea",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "DeusData/codebase-memory-mcp#1339",
+        "crewAIInc/crewAI#6788",
+        "pydantic/pydantic-ai#7109",
+        "pydantic/pydantic-ai#7108",
+        "sgl-project/sglang#33470",
+        "sgl-project/sglang#33464",
+        "sgl-project/sglang#33408",
+        "vllm-project/vllm#50948",
+        "BerriAI/litellm#35711",
+        "sgl-project/sglang#33493",
+        "vllm-project/vllm#50159",
+        "vllm-project/vllm#50959",
+        "PrefectHQ/fastmcp#4744"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[DeusData/codebase-memory-mcp#1339](https://github.com/DeusData/codebase-memory-mcp/issues/1339) Graph not updated when the working tree returns to clean (revert leaves false negatives)**\n建议：WAIT_MAINTAINER | 分数：11\n价值：The issue is a well-documented bug with independent reproductions and maintainer acknowledgment that it is fixed in RC1. However, the fix is already implemented and verified, so no new code contribution is needed. The remaining observations (latency, watch scope, edge nondeterminism) are separate concerns that require maintainer direction.\n改动：No code changes for the main bug; possible follow-up issues for latency, watch scope, and edge nondeterminism.\n验证：No new tests needed for the main bug; regression tests already exist in RC1.\n风险：Potential scope creep if addressing secondary observations without maintainer approval.\n竞争：未发现相关 open PR\n下一步：按正常流程实现并验证；如要求 DCO 则自动 sign-off，PR 创建后报告 CLA 状态。\n证据：复现信号 2，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[crewAIInc/crewAI#6788](https://github.com/crewAIInc/crewAI/issues/6788) [BUG] total_tokens omits cache reads and writes on the native Anthropic provider**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue clearly identifies a real bug in native Anthropic provider token accounting with a concrete reproduction and suggested fix. However, an open PR #6770 already addresses the same code path and semantics, and a duplicate issue #6768 exists. The deterministic gate requires HUMAN_REVIEW, and the existing PR may already cover the fix, so starting new work without maintainer confirmation risks duplication.\n改动：Modify lib/crewai/src/crewai/llms/providers/anthropic/completion.py to include cache tokens in total_tokens；Update corresponding test in lib/crewai/tests/llms/anthropic/test_anthropic.py\n验证：Run the provided reproduction script from cacheeconomics repo to confirm undercount；Add a regression test that asserts total_tokens includes cache read and write tokens；Run existing anthropic provider tests to ensure no breakage\n风险：Existing PR #6770 may already implement the fix, leading to duplicate work；Changing input_tokens semantics could affect downstream consumers expecting the remainder\n竞争：发现 PR #6770 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 5，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[pydantic/pydantic-ai#7109](https://github.com/pydantic/pydantic-ai/issues/7109) Durable-exec leaf-toolset `id` error never mentions the capability `id` that would fix it**\n建议：WAIT_MAINTAINER | 分数：8\n价值：Issue clearly identifies a missing capability id hint in a durable-exec error message, with a concrete repro and root cause. However, the deterministic gate says HUMAN_REVIEW, and existing PR #6696 has semantic overlap with the durable_exec leaf-toolset path, requiring maintainer comparison before starting work.\n改动：Update error message in durable_exec/_base.py::BaseDurabilityCapability._wrap_and_register_leaf generic branch to include capability id hint；Fix typo 'activitys' to 'activities' in Temporal wording\n验证：Add a regression test using the repro: Agent('openai:gpt-5', name='a', capabilities=[WebSearch(local='duckduckgo'), TemporalDurability(name='x')]) and assert the error message contains the capability id hint；Run targeted unit tests for durable_exec and capabilities modules\n风险：Existing PR #6696 may already address this error message; need to compare implementation boundaries；Potential maintainer design preference on error message wording or capability id contract\n竞争：发现 PR #6696 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 2，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[pydantic/pydantic-ai#7108](https://github.com/pydantic/pydantic-ai/issues/7108) `include_binary_content=False` is not honored for tool returns, `final_result`, or output-function arguments**\n建议：WAIT_MAINTAINER | 分数：8\n价值：Issue clearly identifies a real bug with a minimal repro and root cause in messages.py, but an open PR (#7053) has semantic overlap and may already address the same code paths. The deterministic gate requires HUMAN_REVIEW, and the overlap must be manually compared before creating a new task.\n改动：Fix binary content stripping in messages.py::BaseToolReturnPart.otel_message_parts；Possibly adjust instrumentation.py sinks for final_result and tool_arguments\n验证：Add regression test using the provided repro to assert no base64 in otel_message_parts output；Run existing tests in tests/test_capabilities.py, tests/test_logfire.py, tests/test_images.py, tests/models/test_instrumented.py, tests/test_temporal.py\n风险：PR #7053 may already fix the issue, leading to duplicate work；Changing serialization behavior could affect other consumers of all_messages\n竞争：发现 PR #7053 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 2，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33470](https://github.com/sgl-project/sglang/issues/33470) inference_mode mismatch can break lazy buffers**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue identifies a clear inconsistency in torch.inference_mode usage between warmup/autotune and real forward, causing inplace update failures for lazy buffers. However, open PR lookup timed out and related issue audit failed, so duplicate implementation cannot be excluded. Maintainer comment asks for design alignment, indicating need for maintainer decision.\n改动：Align inference_mode usage across warmup/autotune and real forward paths；Add explicit eager initialization for backend workspaces before autotune/capture\n验证：Reproduce with provided DeepSeek-R1-NVFP4 command and FlashInfer MegaMOE branch；Add regression test for inplace update on lazy buffers across inference_mode contexts\n风险：Changing inference_mode may affect performance or correctness in other paths；Potential duplicate work if existing PR addresses this\n竞争：open PR 检索不完整，需等待下轮重试后再判断碰撞\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 9，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33464](https://github.com/sgl-project/sglang/issues/33464) [Bug] EXIF orientation is never applied when decoding images for VLM serving**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue provides a clear root cause and reproduction, but the deterministic gate requires HUMAN_REVIEW and the related issue audit timed out. An existing PR (#33449) directly addresses the issue but has failing CI, so maintainer guidance is needed before starting a competing PR.\n改动：python/sglang/srt/utils/common.py；python/sglang/multimodal_gen/runtime/utils/vision.py\n验证：Run the provided CPU-only reproduction to confirm the bug；Add regression tests for all 8 EXIF orientations and decoder routing\n风险：Potential overlap with existing PR #33449; need to avoid duplicating effort；Fix must cover all three decode paths to avoid incomplete resolution\n竞争：已有直接关联但证据不完整的 PR #33449：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 3，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33408](https://github.com/sgl-project/sglang/issues/33408) [Bug] Unlimited-OCR: server crashes when batching images with different gundam tile counts**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue provides a clear root cause (torch.stack on variable-size crops) and a reproducible test, but an existing PR #33458 directly addresses it with failing CI, and a maintainer has not yet approved or assigned. The gate decision is HUMAN_REVIEW, so we must wait for maintainer input.\n改动：python/sglang/srt/models/unlimited_ocr.py；python/sglang/srt/managers/mm_utils.py\n验证：Add a concurrent regression test with two aspect ratios that produce different gundam tile counts, verifying both requests succeed.；Run existing unit tests for the Unlimited-OCR model and mm_utils.\n风险：Existing PR #33458 may be merged or need revision; competing PR could cause duplication.；Per-request error isolation is out of scope, so server crash risk remains if not addressed.\n竞争：已有直接关联但证据不完整的 PR #33458：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 10，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50948](https://github.com/vllm-project/vllm/issues/50948) [Bug]: Qwen parser routes grammar-constrained JSON to reasoning when `enable_in_reasoning=true`**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue provides a clear root cause and minimal reproduction for a user-visible bug in Qwen parser routing. However, an existing PR #50955 directly references this issue but has failing CI and incomplete evidence, and the deterministic gate requires HUMAN_REVIEW. Maintainer design preference is unconfirmed, so work should wait for maintainer guidance.\n改动：Qwen3Parser initialization logic to handle enable_in_reasoning=true；Structured output manager interaction with reasoning parser\n验证：Add regression test using the provided minimal reproduction with json_object and json_schema response formats；Run targeted unit tests for Qwen3Parser and structured output integration\n风险：Potential conflict with existing PR #50955；Risk of altering behavior for other reasoning parsers or modes\n竞争：已有直接关联但证据不完整的 PR #50955：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 17，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#35711](https://github.com/BerriAI/litellm/issues/35711) [Bug]: `ollama/` streaming never reconstructs tool calls — tool call arrives as plain `delta.content` text with `finish_reason: \"stop\"`, while the non-streaming path reconstructs it correctly**\n建议：WAIT_MAINTAINER | 分数：11\n价值：The issue provides a clear, reproducible bug with a precise root cause: the streaming path in the ollama/ completion transformation never reconstructs tool calls, unlike the non-streaming path. However, the deterministic gate is HUMAN_REVIEW, and open PR and related issue lookups timed out, so we cannot rule out existing implementations or maintainer preferences. The submission policy also conflicts with AI disclosure requirements, blocking automatic action.\n改动：Add tool-call reconstruction to OllamaTextCompletionResponseIterator.chunk_parser；Set finish_reason to 'tool_calls' when reconstructed tool call is detected；Possibly handle 'parameters' key variant in reconstruction condition\n验证：Create a regression test that streams a tool call via ollama/ prefix and asserts delta.tool_calls is populated and finish_reason is 'tool_calls'；Run existing ollama completion tests to ensure no regressions\n风险：Changing streaming behavior may affect existing consumers expecting text-only output；Potential edge cases in parsing partial JSON chunks during streaming\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 10，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33493](https://github.com/sgl-project/sglang/issues/33493) [Bug] DSPARK retrieves wrong key \"acc_linear_penalities\" from sampling_info**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue identifies a likely typo in attribute name causing DSPARK to ignore min_tokens, with a concrete patch and repro. However, open PR and related issue lookups timed out, so duplicate work cannot be excluded. Maintainer design preference is unknown.\n改动：dflash_utils.py；dspark_verify.py\n验证：Add a regression test that starts DSPARK with min_tokens and asserts completion_tokens >= min_tokens.\n风险：Attribute name may differ across versions; patch may need adjustment.\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 7，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50159](https://github.com/vllm-project/vllm/issues/50159) [Bug]: Model Runner V2 + Gemma-4: memory profiler reports ~0.9 GiB more \"available KV\" than MRv1 → no runtime headroom → CUDA OOM under saturating load (no spec involved); with EAGLE it crashes earlier at cudagraph capture (stable-ABI aten::empty)**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue provides strong evidence of a memory accounting discrepancy between MRv1 and MRv2, with a deterministic OOM repro and community A/B isolating CUDA graph capture headroom. However, root cause is not fully confirmed (eager residual unexplained), and an existing draft PR #49233 attempts a fix but is incomplete. Maintainer direction is needed to avoid duplicating or conflicting with ongoing work.\n改动：Fix MRv2 CUDA graph memory reservation to match MRv1 headroom；Investigate and fix small eager-mode KV capacity delta；Add regression test for memory profiling under CUDA graphs\n验证：Reproduce OOM with provided Gemma-4 config and saturating load；Run A/B memory profiling with CUDA graphs on small and large models；Verify fix eliminates OOM and profiler gap matches runtime headroom\n风险：Changing memory reservation may reduce KV cache capacity or performance；Fix may interact with extensible KV cache direction (#47363)\n竞争：已有直接关联但证据不完整的 PR #49233：存在失败 CI/check; 仍是 draft；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 7，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50959](https://github.com/vllm-project/vllm/issues/50959) [Bug] fastsafetensors ParallelLoader broadcasts on group.WORLD; PP-scoped draft loads deadlock**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue describes a deterministic deadlock with clear root cause (WORLD-group broadcast in fastsafetensors loader when only PP-last-stage ranks load draft model). However, the supplied gate decision is HUMAN_REVIEW, and the related issue audit failed (timeout), leaving uncertainty about maintainer awareness and existing design preferences. The open PR #50514 is related but has failing CI and does not directly fix the loader issue.\n改动：Modify fastsafetensors_weights_iterator to use a participant-scoped process group (e.g., TP group) instead of WORLD for broadcasts；Add a guard to reject fastsafetensors for sub-engine loads if scoping is not possible\n验证：Create a minimal reproduction with TP8 x PP2 and fastsafetensors loading a draft model only on last PP stage; verify deadlock occurs before fix；Run the reproduction after fix to confirm no hang and correct weight loading；Run existing vLLM unit tests for weight_utils and model loading with fastsafetensors\n风险：Changing process group scope may affect other load paths that rely on WORLD broadcasts；Potential performance impact if group creation is expensive；Need to ensure fallback to WORLD for engine-wide loads is preserved\n竞争：已有直接关联但证据不完整的 PR #50514：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 4，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[PrefectHQ/fastmcp#4744](https://github.com/PrefectHQ/fastmcp/issues/4744) serialize_by_alias=False ignored for nested Pydantic models**\n建议：WAIT_MAINTAINER | 分数：10\n价值：Issue reports a clear bug: nested Pydantic models in dicts ignore serialize_by_alias=False. Repro is provided, but root cause is not identified and no maintainer confirmation exists. The gate decision is HUMAN_REVIEW, so we must wait for maintainer input.\n改动：Fix serialization of nested Pydantic models inside dicts to respect serialize_by_alias；Add regression test for nested model in dict\n验证：Run the provided minimal repro and assert output uses real_name instead of alias_name；Add unit test covering nested model in dict with serialize_by_alias=False\n风险：Potential impact on existing serialization behavior for other nested structures；Need to confirm maintainer's preferred fix approach\n竞争：未发现相关 open PR\n下一步：先请求维护者分配/确认方案，获批后再开 PR。\n证据：复现信号 2，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T06:09:11.938626Z",
+      "eventId": "8a5a141f1ac3333375483cf4e118b80d4fd142fc1013da05b585b60ff57c0a5f",
+      "idempotencyKey": "8a5a141f1ac3333375483cf4e118b80d4fd142fc1013da05b5",
+      "kind": "review",
+      "runId": "scan-20260804T060339Z-e79febfc6fea",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "sgl-project/sglang#27937"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#27937](https://github.com/sgl-project/sglang/issues/27937) [Failure Tracker] PR Test (AMD)**\n建议：WAIT_MAINTAINER\n价值：POLICY_REVALIDATION_REQUIRED\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T06:09:12.120418Z",
+      "eventId": "8a7816bbb906561920d958ef03ecdc2e227ad9abda1b7ffb1fe6169fa3133133",
+      "idempotencyKey": "8a7816bbb906561920d958ef03ecdc2e227ad9abda1b7ffb1f",
+      "kind": "watch",
+      "runId": "watch-1785823018",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-04T05:45:08.554921Z",
+  "generatedAt": "2026-08-04T06:09:12.241246Z",
   "newEventCount": 0,
   "version": "notification_outbox_v1"
 }

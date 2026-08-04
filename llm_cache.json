@@ -26,6 +26,32 @@
     ],
     "why": "Issue reports a user-visible bug but lacks a clear root cause and minimal repro; maintainer has asked a clarifying question, indicating need for more info before work can start."
   },
+  "09825a63c7595dbc0ab01b0f35ce09e3128060df67572bc7681e652c013b6039": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Update error message in durable_exec/_base.py::BaseDurabilityCapability._wrap_and_register_leaf generic branch to include capability id hint",
+      "Fix typo 'activitys' to 'activities' in Temporal wording"
+    ],
+    "risks": [
+      "Existing PR #6696 may already address this error message; need to compare implementation boundaries",
+      "Potential maintainer design preference on error message wording or capability id contract"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add a regression test using the repro: Agent('openai:gpt-5', name='a', capabilities=[WebSearch(local='duckduckgo'), TemporalDurability(name='x')]) and assert the error message contains the capability id hint",
+      "Run targeted unit tests for durable_exec and capabilities modules"
+    ],
+    "unknowns": [
+      "Whether PR #6696 already fixes this exact error message; maintainer's preferred approach for error message changes"
+    ],
+    "why": "Issue clearly identifies a missing capability id hint in a durable-exec error message, with a concrete repro and root cause. However, the deterministic gate says HUMAN_REVIEW, and existing PR #6696 has semantic overlap with the durable_exec leaf-toolset path, requiring maintainer comparison before starting work."
+  },
   "0a98c92367d8f789fb293f4eee553a84015b8d43450ee0efcd52ea76b26c9e33": {
     "confidence": 0.7,
     "contradictions": [],
@@ -293,6 +319,33 @@
     ],
     "why": "Issue provides a clear, reproducible bug with root cause analysis and a proposed fix, but the deterministic gate requires HUMAN_REVIEW and there is an existing PR (#33449) with failed CI. Actionability depends on maintainer confirmation and PR quality assessment."
   },
+  "5abf5544b263f836e09fc9a31e6d57ef047f8e875f704bbd5f300695bcb5c990": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Fix serialization of nested Pydantic models inside dicts to respect serialize_by_alias",
+      "Add regression test for nested model in dict"
+    ],
+    "risks": [
+      "Potential impact on existing serialization behavior for other nested structures",
+      "Need to confirm maintainer's preferred fix approach"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "test_plan": [
+      "Run the provided minimal repro and assert output uses real_name instead of alias_name",
+      "Add unit test covering nested model in dict with serialize_by_alias=False"
+    ],
+    "unknowns": [
+      "Root cause not yet identified",
+      "Maintainer's design preference for fix not known"
+    ],
+    "why": "Issue reports a clear bug: nested Pydantic models in dicts ignore serialize_by_alias=False. Repro is provided, but root cause is not identified and no maintainer confirmation exists. The gate decision is HUMAN_REVIEW, so we must wait for maintainer input."
+  },
   "696e02a999f1d011ae915149f892da85ad6d48baaeb77c7118e9f6f1d84d1d0e": {
     "confidence": 0.7,
     "contradictions": [
@@ -435,6 +488,61 @@
     ],
     "why": "Issue reports a clear bug: nested Pydantic models in dicts ignore serialize_by_alias=False. No open PR or related issue found, but the repository requires assignment and AI disclosure. Root cause is not yet confirmed; likely in serialization path for nested models."
   },
+  "85b09f86fc32fe02ffa94c6d230ded8ee5de4a891d93472e8abae497f74716f4": {
+    "confidence": 0.8,
+    "contradictions": [
+      "None"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "No code changes for the main bug; possible follow-up issues for latency, watch scope, and edge nondeterminism."
+    ],
+    "risks": [
+      "Potential scope creep if addressing secondary observations without maintainer approval."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "No new tests needed for the main bug; regression tests already exist in RC1."
+    ],
+    "unknowns": [
+      "Whether maintainers want separate issues for the secondary observations."
+    ],
+    "why": "The issue is a well-documented bug with independent reproductions and maintainer acknowledgment that it is fixed in RC1. However, the fix is already implemented and verified, so no new code contribution is needed. The remaining observations (latency, watch scope, edge nondeterminism) are separate concerns that require maintainer direction."
+  },
+  "8bf1059197a6c3ad139c0e1bbfc286d6082ec5d433169535baa623ac7ce49097": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Maintainer comment suggests queue latency, but commenter provides evidence of uuid ordering bug"
+    ],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify get_episodes in graphiti-mcp to order by recency (e.g., valid_at DESC) instead of uuid DESC",
+      "Update or add tests covering recency ordering and regression for stale data"
+    ],
+    "risks": [
+      "Potential behavior change affecting existing consumers expecting uuid ordering",
+      "Need to ensure compatibility with pagination cursor semantics"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce issue by adding episodes with known timestamps and calling get_episodes; assert most recent returned",
+      "Run existing test suite for graphiti-mcp and add unit tests for ordering behavior"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a specific fix approach or have design constraints"
+    ],
+    "why": "Issue reports stale get_episodes data; maintainer attributes to queue latency, but a commenter identifies a concrete root cause: get_episodes uses keyset pagination with ORDER BY uuid DESC, returning arbitrary stable subset instead of most recent. Existing PR #1726 claims to fix this but has failing CI/check and lacks evidence of root-cause analysis. A materially better PR with proper tests and root-cause explanation is plausible."
+  },
   "976b4ba1dc070c3b4427e1660bc07cdd14958c14ad095a6f32d90fd3bce68e5b": {
     "confidence": 0.7,
     "contradictions": [],
@@ -551,6 +659,35 @@
       "Maintainer's preferred approach for streaming tool call reconstruction"
     ],
     "why": "Issue provides a detailed, reproducible bug with clear root cause in streaming path of ollama/ prefix, but open PR and related issue lookups timed out, so duplicate implementation cannot be excluded. Maintainer approval and design confirmation are absent, and the gate requires human review."
+  },
+  "ab31a3b0438fbb896e5b59fe8e4b9a12f327e7367f7e9d96988094211bb81382": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Add tool-call reconstruction to OllamaTextCompletionResponseIterator.chunk_parser",
+      "Set finish_reason to 'tool_calls' when reconstructed tool call is detected",
+      "Possibly handle 'parameters' key variant in reconstruction condition"
+    ],
+    "risks": [
+      "Changing streaming behavior may affect existing consumers expecting text-only output",
+      "Potential edge cases in parsing partial JSON chunks during streaming"
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Create a regression test that streams a tool call via ollama/ prefix and asserts delta.tool_calls is populated and finish_reason is 'tool_calls'",
+      "Run existing ollama completion tests to ensure no regressions"
+    ],
+    "unknowns": [
+      "Whether there is an existing open PR addressing this issue (lookup timed out)",
+      "Whether maintainers have a preferred design or are already working on it",
+      "Whether the repository's AI disclosure policy can be satisfied for automated contribution"
+    ],
+    "why": "The issue provides a clear, reproducible bug with a precise root cause: the streaming path in the ollama/ completion transformation never reconstructs tool calls, unlike the non-streaming path. However, the deterministic gate is HUMAN_REVIEW, and open PR and related issue lookups timed out, so we cannot rule out existing implementations or maintainer preferences. The submission policy also conflicts with AI disclosure requirements, blocking automatic action."
   },
   "abd0dc83190a49c628ea83f21d4e43004b4b2cac3d2f627613be493686ec1dd3": {
     "confidence": 0.85,
@@ -863,6 +1000,37 @@
     ],
     "why": "Issue reports a CLI argument parsing error for MiniMax-H3, but a comment suggests a workaround (adding --model-type diffusion). The root cause is likely missing model-type detection or default, but no maintainer confirmation or design preference is available. Open PR and related issue lookups failed, so duplicate work cannot be excluded."
   },
+  "d2a2d09e56657388c24334de2fc6cb8c9eda1fe7a695ee7ca0250fc621460717": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims LiteLLM counts cache tokens in prompt_tokens, but author later corrects that the cited evidence only showed cache reads, not writes; however, a separate linked file supports the claim."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify lib/crewai/src/crewai/llms/providers/anthropic/completion.py to include cache tokens in total_tokens",
+      "Update corresponding test in lib/crewai/tests/llms/anthropic/test_anthropic.py"
+    ],
+    "risks": [
+      "Existing PR #6770 may already implement the fix, leading to duplicate work",
+      "Changing input_tokens semantics could affect downstream consumers expecting the remainder"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Run the provided reproduction script from cacheeconomics repo to confirm undercount",
+      "Add a regression test that asserts total_tokens includes cache read and write tokens",
+      "Run existing anthropic provider tests to ensure no breakage"
+    ],
+    "unknowns": [
+      "Whether PR #6770 fully resolves the issue and is acceptable to maintainers",
+      "Maintainer preference on whether input_tokens should become total or remain remainder"
+    ],
+    "why": "Issue clearly identifies a real bug in native Anthropic provider token accounting with a concrete reproduction and suggested fix. However, an open PR #6770 already addresses the same code path and semantics, and a duplicate issue #6768 exists. The deterministic gate requires HUMAN_REVIEW, and the existing PR may already cover the fix, so starting new work without maintainer confirmation risks duplication."
+  },
   "e1434717d760518bad9804ecb7735aa8c452c17b29278f88b4b41f2f6a3ba16e": {
     "confidence": 0.8,
     "contradictions": [
@@ -893,6 +1061,58 @@
     ],
     "why": "Issue provides a deterministic OOM repro and strong evidence that MRv2 under-reserves CUDA graph capture memory, matching known issue #49224 and draft PR #49233. However, the PR is draft with failing CI, and maintainer direction is unclear; a new PR would compete with an existing weak attempt."
   },
+  "e63a70b10d97940ab96e59b12f306347f81a5b54ec98103b974281b529c5fc74": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/utils/common.py",
+      "python/sglang/multimodal_gen/runtime/utils/vision.py"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #33449; need to avoid duplicating effort",
+      "Fix must cover all three decode paths to avoid incomplete resolution"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Run the provided CPU-only reproduction to confirm the bug",
+      "Add regression tests for all 8 EXIF orientations and decoder routing"
+    ],
+    "unknowns": [
+      "Status of related issue audit (timeout) and maintainer's stance on the proposed fix",
+      "Whether existing PR #33449 can be improved or should be superseded"
+    ],
+    "why": "Issue provides a clear root cause and reproduction, but the deterministic gate requires HUMAN_REVIEW and the related issue audit timed out. An existing PR (#33449) directly addresses the issue but has failing CI, so maintainer guidance is needed before starting a competing PR."
+  },
+  "e74dc45663b1c93c92111a327a13850493c8b709c21fb20bf14e3c862b61a0d7": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "dflash_utils.py",
+      "dspark_verify.py"
+    ],
+    "risks": [
+      "Attribute name may differ across versions; patch may need adjustment."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 11,
+    "test_plan": [
+      "Add a regression test that starts DSPARK with min_tokens and asserts completion_tokens >= min_tokens."
+    ],
+    "unknowns": [
+      "Whether an existing PR already addresses this; maintainer preference on the fix approach."
+    ],
+    "why": "Issue identifies a likely typo in attribute name causing DSPARK to ignore min_tokens, with a concrete patch and repro. However, open PR and related issue lookups timed out, so duplicate work cannot be excluded. Maintainer design preference is unknown."
+  },
   "e76172b60f1b9591da21eeb4a217fd494af10bb87e29c1175a4a5bbee74d3a27": {
     "confidence": 0.7,
     "contradictions": [
@@ -922,6 +1142,38 @@
     ],
     "why": "Issue reports stale get_episodes results; maintainer comment attributes to queue latency, but user analysis identifies a concrete root cause: get_episodes uses keyset pagination with ORDER BY uuid DESC, returning arbitrary stable subset instead of most recent episodes. Existing PR #1726 addresses this but has failing CI and lacks full evidence. A materially better PR with robust tests and root-cause analysis is plausible."
   },
+  "e81d18c0ff31fa299bfd98be67cc38ee75971616fc0e4583a2c8f64bc84a7151": {
+    "confidence": 0.8,
+    "contradictions": [
+      "None"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix MRv2 CUDA graph memory reservation to match MRv1 headroom",
+      "Investigate and fix small eager-mode KV capacity delta",
+      "Add regression test for memory profiling under CUDA graphs"
+    ],
+    "risks": [
+      "Changing memory reservation may reduce KV cache capacity or performance",
+      "Fix may interact with extensible KV cache direction (#47363)"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "test_plan": [
+      "Reproduce OOM with provided Gemma-4 config and saturating load",
+      "Run A/B memory profiling with CUDA graphs on small and large models",
+      "Verify fix eliminates OOM and profiler gap matches runtime headroom"
+    ],
+    "unknowns": [
+      "Exact root cause of eager-mode residual delta",
+      "Maintainer preference on fixing vs. waiting for extensible KV cache"
+    ],
+    "why": "Issue provides strong evidence of a memory accounting discrepancy between MRv1 and MRv2, with a deterministic OOM repro and community A/B isolating CUDA graph capture headroom. However, root cause is not fully confirmed (eager residual unexplained), and an existing draft PR #49233 attempts a fix but is incomplete. Maintainer direction is needed to avoid duplicating or conflicting with ongoing work."
+  },
   "f9388995937b1e55bd8977335851a0e9859696c4056b203c018e1a8a6a848547": {
     "confidence": 0.8,
     "contradictions": [
@@ -947,5 +1199,32 @@
       "Reporter verification on RC1/current main is pending; maintainer has not confirmed final resolution."
     ],
     "why": "The issue is a well-documented bug with independent reproductions and a confirmed fix in RC1, but the maintainer has explicitly requested verification on RC1/current main and marked it awaiting-reporter. The candidate is not a new clean contribution; it is a regression case already routed for RC. Work should wait for maintainer confirmation and reporter verification."
+  },
+  "fd47108caeda7314532797a09655a868ff9cb7e4c7f7a2cc8922ebb520281895": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Fix binary content stripping in messages.py::BaseToolReturnPart.otel_message_parts",
+      "Possibly adjust instrumentation.py sinks for final_result and tool_arguments"
+    ],
+    "risks": [
+      "PR #7053 may already fix the issue, leading to duplicate work",
+      "Changing serialization behavior could affect other consumers of all_messages"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add regression test using the provided repro to assert no base64 in otel_message_parts output",
+      "Run existing tests in tests/test_capabilities.py, tests/test_logfire.py, tests/test_images.py, tests/models/test_instrumented.py, tests/test_temporal.py"
+    ],
+    "unknowns": [
+      "Whether PR #7053 actually fixes the specific binary content issue",
+      "Maintainer preference on the fix approach"
+    ],
+    "why": "Issue clearly identifies a real bug with a minimal repro and root cause in messages.py, but an open PR (#7053) has semantic overlap and may already address the same code paths. The deterministic gate requires HUMAN_REVIEW, and the overlap must be manually compared before creating a new task."
   }
 }
