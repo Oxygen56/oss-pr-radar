@@ -12,6 +12,7 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
+from time import monotonic, sleep
 from typing import Any
 
 ROOT = Path(__file__).parents[1]
@@ -673,12 +674,20 @@ def recovery_commit(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def task_context(args: argparse.Namespace) -> dict[str, Any]:
-    value = ledger(args.ledger).task_context(
-        issue_url=args.issue_url,
-        thread_id=args.thread_id,
-        worktree_path=args.worktree,
-    )
-    return {"ok": value is not None, "task": value}
+    store = ledger(args.ledger)
+    deadline = monotonic() + max(0.0, min(float(args.wait_seconds), 120.0))
+    while True:
+        value = store.task_context(
+            issue_url=args.issue_url,
+            thread_id=args.thread_id,
+            worktree_path=args.worktree,
+        )
+        if value is not None:
+            return {"ok": True, "task": value, "pendingHandoff": False}
+        pending = store.has_live_handoff(issue_url=args.issue_url)
+        if not pending or monotonic() >= deadline:
+            return {"ok": False, "task": None, "pendingHandoff": pending}
+        sleep(0.5)
 
 
 def main() -> int:
@@ -742,6 +751,7 @@ def main() -> int:
     task_context_parser.add_argument("--issue-url", required=True)
     task_context_parser.add_argument("--thread-id")
     task_context_parser.add_argument("--worktree")
+    task_context_parser.add_argument("--wait-seconds", type=float, default=75.0)
     metrics = subparsers.add_parser("metrics")
     metrics.add_argument("--days", type=int, default=30)
     args = parser.parse_args()

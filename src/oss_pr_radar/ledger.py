@@ -737,6 +737,19 @@ class RadarLedger:
             "authorizationSource": payload.get("authorizationSource"),
         }
 
+    def has_live_handoff(self, *, issue_url: str) -> bool:
+        now = iso_z(datetime.now(UTC))
+        with self.connect() as connection:
+            row = connection.execute(
+                """SELECT 1 FROM opportunities o
+                   JOIN intents i ON i.opportunity_key=o.key
+                   WHERE o.issue_url=? AND i.status='LEASED'
+                     AND i.expires_at>? AND i.lease_until>?
+                   LIMIT 1""",
+                (issue_url, now, now),
+            ).fetchone()
+        return row is not None
+
     def create_publication_request(
         self,
         *,

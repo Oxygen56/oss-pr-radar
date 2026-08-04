@@ -77,3 +77,6 @@ claim/revalidation, exact-project worktree creation, task receipt verification,
 one-shot recovery, title synchronization, and `AUDIT_NO_GO` cleanup in that
 order. A canary WIP limit may leave valid pending intents in the queue; this is
 normal and must not be treated as a failed run.
+An issue task's first `task-context` lookup waits briefly only when the ledger
+shows a live lease for that exact issue, closing the create-thread/receipt race
+without treating an unregistered prompt as authorization.
