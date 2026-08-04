@@ -1,4 +1,31 @@
 {
+  "0740f235a4da3373d7ae5b08296a8d4e8a3db657b4bc57bf6294e4daf5e1b126": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "agent tool loading",
+      "custom skill/knowledge integration"
+    ],
+    "risks": [
+      "Potential design changes in agent runtime; unclear if maintainer wants a specific fix approach."
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Create a minimal reproduction with a mock MCP server and custom skill/knowledge to trigger the failure."
+    ],
+    "unknowns": [
+      "Exact root cause",
+      "Whether maintainer has design preferences",
+      "Minimal repro details"
+    ],
+    "why": "Issue reports a user-visible bug but lacks a clear root cause and minimal repro; maintainer has asked a clarifying question, indicating need for more info before work can start."
+  },
   "0a98c92367d8f789fb293f4eee553a84015b8d43450ee0efcd52ea76b26c9e33": {
     "confidence": 0.7,
     "contradictions": [],
@@ -59,6 +86,71 @@
     ],
     "why": "Issue reports intermittent timeouts in LiveKit Inference but lacks a clear root cause; a contributor comment suggests possible misconfiguration (wrong model name), and no maintainer confirmation or design direction exists. The report is a bug report without a concrete code path or reproducible test, making it premature to start implementation."
   },
+  "1fc593c5dc203e31ed256bba7f704c7b0cbf25f3187106749ac49e25d6d2777f": {
+    "confidence": 0.8,
+    "contradictions": [
+      "PR #5742 is marked technically complete but has failing CI"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "open_pr_assessment"
+    ],
+    "expected_changes": [
+      "Validate per-stage device layout before spawning workers",
+      "Add regression test for stage tensor_parallel_size mismatch"
+    ],
+    "risks": [
+      "Existing PR #5742 may be merged, making a new PR redundant",
+      "Potential overlap with issue #4838 requires maintainer triage"
+    ],
+    "root_cause_clarity": "high",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with the provided commands and verify the clear error message",
+      "Run existing test suite for stage runtime and device layout validation"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer to fix #5742 or accept a new PR",
+      "Whether issue #4838 is truly a duplicate"
+    ],
+    "why": "Issue is a real bug with clear root cause and workaround, but an existing PR #5742 directly addresses it and is technically complete, though it has failing CI. The deterministic gate is HUMAN_REVIEW, and maintainer confirmation is needed before starting a competing PR."
+  },
+  "54b76b2e1cde101b88c0c18c5da20cad436b0fcfdfe9d54a1c5a1c2d07778c0f": {
+    "confidence": 0.7,
+    "contradictions": [
+      "None"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/utils/common.py: apply EXIF orientation in all three decode paths",
+      "python/sglang/srt/utils/common.py: route oriented JPEGs to PIL path instead of nvJPEG",
+      "python/sglang/srt/utils/common.py: add exif_transpose to CPU fallback and direct-PIL branch"
+    ],
+    "risks": [
+      "Potential performance impact on JPEG decode path if orientation check adds overhead",
+      "Risk of behavior change for multi-frame or malformed EXIF images",
+      "Existing PR #33449 may already address the issue; need to evaluate its quality and CI failures"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Add unit test using the provided reproduction script to assert pixel parity with PIL.ImageOps.exif_transpose for all 8 orientations",
+      "Add decoder-routing test to ensure oriented JPEGs use PIL path and unoriented use nvJPEG",
+      "Run existing VLM serving tests to ensure no regression"
+    ],
+    "unknowns": [
+      "Maintainer stance on the proposed fix and severity framing",
+      "Status of PR #33449's CI failures and whether it can be improved",
+      "Whether the issue is considered a security concern requiring CVE handling"
+    ],
+    "why": "Issue provides a clear, reproducible bug with root cause analysis and a proposed fix, but the deterministic gate requires HUMAN_REVIEW and there is an existing PR (#33449) with failed CI. Actionability depends on maintainer confirmation and PR quality assessment."
+  },
   "696e02a999f1d011ae915149f892da85ad6d48baaeb77c7118e9f6f1d84d1d0e": {
     "confidence": 0.7,
     "contradictions": [
@@ -88,6 +180,35 @@
       "Whether PR #6770 fully addresses the issue or needs additional changes"
     ],
     "why": "Issue provides a clear root cause and a concrete fix, but an open PR (#6770) already targets the same code path and semantics. The PR is recent, has tests and CI, but does not reference the issue. Maintainer review is needed to decide whether to adopt the PR, request changes, or accept a new PR."
+  },
+  "729fb5120d96ea7ed0fed61d1b2de361a41ccdff9040fcb8f3c36839b27e73d1": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "runtime ledger terminalization on stop",
+      "prior-run-context non-terminal handling",
+      "backfill repair for stuck runs"
+    ],
+    "risks": [
+      "Overlap with PR #2078",
+      "Design constraints on embedded interaction store"
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Reproduce with AskUserQuestion stop scenario",
+      "Add regression test for terminal fact and prior-run inclusion"
+    ],
+    "unknowns": [
+      "PR #2078 completeness and maintainer stance",
+      "Exact fix scope and design approval"
+    ],
+    "why": "Issue provides detailed root cause and repro, but existing PR #2078 is draft and may already address it; maintainer design preferences and PR quality need assessment before starting competing work."
   },
   "811580dbec57b0c5aaecf3a0702132258e6bf6c914b6aa5a28a7b416860e8e5b": {
     "confidence": 0.7,
@@ -283,6 +404,35 @@
       "Run the existing ag-ui test suite and static checks to ensure no regression in valid snapshot emission cases."
     ],
     "why": "The issue provides a precise root cause, a deterministic no-LLM repro, production impact metrics, and a concrete suggested fix. However, the deterministic gate requires HUMAN_REVIEW, and maintainer triage is needed to confirm design preferences (e.g., whether to use pending-updates check vs. tool-name filter, and whether to introduce StateDeltaEvent at the boundary) and to disambiguate potential overlap with issue #7491."
+  },
+  "c31f56ba0affaf935cc3daa11cb6d52389718f19b63c8feb6ccec90f65f1ab61": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Fix binary content stripping in messages.py::BaseToolReturnPart.otel_message_parts",
+      "Fix final_result and tool_arguments sinks in capabilities/instrumentation.py",
+      "Add regression tests for tool returns, final_result, and output-function arguments"
+    ],
+    "risks": [
+      "Existing PR #7053 may already address part of the issue; need to compare implementation boundaries",
+      "Potential maintainer preference on API behavior changes; avoid expanding scope"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Use the provided repro to create a failing test for ToolReturnPart.otel_message_parts",
+      "Add tests for final_result and tool_arguments with BinaryImage",
+      "Run targeted tests in tests/test_capabilities.py, tests/test_logfire.py, tests/test_images.py, tests/models/test_instrumented.py, tests/test_temporal.py"
+    ],
+    "unknowns": [
+      "Whether PR #7053 actually fixes the reported sinks or only overlaps in test files",
+      "Maintainer design preferences for binary content stripping in traces"
+    ],
+    "why": "Issue clearly identifies a real bug with a minimal repro and root cause in messages.py, but an open PR (#7053) has semantic overlap and the deterministic gate requires human review. Need maintainer confirmation on design and PR comparison before starting work."
   },
   "cb6324d4034f42904d94291b1bac3a9d8313e6bab0c118ddb6115e2c011c48bc": {
     "confidence": 0.7,
