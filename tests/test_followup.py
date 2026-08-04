@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 
 from oss_pr_radar.followup import collect_followup
+from oss_pr_radar.github_client import GitHubError
 
 
 class Client:
@@ -164,3 +165,24 @@ def test_state_schema_migration_does_not_repeat_unchanged_action():
 
     assert migrated["version"] == "pr_followup_v2"
     assert repeated["candidate_details"] == []
+
+
+def test_initial_query_failure_preserves_state_and_emits_report():
+    class FailingClient(Client):
+        def open_pull_requests_by_author(self, author):
+            raise GitHubError("temporary API failure")
+
+    existing, _ = collect_followup(
+        Client(), author="Oxygen56", now=datetime(2026, 8, 4, tzinfo=UTC)
+    )
+    state, report = collect_followup(
+        FailingClient(),
+        author="Oxygen56",
+        existing=existing,
+        now=datetime(2026, 8, 4, 1, tzinfo=UTC),
+    )
+
+    assert report["scan_ok"] is False
+    assert report["candidate_details"] == []
+    assert report["errors"] == ["open_pull_requests:temporary API failure"]
+    assert state["items"] == existing["items"]

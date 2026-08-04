@@ -89,7 +89,26 @@ def collect_followup(
         except GitHubError as exc:
             return repo, number, {}, [], [], str(exc)[:160]
 
-    hits = client.open_pull_requests_by_author(author)[:limit]
+    try:
+        hits = client.open_pull_requests_by_author(author)[:limit]
+    except GitHubError as exc:
+        state = {
+            "version": FOLLOWUP_VERSION,
+            "generatedAt": iso_z(current),
+            "items": sorted(previous.values(), key=lambda item: str(item.get("key") or "")),
+        }
+        state["digest"] = sha256_json(
+            {key: value for key, value in state.items() if key != "digest"}
+        )
+        return state, {
+            "scan_ok": False,
+            "run_id": f"pr-followup-{int(current.timestamp())}",
+            "candidate_details": [],
+            "updates": [],
+            "errors": [f"open_pull_requests:{str(exc)[:160]}"],
+            "workers": 0,
+            "duration_seconds": round(monotonic() - started, 3),
+        }
     worker_count = max(1, min(int(workers), 6, len(hits) or 1))
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
         fetched = list(executor.map(fetch, hits))

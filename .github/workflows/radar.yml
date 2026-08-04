@@ -21,6 +21,8 @@ jobs:
   watch:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
     permissions:
       contents: read
       issues: read
@@ -55,6 +57,8 @@ jobs:
   pr-followup:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
     permissions:
       contents: read
       pull-requests: read
