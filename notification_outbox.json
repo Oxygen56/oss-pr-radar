@@ -1,5 +1,5 @@
 {
-  "digest": "262afca9c4231e07b6708c21015d93b36a1f3a8caadfff942b2b3f57c04e87cf",
+  "digest": "a778e22bde4b8d802dfdaa13795bc81ddd4abb9c84fe6af8fd35aee0451d798a",
   "events": [
     {
       "attempts": 1,
@@ -5481,9 +5481,207 @@
       "runId": "pr-followup-1785866812",
       "sentAt": "2026-08-04T18:14:54.644078Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "google/adk-python#6585"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[google/adk-python#6585](https://github.com/google/adk-python/issues/6585) RemoteA2aAgent ends the invocation silently when the A2A stream stops before a terminal task state**\n建议：NEW_CLEAN_CANDIDATE | 分数：11\n价值：Issue clearly identifies a silent failure in RemoteA2aAgent when A2A stream ends before terminal state, with concrete reproduction steps and expected behavior. No competing PR addresses this exact problem; existing PRs are keyword-overlap only.\n改动：Modify RemoteA2aAgent._run_async_impl to detect non-terminal stream end and either query task state, resubscribe, or emit error event；Add regression test simulating stream truncation before terminal state\n验证：Create a mock A2A client that yields non-terminal events then closes stream; assert an error event or state query is triggered；Run existing A2A agent tests to ensure no regressions\n风险：Potential behavior change for legitimate stream closures; need to ensure only non-terminal ends trigger recovery；May require coordination with a2a-sdk API usage\n竞争：仅发现未直接关联、无代码路径或强机制重合的 PR #4686；保留为搜索上下文，不阻止实现\n下一步：按正常流程实现并验证；如要求 DCO 则自动 sign-off，PR 创建后报告 CLA 状态。\n证据：复现信号 2，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "green",
+          "title": {
+            "content": "OSS PR Radar: 可立即执行",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T19:54:55.007154Z",
+      "eventId": "d1d654176b1250413f74e1a845b5e11caff3d8238ab6f606d278f944239f509c",
+      "idempotencyKey": "d1d654176b1250413f74e1a845b5e11caff3d8238ab6f606d2",
+      "kind": "immediate",
+      "runId": "scan-20260804T194838Z-35a4c96b63ce",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "aaif-goose/goose#10751",
+        "DeusData/codebase-memory-mcp#1339",
+        "sgl-project/sglang#33483",
+        "sgl-project/sglang#33464",
+        "sgl-project/sglang#33408"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[aaif-goose/goose#10751](https://github.com/aaif-goose/goose/issues/10751) ACP WebSocket silently drops connection on oversized session/prompt (no JSON-RPC error, no log)**\n建议：WAIT_MAINTAINER | 分数：12\n价值：The issue identifies a clear root cause (unconfigured WebSocket limits) and impact, but the fix location is ambiguous: upstream in agent-client-protocol-http vs Goose-side. The reporter has asked for maintainer preference and is awaiting direction. No maintainer has responded, so design confirmation is needed before work starts.\n改动：Configure WebSocket message/frame limits in Goose or upstream transport；Add JSON-RPC error response for oversized messages；Add logging for connection drops\n验证：Create a failing test that sends a message exceeding the limit and asserts a JSON-RPC error is returned and connection stays alive；Run existing WebSocket transport tests\n风险：Changing limits may affect legitimate large payloads；Upstream fix may be preferred, causing duplicated effort\n竞争：未发现相关 open PR\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 3，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[DeusData/codebase-memory-mcp#1339](https://github.com/DeusData/codebase-memory-mcp/issues/1339) Graph not updated when the working tree returns to clean (revert leaves false negatives)**\n建议：WAIT_MAINTAINER | 分数：11\n价值：The issue is a well-documented bug with independent reproductions and a clear root cause: the watcher fails to re-index on the dirty-to-clean transition. However, the maintainer has already routed it as a high-priority RC regression case and requested verification on RC1, which has been provided. The fix appears to be already implemented in v0.9.1-rc.1, and the issue is awaiting maintainer verification. Starting a new PR would duplicate existing work and conflict with the maintainer's active investigation.\n改动：No new code changes expected; the fix is already in v0.9.1-rc.1.\n验证：No new tests needed; the existing reproduction steps serve as regression tests.\n风险：Potential duplicate PR if work starts without maintainer confirmation.\n竞争：未发现相关 open PR\n下一步：按正常流程实现并验证；如要求 DCO 则自动 sign-off，PR 创建后报告 CLA 状态。\n证据：复现信号 2，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33483](https://github.com/sgl-project/sglang/issues/33483) [Bug] Default decode CUDA Graph coverage causes a sharp performance cliff when batch size exceeds 32**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue provides detailed, reproducible evidence of a performance cliff caused by default CUDA graph batch size being too low relative to max_running_requests. The root cause is clear: decode steps above the captured batch size fall back to eager execution, causing significant latency degradation. However, the issue explicitly asks for maintainer input on the preferred fix direction, and the open PR and related issue lookups failed, so duplicate work cannot be ruled out. The deterministic gate is HUMAN_REVIEW, so a maintainer decision is required before implementation.\n改动：Adjust default cuda_graph_max_bs heuristic to scale with KV pool or reachable batch size；Add startup warning when cuda_graph_max_bs is far below max_running_requests；Document interaction in tuning guide\n验证：Reproduce the performance cliff using the provided benchmark script and configuration；Add a regression test that checks the default cuda_graph_max_bs is sufficient for typical max_running_requests；Measure TPOT and throughput at rates around the cliff to verify fix\n风险：Changing default may increase GPU memory usage and startup time；Potential impact on other models and hardware configurations；Need to ensure fix does not degrade performance for large models\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 16，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33464](https://github.com/sgl-project/sglang/issues/33464) [Bug] EXIF orientation is never applied when decoding images for VLM serving**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue provides a clear root cause and reproduction, but the deterministic gate requires HUMAN_REVIEW and there is an existing PR (#33449) with failed CI. The fix is technically valuable but needs maintainer confirmation and PR assessment.\n改动：python/sglang/srt/utils/common.py: apply EXIF orientation in all three decode paths；tests for EXIF orientation across all 8 values and decoder routing\n验证：Run the provided reproduction script to confirm the bug；Add unit tests for _load_image and load_image with EXIF-tagged JPEGs, asserting pixel parity with PIL.ImageOps.exif_transpose；Run existing test suite for the affected module\n风险：Potential performance impact on GPU decode path if not carefully short-circuited；Risk of breaking existing behavior for images without EXIF or with malformed EXIF\n竞争：已有直接关联但证据不完整的 PR #33449：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 3，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33408](https://github.com/sgl-project/sglang/issues/33408) [Bug] Unlimited-OCR: server crashes when batching images with different gundam tile counts**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue provides a clear root cause (torch.stack on variable-size crops) and a reproducible test, but an existing PR #33458 directly addresses it with a proposed fix and tests, yet has failed CI checks. The deterministic gate requires HUMAN_REVIEW, and the presence of a competing PR with incomplete evidence means maintainer input is needed to decide whether to improve that PR or start fresh.\n改动：python/sglang/srt/models/unlimited_ocr.py；python/sglang/srt/managers/mm_utils.py\n验证：Add a regression test that sends concurrent requests with images of different aspect ratios (e.g., 2925x4454 and 2242x3157) and asserts both succeed without crashing the server.；Run existing unit tests for the Unlimited-OCR model and mm_utils.\n风险：Potential performance impact if per-item encoding fallback is used for heterogeneous batches.；Need to ensure the fix does not break the fast path for homogeneous batches.\n竞争：已有直接关联但证据不完整的 PR #33458：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 10，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T19:54:55.162822Z",
+      "eventId": "61ff57f874955fb8a3c1e637063e8edcaacbf89f40e8dde74bafadf2929906dc",
+      "idempotencyKey": "61ff57f874955fb8a3c1e637063e8edcaacbf89f40e8dde74b",
+      "kind": "review",
+      "runId": "scan-20260804T194838Z-35a4c96b63ce",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "microsoft/agent-framework#7490",
+        "microsoft/agent-framework#7491",
+        "sgl-project/sglang#33493",
+        "sgl-project/sglang#33504",
+        "sgl-project/sglang#33549",
+        "BerriAI/litellm#35711"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[microsoft/agent-framework#7490](https://github.com/microsoft/agent-framework/issues/7490) Python: [Bug]: with `predict_state_config` set, EVERY tool result emits a full `StateSnapshotEvent` — including for tools the config never names**\n建议：WAIT_MAINTAINER\n价值：OWNERSHIP_CHANGED\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[microsoft/agent-framework#7491](https://github.com/microsoft/agent-framework/issues/7491) Python: [Bug]: AG-UI `MESSAGES_SNAPSHOT` re-factors streamed messages under fresh ids — the reference `@ag-ui/client` merge then renders every mid-run tool call after the final text**\n建议：WAIT_MAINTAINER\n价值：OWNERSHIP_CHANGED\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33493](https://github.com/sgl-project/sglang/issues/33493) [Bug] DSPARK retrieves wrong key \"acc_linear_penalities\" from sampling_info**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33504](https://github.com/sgl-project/sglang/issues/33504) Title: Inconsistent error response format with OpenAI standard for non-streaming requests**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33549](https://github.com/sgl-project/sglang/issues/33549) [Bug] DeepSeek-V4 (dsv4 backend + DSPARK) TP=8 on 8×H20: decode forward hangs indefinitely at ~245K context — all GPUs spin at 100% util / low power, watchdog kills server**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#35711](https://github.com/BerriAI/litellm/issues/35711) [Bug]: `ollama/` streaming never reconstructs tool calls — tool call arrives as plain `delta.content` text with `finish_reason: \"stop\"`, while the non-streaming path reconstructs it correctly**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T19:54:55.298160Z",
+      "eventId": "e7555489b88afab4916c52c150ca178066a5613979e02e7ae9b2b853371dbb90",
+      "idempotencyKey": "e7555489b88afab4916c52c150ca178066a5613979e02e7ae9",
+      "kind": "watch",
+      "runId": "watch-1785872857",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-04T18:14:12.525732Z",
-  "newEventCount": 1,
+  "generatedAt": "2026-08-04T19:54:55.492479Z",
+  "newEventCount": 0,
   "version": "notification_outbox_v1"
 }
