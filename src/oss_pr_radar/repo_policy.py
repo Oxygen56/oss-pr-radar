@@ -14,6 +14,7 @@ from .util import sha256_json, sha256_text
 POLICY_NAMES = {
     "contributing.md",
     "contributing.rst",
+    "contributors.md",
     "pull_request_template.md",
     "code_of_conduct.md",
     "security.md",
@@ -100,6 +101,17 @@ NO_UNSOLICITED_RE = re.compile(
     r"(?:are\s+)?not\s+(?:currently\s+)?accepted",
     re.I | re.S,
 )
+ISSUES_ONLY_RE = re.compile(
+    r"\b(?:we\s+)?accept\s+(?:bug reports?|feature requests?|issues?|prompts?)\s*,?\s*"
+    r"(?:but\s+)?not\s+(?:external\s+)?(?:pull requests?|prs?|source code|diffs?|patches?)\b|"
+    r"\b(?:please\s+)?(?:do not|don['’]?t)\s+open\s+(?:an?\s+)?"
+    r"(?:pull request|pr)\b|"
+    r"\b(?:please\s+)?(?:do not|don['’]?t)\s+send\s+(?:an?\s+)?diff\s+or\s+"
+    r"open\s+(?:an?\s+)?(?:pull request|pr)\b|"
+    r"\bshare\s+(?:the\s+)?(?:prompt|intent)\b.{0,100}\bnot\s+"
+    r"(?:the\s+)?(?:source code|diff|patch)\b",
+    re.I | re.S,
+)
 CLA_RE = re.compile(r"\bcontributor license agreement\b|\bCLA\b", re.I)
 DCO_RE = re.compile(r"\bdeveloper certificate of origin\b|\bDCO\b|signed-off-by", re.I)
 
@@ -169,7 +181,7 @@ def classify_policy_text(text: str) -> PolicyTextClassification:
         ai_disclosure=bool(AI_DISCLOSURE_RE.search(text)),
         ai_prohibited=bool(AI_PROHIBITION_RE.search(text)),
         assignment_required=bool(ASSIGNMENT_RE.search(text)),
-        unsolicited_pr_blocked=bool(NO_UNSOLICITED_RE.search(text)),
+        unsolicited_pr_blocked=bool(NO_UNSOLICITED_RE.search(text) or ISSUES_ONLY_RE.search(text)),
         cla=bool(CLA_RE.search(text)),
         dco=bool(DCO_RE.search(text)),
     )

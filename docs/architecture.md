@@ -67,7 +67,9 @@ They contain decisions and source blob SHAs, not credentials. A changed blob or
 decision-contract digest invalidates the entry before task authorization.
 Discovery and live authorization use the same policy-path selector and text
 classifier, so post-PR review instructions cannot be mistaken for a pre-PR
-assignment requirement by only one stage.
+assignment requirement by only one stage. Explicit issues-only contribution
+policies, including `CONTRIBUTORS.md` rules that accept issues or prompts but
+reject source pull requests, are hard-blocked before dispatch.
 
 Actionable opportunities remain in the watchlist and signed queue while they
 wait behind the WIP limit. Hourly watch evidence forces a rescan on ownership,

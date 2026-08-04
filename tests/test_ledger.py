@@ -156,6 +156,45 @@ def test_no_go_requires_title_sync_before_cleanup(tmp_path):
     assert store.cleanup_candidates()[0]["threadId"] == "thread-1"
 
 
+def test_no_go_revokes_task_context_publication_authorization(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(
+        intent(
+            autoSubmitAuthorized=True,
+            publicSubmissionAllowed=True,
+            authorizationSource="signed_live_revalidation_required",
+            publicationMode="canary",
+        )
+    )
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+
+    authorized = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )
+    assert authorized is not None
+    assert authorized["autoSubmitAuthorized"] is True
+    assert authorized["publicSubmissionAllowed"] is True
+
+    store.record_stage("a/b#1", "AUDIT_NO_GO", reason="POLICY_BLOCKED")
+    revoked = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )
+    assert revoked is not None
+    assert revoked["intentStatus"] == "REJECTED"
+    assert revoked["autoSubmitAuthorized"] is False
+    assert revoked["publicSubmissionAllowed"] is False
+    assert revoked["authorizationSource"] == "revoked_terminal_no_go"
+
+
 def test_orphan_dispatch_can_reconcile_an_expired_async_handoff(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(intent())

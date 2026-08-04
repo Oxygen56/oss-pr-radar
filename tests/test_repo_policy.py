@@ -162,3 +162,36 @@ def test_explicit_pre_pr_assignment_gate_is_shared_by_scanner_and_live_gate():
 
     assert policy.assignment_required is True
     assert submission_policy_from_text(text) == "needs_assignment"
+
+
+def test_issues_only_contributor_policy_blocks_before_dispatch():
+    text = (
+        "We accept issues, not pull requests. Design and implementation are done by "
+        "the maintainers. If you've already built a fix locally, share the prompt "
+        "you used to produce it, not the source code."
+    )
+
+    policy = discover_policy(
+        FakeClient({"CONTRIBUTORS.md": text}),
+        "modelcontextprotocol/inspector",
+    )
+
+    assert policy.status == "CONTRIBUTIONS_CLOSED"
+    assert policy.unsolicited_pr_blocked is True
+    assert [item.path for item in policy.files] == ["CONTRIBUTORS.md"]
+    assert submission_policy_from_text(text) == "contributions_closed"
+
+
+def test_accepting_issues_and_pull_requests_remains_normal():
+    text = (
+        "We accept issues and pull requests. Do not send a diff by email; "
+        "open a pull request instead."
+    )
+
+    policy = discover_policy(
+        FakeClient({"CONTRIBUTORS.md": text}),
+        "example/project",
+    )
+
+    assert policy.status == "NORMAL"
+    assert submission_policy_from_text(text) == "normal"

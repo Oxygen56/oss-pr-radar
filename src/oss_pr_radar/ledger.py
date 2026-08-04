@@ -854,6 +854,7 @@ class RadarLedger:
         if row is None:
             return None
         payload = json.loads(row["payload_json"])
+        authorization_active = row["status"] != "REJECTED" and row["stage"] != "AUDIT_NO_GO"
         return {
             "key": row["key"],
             "stage": row["stage"],
@@ -862,10 +863,18 @@ class RadarLedger:
             "threadId": row["thread_id"],
             "worktreePath": row["worktree_path"],
             "intentStatus": row["status"],
-            "autoSubmitAuthorized": payload.get("autoSubmitAuthorized") is True,
+            "autoSubmitAuthorized": (
+                authorization_active and payload.get("autoSubmitAuthorized") is True
+            ),
             "publicationMode": payload.get("publicationMode"),
-            "publicSubmissionAllowed": payload.get("publicSubmissionAllowed") is True,
-            "authorizationSource": payload.get("authorizationSource"),
+            "publicSubmissionAllowed": (
+                authorization_active and payload.get("publicSubmissionAllowed") is True
+            ),
+            "authorizationSource": (
+                payload.get("authorizationSource")
+                if authorization_active
+                else "revoked_terminal_no_go"
+            ),
         }
 
     def has_live_handoff(self, *, issue_url: str) -> bool:
