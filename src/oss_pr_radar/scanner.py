@@ -619,6 +619,11 @@ TEST_FILE_RE = re.compile(
     r"(^|/)(tests?|specs?)(/|$)|(^|/)test_|(_test|\.test|\.spec)\.",
     re.I,
 )
+NON_TECHNICAL_CHECK_RE = re.compile(
+    r"\b(?:cla(?:\s*assistant)?|(?:pull request|pr) triage|triage|labeler|"
+    r"conventional commits?|semantic (?:pull request|pr)|pr title|title check)\b",
+    re.I,
+)
 
 
 def repo_is_excluded(repo: str) -> bool:
@@ -2118,15 +2123,34 @@ class Radar:
 
         checks_value = detail.get("statusCheckRollup")
         checks = checks_value if isinstance(checks_value, list) else []
-        check_states = [
-            str(check.get("conclusion") or check.get("state") or check.get("status") or "").upper()
+        technical_checks = [
+            check
             for check in checks
             if isinstance(check, dict)
+            and not NON_TECHNICAL_CHECK_RE.search(
+                f"{check.get('name') or ''} {check.get('workflowName') or ''}"
+            )
+        ]
+        check_states = [
+            str(check.get("conclusion") or check.get("state") or check.get("status") or "").upper()
+            for check in technical_checks
         ]
         failed_checks = [
             state for state in check_states if state in {"FAILURE", "FAILED", "ERROR", "TIMED_OUT"}
         ]
         successful_checks = [state for state in check_states if state in {"SUCCESS", "COMPLETED"}]
+        ignored_failed_checks = [
+            str(check.get("name") or check.get("workflowName") or "unnamed")
+            for check in checks
+            if isinstance(check, dict)
+            and str(
+                check.get("conclusion") or check.get("state") or check.get("status") or ""
+            ).upper()
+            in {"FAILURE", "FAILED", "ERROR", "TIMED_OUT"}
+            and NON_TECHNICAL_CHECK_RE.search(
+                f"{check.get('name') or ''} {check.get('workflowName') or ''}"
+            )
+        ]
         updated = parse_github_time(detail.get("updatedAt") or hit.get("updated_at"), self.now)
         age_days = max(0, (self.now - updated).days)
         changed_files = int(detail.get("changedFiles") or len(file_paths) or 0)
@@ -2227,6 +2251,7 @@ class Radar:
             "state": "MERGED" if merged else state,
             "rule_closed": rule_closed,
             "technical_complete": technical_complete,
+            "ignored_nontechnical_failed_checks": ignored_failed_checks[:3],
             "strengths": strengths[:4],
             "gaps": gaps[:5],
         }
