@@ -243,6 +243,35 @@ class RadarLedger:
             self._event(connection, key, "QUALIFIED", intent["intentId"], intent, now)
         return True
 
+    def reconcile_pending(self, active_intent_ids: set[str]) -> list[str]:
+        """Supersede local, uncommitted work that the latest signed queue withdrew."""
+        now = iso_z(datetime.now(UTC))
+        superseded: list[str] = []
+        with self.transaction() as connection:
+            rows = connection.execute(
+                """SELECT intent_id,opportunity_key FROM intents
+                   WHERE status IN ('PENDING','LEASED')"""
+            ).fetchall()
+            for row in rows:
+                intent_id = str(row["intent_id"])
+                if intent_id in active_intent_ids:
+                    continue
+                connection.execute(
+                    """UPDATE intents SET status='SUPERSEDED',lease_owner=NULL,
+                       lease_until=NULL,updated_at=? WHERE intent_id=?""",
+                    (now, intent_id),
+                )
+                self._event(
+                    connection,
+                    str(row["opportunity_key"]),
+                    "INTENT_SUPERSEDED",
+                    intent_id,
+                    {"intentId": intent_id, "reason": "absent_from_latest_signed_queue"},
+                    now,
+                )
+                superseded.append(intent_id)
+        return superseded
+
     def claim(
         self,
         intent_id: str,

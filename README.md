@@ -128,6 +128,8 @@ repository project, verifies its timestamped lifecycle title, prompt, repository
 origin, and worktree identity, then commits a receipt. It retries an obviously
 empty task at most once through a write-ahead recovery receipt. It archives a
 task only after that task records `AUDIT_NO_GO`.
+Each sync also supersedes uncommitted local intents withdrawn from the latest
+signed cloud queue, so an older controller cannot dispatch a retracted decision.
 
 ## Development
 

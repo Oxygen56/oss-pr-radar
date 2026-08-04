@@ -88,6 +88,24 @@ def test_expired_pending_intent_does_not_block_a_fresh_snapshot(tmp_path):
     assert store.enqueue(intent(intentId="intent-2", decisionDigest="new")) is True
 
 
+def test_latest_signed_queue_supersedes_withdrawn_uncommitted_intent(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "old-controller")
+
+    assert store.reconcile_pending(set()) == ["intent-1"]
+    assert store.pending() == []
+    with pytest.raises(LedgerError, match="not leased"):
+        store.commit_dispatch(
+            "intent-1",
+            owner="old-controller",
+            thread_id="thread-1",
+            project_id="repo-project",
+            worktree_path="/tmp/worktree",
+        )
+    assert store.enqueue(intent(intentId="intent-2", decisionDigest="new")) is True
+
+
 def test_title_state_advances_from_go_to_fix_ready(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(intent())
