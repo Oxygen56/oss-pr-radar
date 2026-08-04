@@ -61,9 +61,25 @@ AI_PROHIBITION_RE = re.compile(
     re.I | re.S,
 )
 ASSIGNMENT_RE = re.compile(
-    r"\b(?:must|need(?:s)? to|required to)\b.{0,60}\b(?:assign(?:ed|ment)?|"
-    r"maintainer approval|approved by (?:a )?maintainer)\b|"
-    r"\b(?:wait for|obtain)\b.{0,35}\b(?:assignment|approval)\b",
+    r"(?:issue|pull request|pr).{0,180}(?:must|required).{0,120}assign|"
+    r"\bwait for assignment\b|"
+    r"\bmaintainer\b.{0,80}\bassign\b.{0,100}\bbefore\b.{0,80}"
+    r"\b(?:open(?:ing)?|submit(?:ting)?|start(?:ing)?|implement(?:ing)?)\b|"
+    r"(?:not assigned|without assignment).{0,180}"
+    r"(?:closed automatically|auto(?:matically)?[- ]closed)|"
+    r"pull requests?.{0,120}"
+    r"(?:invitation only|only (?:from|for) invited|invited contributors?)|"
+    r"(?:request|grant).{0,80}contributor access|"
+    r"(?:do not|don['’]?t|must not).{0,80}(?:open|submit).{0,40}"
+    r"(?:pull request|pr).{0,120}(?:unless|until).{0,80}"
+    r"(?:approved|approval|lgtm)|"
+    r"(?:only after|must (?:first )?(?:obtain|receive|have)).{0,60}"
+    r"(?:lgtm|maintainer approval).{0,100}"
+    r"(?:open|submit|start|implement|contribut)|"
+    r"\bbefore\b.{0,80}\b(?:open(?:ing)?|submit(?:ting)?|start(?:ing)?|"
+    r"implement(?:ing)?)\b.{0,100}\b(?:assignment|maintainer approval|lgtm)\b|"
+    r"\b(?:assignment|maintainer approval|lgtm)\b.{0,100}\bbefore\b.{0,80}"
+    r"\b(?:open(?:ing)?|submit(?:ting)?|start(?:ing)?|implement(?:ing)?)\b",
     re.I | re.S,
 )
 NO_UNSOLICITED_RE = re.compile(
@@ -72,7 +88,14 @@ NO_UNSOLICITED_RE = re.compile(
     r"\b(?:unsolicited|external)\b.{0,35}\b(?:pull requests?|prs?|contributions?)\b"
     r".{0,70}\b(?:will be closed|not accepted|are closed)\b|"
     r"\b(?:not accepting|do not accept|will not accept)\b.{0,60}"
-    r"\b(?:external )?(?:code contributions?|pull requests?|prs?)\b",
+    r"\b(?:external )?(?:code contributions?|pull requests?|prs?)\b|"
+    r"(?:not|no longer|currently not|not currently)\s+(?:accepting|taking)\s+"
+    r"(?:external\s+)?(?:code\s+)?contributions?|"
+    r"(?:code\s+)?contributions?\s+(?:are|is)\s+(?:currently\s+)?(?:closed|paused)|"
+    r"(?:do not|don['’]?t|won['’]?t|will not)\s+accept\s+"
+    r"(?:external\s+)?(?:code\s+)?(?:contributions?|pull requests?|prs?)|"
+    r"(?:pull requests?|prs?)\s+(?:from external contributors\s+)?"
+    r"(?:are\s+)?not\s+(?:currently\s+)?accepted",
     re.I | re.S,
 )
 CLA_RE = re.compile(r"\bcontributor license agreement\b|\bCLA\b", re.I)
@@ -105,7 +128,17 @@ class PolicySnapshot:
         return value
 
 
-def _is_policy_path(path: str) -> bool:
+@dataclass(frozen=True)
+class PolicyTextClassification:
+    ai_disclosure: bool
+    ai_prohibited: bool
+    assignment_required: bool
+    unsolicited_pr_blocked: bool
+    cla: bool
+    dco: bool
+
+
+def is_policy_path(path: str) -> bool:
     lowered = path.casefold()
     name = PurePosixPath(lowered).name
     return (
@@ -116,21 +149,56 @@ def _is_policy_path(path: str) -> bool:
     )
 
 
+def select_policy_entries(tree: list[dict[str, Any]], limit: int = 24) -> list[dict[str, Any]]:
+    return sorted(
+        (
+            item
+            for item in tree
+            if item.get("type") == "blob"
+            and isinstance(item.get("path"), str)
+            and is_policy_path(item["path"])
+        ),
+        key=lambda item: (len(str(item["path"])), str(item["path"])),
+    )[:limit]
+
+
+def classify_policy_text(text: str) -> PolicyTextClassification:
+    return PolicyTextClassification(
+        ai_disclosure=bool(AI_DISCLOSURE_RE.search(text)),
+        ai_prohibited=bool(AI_PROHIBITION_RE.search(text)),
+        assignment_required=bool(ASSIGNMENT_RE.search(text)),
+        unsolicited_pr_blocked=bool(NO_UNSOLICITED_RE.search(text)),
+        cla=bool(CLA_RE.search(text)),
+        dco=bool(DCO_RE.search(text)),
+    )
+
+
+def submission_policy_from_text(text: str, static_rule: str = "normal") -> str:
+    flags = classify_policy_text(text)
+    has_ai_policy = static_rule == "ai_disclosure_conflict" or (
+        flags.ai_disclosure or flags.ai_prohibited
+    )
+    needs_assignment = static_rule == "needs_assignment" or flags.assignment_required
+    contributions_closed = static_rule == "contributions_closed" or flags.unsolicited_pr_blocked
+    if contributions_closed:
+        return "contributions_closed"
+    if has_ai_policy and needs_assignment:
+        return "ai_disclosure_and_assignment"
+    if has_ai_policy:
+        return "ai_disclosure_conflict"
+    if needs_assignment:
+        return "needs_assignment"
+    if flags.cla or flags.dco:
+        return "legal_confirmation"
+    return "normal"
+
+
 def discover_policy(client: GitHubClient, repo: str) -> PolicySnapshot:
     try:
         metadata = client.repository(repo)
         ref = str(metadata.get("default_branch") or "HEAD")
         tree = client.repository_tree(repo, ref)
-        entries = sorted(
-            (
-                item
-                for item in tree
-                if item.get("type") == "blob"
-                and isinstance(item.get("path"), str)
-                and _is_policy_path(item["path"])
-            ),
-            key=lambda item: (len(str(item["path"])), str(item["path"])),
-        )[:24]
+        entries = select_policy_entries(tree)
         files: list[PolicyFile] = []
         texts: list[str] = []
         for entry in entries:
@@ -145,15 +213,12 @@ def discover_policy(client: GitHubClient, repo: str) -> PolicySnapshot:
                 )
             )
         combined = "\n\n".join(texts)
-        ai = bool(AI_DISCLOSURE_RE.search(combined))
-        ai_prohibited = bool(AI_PROHIBITION_RE.search(combined))
-        assignment = bool(ASSIGNMENT_RE.search(combined))
-        blocked = bool(NO_UNSOLICITED_RE.search(combined))
+        flags = classify_policy_text(combined)
         status = (
             "CONTRIBUTIONS_CLOSED"
-            if blocked
+            if flags.unsolicited_pr_blocked
             else "AI_POLICY_REVIEW"
-            if ai or ai_prohibited
+            if flags.ai_disclosure or flags.ai_prohibited
             else "NORMAL"
         )
         digest = sha256_json(
@@ -162,12 +227,12 @@ def discover_policy(client: GitHubClient, repo: str) -> PolicySnapshot:
                 "ref": ref,
                 "files": [asdict(item) for item in files],
                 "flags": [
-                    ai,
-                    ai_prohibited,
-                    assignment,
-                    blocked,
-                    bool(CLA_RE.search(combined)),
-                    bool(DCO_RE.search(combined)),
+                    flags.ai_disclosure,
+                    flags.ai_prohibited,
+                    flags.assignment_required,
+                    flags.unsolicited_pr_blocked,
+                    flags.cla,
+                    flags.dco,
                 ],
             }
         )
@@ -175,12 +240,12 @@ def discover_policy(client: GitHubClient, repo: str) -> PolicySnapshot:
             status=status,
             digest=digest,
             files=tuple(files),
-            ai_disclosure=ai,
-            ai_prohibited=ai_prohibited,
-            assignment_required=assignment,
-            unsolicited_pr_blocked=blocked,
-            cla=bool(CLA_RE.search(combined)),
-            dco=bool(DCO_RE.search(combined)),
+            ai_disclosure=flags.ai_disclosure,
+            ai_prohibited=flags.ai_prohibited,
+            assignment_required=flags.assignment_required,
+            unsolicited_pr_blocked=flags.unsolicited_pr_blocked,
+            cla=flags.cla,
+            dco=flags.dco,
         )
     except GitHubError as exc:
         return PolicySnapshot(

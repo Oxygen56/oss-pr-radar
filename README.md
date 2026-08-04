@@ -21,8 +21,9 @@ is recorded as a lagging outcome, never used to judge discovery quality.
   branch, fork owner, base branch, PR title, and PR body digest.
 - Maintainer/policy watch, existing-PR follow-up, Feishu outbox delivery, state
   integrity checks, and natural-schedule health alerts.
-- Parallel watch/PR-follow-up jobs, SHA-bound repository-policy caching, and a
-  dedicated cross-run recheck budget that never uses a cooldown.
+- Parallel watch/PR-follow-up jobs, SHA-bound repository-policy caching, one
+  shared recursive policy classifier for scan/live gates, and a dedicated
+  cross-run recheck budget that never uses a cooldown.
 - A single local controller thread plus explicit alerts when a signed intent
   remains undispatched for more than one hourly controller cycle.
 

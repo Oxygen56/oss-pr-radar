@@ -1,4 +1,4 @@
-from oss_pr_radar.repo_policy import discover_policy
+from oss_pr_radar.repo_policy import discover_policy, submission_policy_from_text
 
 
 class FakeClient:
@@ -131,3 +131,34 @@ def test_required_public_codex_branch_prefix_is_a_disclosure_conflict():
 
     assert policy.status == "AI_POLICY_REVIEW"
     assert policy.ai_disclosure is True
+
+
+def test_post_pr_review_approval_is_not_a_pre_pr_assignment_gate():
+    text = (
+        "You can request that the issue be assigned to you.\n"
+        "Create a PR against the main branch.\n"
+        "Wait for feedback or approval of your changes from the code maintainers."
+    )
+
+    policy = discover_policy(
+        FakeClient({"CONTRIBUTING.md": text}),
+        "microsoft/semantic-kernel",
+    )
+
+    assert policy.assignment_required is False
+    assert submission_policy_from_text(text) == "normal"
+
+
+def test_explicit_pre_pr_assignment_gate_is_shared_by_scanner_and_live_gate():
+    text = (
+        "The issue must be assigned before you start implementing it. "
+        "Pull requests without assignment are automatically closed."
+    )
+
+    policy = discover_policy(
+        FakeClient({"CONTRIBUTING.md": text}),
+        "example/project",
+    )
+
+    assert policy.assignment_required is True
+    assert submission_policy_from_text(text) == "needs_assignment"

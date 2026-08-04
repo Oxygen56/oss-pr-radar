@@ -58,3 +58,6 @@ on the state branch.
 Repository-policy cache entries are part of the integrity-checked cloud state.
 They contain decisions and source blob SHAs, not credentials. A changed blob or
 decision-contract digest invalidates the entry before task authorization.
+Discovery and live authorization use the same policy-path selector and text
+classifier, so post-PR review instructions cannot be mistaken for a pre-PR
+assignment requirement by only one stage.

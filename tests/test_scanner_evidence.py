@@ -261,15 +261,20 @@ def test_repository_policy_cache_reuses_unchanged_blob_shas(monkeypatch, tmp_pat
     content_calls = []
 
     def fake_gh(args, timeout=18):
-        endpoint = args[-1]
-        if endpoint == "repos/example/project/contents":
-            return [
-                {
-                    "name": "CONTRIBUTING.md",
-                    "path": "CONTRIBUTING.md",
-                    "sha": "policy-sha",
-                }
-            ], None
+        endpoint = next(value for value in args if value.startswith("repos/"))
+        if endpoint == "repos/example/project":
+            return {"default_branch": "main"}, None
+        if endpoint == "repos/example/project/git/trees/main":
+            return {
+                "truncated": False,
+                "tree": [
+                    {
+                        "type": "blob",
+                        "path": "CONTRIBUTING.md",
+                        "sha": "policy-sha",
+                    }
+                ],
+            }, None
         if endpoint == "repos/example/project/contents/CONTRIBUTING.md":
             content_calls.append(endpoint)
             return {

@@ -21,15 +21,16 @@ import urllib.request
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import datetime, timedelta, timezone
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from .claims import detect_claims
 from .contracts import SCAN_SCHEMA, contract_digest
 from .llm import DeepSeekEvaluator
 from .messages import add_chinese_explanations
 from .policy import SCANNER_DECISION_REVISION, decision_contract_digest
-from .repo_policy import AI_DISCLOSURE_RE, AI_PROHIBITION_RE
+from .repo_policy import select_policy_entries, submission_policy_from_text
 from .util import sha256_json
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -399,7 +400,6 @@ MODEL_ARTIFACT_FAILURE_RE = re.compile(
     r"(?:safetensors?|checkpoint|model (?:file|weight|artifact))",
     re.I | re.S,
 )
-AI_DISCLOSURE_POLICY_RE = AI_DISCLOSURE_RE
 SECURITY_SENSITIVE_RE = re.compile(
     r"\b(?:security vulnerabilit(?:y|ies)|vulnerability disclosure|cve[- :#]?\d*|"
     r"remote code execution|arbitrary code execution|privilege escalation|"
@@ -445,36 +445,6 @@ MAINTAINER_REVALIDATION_REQUEST_RE = re.compile(
     r".{0,240}\b(?:recent|latest|current|nightly|main)\b|"
     r"\b(?:please|kindly)\b.{0,80}\b(?:test|retest|reproduce|confirm)\b"
     r".{0,240}\b(?:recent|latest|current|nightly|main)\b",
-    re.I | re.S,
-)
-ASSIGNMENT_POLICY_RE = re.compile(
-    r"(?:issue|pull request|pr).{0,180}(?:must|required).{0,120}assign|"
-    r"\bwait for assignment\b|"
-    r"\bmaintainer\b.{0,80}\bassign\b.{0,100}\bbefore\b.{0,80}"
-    r"\b(?:open(?:ing)?|submit(?:ting)?)\b.{0,40}\b(?:pull request|pr)\b|"
-    r"(?:not assigned|without assignment).{0,180}(?:closed automatically|auto(?:matically)?[- ]closed)|"
-    r"ask (?:a )?maintainer to assign|"
-    r"pull requests?.{0,120}(?:invitation only|only (?:from|for) invited|invited contributors?)|"
-    r"(?:request|grant).{0,80}contributor access|"
-    r"(?:do not|don't|must not).{0,80}(?:open|submit).{0,40}(?:pull request|pr)"
-    r".{0,120}(?:unless|until).{0,80}(?:approved|approval|lgtm)|"
-    r"(?:only|must).{0,60}(?:lgtm|maintainer approval).{0,100}"
-    r"(?:grant|allow|permit|rights?).{0,80}(?:pull request|pr|contribut)",
-    re.I | re.S,
-)
-LEGAL_CONFIRMATION_RE = re.compile(
-    r"\bcontributor license agreement\b|\bCLA\b.{0,100}\b(?:agree|accept|sign|required)\b|"
-    r"\bdeveloper certificate of origin\b|\bDCO\b.{0,100}\b(?:sign|sign-off|required)\b",
-    re.I | re.S,
-)
-CONTRIBUTION_CLOSED_RE = re.compile(
-    r"(?:not|no longer|currently not|not currently)\s+(?:accepting|taking)\s+"
-    r"(?:external\s+)?(?:code\s+)?contributions?|"
-    r"(?:code\s+)?contributions?\s+(?:are|is)\s+(?:currently\s+)?(?:closed|paused)|"
-    r"(?:do not|don't|won't|will not)\s+accept\s+(?:external\s+)?(?:code\s+)?"
-    r"(?:contributions?|pull requests?|prs?)|"
-    r"(?:pull requests?|prs?)\s+(?:from external contributors\s+)?"
-    r"(?:are\s+)?not\s+(?:currently\s+)?accepted",
     re.I | re.S,
 )
 UNTRUSTED_TRIAGE_INSTRUCTION_RE = re.compile(
@@ -1562,48 +1532,32 @@ class Radar:
         if repo in self.policy_cache:
             return self.policy_cache[repo]
 
-        root, err = gh(["api", f"repos/{repo}/contents"], timeout=15)
-        if err or not isinstance(root, list):
+        metadata, metadata_err = gh(["api", f"repos/{repo}"], timeout=15)
+        if metadata_err or not isinstance(metadata, dict):
             self.policy_cache[repo] = static_rule if static_rule != "normal" else "policy_unknown"
             return self.policy_cache[repo]
-
-        entries = [entry for entry in root if isinstance(entry, dict)]
-        github_dir = next(
-            (entry for entry in entries if str(entry.get("name") or "").casefold() == ".github"),
-            None,
+        ref = str(metadata.get("default_branch") or "HEAD")
+        tree, tree_err = gh(
+            [
+                "api",
+                "-X",
+                "GET",
+                f"repos/{repo}/git/trees/{quote(ref, safe='')}",
+                "-f",
+                "recursive=1",
+            ],
+            timeout=20,
         )
-        if github_dir:
-            github_entries, github_err = gh(["api", f"repos/{repo}/contents/.github"], timeout=15)
-            if github_err:
-                self.policy_cache[repo] = "policy_unknown"
-                return self.policy_cache[repo]
-            if isinstance(github_entries, list):
-                entries.extend(entry for entry in github_entries if isinstance(entry, dict))
-
-        policy_names = {
-            "agents.md",
-            "cla.md",
-            "claude.md",
-            "contributing.md",
-            "contributing.rst",
-            "dco.md",
-            "pull_request_template.md",
-            "ai_usage_policy.md",
-            "ai-usage-policy.md",
-            "ai_policy.md",
-            "ai-policy.md",
-            "ai_disclosure.md",
-        }
-        policy_paths = [
-            str(entry.get("path"))
-            for entry in entries
-            if str(entry.get("name") or "").casefold() in policy_names and entry.get("path")
-        ][:6]
-        primary_files = {
-            str(entry.get("path")): str(entry.get("sha") or "")
-            for entry in entries
-            if str(entry.get("path") or "") in policy_paths
-        }
+        if tree_err or not isinstance(tree, dict) or tree.get("truncated") is True:
+            self.policy_cache[repo] = static_rule if static_rule != "normal" else "policy_unknown"
+            return self.policy_cache[repo]
+        raw_tree = tree.get("tree")
+        if not isinstance(raw_tree, list):
+            self.policy_cache[repo] = static_rule if static_rule != "normal" else "policy_unknown"
+            return self.policy_cache[repo]
+        entries = select_policy_entries([entry for entry in raw_tree if isinstance(entry, dict)])
+        policy_paths = [str(entry["path"]) for entry in entries]
+        primary_files = {str(entry["path"]): str(entry.get("sha") or "") for entry in entries}
         cache_entry = (self.persistent_repo_cache.get("policies") or {}).get(repo)
         if (
             isinstance(cache_entry, dict)
@@ -1612,24 +1566,22 @@ class Radar:
             and cache_entry.get("primaryFiles") == primary_files
             and isinstance(cache_entry.get("result"), str)
         ):
-            linked_unchanged = True
-            for linked_path, linked_sha in (cache_entry.get("linkedFiles") or {}).items():
-                linked, linked_err = gh(["api", f"repos/{repo}/contents/{linked_path}"], timeout=15)
-                if (
-                    linked_err
-                    or not isinstance(linked, dict)
-                    or str(linked.get("sha") or "") != str(linked_sha)
-                ):
-                    linked_unchanged = False
-                    break
-            if linked_unchanged:
-                self.policy_cache[repo] = str(cache_entry["result"])
-                return self.policy_cache[repo]
+            self.policy_cache[repo] = str(cache_entry["result"])
+            return self.policy_cache[repo]
 
         policy_text: list[str] = []
-        linked_files: dict[str, str] = {}
         for path in policy_paths:
-            payload, payload_err = gh(["api", f"repos/{repo}/contents/{path}"], timeout=15)
+            payload, payload_err = gh(
+                [
+                    "api",
+                    "-X",
+                    "GET",
+                    f"repos/{repo}/contents/{quote(path, safe='/')}",
+                    "-f",
+                    f"ref={ref}",
+                ],
+                timeout=15,
+            )
             if payload_err or not isinstance(payload, dict):
                 self.policy_cache[repo] = "policy_unknown"
                 return self.policy_cache[repo]
@@ -1643,56 +1595,15 @@ class Radar:
                 return self.policy_cache[repo]
             policy_text.append(decoded)
 
-            # GitHub sometimes stores a one-line relative pointer instead of a
-            # symlink (for example CONTRIBUTING.md -> docs/contributing.md).
-            # Follow one safe repository-local markdown pointer so policy gates
-            # are not silently lost.
-            pointer = decoded.strip()
-            if re.fullmatch(r"[A-Za-z0-9_./-]+\.(?:md|rst)", pointer, re.I):
-                target = PurePosixPath(path).parent / pointer
-                normalized = str(target)
-                if ".." not in target.parts and normalized != path:
-                    linked, linked_err = gh(
-                        ["api", f"repos/{repo}/contents/{normalized}"], timeout=15
-                    )
-                    if linked_err or not isinstance(linked, dict) or not linked.get("content"):
-                        self.policy_cache[repo] = "policy_unknown"
-                        return self.policy_cache[repo]
-                    try:
-                        policy_text.append(
-                            base64.b64decode(linked["content"]).decode("utf-8", errors="replace")
-                        )
-                        linked_files[normalized] = str(linked.get("sha") or "")
-                    except (TypeError, ValueError):
-                        self.policy_cache[repo] = "policy_unknown"
-                        return self.policy_cache[repo]
-
         combined = "\n".join(policy_text)
-        has_ai_disclosure = static_rule == "ai_disclosure_conflict" or bool(
-            AI_DISCLOSURE_POLICY_RE.search(combined) or AI_PROHIBITION_RE.search(combined)
-        )
-        needs_assignment = static_rule == "needs_assignment" or bool(
-            ASSIGNMENT_POLICY_RE.search(combined)
-        )
-        if CONTRIBUTION_CLOSED_RE.search(combined):
-            result = "contributions_closed"
-        elif has_ai_disclosure and needs_assignment:
-            result = "ai_disclosure_and_assignment"
-        elif has_ai_disclosure:
-            result = "ai_disclosure_conflict"
-        elif needs_assignment:
-            result = "needs_assignment"
-        elif LEGAL_CONFIRMATION_RE.search(combined):
-            result = "legal_confirmation"
-        else:
-            result = "normal"
+        result = submission_policy_from_text(combined, static_rule)
         self.policy_cache[repo] = result
         self.persistent_repo_cache["policies"][repo] = {
             "checkedAt": self.analyzed,
             "decisionDigest": decision_contract_digest(),
             "staticRule": static_rule,
             "primaryFiles": primary_files,
-            "linkedFiles": linked_files,
+            "linkedFiles": {},
             "result": result,
         }
         return result
