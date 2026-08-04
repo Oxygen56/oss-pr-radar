@@ -1,5 +1,5 @@
 {
-  "digest": "3f4f80b1dc8113db428931ccc5c89af74aa7db55404727293f5805a2afd934cf",
+  "digest": "ec62969ff81d0c73ad8a6e34190629fb29f5a0afbb3378bdb58aafa3a7d58d6b",
   "events": [
     {
       "attempts": 1,
@@ -1352,9 +1352,119 @@
       "runId": "pr-followup-1785819726",
       "sentAt": "2026-08-04T05:07:06.339253Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "sgl-project/sglang#33470",
+        "sgl-project/sglang#33408",
+        "sgl-project/sglang#27937",
+        "vllm-project/vllm#50948",
+        "vllm-project/vllm#50959"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33470](https://github.com/sgl-project/sglang/issues/33470) inference_mode mismatch can break lazy buffers**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue identifies a clear inconsistency in torch.inference_mode usage between warmup/autotune and real forward, causing inplace update failures for lazy buffers. However, open PR lookup timed out and related issue audit failed, so duplicate implementation cannot be excluded. Maintainer comment asks for design alignment, indicating need for maintainer decision.\n改动：Align inference_mode usage across warmup/autotune and real forward paths；Add explicit eager initialization for backend workspaces before autotune/capture\n验证：Reproduce with provided DeepSeek-R1-NVFP4 command and FlashInfer MegaMOE branch；Add regression test for inplace update on lazy buffers across inference_mode contexts\n风险：Changing inference_mode may affect performance or correctness in other paths；Potential duplicate work if existing PR addresses this\n竞争：open PR 检索不完整，需等待下轮重试后再判断碰撞\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 9，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33408](https://github.com/sgl-project/sglang/issues/33408) [Bug] Unlimited-OCR: server crashes when batching images with different gundam tile counts**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue provides a clear root cause (torch.stack on variable-size crops) and a reproducible test, but an existing PR #33458 directly addresses it with failing CI, and a maintainer has not yet approved or assigned. The gate decision is HUMAN_REVIEW, so we must wait for maintainer input.\n改动：python/sglang/srt/models/unlimited_ocr.py；python/sglang/srt/managers/mm_utils.py\n验证：Add a concurrent regression test with two aspect ratios that produce different gundam tile counts, verifying both requests succeed.；Run existing unit tests for the Unlimited-OCR model and mm_utils.\n风险：Existing PR #33458 may be merged or need revision; competing PR could cause duplication.；Per-request error isolation is out of scope, so server crash risk remains if not addressed.\n竞争：已有直接关联但证据不完整的 PR #33458：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 10，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#27937](https://github.com/sgl-project/sglang/issues/27937) [Failure Tracker] PR Test (AMD)**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue is a CI failure tracker with multiple distinct AMD failures, some with clear root causes (e.g., gated HF model, JIT compile errors) but others are infra flakiness. No maintainer approval or help-wanted signal. Open PR lookup timed out, so duplicate work cannot be excluded. The candidate is a tracking issue, not a code change, and requires maintainer triage to prioritize actionable fixes.\n改动：Fix specific recurring failures: JIT kernel compile errors on ROCm clang, aiter collective-op mismatches, diffusion server timeouts, and infra issues like container-start hangs.\n验证：Reproduce each failure using provided job URLs and error messages; add regression tests for JIT compile and aiter accuracy failures.\n风险：Many failures are infra-related and may not be fixable in code; maintainer may prefer to close as flaky.\n竞争：open PR 检索不完整，需等待下轮重试后再判断碰撞\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 2，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50948](https://github.com/vllm-project/vllm/issues/50948) [Bug]: Qwen parser routes grammar-constrained JSON to reasoning when `enable_in_reasoning=true`**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue provides a clear root cause and minimal reproduction for a user-visible bug in Qwen parser routing. However, an existing PR #50955 directly references this issue but has failing CI and incomplete evidence, and the deterministic gate requires HUMAN_REVIEW. Maintainer design preference is unconfirmed, so work should wait for maintainer guidance.\n改动：Qwen3Parser initialization logic to handle enable_in_reasoning=true；Structured output manager interaction with reasoning parser\n验证：Add regression test using the provided minimal reproduction with json_object and json_schema response formats；Run targeted unit tests for Qwen3Parser and structured output integration\n风险：Potential conflict with existing PR #50955；Risk of altering behavior for other reasoning parsers or modes\n竞争：已有直接关联但证据不完整的 PR #50955：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 17，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50959](https://github.com/vllm-project/vllm/issues/50959) [Bug] fastsafetensors ParallelLoader broadcasts on group.WORLD; PP-scoped draft loads deadlock**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue describes a deterministic deadlock with clear root cause (WORLD-group broadcast in fastsafetensors loader when only PP-last-stage ranks load draft model). However, the supplied gate decision is HUMAN_REVIEW, and the related issue audit failed (timeout), leaving uncertainty about maintainer awareness and existing design preferences. The open PR #50514 is related but has failing CI and does not directly fix the loader issue.\n改动：Modify fastsafetensors_weights_iterator to use a participant-scoped process group (e.g., TP group) instead of WORLD for broadcasts；Add a guard to reject fastsafetensors for sub-engine loads if scoping is not possible\n验证：Create a minimal reproduction with TP8 x PP2 and fastsafetensors loading a draft model only on last PP stage; verify deadlock occurs before fix；Run the reproduction after fix to confirm no hang and correct weight loading；Run existing vLLM unit tests for weight_utils and model loading with fastsafetensors\n风险：Changing process group scope may affect other load paths that rely on WORLD broadcasts；Potential performance impact if group creation is expensive；Need to ensure fallback to WORLD for engine-wide loads is preserved\n竞争：已有直接关联但证据不完整的 PR #50514：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 4，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T05:32:41.920868Z",
+      "eventId": "1f82affae1ffc3a93dc10b5fecc391c3de1dee494f81825377e7de97d7c7a69e",
+      "idempotencyKey": "1f82affae1ffc3a93dc10b5fecc391c3de1dee494f81825377",
+      "kind": "review",
+      "runId": "scan-20260804T052759Z-67d81b84fcf7",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "sgl-project/sglang#30554"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#30554](https://github.com/sgl-project/sglang/pull/30554) [Spec] Size shared logits buffer for adaptive candidates**\n建议：PR_FOLLOWUP\n价值：CI 检查失败；分支存在合并冲突\n验证：查看正式 review、失败检查或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T05:32:42.139340Z",
+      "eventId": "e4fceb6965708681e224069800c03721dfaaab0d3bca831e650352ff44f82967",
+      "idempotencyKey": "e4fceb6965708681e224069800c03721dfaaab0d3bca831e65",
+      "kind": "watch",
+      "runId": "pr-followup-1785821210",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-04T05:06:25.023042Z",
+  "generatedAt": "2026-08-04T05:32:42.139340Z",
   "newEventCount": 1,
   "version": "notification_outbox_v1"
 }
