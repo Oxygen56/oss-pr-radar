@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from pathlib import PurePosixPath
 from typing import Any
@@ -29,6 +30,7 @@ POLICY_PARTS = {
     ".github/pull_request_template/",
     "docs/contributing",
 }
+POLICY_FILE_WORKERS = 6
 AI_DISCLOSURE_RE = re.compile(
     r"(?:generative ai|ai[- ]generated|ai[- ]assisted|ai tools?|"
     r"large language models?|llms?|coding assistants?).{0,160}"
@@ -199,19 +201,21 @@ def discover_policy(client: GitHubClient, repo: str) -> PolicySnapshot:
         ref = str(metadata.get("default_branch") or "HEAD")
         tree = client.repository_tree(repo, ref)
         entries = select_policy_entries(tree)
-        files: list[PolicyFile] = []
-        texts: list[str] = []
-        for entry in entries:
+
+        def load_entry(entry: dict[str, Any]) -> tuple[PolicyFile, str]:
             path = str(entry["path"])
             text = client.file_text(repo, path, ref)[:250_000]
-            texts.append(text)
-            files.append(
-                PolicyFile(
-                    path=path,
-                    sha=str(entry.get("sha") or ""),
-                    text_digest=sha256_text(text),
-                )
+            return (
+                PolicyFile(path, str(entry.get("sha") or ""), sha256_text(text)),
+                text,
             )
+
+        loaded: list[tuple[PolicyFile, str]] = []
+        if entries:
+            with ThreadPoolExecutor(max_workers=min(POLICY_FILE_WORKERS, len(entries))) as executor:
+                loaded = list(executor.map(load_entry, entries))
+        files = [item[0] for item in loaded]
+        texts = [item[1] for item in loaded]
         combined = "\n\n".join(texts)
         flags = classify_policy_text(combined)
         status = (

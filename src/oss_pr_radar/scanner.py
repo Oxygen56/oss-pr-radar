@@ -30,7 +30,11 @@ from .contracts import SCAN_SCHEMA, contract_digest
 from .llm import DeepSeekEvaluator
 from .messages import add_chinese_explanations
 from .policy import SCANNER_DECISION_REVISION, decision_contract_digest
-from .repo_policy import select_policy_entries, submission_policy_from_text
+from .repo_policy import (
+    POLICY_FILE_WORKERS,
+    select_policy_entries,
+    submission_policy_from_text,
+)
 from .util import sha256_json
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -1569,8 +1573,7 @@ class Radar:
             self.policy_cache[repo] = str(cache_entry["result"])
             return self.policy_cache[repo]
 
-        policy_text: list[str] = []
-        for path in policy_paths:
+        def load_policy_text(path: str) -> str | None:
             payload, payload_err = gh(
                 [
                     "api",
@@ -1583,17 +1586,25 @@ class Radar:
                 timeout=15,
             )
             if payload_err or not isinstance(payload, dict):
-                self.policy_cache[repo] = "policy_unknown"
-                return self.policy_cache[repo]
+                return None
             encoded = payload.get("content")
             if not encoded:
-                continue
+                return ""
             try:
-                decoded = base64.b64decode(encoded).decode("utf-8", errors="replace")
+                return base64.b64decode(encoded).decode("utf-8", errors="replace")
             except (TypeError, ValueError):
+                return None
+
+        policy_text: list[str] = []
+        if policy_paths:
+            with ThreadPoolExecutor(
+                max_workers=min(POLICY_FILE_WORKERS, len(policy_paths))
+            ) as executor:
+                loaded_text = list(executor.map(load_policy_text, policy_paths))
+            if any(text is None for text in loaded_text):
                 self.policy_cache[repo] = "policy_unknown"
                 return self.policy_cache[repo]
-            policy_text.append(decoded)
+            policy_text = [text for text in loaded_text if text]
 
         combined = "\n".join(policy_text)
         result = submission_policy_from_text(combined, static_rule)
