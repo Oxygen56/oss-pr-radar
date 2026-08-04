@@ -62,6 +62,31 @@ def test_merged_direct_pr_is_strong_coverage(monkeypatch, tmp_path):
     assert result["status"] == "covered_strong"
 
 
+def test_maintainer_owned_direct_pr_is_strong_despite_failed_ci(monkeypatch, tmp_path):
+    instance = radar(tmp_path)
+    monkeypatch.setattr(instance, "open_pr_hits", lambda *args: [{"number": 9}])
+    monkeypatch.setattr(
+        instance,
+        "assess_single_pr",
+        lambda *args: {
+            "number": 9,
+            "url": "https://github.com/a/b/pull/9",
+            "references_issue": True,
+            "issue_body_link": False,
+            "technical_complete": True,
+            "maintainer_owned": True,
+            "score": 61,
+            "test_files": 1,
+            "state": "OPEN",
+            "is_draft": False,
+            "gaps": ["存在失败 CI/check"],
+            "strengths": ["明确关联 issue", "由仓库维护者或协作者提交"],
+        },
+    )
+    result = instance.assess_open_prs("a/b", 7, "Streaming bug")
+    assert result["status"] == "covered_strong"
+
+
 def test_nontechnical_triage_failure_does_not_create_pr_competition(monkeypatch, tmp_path):
     instance = radar(tmp_path)
     monkeypatch.setattr(instance, "open_pr_hits", lambda *args: [{"number": 1726}])

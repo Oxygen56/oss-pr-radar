@@ -258,6 +258,28 @@ def test_deferred_rechecks_have_capacity_in_addition_to_fresh_issues():
     assert len(deferred) == 4
 
 
+def test_deferred_rechecks_and_fresh_issues_are_interleaved_before_deadline():
+    bases = [
+        {"repo": f"recheck/{index}", "num": index, "_explicit_recheck": True} for index in range(3)
+    ] + [{"repo": f"fresh/{index}", "num": index} for index in range(3)]
+
+    selected, _ = select_inspection_bases(
+        bases,
+        limit=3,
+        recheck_limit=3,
+        per_repo_limit=1,
+    )
+
+    assert [bool(item.get("_explicit_recheck")) for item in selected] == [
+        True,
+        False,
+        True,
+        False,
+        True,
+        False,
+    ]
+
+
 def test_seen_rechecks_prioritize_actionable_history_then_original_wait_time():
     seen = {
         "example/ordinary-new#1": {

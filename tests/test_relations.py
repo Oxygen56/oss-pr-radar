@@ -30,6 +30,27 @@ def test_exact_draft_without_tests_is_weak():
     assert result[0].relation == "WEAK_OR_PARTIAL_EXACT"
 
 
+def test_maintainer_owned_exact_pr_with_tests_blocks_even_when_ci_is_red():
+    result = assess_relations(
+        repo="a/b",
+        issue_number=7,
+        issue_title="Streaming tool arguments disappear",
+        pull_requests=[
+            {
+                "number": 9,
+                "body": "Fixes #7 with focused regression coverage.",
+                "title": "Fix streaming tool arguments",
+                "files": [{"filename": "tests/test_streaming.py"}],
+                "checks": [{"conclusion": "failure"}],
+                "author_association": "COLLABORATOR",
+                "draft": False,
+            }
+        ],
+    )
+    assert result[0].maintainer_owned is True
+    assert result[0].relation == "STRONG_EXACT_DUPLICATE"
+
+
 def test_exact_merged_pr_blocks_even_without_test_metadata():
     result = assess_relations(
         repo="a/b",

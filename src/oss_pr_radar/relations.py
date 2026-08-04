@@ -38,6 +38,7 @@ class PullRelation:
     has_tests: bool
     checks_green: bool | None
     maintainer_approved: bool
+    maintainer_owned: bool
     draft: bool
     state: str
     merged: bool
@@ -108,9 +109,19 @@ def assess_relations(
             for review in pr.get("reviews") or []
             if isinstance(review, dict)
         )
+        author_association = str(
+            pr.get("author_association") or pr.get("authorAssociation") or ""
+        ).upper()
+        maintainer_owned = author_association in {"OWNER", "MEMBER", "COLLABORATOR"}
         if exact and merged:
             relation = "STRONG_MERGED_COVERAGE"
-        elif exact and state == "OPEN" and has_tests and checks_green is True and not draft:
+        elif (
+            exact
+            and state == "OPEN"
+            and has_tests
+            and not draft
+            and (checks_green is True or maintainer_approved or maintainer_owned)
+        ):
             relation = "STRONG_EXACT_DUPLICATE"
         elif exact and state == "OPEN":
             relation = "WEAK_OR_PARTIAL_EXACT"
@@ -130,6 +141,7 @@ def assess_relations(
                 has_tests=has_tests,
                 checks_green=checks_green,
                 maintainer_approved=maintainer_approved,
+                maintainer_owned=maintainer_owned,
                 draft=draft,
                 state=state,
                 merged=merged,

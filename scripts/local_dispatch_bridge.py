@@ -26,7 +26,7 @@ from oss_pr_radar.ledger import RadarLedger  # noqa: E402
 from oss_pr_radar.metrics import assess_submit_ready, rolling_quality  # noqa: E402
 from oss_pr_radar.notifier import FeishuClient, NotificationError  # noqa: E402
 from oss_pr_radar.publication import request_publication  # noqa: E402
-from oss_pr_radar.util import sha256_json  # noqa: E402
+from oss_pr_radar.util import parse_time, sha256_json  # noqa: E402
 
 STATE = ROOT / "state"
 LEDGER_PATH = STATE / "radar_ledger.sqlite3"
@@ -39,6 +39,7 @@ DELEGATED_INPUT = re.compile(r"<input>(.*?)</input>", re.DOTALL)
 MAX_TITLE_CHARS = 59
 TITLE_PREFIXES = {
     "GO": "[有价值·GO]",
+    "AUDIT_NO_GO": "[无价值]",
     "FIX_READY": "[有价值·本地修复就绪]",
     "PUBLICATION_REQUEST": "[有价值·存在发布请求]",
     "PR_OPEN": "[有价值·PR已开]",
@@ -426,6 +427,149 @@ def commit_receipt(args: argparse.Namespace) -> dict[str, Any]:
     return {"ok": True, "key": intent["key"], "threadId": args.thread_id}
 
 
+def _thread_created_at(row: sqlite3.Row) -> float:
+    created_at_ms = int(row["created_at_ms"] or 0)
+    return created_at_ms / 1000 if created_at_ms else float(row["created_at"])
+
+
+def orphan_list(args: argparse.Namespace) -> dict[str, Any]:
+    """Find uniquely matching tasks hidden by asynchronous worktree creation."""
+
+    store = ledger(args.ledger)
+    handoffs = store.orphaned_handoffs()
+    bound_thread_ids = store.bound_thread_ids()
+    connection = sqlite3.connect(THREAD_DB)
+    connection.row_factory = sqlite3.Row
+    try:
+        rows = connection.execute(
+            """SELECT id,cwd,title,first_user_message,git_origin_url,archived,
+                      created_at,created_at_ms
+               FROM threads WHERE archived=0"""
+        ).fetchall()
+    finally:
+        connection.close()
+
+    candidates: list[dict[str, Any]] = []
+    blocked: list[dict[str, Any]] = []
+    unmatched: list[dict[str, Any]] = []
+    worktree_root = WORKTREE_ROOT.resolve()
+    for handoff in handoffs:
+        started = parse_time(str(handoff["leaseStartedAt"])).timestamp() - 60
+        lease_end = handoff.get("leaseUntil") or handoff.get("expiresAt")
+        ended = parse_time(str(lease_end)).timestamp() + 300
+        matches: list[sqlite3.Row] = []
+        for row in rows:
+            if row["id"] in bound_thread_ids:
+                continue
+            created = _thread_created_at(row)
+            if created < started or created > ended:
+                continue
+            if canonical_prompt(row["first_user_message"] or "") != issue_prompt(
+                handoff["issueUrl"]
+            ):
+                continue
+            if normalize_origin(row["git_origin_url"] or "") != str(handoff["repo"]).casefold():
+                continue
+            cwd = Path(row["cwd"]).resolve()
+            if cwd == worktree_root or worktree_root not in cwd.parents:
+                continue
+            matches.append(row)
+        if not matches:
+            if handoff["intentStatus"] == "LEASED":
+                unmatched.append(
+                    {
+                        "intentId": handoff["intentId"],
+                        "key": handoff["key"],
+                        "leaseStartedAt": handoff["leaseStartedAt"],
+                    }
+                )
+            continue
+        if len(matches) != 1:
+            blocked.append(
+                {
+                    "intentId": handoff["intentId"],
+                    "key": handoff["key"],
+                    "reason": "ambiguous_matching_threads",
+                    "threadIds": sorted(str(row["id"]) for row in matches),
+                }
+            )
+            continue
+        row = matches[0]
+        created = _thread_created_at(row)
+        title_time = datetime.fromtimestamp(created).astimezone().strftime("%m-%d %H:%M")
+        nonce = sha256_json(
+            {
+                "intentId": handoff["intentId"],
+                "threadId": row["id"],
+                "leaseStartedAt": handoff["leaseStartedAt"],
+                "operation": "orphan-dispatch-reconcile-v1",
+            }
+        )
+        candidates.append(
+            handoff
+            | {
+                "threadId": row["id"],
+                "cwd": row["cwd"],
+                "currentTitle": row["title"],
+                "titleTime": title_time,
+                "desiredTitle": lifecycle_title("GO", title_time, handoff["key"], handoff["title"]),
+                "orphanNonce": nonce,
+            }
+        )
+    return {
+        "ok": not blocked,
+        "candidates": candidates,
+        "blocked": blocked,
+        "unmatched": unmatched,
+    }
+
+
+def orphan_commit(args: argparse.Namespace) -> dict[str, Any]:
+    result = orphan_list(args)
+    candidates = {item["intentId"]: item for item in result["candidates"]}
+    candidate = candidates.get(args.intent_id)
+    if candidate is None or candidate["orphanNonce"] != args.orphan_nonce:
+        raise RuntimeError("orphan reconciliation authorization is stale or invalid")
+    if candidate["threadId"] != args.thread_id:
+        raise RuntimeError("orphan thread mismatch")
+    if candidate["desiredTitle"] != args.desired_title:
+        raise RuntimeError("orphan desired title mismatch")
+    source = Path(args.source_repo).resolve()
+    cwd = Path(candidate["cwd"]).resolve()
+    if (
+        normalize_origin(command(["git", "remote", "get-url", "origin"], cwd=source))
+        != str(candidate["repo"]).casefold()
+    ):
+        raise RuntimeError("source repository origin mismatch")
+    if git_path("rev-parse", "--path-format=absolute", "--git-common-dir", cwd=cwd) != git_path(
+        "rev-parse", "--path-format=absolute", "--git-dir", cwd=source
+    ):
+        raise RuntimeError("orphan worktree does not belong to source repository")
+    connection = sqlite3.connect(THREAD_DB)
+    try:
+        row = connection.execute(
+            "SELECT title,archived FROM threads WHERE id=?", (args.thread_id,)
+        ).fetchone()
+    finally:
+        connection.close()
+    if row is None or int(row[1] or 0) != 0 or row[0] != args.desired_title:
+        raise RuntimeError("orphan thread title was not applied")
+    ledger(args.ledger).commit_orphan_dispatch(
+        args.intent_id,
+        thread_id=args.thread_id,
+        project_id=args.project_id,
+        worktree_path=str(cwd),
+        title_time=candidate["titleTime"],
+        lease_started_at=candidate["leaseStartedAt"],
+    )
+    return {
+        "ok": True,
+        "key": candidate["key"],
+        "threadId": args.thread_id,
+        "reconciled": True,
+    }
+
+
 def record_outcome(args: argparse.Namespace) -> dict[str, Any]:
     if args.evidence_file:
         payload = json.loads(Path(args.evidence_file).read_text(encoding="utf-8"))
@@ -675,7 +819,8 @@ def recovery_commit(args: argparse.Namespace) -> dict[str, Any]:
 
 def task_context(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
-    deadline = monotonic() + max(0.0, min(float(args.wait_seconds), 120.0))
+    deadline = monotonic() + max(0.0, min(float(args.wait_seconds), 300.0))
+    reconciliation_attempted = False
     while True:
         value = store.task_context(
             issue_url=args.issue_url,
@@ -684,6 +829,28 @@ def task_context(args: argparse.Namespace) -> dict[str, Any]:
         )
         if value is not None:
             return {"ok": True, "task": value, "pendingHandoff": False}
+        if not reconciliation_attempted and args.worktree:
+            reconciliation_attempted = True
+            reconciliation = orphan_list(args)
+            matches = [
+                item
+                for item in reconciliation["candidates"]
+                if item["issueUrl"] == args.issue_url
+                and Path(item["cwd"]).resolve() == Path(args.worktree).resolve()
+                and (not args.thread_id or item["threadId"] == args.thread_id)
+            ]
+            if len(matches) == 1:
+                candidate = matches[0]
+                store.commit_orphan_dispatch(
+                    candidate["intentId"],
+                    thread_id=candidate["threadId"],
+                    project_id=f"async-reconciled:{candidate['repo']}",
+                    worktree_path=str(Path(candidate["cwd"]).resolve()),
+                    title_time=candidate["titleTime"],
+                    lease_started_at=candidate["leaseStartedAt"],
+                    title_synced_state=None,
+                )
+                continue
         pending = store.has_live_handoff(issue_url=args.issue_url)
         if not pending or monotonic() >= deadline:
             return {"ok": False, "task": None, "pendingHandoff": pending}
@@ -712,6 +879,14 @@ def main() -> int:
     commit.add_argument("--cwd", required=True)
     commit.add_argument("--source-repo", required=True)
     commit.add_argument("--title-time", required=True)
+    subparsers.add_parser("orphan-list")
+    orphan_commit_parser = subparsers.add_parser("orphan-commit")
+    orphan_commit_parser.add_argument("--intent-id", required=True)
+    orphan_commit_parser.add_argument("--thread-id", required=True)
+    orphan_commit_parser.add_argument("--project-id", required=True)
+    orphan_commit_parser.add_argument("--source-repo", required=True)
+    orphan_commit_parser.add_argument("--desired-title", required=True)
+    orphan_commit_parser.add_argument("--orphan-nonce", required=True)
     outcome = subparsers.add_parser("outcome")
     outcome.add_argument("--key", required=True)
     outcome.add_argument("--stage", required=True)
@@ -751,7 +926,7 @@ def main() -> int:
     task_context_parser.add_argument("--issue-url", required=True)
     task_context_parser.add_argument("--thread-id")
     task_context_parser.add_argument("--worktree")
-    task_context_parser.add_argument("--wait-seconds", type=float, default=75.0)
+    task_context_parser.add_argument("--wait-seconds", type=float, default=180.0)
     metrics = subparsers.add_parser("metrics")
     metrics.add_argument("--days", type=int, default=30)
     args = parser.parse_args()
@@ -765,6 +940,10 @@ def main() -> int:
         result = claim_intent(args)
     elif args.operation == "commit":
         result = commit_receipt(args)
+    elif args.operation == "orphan-list":
+        result = orphan_list(args)
+    elif args.operation == "orphan-commit":
+        result = orphan_commit(args)
     elif args.operation == "outcome":
         result = record_outcome(args)
     elif args.operation == "request-publication":

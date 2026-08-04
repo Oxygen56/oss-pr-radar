@@ -99,7 +99,7 @@ KNOWN_REPOS = [
     "browser-use/browser-use",
     "crewAIInc/crewAI",
     "mem0ai/mem0",
-    "All-Hands-AI/OpenHands",
+    "OpenHands/OpenHands",
     "modelcontextprotocol/python-sdk",
     "modelcontextprotocol/typescript-sdk",
     "modelcontextprotocol/java-sdk",
@@ -127,9 +127,35 @@ KNOWN_REPOS = [
     "opensearch-project/OpenSearch",
     "PrefectHQ/fastmcp",
     "ai-dynamo/dynamo",
+    "BerriAI/litellm",
+    "google/adk-python",
+    "google/adk-java",
+    "google/adk-js",
+    "strands-agents/harness-sdk",
+    "camel-ai/camel",
+    "langgenius/dify",
+    "langflow-ai/langflow",
+    "FlowiseAI/Flowise",
+    "mastra-ai/mastra",
+    "browserbase/stagehand",
+    "livekit/agents",
+    "pipecat-ai/pipecat",
+    "ComposioHQ/composio",
+    "langfuse/langfuse",
+    "Arize-ai/phoenix",
+    "promptfoo/promptfoo",
+    "modelcontextprotocol/servers",
+    "modelcontextprotocol/inspector",
+    "NVIDIA/NeMo-Agent-Toolkit",
+    "agentscope-ai/agentscope",
+    "mcp-use/mcp-use",
+    "aaif-goose/goose",
+    "anomalyco/opencode",
+    "cline/cline",
+    "infiniflow/ragflow",
 ]
 
-AGENT_INFRA_PRIORITY_REPOS = {
+AGENT_RUNTIME_REPOS = {
     "langchain-ai/langgraph",
     "pydantic/pydantic-ai",
     "microsoft/autogen",
@@ -139,17 +165,63 @@ AGENT_INFRA_PRIORITY_REPOS = {
     "agno-agi/agno",
     "browser-use/browser-use",
     "crewAIInc/crewAI",
+    "mem0ai/mem0",
+    "OpenHands/OpenHands",
+    "letta-ai/letta",
+    "deepset-ai/haystack",
+    "stanfordnlp/dspy",
+    "google/adk-python",
+    "google/adk-java",
+    "google/adk-js",
+    "strands-agents/harness-sdk",
+    "camel-ai/camel",
+    "mastra-ai/mastra",
+    "agentscope-ai/agentscope",
+}
+
+AGENT_TOOLING_REPOS = {
     "modelcontextprotocol/python-sdk",
     "modelcontextprotocol/typescript-sdk",
     "modelcontextprotocol/java-sdk",
     "modelcontextprotocol/csharp-sdk",
+    "modelcontextprotocol/servers",
+    "modelcontextprotocol/inspector",
+    "mcp-use/mcp-use",
     "openai/openai-agents-python",
     "microsoft/semantic-kernel",
     "PrefectHQ/fastmcp",
+    "browserbase/stagehand",
+    "livekit/agents",
+    "pipecat-ai/pipecat",
+    "ComposioHQ/composio",
+    "continuedev/continue",
+    "aaif-goose/goose",
+    "anomalyco/opencode",
+    "cline/cline",
+}
+
+AGENT_PLATFORM_REPOS = {
+    "vercel/ai",
+    "BerriAI/litellm",
+    "langfuse/langfuse",
+    "Arize-ai/phoenix",
+    "promptfoo/promptfoo",
+    "langgenius/dify",
+    "langflow-ai/langflow",
+    "FlowiseAI/Flowise",
+    "infiniflow/ragflow",
+    "NVIDIA/NeMo-Agent-Toolkit",
+}
+
+INFERENCE_SERVING_REPOS = {
     "vllm-project/vllm",
     "sgl-project/sglang",
     "ai-dynamo/dynamo",
 }
+
+AGENT_INFRA_PRIORITY_REPOS = (
+    AGENT_RUNTIME_REPOS | AGENT_TOOLING_REPOS | AGENT_PLATFORM_REPOS | INFERENCE_SERVING_REPOS
+)
 
 AGENT_INFRA_SCAN_REPOS = [repo for repo in KNOWN_REPOS if repo in AGENT_INFRA_PRIORITY_REPOS]
 AGENT_INFRA_SCAN_REPOS = [
@@ -724,9 +796,12 @@ def issue_body_pr_link_relation(issue_context: str, repo: str, pr_num: int) -> s
     return "reference"
 
 
-def base_priority(item: dict[str, Any]) -> tuple[int, int, int, int, int, int, int, str]:
+def base_priority(
+    item: dict[str, Any],
+) -> tuple[int, int, int, int, int, int, int, int, str, str]:
     labels = " ".join(item.get("labels", []))
     title = str(item.get("title") or "").replace("_", " ").replace("-", " ")
+    context = f"{title}\n{item.get('body') or ''}"
     return (
         int(bool(item.get("_explicit_recheck"))),
         int(item.get("_recheck_priority") or 0),
@@ -734,7 +809,19 @@ def base_priority(item: dict[str, Any]) -> tuple[int, int, int, int, int, int, i
         int(item.get("_defer_count") or 0),
         int(item.get("repo") in AGENT_INFRA_PRIORITY_REPOS),
         int(bool(re.search(r"\b(bug|regression|performance|refactor)\b", labels, re.I))),
+        len(
+            {
+                match.group(0).lower()
+                for match in re.finditer(
+                    r"steps? to reproduce|repro(?:duction|ducible)?|expected behavior|"
+                    r"actual behavior|traceback|stack trace|root cause|regression",
+                    context,
+                    re.I,
+                )
+            }
+        ),
         len({match.group(0).lower() for match in HIGH_RE.finditer(title)}),
+        item.get("created") or "",
         item.get("updated") or "",
     )
 
@@ -747,14 +834,19 @@ def select_inspection_bases(
     per_repo_limit: int = MAX_ISSUES_PER_REPO_PER_SCAN,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Give persisted rechecks their own budget without starving fresh issues."""
-    selected: list[dict[str, Any]] = []
+    selected_rechecks: list[dict[str, Any]] = []
+    selected_regular: list[dict[str, Any]] = []
     deferred: list[dict[str, Any]] = []
     repo_counts: Counter[str] = Counter()
 
     rechecks = [base for base in bases if base.get("_explicit_recheck")]
     regular = [base for base in bases if not base.get("_explicit_recheck")]
 
-    def reserve(pool: list[dict[str, Any]], capacity: int) -> None:
+    def reserve(
+        pool: list[dict[str, Any]],
+        capacity: int,
+        selected: list[dict[str, Any]],
+    ) -> None:
         overflow: list[dict[str, Any]] = []
         accepted = 0
         for base in pool:
@@ -772,8 +864,18 @@ def select_inspection_bases(
             overflow = overflow[extra:]
         deferred.extend(overflow)
 
-    reserve(rechecks, max(0, recheck_limit))
-    reserve(regular, max(0, limit))
+    reserve(rechecks, max(0, recheck_limit), selected_rechecks)
+    reserve(regular, max(0, limit), selected_regular)
+
+    # Network-heavy duplicate and policy checks can hit the wall-clock deadline
+    # before both budgets are exhausted. Interleave durable rechecks with fresh
+    # issues so neither class can consume the whole useful prefix of the run.
+    selected: list[dict[str, Any]] = []
+    for index in range(max(len(selected_rechecks), len(selected_regular))):
+        if index < len(selected_rechecks):
+            selected.append(selected_rechecks[index])
+        if index < len(selected_regular):
+            selected.append(selected_regular[index])
     return selected, deferred
 
 
@@ -2159,6 +2261,14 @@ class Radar:
         text = f"{title}\n{body}".lower()
         state = str(detail.get("state") or hit.get("state") or "").upper()
         merged = bool(detail.get("mergedAt") or detail.get("merged_at"))
+        author_association = str(
+            detail.get("authorAssociation")
+            or detail.get("author_association")
+            or hit.get("authorAssociation")
+            or hit.get("author_association")
+            or ""
+        ).upper()
+        maintainer_owned = author_association in {"OWNER", "MEMBER", "COLLABORATOR"}
         comments_value = detail.get("comments")
         comments = comments_value if isinstance(comments_value, list) else []
         comment_text = "\n".join(
@@ -2273,6 +2383,9 @@ class Radar:
         if detail.get("isDraft"):
             score -= 10
             gaps.append("仍是 draft")
+        if maintainer_owned:
+            score += 18
+            strengths.append("由仓库维护者或协作者提交")
         if age_days <= 7:
             score += 8
             strengths.append("近期仍活跃")
@@ -2303,7 +2416,7 @@ class Radar:
             and test_files
             and changed_files > 0
             and len(body.strip()) >= 160
-            and (successful_checks or rule_closed)
+            and (successful_checks or rule_closed or maintainer_owned)
         )
 
         return {
@@ -2326,6 +2439,8 @@ class Radar:
             "is_draft": bool(detail.get("isDraft")),
             "state": "MERGED" if merged else state,
             "rule_closed": rule_closed,
+            "maintainer_owned": maintainer_owned,
+            "author_association": author_association,
             "technical_complete": technical_complete,
             "ignored_nontechnical_failed_checks": ignored_failed_checks[:3],
             "strengths": strengths[:4],
@@ -2439,7 +2554,7 @@ class Radar:
             item.get("technical_complete")
             and item.get("score", 0) >= 55
             and not item.get("is_draft")
-            and "存在失败 CI/check" not in item.get("gaps", [])
+            and ("存在失败 CI/check" not in item.get("gaps", []) or item.get("maintainer_owned"))
             and "超过 30 天未更新" not in item.get("gaps", [])
             for item in active_direct
         )
@@ -3514,6 +3629,12 @@ class Radar:
             },
             "repository_activity": {
                 "fixed_scope": sorted(AGENT_INFRA_SCAN_REPOS),
+                "fixed_scope_by_domain": {
+                    "agent_runtime": sorted(AGENT_RUNTIME_REPOS),
+                    "agent_tooling": sorted(AGENT_TOOLING_REPOS),
+                    "agent_platform": sorted(AGENT_PLATFORM_REPOS),
+                    "inference_serving": sorted(INFERENCE_SERVING_REPOS),
+                },
                 "queried": sorted(self.queried_repos),
                 "matched": sorted(self.matched_repos),
                 "qualified": sorted(self.qualified_repo_names),

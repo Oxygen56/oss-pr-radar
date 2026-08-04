@@ -130,6 +130,56 @@ def test_title_state_advances_from_go_to_fix_ready(tmp_path):
     assert store.title_candidates() == []
 
 
+def test_no_go_requires_title_sync_before_cleanup(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+        title_time="08-04 18:47",
+    )
+    store.record_stage("a/b#1", "AUDIT_NO_GO", reason="STRONG_EXISTING_PR")
+
+    assert store.cleanup_candidates() == []
+    candidate = store.title_candidates()[0]
+    assert candidate["titleState"] == "AUDIT_NO_GO"
+    store.commit_title(
+        thread_id="thread-1",
+        state="AUDIT_NO_GO",
+        nonce=candidate["titleNonce"],
+    )
+    assert store.title_candidates() == []
+    assert store.cleanup_candidates()[0]["threadId"] == "thread-1"
+
+
+def test_orphan_dispatch_can_reconcile_an_expired_async_handoff(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    candidate = store.orphaned_handoffs()[0]
+    with store.connect() as connection:
+        connection.execute("UPDATE intents SET status='EXPIRED' WHERE intent_id='intent-1'")
+
+    store.commit_orphan_dispatch(
+        "intent-1",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+        title_time="08-04 18:47",
+        lease_started_at=candidate["leaseStartedAt"],
+    )
+    context = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )
+    assert context is not None
+    assert context["intentStatus"] == "DISPATCHED"
+
+
 def test_only_audit_no_go_threads_are_cleanup_candidates(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(intent())
@@ -171,6 +221,12 @@ def test_stalled_dispatch_gets_one_write_ahead_recovery(tmp_path):
     store.commit_recovery(thread_id="thread-1", nonce=candidate["recoveryNonce"])
     assert store.unresolved_recoveries() == []
     store.record_stage("a/b#1", "AUDIT_NO_GO", reason="DUPLICATE")
+    title_candidate = store.title_candidates()[0]
+    store.commit_title(
+        thread_id="thread-1",
+        state="AUDIT_NO_GO",
+        nonce=title_candidate["titleNonce"],
+    )
     candidate = store.cleanup_candidates()[0]
     assert candidate["threadId"] == "thread-1"
     store.commit_cleanup(thread_id="thread-1", nonce=candidate["cleanupNonce"])

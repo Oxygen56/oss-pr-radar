@@ -24,6 +24,9 @@ timing are external labels, not the north-star metric.
    worktree, first user input, and expected timestamped lifecycle title. The
    selected project must be the exact source repository and must advertise a
    Git repository; parent folders and the radar repository are invalid targets.
+   When worktree creation returns only an asynchronous client ID, a later
+   reconciliation may bind the task only if lease time, canonical prompt,
+   repository origin, and previously unbound worktree identify exactly one task.
 7. **Delivery** records either `AUDIT_NO_GO` or SubmitReady evidence. Only the
    latter can create a publication request.
 8. **Publication** rechecks the exact clean commit, branch, diff, evidence,
@@ -36,11 +39,12 @@ timing are external labels, not the north-star metric.
 `QUALIFIED -> LEASED -> DISPATCHED -> AUDIT_PASS -> FIX_READY -> PR_OPEN -> CI_GREEN -> MAINTAINER_ACCEPTED -> MERGED`
 
 `AUDIT_NO_GO` is a terminal no-value outcome and is the only lifecycle state
-that authorizes automatic task archival. Shadow observations do not enter the
-SubmitReady denominator.
+that authorizes automatic task archival. Archival remains blocked until the
+same task has first acknowledged its `[无价值]` title state. Shadow observations
+do not enter the SubmitReady denominator.
 
 Visible task titles progress through `GO`, `本地修复就绪`, `存在发布请求`,
-`PR已开`, and `已合并`, while preserving the original dispatch timestamp. A
+`PR已开`, `已合并`, or terminal `无价值`, while preserving the original dispatch timestamp. A
 dispatched task with no outcome can receive one write-ahead, exact-prompt
 recovery attempt; an ambiguous recovery is surfaced instead of retried.
 

@@ -374,12 +374,136 @@ class RadarLedger:
                 now,
             )
 
+    def orphaned_handoffs(self) -> list[dict[str, Any]]:
+        """Return task handoffs whose Codex thread was created before receipt commit."""
+
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT o.key,o.issue_url,o.title,i.intent_id,i.status,i.lease_owner,
+                          i.lease_until,i.expires_at,i.payload_json,
+                          l.created_at AS lease_started_at,l.payload_json AS lease_payload
+                   FROM opportunities o JOIN intents i ON i.opportunity_key=o.key
+                   JOIN events l ON l.id=(
+                     SELECT e.id FROM events e
+                     WHERE e.opportunity_key=o.key AND e.event_type='LEASED'
+                     ORDER BY e.created_at DESC,e.id DESC LIMIT 1
+                   )
+                   WHERE i.status IN ('LEASED','EXPIRED','SUPERSEDED')
+                     AND i.thread_id IS NULL
+                     AND NOT EXISTS (
+                       SELECT 1 FROM intents newer
+                       WHERE newer.opportunity_key=i.opportunity_key
+                         AND newer.intent_id<>i.intent_id
+                         AND newer.status IN ('PENDING','LEASED','DISPATCHED')
+                     )
+                   ORDER BY l.created_at"""
+            ).fetchall()
+        values: list[dict[str, Any]] = []
+        for row in rows:
+            payload = json.loads(row["payload_json"])
+            lease_payload = json.loads(row["lease_payload"])
+            values.append(
+                {
+                    "key": row["key"],
+                    "issueUrl": row["issue_url"],
+                    "title": row["title"],
+                    "intentId": row["intent_id"],
+                    "intentStatus": row["status"],
+                    "leaseOwner": row["lease_owner"] or lease_payload.get("owner"),
+                    "leaseStartedAt": row["lease_started_at"],
+                    "leaseUntil": row["lease_until"] or lease_payload.get("leaseUntil"),
+                    "expiresAt": row["expires_at"],
+                    "repo": payload.get("repo"),
+                }
+            )
+        return values
+
+    def bound_thread_ids(self) -> set[str]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT thread_id FROM intents WHERE thread_id IS NOT NULL"
+            ).fetchall()
+        return {str(row["thread_id"]) for row in rows}
+
+    def commit_orphan_dispatch(
+        self,
+        intent_id: str,
+        *,
+        thread_id: str,
+        project_id: str,
+        worktree_path: str,
+        title_time: str,
+        lease_started_at: str,
+        title_synced_state: str | None = "GO",
+    ) -> None:
+        """Attach a uniquely matched task after asynchronous creation hid its ID."""
+
+        now = iso_z(datetime.now(UTC))
+        with self.transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM intents WHERE intent_id=?", (intent_id,)
+            ).fetchone()
+            if row is None:
+                raise LedgerError("intent not found")
+            if row["status"] == "DISPATCHED" and row["thread_id"] == thread_id:
+                return
+            if row["status"] not in {"LEASED", "EXPIRED", "SUPERSEDED"}:
+                raise LedgerError("intent is not eligible for orphan reconciliation")
+            if row["thread_id"] is not None:
+                raise LedgerError("intent already has a thread")
+            newer = connection.execute(
+                """SELECT 1 FROM intents WHERE opportunity_key=? AND intent_id<>?
+                   AND status IN ('PENDING','LEASED','DISPATCHED') LIMIT 1""",
+                (row["opportunity_key"], intent_id),
+            ).fetchone()
+            if newer:
+                raise LedgerError("a newer live intent exists")
+            lease_event = connection.execute(
+                """SELECT created_at FROM events WHERE opportunity_key=?
+                   AND event_type='LEASED' ORDER BY created_at DESC,id DESC LIMIT 1""",
+                (row["opportunity_key"],),
+            ).fetchone()
+            if lease_event is None or lease_event["created_at"] != lease_started_at:
+                raise LedgerError("lease evidence changed")
+            connection.execute(
+                """UPDATE intents SET status='DISPATCHED',thread_id=?,project_id=?,
+                   worktree_path=?,title_time=?,title_synced_state=?,updated_at=?
+                   WHERE intent_id=?""",
+                (
+                    thread_id,
+                    project_id,
+                    worktree_path,
+                    title_time,
+                    title_synced_state,
+                    now,
+                    intent_id,
+                ),
+            )
+            connection.execute(
+                "UPDATE opportunities SET stage='DISPATCHED',updated_at=? WHERE key=?",
+                (now, row["opportunity_key"]),
+            )
+            self._event(
+                connection,
+                row["opportunity_key"],
+                "DISPATCHED",
+                thread_id,
+                {
+                    "intentId": intent_id,
+                    "threadId": thread_id,
+                    "projectId": project_id,
+                    "reconciledAsyncCreation": True,
+                },
+                now,
+            )
+
     def title_candidates(self) -> list[dict[str, Any]]:
         with self.connect() as connection:
             rows = connection.execute(
                 """SELECT o.key,o.title,o.stage,o.updated_at,i.thread_id,i.title_time,
                           i.title_synced_state,
                           CASE
+                            WHEN o.stage='AUDIT_NO_GO' THEN 'AUDIT_NO_GO'
                             WHEN o.stage='MERGED' THEN 'MERGED'
                             WHEN o.stage IN ('PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED','CLOSED')
                               THEN 'PR_OPEN'
@@ -392,8 +516,15 @@ class RadarLedger:
                             ELSE 'GO'
                           END AS desired_state
                    FROM opportunities o JOIN intents i ON i.opportunity_key=o.key
-                   WHERE i.thread_id IS NOT NULL AND o.stage<>'AUDIT_NO_GO'
-                     AND i.status IN ('DISPATCHED','COMPLETED')
+                   WHERE i.thread_id IS NOT NULL
+                     AND i.status IN ('DISPATCHED','COMPLETED','REJECTED')
+                     AND NOT (
+                       o.stage='AUDIT_NO_GO' AND EXISTS (
+                         SELECT 1 FROM events archived
+                         WHERE archived.opportunity_key=o.key
+                           AND archived.event_type='THREAD_ARCHIVED'
+                       )
+                     )
                    ORDER BY o.updated_at"""
             ).fetchall()
         values = []
@@ -1240,6 +1371,7 @@ class RadarLedger:
                 """SELECT o.key,o.stage,o.updated_at,i.thread_id
                    FROM opportunities o JOIN intents i ON i.opportunity_key=o.key
                    WHERE o.stage='AUDIT_NO_GO' AND i.thread_id IS NOT NULL
+                     AND i.title_synced_state='AUDIT_NO_GO'
                      AND NOT EXISTS (
                        SELECT 1 FROM events e
                        WHERE e.opportunity_key=o.key AND e.event_type='THREAD_ARCHIVED'

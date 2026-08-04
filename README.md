@@ -40,26 +40,33 @@ is recorded as a lagging outcome, never used to judge discovery quality.
 
 ## Scan Scope
 
-Every hour directly polls these repositories and also runs a bounded dynamic
-GitHub search for mature Agent/AI-infrastructure repositories outside the list:
+Every hour directly polls 52 mature repositories and also runs a bounded
+dynamic GitHub search for Agent/AI-infrastructure repositories outside the
+curated list. The fixed scope is grouped by the code surface it contributes:
 
 ```text
-langchain-ai/langgraph                 pydantic/pydantic-ai
-microsoft/autogen                      microsoft/agent-framework
-huggingface/smolagents                 run-llama/llama_index
-agno-agi/agno                          browser-use/browser-use
-crewAIInc/crewAI                       modelcontextprotocol/python-sdk
-modelcontextprotocol/typescript-sdk    modelcontextprotocol/java-sdk
-modelcontextprotocol/csharp-sdk        openai/openai-agents-python
-microsoft/semantic-kernel              PrefectHQ/fastmcp
-vllm-project/vllm                      sgl-project/sglang
-ai-dynamo/dynamo
+Agent runtimes:
+  LangGraph, PydanticAI, AutoGen, Agent Framework, smolagents, LlamaIndex,
+  Agno, CrewAI, mem0, OpenHands, Letta, Haystack, DSPy, Google ADK
+  (Python/Java/JS), Strands Agents, CAMEL, Mastra, AgentScope, browser-use
+
+Tools, MCP, coding, browser, and realtime agents:
+  MCP Python/TypeScript/Java/C# SDKs, MCP Servers, MCP Inspector, mcp-use,
+  FastMCP, OpenAI Agents SDK, Semantic Kernel, Stagehand, Composio, LiveKit
+  Agents, Pipecat, Continue, goose, OpenCode, Cline
+
+Gateways, evals, observability, and workflow platforms:
+  LiteLLM, Vercel AI SDK, Langfuse, Phoenix, Promptfoo, Dify, Langflow,
+  Flowise, RAGFlow, NVIDIA NeMo Agent Toolkit
+
+Inference serving:
+  vLLM, SGLang, NVIDIA Dynamo
 ```
 
-The scan artifact records five distinct repository sets: fixed scope, queried,
-matched, qualified, and deeply inspected. Dynamic discoveries must still pass
-the mature-repository and real-code-surface gates. `openai/codex` remains
-explicitly excluded.
+The scan artifact records the fixed scope both as a flat list and by domain,
+plus queried, matched, qualified, and deeply inspected sets. Dynamic discoveries
+must still pass the mature-repository and real-code-surface gates.
+`openai/codex` remains explicitly excluded.
 
 ## Trust Boundaries
 
@@ -139,7 +146,10 @@ fresh live audit, creates only the authorized worktree task in the exact source
 repository project, verifies its timestamped lifecycle title, prompt, repository
 origin, and worktree identity, then commits a receipt. It retries an obviously
 empty task at most once through a write-ahead recovery receipt. It archives a
-task only after that task records `AUDIT_NO_GO`.
+task only after that task records `AUDIT_NO_GO` and its title has first been
+synchronized to the visible `[无价值]` lifecycle prefix. If asynchronous
+worktree creation returns only a client ID, the controller can reconcile the
+unique prompt/origin/worktree match before the next lifecycle action.
 Each sync also supersedes uncommitted local intents withdrawn from the latest
 signed cloud queue, so an older controller cannot dispatch a retracted decision.
 

@@ -31,7 +31,11 @@ Deferred rechecks have a separate 24-item budget. Ordering uses the first
 deferred timestamp rather than the latest retry timestamp, and previously
 actionable candidates retain their score and receive priority. This prevents a
 busy fixed-repository feed from pushing the same opportunity to the back on
-every hourly run. The scan report records policy-migration selections
+every hourly run. Rechecks and fresh issues are interleaved before the
+wall-clock deadline, so a backlog cannot consume the entire useful prefix of a
+scan. Fresh issues with bug/performance labels, public reproduction or root
+cause signals, and a recent creation timestamp are inspected first. The scan
+report records policy-migration selections
 separately, and recomputes the remaining count after LLM review and notification
 staging so it matches the durable `seen.json` state.
 
@@ -54,6 +58,10 @@ a quality KPI or a publication-policy bypass.
 - A live lease is exclusive even if two controller runs reuse the same owner
   label. A signed intent waiting at least 70 minutes, or a stale lease, produces
   a deduplicated Feishu dispatch alert.
+- Before queue sync, `orphan-list` reconciles asynchronous worktree creations
+  whose real task ID appeared after the controller's initial lookup. Only one
+  unbound task matching the lease window, canonical prompt, repository origin,
+  and Codex worktree can be committed; ambiguity fails closed.
 - A task that remains dispatched without an outcome for 90 minutes enters the
   local recovery list. Only an obviously empty or `完成`-only task may receive
   one repeat of the exact canonical prompt. The reservation is written before
@@ -85,7 +93,8 @@ quota or discovery score.
 
 ## Local Dispatcher Order
 
-The single-thread desktop heartbeat runs health with fallback repair, queue sync,
+The single-thread desktop heartbeat runs health with fallback repair, asynchronous
+task reconciliation, queue sync,
 dispatch-age alerts, PR lifecycle refresh, live
 claim/revalidation, exact-project worktree creation, task receipt verification,
 one-shot recovery, title synchronization, and `AUDIT_NO_GO` cleanup in that
@@ -94,6 +103,6 @@ normal and must not be treated as a failed run.
 `githubNaturalScheduleHealthy` refers only to GitHub Actions cron delivery;
 `operationalHealthy` also accepts a recent successful or currently active
 manual/fallback scan. The desktop heartbeat's own trigger is a separate signal.
-An issue task's first `task-context` lookup waits briefly only when the ledger
+An issue task's first `task-context` lookup waits up to three minutes only when the ledger
 shows a live lease for that exact issue, closing the create-thread/receipt race
 without treating an unregistered prompt as authorization.
