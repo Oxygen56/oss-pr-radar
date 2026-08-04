@@ -118,7 +118,9 @@ def recheck_watchlist(
         ):
             new_status = "COVERED"
             reason = "STRONG_PR_APPEARED"
-        elif evidence.policy.get("digest") != item.get("policyDigest"):
+        elif item.get("latestPolicyDigest") and evidence.policy.get("digest") != item.get(
+            "latestPolicyDigest"
+        ):
             new_status = "POLICY_CHANGED"
             reason = "POLICY_REVALIDATION_REQUIRED"
         elif evidence.maintainer_approvals:

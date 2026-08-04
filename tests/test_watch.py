@@ -57,6 +57,16 @@ class GreenLightClient:
         return []
 
 
+class NoChangeClient(GreenLightClient):
+    def comments(self, repo, number):
+        return []
+
+
+class PolicyChangeClient(NoChangeClient):
+    def file_text(self, repo, path, ref):
+        return "Contributions require maintainer assignment before implementation."
+
+
 def test_actionable_candidate_is_removed_from_watchlist():
     existing = build_watchlist({"candidate_details": [held_candidate()]}, now=NOW)
     updated = build_watchlist(
@@ -70,5 +80,22 @@ def test_maintainer_green_light_creates_forced_recheck():
         {"candidate_details": [held_candidate(policy_digest="different")]}, now=NOW
     )
     updated, report = recheck_watchlist(watchlist, GreenLightClient(), now=NOW)
-    assert updated["items"][0]["status"] in {"POLICY_CHANGED", "RESCAN_REQUIRED"}
+    assert updated["items"][0]["status"] == "RESCAN_REQUIRED"
     assert report["pending_rechecks"]["a/b#1"]
+
+
+def test_policy_baseline_does_not_create_a_false_change():
+    watchlist = build_watchlist({"candidate_details": [held_candidate()]}, now=NOW)
+    updated, first_report = recheck_watchlist(watchlist, NoChangeClient(), now=NOW)
+    updated, second_report = recheck_watchlist(updated, NoChangeClient(), now=NOW)
+    assert updated["items"][0]["status"] == "WATCHING"
+    assert first_report["pending_rechecks"] == {}
+    assert second_report["pending_rechecks"] == {}
+
+
+def test_live_policy_digest_change_creates_forced_recheck():
+    watchlist = build_watchlist({"candidate_details": [held_candidate()]}, now=NOW)
+    watchlist, _ = recheck_watchlist(watchlist, NoChangeClient(), now=NOW)
+    updated, report = recheck_watchlist(watchlist, PolicyChangeClient(), now=NOW)
+    assert updated["items"][0]["status"] == "POLICY_CHANGED"
+    assert report["pending_rechecks"]["a/b#1"]["reasonCode"] == ("POLICY_REVALIDATION_REQUIRED")
