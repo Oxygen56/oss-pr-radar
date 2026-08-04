@@ -1023,6 +1023,51 @@ class RadarLedger:
                 return None
             return dict(row) if row["status"] == "ACTIVE" else None
 
+    def publication_permit_for_effect(
+        self, permit_id: str, *, action: str
+    ) -> dict[str, Any] | None:
+        """Return a non-active permit only for an existing recoverable effect."""
+        current = datetime.now(UTC)
+        now = iso_z(current)
+        with self.transaction() as connection:
+            permit = connection.execute(
+                "SELECT * FROM publication_permits WHERE permit_id=?", (permit_id,)
+            ).fetchone()
+            if permit is None:
+                return None
+            if permit["status"] == "ACTIVE" and parse_time(permit["expires_at"]) <= current:
+                connection.execute(
+                    "UPDATE publication_permits SET status='EXPIRED',updated_at=? WHERE permit_id=?",
+                    (now, permit_id),
+                )
+                permit = connection.execute(
+                    "SELECT * FROM publication_permits WHERE permit_id=?", (permit_id,)
+                ).fetchone()
+            if permit["status"] not in {"ACTIVE", "EXPIRED", "CONSUMED"}:
+                return None
+            effect = connection.execute(
+                """SELECT status FROM publication_effects
+                   WHERE permit_id=? AND action=?
+                     AND status IN ('RECONCILE_REQUIRED','SUCCEEDED')
+                   ORDER BY updated_at DESC LIMIT 1""",
+                (permit_id, action),
+            ).fetchone()
+            if effect is None:
+                return None
+            if permit["status"] == "CONSUMED" and effect["status"] != "SUCCEEDED":
+                return None
+            return dict(permit)
+
+    def publication_effect_by_request(
+        self, *, permit_id: str, action: str, request_digest: str
+    ) -> dict[str, Any] | None:
+        effect_id = sha256_text(f"{permit_id}|{action}|{request_digest}")
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM publication_effects WHERE effect_id=?", (effect_id,)
+            ).fetchone()
+        return dict(row) if row else None
+
     def publication_effect(
         self,
         *,
@@ -1093,6 +1138,66 @@ class RadarLedger:
             ).fetchone()
             if permit is None or permit["status"] != "ACTIVE":
                 raise LedgerError("publication permit is not active")
+            connection.execute(
+                """UPDATE publication_permits SET status='CONSUMED',pr_url=?,updated_at=?
+                   WHERE permit_id=?""",
+                (pr_url, now, permit_id),
+            )
+            connection.execute(
+                """UPDATE publication_requests SET status='CONSUMED',updated_at=?
+                   WHERE request_id=?""",
+                (now, permit["request_id"]),
+            )
+            request = connection.execute(
+                "SELECT opportunity_key FROM publication_requests WHERE request_id=?",
+                (permit["request_id"],),
+            ).fetchone()
+            if request:
+                connection.execute(
+                    "UPDATE opportunities SET stage='PR_OPEN',updated_at=? WHERE key=?",
+                    (now, request["opportunity_key"]),
+                )
+                self._event(
+                    connection,
+                    request["opportunity_key"],
+                    "PR_OPEN",
+                    pr_url,
+                    {"permitId": permit_id, "prUrl": pr_url},
+                    now,
+                )
+
+    def succeed_pull_request_effect(
+        self,
+        *,
+        effect_id: str,
+        permit_id: str,
+        pr_url: str,
+        result: dict[str, Any],
+    ) -> None:
+        """Atomically reconcile a PR effect and consume its narrowly bound permit."""
+        now = iso_z(datetime.now(UTC))
+        with self.transaction() as connection:
+            effect = connection.execute(
+                "SELECT * FROM publication_effects WHERE effect_id=?", (effect_id,)
+            ).fetchone()
+            permit = connection.execute(
+                "SELECT * FROM publication_permits WHERE permit_id=?", (permit_id,)
+            ).fetchone()
+            if effect is None or permit is None:
+                raise LedgerError("publication effect or permit not found")
+            if effect["permit_id"] != permit_id or effect["action"] != "create_pr":
+                raise LedgerError("publication effect binding mismatch")
+            if effect["status"] not in {"ATTEMPTED", "RECONCILE_REQUIRED"}:
+                raise LedgerError("pull-request effect is not finalizable")
+            if permit["status"] not in {"ACTIVE", "EXPIRED"}:
+                raise LedgerError("publication permit is not consumable")
+            if permit["status"] == "EXPIRED" and effect["status"] != "RECONCILE_REQUIRED":
+                raise LedgerError("expired permit can only reconcile an ambiguous effect")
+            connection.execute(
+                """UPDATE publication_effects SET status='SUCCEEDED',result_json=?,updated_at=?
+                   WHERE effect_id=?""",
+                (canonical_json(result), now, effect_id),
+            )
             connection.execute(
                 """UPDATE publication_permits SET status='CONSUMED',pr_url=?,updated_at=?
                    WHERE permit_id=?""",

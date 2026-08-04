@@ -8,6 +8,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from time import sleep
 from typing import Any
 
 ROOT = Path(__file__).parents[1]
@@ -57,24 +58,30 @@ def remote_head(worktree: Path, remote: str, branch: str) -> str | None:
 
 
 def existing_pr(repo: str, head_owner: str, branch: str) -> dict[str, Any] | None:
-    proc = run(
-        [
-            "gh",
-            "pr",
-            "list",
-            "--repo",
-            repo,
-            "--head",
-            f"{head_owner}:{branch}",
-            "--state",
-            "all",
-            "--json",
-            "number,url,state,headRefOid,headRefName,headRepositoryOwner",
-            "--limit",
-            "5",
-        ],
-        cwd=ROOT,
-    )
+    proc = None
+    retry_delays = (1.0, 3.0)
+    for attempt in range(len(retry_delays) + 1):
+        proc = run(
+            [
+                "gh",
+                "api",
+                "--method",
+                "GET",
+                f"repos/{repo}/pulls",
+                "-f",
+                f"head={head_owner}:{branch}",
+                "-f",
+                "state=all",
+                "-f",
+                "per_page=5",
+            ],
+            cwd=ROOT,
+        )
+        if proc.returncode == 0:
+            break
+        if attempt < len(retry_delays):
+            sleep(retry_delays[attempt])
+    assert proc is not None
     if proc.returncode != 0:
         raise RuntimeError(f"pull-request lookup failed: {output(proc)[:240]}")
     try:
@@ -83,13 +90,35 @@ def existing_pr(repo: str, head_owner: str, branch: str) -> dict[str, Any] | Non
         raise RuntimeError("pull-request lookup returned invalid JSON") from exc
     matches = []
     for value in values if isinstance(values, list) else []:
-        owner = (value.get("headRepositoryOwner") or {}).get("login") or ""
-        if owner.casefold() == head_owner.casefold() and value.get("headRefName") == branch:
-            matches.append(value)
+        head = value.get("head") or {}
+        head_repo = head.get("repo") or {}
+        owner = (head_repo.get("owner") or {}).get("login") or (head.get("user") or {}).get(
+            "login", ""
+        )
+        normalized = {
+            "number": value.get("number"),
+            "url": value.get("html_url"),
+            "state": str(value.get("state") or "").upper(),
+            "headRefOid": head.get("sha"),
+            "headRefName": head.get("ref"),
+            "headRepositoryOwner": {"login": owner},
+        }
+        if owner.casefold() == head_owner.casefold() and head.get("ref") == branch:
+            matches.append(normalized)
     return next(
         (value for value in matches if str(value.get("state") or "").upper() == "OPEN"),
         matches[0] if matches else None,
     )
+
+
+def wait_for_existing_pr(repo: str, head_owner: str, branch: str) -> dict[str, Any] | None:
+    found = existing_pr(repo, head_owner, branch)
+    for delay in (1.0, 3.0, 7.0):
+        if found:
+            break
+        sleep(delay)
+        found = existing_pr(repo, head_owner, branch)
+    return found
 
 
 def ensure_permit(
@@ -99,8 +128,12 @@ def ensure_permit(
     issue_url: str,
     commit_sha: str,
     branch: str,
+    action: str | None = None,
+    live_recheck: bool = True,
 ) -> dict[str, Any]:
     permit = store.publication_permit_by_id(permit_id)
+    if not permit and not live_recheck and action:
+        permit = store.publication_permit_for_effect(permit_id, action=action)
     if not permit:
         raise RuntimeError("publication permit is missing, expired, or consumed")
     if (
@@ -109,10 +142,23 @@ def ensure_permit(
         or permit["branch"] != branch
     ):
         raise RuntimeError("publication permit binding mismatch")
-    audit = audit_publication_request(store, permit["request_id"])
-    if audit.status != "ALLOW":
-        raise RuntimeError(f"live publication recheck failed: {audit.reason}")
+    if live_recheck:
+        audit = audit_publication_request(store, permit["request_id"])
+        if audit.status != "ALLOW":
+            raise RuntimeError(f"live publication recheck failed: {audit.reason}")
     return permit
+
+
+def recheck_new_effect(store: RadarLedger, permit: dict[str, Any], effect_id: str) -> None:
+    audit = audit_publication_request(store, permit["request_id"])
+    if audit.status == "ALLOW":
+        return
+    store.complete_publication_effect(
+        effect_id,
+        status="FAILED",
+        result={"ok": False, "reason": "LIVE_RECHECK_FAILED", "detail": audit.reason},
+    )
+    raise RuntimeError(f"live publication recheck failed: {audit.reason}")
 
 
 def permit_publication(permit: dict[str, Any]) -> dict[str, str]:
@@ -128,18 +174,35 @@ def permit_publication(permit: dict[str, Any]) -> dict[str, str]:
 
 
 def begin_effect(
-    store: RadarLedger, permit_id: str, action: str, request: dict[str, Any]
+    store: RadarLedger,
+    permit_id: str,
+    action: str,
+    request: dict[str, Any],
+    *,
+    allow_create: bool,
 ) -> tuple[dict[str, Any], str]:
     digest = sha256_json(request)
-    effect = store.publication_effect(
-        permit_id=permit_id,
-        action=action,
-        request_digest=digest,
-    )
+    if allow_create:
+        effect = store.publication_effect(
+            permit_id=permit_id,
+            action=action,
+            request_digest=digest,
+        )
+    else:
+        effect = store.publication_effect_by_request(
+            permit_id=permit_id,
+            action=action,
+            request_digest=digest,
+        )
+        if effect is None:
+            raise RuntimeError("inactive permit does not match a recoverable publication effect")
+        effect = effect | {"created": False}
     if not effect.get("created"):
         status = effect["status"]
         if status == "SUCCEEDED":
             return effect, "already_succeeded"
+        if status == "RECONCILE_REQUIRED":
+            return effect, "reconcile_only"
         raise RuntimeError(f"previous {action} attempt requires reconciliation: {status}")
     return effect, "new"
 
@@ -156,6 +219,8 @@ def push(args: argparse.Namespace, store: RadarLedger) -> dict[str, Any]:
         issue_url=args.issue_url,
         commit_sha=args.commit_sha,
         branch=args.branch,
+        action="push",
+        live_recheck=False,
     )
     publication = permit_publication(permit)
     if args.head_owner.casefold() != publication["headOwner"].casefold():
@@ -170,14 +235,25 @@ def push(args: argparse.Namespace, store: RadarLedger) -> dict[str, Any]:
         "branch": args.branch,
         "remote": expected_fork,
     }
+    effect = None
+    state = None
+    if permit["status"] != "ACTIVE":
+        effect, state = begin_effect(store, args.permit_id, "push", request, allow_create=False)
+        if state == "already_succeeded":
+            return json.loads(effect["result_json"])
     current = remote_head(worktree, args.remote, args.branch)
-    effect, state = begin_effect(store, args.permit_id, "push", request)
-    if state == "already_succeeded":
-        return json.loads(effect["result_json"])
+    if effect is None:
+        effect, state = begin_effect(store, args.permit_id, "push", request, allow_create=True)
+    if permit["status"] != "ACTIVE" and state != "reconcile_only":
+        raise RuntimeError("expired permit cannot authorize a new push attempt")
+    if state == "new":
+        recheck_new_effect(store, permit, effect["effect_id"])
     if current == args.commit_sha:
         result = {"ok": True, "reconciled": True, "remoteSha": current}
         store.complete_publication_effect(effect["effect_id"], status="SUCCEEDED", result=result)
         return result
+    if state == "reconcile_only":
+        raise RuntimeError("previous push attempt is not visible on the exact remote branch")
     if current:
         result = {"ok": False, "reason": "REMOTE_BRANCH_CONFLICT", "remoteSha": current}
         store.complete_publication_effect(effect["effect_id"], status="FAILED", result=result)
@@ -219,6 +295,8 @@ def create_pr(args: argparse.Namespace, store: RadarLedger) -> dict[str, Any]:
         issue_url=args.issue_url,
         commit_sha=args.commit_sha,
         branch=args.branch,
+        action="create_pr",
+        live_recheck=False,
     )
     publication = permit_publication(permit)
     if args.head_owner.casefold() != publication["headOwner"].casefold():
@@ -241,10 +319,21 @@ def create_pr(args: argparse.Namespace, store: RadarLedger) -> dict[str, Any]:
         "title": args.title,
         "bodyDigest": sha256_json({"body": body}),
     }
+    effect = None
+    state = None
+    if permit["status"] != "ACTIVE":
+        effect, state = begin_effect(
+            store, args.permit_id, "create_pr", request, allow_create=False
+        )
+        if state == "already_succeeded":
+            return json.loads(effect["result_json"])
     found = existing_pr(args.repo, args.head_owner, args.branch)
-    effect, state = begin_effect(store, args.permit_id, "create_pr", request)
-    if state == "already_succeeded":
-        return json.loads(effect["result_json"])
+    if effect is None:
+        effect, state = begin_effect(store, args.permit_id, "create_pr", request, allow_create=True)
+    if permit["status"] != "ACTIVE" and state != "reconcile_only":
+        raise RuntimeError("expired permit cannot authorize a new PR attempt")
+    if state == "new":
+        recheck_new_effect(store, permit, effect["effect_id"])
     if found and str(found.get("state") or "").upper() != "OPEN":
         result = {"ok": False, "reason": "BRANCH_HAS_CLOSED_OR_MERGED_PR", "pr": found}
         store.complete_publication_effect(effect["effect_id"], status="FAILED", result=result)
@@ -253,6 +342,8 @@ def create_pr(args: argparse.Namespace, store: RadarLedger) -> dict[str, Any]:
         result = {"ok": False, "reason": "EXISTING_PR_HEAD_MISMATCH", "pr": found}
         store.complete_publication_effect(effect["effect_id"], status="FAILED", result=result)
         raise RuntimeError("existing PR head does not match the permitted commit")
+    if state == "reconcile_only" and not found:
+        raise RuntimeError("previous PR creation attempt is not visible for the exact head branch")
     proc = None
     if not found:
         proc = run(
@@ -275,7 +366,7 @@ def create_pr(args: argparse.Namespace, store: RadarLedger) -> dict[str, Any]:
             timeout=180,
         )
         try:
-            found = existing_pr(args.repo, args.head_owner, args.branch)
+            found = wait_for_existing_pr(args.repo, args.head_owner, args.branch)
         except RuntimeError as exc:
             result = {
                 "ok": False,
@@ -293,8 +384,12 @@ def create_pr(args: argparse.Namespace, store: RadarLedger) -> dict[str, Any]:
             "prUrl": found["url"],
             "state": found.get("state"),
         }
-        store.complete_publication_effect(effect["effect_id"], status="SUCCEEDED", result=result)
-        store.consume_publication_permit(args.permit_id, found["url"])
+        store.succeed_pull_request_effect(
+            effect_id=effect["effect_id"],
+            permit_id=args.permit_id,
+            pr_url=found["url"],
+            result=result,
+        )
         return result
     result = {
         "ok": False,
