@@ -10,6 +10,7 @@ import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from time import sleep
 
 ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT / "src"))
@@ -19,24 +20,32 @@ from oss_pr_radar.util import parse_time, sha256_json  # noqa: E402
 
 
 def runs(repo: str) -> list[dict]:
-    completed = subprocess.run(
-        [
-            "gh",
-            "api",
-            "-X",
-            "GET",
-            f"repos/{repo}/actions/workflows/radar.yml/runs",
-            "-f",
-            "per_page=20",
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    if completed.returncode != 0:
-        raise RuntimeError((completed.stderr or completed.stdout)[:300])
-    return json.loads(completed.stdout).get("workflow_runs") or []
+    last_error = "unknown GitHub API failure"
+    for delay in (0.0, 1.0, 3.0):
+        if delay:
+            sleep(delay)
+        try:
+            completed = subprocess.run(
+                [
+                    "gh",
+                    "api",
+                    "-X",
+                    "GET",
+                    f"repos/{repo}/actions/workflows/radar.yml/runs",
+                    "-f",
+                    "per_page=20",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if completed.returncode == 0:
+                return json.loads(completed.stdout).get("workflow_runs") or []
+            last_error = (completed.stderr or completed.stdout or last_error)[:300]
+        except (json.JSONDecodeError, OSError, subprocess.SubprocessError) as exc:
+            last_error = f"{type(exc).__name__}:{str(exc)[:240]}"
+    raise RuntimeError(last_error)
 
 
 def health(workflow_runs: list[dict], *, now: datetime | None = None) -> dict:
@@ -59,6 +68,10 @@ def health(workflow_runs: list[dict], *, now: datetime | None = None) -> dict:
     return {
         "healthy": not issues,
         "issues": issues,
+        "healthScope": "github_actions_schedule",
+        "githubNaturalScheduleHealthy": not issues,
+        "githubNaturalScheduleIssues": issues,
+        # Compatibility fields for older controller prompts and reports.
         "naturalScheduleHealthy": not issues,
         "naturalScheduleIssues": issues,
         "latestScheduleUrl": latest_schedule.get("html_url") if latest_schedule else None,

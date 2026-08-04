@@ -126,7 +126,7 @@ python scripts/local_dispatch_bridge.py alerts --min-age-minutes 70 --notify
 # Rolling controllable quality metrics
 python scripts/local_dispatch_bridge.py metrics --days 30
 
-# Independent natural-schedule check
+# Independent GitHub Actions schedule check (manual/fallback freshness is separate)
 python scripts/check_workflow_health.py --notify --repair
 ```
 
