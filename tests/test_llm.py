@@ -37,6 +37,7 @@ def test_reject_removes_candidate(tmp_path, monkeypatch):
         lambda payload: {"decision": "REJECT", "score": 2, "confidence": 0.9},
     )
     assert instance.evaluate_candidates([candidate()]) == []
+    assert instance.rejected_candidates["example/project#42"]["reason"] == "llm_reject"
 
 
 def test_llm_cannot_upgrade_human_review(tmp_path, monkeypatch):
@@ -98,3 +99,22 @@ def test_invalid_json_is_retried(tmp_path, monkeypatch):
     monkeypatch.setattr(instance, "_request_once", request_once)
     assert instance._request({})["score"] == 8
     assert calls == [0, 1]
+
+
+def test_non_blocking_unknown_does_not_downgrade_clean_candidate(tmp_path, monkeypatch):
+    instance = evaluator(tmp_path)
+    monkeypatch.setattr(
+        instance,
+        "_request",
+        lambda payload: {
+            "decision": "NEW_CLEAN_CANDIDATE",
+            "score": 8,
+            "confidence": 0.8,
+            "unknowns": ["Maintainer may prefer different wording"],
+        },
+    )
+
+    result = instance.evaluate_candidates([candidate()])
+
+    assert result[0]["gate_decision"] == "ALLOW_TO_WORK"
+    assert result[0]["auto_spawn"] is True

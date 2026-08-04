@@ -116,6 +116,51 @@ def test_outbox_mode_marks_candidates_as_queued(monkeypatch, tmp_path):
     assert seen["example/project#7"]["notification_digest"]
 
 
+def test_llm_rejection_is_persisted_as_terminal_seen_status(monkeypatch, tmp_path):
+    seen_path = tmp_path / "seen.json"
+    radar = Radar(
+        datetime(2026, 8, 4, tzinfo=UTC),
+        2,
+        seen_path,
+        "",
+        dry_run=True,
+        notify=False,
+    )
+    candidate = {
+        "repo": "example/project",
+        "num": 8,
+        "title": "Provider timeout",
+        "url": "https://github.com/example/project/issues/8",
+        "issue_updated": "2026-08-04T00:00:00Z",
+    }
+
+    class RejectingEvaluator:
+        @classmethod
+        def from_environment(cls, _path):
+            return cls()
+
+        def evaluate_candidates(self, candidates):
+            self.rejected_candidates = {
+                "example/project#8": {
+                    "reason": "llm_reject",
+                    "candidate": candidates[0],
+                    "review": {"decision": "REJECT", "score": 3},
+                }
+            }
+            return []
+
+    monkeypatch.setattr(radar, "collect_items", lambda: {"example/project#8": {}})
+    monkeypatch.setattr(radar, "shortlist", lambda _items: ([candidate], 1, 1))
+    monkeypatch.setattr(scanner, "DeepSeekEvaluator", RejectingEvaluator)
+
+    result = radar.run(None)
+    seen = json.loads(seen_path.read_text(encoding="utf-8"))
+
+    assert seen["example/project#8"]["status"] == "llm_reject"
+    assert result["forced_recheck_results"] == {}
+    assert result["rejection_summary"]["llm_reject"] == 1
+
+
 def test_seen_deferred_items_are_tracked_as_forced_rechecks(monkeypatch, tmp_path):
     seen_path = tmp_path / "seen.json"
     seen_path.write_text(

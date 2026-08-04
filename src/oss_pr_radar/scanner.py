@@ -3255,6 +3255,24 @@ class Radar:
             candidates, qualified_repos, inspected = self.shortlist(items)
             evaluator = DeepSeekEvaluator.from_environment(BASE_DIR / "state" / "llm_cache.json")
             candidates = evaluator.evaluate_candidates(candidates)
+            for key, rejected in getattr(evaluator, "rejected_candidates", {}).items():
+                candidate = rejected["candidate"]
+                reason = rejected["reason"]
+                review = rejected["review"]
+                self.issue_outcomes[key] = {"status": "rejected", "reason": reason}
+                self.seen[key] = {
+                    "analyzed": self.analyzed,
+                    "status": reason,
+                    "title": candidate.get("title") or key,
+                    "url": candidate.get("url"),
+                    "issue_updated": candidate.get("issue_updated") or "",
+                    "llm_decision": review.get("decision"),
+                    "llm_score": review.get("score"),
+                }
+                self.rejection_summary[reason] = int(self.rejection_summary.get(reason) or 0) + 1
+            self.rejection_summary = dict(
+                sorted(self.rejection_summary.items(), key=lambda row: (-row[1], row[0]))
+            )
             notification_candidates = []
             for candidate in candidates:
                 key = f"{candidate['repo']}#{candidate['num']}"
