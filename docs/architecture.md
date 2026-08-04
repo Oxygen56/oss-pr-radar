@@ -14,6 +14,9 @@ timing are external labels, not the north-star metric.
    artifact identifies fixed, queried, matched, qualified, and inspected repos.
 2. **Evidence** reads every comment and timeline page, recursive policy files,
    related PR details/files/checks/reviews, issue ownership, and hardware scope.
+   Unlinked PRs are held for review when a stack-trace path or distinctive file
+   basename overlaps the PR diff and the issue/PR semantics also overlap;
+   generic names such as `utils.py` never establish coverage by themselves.
 3. **Decision** applies hard gates first. DeepSeek may reject, downgrade, or
    classify semantic competition; it cannot produce a positive authorization.
 4. **Cloud handoff** validates the immutable report and signs a promptless,

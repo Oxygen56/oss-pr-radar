@@ -589,6 +589,28 @@ ISSUE_CODE_PATH_RE = re.compile(
     r"\b(?:[A-Za-z0-9_.-]+/)+(?:[A-Za-z0-9_.-]+\.(?:py|rs|ts|tsx|js|jsx|java|cs|cc|cpp|c|h|hpp))\b",
     re.I,
 )
+ISSUE_CODE_FILE_RE = re.compile(
+    r"(?<![A-Za-z0-9_.-])([A-Za-z0-9_-]+\.(?:py|rs|ts|tsx|js|jsx|java|cs|cc|cpp|c|h|hpp))(?![A-Za-z0-9_.-])",
+    re.I,
+)
+GENERIC_CODE_BASENAMES = {
+    "__init__.py",
+    "api.py",
+    "base.py",
+    "cli.py",
+    "client.py",
+    "common.py",
+    "config.py",
+    "constants.py",
+    "index.js",
+    "index.ts",
+    "main.py",
+    "model.py",
+    "server.py",
+    "test.py",
+    "types.ts",
+    "utils.py",
+}
 RELATED_FAILURE_SIGNATURE_RE = re.compile(
     r"\b(?:nvcc|cicc|ptxas|clang|gcc|segmentation\s+fault|bus\s+error|"
     r"illegal\s+memory\s+access|core\s+dumped|signal\s+\d+)\b|"
@@ -721,12 +743,40 @@ def semantic_distinctive_overlap(left: str, right: str) -> set[str]:
     }
 
 
+def issue_code_paths(text: str) -> set[str]:
+    paths = {match.casefold().lstrip("./") for match in ISSUE_CODE_PATH_RE.findall(text)}
+    paths.update(match.casefold() for match in ISSUE_CODE_FILE_RE.findall(text))
+    return paths
+
+
+def overlapping_issue_pr_paths(issue_context: str, file_paths: list[str]) -> list[str]:
+    issue_paths = issue_code_paths(issue_context)
+    overlaps: set[str] = set()
+    for file_path in file_paths:
+        normalized_file = file_path.casefold().lstrip("./")
+        file_basename = normalized_file.rsplit("/", 1)[-1]
+        for issue_path in issue_paths:
+            issue_basename = issue_path.rsplit("/", 1)[-1]
+            exact_or_suffix = (
+                normalized_file == issue_path
+                or normalized_file.endswith(f"/{issue_path}")
+                or issue_path.endswith(f"/{normalized_file}")
+            )
+            distinctive_basename = (
+                file_basename == issue_basename and file_basename not in GENERIC_CODE_BASENAMES
+            )
+            if exact_or_suffix or distinctive_basename:
+                overlaps.add(file_path)
+                break
+    return sorted(overlaps)
+
+
 def related_issue_stack_signatures(text: str) -> set[str]:
     signatures = {
         "failure:" + re.sub(r"\s+", "_", match.group(0).casefold())
         for match in RELATED_FAILURE_SIGNATURE_RE.finditer(text)
     }
-    for raw_path in ISSUE_CODE_PATH_RE.findall(text):
+    for raw_path in issue_code_paths(text):
         parts = raw_path.casefold().split("/")
         # Drop host-specific prefixes while retaining package/module identity.
         if "site-packages" in parts:
@@ -2345,8 +2395,7 @@ class Radar:
 
         keyword_hits, code_like_overlap = semantic_overlap_strength(issue_title, text)
         distinctive_overlap = semantic_distinctive_overlap(issue_title, text)
-        issue_paths = {match.lower() for match in ISSUE_CODE_PATH_RE.findall(issue_context)}
-        overlapping_paths = sorted(path for path in file_paths if path.lower() in issue_paths)
+        overlapping_paths = overlapping_issue_pr_paths(issue_context, file_paths)
         semantic_overlap = (bool(overlapping_paths) and keyword_hits >= 2) or (
             keyword_hits >= 3 and code_like_overlap and len(distinctive_overlap) >= 2
         )

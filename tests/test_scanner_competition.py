@@ -137,3 +137,46 @@ def test_nontechnical_triage_failure_does_not_create_pr_competition(monkeypatch,
     assert result["status"] == "covered_strong"
     assert result["prs"][0]["ignored_nontechnical_failed_checks"] == ["triage"]
     assert "存在失败 CI/check" not in result["prs"][0]["gaps"]
+
+
+def test_stack_trace_basename_and_semantics_block_unlinked_covering_pr(monkeypatch, tmp_path):
+    instance = radar(tmp_path)
+    monkeypatch.setattr(instance, "open_pr_hits", lambda *args: [{"number": 1439}])
+    monkeypatch.setattr(
+        instance,
+        "pr_detail",
+        lambda *args: {
+            "number": 1439,
+            "title": "Add input layer to profiling plots (fixes #404)",
+            "url": "https://github.com/fastmachinelearning/hls4ml/pull/1439",
+            "body": (
+                "activations_hlsmodel now handles multi-input X formats. "
+                "Lists are converted to contiguous arrays before model.trace."
+            ),
+            "state": "OPEN",
+            "isDraft": False,
+            "updatedAt": "2026-02-16T10:35:50Z",
+            "files": [
+                {"path": "hls4ml/model/profiling.py"},
+                {"path": "test/pytest/test_profiling_input_layer.py"},
+            ],
+            "additions": 201,
+            "deletions": 4,
+            "changedFiles": 2,
+            "statusCheckRollup": [{"name": "pre-commit", "conclusion": "SUCCESS"}],
+            "reviewDecision": "REVIEW_REQUIRED",
+            "comments": [],
+            "closingIssuesReferences": [{"number": 404}],
+        },
+    )
+
+    result = instance.assess_open_prs(
+        "fastmachinelearning/hls4ml",
+        1515,
+        "profiling.numerical() fails for multi-input models",
+        'File ".../profiling.py", line 330, in activations_hlsmodel\n'
+        "model.trace(np.ascontiguousarray(X))",
+    )
+
+    assert result["status"] == "semantic_overlap_requires_review"
+    assert result["prs"][0]["overlapping_paths"] == ["hls4ml/model/profiling.py"]
