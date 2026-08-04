@@ -1,5 +1,5 @@
 {
-  "digest": "539c7b6bfd8fc307a864e314f2dbdccd80a174d6cfee484964f72bcf08f6e946",
+  "digest": "8440fb332fe32c684d45e6a5cd48d77c342f88947a0b8b3e03082fd4beb4cb8e",
   "events": [
     {
       "attempts": 1,
@@ -5688,9 +5688,251 @@
       "runId": "watch-1785872857",
       "sentAt": "2026-08-04T19:55:26.158807Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "mastra-ai/mastra#20701"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[mastra-ai/mastra#20701](https://github.com/mastra-ai/mastra/issues/20701) [BUG] When throwing an error in a tool, the state of that message is `output-available` not `output-error`**\n建议：PR_COMPETITION_OPPORTUNITY | 分数：11\n价值：Issue reports a clear user-visible bug with a public repro, but root cause is not identified. Existing PR #20705 directly addresses it but has failing CI and lacks maintainer approval, leaving room for a stronger PR with better tests and root-cause analysis.\n改动：core message state handling for tool errors；tests covering tool error state transitions\n验证：Use the provided minimal repro to create a failing test asserting output-error state；Run targeted unit tests for the relevant core module\n风险：Potential overlap with existing PR #20705; need to ensure differentiation；May require maintainer design confirmation on state semantics\n竞争：已有直接关联但证据不完整的 PR #20705：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：先复现 issue，再逐项对比已有 PR 的缺口；只有能提供更小改动、更强测试或更完整边界覆盖时才开 PR。\n证据：复现信号 5，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "green",
+          "title": {
+            "content": "OSS PR Radar: 可立即执行",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T20:04:32.966151Z",
+      "eventId": "eb3e4f37ee77f5ca1b6a6812f28e3f7a20dd20a8c5e08aec54137e491cd467b9",
+      "idempotencyKey": "eb3e4f37ee77f5ca1b6a6812f28e3f7a20dd20a8c5e08aec54",
+      "kind": "immediate",
+      "runId": "scan-20260804T200116Z-3b3dff20b624",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "mastra-ai/mastra#20672",
+        "mastra-ai/mastra#20663",
+        "BerriAI/litellm#35789",
+        "sgl-project/sglang#33577",
+        "vllm-project/vllm#50159",
+        "PrefectHQ/fastmcp#4744"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[mastra-ai/mastra#20672](https://github.com/mastra-ai/mastra/issues/20672) [BUG] `@mastra/inngest` resume events ship full stepResults/initialState copies, making resume impossible once durable state accumulates**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue provides a detailed root cause and fix direction, but the deterministic gate requires HUMAN_REVIEW and existing PR #19217 overlaps semantically, needing maintainer comparison before new work.\n改动：workflows/inngest/src/run.ts；workflows/inngest/src/execution-engine.ts；workflows/inngest/src/workflow.ts；workflows/inngest/src/durable-agent/create-inngest-agent.ts\n验证：Add regression tests asserting resume event payload contains no stepResults/initialState copies；Add end-to-end suspend→resume round-trip test with snapshot rehydration\n风险：Existing PR #19217 may already address the root cause; need to compare implementation boundaries；Backward compatibility handling for in-flight events during deploys\n竞争：发现 PR #19217 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 4，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[mastra-ai/mastra#20663](https://github.com/mastra-ai/mastra/issues/20663) [BUG] `dataset.startExperiment` with a Memory-enabled agent target throws `AGENT_MEMORY_MISSING_RESOURCE_ID` — no way to supply `threadId`**\n建议：WAIT_MAINTAINER | 分数：15\n价值：The issue clearly describes a bug with a root cause and reproduction, but the maintainer has labeled it for triage and requested a minimal reproduction, indicating design confirmation is needed. The proposed fixes (auto-create thread, expose threadId option, or ignore lone resourceId) have different API implications, so maintainer direction is required before implementation.\n改动：Modify dataset.startExperiment agent target to handle memory-enabled agents, likely by auto-creating a thread or passing threadId/memory options.\n验证：Add a failing test that reproduces the issue using the provided minimal reproduction, then run the relevant package tests.\n风险：Changing behavior to ignore lone resourceId could mask user errors; auto-creating threads may have unintended side effects.\n竞争：仅发现未直接关联、无代码路径或强机制重合的 PR #20136；保留为搜索上下文，不阻止实现\n下一步：先在 issue 下请求分配/确认方案，获批后再开 PR。\n证据：复现信号 3，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#35789](https://github.com/BerriAI/litellm/issues/35789) [Bug]: Expired UI session tokens pollute SpendLogs — dashboard info-route 401s are recorded as failed LLM requests**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue provides a clear root cause and reproduction, but the supplied gate decision is HUMAN_REVIEW and the related issue audit failed (timeout). An existing PR #35791 directly addresses the issue but has failing CI checks, making it a weak competition opportunity. Maintainer confirmation is needed before starting work.\n改动：litellm/proxy/utils.py；litellm/proxy/hooks/proxy_track_cost_callback.py\n验证：Reproduce by setting LITELLM_UI_SESSION_DURATION=10m, letting session expire, and observing SpendLogs rows; add regression test for info-route failures from UI session tokens not being logged.\n风险：Potential behavior change for info-route failures from real virtual keys if not carefully scoped.；Existing PR #35791 may already cover the fix; competing could be redundant.\n竞争：已有直接关联但证据不完整的 PR #35791：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 3，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33577](https://github.com/sgl-project/sglang/issues/33577) [Bug] DCP a2a backend NCCL crash at conc=64 (​unhandled cuda error​)**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue reports two concrete bugs with root causes and reproduction steps, but the existing PR #33592 is weak (no tests, failing CI) and maintainer approval/design confirmation is missing. The deterministic gate says HUMAN_REVIEW, so we must wait for maintainer input.\n改动：Fix pynccl enablement in _all_to_all_single；Account for symmetric memory pool allocation in memory budget\n验证：Reproduce with 64 concurrent requests and the given flags; verify no NCCL crash and no OOM；Add regression tests for pynccl state and memory accounting\n风险：Existing PR may be superseded; maintainer may have design preferences；Hardware-dependent reproduction may be flaky\n竞争：已有直接关联但证据不完整的 PR #33592：缺少测试文件; 存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 3，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50159](https://github.com/vllm-project/vllm/issues/50159) [Bug]: Model Runner V2 + Gemma-4: memory profiler reports ~0.9 GiB more \"available KV\" than MRv1 → no runtime headroom → CUDA OOM under saturating load (no spec involved); with EAGLE it crashes earlier at cudagraph capture (stable-ABI aten::empty)**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue provides strong evidence of a real bug: MRv2 reports more available KV memory than runtime can back, causing OOM under load; root cause is likely CUDA graph capture headroom accounting, but not fully confirmed. Existing draft PR #49233 attempts a fix but is incomplete and has failed CI. Maintainer direction is unclear; issue needs maintainer confirmation before work starts.\n改动：Fix CUDA graph memory reservation in MRv2 to match MRv1 headroom；Adjust memory profiler to account for actual capture overhead；Possibly add validation for speculative decoding memory requirements\n验证：Reproduce with Gemma-4 31B on 2x RTX 3090 using provided config and saturating load；A/B test MRv1 vs MRv2 with CUDA graphs and eager mode to measure KV capacity delta；Test draft PR #49233 on the deterministic OOM rig to verify fix\n风险：Fix may reduce available KV memory, impacting performance；Changes to memory profiler could affect other models/configurations；Speculative decoding fix may be complex and require separate handling\n竞争：已有直接关联但证据不完整的 PR #49233：存在失败 CI/check; 仍是 draft；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 7，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[PrefectHQ/fastmcp#4744](https://github.com/PrefectHQ/fastmcp/issues/4744) serialize_by_alias=False ignored for nested Pydantic models**\n建议：WAIT_MAINTAINER | 分数：10\n价值：Issue reports a clear bug with a minimal repro, but the existing PR #4751 is closed with failed checks and changes requested, and the gate requires human review. No maintainer confirmation or design direction is available.\n改动：Fix serialization of nested Pydantic models in dict return values to respect serialize_by_alias=False；Add regression test for nested model in dict\n验证：Use the provided minimal repro to create a failing test；Run targeted unit tests for serialization and tool return handling\n风险：Potential behavior change affecting existing users relying on alias serialization；Need to coordinate with maintainer on preferred fix approach\n竞争：发现关键词相关 PR，但未确认直接覆盖：#4751；需人工核对\n下一步：已有 PR 但强度不足；先看维护者规则和 issue 讨论，必要时先请求确认方案或分配。\n证据：复现信号 2，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T20:04:33.042749Z",
+      "eventId": "fb869c67becfa0140a3b4fcfc4892b96598e1d590ef832a89b9d864a798b0ac5",
+      "idempotencyKey": "fb869c67becfa0140a3b4fcfc4892b96598e1d590ef832a89b",
+      "kind": "review",
+      "runId": "scan-20260804T200116Z-3b3dff20b624",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "openabdev/openab#1464",
+        "openclaw/openclaw#92199",
+        "pydantic/pydantic-ai#7108",
+        "vllm-project/vllm#50719",
+        "vllm-project/vllm#50881",
+        "vllm-project/vllm#50948",
+        "vllm-project/vllm#51035",
+        "BerriAI/litellm#35780",
+        "PrefectHQ/fastmcp#4748"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[openabdev/openab#1464](https://github.com/openabdev/openab/issues/1464) bug(gateway/feishu): v0.9.0 unified mode broke all Feishu streaming modes + delete recovery**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[openclaw/openclaw#92199](https://github.com/openclaw/openclaw/issues/92199) [Bug]: [ACP] Text before tool calls is lost in WeChat (intermediate messages dropped, not merged)**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[pydantic/pydantic-ai#7108](https://github.com/pydantic/pydantic-ai/issues/7108) `include_binary_content=False` is not honored for tool returns, `final_result`, or output-function arguments**\n建议：WAIT_MAINTAINER\n价值：OWNERSHIP_CHANGED\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50719](https://github.com/vllm-project/vllm/issues/50719) [Bug][PD][Mooncake] Decode requests stuck in WAITING_FOR_REMOTE_KVS and fail with Timeout waiting for P side ready**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50881](https://github.com/vllm-project/vllm/issues/50881) [Bug]: MiniMax-M3 fp8 KV cache on SM80 (A100/A800): coherent with --enforce-eager, garbage under CUDA graphs — root cause + working fix**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50948](https://github.com/vllm-project/vllm/issues/50948) [Bug]: Qwen parser routes grammar-constrained JSON to reasoning when `enable_in_reasoning=true`**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#51035](https://github.com/vllm-project/vllm/issues/51035) [Bug]: DeepSeek-V4 sparse-decode MLA kernel wedges in a spin loop with no timeout and no diagnostic (device-level capture on sm_103; surfaces 300 s later as an unrelated DeepGEMM assert)**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#35780](https://github.com/BerriAI/litellm/issues/35780) [Bug]: Responses API sends metadata to a strict OpenAI-compatible upstream although the client does not pass metadata**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[PrefectHQ/fastmcp#4748](https://github.com/PrefectHQ/fastmcp/issues/4748) OAuth consent cookie is rejected behind Azure Functions**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T20:04:33.132496Z",
+      "eventId": "27ecd22d2fef8bfe4dfc4cda7fb7a114ba58421978dcf1002e7337ec3e6b235d",
+      "idempotencyKey": "27ecd22d2fef8bfe4dfc4cda7fb7a114ba58421978dcf1002e",
+      "kind": "watch",
+      "runId": "watch-1785873631",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-04T19:54:55.492479Z",
+  "generatedAt": "2026-08-04T20:04:33.226666Z",
   "newEventCount": 0,
   "version": "notification_outbox_v1"
 }

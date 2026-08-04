@@ -1303,6 +1303,30 @@
     ],
     "why": "The issue is a real user-facing bug with a clear repro and fresh evidence, but the deterministic gate requires HUMAN_REVIEW and the maintainer bot explicitly states a product decision is needed on cross-channel delivery policy. Existing PRs are closed/unmerged and do not settle the design. A new PR would be premature without maintainer direction."
   },
+  "497956747ca2caf0ab86b8f812d382c3d43b8cdcc8ff113d26359603706dfec4": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify dataset.startExperiment agent target to handle memory-enabled agents, likely by auto-creating a thread or passing threadId/memory options."
+    ],
+    "risks": [
+      "Changing behavior to ignore lone resourceId could mask user errors; auto-creating threads may have unintended side effects."
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "test_plan": [
+      "Add a failing test that reproduces the issue using the provided minimal reproduction, then run the relevant package tests."
+    ],
+    "unknowns": [
+      "Maintainer's preferred design for handling memory in experiments; whether a minimal reproduction has been provided."
+    ],
+    "why": "The issue clearly describes a bug with a root cause and reproduction, but the maintainer has labeled it for triage and requested a minimal reproduction, indicating design confirmation is needed. The proposed fixes (auto-create thread, expose threadId option, or ignore lone resourceId) have different API implications, so maintainer direction is required before implementation."
+  },
   "4b3aee146f076609481d5cc61c8f1cb6b982b62e131e3d3336feba1ff85f5671": {
     "confidence": 0.7,
     "contradictions": [],
@@ -1664,6 +1688,34 @@
     ],
     "why": "The issue provides a clear root cause (AOT cache key ignores limit_mm_per_prompt/multimodal_config) and a reproducible crash, but the deterministic gate requires HUMAN_REVIEW and an existing PR (#50908) already attempts a fix with failing CI. Maintainer direction is needed to avoid duplicate or conflicting work."
   },
+  "586eaf6b21103c7d6f23544acd4b5c3e4ec6df55a491a4031ea5657e59f508f4": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Gate decision HUMAN_REVIEW conflicts with NEW_CLEAN_CANDIDATE."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "litellm/proxy/utils.py",
+      "litellm/proxy/hooks/proxy_track_cost_callback.py"
+    ],
+    "risks": [
+      "Potential behavior change for info-route failures from real virtual keys if not carefully scoped.",
+      "Existing PR #35791 may already cover the fix; competing could be redundant."
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Reproduce by setting LITELLM_UI_SESSION_DURATION=10m, letting session expire, and observing SpendLogs rows; add regression test for info-route failures from UI session tokens not being logged."
+    ],
+    "unknowns": [
+      "Maintainer stance on the proposed fix and whether PR #35791 is salvageable."
+    ],
+    "why": "Issue provides a clear root cause and reproduction, but the supplied gate decision is HUMAN_REVIEW and the related issue audit failed (timeout). An existing PR #35791 directly addresses the issue but has failing CI checks, making it a weak competition opportunity. Maintainer confirmation is needed before starting work."
+  },
   "59d8d15af87f333e2a0b9cc214dd240ad387204e6a4258d3653a6baa77a0a2cb": {
     "confidence": 0.7,
     "contradictions": [],
@@ -1805,6 +1857,40 @@
       "Whether the existing PR #50882 can be improved or superseded"
     ],
     "why": "Issue provides a detailed root cause and a working fix, but the deterministic gate requires HUMAN_REVIEW and the related issue audit timed out. Existing PR #50882 is weak (draft, no tests, failing CI), but a materially better PR is plausible. However, the lack of maintainer confirmation and the unresolved audit block actionability."
+  },
+  "602ffadc5009d1d939d921c6cef24c451087f7a3cb999bfa1737c780dd9ed33a": {
+    "confidence": 0.8,
+    "contradictions": [
+      "None"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix CUDA graph memory reservation in MRv2 to match MRv1 headroom",
+      "Adjust memory profiler to account for actual capture overhead",
+      "Possibly add validation for speculative decoding memory requirements"
+    ],
+    "risks": [
+      "Fix may reduce available KV memory, impacting performance",
+      "Changes to memory profiler could affect other models/configurations",
+      "Speculative decoding fix may be complex and require separate handling"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "test_plan": [
+      "Reproduce with Gemma-4 31B on 2x RTX 3090 using provided config and saturating load",
+      "A/B test MRv1 vs MRv2 with CUDA graphs and eager mode to measure KV capacity delta",
+      "Test draft PR #49233 on the deterministic OOM rig to verify fix"
+    ],
+    "unknowns": [
+      "Maintainer confirmation on preferred fix direction (e.g., #49233 vs #47363)",
+      "Whether the eager residual delta is a separate bug needing fix",
+      "Exact root cause of the 0.9 GiB gap on the original issue vs 0.59 GiB in follow-up"
+    ],
+    "why": "Issue provides strong evidence of a real bug: MRv2 reports more available KV memory than runtime can back, causing OOM under load; root cause is likely CUDA graph capture headroom accounting, but not fully confirmed. Existing draft PR #49233 attempts a fix but is incomplete and has failed CI. Maintainer direction is unclear; issue needs maintainer confirmation before work starts."
   },
   "62f7e949f9b37e73e95c2d0803e0feb1b48c3259960172ce67b5995842d4adac": {
     "confidence": 0.7,
@@ -2400,6 +2486,34 @@
       "Maintainer preference on which option to implement (comment suggests ongoing discussion)"
     ],
     "why": "Issue identifies a clear inconsistency in inference_mode usage between warmup/autotune and real forward, with a concrete reproduction and proposed options. However, open PR lookup timed out and related issue audit failed, so duplicate implementation cannot be excluded. Maintainer comment indicates design discussion is ongoing, requiring maintainer input."
+  },
+  "859eeae931e4455362863663b531c751268f70a1afe11a115a9f817793932d8e": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix serialization of nested Pydantic models in dict return values to respect serialize_by_alias=False",
+      "Add regression test for nested model in dict"
+    ],
+    "risks": [
+      "Potential behavior change affecting existing users relying on alias serialization",
+      "Need to coordinate with maintainer on preferred fix approach"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "test_plan": [
+      "Use the provided minimal repro to create a failing test",
+      "Run targeted unit tests for serialization and tool return handling"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred fix design",
+      "Status of PR #4751 and whether it can be revived or superseded"
+    ],
+    "why": "Issue reports a clear bug with a minimal repro, but the existing PR #4751 is closed with failed checks and changes requested, and the gate requires human review. No maintainer confirmation or design direction is available."
   },
   "85b09f86fc32fe02ffa94c6d230ded8ee5de4a891d93472e8abae497f74716f4": {
     "confidence": 0.8,
@@ -3007,6 +3121,35 @@
       "Whether the repository's AI disclosure policy can be satisfied for automated contribution"
     ],
     "why": "The issue provides a clear, reproducible bug with a precise root cause: the streaming path in the ollama/ completion transformation never reconstructs tool calls, unlike the non-streaming path. However, the deterministic gate is HUMAN_REVIEW, and open PR and related issue lookups timed out, so we cannot rule out existing implementations or maintainer preferences. The submission policy also conflicts with AI disclosure requirements, blocking automatic action."
+  },
+  "ab7d850da52fa1a34aa5ac2260e7d5cf149ca48a5606b2340d7427caf97ba8dc": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "workflows/inngest/src/run.ts",
+      "workflows/inngest/src/execution-engine.ts",
+      "workflows/inngest/src/workflow.ts",
+      "workflows/inngest/src/durable-agent/create-inngest-agent.ts"
+    ],
+    "risks": [
+      "Existing PR #19217 may already address the root cause; need to compare implementation boundaries",
+      "Backward compatibility handling for in-flight events during deploys"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Add regression tests asserting resume event payload contains no stepResults/initialState copies",
+      "Add end-to-end suspend→resume round-trip test with snapshot rehydration"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a new PR or extending PR #19217"
+    ],
+    "why": "Issue provides a detailed root cause and fix direction, but the deterministic gate requires HUMAN_REVIEW and existing PR #19217 overlaps semantically, needing maintainer comparison before new work."
   },
   "abd0dc83190a49c628ea83f21d4e43004b4b2cac3d2f627613be493686ec1dd3": {
     "confidence": 0.85,
@@ -3709,6 +3852,34 @@
     ],
     "why": "Issue reports a deterministic deadlock in fastsafetensors ParallelLoader when loading draft models under pipeline parallelism, with a clear root cause (hard-coded WORLD group) and a suggested fix. However, the deterministic gate is HUMAN_REVIEW, and there is an existing PR (#50514) with failed CI that may already address the area. Maintainer has acknowledged the issue but no design confirmation or assignment yet."
   },
+  "d90931ce4843cfecd8a001954c60a99fdce15220b3581596f86a4ce0f7c06f5a": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix pynccl enablement in _all_to_all_single",
+      "Account for symmetric memory pool allocation in memory budget"
+    ],
+    "risks": [
+      "Existing PR may be superseded; maintainer may have design preferences",
+      "Hardware-dependent reproduction may be flaky"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Reproduce with 64 concurrent requests and the given flags; verify no NCCL crash and no OOM",
+      "Add regression tests for pynccl state and memory accounting"
+    ],
+    "unknowns": [
+      "Maintainer confirmation on approach",
+      "Whether existing PR can be improved or should be replaced"
+    ],
+    "why": "Issue reports two concrete bugs with root causes and reproduction steps, but the existing PR #33592 is weak (no tests, failing CI) and maintainer approval/design confirmation is missing. The deterministic gate says HUMAN_REVIEW, so we must wait for maintainer input."
+  },
   "df415d8405e9e398e78a2e1e0ac591cd9353fd22f263ec5549f4fe01c26291b5": {
     "confidence": 0.85,
     "contradictions": [],
@@ -4100,6 +4271,34 @@
       "Maintainer's preferred cross-channel delivery policy"
     ],
     "why": "Issue is a real user-facing bug with fresh live repro evidence, but the deterministic gate requires HUMAN_REVIEW and maintainer decision on cross-channel delivery policy is unresolved. Existing PRs are closed/unmerged and do not settle the policy."
+  },
+  "f45c6fcbaca825d50f87627a5719ad5bdca321bbc991bf8e57a1910f6c4a2729": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "core message state handling for tool errors",
+      "tests covering tool error state transitions"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #20705; need to ensure differentiation",
+      "May require maintainer design confirmation on state semantics"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "test_plan": [
+      "Use the provided minimal repro to create a failing test asserting output-error state",
+      "Run targeted unit tests for the relevant core module"
+    ],
+    "unknowns": [
+      "Exact code path causing the incorrect state",
+      "Whether maintainers prefer a specific fix approach"
+    ],
+    "why": "Issue reports a clear user-visible bug with a public repro, but root cause is not identified. Existing PR #20705 directly addresses it but has failing CI and lacks maintainer approval, leaving room for a stronger PR with better tests and root-cause analysis."
   },
   "f653ec6d3be35a9d693773c9a54c0c573c9ed31a5eb264ad38ba6fbedbd949fb": {
     "confidence": 0.8,
