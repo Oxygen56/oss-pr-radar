@@ -261,6 +261,36 @@
     ],
     "why": "Issue describes a clear deadlock with root cause in fastsafetensors using WORLD group for PP-scoped draft loads, but lacks maintainer confirmation and has an existing PR (#50514) with failed CI that may already address the area."
   },
+  "1ba8ba55a525ba4ec5911bdf810a6cd058fe4231da4ad21d78f3a52af4ae6ebd": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "UnifiedGatewayAdapter delete_message override",
+      "Idle reaper vs open turn fix",
+      "post/auto keep_full_text regression fix"
+    ],
+    "risks": [
+      "Potential duplicate with PR #1458",
+      "Design confirmation needed for idle reaper and keep_full_text changes"
+    ],
+    "root_cause_clarity": "high",
+    "score": 13,
+    "test_plan": [
+      "Reproduce post/auto fake streaming with >3s prompt",
+      "Reproduce card mode idle reaper drop with sleep 15",
+      "Reproduce delete recovery with 20-edit cap"
+    ],
+    "unknowns": [
+      "Maintainer preference on proposed fix scope",
+      "Whether PR #1458 already addresses root cause"
+    ],
+    "why": "Issue provides detailed root cause and reproduction, but existing PR #1458 overlaps semantically and requires maintainer review to avoid duplicate work. Deterministic gate says HUMAN_REVIEW."
+  },
   "1cf9e126e4eb8756e973dfc4e93dafa14dab8e227d2b2e88dc9719fc39392f54": {
     "confidence": 0.85,
     "contradictions": [
@@ -1061,6 +1091,36 @@
     ],
     "why": "Issue reports a high-impact Windows bug where install/uninstall/doctor/serve all fail with 'active CBM sessions and operations could not be stopped safely', with independent reproduction and a working recovery procedure. Root cause is likely in the activation transaction or daemon startup logic on Windows, possibly related to file access or session handling. No competing PR exists, and maintainer has acknowledged the bug as high priority."
   },
+  "7b935e2e33e35b2822a3f75e7d01de96225fdc9b91f6c03c09b500e0c96d7b6f": {
+    "confidence": 0.7,
+    "contradictions": [
+      "PR #50514 references issue but semantic_overlap is false; issue_body_link is false"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Scope process group to weight-loading participants in fastsafetensors_weights_iterator",
+      "Add fallback to plain safetensors for sub-engine loads if scoping unavailable"
+    ],
+    "risks": [
+      "Changing process group scoping may affect other load paths",
+      "Existing PR #50514 may already address this; competition may be wasted"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 11,
+    "test_plan": [
+      "Reproduce deadlock with TP8xPP2 and fastsafetensors draft load",
+      "Add regression test for PP-scoped draft load with fastsafetensors"
+    ],
+    "unknowns": [
+      "Whether maintainers have design preference for fix",
+      "Whether PR #50514 actually fixes this issue despite failed CI",
+      "Full related issue audit results due to timeout"
+    ],
+    "why": "Issue describes a plausible deadlock in fastsafetensors ParallelLoader when loading draft models under pipeline parallelism, with a concrete repro and suggested fix. However, the related issue audit timed out, and the existing PR #50514 is open with failed CI and unclear semantic overlap. The deterministic gate requires HUMAN_REVIEW, and the submission policy conflicts with AI disclosure, so work cannot start without maintainer confirmation."
+  },
   "7bafb720133c05b4137486593349fd54f50fbee95133e610fd5dd96615e0caed": {
     "confidence": 0.7,
     "contradictions": [],
@@ -1141,6 +1201,34 @@
       "Whether maintainers want separate issues for the secondary observations."
     ],
     "why": "The issue is a well-documented bug with independent reproductions and maintainer acknowledgment that it is fixed in RC1. However, the fix is already implemented and verified, so no new code contribution is needed. The remaining observations (latency, watch scope, edge nondeterminism) are separate concerns that require maintainer direction."
+  },
+  "85be88fc15da315762d60fee89fbbf7a79f7ecad8281864cf5955ea690aac9d2": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Recursive merge in sglang/srt/utils/hf_transformers/config.py",
+      "Add regression test for nested override args"
+    ],
+    "risks": [
+      "Potential behavior change for existing override semantics",
+      "PR #33525 may be merged or need coordination"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Reproduce with provided command and assert no AttributeError",
+      "Add unit test for recursive update of nested config keys"
+    ],
+    "unknowns": [
+      "Maintainer preference on recursive merge approach",
+      "Status of PR #33525 and its failing checks"
+    ],
+    "why": "Issue clearly identifies a shallow update in get_config causing recursive override failure, with a concrete reproduction. However, an existing PR #33525 directly addresses this but lacks tests and has failing CI, and the deterministic gate requires HUMAN_REVIEW. Maintainer design preference is unconfirmed."
   },
   "8aea60e09083802fb3fd5f35002ade0ff1b1e76a1412745d1f9409a7a94eda42": {
     "confidence": 0.85,
@@ -1255,6 +1343,35 @@
     ],
     "why": "Issue is a real bug with clear root cause and workaround, but an open PR #5742 already addresses it with a proposed fix. The PR has failing CI and lacks complete evidence, so a better PR could be competitive, but maintainer review is needed to confirm direction and avoid duplicate work."
   },
+  "986ceb96c5620291424d09fe66153de1a423ab850095ac13db6be05f89158019": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix probeLiteralPathExists to treat ENAMETOOLONG as missing",
+      "Fix delimitedPathPartResolves classification",
+      "Improve glob error handling"
+    ],
+    "risks": [
+      "Duplicating existing PR #7598",
+      "Potential maintainer preference for existing PR"
+    ],
+    "root_cause_clarity": "high",
+    "score": 5,
+    "test_plan": [
+      "Add regression tests for NAME_MAX boundary and ENAMETOOLONG probe",
+      "Run existing test suite for affected packages"
+    ],
+    "unknowns": [
+      "Status of CI failures in PR #7598",
+      "Maintainer's stance on the existing PR"
+    ],
+    "why": "The issue provides a clear root cause and reproduction, but a collaborator has already submitted PR #7598 that directly addresses the issue with tests and is actively maintained. The existing PR appears technically complete, though it has failed CI checks. Without evidence that the PR is weak or abandoned, starting a competing PR risks duplication. Maintainer review is needed to confirm whether the existing PR is acceptable or if a better approach is required."
+  },
   "9f56014d00bc17e68f460b2d1b643185db72b637b6cff4202360ce6076790957": {
     "confidence": 0.85,
     "contradictions": [
@@ -1315,6 +1432,37 @@
       "Maintainer preference on which alignment option to choose"
     ],
     "why": "Issue identifies a clear correctness bug from inconsistent inference_mode usage, with reproduction and maintainer discussion. However, open PR lookup timed out and related issue audit failed, so duplicate/competing work cannot be excluded. Maintainer comment asks for design alignment, indicating need for maintainer decision."
+  },
+  "a33052b432b4ecd0968f20f7dfb84a59a82888cbb772ab10066cf8dd46d3bbb2": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Contributor suggests a workaround that may resolve the issue, conflicting with the bug report's implication of a code defect"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Investigate configuration class registration in sglang.srt.utils.hf_transformers.common",
+      "Possibly add support for DeepSeek-V4 config alias or adjust model loading logic"
+    ],
+    "risks": [
+      "May be a usage issue rather than a code bug; maintainer may prefer a workaround",
+      "Potential duplicate PR or existing fix not found due to lookup timeout"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with the exact command and environment; verify if the workaround resolves it",
+      "Add a regression test for loading DeepSeek-V4-Flash-0731 with the specified flags"
+    ],
+    "unknowns": [
+      "Whether the workaround fully resolves the issue",
+      "Whether an existing PR or fix already addresses this",
+      "Exact root cause and maintainer intent"
+    ],
+    "why": "Issue reports an unrecognized configuration class for DeepSeek-V4-Flash-0731, but root cause is unclear; a contributor suggests a workaround with additional flags, indicating possible usage or version mismatch. Open PR and related issue lookups timed out, so duplicate implementation cannot be ruled out."
   },
   "a4284d967a499038b2f0cef8c6aaec18012a110ca1e74ab24fbe2d1a4873dc62": {
     "confidence": 0.7,
@@ -2102,6 +2250,37 @@
       "Whether other switch paths (e.g., /effort) also need the same fix"
     ],
     "why": "Issue reports a clear user-visible bug with a plausible root cause (missing EnableInteractiveApproval on model switch) and public reproduction steps. No competing PR or issue found, and the gate allows work."
+  },
+  "f0de309411bf797fea9f94c5b698250563f23c83efe3fb49d7255a787e77fb1e": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue claims 100% reproduction, but maintainer review notes no live current-main repro was run"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "ACP terminal-event delivery policy",
+      "replyResolver/final_only buffer handling",
+      "WeChat channel adapter integration"
+    ],
+    "risks": [
+      "Changing delivery policy may affect other channels",
+      "Projector-only patch may not fix channel-specific loss"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 11,
+    "test_plan": [
+      "Add regression test for multiple direct replies between tool calls in one turn",
+      "Run live ACP-to-WeChat trace with debug logs to verify delivery"
+    ],
+    "unknowns": [
+      "Exact root cause (generic ACP lifecycle vs WeChat adapter)",
+      "Maintainer's preferred cross-channel delivery policy"
+    ],
+    "why": "Issue is a real user-facing bug with fresh live repro evidence, but the deterministic gate requires HUMAN_REVIEW and maintainer decision on cross-channel delivery policy is unresolved. Existing PRs are closed/unmerged and do not settle the policy."
   },
   "f8658379e0be3e23bbb4673be8620c5d7cf8322218f640bf87e0b9a319d16673": {
     "confidence": 0.8,

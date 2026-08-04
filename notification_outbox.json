@@ -1,5 +1,5 @@
 {
-  "digest": "70c6949996aa4282fa614223860f6668f2e8a964ea344e6444268ab9128caf7f",
+  "digest": "8c1ee0faabe514dc0dfc9b4bb1d8e2e4407b0f78e6da97b2a3cac24bb9b282ed",
   "events": [
     {
       "attempts": 1,
@@ -3009,9 +3009,262 @@
       "runId": "watch-1785835431",
       "sentAt": "2026-08-04T09:27:42.557923Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "esengine/DeepSeek-Reasonix#6545",
+        "can1357/oh-my-pi#7601",
+        "microsoft/semantic-kernel#14265"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[esengine/DeepSeek-Reasonix#6545](https://github.com/esengine/DeepSeek-Reasonix/issues/6545) [Bug]: `reasonix serve` 切换模型后 `ask` 工具失效，返回 'No interactive user answered'\"**\n建议：NEW_CLEAN_CANDIDATE | 分数：9\n价值：Issue reports a clear user-visible bug with a plausible root cause (missing EnableInteractiveApproval on model switch) and public reproduction steps. No competing PR or issue found, and the gate allows work.\n改动：internal/serve/serve.go: call EnableInteractiveApproval on new controller in switchModel；Add regression test for ask tool after model switch\n验证：Reproduce by starting reasonix serve, switching model, triggering ask; assert ask_request event is emitted；Add unit test for switchModel verifying EnableInteractiveApproval is called on new controller\n风险：Root cause is AI-assisted and not confirmed by maintainers; fix may need to cover other controller initialization paths；Potential API behavior changes if EnableInteractiveApproval has side effects\n竞争：未发现相关 open PR\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 2，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[can1357/oh-my-pi#7601](https://github.com/can1357/oh-my-pi/issues/7601) [Windows] Shared headless browser daemon exits with code 21: system Chrome 150 silently exits on --remote-debugging-port=0**\n建议：PR_COMPETITION_OPPORTUNITY | 分数：11\n价值：Issue provides a clear root cause (system Chrome exits on --remote-debugging-port=0, and ensureChromiumExecutable() ignores PUPPETEER_EXECUTABLE_PATH) and a workaround. Existing PR #7604 is weak: it has failing CI and lacks full evidence, so a materially better PR with complete tests and root-cause coverage is plausible.\n改动：Fix executable selection precedence in packages/coding-agent/src/tools/browser/launch.ts to honor PUPPETEER_EXECUTABLE_PATH before system Chrome detection；Add regression tests for Windows system Chrome detection and override behavior；Possibly adjust daemon launch args to avoid --remote-debugging-port=0 or handle its failure\n验证：Reproduce the issue on Windows with system Chrome installed and PUPPETEER_EXECUTABLE_PATH set to a working headless-shell; assert the daemon launches and serves CDP；Add unit tests for ensureChromiumExecutable() covering precedence and override honoring；Run existing browser tool tests and static checks\n风险：Potential maintainer preference for a different fix (e.g., changing default port behavior) could conflict；Risk of duplicating existing PR #7604 if it is improved; need to coordinate or supersede\n竞争：已有直接关联但证据不完整的 PR #7604：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：先复现 issue，再逐项对比已有 PR 的缺口；只有能提供更小改动、更强测试或更完整边界覆盖时才开 PR。\n证据：复现信号 5，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[microsoft/semantic-kernel#14265](https://github.com/microsoft/semantic-kernel/issues/14265) Bug: VertexAIEmbeddingGenerator hardcodes :predict, unusable with gemini-embedding models that only serve :embedContent**\n建议：PR_COMPETITION_OPPORTUNITY | 分数：11\n价值：Issue clearly identifies a hardcoded :predict endpoint causing failures with gemini-embedding-2. Existing PR #14266 addresses it but lacks tests and may be incomplete. A better PR with tests and minimal fix is plausible.\n改动：Modify VertexAIEmbeddingClient to select :embedContent for gemini-embedding models；Add unit/integration tests for endpoint selection\n验证：Reproduce with provided C# snippet against gemini-embedding-2；Add test asserting correct endpoint URI for gemini-embedding models\n风险：Potential maintainer preference for broader refactor；Risk of breaking other models if endpoint selection logic is too broad\n竞争：已有直接关联但证据不完整的 PR #14266：缺少测试文件；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：先复现 issue，再逐项对比已有 PR 的缺口；只有能提供更小改动、更强测试或更完整边界覆盖时才开 PR。\n证据：复现信号 3，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "green",
+          "title": {
+            "content": "OSS PR Radar: 可立即执行",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T09:38:23.124649Z",
+      "eventId": "eefbe5e160ae50591768c05f26b620cda272ee76b7e9724683010f081d29c652",
+      "idempotencyKey": "eefbe5e160ae50591768c05f26b620cda272ee76b7e9724683",
+      "kind": "immediate",
+      "runId": "scan-20260804T093349Z-f1fe5633760d",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "DeusData/codebase-memory-mcp#1416",
+        "openabdev/openab#1464",
+        "areal-project/AReaL#1565",
+        "PrefectHQ/fastmcp#4748",
+        "sgl-project/sglang#33505",
+        "openclaw/openclaw#92199",
+        "vllm-project/vllm#50959",
+        "PrefectHQ/fastmcp#4749",
+        "sgl-project/sglang#33504",
+        "KunAgent/Kun#1090"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[DeusData/codebase-memory-mcp#1416](https://github.com/DeusData/codebase-memory-mcp/issues/1416) Windows: install/uninstall/doctor all fail with \"active CBM sessions and operations could not be stopped safely\"**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue reports a high-impact Windows bug with multiple commands failing, but root cause is unclear: one reporter sees activation error, another sees daemon timeout, and Windows-level file access denials suggest OS-level issues. Maintainer has acknowledged and routed as high-priority, but no design confirmation or active investigation. A PR could be premature without maintainer direction on the intended fix.\n改动：Windows-specific activation transaction handling；daemon startup error handling；installer recovery procedure\n验证：Reproduce on Windows with 0.9.1-rc.1 and verify failure；Test recovery by overwriting with 0.9.0 binary；Add regression test for activation transaction on Windows\n风险：Root cause may be OS-level permissions or AV interference, not code；Fix may require maintainer design decisions on activation transaction semantics\n竞争：未发现相关 open PR\n下一步：按正常流程实现并验证；如要求 DCO 则自动 sign-off，PR 创建后报告 CLA 状态。\n证据：复现信号 12，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[openabdev/openab#1464](https://github.com/openabdev/openab/issues/1464) bug(gateway/feishu): v0.9.0 unified mode broke all Feishu streaming modes + delete recovery**\n建议：WAIT_MAINTAINER | 分数：13\n价值：Issue provides detailed root cause and reproduction, but existing PR #1458 overlaps semantically and requires maintainer review to avoid duplicate work. Deterministic gate says HUMAN_REVIEW.\n改动：UnifiedGatewayAdapter delete_message override；Idle reaper vs open turn fix；post/auto keep_full_text regression fix\n验证：Reproduce post/auto fake streaming with >3s prompt；Reproduce card mode idle reaper drop with sleep 15；Reproduce delete recovery with 20-edit cap\n风险：Potential duplicate with PR #1458；Design confirmation needed for idle reaper and keep_full_text changes\n竞争：发现 PR #1458 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 1，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[areal-project/AReaL#1565](https://github.com/areal-project/AReaL/issues/1565) [BUG][v2] Teardown leaves an orphan process after torch-memory-saver CUDA free errors**\n建议：WAIT_MAINTAINER | 分数：10\n价值：Issue reports a reproducible teardown bug with a plausible root cause (TMS paused-free) and a maintainer has outlined a multi-step plan, but the fix depends on upstream TMS changes and maintainer guidance on scope. Existing PR #1571 is draft and incomplete, leaving room for a better PR, but actionability is blocked by pending upstream and design confirmation.\n改动：TMS free() state-aware fix upstream；AReaL pin update and regression tests；v2 controller two-phase teardown；forked-service cleanup hardening\n验证：Reproduce with provided config and assert no TMS CUDA free error and no orphan process；Add FSDP offload->destroy tests for one and two GPUs；Update tests/test_offload.py to verify success only after engine.destroy() and zero subprocess exit\n风险：Upstream TMS fix may be delayed or rejected；Temporary workaround could cause OOM；Scope split may conflict with existing PR #1571\n竞争：已有直接关联但证据不完整的 PR #1571：CI/check 信息不足; 仍是 draft; 改动面偏大；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：先复现 issue，再逐项对比已有 PR 的缺口；只有能提供更小改动、更强测试或更完整边界覆盖时才开 PR。\n证据：复现信号 7，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[PrefectHQ/fastmcp#4748](https://github.com/PrefectHQ/fastmcp/issues/4748) OAuth consent cookie is rejected behind Azure Functions**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue reports a clear bug: Azure Functions adds Domain attribute to __Host- cookie, causing browser rejection and 403. Root cause is well understood and reproducible. However, the deterministic gate says HUMAN_REVIEW, and there is no maintainer approval or help-wanted signal. The fix may involve design choices about cookie handling and deployment compatibility, so maintainer input is needed.\n改动：Modify OAuth consent cookie handling to be compatible with hosting layers that rewrite cookie attributes, possibly by using a non-__Host- cookie or adjusting cookie attributes.\n验证：Create a failing test that simulates Azure Functions adding Domain attribute to the consent cookie and verifies the OAuth flow completes.\n风险：Changing cookie attributes may weaken security if not done carefully; need to preserve CSRF and browser-session binding.\n竞争：未发现相关 open PR\n下一步：先请求维护者分配/确认方案，获批后再开 PR。\n证据：复现信号 9，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33505](https://github.com/sgl-project/sglang/issues/33505) [Bug] The --json-model-override-args  does not  recursively update the model configuration.**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue clearly identifies a shallow update in get_config causing recursive override failure, with a concrete reproduction. However, an existing PR #33525 directly addresses this but lacks tests and has failing CI, and the deterministic gate requires HUMAN_REVIEW. Maintainer design preference is unconfirmed.\n改动：Recursive merge in sglang/srt/utils/hf_transformers/config.py；Add regression test for nested override args\n验证：Reproduce with provided command and assert no AttributeError；Add unit test for recursive update of nested config keys\n风险：Potential behavior change for existing override semantics；PR #33525 may be merged or need coordination\n竞争：已有直接关联但证据不完整的 PR #33525：缺少测试文件; 存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 4，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[openclaw/openclaw#92199](https://github.com/openclaw/openclaw/issues/92199) [Bug]: [ACP] Text before tool calls is lost in WeChat (intermediate messages dropped, not merged)**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue is a real user-facing bug with fresh live repro evidence, but the deterministic gate requires HUMAN_REVIEW and maintainer decision on cross-channel delivery policy is unresolved. Existing PRs are closed/unmerged and do not settle the policy.\n改动：ACP terminal-event delivery policy；replyResolver/final_only buffer handling；WeChat channel adapter integration\n验证：Add regression test for multiple direct replies between tool calls in one turn；Run live ACP-to-WeChat trace with debug logs to verify delivery\n风险：Changing delivery policy may affect other channels；Projector-only patch may not fix channel-specific loss\n竞争：发现关键词相关 PR，但未确认直接覆盖：#92804；需人工核对\n下一步：已有 PR 但强度不足；先看维护者规则和 issue 讨论，必要时先请求确认方案或分配。\n证据：复现信号 4，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50959](https://github.com/vllm-project/vllm/issues/50959) [Bug] fastsafetensors ParallelLoader broadcasts on group.WORLD; PP-scoped draft loads deadlock**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue describes a plausible deadlock in fastsafetensors ParallelLoader when loading draft models under pipeline parallelism, with a concrete repro and suggested fix. However, the related issue audit timed out, and the existing PR #50514 is open with failed CI and unclear semantic overlap. The deterministic gate requires HUMAN_REVIEW, and the submission policy conflicts with AI disclosure, so work cannot start without maintainer confirmation.\n改动：Scope process group to weight-loading participants in fastsafetensors_weights_iterator；Add fallback to plain safetensors for sub-engine loads if scoping unavailable\n验证：Reproduce deadlock with TP8xPP2 and fastsafetensors draft load；Add regression test for PP-scoped draft load with fastsafetensors\n风险：Changing process group scoping may affect other load paths；Existing PR #50514 may already address this; competition may be wasted\n竞争：已有直接关联但证据不完整的 PR #50514：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 4，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[PrefectHQ/fastmcp#4749](https://github.com/PrefectHQ/fastmcp/issues/4749) Resource list do not match the actual resource**\n建议：WAIT_MAINTAINER | 分数：10\n价值：Issue reports a resource list mismatch in FastMCP HTTP transport, but lacks a minimal reproducer and root cause analysis. No maintainer confirmation or design direction exists, and the deterministic gate requires human review.\n改动：Investigate resource listing in HTTP transport；Add regression test for resource list with dynamic URI templates\n验证：Create a minimal FastMCP server with a dynamic resource and verify resource list via HTTP client；Run existing FastMCP test suite for resource listing\n风险：Potential API behavior change if fix alters resource listing semantics；Incomplete reproducer may lead to incorrect fix\n竞争：未发现相关 open PR\n下一步：先请求维护者分配/确认方案，获批后再开 PR。\n证据：复现信号 2，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33504](https://github.com/sgl-project/sglang/issues/33504) Title: Inconsistent error response format with OpenAI standard for non-streaming requests**\n建议：WAIT_MAINTAINER | 分数：10\n价值：Issue clearly identifies a concrete bug in error response format with a proposed fix, but the deterministic gate requires HUMAN_REVIEW and open PR/related issue lookups timed out, so duplicate work cannot be excluded.\n改动：Modify create_error_response in sglang.srt.entrypoints.openai.serving_base to wrap error in 'error' key\n验证：Add a regression test that sends a request exceeding max_tokens and asserts the response body matches OpenAI error schema\n风险：Potential breaking change for clients relying on current format; need maintainer confirmation on desired schema\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 9，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[KunAgent/Kun#1090](https://github.com/KunAgent/Kun/issues/1090) [Bug] Custom provider models are automatically deleted after being added**\n建议：NEW_CLEAN_CANDIDATE | 分数：10\n价值：Issue provides a clear user-visible bug with detailed reproduction steps, logs, and a specific root cause (registry-to-GUI projection overwrites newly added models). No competing PR or issue found. The fix is localized and actionable.\n改动：Modify gui-settings-bridge.js to merge provider models instead of overwriting；Ensure synchronization across config.json, model-connections.v1.json, and kun-settings.json\n验证：Add a regression test that simulates adding a model via GUI and verifies it persists after the delayed projection；Run existing unit tests for gui-settings-bridge and related config sync modules\n风险：Potential unintended behavior changes in config synchronization if merge logic is not carefully scoped；Need to handle concurrent writes from background processes\n竞争：未发现相关 open PR\n下一步：仅完成本地复现、修复、测试和私有提交包；由用户自行决定公开提交。\n证据：复现信号 5，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T09:38:23.233241Z",
+      "eventId": "f0bed791eba3451d566dad065e5783938680429e9ab7758a15a8b18b648e3927",
+      "idempotencyKey": "f0bed791eba3451d566dad065e5783938680429e9ab7758a15",
+      "kind": "review",
+      "runId": "scan-20260804T093349Z-f1fe5633760d",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "vllm-project/vllm#50881",
+        "BerriAI/litellm#35711",
+        "DeusData/codebase-memory-mcp#1339",
+        "PrefectHQ/fastmcp#4744"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50881](https://github.com/vllm-project/vllm/issues/50881) [Bug]: MiniMax-M3 fp8 KV cache on SM80 (A100/A800): coherent with --enforce-eager, garbage under CUDA graphs — root cause + working fix**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#35711](https://github.com/BerriAI/litellm/issues/35711) [Bug]: `ollama/` streaming never reconstructs tool calls — tool call arrives as plain `delta.content` text with `finish_reason: \"stop\"`, while the non-streaming path reconstructs it correctly**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[DeusData/codebase-memory-mcp#1339](https://github.com/DeusData/codebase-memory-mcp/issues/1339) Graph not updated when the working tree returns to clean (revert leaves false negatives)**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[PrefectHQ/fastmcp#4744](https://github.com/PrefectHQ/fastmcp/issues/4744) serialize_by_alias=False ignored for nested Pydantic models**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T09:38:23.383521Z",
+      "eventId": "8762f2f392a06435c65df9be789e0442c983ccd9bb7b07b342e97a823ff6ed5b",
+      "idempotencyKey": "8762f2f392a06435c65df9be789e0442c983ccd9bb7b07b342",
+      "kind": "watch",
+      "runId": "watch-1785835934",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-04T09:27:05.084018Z",
+  "generatedAt": "2026-08-04T09:38:23.499562Z",
   "newEventCount": 0,
   "version": "notification_outbox_v1"
 }
