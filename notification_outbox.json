@@ -1,5 +1,5 @@
 {
-  "digest": "de7622b8e31b40d8dbe686cef0fa6d0754402fae242150ea8b9c26ec0e09378a",
+  "digest": "8685a8b9071d30afff9a05ed62be9e5a60b6f12f644905d31f6613f2ad05b633",
   "events": [
     {
       "attempts": 1,
@@ -3522,9 +3522,207 @@
       "runId": "watch-1785836723",
       "sentAt": "2026-08-04T09:50:37.082665Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "pydantic/pydantic-ai#7108",
+        "BerriAI/litellm#35711",
+        "vllm-project/vllm#50959",
+        "pydantic/pydantic-ai#7109"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[pydantic/pydantic-ai#7108](https://github.com/pydantic/pydantic-ai/issues/7108) `include_binary_content=False` is not honored for tool returns, `final_result`, or output-function arguments**\n建议：WAIT_MAINTAINER | 分数：8\n价值：Issue clearly identifies a real bug with a minimal repro and root cause in messages.py, but an open PR (#7053) has semantic overlap and the deterministic gate requires human review. Need maintainer confirmation to avoid duplicate work.\n改动：Fix binary stripping in messages.py::BaseToolReturnPart.otel_message_parts；Fix instrumentation.py sinks for final_result and tool_arguments；Add regression tests for binary content in tool returns and output functions\n验证：Use provided repro to create failing test for ToolReturnPart.otel_message_parts；Add tests for final_result and output-function arguments with include_binary_content=False；Run targeted tests in tests/test_capabilities.py, tests/test_logfire.py, tests/test_images.py, tests/models/test_instrumented.py, tests/test_temporal.py\n风险：Potential overlap with PR #7053 may require coordination；Changing serialization behavior could affect existing traces or snapshots\n竞争：发现 PR #7053 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 2，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#35711](https://github.com/BerriAI/litellm/issues/35711) [Bug]: `ollama/` streaming never reconstructs tool calls — tool call arrives as plain `delta.content` text with `finish_reason: \"stop\"`, while the non-streaming path reconstructs it correctly**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue provides a precise, reproducible bug with clear root cause in the streaming path of the ollama/ provider, but the deterministic gate requires HUMAN_REVIEW and open PR/related issue lookups timed out, so duplicate work cannot be excluded.\n改动：Add tool-call reconstruction to OllamaTextCompletionResponseIterator.chunk_parser；Set finish_reason to tool_calls when tool call detected；Possibly handle 'parameters' key variant\n验证：Add regression test using the provided curl reproduction with stream:true；Verify delta.tool_calls populated and finish_reason tool_calls；Run existing ollama completion tests\n风险：May conflict with existing PR or maintainer design preference；Behavior change could affect other streaming consumers\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 10，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50959](https://github.com/vllm-project/vllm/issues/50959) [Bug] fastsafetensors ParallelLoader broadcasts on group.WORLD; PP-scoped draft loads deadlock**\n建议：WAIT_MAINTAINER | 分数：11\n价值：The issue provides a detailed root cause (hard-coded WORLD group in fastsafetensors causing deadlock under PP-scoped draft loads) and a clear repro, but the deterministic gate requires HUMAN_REVIEW and the related issue audit timed out. A maintainer has acknowledged the report, so assignment/design confirmation is pending.\n改动：Fix fastsafetensors ParallelLoader to use a participant-scoped process group (e.g., TP group) instead of WORLD for sub-engine loads；Add a regression test that reproduces the deadlock with PP and fastsafetensors\n验证：Create a minimal test that runs a PP-scoped draft load with fastsafetensors and verifies no hang；Run existing fastsafetensors and PP-related tests to ensure no regression\n风险：Changing process group scoping may affect other collective operations or performance；Potential interaction with existing PR #50514 which is still open and has failing CI\n竞争：已有直接关联但证据不完整的 PR #50514：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 4，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[pydantic/pydantic-ai#7109](https://github.com/pydantic/pydantic-ai/issues/7109) Durable-exec leaf-toolset `id` error never mentions the capability `id` that would fix it**\n建议：WAIT_MAINTAINER | 分数：8\n价值：Issue clearly identifies a missing capability id hint in error message with a concrete repro and root cause. However, an existing PR (#7125) already attempts to fix it but is closed with failed CI, and the repo requires assignment. Maintainer confirmation is needed before starting new work.\n改动：Update error message in durable_exec/_base.py generic branch to include capability id hint；Fix typo 'activitys' to 'activities'；Add regression test for capability-contributed FunctionToolset error message\n验证：Use the provided repro (Agent with WebSearch local and TemporalDurability) to assert the error message contains the capability id hint；Run existing durable_exec tests and static checks\n风险：Existing PR #7125 may be revived or superseded; maintainer may prefer a different approach；Changing error message could affect tests that assert exact wording\n竞争：已有 PR 但强度不足，且仓库通常需要先分配/确认：#7125 score=69\n下一步：已有 PR 但强度不足；先看维护者规则和 issue 讨论，必要时先请求确认方案或分配。\n证据：复现信号 2，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T10:05:10.624758Z",
+      "eventId": "2873ed5776f866934a5e137850942d6c06d4b2ff07ec20ae037c6d8ce296836b",
+      "idempotencyKey": "2873ed5776f866934a5e137850942d6c06d4b2ff07ec20ae03",
+      "kind": "review",
+      "runId": "scan-20260804T100147Z-ace8ada4fdfb",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "can1357/oh-my-pi#7597",
+        "crewAIInc/crewAI#6788",
+        "maka-agent/maka-agent#2074",
+        "microsoft/agent-framework#7490",
+        "microsoft/agent-framework#7491",
+        "sgl-project/sglang#33505",
+        "vllm-project/vllm#50159",
+        "vllm-project/vllm#50719",
+        "vllm-project/vllm#50881",
+        "vllm-project/vllm#50948"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[can1357/oh-my-pi#7597](https://github.com/can1357/oh-my-pi/issues/7597) grep/glob: semicolon multipath silently collapses to one literal path when the joined string is ENAMETOOLONG**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[crewAIInc/crewAI#6788](https://github.com/crewAIInc/crewAI/issues/6788) [BUG] total_tokens omits cache reads and writes on the native Anthropic provider**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[maka-agent/maka-agent#2074](https://github.com/maka-agent/maka-agent/issues/2074) bug(runtime): a stopped run parked on AskUserQuestion never lands a terminal fact, and prior-run context then silently drops the whole turn**\n建议：WAIT_MAINTAINER\n价值：ISSUE_NOT_OPEN\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[microsoft/agent-framework#7490](https://github.com/microsoft/agent-framework/issues/7490) Python: [Bug]: with `predict_state_config` set, EVERY tool result emits a full `StateSnapshotEvent` — including for tools the config never names**\n建议：WAIT_MAINTAINER\n价值：OWNERSHIP_CHANGED\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[microsoft/agent-framework#7491](https://github.com/microsoft/agent-framework/issues/7491) Python: [Bug]: AG-UI `MESSAGES_SNAPSHOT` re-factors streamed messages under fresh ids — the reference `@ag-ui/client` merge then renders every mid-run tool call after the final text**\n建议：WAIT_MAINTAINER\n价值：OWNERSHIP_CHANGED\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33505](https://github.com/sgl-project/sglang/issues/33505) [Bug] The --json-model-override-args  does not  recursively update the model configuration.**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50159](https://github.com/vllm-project/vllm/issues/50159) [Bug]: Model Runner V2 + Gemma-4: memory profiler reports ~0.9 GiB more \"available KV\" than MRv1 → no runtime headroom → CUDA OOM under saturating load (no spec involved); with EAGLE it crashes earlier at cudagraph capture (stable-ABI aten::empty)**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50719](https://github.com/vllm-project/vllm/issues/50719) [Bug][PD][Mooncake] Decode requests stuck in WAITING_FOR_REMOTE_KVS and fail with Timeout waiting for P side ready**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50881](https://github.com/vllm-project/vllm/issues/50881) [Bug]: MiniMax-M3 fp8 KV cache on SM80 (A100/A800): coherent with --enforce-eager, garbage under CUDA graphs — root cause + working fix**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50948](https://github.com/vllm-project/vllm/issues/50948) [Bug]: Qwen parser routes grammar-constrained JSON to reasoning when `enable_in_reasoning=true`**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T10:05:10.713527Z",
+      "eventId": "91bf97f2578d18758a5e063200d4d8bb6a8a9e14a627efb70653c26324ebabc1",
+      "idempotencyKey": "91bf97f2578d18758a5e063200d4d8bb6a8a9e14a627efb706",
+      "kind": "watch",
+      "runId": "watch-1785837659",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-04T09:49:52.259768Z",
+  "generatedAt": "2026-08-04T10:05:10.824078Z",
   "newEventCount": 0,
   "version": "notification_outbox_v1"
 }
