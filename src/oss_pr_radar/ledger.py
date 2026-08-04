@@ -1157,6 +1157,10 @@ class RadarLedger:
                     "UPDATE opportunities SET stage='PR_OPEN',updated_at=? WHERE key=?",
                     (now, request["opportunity_key"]),
                 )
+                connection.execute(
+                    "UPDATE intents SET status='COMPLETED',updated_at=? WHERE opportunity_key=?",
+                    (now, request["opportunity_key"]),
+                )
                 self._event(
                     connection,
                     request["opportunity_key"],
@@ -1215,6 +1219,10 @@ class RadarLedger:
             if request:
                 connection.execute(
                     "UPDATE opportunities SET stage='PR_OPEN',updated_at=? WHERE key=?",
+                    (now, request["opportunity_key"]),
+                )
+                connection.execute(
+                    "UPDATE intents SET status='COMPLETED',updated_at=? WHERE opportunity_key=?",
                     (now, request["opportunity_key"]),
                 )
                 self._event(

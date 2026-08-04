@@ -225,9 +225,13 @@ def test_expired_permit_can_only_finalize_ambiguous_pr_effect(tmp_path):
         opportunity = connection.execute(
             "SELECT stage FROM opportunities WHERE key='example/project#7'"
         ).fetchone()
+        intent = connection.execute(
+            "SELECT status FROM intents WHERE intent_id='intent-1'"
+        ).fetchone()
     assert dict(permit_row) == {"status": "CONSUMED", "pr_url": result["prUrl"]}
     assert effect_row["status"] == "SUCCEEDED"
     assert opportunity["stage"] == "PR_OPEN"
+    assert intent["status"] == "COMPLETED"
     replay_permit = store.publication_permit_for_effect(permit["permit_id"], action="create_pr")
     replay_effect = store.publication_effect_by_request(
         permit_id=permit["permit_id"],
