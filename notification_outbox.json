@@ -1,5 +1,5 @@
 {
-  "digest": "e3dee6331d7572e5a606887615729a87b62c7686ad3178ca6a046514dd48290f",
+  "digest": "339f1210362a59da9e440979df84d35791579ecec1981cf19706fc121c01392f",
   "events": [
     {
       "attempts": 1,
@@ -3271,9 +3271,251 @@
       "runId": "watch-1785835934",
       "sentAt": "2026-08-04T09:39:01.300793Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "fastmachinelearning/hls4ml#1515"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[fastmachinelearning/hls4ml#1515](https://github.com/fastmachinelearning/hls4ml/issues/1515) profiling.numerical() fails for multi-input models**\n建议：NEW_CLEAN_CANDIDATE | 分数：10\n价值：Issue reports a clear user-facing bug: profiling.numerical() fails for multi-input models due to np.ascontiguousarray(X) on a list of arrays with different shapes. Root cause is likely in activations_hlsmodel where X is passed to np.ascontiguousarray without handling list-of-arrays. No competing PR or maintainer assignment blocks work.\n改动：Modify profiling.numerical() or activations_hlsmodel to handle list of arrays for multi-input models, likely by converting each input separately or using np.asarray with dtype=object.\n验证：Create a minimal multi-input Keras model, convert to hls4ml, and call profiling.numerical() with a list of arrays of different shapes; assert it does not raise and returns expected outputs.\n风险：Potential API changes if handling is done at a higher level; need to ensure backward compatibility for single-input models.\n竞争：仅发现未直接关联、无代码路径或强机制重合的 PR #1439；保留为搜索上下文，不阻止实现\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 6，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "green",
+          "title": {
+            "content": "OSS PR Radar: 可立即执行",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T09:49:51.893029Z",
+      "eventId": "992ef5831b9d4e274518914f0ef15a4175313e18035b906959623f5d565f4d5e",
+      "idempotencyKey": "992ef5831b9d4e274518914f0ef15a4175313e18035b906959",
+      "kind": "immediate",
+      "runId": "scan-20260804T094616Z-003aca18b7f4",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "sgl-project/sglang#33483",
+        "sgl-project/sglang#33470",
+        "sgl-project/sglang#33464",
+        "sgl-project/sglang#33408",
+        "vllm-project/vllm#50719",
+        "vllm-project/vllm#50948",
+        "vllm-project/vllm#50891",
+        "sgl-project/sglang#33493"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33483](https://github.com/sgl-project/sglang/issues/33483) [Bug] Default decode CUDA Graph coverage causes a sharp performance cliff when batch size exceeds 32**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue provides detailed, reproducible evidence of a performance cliff caused by default CUDA graph batch size being too low relative to max_running_requests. The root cause is clear: decode steps above the captured batch size fall back to eager execution, causing significant latency degradation. However, the issue explicitly asks for maintainer input on the preferred fix direction, and the open PR and related issue lookups failed, so duplicate work cannot be ruled out. The deterministic gate is HUMAN_REVIEW, so a maintainer decision is required before implementation.\n改动：Adjust default cuda_graph_max_bs heuristic to scale with KV pool or reachable batch size；Add startup warning when cuda_graph_max_bs is far below max_running_requests；Document interaction in tuning guide\n验证：Reproduce the performance cliff using the provided benchmark script and configuration；Add a regression test that checks the default cuda_graph_max_bs is sufficient for typical max_running_requests；Measure TPOT and throughput at rates around the cliff to verify fix\n风险：Changing default may increase GPU memory usage and startup time；Potential impact on other models and hardware configurations；Need to ensure fix does not degrade performance for large models\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 16，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33470](https://github.com/sgl-project/sglang/issues/33470) inference_mode mismatch can break lazy buffers**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue identifies a clear correctness bug from inconsistent inference_mode usage, with reproduction and maintainer discussion. However, open PR lookup timed out and related issue audit failed, so duplicate/competing work cannot be excluded. Maintainer comment asks for design alignment, indicating need for maintainer decision.\n改动：Align inference_mode usage across warmup/autotune and real forward paths；Possibly add explicit eager initialization for backend workspaces\n验证：Reproduce with provided command and FlashInfer MegaMOE branch；Add regression test for inplace update on lazy buffers across inference_mode contexts\n风险：Changing inference_mode may affect performance or autograd behavior；Backend-specific fixes may be needed for FlashInfer and others\n竞争：open PR 检索不完整，需等待下轮重试后再判断碰撞\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 9，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33464](https://github.com/sgl-project/sglang/issues/33464) [Bug] EXIF orientation is never applied when decoding images for VLM serving**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue provides a clear root cause and reproduction, but an existing PR (#33449) directly addresses it with failing CI checks. The deterministic gate requires HUMAN_REVIEW, and the PR's technical completeness is uncertain due to failed checks. A new candidate would compete with an existing weak PR, but maintainer confirmation is needed to avoid duplicate effort.\n改动：python/sglang/srt/utils/common.py: apply EXIF orientation in all three decode paths；python/sglang/srt/utils/common.py: add decoder routing logic to fall back to PIL when orientation is non-trivial；tests: add regression tests for all 8 orientation values and decoder routing\n验证：Run the provided reproduction script to confirm the bug；Add unit tests asserting pixel-identical parity with PIL.ImageOps.exif_transpose for all 8 orientations；Add tests for decoder routing (nvJPEG vs PIL) without CUDA；Run existing serving tests to ensure no regressions\n风险：Potential performance impact on GPU decode path if not carefully short-circuited；Risk of missing edge cases like malformed EXIF or multi-frame images；Competing PR may already have partial implementation; need to align with maintainer preferences\n竞争：已有直接关联但证据不完整的 PR #33449：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 3，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33408](https://github.com/sgl-project/sglang/issues/33408) [Bug] Unlimited-OCR: server crashes when batching images with different gundam tile counts**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue provides a clear root cause (torch.stack on variable-size crops) and a reproducible test, but the deterministic gate requires HUMAN_REVIEW. An existing PR #33458 directly addresses the issue but has failing CI checks, and a commenter has proposed a focused fix. Maintainer direction is not confirmed.\n改动：python/sglang/srt/models/unlimited_ocr.py；python/sglang/srt/managers/mm_utils.py\n验证：Add a concurrent regression test with two aspect ratios that produce different gundam tile counts, verifying both requests succeed.；Run existing Unlimited-OCR unit tests and static checks.\n风险：Potential conflict with existing PR #33458; need to ensure fix does not regress batched fast path.\n竞争：已有直接关联但证据不完整的 PR #33458：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 10，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50719](https://github.com/vllm-project/vllm/issues/50719) [Bug][PD][Mooncake] Decode requests stuck in WAITING_FOR_REMOTE_KVS and fail with Timeout waiting for P side ready**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue reports a systemic D-side stall in Mooncake remote KV transfer with clear logs and reproduction outline, but root cause is unconfirmed and an existing PR #50984 is weak (no tests, failing CI). Maintainer design confirmation is needed before starting a competing PR.\n改动：Mooncake connector timeout handling；scheduler WAITING_FOR_REMOTE_KVS state transitions；error propagation from P-side failures\n验证：Reproduce with provided configuration and traffic pattern；Add regression test for D-side timeout when P-side never becomes ready；Run existing Mooncake connector unit tests\n风险：Changing timeout behavior may affect performance；Incomplete understanding of P-side state machine could lead to incorrect fix\n竞争：已有直接关联但证据不完整的 PR #50984：缺少测试文件; 存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 11，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50948](https://github.com/vllm-project/vllm/issues/50948) [Bug]: Qwen parser routes grammar-constrained JSON to reasoning when `enable_in_reasoning=true`**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue provides a clear root cause and minimal reproduction for a user-visible bug, but the deterministic gate requires HUMAN_REVIEW and the related issue audit failed due to timeout. Existing PR #50955 is weak with failed CI, so a better PR may be possible, but maintainer confirmation is needed.\n改动：Qwen3Parser initialization logic；structured-outputs config handling for enable_in_reasoning\n验证：Add regression test using the provided curl commands to assert content is non-null and reasoning is null when enable_in_reasoning=true；Run existing structured-output and reasoning parser tests\n风险：Potential conflict with existing PR #50955；Behavior change may affect other reasoning parser modes\n竞争：已有直接关联但证据不完整的 PR #50955：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 17，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50891](https://github.com/vllm-project/vllm/issues/50891) [Bug]: AOT compile cache key ignores limit_mm_per_prompt, so image:0 and image:1 runs collide and crash with AttributeError: 'NoneType' object has no attribute 'size'**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue provides a clear root cause (AOT cache key ignores multimodal config) and a reproducible crash. Existing PR #50908 addresses the issue but has failed CI checks and may be incomplete. A materially better PR with comprehensive tests and a robust fix is plausible.\n改动：Modify AOT cache key computation to include multimodal config and limit_mm_per_prompt；Possibly enable guard checking for disk-loaded artifacts；Add regression tests for cache collision scenarios\n验证：Reproduce the issue with the provided commands and verify crash；Apply fix and ensure both image:0 and image:1 runs succeed without cache wipe；Run existing test suite for vllm/config and vllm/compilation；Add unit tests for cache key generation with different multimodal settings\n风险：Changing cache key may invalidate existing caches and cause recompilation overhead；Enabling guard checks might introduce performance overhead；Potential interaction with other cache-related features\n竞争：已有直接关联但证据不完整的 PR #50908：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 6，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33493](https://github.com/sgl-project/sglang/issues/33493) [Bug] DSPARK retrieves wrong key \"acc_linear_penalities\" from sampling_info**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue identifies a likely typo in attribute name causing DSPARK to ignore min_tokens, with a concrete patch. However, open PR and related issue lookups timed out, so duplicate work cannot be excluded. Maintainer design confirmation is needed before implementing.\n改动：python/sglang/srt/speculative/dflash_utils.py；python/sglang/srt/speculative/dspark_components/dspark_verify.py\n验证：Add a regression test that starts DSPARK with min_tokens and verifies completion_tokens >= min_tokens.；Run existing speculative decoding unit tests.\n风险：Potential duplicate PR already exists; attribute name change may affect other code paths.\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 7，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T09:49:51.995407Z",
+      "eventId": "cdb6b08c18485291ae9ff1062bb26af43a91cae9100962d166fae8a72b405722",
+      "idempotencyKey": "cdb6b08c18485291ae9ff1062bb26af43a91cae9100962d166",
+      "kind": "review",
+      "runId": "scan-20260804T094616Z-003aca18b7f4",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "pydantic/pydantic-ai#7108",
+        "pydantic/pydantic-ai#7109",
+        "vllm-project/vllm#50959",
+        "DeusData/codebase-memory-mcp#1416",
+        "PrefectHQ/fastmcp#4748",
+        "PrefectHQ/fastmcp#4749",
+        "areal-project/AReaL#1565"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[pydantic/pydantic-ai#7108](https://github.com/pydantic/pydantic-ai/issues/7108) `include_binary_content=False` is not honored for tool returns, `final_result`, or output-function arguments**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[pydantic/pydantic-ai#7109](https://github.com/pydantic/pydantic-ai/issues/7109) Durable-exec leaf-toolset `id` error never mentions the capability `id` that would fix it**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50959](https://github.com/vllm-project/vllm/issues/50959) [Bug] fastsafetensors ParallelLoader broadcasts on group.WORLD; PP-scoped draft loads deadlock**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[DeusData/codebase-memory-mcp#1416](https://github.com/DeusData/codebase-memory-mcp/issues/1416) Windows: install/uninstall/doctor all fail with \"active CBM sessions and operations could not be stopped safely\"**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[PrefectHQ/fastmcp#4748](https://github.com/PrefectHQ/fastmcp/issues/4748) OAuth consent cookie is rejected behind Azure Functions**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[PrefectHQ/fastmcp#4749](https://github.com/PrefectHQ/fastmcp/issues/4749) Resource list do not match the actual resource**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[areal-project/AReaL#1565](https://github.com/areal-project/AReaL/issues/1565) [BUG][v2] Teardown leaves an orphan process after torch-memory-saver CUDA free errors**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T09:49:52.136902Z",
+      "eventId": "739df8222447f15de529bbe9a1eccb8ff0ef26e48af0a921fe59ba221910bb3e",
+      "idempotencyKey": "739df8222447f15de529bbe9a1eccb8ff0ef26e48af0a921fe",
+      "kind": "watch",
+      "runId": "watch-1785836723",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-04T09:38:23.499562Z",
+  "generatedAt": "2026-08-04T09:49:52.259768Z",
   "newEventCount": 0,
   "version": "notification_outbox_v1"
 }

@@ -26,6 +26,29 @@
     ],
     "why": "Issue reports a user-visible bug but lacks a clear root cause and minimal repro; maintainer has asked a clarifying question, indicating need for more info before work can start."
   },
+  "07506335f4b29716574c815877aa674d1b3df0116e68b696eede2f0d9cc2c726": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify profiling.numerical() or activations_hlsmodel to handle list of arrays for multi-input models, likely by converting each input separately or using np.asarray with dtype=object."
+    ],
+    "risks": [
+      "Potential API changes if handling is done at a higher level; need to ensure backward compatibility for single-input models."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a minimal multi-input Keras model, convert to hls4ml, and call profiling.numerical() with a list of arrays of different shapes; assert it does not raise and returns expected outputs."
+    ],
+    "unknowns": [
+      "Exact code path in profiling.py beyond the traceback; maintainer preference for fix location."
+    ],
+    "why": "Issue reports a clear user-facing bug: profiling.numerical() fails for multi-input models due to np.ascontiguousarray(X) on a list of arrays with different shapes. Root cause is likely in activations_hlsmodel where X is passed to np.ascontiguousarray without handling list-of-arrays. No competing PR or maintainer assignment blocks work."
+  },
   "09825a63c7595dbc0ab01b0f35ce09e3128060df67572bc7681e652c013b6039": {
     "confidence": 0.7,
     "contradictions": [],
@@ -737,6 +760,38 @@
     ],
     "why": "The issue provides a clear root cause: AOT compile cache key ignores limit_mm_per_prompt and multimodal_config, causing cache collisions between image-enabled and image-disabled runs. An existing PR #50908 attempts to fix this by including disabled multimodal modalities in the model config hash, but it has failed CI checks and may not fully address the root cause. A materially better PR could provide a more robust fix with comprehensive tests and ensure CI passes."
   },
+  "53fcf4843f720f6be4a9109050b2c70064df91a4b63856f72974b19734e0f5ea": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/utils/common.py: apply EXIF orientation in all three decode paths",
+      "python/sglang/srt/utils/common.py: add decoder routing logic to fall back to PIL when orientation is non-trivial",
+      "tests: add regression tests for all 8 orientation values and decoder routing"
+    ],
+    "risks": [
+      "Potential performance impact on GPU decode path if not carefully short-circuited",
+      "Risk of missing edge cases like malformed EXIF or multi-frame images",
+      "Competing PR may already have partial implementation; need to align with maintainer preferences"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Run the provided reproduction script to confirm the bug",
+      "Add unit tests asserting pixel-identical parity with PIL.ImageOps.exif_transpose for all 8 orientations",
+      "Add tests for decoder routing (nvJPEG vs PIL) without CUDA",
+      "Run existing serving tests to ensure no regressions"
+    ],
+    "unknowns": [
+      "Status of failing CI checks in PR #33449; whether they are fixable or indicate fundamental issues",
+      "Maintainer's stance on the proposed fix approach (e.g., using PIL fallback vs manual tensor transposes)",
+      "Whether the issue is considered a security concern requiring CVE handling"
+    ],
+    "why": "Issue provides a clear root cause and reproduction, but an existing PR (#33449) directly addresses it with failing CI checks. The deterministic gate requires HUMAN_REVIEW, and the PR's technical completeness is uncertain due to failed checks. A new candidate would compete with an existing weak PR, but maintainer confirmation is needed to avoid duplicate effort."
+  },
   "54b76b2e1cde101b88c0c18c5da20cad436b0fcfdfe9d54a1c5a1c2d07778c0f": {
     "confidence": 0.7,
     "contradictions": [
@@ -858,6 +913,34 @@
       "Whether the existing PR #50882 can be improved or superseded"
     ],
     "why": "Issue provides a detailed root cause and a working fix, but the deterministic gate requires HUMAN_REVIEW and the related issue audit timed out. Existing PR #50882 is weak (draft, no tests, failing CI), but a materially better PR is plausible. However, the lack of maintainer confirmation and the unresolved audit block actionability."
+  },
+  "684ee8688f348de5ece7552a2b00443acc5faca9c330f44ba30d645a0f0e2374": {
+    "confidence": 0.7,
+    "contradictions": [
+      "PR #33458 is marked technically complete but has failing CI checks."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/models/unlimited_ocr.py",
+      "python/sglang/srt/managers/mm_utils.py"
+    ],
+    "risks": [
+      "Potential conflict with existing PR #33458; need to ensure fix does not regress batched fast path."
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Add a concurrent regression test with two aspect ratios that produce different gundam tile counts, verifying both requests succeed.",
+      "Run existing Unlimited-OCR unit tests and static checks."
+    ],
+    "unknowns": [
+      "Maintainer preference on whether to fix the stacking bug directly or rely on per-request isolation from issue #26751."
+    ],
+    "why": "Issue provides a clear root cause (torch.stack on variable-size crops) and a reproducible test, but the deterministic gate requires HUMAN_REVIEW. An existing PR #33458 directly addresses the issue but has failing CI checks, and a commenter has proposed a focused fix. Maintainer direction is not confirmed."
   },
   "696e02a999f1d011ae915149f892da85ad6d48baaeb77c7118e9f6f1d84d1d0e": {
     "confidence": 0.7,
