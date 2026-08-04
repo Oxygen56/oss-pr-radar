@@ -1,5 +1,5 @@
 {
-  "digest": "e313970313126631fd7b007647aba4733bbd1fb0ca9d38cb042344b92a1e5890",
+  "digest": "ce4eb06e6fed06b4f721a5b2c016462dd8afcd91ef05361468599efc7ebf30eb",
   "events": [
     {
       "attempts": 1,
@@ -891,9 +891,174 @@
       "runId": "pr-followup-1785815032",
       "sentAt": "2026-08-04T03:49:18.673431Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "DeusData/codebase-memory-mcp#1339",
+        "crewAIInc/crewAI#6788",
+        "getzep/graphiti#1062",
+        "pydantic/pydantic-ai#7109",
+        "BerriAI/litellm#35711",
+        "vllm-project/vllm#50159",
+        "PrefectHQ/fastmcp#4744"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[DeusData/codebase-memory-mcp#1339](https://github.com/DeusData/codebase-memory-mcp/issues/1339) Graph not updated when the working tree returns to clean (revert leaves false negatives)**\n建议：WAIT_MAINTAINER | 分数：11\n价值：The issue is a well-documented bug with independent reproductions and a confirmed fix in RC1, but the maintainer has explicitly requested verification on RC1/current main and marked it awaiting-reporter. The candidate is not a new clean contribution; it is a regression case already routed for RC. Work should wait for maintainer confirmation and reporter verification.\n改动：No new code changes; the fix is already in RC1. Potential follow-up: improve change-visibility latency and document watch scope.\n验证：Retest the dirty-to-clean sequence on v0.9.1-rc.1 or current main as requested by maintainer.\n风险：Duplicate of #1296 if not properly distinguished; potential scope creep from secondary observations.\n竞争：未发现相关 open PR\n下一步：按正常流程实现并验证；如要求 DCO 则自动 sign-off，PR 创建后报告 CLA 状态。\n证据：复现信号 2，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[crewAIInc/crewAI#6788](https://github.com/crewAIInc/crewAI/issues/6788) [BUG] total_tokens omits cache reads and writes on the native Anthropic provider**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue provides a clear root cause and a concrete fix, but an open PR (#6770) already targets the same code path and semantics. The PR is recent, has tests and CI, but does not reference the issue. Maintainer review is needed to decide whether to adopt the PR, request changes, or accept a new PR.\n改动：Modify anthropic completion.py to include cache tokens in total_tokens；Update test_anthropic.py to reflect corrected total_tokens\n验证：Run the existing test suite for anthropic provider；Add a regression test using the issue's reproduction script or a mock that verifies total_tokens includes cache tokens\n风险：Potential semantic change to input_tokens field may affect downstream consumers；Duplicate work if PR #6770 is merged or needs changes\n竞争：发现 PR #6770 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 5，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[getzep/graphiti#1062](https://github.com/getzep/graphiti/issues/1062) [BUG] get_episodes from graphiti-mcp returns stale/old data when used in n8n**\n建议：WAIT_MAINTAINER | 分数：9\n价值：Issue reports stale get_episodes results; maintainer comment attributes to queue latency, but user analysis identifies a concrete root cause: get_episodes uses keyset pagination with ORDER BY uuid DESC, returning arbitrary stable subset instead of most recent episodes. Existing PR #1726 addresses this but has failing CI and lacks full evidence. A materially better PR with robust tests and root-cause analysis is plausible.\n改动：Modify get_episodes in graphiti-mcp to order by valid_at DESC or equivalent recency ordering；Add regression tests for recency ordering and pagination\n验证：Reproduce issue by adding episodes with known timestamps and verifying get_episodes returns most recent first；Run existing test suite for graphiti-mcp and add targeted tests for ordering\n风险：Potential maintainer preference for queue-latency explanation; need to confirm root cause with maintainers；Changing ordering may affect pagination semantics; ensure backward compatibility\n竞争：已有直接关联但证据不完整的 PR #1726：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：先复现 issue，再逐项对比已有 PR 的缺口；只有能提供更小改动、更强测试或更完整边界覆盖时才开 PR。\n证据：复现信号 7，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[pydantic/pydantic-ai#7109](https://github.com/pydantic/pydantic-ai/issues/7109) Durable-exec leaf-toolset `id` error never mentions the capability `id` that would fix it**\n建议：WAIT_MAINTAINER | 分数：8\n价值：Issue clearly identifies a missing capability id hint in a durable-exec error message, with a minimal repro and root cause. However, open PR #6696 has semantic overlap and may already address the code path; maintainer design preference is unknown and no assignment is confirmed.\n改动：Update error message in durable_exec/_base.py generic branch to include capability id hint；Fix typo 'activitys' to 'activities'\n验证：Add a regression test using the provided repro (Agent with WebSearch(local='duckduckgo') and TemporalDurability) asserting the error message contains the capability id hint；Run existing durable_exec unit tests and static checks\n风险：Potential overlap with PR #6696 may lead to duplicate work or merge conflicts；Changing error message text could break tests that assert exact wording\n竞争：发现 PR #6696 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 2，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#35711](https://github.com/BerriAI/litellm/issues/35711) [Bug]: `ollama/` streaming never reconstructs tool calls — tool call arrives as plain `delta.content` text with `finish_reason: \"stop\"`, while the non-streaming path reconstructs it correctly**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue provides a detailed, reproducible bug with clear root cause in streaming path of ollama/ prefix, but open PR and related issue lookups timed out, so duplicate implementation cannot be excluded. Maintainer approval and design confirmation are absent, and the gate requires human review.\n改动：Modify OllamaTextCompletionResponseIterator in litellm/llms/ollama/completion/transformation.py to reconstruct tool calls from streamed JSON text and set finish_reason to 'tool_calls'；Add streaming regression test for ollama/ tool calls\n验证：Use the provided curl reproduction to create a failing test for stream=true tool calls；Run targeted unit tests for ollama completion transformation and streaming iterator\n风险：Potential API behavior change if not carefully scoped；May conflict with existing PR or maintainer design preferences\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 10，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50159](https://github.com/vllm-project/vllm/issues/50159) [Bug]: Model Runner V2 + Gemma-4: memory profiler reports ~0.9 GiB more \"available KV\" than MRv1 → no runtime headroom → CUDA OOM under saturating load (no spec involved); with EAGLE it crashes earlier at cudagraph capture (stable-ABI aten::empty)**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue provides a deterministic OOM repro and strong evidence that MRv2 under-reserves CUDA graph capture memory, matching known issue #49224 and draft PR #49233. However, the PR is draft with failing CI, and maintainer direction is unclear; a new PR would compete with an existing weak attempt.\n改动：Fix MRv2's profile_cudagraph_memory() to reserve sufficient capture headroom；Add regression test for CUDA graph memory accounting parity between MRv1 and MRv2\n验证：Run the reported Gemma-4 31B int8 TP=2 config under saturating load and verify no OOM；Add a unit test comparing profiler-reported available KV with and without CUDA graphs for a small model\n风险：May conflict with ongoing extensible-KV-cache redesign (#47363)；Requires GPU hardware to reproduce; CI may lack suitable environment\n竞争：已有直接关联但证据不完整的 PR #49233：存在失败 CI/check; 仍是 draft；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 7，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[PrefectHQ/fastmcp#4744](https://github.com/PrefectHQ/fastmcp/issues/4744) serialize_by_alias=False ignored for nested Pydantic models**\n建议：WAIT_MAINTAINER | 分数：10\n价值：Issue reports a clear bug: nested Pydantic models in dicts ignore serialize_by_alias=False. No open PR or related issue found, but the repository requires assignment and AI disclosure. Root cause is not yet confirmed; likely in serialization path for nested models.\n改动：Add failing test for nested model serialization；Fix serialization logic to respect serialize_by_alias for nested models\n验证：Reproduce with provided minimal example；Run targeted unit tests for tool return serialization\n风险：Potential behavior change for existing users relying on aliases；Need maintainer design confirmation\n竞争：未发现相关 open PR\n下一步：先等待维护者分配/确认方案；即使获批，公开 PR 的 AI 复核/披露确认仍必须由用户本人处理。\n证据：复现信号 2，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T04:44:22.623714Z",
+      "eventId": "9a7384be8e74948f990335b2696254eb2249ae3c9af59bb3bbe231d8c948928b",
+      "idempotencyKey": "9a7384be8e74948f990335b2696254eb2249ae3c9af59bb3bb",
+      "kind": "review",
+      "runId": "scan-20260804T044049Z-6e18e01fb993",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "vllm-project/vllm#48109",
+        "vllm-project/vllm#45522",
+        "multica-ai/multica#4163",
+        "flashinfer-ai/flashinfer#3551"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#48109](https://github.com/vllm-project/vllm/pull/48109) [Bugfix][XPU] Fix Mamba state pointer overflow**\n建议：PR_FOLLOWUP\n价值：CI 检查失败\n验证：查看正式 review、失败检查或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#45522](https://github.com/vllm-project/vllm/pull/45522) fix: cache bad_words tokenization to avoid 'Already borrowed' errors under concurrency**\n建议：PR_FOLLOWUP\n价值：CI 检查失败\n验证：查看正式 review、失败检查或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[multica-ai/multica#4163](https://github.com/multica-ai/multica/pull/4163) fix(codex): add Windows blind-run warning and detection for upstream openai/codex#20874 [MUL-4291]**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、失败检查或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[flashinfer-ai/flashinfer#3551](https://github.com/flashinfer-ai/flashinfer/pull/3551) fix: handle negative draft_token_ids in ChainSpeculativeSampling**\n建议：PR_FOLLOWUP\n价值：CI 检查失败\n验证：查看正式 review、失败检查或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T04:44:22.859607Z",
+      "eventId": "1156b2f398feb22c158790c5dacfd123c8ea874ba07f6e1af690365e29173d30",
+      "idempotencyKey": "1156b2f398feb22c158790c5dacfd123c8ea874ba07f6e1af6",
+      "kind": "watch",
+      "runId": "pr-followup-1785818382",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-04T03:48:47.879563Z",
+  "generatedAt": "2026-08-04T04:44:22.859607Z",
   "newEventCount": 1,
   "version": "notification_outbox_v1"
 }

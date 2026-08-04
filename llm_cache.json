@@ -56,6 +56,60 @@
     ],
     "why": "Issue reports a clear bug: nested Pydantic models in dicts ignore serialize_by_alias=False. No open PR or related issue found, but the repository requires assignment and AI disclosure. Root cause is not yet confirmed; likely in serialization path for nested models."
   },
+  "976b4ba1dc070c3b4427e1660bc07cdd14958c14ad095a6f32d90fd3bce68e5b": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Update error message in durable_exec/_base.py generic branch to include capability id hint",
+      "Fix typo 'activitys' to 'activities'"
+    ],
+    "risks": [
+      "Potential overlap with PR #6696 may lead to duplicate work or merge conflicts",
+      "Changing error message text could break tests that assert exact wording"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add a regression test using the provided repro (Agent with WebSearch(local='duckduckgo') and TemporalDurability) asserting the error message contains the capability id hint",
+      "Run existing durable_exec unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a specific wording or approach for the error message",
+      "Whether PR #6696 already fixes this issue or will be merged soon"
+    ],
+    "why": "Issue clearly identifies a missing capability id hint in a durable-exec error message, with a minimal repro and root cause. However, open PR #6696 has semantic overlap and may already address the code path; maintainer design preference is unknown and no assignment is confirmed."
+  },
+  "a4284d967a499038b2f0cef8c6aaec18012a110ca1e74ab24fbe2d1a4873dc62": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify OllamaTextCompletionResponseIterator in litellm/llms/ollama/completion/transformation.py to reconstruct tool calls from streamed JSON text and set finish_reason to 'tool_calls'",
+      "Add streaming regression test for ollama/ tool calls"
+    ],
+    "risks": [
+      "Potential API behavior change if not carefully scoped",
+      "May conflict with existing PR or maintainer design preferences"
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Use the provided curl reproduction to create a failing test for stream=true tool calls",
+      "Run targeted unit tests for ollama completion transformation and streaming iterator"
+    ],
+    "unknowns": [
+      "Whether an open PR already addresses this issue",
+      "Maintainer's preferred approach for streaming tool call reconstruction"
+    ],
+    "why": "Issue provides a detailed, reproducible bug with clear root cause in streaming path of ollama/ prefix, but open PR and related issue lookups timed out, so duplicate implementation cannot be excluded. Maintainer approval and design confirmation are absent, and the gate requires human review."
+  },
   "abd0dc83190a49c628ea83f21d4e43004b4b2cac3d2f627613be493686ec1dd3": {
     "confidence": 0.85,
     "contradictions": [],
@@ -200,6 +254,36 @@
       "Maintainer's stance on proposed fix in #1724"
     ],
     "why": "Issue reports stale data in get_episodes; maintainer attributes to queue latency, but a user comment identifies a concrete root cause: keyset pagination hardcodes ORDER BY uuid DESC, returning arbitrary stable subset. Existing PR #1726 addresses this but has failing CI and lacks explicit issue link. A materially better PR with robust tests and clear root-cause fix is plausible."
+  },
+  "e1434717d760518bad9804ecb7735aa8c452c17b29278f88b4b41f2f6a3ba16e": {
+    "confidence": 0.8,
+    "contradictions": [
+      "None"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix MRv2's profile_cudagraph_memory() to reserve sufficient capture headroom",
+      "Add regression test for CUDA graph memory accounting parity between MRv1 and MRv2"
+    ],
+    "risks": [
+      "May conflict with ongoing extensible-KV-cache redesign (#47363)",
+      "Requires GPU hardware to reproduce; CI may lack suitable environment"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Run the reported Gemma-4 31B int8 TP=2 config under saturating load and verify no OOM",
+      "Add a unit test comparing profiler-reported available KV with and without CUDA graphs for a small model"
+    ],
+    "unknowns": [
+      "Maintainer preference on fixing vs. waiting for #47363",
+      "Whether #49233 can be improved or should be superseded"
+    ],
+    "why": "Issue provides a deterministic OOM repro and strong evidence that MRv2 under-reserves CUDA graph capture memory, matching known issue #49224 and draft PR #49233. However, the PR is draft with failing CI, and maintainer direction is unclear; a new PR would compete with an existing weak attempt."
   },
   "e76172b60f1b9591da21eeb4a217fd494af10bb87e29c1175a4a5bbee74d3a27": {
     "confidence": 0.7,
