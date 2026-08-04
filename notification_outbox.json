@@ -1,5 +1,5 @@
 {
-  "digest": "e2d536a4cc78283f8cb9cf7577d651777e1450d33a0149019994d84e18379f4a",
+  "digest": "8fed9fd16347527835bfd6a369c5c290fb48a223b2c511c0fb4ddbe633d75ea1",
   "events": [
     {
       "attempts": 1,
@@ -3897,9 +3897,119 @@
       "runId": "watch-1785843970",
       "sentAt": "2026-08-04T11:50:36.072602Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "ai-dynamo/dynamo#12630",
+        "vllm-project/vllm#51016",
+        "crewAIInc/crewAI#6788"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[ai-dynamo/dynamo#12630](https://github.com/ai-dynamo/dynamo/issues/12630) [Bug] sglang chat processor streaming detokenizer emits U+FFFD and drops completed characters on multi-byte UTF-8 (CJK) at chunk boundaries**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue provides a clear root cause and a verified fix for a user-visible streaming corruption bug, but the deterministic gate requires HUMAN_REVIEW and there is potential overlap with issue #11997 that needs maintainer triage.\n改动：Modify _incremental_decode in dynamo/frontend/sglang_prepost.py to use emitted-character marker and hold back trailing U+FFFD；Add streaming regression tests for multi-byte UTF-8 chunk boundaries\n验证：Reproduce with the issue's minimal example and assert zero U+FFFD in streamed Korean output；Run existing sglang frontend unit tests and static checks\n风险：Potential behavior change for legitimate trailing U+FFFD; need flush on finish_reason；Overlap with issue #11997 may require coordination\n竞争：仅发现未直接关联、无代码路径或强机制重合的 PR #12562；保留为搜索上下文，不阻止实现\n下一步：先人工比较相关 issue 的根因、维护者归并方向和可提交代码路径；确认不是重复后再进入实现。\n证据：复现信号 2，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#51016](https://github.com/vllm-project/vllm/issues/51016) [Bug]: extract_hidden_states fails with TP>1 when KV page size < hidden-state per-token cost**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue provides a clear root cause and reproduction for a user-visible crash with TP>1, but the deterministic gate requires HUMAN_REVIEW and the related issue audit failed (timeout). A draft PR (#50894) exists with failed CI and incomplete evidence, so a new clean candidate is not appropriate without maintainer confirmation.\n改动：Add a failing regression test for extract_hidden_states with TP>1 and small KV page size；Adjust KV cache group block size alignment to respect hidden-state per-token cost\n验证：Run the provided reproduction command with TP=4 and the specified model to confirm the assertion；Add a unit test that constructs a KVCacheSpec with TP>1 and hidden-state cost exceeding the common page, expecting no assertion\n风险：Potential API behavior change if alignment logic is altered broadly；Draft PR #50894 may already address the issue but has failed CI; competing work could be wasted\n竞争：已有直接关联但证据不完整的 PR #50894：存在失败 CI/check; 仍是 draft；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 4，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[crewAIInc/crewAI#6788](https://github.com/crewAIInc/crewAI/issues/6788) [BUG] total_tokens omits cache reads and writes on the native Anthropic provider**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue provides a clear root cause and a concrete fix for a real token accounting bug, but the deterministic gate requires HUMAN_REVIEW and open PR lookup failed, so we cannot rule out duplicate work.\n改动：Modify anthropic provider token extraction to include cache tokens in total_tokens；Update existing test that pins the undercount\n验证：Run the provided reproduction script to confirm undercount；Add regression test with cache tokens verifying total_tokens includes them\n风险：Potential duplicate issue #6768 or existing PR；Changing input_tokens semantics may affect downstream consumers\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 5，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T12:24:35.084913Z",
+      "eventId": "57ff7e21cb27e17f24b700cadf6d233c0f21361541e5cd37a5c18485026bdc53",
+      "idempotencyKey": "57ff7e21cb27e17f24b700cadf6d233c0f21361541e5cd37a5",
+      "kind": "review",
+      "runId": "scan-20260804T122157Z-4e87097f1f47",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "vllm-project/vllm#50159",
+        "DeusData/codebase-memory-mcp#1339",
+        "PrefectHQ/fastmcp#4744"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50159](https://github.com/vllm-project/vllm/issues/50159) [Bug]: Model Runner V2 + Gemma-4: memory profiler reports ~0.9 GiB more \"available KV\" than MRv1 → no runtime headroom → CUDA OOM under saturating load (no spec involved); with EAGLE it crashes earlier at cudagraph capture (stable-ABI aten::empty)**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[DeusData/codebase-memory-mcp#1339](https://github.com/DeusData/codebase-memory-mcp/issues/1339) Graph not updated when the working tree returns to clean (revert leaves false negatives)**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[PrefectHQ/fastmcp#4744](https://github.com/PrefectHQ/fastmcp/issues/4744) serialize_by_alias=False ignored for nested Pydantic models**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T12:24:35.231353Z",
+      "eventId": "271c2ac556ada10820a6cff682c1631c4ad1ac0cafc0c761b139cee74e64c75a",
+      "idempotencyKey": "271c2ac556ada10820a6cff682c1631c4ad1ac0cafc0c761b1",
+      "kind": "watch",
+      "runId": "watch-1785846068",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-04T11:50:00.854284Z",
+  "generatedAt": "2026-08-04T12:24:35.340641Z",
   "newEventCount": 0,
   "version": "notification_outbox_v1"
 }

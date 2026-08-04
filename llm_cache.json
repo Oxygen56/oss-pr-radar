@@ -25,6 +25,34 @@
     ],
     "why": "Issue reports an unrecognized arguments error for MiniMax-H3, but a comment suggests adding --model-type diffusion resolves it, indicating a usage/documentation gap rather than a clear code bug. The issue is not a PR and lacks maintainer confirmation or root cause analysis. Open PR and related issue lookups timed out, so duplicate work cannot be excluded."
   },
+  "071cc772b86525081c574dcfcbf9b29e5079373611d8519630e5c4705b121ab6": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify _incremental_decode in dynamo/frontend/sglang_prepost.py to use emitted-character marker and hold back trailing U+FFFD",
+      "Add streaming regression tests for multi-byte UTF-8 chunk boundaries"
+    ],
+    "risks": [
+      "Potential behavior change for legitimate trailing U+FFFD; need flush on finish_reason",
+      "Overlap with issue #11997 may require coordination"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Reproduce with the issue's minimal example and assert zero U+FFFD in streamed Korean output",
+      "Run existing sglang frontend unit tests and static checks"
+    ],
+    "unknowns": [
+      "Maintainer preference on whether to address both Python and Rust paths",
+      "Whether issue #11997 is a duplicate or distinct root cause"
+    ],
+    "why": "Issue provides a clear root cause and a verified fix for a user-visible streaming corruption bug, but the deterministic gate requires HUMAN_REVIEW and there is potential overlap with issue #11997 that needs maintainer triage."
+  },
   "0740f235a4da3373d7ae5b08296a8d4e8a3db657b4bc57bf6294e4daf5e1b126": {
     "confidence": 0.6,
     "contradictions": [],
@@ -429,6 +457,34 @@
       "Whether issue #4838 is truly a duplicate"
     ],
     "why": "Issue is a real bug with clear root cause and workaround, but an existing PR #5742 directly addresses it and is technically complete, though it has failing CI. The deterministic gate is HUMAN_REVIEW, and maintainer confirmation is needed before starting a competing PR."
+  },
+  "2157666a01c6611d2766485a271f0397669624ec708a68262cc7b7566eb2239d": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify anthropic provider token extraction to include cache tokens in total_tokens",
+      "Update existing test that pins the undercount"
+    ],
+    "risks": [
+      "Potential duplicate issue #6768 or existing PR",
+      "Changing input_tokens semantics may affect downstream consumers"
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Run the provided reproduction script to confirm undercount",
+      "Add regression test with cache tokens verifying total_tokens includes them"
+    ],
+    "unknowns": [
+      "Open PR status unknown due to lookup failure",
+      "Maintainer design preference on input_tokens semantics"
+    ],
+    "why": "Issue provides a clear root cause and a concrete fix for a real token accounting bug, but the deterministic gate requires HUMAN_REVIEW and open PR lookup failed, so we cannot rule out duplicate work."
   },
   "2566e652e6fa8090066e3ad581d828156b7194fe38a86774a4165517c47e9746": {
     "confidence": 0.85,
@@ -1515,6 +1571,35 @@
     ],
     "why": "Issue clearly identifies a shallow update in get_config causing recursive override failure, with a concrete reproduction. However, an existing PR #33525 directly addresses this but lacks tests and has failing CI, and the deterministic gate requires HUMAN_REVIEW. Maintainer design preference is unconfirmed."
   },
+  "86b7fa69f0424838e50d4a2f4d4245d8eef73797bc8c0370fdb579bfcdd2bbbf": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Investigate scheduler watchdog timeout in DSPARK/hierarchical cache path",
+      "Add regression test using provided reproduction command"
+    ],
+    "risks": [
+      "Complex environment and configuration may make reproduction flaky",
+      "Potential duplicate fix already in progress due to failed PR lookup"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Run the exact reproduction command on H200 node to reproduce timeout",
+      "Add a minimal test that triggers watchdog timeout under similar load"
+    ],
+    "unknowns": [
+      "Whether a related PR already exists",
+      "Whether maintainers have acknowledged or are investigating",
+      "Root cause of the watchdog timeout"
+    ],
+    "why": "Issue reports a watchdog timeout with a complex reproduction command but no root cause analysis. Related issue and open PR lookups timed out, so duplicate work cannot be excluded. Maintainer input is needed to confirm priority and design direction."
+  },
   "8aea60e09083802fb3fd5f35002ade0ff1b1e76a1412745d1f9409a7a94eda42": {
     "confidence": 0.85,
     "contradictions": [],
@@ -1775,6 +1860,33 @@
       "Maintainer's preferred approach for streaming tool call reconstruction"
     ],
     "why": "Issue provides a detailed, reproducible bug with clear root cause in streaming path of ollama/ prefix, but open PR and related issue lookups timed out, so duplicate implementation cannot be excluded. Maintainer approval and design confirmation are absent, and the gate requires human review."
+  },
+  "a460af5ee1f0fe46b18ffc4da2296fc8def574f04f3221a31e281b8c32dc1967": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Add a failing regression test for extract_hidden_states with TP>1 and small KV page size",
+      "Adjust KV cache group block size alignment to respect hidden-state per-token cost"
+    ],
+    "risks": [
+      "Potential API behavior change if alignment logic is altered broadly",
+      "Draft PR #50894 may already address the issue but has failed CI; competing work could be wasted"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Run the provided reproduction command with TP=4 and the specified model to confirm the assertion",
+      "Add a unit test that constructs a KVCacheSpec with TP>1 and hidden-state cost exceeding the common page, expecting no assertion"
+    ],
+    "unknowns": [
+      "Maintainer design preference for the fix",
+      "Status of related issue audit (timeout) and whether #50894 is viable"
+    ],
+    "why": "Issue provides a clear root cause and reproduction for a user-visible crash with TP>1, but the deterministic gate requires HUMAN_REVIEW and the related issue audit failed (timeout). A draft PR (#50894) exists with failed CI and incomplete evidence, so a new clean candidate is not appropriate without maintainer confirmation."
   },
   "a6ff5f2141ad8ab6215ace197e615b6110ec510ed6080dd2c44cb9ec99fb83e0": {
     "confidence": 0.7,
