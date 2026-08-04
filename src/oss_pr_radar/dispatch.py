@@ -9,10 +9,11 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from .contracts import contract_digest, validate_report
+from .policy import SCANNER_DECISION_REVISION, decision_contract_digest
 from .util import canonical_json, iso_z, parse_time, sha256_json, sha256_text
 
-QUEUE_VERSION = "dispatch_intents_v3"
-INTENT_VERSION = "dispatch_intent_v3"
+QUEUE_VERSION = "dispatch_intents_v4"
+INTENT_VERSION = "dispatch_intent_v4"
 SKILL = "[$gh-issue-pr](/Users/oxygen/.codex/skills/gh-issue-pr/SKILL.md)"
 ACTIONABLE_DECISIONS = {"NEW_CLEAN_CANDIDATE", "PR_COMPETITION_OPPORTUNITY"}
 
@@ -75,10 +76,14 @@ def build_queue(
     source_sha: str = "",
 ) -> dict[str, Any]:
     validate_report(report)
+    scanner_version = str(report.get("scanner_version") or "")
+    if scanner_version != SCANNER_DECISION_REVISION:
+        raise ValueError("stale scanner decision revision")
     if mode not in {"shadow", "canary", "active"}:
         raise ValueError("unsupported dispatch mode")
     current = (now or datetime.now(UTC)).astimezone(UTC)
     expires = current + timedelta(minutes=max(5, min(ttl_minutes, 360)))
+    dispatch_contract_digest = decision_contract_digest()
     observed = {
         f"{item.get('repo')}#{item.get('num')}"
         for item in report.get("candidate_details") or []
@@ -101,6 +106,8 @@ def build_queue(
                 signer.verify(item)
                 if (
                     item.get("key") not in observed
+                    and item.get("scannerVersion") == scanner_version
+                    and item.get("decisionContractDigest") == dispatch_contract_digest
                     and parse_time(str(item["expiresAt"])) > current
                     and item.get("status") == "PENDING"
                 ):
@@ -127,9 +134,9 @@ def build_queue(
             or contract_digest(),
             "llmReview": candidate.get("llm_review"),
         }
-        decision_digest = sha256_json(decision_basis)
+        candidate_decision_digest = sha256_json(decision_basis)
         intent_id = sha256_text(
-            f"{key}|{report.get('snapshot_id') or report.get('now')}|{decision_digest}"
+            f"{key}|{report.get('snapshot_id') or report.get('now')}|{candidate_decision_digest}"
         )
         item = {
             "version": INTENT_VERSION,
@@ -156,10 +163,12 @@ def build_queue(
             "runId": report.get("run_id") or report.get("now"),
             "sourceSha": source_sha,
             "snapshotId": report.get("snapshot_id") or sha256_json(report),
+            "scannerVersion": scanner_version,
+            "decisionContractDigest": dispatch_contract_digest,
             "contractDigest": report.get("contract_digest") or contract_digest(),
             "policyDigest": candidate.get("policy_digest") or "",
             "evidenceDigest": candidate.get("evidence_digest") or "",
-            "decisionDigest": decision_digest,
+            "decisionDigest": candidate_decision_digest,
             "promptDigest": sha256_text(canonical_prompt(issue_url)),
             "issuedAt": iso_z(current),
             "expiresAt": iso_z(expires),
@@ -175,6 +184,8 @@ def build_queue(
         "generatedAt": iso_z(current),
         "runId": report.get("run_id") or report.get("now"),
         "sourceSha": source_sha,
+        "scannerVersion": scanner_version,
+        "decisionContractDigest": dispatch_contract_digest,
         "contractDigest": report.get("contract_digest") or contract_digest(),
         "mode": mode,
         "intentCount": len(retained),
@@ -191,6 +202,10 @@ def verify_queue(
         raise SignatureError("unsupported dispatch queue")
     if queue.get("contractDigest") != contract_digest():
         raise SignatureError("stale dispatch contract")
+    if queue.get("scannerVersion") != SCANNER_DECISION_REVISION:
+        raise SignatureError("stale scanner decision revision")
+    if queue.get("decisionContractDigest") != decision_contract_digest():
+        raise SignatureError("stale dispatch decision revision")
     signer.verify(queue)
     current = (now or datetime.now(UTC)).astimezone(UTC)
     verified: list[dict[str, Any]] = []
@@ -200,6 +215,10 @@ def verify_queue(
         signer.verify(item)
         if item.get("version") != INTENT_VERSION:
             raise SignatureError("unsupported dispatch intent")
+        if item.get("scannerVersion") != SCANNER_DECISION_REVISION:
+            raise SignatureError("stale intent scanner revision")
+        if item.get("decisionContractDigest") != decision_contract_digest():
+            raise SignatureError("stale intent decision revision")
         if parse_time(str(item["expiresAt"])) <= current:
             continue
         if item.get("promptDigest") != sha256_text(canonical_prompt(str(item["issueUrl"]))):

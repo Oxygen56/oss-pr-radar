@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from oss_pr_radar.dispatch import DispatchSigner, SignatureError, verify_queue
+from oss_pr_radar.policy import SCANNER_DECISION_REVISION, decision_contract_digest
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "build_dispatch_intents.py"
 SPEC = importlib.util.spec_from_file_location("build_dispatch_intents", SCRIPT)
@@ -46,6 +47,7 @@ def report(*candidates):
         "now": "2026-08-04T00:00:00Z",
         "run_id": "run-1",
         "snapshot_id": "snapshot-1",
+        "scanner_version": SCANNER_DECISION_REVISION,
         "candidate_details": list(candidates),
     }
 
@@ -55,6 +57,8 @@ def test_builds_signed_promptless_envelope():
     intent = result["intents"][0]
     assert "prompt" not in intent
     assert intent["sourceSha"] == "abc123"
+    assert intent["scannerVersion"] == SCANNER_DECISION_REVISION
+    assert intent["decisionContractDigest"] == decision_contract_digest()
     assert len(intent["promptDigest"]) == 64
     assert verify_queue(result, DispatchSigner(KEY), now=NOW) == [intent]
 
@@ -89,6 +93,32 @@ def test_existing_unconsumed_intent_survives_unobserved_scan_until_expiry():
     result = MODULE.build(report(), existing, signing_key=KEY, now=NOW + timedelta(minutes=30))
     assert [item["key"] for item in result["intents"]] == ["example/project#42"]
     assert result["newIntentCount"] == 0
+
+
+def test_old_scanner_revision_intent_is_revoked_before_issue_recheck():
+    signer = DispatchSigner(KEY)
+    existing = MODULE.build(report(candidate()), signing_key=KEY, now=NOW)
+    stale_intent = dict(existing["intents"][0])
+    stale_intent["scannerVersion"] = "oss_pr_radar_v18_previous"
+    existing["intents"] = [signer.seal(stale_intent)]
+    existing["scannerVersion"] = "oss_pr_radar_v18_previous"
+    existing = signer.seal(existing)
+
+    result = MODULE.build(
+        report(),
+        existing,
+        signing_key=KEY,
+        now=NOW + timedelta(minutes=10),
+    )
+
+    assert result["intents"] == []
+
+
+def test_stale_scanner_report_cannot_build_dispatch_queue():
+    stale = report(candidate())
+    stale["scanner_version"] = "oss_pr_radar_v18_previous"
+    with pytest.raises(ValueError, match="stale scanner decision revision"):
+        MODULE.build(stale, signing_key=KEY, now=NOW)
 
 
 def test_observed_rejection_revokes_existing_intent():
