@@ -667,6 +667,39 @@
     ],
     "why": "Issue provides detailed root cause and repro, but existing PR #2078 is draft and may already address it; maintainer design preferences and PR quality need assessment before starting competing work."
   },
+  "7ab32ae82a3f39286a4cee7fbf5cfafa1d094ceb263bf8600a3d5173c56e673c": {
+    "confidence": 0.85,
+    "contradictions": [
+      "One comment reports different error message for some commands (daemon could not start) vs activation error, suggesting possibly separate root cause"
+    ],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix activation transaction logic on Windows to handle cases where no sessions are active",
+      "Ensure daemon startup does not fail due to stale state or file access issues",
+      "Add recovery/reset procedure for activation state"
+    ],
+    "risks": [
+      "Windows-specific behavior may be hard to reproduce in CI",
+      "Changes to activation logic could affect other platforms",
+      "Need to ensure backward compatibility with existing installations"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce the issue on Windows by following the steps in the report",
+      "Add a regression test that simulates the failure condition (e.g., no active sessions but activation fails)",
+      "Run existing test suite on Windows to ensure no regressions"
+    ],
+    "unknowns": [
+      "Exact root cause not yet identified; may require deeper investigation",
+      "Whether the issue is specific to Windows file permissions or a broader activation logic flaw"
+    ],
+    "why": "Issue reports a high-impact Windows bug where install/uninstall/doctor/serve all fail with 'active CBM sessions and operations could not be stopped safely', with independent reproduction and a working recovery procedure. Root cause is likely in the activation transaction or daemon startup logic on Windows, possibly related to file access or session handling. No competing PR exists, and maintainer has acknowledged the bug as high priority."
+  },
   "7bafb720133c05b4137486593349fd54f50fbee95133e610fd5dd96615e0caed": {
     "confidence": 0.7,
     "contradictions": [],
@@ -1543,6 +1576,33 @@
       "Maintainer preference on fixing vs. waiting for extensible KV cache"
     ],
     "why": "Issue provides strong evidence of a memory accounting discrepancy between MRv1 and MRv2, with a deterministic OOM repro and community A/B isolating CUDA graph capture headroom. However, root cause is not fully confirmed (eager residual unexplained), and an existing draft PR #49233 attempts a fix but is incomplete. Maintainer direction is needed to avoid duplicating or conflicting with ongoing work."
+  },
+  "f8658379e0be3e23bbb4673be8620c5d7cf8322218f640bf87e0b9a319d16673": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify gui-settings-bridge.js to merge provider models instead of overwriting",
+      "Ensure synchronization across config.json, model-connections.v1.json, and kun-settings.json"
+    ],
+    "risks": [
+      "Potential unintended side effects on model ordering or metadata if merge logic is not careful",
+      "Background processes may still cause race conditions if not addressed"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add a regression test that simulates adding a model via GUI and verifies it persists after the delayed projection",
+      "Run existing unit tests for gui-settings-bridge and related config sync modules"
+    ],
+    "unknowns": [
+      "Exact code structure and current implementation details of gui-settings-bridge.js",
+      "Whether maintainers have a preferred design for merging vs. overwriting"
+    ],
+    "why": "Issue provides a clear, reproducible bug with detailed logs and root cause analysis: a delayed registry-to-GUI projection overwrites newly added models. No competing PR or issue exists, and the fix is localized to synchronization logic."
   },
   "f9388995937b1e55bd8977335851a0e9859696c4056b203c018e1a8a6a848547": {
     "confidence": 0.8,

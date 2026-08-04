@@ -1,5 +1,5 @@
 {
-  "digest": "30ba85c0ee469de61914b2d9eaa5588e828a7a416ebd145f3dd5d5866e3eb15c",
+  "digest": "7af9741701c9fcfcc78346641b387b4f45fe248ac8002792ae7cea23278785f6",
   "events": [
     {
       "attempts": 1,
@@ -2186,9 +2186,130 @@
       "runId": "watch-1785825982",
       "sentAt": "2026-08-04T06:57:14.900762Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "DeusData/codebase-memory-mcp#1416"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[DeusData/codebase-memory-mcp#1416](https://github.com/DeusData/codebase-memory-mcp/issues/1416) Windows: install/uninstall/doctor all fail with \"active CBM sessions and operations could not be stopped safely\"**\n建议：NEW_CLEAN_CANDIDATE | 分数：11\n价值：Issue reports a high-impact Windows bug where install/uninstall/doctor/serve all fail with 'active CBM sessions and operations could not be stopped safely', with independent reproduction and a working recovery procedure. Root cause is likely in the activation transaction or daemon startup logic on Windows, possibly related to file access or session handling. No competing PR exists, and maintainer has acknowledged the bug as high priority.\n改动：Fix activation transaction logic on Windows to handle cases where no sessions are active；Ensure daemon startup does not fail due to stale state or file access issues；Add recovery/reset procedure for activation state\n验证：Reproduce the issue on Windows by following the steps in the report；Add a regression test that simulates the failure condition (e.g., no active sessions but activation fails)；Run existing test suite on Windows to ensure no regressions\n风险：Windows-specific behavior may be hard to reproduce in CI；Changes to activation logic could affect other platforms；Need to ensure backward compatibility with existing installations\n竞争：未发现相关 open PR\n下一步：按正常流程实现并验证；如要求 DCO 则自动 sign-off，PR 创建后报告 CLA 状态。\n证据：复现信号 12，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "green",
+          "title": {
+            "content": "OSS PR Radar: 可立即执行",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T07:07:08.448623Z",
+      "eventId": "754b4b4c0bf8af268a0cc5275219db4a51d17a4e421799488b5ca9f482ff4c39",
+      "idempotencyKey": "754b4b4c0bf8af268a0cc5275219db4a51d17a4e421799488b",
+      "kind": "immediate",
+      "runId": "scan-20260804T070447Z-914887b9cbdc",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "can1357/oh-my-pi#7601",
+        "vllm-project/vllm#50959",
+        "KunAgent/Kun#1090"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[can1357/oh-my-pi#7601](https://github.com/can1357/oh-my-pi/issues/7601) [Windows] Shared headless browser daemon exits with code 21: system Chrome 150 silently exits on --remote-debugging-port=0**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue provides a clear root cause and repro, but a maintainer (roboomp) is actively investigating and has already submitted PR #7604 with a fix and regression tests. The PR has failed CI checks, so it may be weak, but the maintainer's involvement and existing PR make a new candidate premature until the PR is reviewed or closed.\n改动：packages/coding-agent/src/tools/browser/launch.ts；browser daemon configuration\n验证：Reproduce the issue on Windows with system Chrome and PUPPETEER_EXECUTABLE_PATH set; verify the fix selects the override.；Run existing browser tool tests and add regression test for executable selection precedence.\n风险：PR #7604 may be merged, making a new PR redundant.；Potential maintainer preference for a different fix approach.\n竞争：已有直接关联但证据不完整的 PR #7604：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 5，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50959](https://github.com/vllm-project/vllm/issues/50959) [Bug] fastsafetensors ParallelLoader broadcasts on group.WORLD; PP-scoped draft loads deadlock**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue describes a clear deadlock with root cause in fastsafetensors using WORLD group for PP-scoped draft loads, but lacks maintainer confirmation and has an existing PR (#50514) with failed CI that may already address the area.\n改动：Fix fastsafetensors ParallelLoader to use participant-scoped process group；Add regression test for PP-scoped draft load with fastsafetensors\n验证：Reproduce with TP8×PP2 and fastsafetensors; verify no hang；Run existing spec decode under PP tests\n风险：May conflict with existing PR #50514；Changing process group scoping could affect other load paths\n竞争：已有直接关联但证据不完整的 PR #50514：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 4，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[KunAgent/Kun#1090](https://github.com/KunAgent/Kun/issues/1090) [Bug] Custom provider models are automatically deleted after being added**\n建议：NEW_CLEAN_CANDIDATE | 分数：10\n价值：Issue provides a clear, reproducible bug with detailed logs and root cause analysis: a delayed registry-to-GUI projection overwrites newly added models. No competing PR or issue exists, and the fix is localized to synchronization logic.\n改动：Modify gui-settings-bridge.js to merge provider models instead of overwriting；Ensure synchronization across config.json, model-connections.v1.json, and kun-settings.json\n验证：Add a regression test that simulates adding a model via GUI and verifies it persists after the delayed projection；Run existing unit tests for gui-settings-bridge and related config sync modules\n风险：Potential unintended side effects on model ordering or metadata if merge logic is not careful；Background processes may still cause race conditions if not addressed\n竞争：未发现相关 open PR\n下一步：仅完成本地复现、修复、测试和私有提交包；由用户自行决定公开提交。\n证据：复现信号 5，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T07:07:08.620508Z",
+      "eventId": "faa0f4252cb9b660187ad38ab135ead0cd9fff14cb06675656b8693e17453743",
+      "idempotencyKey": "faa0f4252cb9b660187ad38ab135ead0cd9fff14cb06675656",
+      "kind": "review",
+      "runId": "scan-20260804T070447Z-914887b9cbdc",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "openclaw/openclaw#92199"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[openclaw/openclaw#92199](https://github.com/openclaw/openclaw/issues/92199) [Bug]: [ACP] Text before tool calls is lost in WeChat (intermediate messages dropped, not merged)**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T07:07:08.806477Z",
+      "eventId": "ad0ad6662b4a68679aa7b84189770607db000e37ee1e67fd5df2869848f52e10",
+      "idempotencyKey": "ad0ad6662b4a68679aa7b84189770607db000e37ee1e67fd5d",
+      "kind": "watch",
+      "runId": "watch-1785826736",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-04T06:56:32.901988Z",
+  "generatedAt": "2026-08-04T07:07:08.938836Z",
   "newEventCount": 0,
   "version": "notification_outbox_v1"
 }
