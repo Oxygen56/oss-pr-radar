@@ -1,5 +1,5 @@
 {
-  "digest": "610d0d674ed1b9f06981e7f5fb1ccc76fbe342774ab84515b5b157f2a69c39c2",
+  "digest": "cb748ba7c90979f9e2f20c93b04b0bcc029469350ca3afc4ff1d7718f3585bb5",
   "events": [
     {
       "attempts": 1,
@@ -5128,9 +5128,350 @@
       "runId": "pr-followup-1785865058",
       "sentAt": "2026-08-04T17:45:25.333556Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "modelcontextprotocol/inspector#1914",
+        "modelcontextprotocol/inspector#1918",
+        "modelcontextprotocol/inspector#1858",
+        "mastra-ai/mastra#20688"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[modelcontextprotocol/inspector#1914](https://github.com/modelcontextprotocol/inspector/issues/1914) Bug: Failed manual connection leaves un-modifiable ghost server entry**\n建议：NEW_CLEAN_CANDIDATE | 分数：12\n价值：The issue describes a user-visible bug with silent failure and ghost server entries, but the root cause is partially clarified by a comment suggesting it may be a side effect of another bug (#1918). The issue is actionable with a clear reproduction path and expected behavior, and no competing PR exists.\n改动：Add visible error handling for failed manual connection attempts；Prevent persistence of failed server entries or make them manageable；Handle name collisions during import with overwrite option\n验证：Reproduce by following steps in issue: add server with failing URL, verify no error shown and ghost entry created；Attempt import with same name and verify duplicate error；After fix, verify error is shown and entry is either not persisted or can be deleted\n风险：Potential interaction with bug #1918 may require coordinated fix；UI changes may affect existing behavior for successful connections\n竞争：未发现相关 open PR\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 4，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[modelcontextprotocol/inspector#1918](https://github.com/modelcontextprotocol/inspector/issues/1918) Bug: GET api/servers Fails Within Headless Docker Container**\n建议：NEW_CLEAN_CANDIDATE | 分数：12\n价值：Issue provides a clear, reproducible bug with a precise root cause: keychain lookup is attempted for all servers even without OAuth, and the AsyncEntry constructor throws outside the try/catch, causing a 500 in headless environments. This is a user-visible bug with high impact and a clear minimal fix path.\n改动：Modify expectedSecretFields() to only include OAuth secret fields when OAuth config is present；Move AsyncEntry construction inside the try/catch in KeyringSecretStore.get() to handle synchronous throws gracefully\n验证：Add a regression test that simulates a missing secret-service backend and verifies GET /api/servers returns 200 with an empty list；Run existing unit tests for the keyring and server list modules\n风险：Potential behavior change if some servers rely on keychain lookup even without OAuth config; need to ensure no regression in normal environments\n竞争：未发现相关 open PR\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 10，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[modelcontextprotocol/inspector#1858](https://github.com/modelcontextprotocol/inspector/issues/1858) v2 hangs silently when connecting to streamable-http**\n建议：NEW_CLEAN_CANDIDATE | 分数：10\n价值：Issue reports a v2 regression where streamable-http connections hang silently, with multiple user confirmations and a maintainer triage marking it High priority. No competing PR exists, and the bug is actionable with a clear reproduction path.\n改动：Fix streamable-http connection hang in v2；Improve error logging for connection failures\n验证：Reproduce with provided Forgejo MCP example and assert connection completes；Add regression test for streamable-http transport with delayed or incomplete responses\n风险：Potential complexity in streamable-http protocol handling；Risk of introducing regressions in other transports\n竞争：仅发现未直接关联、无代码路径或强机制重合的 PR #1296；保留为搜索上下文，不阻止实现\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 2，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[mastra-ai/mastra#20688](https://github.com/mastra-ai/mastra/issues/20688) Factory: workspace factory reads the raw better-auth user shape, so every session becomes 'not available to the current user' after a restart**\n建议：PR_COMPETITION_OPPORTUNITY | 分数：12\n价值：Issue provides a precise root cause (two writers of requestContext user with different shapes) and a verified workaround. Existing PR #20690 is open but has failing CI/checks and may not cover all affected readers, leaving room for a materially better PR.\n改动：Normalize user shape in workspace factory or at write site；Align SDK tenant resolver；Consider normalizing other quiet readers (authorship.ts, composio.ts)\n验证：Reproduce by restarting Factory with better-auth and verifying 500 error；Add regression tests for owner access, cross-org rejection, missing-active-org rejection；Run targeted unit tests for factory and server packages\n风险：Potential maintainer preference on write-site vs read-site normalization；Risk of breaking existing behavior if normalization changes fail-closed semantics\n竞争：已有直接关联但证据不完整的 PR #20690：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：先复现 issue，再逐项对比已有 PR 的缺口；只有能提供更小改动、更强测试或更完整边界覆盖时才开 PR。\n证据：复现信号 6，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "green",
+          "title": {
+            "content": "OSS PR Radar: 可立即执行",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T18:14:12.063193Z",
+      "eventId": "e45db6b660742e4a160c60c7b7c5c0fba1d2103b5117e8abe5c2269155d3b22d",
+      "idempotencyKey": "e45db6b660742e4a160c60c7b7c5c0fba1d2103b5117e8abe5",
+      "kind": "immediate",
+      "runId": "scan-20260804T180800Z-53ae22c46116",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "aaif-goose/goose#10917",
+        "BerriAI/litellm#35780",
+        "PrefectHQ/fastmcp#4748",
+        "modelcontextprotocol/typescript-sdk#2614",
+        "sgl-project/sglang#33549",
+        "sgl-project/sglang#33470",
+        "vllm-project/vllm#50948",
+        "vllm-project/vllm#50891",
+        "sgl-project/sglang#33493",
+        "pydantic/pydantic-ai#7109"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[aaif-goose/goose#10917](https://github.com/aaif-goose/goose/issues/10917) [BUG] Connection-refused to a down local provider is retried for ~2 minutes before surfacing an error**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue provides a clear root cause and repro, but maintainer comment questions the desired behavior (retry vs fast fail) and suggests possible UX mitigation, indicating design confirmation is needed before implementation.\n改动：retry classification for connection-refused；ollama retry budget or timeout handling；possible user-visible retry status message\n验证：Add integration test with a down local provider to assert fast error surfacing；Unit test for should_retry distinguishing connection-refused from transient network errors\n风险：Changing retry behavior may affect transient network recovery；Reducing retry budget may impact large model loading scenarios\n竞争：未发现相关 open PR\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 6，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#35780](https://github.com/BerriAI/litellm/issues/35780) [Bug]: Responses API sends metadata to a strict OpenAI-compatible upstream although the client does not pass metadata**\n建议：WAIT_MAINTAINER | 分数：14\n价值：Issue reports a clear user-visible bug with a workaround, but root cause is unconfirmed and open PR/related issue lookups timed out, so duplicate implementation cannot be excluded.\n改动：Identify where metadata is injected in Proxy /v1/responses path；Ensure internal metadata is not serialized to upstream；Add regression test for strict upstream without metadata\n验证：Reproduce with provided config and strict upstream；Add test asserting no metadata in upstream request when not supplied；Run existing responses API tests\n风险：May alter API behavior if not carefully scoped；Potential duplicate PR exists due to lookup failure\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 10，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[PrefectHQ/fastmcp#4748](https://github.com/PrefectHQ/fastmcp/issues/4748) OAuth consent cookie is rejected behind Azure Functions**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue reports a clear bug: Azure Functions adds Domain attribute to __Host- cookie, causing browser rejection and 403. Root cause is well understood and reproducible. However, the deterministic gate says HUMAN_REVIEW, and there is no maintainer approval or help-wanted signal. The fix may involve design choices about cookie handling and deployment compatibility, so maintainer input is needed.\n改动：Modify OAuth consent cookie handling to be compatible with hosting layers that rewrite cookie attributes, possibly by using a non-__Host- cookie or adjusting cookie attributes.\n验证：Create a failing test that simulates Azure Functions adding Domain attribute to the consent cookie and verifies the OAuth flow completes.\n风险：Changing cookie attributes may weaken security if not done carefully; need to preserve CSRF and browser-session binding.\n竞争：未发现相关 open PR\n下一步：先请求维护者分配/确认方案，获批后再开 PR。\n证据：复现信号 9，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[modelcontextprotocol/typescript-sdk#2614](https://github.com/modelcontextprotocol/typescript-sdk/issues/2614) Client.listTools() corrupts its cached tool metadata when an output schema fails to compile**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue provides a clear root cause and a concrete reproduction, but the deterministic gate requires HUMAN_REVIEW and there is potential overlap with existing issue #1585. Maintainer confirmation is needed before starting work.\n改动：Modify cacheToolMetadata in src/client/index.ts to build replacement collections locally and publish only after successful compilation.\n验证：Add a regression test using the provided reproduction script to assert that callTool still validates against the previous schema after a failed listTools.\n风险：Potential overlap with issue #1585 may lead to duplicate work or conflicting fixes.；Changing cache replacement semantics could affect concurrency behavior if not carefully synchronized.\n竞争：未发现相关 open PR\n下一步：先人工比较相关 issue 的根因、维护者归并方向和可提交代码路径；确认不是重复后再进入实现。\n证据：复现信号 8，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33549](https://github.com/sgl-project/sglang/issues/33549) [Bug] DeepSeek-V4 (dsv4 backend + DSPARK) TP=8 on 8×H20: decode forward hangs indefinitely at ~245K context — all GPUs spin at 100% util / low power, watchdog kills server**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue reports a severe production hang with strong evidence (all-GPU spin, watchdog timeout) but lacks a deterministic reproducer and root cause. The maintainer has requested additional diagnostic logs, indicating active investigation. Open PR and related issue lookups timed out, so duplicate work cannot be excluded. Actionability is blocked by missing stack traces and maintainer guidance.\n改动：Diagnostic instrumentation in scheduler/decode path；Potential fix in DSPARK or dsv4 attention backend\n验证：Reproduce with long-context agentic workload and capture py-spy stack with SYS_PTRACE；Run bisection experiments disabling DSPARK/CUDA graph to isolate component\n风险：Non-deterministic hang may be hard to reproduce；Fix may require deep changes in speculative decoding or attention backend\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 13，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33470](https://github.com/sgl-project/sglang/issues/33470) inference_mode mismatch can break lazy buffers**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue identifies a clear correctness bug from inconsistent torch.inference_mode usage between warmup/autotune and real forward, with a concrete reproduction and maintainer discussion. However, open PR lookup timed out and related issue audit failed, so duplicate implementation cannot be excluded. Maintainer has not confirmed design direction, and the suggested fixes (options 1-4) require maintainer decision.\n改动：Align inference_mode usage across warmup/autotune and real forward paths；Add explicit eager initialization for backend workspaces before autotune/capture；Possibly add workspace allocation APIs\n验证：Reproduce with provided command and FlashInfer MegaMOE branch；Add regression test that runs warmup under inference_mode then real forward with inplace updates；Run existing serving tests and targeted unit tests for affected backends\n风险：Changing inference_mode behavior may affect performance or other backends；Option 3/4 may require significant refactoring of backend workspace management\n竞争：open PR 检索不完整，需等待下轮重试后再判断碰撞\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 11，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50948](https://github.com/vllm-project/vllm/issues/50948) [Bug]: Qwen parser routes grammar-constrained JSON to reasoning when `enable_in_reasoning=true`**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue reports a clear bug with root cause and minimal repro, but the deterministic gate requires HUMAN_REVIEW and the repository has an AI disclosure policy that blocks automated action. Existing PR #50955 is weak (failed CI) and may be a competition opportunity, but maintainer confirmation is needed.\n改动：Qwen3Parser initialization logic to start in CONTENT when enable_in_reasoning=true；Structured output manager interaction with reasoning parser\n验证：Add regression test using the provided curl commands to verify content vs reasoning classification；Run existing structured output and reasoning parser tests\n风险：Potential behavior change for existing users relying on reasoning output；Interaction with other reasoning parsers and structured output modes\n竞争：已有直接关联但证据不完整的 PR #50955：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 17，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50891](https://github.com/vllm-project/vllm/issues/50891) [Bug]: AOT compile cache key ignores limit_mm_per_prompt, so image:0 and image:1 runs collide and crash with AttributeError: 'NoneType' object has no attribute 'size'**\n建议：WAIT_MAINTAINER | 分数：12\n价值：The issue provides a clear root cause (AOT cache key ignores limit_mm_per_prompt/multimodal_config) and a reproducible crash, but the deterministic gate requires HUMAN_REVIEW and an existing PR (#50908) already attempts a fix with failing CI. Maintainer direction is needed to avoid duplicate or conflicting work.\n改动：vllm/config/model.py；vllm/compilation/caching.py；vllm/compilation/decorators.py\n验证：Add a regression test that runs the same model with image:0 and image:1 and verifies separate cache entries or no crash.；Run existing vllm compilation and multimodal tests.\n风险：Changing cache key may invalidate many existing cache entries, causing performance regression.；Modifying guard evaluation could expose other latent mismatches.\n竞争：已有直接关联但证据不完整的 PR #50908：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 6，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33493](https://github.com/sgl-project/sglang/issues/33493) [Bug] DSPARK retrieves wrong key \"acc_linear_penalities\" from sampling_info**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue identifies a clear typo in attribute name causing min_tokens to be ignored in DSPARK. Existing PR #33531 addresses the same files but has failed CI/checks and lacks complete evidence. A new PR with a minimal fix and robust tests could be materially better.\n改动：python/sglang/srt/speculative/dflash_utils.py；python/sglang/srt/speculative/dspark_components/dspark_verify.py\n验证：Add a regression test that reproduces the min_tokens issue with DSPARK, verifying completion_tokens >= min_tokens.；Run existing speculative decoding tests and static checks.\n风险：Potential maintainer preference for a different fix approach.；Need to ensure no other code paths rely on the incorrect attribute name.\n竞争：已有直接关联但证据不完整的 PR #33531：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 7，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[pydantic/pydantic-ai#7109](https://github.com/pydantic/pydantic-ai/issues/7109) Durable-exec leaf-toolset `id` error never mentions the capability `id` that would fix it**\n建议：WAIT_MAINTAINER | 分数：8\n价值：Issue clearly identifies a missing capability id hint in the generic leaf-toolset error branch, with a concrete repro and root cause. However, the deterministic gate requires HUMAN_REVIEW, and an existing PR (#7125) already attempts to address this but is closed with failed CI, indicating maintainer attention is needed.\n改动：Update error message in durable_exec/_base.py generic branch to include capability id hint；Fix typo 'activitys' in Temporal wording；Add regression test for capability-contributed FunctionToolset error message\n验证：Use the provided repro (Agent with WebSearch and TemporalDurability) to assert the error message contains the capability id hint；Run existing durable_exec tests and static checks\n风险：Potential maintainer preference on error message wording；Existing PR #7125 may be revived or superseded\n竞争：已有 PR 但强度不足，且仓库通常需要先分配/确认：#7125 score=69\n下一步：已有 PR 但强度不足；先看维护者规则和 issue 讨论，必要时先请求确认方案或分配。\n证据：复现信号 2，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T18:14:12.208434Z",
+      "eventId": "66e1fe67e12dd3bbd71a067662ee8508e142d4050df71e8a12bed9b25e50bee9",
+      "idempotencyKey": "66e1fe67e12dd3bbd71a067662ee8508e142d4050df71e8a12",
+      "kind": "review",
+      "runId": "scan-20260804T180800Z-53ae22c46116",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "sgl-project/sglang#27937",
+        "sgl-project/sglang#33408",
+        "sgl-project/sglang#33483",
+        "DeusData/codebase-memory-mcp#1416",
+        "PrefectHQ/fastmcp#4744",
+        "cline/cline#12913",
+        "google/adk-python#6584",
+        "mastra-ai/mastra#20682"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#27937](https://github.com/sgl-project/sglang/issues/27937) [Failure Tracker] PR Test (AMD)**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33408](https://github.com/sgl-project/sglang/issues/33408) [Bug] Unlimited-OCR: server crashes when batching images with different gundam tile counts**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33483](https://github.com/sgl-project/sglang/issues/33483) [Bug] Default decode CUDA Graph coverage causes a sharp performance cliff when batch size exceeds 32**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[DeusData/codebase-memory-mcp#1416](https://github.com/DeusData/codebase-memory-mcp/issues/1416) Windows: install/uninstall/doctor all fail with \"active CBM sessions and operations could not be stopped safely\"**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[PrefectHQ/fastmcp#4744](https://github.com/PrefectHQ/fastmcp/issues/4744) serialize_by_alias=False ignored for nested Pydantic models**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[cline/cline#12913](https://github.com/cline/cline/issues/12913) Bedrock prompt caching never engages: routing layer emits anthropic cache_control but @ai-sdk/amazon-bedrock only reads providerMetadata.bedrock.cachePoint (zero writers in binary)**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[google/adk-python#6584](https://github.com/google/adk-python/issues/6584) RemoteA2aAgent: a terminal A2A task carrying tool activity fails is_final_response(), so the turn cannot be detected as finished (non-streaming peer)**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[mastra-ai/mastra#20682](https://github.com/mastra-ai/mastra/issues/20682) [BUG] Thread title is silently lost when generateTitle is used on serverless runtimes that freeze after the response (e.g. AWS Lambda)**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T18:14:12.360297Z",
+      "eventId": "87567da5f58ef30e7b283405c445489a68e823d0a6c4cfe58d0ce040595ba189",
+      "idempotencyKey": "87567da5f58ef30e7b283405c445489a68e823d0a6c4cfe58d",
+      "kind": "watch",
+      "runId": "watch-1785866806",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "ollama/ollama#17356"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[ollama/ollama#17356](https://github.com/ollama/ollama/pull/17356) llm: use direct I/O for Vulkan iGPUs**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、失败检查或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T18:14:12.525732Z",
+      "eventId": "568dae1a3615a45d789164a7929f956b8d391929d2e710e010b02e304a3762dd",
+      "idempotencyKey": "568dae1a3615a45d789164a7929f956b8d391929d2e710e010",
+      "kind": "watch",
+      "runId": "pr-followup-1785866812",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-04T17:44:47.358825Z",
+  "generatedAt": "2026-08-04T18:14:12.525732Z",
   "newEventCount": 1,
   "version": "notification_outbox_v1"
 }

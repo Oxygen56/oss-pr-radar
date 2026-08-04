@@ -335,6 +335,36 @@
     ],
     "why": "Issue clearly identifies a hardcoded :predict endpoint causing failures with gemini-embedding-2. Existing PR #14266 addresses it but lacks tests and may be incomplete. A better PR with tests and minimal fix is plausible."
   },
+  "111b0e343802c0fb6827ab1e3494a74f76f20224f51795422f6a8e44c7c2ff9c": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue labels include 'rocm' but body states not ROCm-specific"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Qwen3Parser initialization logic to start in CONTENT when enable_in_reasoning=true",
+      "Structured output manager interaction with reasoning parser"
+    ],
+    "risks": [
+      "Potential behavior change for existing users relying on reasoning output",
+      "Interaction with other reasoning parsers and structured output modes"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Add regression test using the provided curl commands to verify content vs reasoning classification",
+      "Run existing structured output and reasoning parser tests"
+    ],
+    "unknowns": [
+      "Maintainer design preference for fixing this bug",
+      "Whether PR #50955 can be improved or superseded"
+    ],
+    "why": "Issue reports a clear bug with root cause and minimal repro, but the deterministic gate requires HUMAN_REVIEW and the repository has an AI disclosure policy that blocks automated action. Existing PR #50955 is weak (failed CI) and may be a competition opportunity, but maintainer confirmation is needed."
+  },
   "150fc25a81cebf519c84fbf5ebf5bb4084f6a8d4fdba5ebbb102e8f838fb12f0": {
     "confidence": 0.85,
     "contradictions": [],
@@ -630,6 +660,31 @@
     ],
     "why": "Issue provides a clear root cause and a concrete fix for a real token accounting bug, but the deterministic gate requires HUMAN_REVIEW and open PR lookup failed, so we cannot rule out duplicate work."
   },
+  "21ad298e38e58cffac8e72b201250ae086eadda22c92d16e7e8a1dab8fd35f90": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify expectedSecretFields() to only include OAuth secret fields when OAuth config is present",
+      "Move AsyncEntry construction inside the try/catch in KeyringSecretStore.get() to handle synchronous throws gracefully"
+    ],
+    "risks": [
+      "Potential behavior change if some servers rely on keychain lookup even without OAuth config; need to ensure no regression in normal environments"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add a regression test that simulates a missing secret-service backend and verifies GET /api/servers returns 200 with an empty list",
+      "Run existing unit tests for the keyring and server list modules"
+    ],
+    "unknowns": [
+      "No explicit maintainer approval or help-wanted label, but the issue is clearly a bug and the fix is straightforward; absence of assignment is not blocking."
+    ],
+    "why": "Issue provides a clear, reproducible bug with a precise root cause: keychain lookup is attempted for all servers even without OAuth, and the AsyncEntry constructor throws outside the try/catch, causing a 500 in headless environments. This is a user-visible bug with high impact and a clear minimal fix path."
+  },
   "2566e652e6fa8090066e3ad581d828156b7194fe38a86774a4165517c47e9746": {
     "confidence": 0.85,
     "contradictions": [],
@@ -915,6 +970,34 @@
       "Full server configuration and client used in reproduction"
     ],
     "why": "Issue reports a resource list mismatch in FastMCP HTTP transport, but lacks a minimal reproducer and root cause analysis. No maintainer confirmation or design direction exists, and the deterministic gate requires human review."
+  },
+  "3869a689a4ac88ee3cd663699f334b613175e4cd5375bedf7806eca3732ff12e": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix streamable-http connection hang in v2",
+      "Improve error logging for connection failures"
+    ],
+    "risks": [
+      "Potential complexity in streamable-http protocol handling",
+      "Risk of introducing regressions in other transports"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "test_plan": [
+      "Reproduce with provided Forgejo MCP example and assert connection completes",
+      "Add regression test for streamable-http transport with delayed or incomplete responses"
+    ],
+    "unknowns": [
+      "Exact root cause not yet identified",
+      "Maintainer design preferences for fix approach"
+    ],
+    "why": "Issue reports a v2 regression where streamable-http connections hang silently, with multiple user confirmations and a maintainer triage marking it High priority. No competing PR exists, and the bug is actionable with a clear reproduction path."
   },
   "38a4423040d394b92f3aab9c0e6707655d934f70fd23b59e6c3eda9a3088c268": {
     "confidence": 0.85,
@@ -1493,6 +1576,35 @@
     ],
     "why": "Issue provides a clear root cause (AOT cache key ignores multimodal config) and a reproducible crash. Existing PR #50908 addresses the issue but has failed CI checks and may be incomplete. A materially better PR with comprehensive tests and a robust fix is plausible."
   },
+  "57d21a79a02e2144ac6e390c4883d4d842ef83ea8ee2ee8264820ae55549d435": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/config/model.py",
+      "vllm/compilation/caching.py",
+      "vllm/compilation/decorators.py"
+    ],
+    "risks": [
+      "Changing cache key may invalidate many existing cache entries, causing performance regression.",
+      "Modifying guard evaluation could expose other latent mismatches."
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Add a regression test that runs the same model with image:0 and image:1 and verifies separate cache entries or no crash.",
+      "Run existing vllm compilation and multimodal tests."
+    ],
+    "unknowns": [
+      "Maintainer preference on whether to fix cache key vs. enable guard evaluation.",
+      "Status of PR #50908 and whether its failing CI is resolved."
+    ],
+    "why": "The issue provides a clear root cause (AOT cache key ignores limit_mm_per_prompt/multimodal_config) and a reproducible crash, but the deterministic gate requires HUMAN_REVIEW and an existing PR (#50908) already attempts a fix with failing CI. Maintainer direction is needed to avoid duplicate or conflicting work."
+  },
   "59d8d15af87f333e2a0b9cc214dd240ad387204e6a4258d3653a6baa77a0a2cb": {
     "confidence": 0.7,
     "contradictions": [],
@@ -1547,6 +1659,63 @@
       "Maintainer's design preference for fix not known"
     ],
     "why": "Issue reports a clear bug: nested Pydantic models in dicts ignore serialize_by_alias=False. Repro is provided, but root cause is not identified and no maintainer confirmation exists. The gate decision is HUMAN_REVIEW, so we must wait for maintainer input."
+  },
+  "5b879069d2527d463daa0af86afbbcace94eb1f1d446a0e4da736f1a3e9fd111": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Update error message in durable_exec/_base.py generic branch to include capability id hint",
+      "Fix typo 'activitys' in Temporal wording",
+      "Add regression test for capability-contributed FunctionToolset error message"
+    ],
+    "risks": [
+      "Potential maintainer preference on error message wording",
+      "Existing PR #7125 may be revived or superseded"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Use the provided repro (Agent with WebSearch and TemporalDurability) to assert the error message contains the capability id hint",
+      "Run existing durable_exec tests and static checks"
+    ],
+    "unknowns": [
+      "Maintainer's intent on whether to accept a new PR given existing closed PR #7125"
+    ],
+    "why": "Issue clearly identifies a missing capability id hint in the generic leaf-toolset error branch, with a concrete repro and root cause. However, the deterministic gate requires HUMAN_REVIEW, and an existing PR (#7125) already attempts to address this but is closed with failed CI, indicating maintainer attention is needed."
+  },
+  "5cf211765f9f5d711ac0b4f7f31491ca9e8ad8920812b34f6798768a0e74fccb": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Normalize user shape in workspace factory or at write site",
+      "Align SDK tenant resolver",
+      "Consider normalizing other quiet readers (authorship.ts, composio.ts)"
+    ],
+    "risks": [
+      "Potential maintainer preference on write-site vs read-site normalization",
+      "Risk of breaking existing behavior if normalization changes fail-closed semantics"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce by restarting Factory with better-auth and verifying 500 error",
+      "Add regression tests for owner access, cross-org rejection, missing-active-org rejection",
+      "Run targeted unit tests for factory and server packages"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer write-site normalization or read-site normalization",
+      "Whether the two remaining quiet readers should be fixed in the same PR"
+    ],
+    "why": "Issue provides a precise root cause (two writers of requestContext user with different shapes) and a verified workaround. Existing PR #20690 is open but has failing CI/checks and may not cover all affected readers, leaving room for a materially better PR."
   },
   "5e4c0b3cfb0725a76c5e7aa225a5522cd8ed546062942df83393323f4505a9c0": {
     "confidence": 0.7,
@@ -2062,6 +2231,35 @@
     ],
     "why": "Issue identifies a clear inconsistency in torch.inference_mode usage between warmup/autotune and real forward, causing inplace update failures for lazy buffers. However, open PR lookup timed out and related issue audit failed, so duplicate implementation cannot be excluded. Maintainer comment asks for design alignment, indicating need for maintainer decision."
   },
+  "7e0323a343bc8266d4643b31ccce59c4ac80a2c62a6471b4f765c2a416b10e14": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "retry classification for connection-refused",
+      "ollama retry budget or timeout handling",
+      "possible user-visible retry status message"
+    ],
+    "risks": [
+      "Changing retry behavior may affect transient network recovery",
+      "Reducing retry budget may impact large model loading scenarios"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "test_plan": [
+      "Add integration test with a down local provider to assert fast error surfacing",
+      "Unit test for should_retry distinguishing connection-refused from transient network errors"
+    ],
+    "unknowns": [
+      "Maintainer preference on retry vs fast fail",
+      "Exact desired timeout or UX approach"
+    ],
+    "why": "Issue provides a clear root cause and repro, but maintainer comment questions the desired behavior (retry vs fast fail) and suggests possible UX mitigation, indicating design confirmation is needed before implementation."
+  },
   "811580dbec57b0c5aaecf3a0702132258e6bf6c914b6aa5a28a7b416860e8e5b": {
     "confidence": 0.7,
     "contradictions": [],
@@ -2491,6 +2689,35 @@
     ],
     "why": "Issue reports a clear crash with root cause and repro, but the deterministic gate says HUMAN_REVIEW and the related issue audit timed out. An existing draft PR (#50894) directly addresses the bug but has failed CI and is incomplete, so a better PR may be possible. However, maintainer design preference and PR status need confirmation."
   },
+  "9c1fb3e2991987f1a7f8345147e1298e9b6a8bed38e5f16a7327e38b76aa0708": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Diagnostic instrumentation in scheduler/decode path",
+      "Potential fix in DSPARK or dsv4 attention backend"
+    ],
+    "risks": [
+      "Non-deterministic hang may be hard to reproduce",
+      "Fix may require deep changes in speculative decoding or attention backend"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 12,
+    "test_plan": [
+      "Reproduce with long-context agentic workload and capture py-spy stack with SYS_PTRACE",
+      "Run bisection experiments disabling DSPARK/CUDA graph to isolate component"
+    ],
+    "unknowns": [
+      "Missing stack trace from py-spy",
+      "Open PR and related issue lookup failed due to timeout",
+      "Maintainer has not confirmed root cause or design direction"
+    ],
+    "why": "Issue reports a severe production hang with strong evidence (all-GPU spin, watchdog timeout) but lacks a deterministic reproducer and root cause. The maintainer has requested additional diagnostic logs, indicating active investigation. Open PR and related issue lookups timed out, so duplicate work cannot be excluded. Actionability is blocked by missing stack traces and maintainer guidance."
+  },
   "9f56014d00bc17e68f460b2d1b643185db72b637b6cff4202360ce6076790957": {
     "confidence": 0.85,
     "contradictions": [
@@ -2860,6 +3087,32 @@
       "Whether PR #7423 already addresses the root cause"
     ],
     "why": "Issue provides a detailed root cause and proposed fix, but the deterministic gate requires HUMAN_REVIEW and there is an existing PR (#7423) with semantic overlap that needs maintainer comparison. Also, potential duplicate issue #7490 and design confirmation are needed."
+  },
+  "b9db9b78955bec014b000a0eacf9959aef3efa9f114b530bf859ed6a4bdcf821": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify cacheToolMetadata in src/client/index.ts to build replacement collections locally and publish only after successful compilation."
+    ],
+    "risks": [
+      "Potential overlap with issue #1585 may lead to duplicate work or conflicting fixes.",
+      "Changing cache replacement semantics could affect concurrency behavior if not carefully synchronized."
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Add a regression test using the provided reproduction script to assert that callTool still validates against the previous schema after a failed listTools."
+    ],
+    "unknowns": [
+      "Maintainer's preferred design for failure-atomic cache updates.",
+      "Whether issue #1585 is considered a duplicate or related and should be addressed together."
+    ],
+    "why": "Issue provides a clear root cause and a concrete reproduction, but the deterministic gate requires HUMAN_REVIEW and there is potential overlap with existing issue #1585. Maintainer confirmation is needed before starting work."
   },
   "ba469bd5c94418bd3fdf7ff2f217e4cac4ca0cb69587f3c0ea186546a5cf99b6": {
     "confidence": 0.82,
@@ -3231,6 +3484,37 @@
     ],
     "why": "Issue clearly identifies a shallow update in get_config causing recursive merge failure, with a public repro. However, an existing PR #33525 directly addresses the same issue but lacks tests and has failing CI, so a new PR would be a competition opportunity only if it can improve on those gaps. Given the gate decision is HUMAN_REVIEW and the existing PR is weak, the appropriate action is to wait for maintainer input or further evidence."
   },
+  "d03becb25b1186162801fddd0598a5ce352b81e94da4f59faab43c642b8a0a5d": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Align inference_mode usage across warmup/autotune and real forward paths",
+      "Add explicit eager initialization for backend workspaces before autotune/capture",
+      "Possibly add workspace allocation APIs"
+    ],
+    "risks": [
+      "Changing inference_mode behavior may affect performance or other backends",
+      "Option 3/4 may require significant refactoring of backend workspace management"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Reproduce with provided command and FlashInfer MegaMOE branch",
+      "Add regression test that runs warmup under inference_mode then real forward with inplace updates",
+      "Run existing serving tests and targeted unit tests for affected backends"
+    ],
+    "unknowns": [
+      "Whether an existing PR already addresses this issue (open PR lookup failed)",
+      "Maintainer preference among the suggested options",
+      "Whether the issue is already under active investigation by maintainers"
+    ],
+    "why": "Issue identifies a clear correctness bug from inconsistent torch.inference_mode usage between warmup/autotune and real forward, with a concrete reproduction and maintainer discussion. However, open PR lookup timed out and related issue audit failed, so duplicate implementation cannot be excluded. Maintainer has not confirmed design direction, and the suggested fixes (options 1-4) require maintainer decision."
+  },
   "d0f25ec094f9677c72859d8a2aa6b432d9cb6298191f9d7fa940754b4e74a8b7": {
     "confidence": 0.7,
     "contradictions": [
@@ -3391,6 +3675,64 @@
       "Related issue status unknown due to timeout"
     ],
     "why": "Issue identifies a clear shallow-update bug in get_config causing recursive config override failure, with a concrete reproduction. However, open PR and related issue lookups timed out, so duplicate implementation cannot be excluded. Maintainer design confirmation is needed before starting work."
+  },
+  "e424f4ebec0915a61bdc2a0b8aba5c7e2e997268d45e0d65dbc3329dc3af303c": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Comment suggests ghost entry may be due to failing GET api/servers, conflicting with original description of ghost entry being unmodifiable"
+    ],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add visible error handling for failed manual connection attempts",
+      "Prevent persistence of failed server entries or make them manageable",
+      "Handle name collisions during import with overwrite option"
+    ],
+    "risks": [
+      "Potential interaction with bug #1918 may require coordinated fix",
+      "UI changes may affect existing behavior for successful connections"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "test_plan": [
+      "Reproduce by following steps in issue: add server with failing URL, verify no error shown and ghost entry created",
+      "Attempt import with same name and verify duplicate error",
+      "After fix, verify error is shown and entry is either not persisted or can be deleted"
+    ],
+    "unknowns": [
+      "Whether the maintainers have a preferred design for handling failed connections",
+      "Exact code path for server entry creation and import collision handling"
+    ],
+    "why": "The issue describes a user-visible bug with silent failure and ghost server entries, but the root cause is partially clarified by a comment suggesting it may be a side effect of another bug (#1918). The issue is actionable with a clear reproduction path and expected behavior, and no competing PR exists."
+  },
+  "e43ffda97d56de15165899b11667e281dbf1ef1aec930d5d95f30b02fdd39721": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/speculative/dflash_utils.py",
+      "python/sglang/srt/speculative/dspark_components/dspark_verify.py"
+    ],
+    "risks": [
+      "Potential maintainer preference for a different fix approach.",
+      "Need to ensure no other code paths rely on the incorrect attribute name."
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "test_plan": [
+      "Add a regression test that reproduces the min_tokens issue with DSPARK, verifying completion_tokens >= min_tokens.",
+      "Run existing speculative decoding tests and static checks."
+    ],
+    "unknowns": [
+      "Details of failed CI checks in PR #33531 and whether they are easily fixable."
+    ],
+    "why": "Issue identifies a clear typo in attribute name causing min_tokens to be ignored in DSPARK. Existing PR #33531 addresses the same files but has failed CI/checks and lacks complete evidence. A new PR with a minimal fix and robust tests could be materially better."
   },
   "e63a70b10d97940ab96e59b12f306347f81a5b54ec98103b974281b529c5fc74": {
     "confidence": 0.7,
