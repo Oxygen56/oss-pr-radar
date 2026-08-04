@@ -934,6 +934,38 @@
     ],
     "why": "Issue provides a clear root cause and reproduction, but an existing PR (#33449) directly addresses it with failing CI checks. The deterministic gate requires HUMAN_REVIEW, and the PR's technical completeness is uncertain due to failed checks. A new candidate would compete with an existing weak PR, but maintainer confirmation is needed to avoid duplicate effort."
   },
+  "5436e9fe0cd5e342232eebe90e06a1bf15c3ab02189deb63ec0d4322acff99b9": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue initially attributes to crash, later comments indicate normal exit also leaks",
+      "One comment suggests driver version is root cause, conflicting with vLLM bug hypothesis"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Investigate GPU memory cleanup in vLLM shutdown paths, especially with CPU offloading",
+      "Potential fix in offloader singleton reset or CUDA context cleanup"
+    ],
+    "risks": [
+      "Driver-related issue may not be fixable in vLLM",
+      "Changing shutdown behavior could affect performance or stability"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with provided commands and check nvidia-smi after normal exit",
+      "Add regression test for memory cleanup after engine shutdown"
+    ],
+    "unknowns": [
+      "Exact root cause (vLLM vs driver)",
+      "Whether maintainers have acknowledged or are investigating",
+      "Whether PR #42074 is a viable fix despite being closed"
+    ],
+    "why": "Issue reports GPU memory not freed after vLLM crash or normal exit, possibly related to CPU offloading and driver versions. Existing PR #42074 is draft, closed, lacks tests, and has failed checks, so not a strong competing implementation. However, root cause is unclear and may be driver-related, requiring maintainer investigation."
+  },
   "54b76b2e1cde101b88c0c18c5da20cad436b0fcfdfe9d54a1c5a1c2d07778c0f": {
     "confidence": 0.7,
     "contradictions": [
@@ -2473,6 +2505,33 @@
     ],
     "why": "Issue provides strong evidence of a memory accounting discrepancy between MRv1 and MRv2, with a deterministic OOM repro and community A/B isolating CUDA graph capture headroom. However, root cause is not fully confirmed (eager residual unexplained), and an existing draft PR #49233 attempts a fix but is incomplete. Maintainer direction is needed to avoid duplicating or conflicting with ongoing work."
   },
+  "ea8c4d6a087e45855f487e879dbe1b52088e0e33062c845599cff3f09ea5202a": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Add failing test for nested model serialization",
+      "Fix serialization logic to respect serialize_by_alias for nested models"
+    ],
+    "risks": [
+      "Potential impact on existing serialization behavior",
+      "Need to ensure fix doesn't break other serialization cases"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "test_plan": [
+      "Reproduce with provided minimal example",
+      "Add regression test asserting nested model uses real_name not alias_name"
+    ],
+    "unknowns": [
+      "Exact code path causing the issue",
+      "Maintainer preference on fix approach"
+    ],
+    "why": "Issue reports a clear bug: nested Pydantic models in dicts ignore serialize_by_alias=False. The root cause is likely in FastMCP's serialization path, but not yet confirmed. No open PR or related issue found, and no maintainer input. The gate decision is HUMAN_REVIEW, so we must wait for maintainer guidance."
+  },
   "edff09199f1721bcbfc79808790a17e27beb21125e76893e82ee9241a6dc31cb": {
     "confidence": 0.7,
     "contradictions": [
@@ -2563,6 +2622,32 @@
       "Maintainer's preferred cross-channel delivery policy"
     ],
     "why": "Issue is a real user-facing bug with fresh live repro evidence, but the deterministic gate requires HUMAN_REVIEW and maintainer decision on cross-channel delivery policy is unresolved. Existing PRs are closed/unmerged and do not settle the policy."
+  },
+  "f7cad12f924f80210d13dd60c3696419b55c0426c329d1515eaf4f4b10e3bd18": {
+    "confidence": 0.8,
+    "contradictions": [
+      "The maintainer's comment indicates the fix is already in RC1, while the issue remains open awaiting verification."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "No new code changes expected; the fix is already in v0.9.1-rc.1."
+    ],
+    "risks": [
+      "Potential duplicate PR if work starts without maintainer confirmation."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "No new tests needed; the existing reproduction steps serve as regression tests."
+    ],
+    "unknowns": [
+      "Whether the maintainer will close the issue after verification or request further changes."
+    ],
+    "why": "The issue is a well-documented bug with independent reproductions and a clear root cause: the watcher fails to re-index on the dirty-to-clean transition. However, the maintainer has already routed it as a high-priority RC regression case and requested verification on RC1, which has been provided. The fix appears to be already implemented in v0.9.1-rc.1, and the issue is awaiting maintainer verification. Starting a new PR would duplicate existing work and conflict with the maintainer's active investigation."
   },
   "f8658379e0be3e23bbb4673be8620c5d7cf8322218f640bf87e0b9a319d16673": {
     "confidence": 0.8,

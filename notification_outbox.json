@@ -1,5 +1,5 @@
 {
-  "digest": "597bc0a63612d4d2ea9a42779e3dde260ed61ec2876e386ec2ea3bf8ddce3899",
+  "digest": "bd7a225126cc75dacb8ae55ae02391e449e71409b6585323647e267ebbc95b5c",
   "events": [
     {
       "attempts": 1,
@@ -3726,9 +3726,174 @@
       "runId": "watch-1785837659",
       "sentAt": "2026-08-04T10:05:52.179189Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "DeusData/codebase-memory-mcp#1339",
+        "vllm-project/vllm#50159",
+        "PrefectHQ/fastmcp#4744"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[DeusData/codebase-memory-mcp#1339](https://github.com/DeusData/codebase-memory-mcp/issues/1339) Graph not updated when the working tree returns to clean (revert leaves false negatives)**\n建议：WAIT_MAINTAINER | 分数：11\n价值：The issue is a well-documented bug with independent reproductions and a clear root cause: the watcher fails to re-index on the dirty-to-clean transition. However, the maintainer has already routed it as a high-priority RC regression case and requested verification on RC1, which has been provided. The fix appears to be already implemented in v0.9.1-rc.1, and the issue is awaiting maintainer verification. Starting a new PR would duplicate existing work and conflict with the maintainer's active investigation.\n改动：No new code changes expected; the fix is already in v0.9.1-rc.1.\n验证：No new tests needed; the existing reproduction steps serve as regression tests.\n风险：Potential duplicate PR if work starts without maintainer confirmation.\n竞争：未发现相关 open PR\n下一步：按正常流程实现并验证；如要求 DCO 则自动 sign-off，PR 创建后报告 CLA 状态。\n证据：复现信号 2，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50159](https://github.com/vllm-project/vllm/issues/50159) [Bug]: Model Runner V2 + Gemma-4: memory profiler reports ~0.9 GiB more \"available KV\" than MRv1 → no runtime headroom → CUDA OOM under saturating load (no spec involved); with EAGLE it crashes earlier at cudagraph capture (stable-ABI aten::empty)**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue provides strong evidence of MRv2 memory profiler over-reporting available KV cache due to insufficient CUDA graph capture headroom, leading to OOM under load. However, root cause is not fully isolated (eager residual unexplained), and an existing draft PR #49233 attempts a fix but is incomplete with failed CI. Maintainer direction is unclear, and the issue is still open without explicit approval.\n改动：Fix MRv2 CUDA graph memory reservation in model runner；Adjust memory profiler to account for capture headroom；Possibly add validation for speculative decoding memory\n验证：Reproduce OOM with provided Gemma-4 config and saturating load；Run A/B test with MRv1 vs MRv2 on small and large models with CUDA graphs enabled；Verify eager mode delta is negligible or explain residual；Test draft PR #49233 on the reported rig to see if it resolves the OOM\n风险：Changing memory reservation may reduce available KV cache and impact performance；Fix may conflict with extensible KV cache direction (#47363)；Incomplete understanding of eager residual could lead to incomplete fix\n竞争：已有直接关联但证据不完整的 PR #49233：存在失败 CI/check; 仍是 draft；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 7，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[PrefectHQ/fastmcp#4744](https://github.com/PrefectHQ/fastmcp/issues/4744) serialize_by_alias=False ignored for nested Pydantic models**\n建议：WAIT_MAINTAINER | 分数：10\n价值：Issue reports a clear bug: nested Pydantic models in dicts ignore serialize_by_alias=False. The root cause is likely in FastMCP's serialization path, but not yet confirmed. No open PR or related issue found, and no maintainer input. The gate decision is HUMAN_REVIEW, so we must wait for maintainer guidance.\n改动：Add failing test for nested model serialization；Fix serialization logic to respect serialize_by_alias for nested models\n验证：Reproduce with provided minimal example；Add regression test asserting nested model uses real_name not alias_name\n风险：Potential impact on existing serialization behavior；Need to ensure fix doesn't break other serialization cases\n竞争：未发现相关 open PR\n下一步：先请求维护者分配/确认方案，获批后再开 PR。\n证据：复现信号 2，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T11:50:00.674900Z",
+      "eventId": "e28e44308e0702f0a9640d23122cb063b4dff40d4fa092ad75ebcf7ed635dc36",
+      "idempotencyKey": "e28e44308e0702f0a9640d23122cb063b4dff40d4fa092ad75",
+      "kind": "review",
+      "runId": "scan-20260804T114702Z-5d68b2b6eedf",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "areal-project/AReaL#1565",
+        "pydantic/pydantic-ai#7108",
+        "sgl-project/sglang#33408",
+        "sgl-project/sglang#33470",
+        "sgl-project/sglang#33483",
+        "vllm-project/vllm#50891",
+        "vllm-project/vllm#50959",
+        "BerriAI/litellm#35711"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[areal-project/AReaL#1565](https://github.com/areal-project/AReaL/issues/1565) [BUG][v2] Teardown leaves an orphan process after torch-memory-saver CUDA free errors**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[pydantic/pydantic-ai#7108](https://github.com/pydantic/pydantic-ai/issues/7108) `include_binary_content=False` is not honored for tool returns, `final_result`, or output-function arguments**\n建议：WAIT_MAINTAINER\n价值：OWNERSHIP_CHANGED\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33408](https://github.com/sgl-project/sglang/issues/33408) [Bug] Unlimited-OCR: server crashes when batching images with different gundam tile counts**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33470](https://github.com/sgl-project/sglang/issues/33470) inference_mode mismatch can break lazy buffers**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33483](https://github.com/sgl-project/sglang/issues/33483) [Bug] Default decode CUDA Graph coverage causes a sharp performance cliff when batch size exceeds 32**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50891](https://github.com/vllm-project/vllm/issues/50891) [Bug]: AOT compile cache key ignores limit_mm_per_prompt, so image:0 and image:1 runs collide and crash with AttributeError: 'NoneType' object has no attribute 'size'**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50959](https://github.com/vllm-project/vllm/issues/50959) [Bug] fastsafetensors ParallelLoader broadcasts on group.WORLD; PP-scoped draft loads deadlock**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#35711](https://github.com/BerriAI/litellm/issues/35711) [Bug]: `ollama/` streaming never reconstructs tool calls — tool call arrives as plain `delta.content` text with `finish_reason: \"stop\"`, while the non-streaming path reconstructs it correctly**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T11:50:00.766246Z",
+      "eventId": "2711f230417af5ab32b3907c5906d391f30e18e470832b02adbd7c87dd6cacbf",
+      "idempotencyKey": "2711f230417af5ab32b3907c5906d391f30e18e470832b02ad",
+      "kind": "watch",
+      "runId": "watch-1785843970",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-04T10:05:10.824078Z",
+  "generatedAt": "2026-08-04T11:50:00.854284Z",
   "newEventCount": 0,
   "version": "notification_outbox_v1"
 }
