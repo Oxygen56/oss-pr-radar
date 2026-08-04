@@ -2,7 +2,8 @@ import json
 from datetime import UTC, datetime
 
 from oss_pr_radar import scanner
-from oss_pr_radar.scanner import SCANNER_MIGRATION_RECHECK_STATUSES, Radar
+from oss_pr_radar.policy import decision_contract_digest
+from oss_pr_radar.scanner import SCANNER_MIGRATION_RECHECK_STATUSES, SCANNER_VERSION, Radar
 
 
 def test_paginated_gh_flattens_every_page(monkeypatch):
@@ -195,3 +196,38 @@ def test_seen_deferred_items_are_tracked_as_forced_rechecks(monkeypatch, tmp_pat
 
 def test_changed_hardware_filter_rechecks_old_rejections():
     assert "hardware_unavailable" in SCANNER_MIGRATION_RECHECK_STATUSES
+
+
+def test_dispatch_decision_change_rechecks_queued_candidate(monkeypatch, tmp_path):
+    seen_path = tmp_path / "seen.json"
+    seen_path.write_text(
+        json.dumps(
+            {
+                "example/project#11": {
+                    "status": "queued_outbox",
+                    "title": "Provider settings are overwritten",
+                    "url": "https://github.com/example/project/issues/11",
+                    "issue_updated": "2026-08-04T06:40:17Z",
+                    "scanner_version": SCANNER_VERSION,
+                    "decision_contract_digest": "previous-decision-contract",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    radar = Radar(
+        datetime(2026, 8, 4, 7, tzinfo=UTC),
+        2,
+        seen_path,
+        "",
+        dry_run=True,
+        notify=False,
+    )
+    monkeypatch.setattr(radar, "add_repo_issues", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(radar, "add_search", lambda *_args, **_kwargs: None)
+
+    items = radar.collect_items()
+
+    assert decision_contract_digest() != "previous-decision-contract"
+    assert items["example/project#11"]["_explicit_recheck"] is True
+    assert "example/project#11" in radar.forced_recheck_keys

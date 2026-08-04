@@ -28,7 +28,7 @@ from .claims import detect_claims
 from .contracts import SCAN_SCHEMA, contract_digest
 from .llm import DeepSeekEvaluator
 from .messages import add_chinese_explanations
-from .policy import SCANNER_DECISION_REVISION
+from .policy import SCANNER_DECISION_REVISION, decision_contract_digest
 from .repo_policy import AI_DISCLOSURE_RE, AI_PROHIBITION_RE
 from .util import sha256_json
 
@@ -1035,6 +1035,7 @@ def should_skip_seen(
     issue_updated: str | None = None,
     now: datetime | None = None,
     scanner_version: str | None = None,
+    decision_digest: str | None = None,
 ) -> bool:
     if not isinstance(old, dict):
         return False
@@ -1043,6 +1044,8 @@ def should_skip_seen(
     if not (old.get("analyzed") or old.get("notified")):
         return False
     if scanner_version and old.get("scanner_version") != scanner_version:
+        return False
+    if decision_digest and old.get("decision_contract_digest") != decision_digest:
         return False
 
     old_updated = old.get("issue_updated")
@@ -1359,13 +1362,17 @@ class Radar:
         )[:MAX_SEEN_RECHECKS]
         recheck_keys = {key for key, _ in rechecks}
         self.forced_recheck_keys.update(recheck_keys)
+        current_decision_digest = decision_contract_digest()
         migration_rechecks = sorted(
             (
                 (key, value)
                 for key, value in self.seen.items()
                 if key not in recheck_keys
                 and isinstance(value, dict)
-                and value.get("scanner_version") != SCANNER_VERSION
+                and (
+                    value.get("scanner_version") != SCANNER_VERSION
+                    or value.get("decision_contract_digest") != current_decision_digest
+                )
                 and value.get("status") in SCANNER_MIGRATION_RECHECK_STATUSES
             ),
             key=lambda pair: str(pair[1].get("issue_updated") or ""),
@@ -2835,6 +2842,7 @@ class Radar:
                 base.get("updated"),
                 self.now,
                 scanner_version=SCANNER_VERSION,
+                decision_digest=decision_contract_digest(),
             ):
                 reject("seen_recently", base)
                 continue
@@ -3362,6 +3370,7 @@ class Radar:
         for entry in self.seen.values():
             if isinstance(entry, dict) and entry.get("analyzed") == self.analyzed:
                 entry["scanner_version"] = SCANNER_VERSION
+                entry["decision_contract_digest"] = decision_contract_digest()
 
         atomic_write_json(self.seen_path, self.seen)
         auto_spawn_candidates = [

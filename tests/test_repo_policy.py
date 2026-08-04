@@ -114,3 +114,20 @@ def test_pr_template_ai_disclosure_policy_is_still_detected():
     )
     assert policy.status == "AI_POLICY_REVIEW"
     assert policy.ai_disclosure is True
+
+
+def test_required_public_codex_branch_prefix_is_a_disclosure_conflict():
+    policy = discover_policy(
+        FakeClient(
+            {
+                "AGENTS.md": (
+                    "New branches should use the `codex/` prefix, for example "
+                    "`codex/fix-provider-endpoint`."
+                )
+            }
+        ),
+        "example/project",
+    )
+
+    assert policy.status == "AI_POLICY_REVIEW"
+    assert policy.ai_disclosure is True

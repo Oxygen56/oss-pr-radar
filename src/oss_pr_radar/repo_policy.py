@@ -44,7 +44,9 @@ AI_DISCLOSURE_RE = re.compile(
     r"(?:generative ai|ai[- ]generated|ai[- ]assisted|ai tools?|"
     r"large language models?|llms?|coding assistants?)|"
     r"\bai (?:tool )?used\b|\bai disclosure\b|"
-    r"disclos(?:e|ure).{0,60}(?:significant )?ai assistance",
+    r"disclos(?:e|ure).{0,60}(?:significant )?ai assistance|"
+    r"(?:new\s+)?branches?\s+(?:should|must|are required to)\s+use\s+"
+    r"(?:the\s+)?[`'\"]?codex/",
     re.I | re.S,
 )
 AI_PROHIBITION_RE = re.compile(

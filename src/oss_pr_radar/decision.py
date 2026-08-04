@@ -8,7 +8,14 @@ from typing import Any
 
 from .evidence import EvidenceBundle
 
-SECURITY_RE = re.compile(r"\b(?:security|vulnerab(?:ility|le)|CVE-\d+|zero[- ]day)\b", re.I)
+SECURITY_RE = re.compile(
+    r"\b(?:security vulnerabilit(?:y|ies)|vulnerability disclosure|cve[- :#]?\d*|"
+    r"remote code execution|arbitrary code execution|privilege escalation|"
+    r"supply chain (?:attack|risk|vulnerability)|credential exfiltration|"
+    r"sandbox escape|authentication bypass|command injection|"
+    r"indirect prompt injection|unauthorized (?:code )?execution)\b",
+    re.I,
+)
 DESIGN_RE = re.compile(
     r"\b(?:RFC|design proposal|architecture proposal|breaking API|roadmap)\b", re.I
 )
