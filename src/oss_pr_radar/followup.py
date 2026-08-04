@@ -8,7 +8,7 @@ from typing import Any
 from .github_client import GitHubClient, GitHubError
 from .util import iso_z, sha256_json
 
-FOLLOWUP_VERSION = "pr_followup_v1"
+FOLLOWUP_VERSION = "pr_followup_v2"
 MAINTAINER_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
 FAILURE_CONCLUSIONS = {
     "failure",
@@ -59,6 +59,7 @@ def collect_followup(
     now: datetime | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     current = (now or datetime.now(UTC)).astimezone(UTC)
+    existing_version = str((existing or {}).get("version") or "")
     previous = {
         item.get("key"): item
         for item in (existing or {}).get("items", [])
@@ -73,6 +74,7 @@ def collect_followup(
         if not repo or not number:
             continue
         key = f"{repo}#{number}"
+        previous_item = previous.get(key, {})
         try:
             pull = client.pull_request(repo, number)
             reviews = client.pull_reviews(repo, number)
@@ -93,32 +95,52 @@ def collect_followup(
             if str(check.get("status") or "").lower() == "completed"
             and str(check.get("conclusion") or "").lower() in FAILURE_CONCLUSIONS
         ]
-        actions: list[str] = []
-        if maintainer_changes:
-            actions.append("正式 review 要求修改")
-        if failing_checks:
-            actions.append("CI 检查失败")
-        if str(pull.get("mergeable_state") or "").lower() == "dirty":
-            actions.append("分支存在合并冲突")
-        evidence = {
-            "headSha": head,
-            "mergeableState": pull.get("mergeable_state"),
-            "draft": bool(pull.get("draft")),
-            "requestedChanges": [
+        mergeable_state = str(pull.get("mergeable_state") or "").lower()
+        previous_conflict = previous_item.get("mergeConflict")
+        if previous_conflict is None:
+            previous_conflict = "分支存在合并冲突" in previous_item.get("actions", [])
+        merge_conflict = (
+            bool(previous_conflict)
+            if mergeable_state in {"", "unknown"}
+            else mergeable_state == "dirty"
+        )
+        requested_changes = sorted(
+            (
                 {
                     "reviewer": (item.get("user") or {}).get("login"),
                     "submittedAt": item.get("submitted_at"),
                 }
                 for item in maintainer_changes
-            ],
-            "failingChecks": [
+            ),
+            key=lambda item: (str(item["reviewer"] or ""), str(item["submittedAt"] or "")),
+        )
+        failing_check_evidence = sorted(
+            (
                 {
                     "name": item.get("name"),
                     "conclusion": item.get("conclusion"),
                     "url": item.get("details_url"),
                 }
                 for item in failing_checks
-            ],
+            ),
+            key=lambda item: (
+                str(item["name"] or ""),
+                str(item["conclusion"] or ""),
+                str(item["url"] or ""),
+            ),
+        )
+        actions: list[str] = []
+        if maintainer_changes:
+            actions.append("正式 review 要求修改")
+        if failing_checks:
+            actions.append("CI 检查失败")
+        if merge_conflict:
+            actions.append("分支存在合并冲突")
+        evidence = {
+            "headSha": head,
+            "mergeConflict": merge_conflict,
+            "requestedChanges": requested_changes,
+            "failingChecks": failing_check_evidence,
         }
         digest = sha256_json(evidence)
         state_item = {
@@ -130,10 +152,19 @@ def collect_followup(
             "headSha": head,
             "actionDigest": digest,
             "actions": actions,
+            "mergeableState": mergeable_state,
+            "mergeConflict": merge_conflict,
+            "draft": bool(pull.get("draft")),
             "checkedAt": iso_z(current),
         }
         state_items.append(state_item)
-        if actions and previous.get(key, {}).get("actionDigest") != digest:
+        migration_only_change = (
+            existing_version != FOLLOWUP_VERSION
+            and bool(previous_item)
+            and previous_item.get("headSha") == head
+            and previous_item.get("actions") == actions
+        )
+        if actions and previous_item.get("actionDigest") != digest and not migration_only_change:
             updates.append(state_item | {"evidence": evidence})
     state = {
         "version": FOLLOWUP_VERSION,
