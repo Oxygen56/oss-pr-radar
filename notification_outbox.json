@@ -1,5 +1,5 @@
 {
-  "digest": "91b26deeb35ce836072d87407228dbe74026f1b693414f3eb456235ad5863d14",
+  "digest": "b057185c6c0e0bb57b411b7b5b32a9fa70d3497ec5c85d0a11b908b9a29aecdc",
   "events": [
     {
       "attempts": 1,
@@ -2316,9 +2316,240 @@
       "runId": "watch-1785826736",
       "sentAt": "2026-08-04T07:07:59.614945Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "esengine/DeepSeek-Reasonix#6545",
+        "microsoft/semantic-kernel#14265"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[esengine/DeepSeek-Reasonix#6545](https://github.com/esengine/DeepSeek-Reasonix/issues/6545) [Bug]: `reasonix serve` 切换模型后 `ask` 工具失效，返回 'No interactive user answered'\"**\n建议：NEW_CLEAN_CANDIDATE | 分数：9\n价值：Issue reports a clear user-visible bug with a plausible root cause (missing EnableInteractiveApproval on model switch) and public reproduction steps. No competing PR or issue found, and the gate allows work.\n改动：internal/serve/serve.go: call EnableInteractiveApproval on new controller in switchModel；Add regression test for ask tool after model switch\n验证：Reproduce by starting reasonix serve, switching model, triggering ask; assert ask_request event is emitted；Add unit test for switchModel verifying EnableInteractiveApproval is called on new controller\n风险：Root cause is AI-assisted and not confirmed by maintainers; fix may need to cover other controller initialization paths；Potential API behavior changes if EnableInteractiveApproval has side effects\n竞争：未发现相关 open PR\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 2，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[microsoft/semantic-kernel#14265](https://github.com/microsoft/semantic-kernel/issues/14265) Bug: VertexAIEmbeddingGenerator hardcodes :predict, unusable with gemini-embedding models that only serve :embedContent**\n建议：PR_COMPETITION_OPPORTUNITY | 分数：11\n价值：Issue clearly identifies a hardcoded :predict endpoint causing failures with gemini-embedding-2. Existing PR #14266 addresses it but lacks tests and may be incomplete. A better PR with tests and minimal fix is plausible.\n改动：Modify VertexAIEmbeddingClient to select :embedContent for gemini-embedding models；Add unit/integration tests for endpoint selection\n验证：Reproduce with provided C# snippet against gemini-embedding-2；Add test asserting correct endpoint URI for gemini-embedding models\n风险：Potential maintainer preference for broader refactor；Risk of breaking other models if endpoint selection logic is too broad\n竞争：已有直接关联但证据不完整的 PR #14266：缺少测试文件；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：先复现 issue，再逐项对比已有 PR 的缺口；只有能提供更小改动、更强测试或更完整边界覆盖时才开 PR。\n证据：复现信号 3，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "green",
+          "title": {
+            "content": "OSS PR Radar: 可立即执行",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T08:42:12.862226Z",
+      "eventId": "5d26b1dfa38e65b8fad4eb193a6cebb4bbda59f4b1f7727d8e9861618c3a34d7",
+      "idempotencyKey": "5d26b1dfa38e65b8fad4eb193a6cebb4bbda59f4b1f7727d8e",
+      "kind": "immediate",
+      "runId": "scan-20260804T084025Z-d584fa769f02",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "PrefectHQ/fastmcp#4748",
+        "PrefectHQ/fastmcp#4749"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[PrefectHQ/fastmcp#4748](https://github.com/PrefectHQ/fastmcp/issues/4748) OAuth consent cookie is rejected behind Azure Functions**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue reports a clear bug: Azure Functions adds Domain attribute to __Host- cookie, causing browser rejection and 403. Root cause is well understood and reproducible. However, the deterministic gate says HUMAN_REVIEW, and there is no maintainer approval or help-wanted signal. The fix may involve design choices about cookie handling and deployment compatibility, so maintainer input is needed.\n改动：Modify OAuth consent cookie handling to be compatible with hosting layers that rewrite cookie attributes, possibly by using a non-__Host- cookie or adjusting cookie attributes.\n验证：Create a failing test that simulates Azure Functions adding Domain attribute to the consent cookie and verifies the OAuth flow completes.\n风险：Changing cookie attributes may weaken security if not done carefully; need to preserve CSRF and browser-session binding.\n竞争：未发现相关 open PR\n下一步：先请求维护者分配/确认方案，获批后再开 PR。\n证据：复现信号 9，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[PrefectHQ/fastmcp#4749](https://github.com/PrefectHQ/fastmcp/issues/4749) Resource list do not match the actual resource**\n建议：WAIT_MAINTAINER | 分数：10\n价值：Issue reports a resource list mismatch in FastMCP HTTP transport, but lacks a minimal reproducer and root cause analysis. No maintainer confirmation or design direction exists, and the deterministic gate requires human review.\n改动：Investigate resource listing in HTTP transport；Add regression test for resource list with dynamic URI templates\n验证：Create a minimal FastMCP server with a dynamic resource and verify resource list via HTTP client；Run existing FastMCP test suite for resource listing\n风险：Potential API behavior change if fix alters resource listing semantics；Incomplete reproducer may lead to incorrect fix\n竞争：未发现相关 open PR\n下一步：先请求维护者分配/确认方案，获批后再开 PR。\n证据：复现信号 2，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T08:42:12.970804Z",
+      "eventId": "c2d0a6819e97ce90126c98afe98e8cdf7d3e63053b0930f7ed420019e6eb7098",
+      "idempotencyKey": "c2d0a6819e97ce90126c98afe98e8cdf7d3e63053b0930f7ed",
+      "kind": "review",
+      "runId": "scan-20260804T084025Z-d584fa769f02",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "can1357/oh-my-pi#7601",
+        "crewAIInc/crewAI#6788",
+        "maka-agent/maka-agent#2074",
+        "microsoft/agent-framework#7490",
+        "microsoft/agent-framework#7491",
+        "openclaw/openclaw#92199",
+        "pydantic/pydantic-ai#7108",
+        "pydantic/pydantic-ai#7109",
+        "sgl-project/sglang#27937",
+        "sgl-project/sglang#33408",
+        "sgl-project/sglang#33464"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[can1357/oh-my-pi#7601](https://github.com/can1357/oh-my-pi/issues/7601) [Windows] Shared headless browser daemon exits with code 21: system Chrome 150 silently exits on --remote-debugging-port=0**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[crewAIInc/crewAI#6788](https://github.com/crewAIInc/crewAI/issues/6788) [BUG] total_tokens omits cache reads and writes on the native Anthropic provider**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[maka-agent/maka-agent#2074](https://github.com/maka-agent/maka-agent/issues/2074) bug(runtime): a stopped run parked on AskUserQuestion never lands a terminal fact, and prior-run context then silently drops the whole turn**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[microsoft/agent-framework#7490](https://github.com/microsoft/agent-framework/issues/7490) Python: [Bug]: with `predict_state_config` set, EVERY tool result emits a full `StateSnapshotEvent` — including for tools the config never names**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[microsoft/agent-framework#7491](https://github.com/microsoft/agent-framework/issues/7491) Python: [Bug]: AG-UI `MESSAGES_SNAPSHOT` re-factors streamed messages under fresh ids — the reference `@ag-ui/client` merge then renders every mid-run tool call after the final text**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[openclaw/openclaw#92199](https://github.com/openclaw/openclaw/issues/92199) [Bug]: [ACP] Text before tool calls is lost in WeChat (intermediate messages dropped, not merged)**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[pydantic/pydantic-ai#7108](https://github.com/pydantic/pydantic-ai/issues/7108) `include_binary_content=False` is not honored for tool returns, `final_result`, or output-function arguments**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[pydantic/pydantic-ai#7109](https://github.com/pydantic/pydantic-ai/issues/7109) Durable-exec leaf-toolset `id` error never mentions the capability `id` that would fix it**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#27937](https://github.com/sgl-project/sglang/issues/27937) [Failure Tracker] PR Test (AMD)**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33408](https://github.com/sgl-project/sglang/issues/33408) [Bug] Unlimited-OCR: server crashes when batching images with different gundam tile counts**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33464](https://github.com/sgl-project/sglang/issues/33464) [Bug] EXIF orientation is never applied when decoding images for VLM serving**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T08:42:13.103245Z",
+      "eventId": "7743038d90efcb724aece7c65873ed230be8ae6ab811ae13e59eaaa19c445c29",
+      "idempotencyKey": "7743038d90efcb724aece7c65873ed230be8ae6ab811ae13e5",
+      "kind": "watch",
+      "runId": "watch-1785832700",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-04T07:07:08.938836Z",
+  "generatedAt": "2026-08-04T08:42:13.271214Z",
   "newEventCount": 0,
   "version": "notification_outbox_v1"
 }
