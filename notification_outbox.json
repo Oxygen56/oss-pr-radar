@@ -1,5 +1,5 @@
 {
-  "digest": "02b969cef2ff55228f2791c583ee53ecbd358f4af168b6d95eb0f10649c3e67b",
+  "digest": "9ef4533e4b676240789b94c7783dd681b631da1d33e3bba7d15a543f8f80c61a",
   "events": [
     {
       "attempts": 1,
@@ -2871,9 +2871,141 @@
       "runId": "watch-1785834687",
       "sentAt": "2026-08-04T09:16:39.503710Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "DeusData/codebase-memory-mcp#1416",
+        "sgl-project/sglang#33505",
+        "vllm-project/vllm#50719",
+        "sgl-project/sglang#33504"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[DeusData/codebase-memory-mcp#1416](https://github.com/DeusData/codebase-memory-mcp/issues/1416) Windows: install/uninstall/doctor all fail with \"active CBM sessions and operations could not be stopped safely\"**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue reports a high-impact Windows bug with multiple commands failing, but root cause is unclear: one reporter sees activation error, another sees daemon timeout, and Windows-level file access denials suggest OS-level issues. Maintainer has acknowledged and routed as high-priority, but no design confirmation or active investigation. A PR could be premature without maintainer direction on the intended fix.\n改动：Windows-specific activation transaction handling；daemon startup error handling；installer recovery procedure\n验证：Reproduce on Windows with 0.9.1-rc.1 and verify failure；Test recovery by overwriting with 0.9.0 binary；Add regression test for activation transaction on Windows\n风险：Root cause may be OS-level permissions or AV interference, not code；Fix may require maintainer design decisions on activation transaction semantics\n竞争：未发现相关 open PR\n下一步：按正常流程实现并验证；如要求 DCO 则自动 sign-off，PR 创建后报告 CLA 状态。\n证据：复现信号 12，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33505](https://github.com/sgl-project/sglang/issues/33505) [Bug] The --json-model-override-args  does not  recursively update the model configuration.**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue identifies a clear shallow-update bug in get_config causing recursive config override failure, with a concrete reproduction. However, open PR and related issue lookups timed out, so duplicate implementation cannot be excluded. Maintainer design confirmation is needed before starting work.\n改动：sglang/srt/utils/hf_transformers/config.py: implement recursive merge for model_override_args；add regression test for nested config override\n验证：Reproduce with provided command and assert no AttributeError；Add unit test for recursive update of nested text_config.rope_parameters\n风险：Potential behavior change for existing shallow override usage；Need to confirm maintainer preference for recursive merge semantics\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 4，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50719](https://github.com/vllm-project/vllm/issues/50719) [Bug][PD][Mooncake] Decode requests stuck in WAITING_FOR_REMOTE_KVS and fail with Timeout waiting for P side ready**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue reports a systemic D-side stall in Mooncake remote KV transfer with clear logs and reproduction outline, but root cause is unconfirmed and an existing PR #50984 is weak (no tests, failing CI). Maintainer design confirmation is needed before starting a competing PR.\n改动：Mooncake connector timeout handling；scheduler WAITING_FOR_REMOTE_KVS state transitions；error propagation from P-side failures\n验证：Reproduce with provided configuration and traffic pattern；Add regression test for D-side timeout when P-side never becomes ready；Run existing Mooncake connector unit tests\n风险：Changing timeout behavior may affect performance；Incomplete understanding of P-side state machine could lead to incorrect fix\n竞争：已有直接关联但证据不完整的 PR #50984：缺少测试文件; 存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 11，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33504](https://github.com/sgl-project/sglang/issues/33504) Title: Inconsistent error response format with OpenAI standard for non-streaming requests**\n建议：WAIT_MAINTAINER | 分数：10\n价值：Issue clearly identifies a concrete bug in error response format with a proposed fix, but the deterministic gate requires HUMAN_REVIEW and open PR/related issue lookups timed out, so duplicate work cannot be excluded.\n改动：Modify create_error_response in sglang.srt.entrypoints.openai.serving_base to wrap error in 'error' key\n验证：Add a regression test that sends a request exceeding max_tokens and asserts the response body matches OpenAI error schema\n风险：Potential breaking change for clients relying on current format; need maintainer confirmation on desired schema\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 9，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T09:27:04.841934Z",
+      "eventId": "c63a22c5c0a2a6909bd41ce0ca1a163dd5efac43209603fbbdb101e5b6f21726",
+      "idempotencyKey": "c63a22c5c0a2a6909bd41ce0ca1a163dd5efac43209603fbbd",
+      "kind": "review",
+      "runId": "scan-20260804T092450Z-d8c80185d8d4",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "sgl-project/sglang#27937",
+        "sgl-project/sglang#33408",
+        "PrefectHQ/fastmcp#4748",
+        "areal-project/AReaL#1565"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#27937](https://github.com/sgl-project/sglang/issues/27937) [Failure Tracker] PR Test (AMD)**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33408](https://github.com/sgl-project/sglang/issues/33408) [Bug] Unlimited-OCR: server crashes when batching images with different gundam tile counts**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[PrefectHQ/fastmcp#4748](https://github.com/PrefectHQ/fastmcp/issues/4748) OAuth consent cookie is rejected behind Azure Functions**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[areal-project/AReaL#1565](https://github.com/areal-project/AReaL/issues/1565) [BUG][v2] Teardown leaves an orphan process after torch-memory-saver CUDA free errors**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T09:27:04.952027Z",
+      "eventId": "ba0490e387bdc3be1d23618ee126d6b20ed8e439feb9b53955a6332da75ba3db",
+      "idempotencyKey": "ba0490e387bdc3be1d23618ee126d6b20ed8e439feb9b53955",
+      "kind": "watch",
+      "runId": "watch-1785835431",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-04T09:16:01.163982Z",
+  "generatedAt": "2026-08-04T09:27:05.084018Z",
   "newEventCount": 0,
   "version": "notification_outbox_v1"
 }
