@@ -81,6 +81,41 @@
     ],
     "why": "Issue reports a tool call error when switching moe-runner-backend from marlin to flashinfer_mxfp4, but lacks a minimal reproduction and root cause analysis. Open PR lookup timed out, and related PRs may overlap. Maintainer input needed."
   },
+  "0d3cf5b72905e6c4fea8f0d17a8f99262852bd9f7adab0beb171652588ee0eaa": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue reports ~0.9 GiB gap on Gemma-4, but commenter's A/B shows 0.59 GiB gap; discrepancy may be due to different measurement conditions or model size"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix MRv2 CUDA graph memory reservation in model runner",
+      "Adjust memory profiler to account for capture headroom",
+      "Possibly add validation for speculative decoding memory"
+    ],
+    "risks": [
+      "Changing memory reservation may reduce available KV cache and impact performance",
+      "Fix may conflict with extensible KV cache direction (#47363)",
+      "Incomplete understanding of eager residual could lead to incomplete fix"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "test_plan": [
+      "Reproduce OOM with provided Gemma-4 config and saturating load",
+      "Run A/B test with MRv1 vs MRv2 on small and large models with CUDA graphs enabled",
+      "Verify eager mode delta is negligible or explain residual",
+      "Test draft PR #49233 on the reported rig to see if it resolves the OOM"
+    ],
+    "unknowns": [
+      "Exact root cause of eager residual delta",
+      "Whether maintainers prefer fixing #49233 or pursuing extensible KV cache",
+      "Whether the OOM is specific to int8 KV cache or occurs with bf16 under comparable load"
+    ],
+    "why": "Issue provides strong evidence of MRv2 memory profiler over-reporting available KV cache due to insufficient CUDA graph capture headroom, leading to OOM under load. However, root cause is not fully isolated (eager residual unexplained), and an existing draft PR #49233 attempts a fix but is incomplete with failed CI. Maintainer direction is unclear, and the issue is still open without explicit approval."
+  },
   "1112f1b1e723d128844b06374130236b0caf3d2aefbae3b5758f2b5f7732e8c3": {
     "confidence": 0.7,
     "contradictions": [],
@@ -225,6 +260,36 @@
       "Status of PR #50514's failed CI and whether it already fixes this"
     ],
     "why": "Issue describes a clear deadlock with root cause in fastsafetensors using WORLD group for PP-scoped draft loads, but lacks maintainer confirmation and has an existing PR (#50514) with failed CI that may already address the area."
+  },
+  "1cf9e126e4eb8756e973dfc4e93dafa14dab8e227d2b2e88dc9719fc39392f54": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue labels include 'rocm' but body states not ROCm-specific"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Qwen3Parser initialization logic",
+      "structured-outputs config handling for enable_in_reasoning"
+    ],
+    "risks": [
+      "Potential conflict with existing PR #50955",
+      "Behavior change may affect other reasoning parser modes"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Add regression test using the provided curl commands to assert content is non-null and reasoning is null when enable_in_reasoning=true",
+      "Run existing structured-output and reasoning parser tests"
+    ],
+    "unknowns": [
+      "Maintainer design preference for fixing this path",
+      "Status of related issue audit failure"
+    ],
+    "why": "Issue provides a clear root cause and minimal reproduction for a user-visible bug, but the deterministic gate requires HUMAN_REVIEW and the related issue audit failed due to timeout. Existing PR #50955 is weak with failed CI, so a better PR may be possible, but maintainer confirmation is needed."
   },
   "1fc593c5dc203e31ed256bba7f704c7b0cbf25f3187106749ac49e25d6d2777f": {
     "confidence": 0.8,
@@ -668,6 +733,36 @@
     ],
     "why": "Issue reports a clear bug: nested Pydantic models in dicts ignore serialize_by_alias=False. Repro is provided, but root cause is not identified and no maintainer confirmation exists. The gate decision is HUMAN_REVIEW, so we must wait for maintainer input."
   },
+  "5e4c0b3cfb0725a76c5e7aa225a5522cd8ed546062942df83393323f4505a9c0": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify MiniMaxM3SparseAttention._insert_kv to use eager_break_during_capture",
+      "Route dense-layer KV writes through reshape_and_cache_flash",
+      "Relax SM89 guards to SM80 for fp8 KV cache"
+    ],
+    "risks": [
+      "Potential maintainer design preference against eager_break_during_capture",
+      "Performance impact of breaking graph capture in that path",
+      "Need to validate on actual A100/A800 hardware"
+    ],
+    "root_cause_clarity": "high",
+    "score": 5,
+    "test_plan": [
+      "Add a regression test that runs MiniMax-M3 with fp8_e5m2 KV cache under CUDA graphs and verifies output coherence",
+      "Add a unit test for _insert_kv under graph capture to ensure no corruption"
+    ],
+    "unknowns": [
+      "Maintainer feedback on the proposed fix",
+      "Status of related issue audit (timeout)",
+      "Whether the existing PR #50882 can be improved or superseded"
+    ],
+    "why": "Issue provides a detailed root cause and a working fix, but the deterministic gate requires HUMAN_REVIEW and the related issue audit timed out. Existing PR #50882 is weak (draft, no tests, failing CI), but a materially better PR is plausible. However, the lack of maintainer confirmation and the unresolved audit block actionability."
+  },
   "696e02a999f1d011ae915149f892da85ad6d48baaeb77c7118e9f6f1d84d1d0e": {
     "confidence": 0.7,
     "contradictions": [
@@ -1104,6 +1199,34 @@
     ],
     "why": "Issue is a real user-visible bug with strong reproduction evidence, but the deterministic gate requires HUMAN_REVIEW and the maintainer bot explicitly states a product decision is needed on cross-channel delivery policy. Existing PRs are closed unmerged and do not settle the policy, so a new PR would be premature without maintainer direction."
   },
+  "9fc6f79d0243eaf0f7008dc5b9015d2a1343acb2d4858511520f5f3a62e9d6e0": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Align inference_mode usage across warmup/autotune and real forward paths",
+      "Possibly add explicit eager initialization for backend workspaces"
+    ],
+    "risks": [
+      "Changing inference_mode may affect performance or autograd behavior",
+      "Backend-specific fixes may be needed for FlashInfer and others"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Reproduce with provided command and FlashInfer MegaMOE branch",
+      "Add regression test for inplace update on lazy buffers across inference_mode contexts"
+    ],
+    "unknowns": [
+      "Whether an existing PR already addresses this issue (open PR lookup failed)",
+      "Maintainer preference on which alignment option to choose"
+    ],
+    "why": "Issue identifies a clear correctness bug from inconsistent inference_mode usage, with reproduction and maintainer discussion. However, open PR lookup timed out and related issue audit failed, so duplicate/competing work cannot be excluded. Maintainer comment asks for design alignment, indicating need for maintainer decision."
+  },
   "a4284d967a499038b2f0cef8c6aaec18012a110ca1e74ab24fbe2d1a4873dc62": {
     "confidence": 0.7,
     "contradictions": [],
@@ -1353,6 +1476,33 @@
       "Maintainer's design preference for the fix"
     ],
     "why": "Issue provides a clear root cause and repro, but the deterministic gate requires HUMAN_REVIEW and an existing PR (#7598) already addresses it with failing CI. Competition is possible only if the PR's gaps are filled, but maintainer confirmation is needed."
+  },
+  "bbbf838fe0e08004deeb70b057a3b71b8a9c6e1d35baab6dd86f3bf7d9310080": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify gui-settings-bridge.js to merge provider models instead of overwriting",
+      "Ensure synchronization across config.json, model-connections.v1.json, and kun-settings.json"
+    ],
+    "risks": [
+      "Potential unintended behavior changes in config synchronization if merge logic is not carefully scoped",
+      "Need to handle concurrent writes from background processes"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add a regression test that simulates adding a model via GUI and verifies it persists after the delayed projection",
+      "Run existing unit tests for gui-settings-bridge and related config sync modules"
+    ],
+    "unknowns": [
+      "Exact code path and function details beyond the mentioned bridge",
+      "Maintainer preferences on design approach"
+    ],
+    "why": "Issue provides a clear user-visible bug with detailed reproduction steps, logs, and a specific root cause (registry-to-GUI projection overwrites newly added models). No competing PR or issue found. The fix is localized and actionable."
   },
   "bf7a7492d3eaa127d552d503815d6210dab8778071dc4024972f8b10166ebc98": {
     "confidence": 0.7,
@@ -1776,6 +1926,38 @@
       "Maintainer preference on fixing vs. waiting for extensible KV cache"
     ],
     "why": "Issue provides strong evidence of a memory accounting discrepancy between MRv1 and MRv2, with a deterministic OOM repro and community A/B isolating CUDA graph capture headroom. However, root cause is not fully confirmed (eager residual unexplained), and an existing draft PR #49233 attempts a fix but is incomplete. Maintainer direction is needed to avoid duplicating or conflicting with ongoing work."
+  },
+  "edff09199f1721bcbfc79808790a17e27beb21125e76893e82ee9241a6dc31cb": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue says system Chrome exits with code 0, but daemon reports exit code 21; likely daemon wraps the exit code"
+    ],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix executable selection precedence in packages/coding-agent/src/tools/browser/launch.ts to honor PUPPETEER_EXECUTABLE_PATH before system Chrome detection",
+      "Add regression tests for Windows system Chrome detection and override behavior",
+      "Possibly adjust daemon launch args to avoid --remote-debugging-port=0 or handle its failure"
+    ],
+    "risks": [
+      "Potential maintainer preference for a different fix (e.g., changing default port behavior) could conflict",
+      "Risk of duplicating existing PR #7604 if it is improved; need to coordinate or supersede"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce the issue on Windows with system Chrome installed and PUPPETEER_EXECUTABLE_PATH set to a working headless-shell; assert the daemon launches and serves CDP",
+      "Add unit tests for ensureChromiumExecutable() covering precedence and override honoring",
+      "Run existing browser tool tests and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred design for executable selection or port handling",
+      "Whether existing PR #7604 can be improved or will be merged soon"
+    ],
+    "why": "Issue provides a clear root cause (system Chrome exits on --remote-debugging-port=0, and ensureChromiumExecutable() ignores PUPPETEER_EXECUTABLE_PATH) and a workaround. Existing PR #7604 is weak: it has failing CI and lacks full evidence, so a materially better PR with complete tests and root-cause coverage is plausible."
   },
   "ee8df59c545d68aa8918bb4088d85a57ed5d1134e3d5e62adef6e69d3c5535e7": {
     "confidence": 0.8,

@@ -1,5 +1,5 @@
 {
-  "digest": "1127e45b5acb60671bad70e6c40cc71b98c7629e6ca062c32e8e5050121ea6ff",
+  "digest": "4b922f0fc35d6b9c93303120369e22cd627069851901589fefdbad73f475d32c",
   "events": [
     {
       "attempts": 1,
@@ -2697,9 +2697,174 @@
       "runId": "watch-1785834145",
       "sentAt": "2026-08-04T09:08:13.724614Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "can1357/oh-my-pi#7601"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[can1357/oh-my-pi#7601](https://github.com/can1357/oh-my-pi/issues/7601) [Windows] Shared headless browser daemon exits with code 21: system Chrome 150 silently exits on --remote-debugging-port=0**\n建议：PR_COMPETITION_OPPORTUNITY | 分数：11\n价值：Issue provides a clear root cause (system Chrome exits on --remote-debugging-port=0, and ensureChromiumExecutable() ignores PUPPETEER_EXECUTABLE_PATH) and a workaround. Existing PR #7604 is weak: it has failing CI and lacks full evidence, so a materially better PR with complete tests and root-cause coverage is plausible.\n改动：Fix executable selection precedence in packages/coding-agent/src/tools/browser/launch.ts to honor PUPPETEER_EXECUTABLE_PATH before system Chrome detection；Add regression tests for Windows system Chrome detection and override behavior；Possibly adjust daemon launch args to avoid --remote-debugging-port=0 or handle its failure\n验证：Reproduce the issue on Windows with system Chrome installed and PUPPETEER_EXECUTABLE_PATH set to a working headless-shell; assert the daemon launches and serves CDP；Add unit tests for ensureChromiumExecutable() covering precedence and override honoring；Run existing browser tool tests and static checks\n风险：Potential maintainer preference for a different fix (e.g., changing default port behavior) could conflict；Risk of duplicating existing PR #7604 if it is improved; need to coordinate or supersede\n竞争：已有直接关联但证据不完整的 PR #7604：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：先复现 issue，再逐项对比已有 PR 的缺口；只有能提供更小改动、更强测试或更完整边界覆盖时才开 PR。\n证据：复现信号 5，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "green",
+          "title": {
+            "content": "OSS PR Radar: 可立即执行",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T09:16:00.806417Z",
+      "eventId": "b09a85a0fd4337067d14e9d2b766454851627bc836ea3eb053e50cc826375836",
+      "idempotencyKey": "b09a85a0fd4337067d14e9d2b766454851627bc836ea3eb053",
+      "kind": "immediate",
+      "runId": "scan-20260804T091330Z-48a7e3d7ba76",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "PrefectHQ/fastmcp#4748",
+        "sgl-project/sglang#33470",
+        "vllm-project/vllm#50948",
+        "vllm-project/vllm#50159",
+        "KunAgent/Kun#1090"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[PrefectHQ/fastmcp#4748](https://github.com/PrefectHQ/fastmcp/issues/4748) OAuth consent cookie is rejected behind Azure Functions**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue reports a clear bug: Azure Functions adds Domain attribute to __Host- cookie, causing browser rejection and 403. Root cause is well understood and reproducible. However, the deterministic gate says HUMAN_REVIEW, and there is no maintainer approval or help-wanted signal. The fix may involve design choices about cookie handling and deployment compatibility, so maintainer input is needed.\n改动：Modify OAuth consent cookie handling to be compatible with hosting layers that rewrite cookie attributes, possibly by using a non-__Host- cookie or adjusting cookie attributes.\n验证：Create a failing test that simulates Azure Functions adding Domain attribute to the consent cookie and verifies the OAuth flow completes.\n风险：Changing cookie attributes may weaken security if not done carefully; need to preserve CSRF and browser-session binding.\n竞争：未发现相关 open PR\n下一步：先请求维护者分配/确认方案，获批后再开 PR。\n证据：复现信号 9，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33470](https://github.com/sgl-project/sglang/issues/33470) inference_mode mismatch can break lazy buffers**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue identifies a clear correctness bug from inconsistent inference_mode usage, with reproduction and maintainer discussion. However, open PR lookup timed out and related issue audit failed, so duplicate/competing work cannot be excluded. Maintainer comment asks for design alignment, indicating need for maintainer decision.\n改动：Align inference_mode usage across warmup/autotune and real forward paths；Possibly add explicit eager initialization for backend workspaces\n验证：Reproduce with provided command and FlashInfer MegaMOE branch；Add regression test for inplace update on lazy buffers across inference_mode contexts\n风险：Changing inference_mode may affect performance or autograd behavior；Backend-specific fixes may be needed for FlashInfer and others\n竞争：open PR 检索不完整，需等待下轮重试后再判断碰撞\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 9，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50948](https://github.com/vllm-project/vllm/issues/50948) [Bug]: Qwen parser routes grammar-constrained JSON to reasoning when `enable_in_reasoning=true`**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue provides a clear root cause and minimal reproduction for a user-visible bug, but the deterministic gate requires HUMAN_REVIEW and the related issue audit failed due to timeout. Existing PR #50955 is weak with failed CI, so a better PR may be possible, but maintainer confirmation is needed.\n改动：Qwen3Parser initialization logic；structured-outputs config handling for enable_in_reasoning\n验证：Add regression test using the provided curl commands to assert content is non-null and reasoning is null when enable_in_reasoning=true；Run existing structured-output and reasoning parser tests\n风险：Potential conflict with existing PR #50955；Behavior change may affect other reasoning parser modes\n竞争：已有直接关联但证据不完整的 PR #50955：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 17，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50159](https://github.com/vllm-project/vllm/issues/50159) [Bug]: Model Runner V2 + Gemma-4: memory profiler reports ~0.9 GiB more \"available KV\" than MRv1 → no runtime headroom → CUDA OOM under saturating load (no spec involved); with EAGLE it crashes earlier at cudagraph capture (stable-ABI aten::empty)**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue provides strong evidence of MRv2 memory profiler over-reporting available KV cache due to insufficient CUDA graph capture headroom, leading to OOM under load. However, root cause is not fully isolated (eager residual unexplained), and an existing draft PR #49233 attempts a fix but is incomplete with failed CI. Maintainer direction is unclear, and the issue is still open without explicit approval.\n改动：Fix MRv2 CUDA graph memory reservation in model runner；Adjust memory profiler to account for capture headroom；Possibly add validation for speculative decoding memory\n验证：Reproduce OOM with provided Gemma-4 config and saturating load；Run A/B test with MRv1 vs MRv2 on small and large models with CUDA graphs enabled；Verify eager mode delta is negligible or explain residual；Test draft PR #49233 on the reported rig to see if it resolves the OOM\n风险：Changing memory reservation may reduce available KV cache and impact performance；Fix may conflict with extensible KV cache direction (#47363)；Incomplete understanding of eager residual could lead to incomplete fix\n竞争：已有直接关联但证据不完整的 PR #49233：存在失败 CI/check; 仍是 draft；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 7，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[KunAgent/Kun#1090](https://github.com/KunAgent/Kun/issues/1090) [Bug] Custom provider models are automatically deleted after being added**\n建议：NEW_CLEAN_CANDIDATE | 分数：10\n价值：Issue provides a clear user-visible bug with detailed reproduction steps, logs, and a specific root cause (registry-to-GUI projection overwrites newly added models). No competing PR or issue found. The fix is localized and actionable.\n改动：Modify gui-settings-bridge.js to merge provider models instead of overwriting；Ensure synchronization across config.json, model-connections.v1.json, and kun-settings.json\n验证：Add a regression test that simulates adding a model via GUI and verifies it persists after the delayed projection；Run existing unit tests for gui-settings-bridge and related config sync modules\n风险：Potential unintended behavior changes in config synchronization if merge logic is not carefully scoped；Need to handle concurrent writes from background processes\n竞争：未发现相关 open PR\n下一步：仅完成本地复现、修复、测试和私有提交包；由用户自行决定公开提交。\n证据：复现信号 5，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T09:16:00.935054Z",
+      "eventId": "9b4999076cee2a3bf2e58938dddc8d10c3b974110c609ffcad49d1bbe0adf8f3",
+      "idempotencyKey": "9b4999076cee2a3bf2e58938dddc8d10c3b974110c609ffcad",
+      "kind": "review",
+      "runId": "scan-20260804T091330Z-48a7e3d7ba76",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "sgl-project/sglang#33464",
+        "vllm-project/vllm#50881",
+        "PrefectHQ/fastmcp#4749"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33464](https://github.com/sgl-project/sglang/issues/33464) [Bug] EXIF orientation is never applied when decoding images for VLM serving**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50881](https://github.com/vllm-project/vllm/issues/50881) [Bug]: MiniMax-M3 fp8 KV cache on SM80 (A100/A800): coherent with --enforce-eager, garbage under CUDA graphs — root cause + working fix**\n建议：WAIT_MAINTAINER\n价值：POLICY_REVALIDATION_REQUIRED\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[PrefectHQ/fastmcp#4749](https://github.com/PrefectHQ/fastmcp/issues/4749) Resource list do not match the actual resource**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T09:16:01.052930Z",
+      "eventId": "14db0325fd8a841dbdbec5eeeadc424ac91c7c120374388c8a00778eebeecd42",
+      "idempotencyKey": "14db0325fd8a841dbdbec5eeeadc424ac91c7c120374388c8a",
+      "kind": "watch",
+      "runId": "watch-1785834687",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-04T09:07:24.657588Z",
+  "generatedAt": "2026-08-04T09:16:01.163982Z",
   "newEventCount": 0,
   "version": "notification_outbox_v1"
 }
