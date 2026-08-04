@@ -27,6 +27,12 @@ use three bounded workers and share one policy snapshot per repository; open PR
 checks use four bounded workers. Scanner policy text is reused only when the
 repository policy blob SHAs and the decision-contract digest are unchanged.
 
+Deferred rechecks have a separate 24-item budget. Ordering uses the first
+deferred timestamp rather than the latest retry timestamp, and previously
+actionable candidates retain their score and receive priority. This prevents a
+busy fixed-repository feed from pushing the same opportunity to the back on
+every hourly run.
+
 ## Rollout Modes
 
 - `shadow`: verify signed handoff and live decisions; create no task.

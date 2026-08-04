@@ -54,9 +54,9 @@ SCAN_DEEP_INSPECTION_DEADLINE_SECONDS = 360.0
 REPO_COLLECTION_WORKERS = 6
 REPO_QUALITY_CACHE_HOURS = 6
 MAX_ISSUES_TO_INSPECT = 30
-RECHECK_INSPECTION_BUDGET = 10
+RECHECK_INSPECTION_BUDGET = 24
 MAX_SEEN_RECHECKS = RECHECK_INSPECTION_BUDGET
-MAX_PENDING_RECHECKS = 12
+MAX_PENDING_RECHECKS = RECHECK_INSPECTION_BUDGET
 MAX_SCANNER_MIGRATION_RECHECKS = 8
 SEEN_RECHECK_STATUSES = frozenset(
     {
@@ -724,12 +724,13 @@ def issue_body_pr_link_relation(issue_context: str, repo: str, pr_num: int) -> s
     return "reference"
 
 
-def base_priority(item: dict[str, Any]) -> tuple[int, int, int, int, int, int, str]:
+def base_priority(item: dict[str, Any]) -> tuple[int, int, int, int, int, int, int, str]:
     labels = " ".join(item.get("labels", []))
     title = str(item.get("title") or "").replace("_", " ").replace("-", " ")
     return (
         int(bool(item.get("_explicit_recheck"))),
         int(item.get("_recheck_priority") or 0),
+        int(item.get("_prior_score") or 0),
         int(item.get("_defer_count") or 0),
         int(item.get("repo") in AGENT_INFRA_PRIORITY_REPOS),
         int(bool(re.search(r"\b(bug|regression|performance|refactor)\b", labels, re.I))),
@@ -774,6 +775,28 @@ def select_inspection_bases(
     reserve(rechecks, max(0, recheck_limit))
     reserve(regular, max(0, limit))
     return selected, deferred
+
+
+def select_seen_rechecks(
+    seen: dict[str, Any], limit: int = MAX_SEEN_RECHECKS
+) -> list[tuple[str, dict[str, Any]]]:
+    candidates = [
+        (key, value)
+        for key, value in seen.items()
+        if isinstance(value, dict) and value.get("status") in SEEN_RECHECK_STATUSES
+    ]
+    candidates.sort(
+        key=lambda pair: (
+            0 if pair[1].get("deferred_from_status") in {"queued_outbox", "notified"} else 1,
+            str(
+                pair[1].get("first_deferred_at")
+                or pair[1].get("requeued_at")
+                or pair[1].get("analyzed")
+                or ""
+            ),
+        )
+    )
+    return candidates[: max(0, limit)]
 
 
 def parse_github_time(value: str | None, default: datetime) -> datetime:
@@ -1378,14 +1401,7 @@ class Radar:
         discovery_index = int(self.now.timestamp() // 3600) % len(AGENT_INFRA_DISCOVERY_QUERIES)
         discovery_query = AGENT_INFRA_DISCOVERY_QUERIES[discovery_index]
         self.add_search(items, f"{base} label:bug {discovery_query}", 15, required=False)
-        rechecks = sorted(
-            (
-                (key, value)
-                for key, value in self.seen.items()
-                if isinstance(value, dict) and value.get("status") in SEEN_RECHECK_STATUSES
-            ),
-            key=lambda pair: str(pair[1].get("requeued_at") or pair[1].get("analyzed") or ""),
-        )[:MAX_SEEN_RECHECKS]
+        rechecks = select_seen_rechecks(self.seen)
         self.deferred_rechecks_before = len(
             [
                 value
@@ -1434,10 +1450,15 @@ class Radar:
             items[key]["_explicit_recheck"] = True
             items[key]["_recheck_status"] = entry.get("status")
             items[key]["_recheck_priority"] = (
-                2
-                if entry.get("status") in {"inspection_budget_deferred", "candidate_overflow"}
-                else 1
+                4
+                if entry.get("deferred_from_status") in {"queued_outbox", "notified"}
+                else (
+                    2
+                    if entry.get("status") in {"inspection_budget_deferred", "candidate_overflow"}
+                    else 1
+                )
             )
+            items[key]["_prior_score"] = int(entry.get("score") or 0)
             items[key]["_defer_count"] = int(entry.get("defer_count") or 0)
             items[key]["_first_deferred_at"] = entry.get("first_deferred_at") or ""
         for key, entry in list(self.pending_rechecks.items())[:MAX_PENDING_RECHECKS]:
@@ -2866,6 +2887,9 @@ class Radar:
                 or previous.get("requeued_at")
                 or self.analyzed,
                 "defer_count": int(previous.get("defer_count") or 0) + 1,
+                "deferred_from_status": previous.get("deferred_from_status")
+                or previous.get("status"),
+                "score": previous.get("score"),
                 "status": (
                     "candidate_overflow"
                     if reason == "candidate_overflow"

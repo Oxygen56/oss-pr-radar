@@ -8,6 +8,7 @@ from oss_pr_radar.scanner import (
     SCANNER_VERSION,
     Radar,
     select_inspection_bases,
+    select_seen_rechecks,
 )
 from oss_pr_radar.util import atomic_write_json
 
@@ -254,6 +255,35 @@ def test_deferred_rechecks_have_capacity_in_addition_to_fresh_issues():
     assert sum(bool(item.get("_explicit_recheck")) for item in selected) == 2
     assert sum(not item.get("_explicit_recheck") for item in selected) == 3
     assert len(deferred) == 4
+
+
+def test_seen_rechecks_prioritize_actionable_history_then_original_wait_time():
+    seen = {
+        "example/ordinary-new#1": {
+            "status": "inspection_budget_deferred",
+            "first_deferred_at": "2026-08-04T02:00:00Z",
+            "requeued_at": "2026-08-04T02:00:00Z",
+        },
+        "example/actionable#2": {
+            "status": "inspection_budget_deferred",
+            "deferred_from_status": "queued_outbox",
+            "first_deferred_at": "2026-08-04T03:00:00Z",
+            "requeued_at": "2026-08-04T05:00:00Z",
+        },
+        "example/ordinary-old#3": {
+            "status": "inspection_budget_deferred",
+            "first_deferred_at": "2026-08-04T01:00:00Z",
+            "requeued_at": "2026-08-04T06:00:00Z",
+        },
+    }
+
+    selected = select_seen_rechecks(seen, limit=3)
+
+    assert [key for key, _ in selected] == [
+        "example/actionable#2",
+        "example/ordinary-old#3",
+        "example/ordinary-new#1",
+    ]
 
 
 def test_repository_policy_cache_reuses_unchanged_blob_shas(monkeypatch, tmp_path):

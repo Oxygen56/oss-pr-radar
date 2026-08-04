@@ -30,6 +30,9 @@ is recorded as a lagging outcome, never used to judge discovery quality.
 - A durable, live-rechecked opportunity backlog: unchanged or transiently
   unreadable issues keep their signed intent, while ownership, closure, strong
   competing PRs, or policy drift force a fresh decision before dispatch.
+- A 24-item independent recheck lane ordered by original wait time, with prior
+  actionable candidates promoted ahead of ordinary deferred items. Rechecks
+  never use a cooldown and cannot starve behind fresh discovery.
 
 ## Scan Scope
 
