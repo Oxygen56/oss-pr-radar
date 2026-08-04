@@ -1,6 +1,6 @@
 import pytest
 
-from oss_pr_radar.contracts import ContractError, validate_report
+from oss_pr_radar.contracts import SCAN_SCHEMA, ContractError, contract_digest, validate_report
 
 
 def candidate(**updates):
@@ -38,3 +38,29 @@ def test_auto_spawn_requires_actionable_review():
 def test_failed_scan_is_rejected():
     with pytest.raises(ContractError):
         validate_report({"scan_ok": False, "scan_error": "incomplete", "candidate_details": []})
+
+
+def test_v2_report_requires_scan_observability_contract():
+    report = {
+        "scan_ok": True,
+        "schema_version": SCAN_SCHEMA,
+        "contract_digest": contract_digest(),
+        "run_id": "run-1",
+        "snapshot_id": "snapshot-1",
+        "candidate_details": [],
+        "timings_seconds": {"collect": 1.0, "total": 2.0},
+        "repository_activity": {
+            "fixed_scope": ["a/b"],
+            "queried": ["a/b"],
+            "matched": [],
+            "qualified": [],
+            "inspected": [],
+            "collection_failures": {},
+        },
+        "deferred_rechecks": {"cooldown_enabled": False},
+    }
+
+    validate_report(report, require_v2=True)
+    del report["repository_activity"]
+    with pytest.raises(ContractError, match="repository_activity"):
+        validate_report(report, require_v2=True)

@@ -266,11 +266,10 @@ class RadarLedger:
                     (now, intent_id),
                 )
                 return None
-            if (
-                row["lease_until"]
-                and parse_time(row["lease_until"]) > now_dt
-                and row["lease_owner"] != owner
-            ):
+            # A live lease is exclusive even when a later controller happens to
+            # reuse the same owner label. This prevents overlapping automation
+            # runs from both creating a task from one signed intent.
+            if row["lease_until"] and parse_time(row["lease_until"]) > now_dt:
                 return None
             if max_active is not None:
                 active = connection.execute(
@@ -499,15 +498,47 @@ class RadarLedger:
                 )
 
     def pending(self) -> list[dict[str, Any]]:
-        now = iso_z(datetime.now(UTC))
+        now_dt = datetime.now(UTC)
+        now = iso_z(now_dt)
         with self.connect() as connection:
             rows = connection.execute(
-                """SELECT payload_json,status,lease_until FROM intents
+                """SELECT payload_json,status,issued_at,lease_until FROM intents
                    WHERE status IN ('PENDING','LEASED') AND expires_at>?
                    ORDER BY issued_at""",
                 (now,),
             ).fetchall()
-        return [json.loads(row["payload_json"]) | {"ledgerStatus": row["status"]} for row in rows]
+        values: list[dict[str, Any]] = []
+        for row in rows:
+            issued_at = parse_time(row["issued_at"])
+            age_minutes = max(0, int((now_dt - issued_at).total_seconds() // 60))
+            lease_stale = bool(
+                row["status"] == "LEASED"
+                and row["lease_until"]
+                and parse_time(row["lease_until"]) <= now_dt
+            )
+            values.append(
+                json.loads(row["payload_json"])
+                | {
+                    "ledgerStatus": row["status"],
+                    "pendingSince": row["issued_at"],
+                    "pendingAgeMinutes": age_minutes,
+                    "leaseStale": lease_stale,
+                }
+            )
+        return values
+
+    def pending_alerts(self, *, min_age_minutes: int = 70) -> list[dict[str, Any]]:
+        threshold = max(60, min(int(min_age_minutes), 24 * 60))
+        alerts: list[dict[str, Any]] = []
+        for item in self.pending():
+            code = None
+            if item.get("leaseStale"):
+                code = "DISPATCH_LEASE_STALE"
+            elif int(item.get("pendingAgeMinutes") or 0) >= threshold:
+                code = "DISPATCH_PENDING_OVER_ONE_CYCLE"
+            if code:
+                alerts.append(item | {"alertCode": code, "thresholdMinutes": threshold})
+        return alerts
 
     def active_dispatch_count(self, *, exclude_intent_id: str | None = None) -> int:
         now = iso_z(datetime.now(UTC))

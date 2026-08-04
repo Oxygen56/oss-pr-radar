@@ -10,7 +10,7 @@ from .util import sha256_json
 SCAN_SCHEMA = "oss-pr-radar.scan.v2"
 CANDIDATE_SCHEMA = "oss-pr-radar.candidate.v2"
 EVIDENCE_SCHEMA = "oss-pr-radar.evidence.v1"
-CONTRACT_REVISION = "trust-core-v3-full-publication-payload"
+CONTRACT_REVISION = "trust-core-v4-scan-observability"
 
 CONTRACT_MANIFEST = {
     "scanSchema": SCAN_SCHEMA,
@@ -98,6 +98,26 @@ def validate_report(report: dict[str, Any], *, require_v2: bool = False) -> Repo
         _require(report.get("contract_digest") == contract_digest(), "stale decision contract")
         _require(bool(report.get("run_id")), "run_id is required")
         _require(bool(report.get("snapshot_id")), "snapshot_id is required")
+        timings = report.get("timings_seconds")
+        _require(isinstance(timings, dict), "timings_seconds is required")
+        _require(
+            all(isinstance(timings.get(key), (int, float)) for key in ("collect", "total")),
+            "timings_seconds.collect and total must be numeric",
+        )
+        activity = report.get("repository_activity")
+        _require(isinstance(activity, dict), "repository_activity is required")
+        for key in ("fixed_scope", "queried", "matched", "qualified", "inspected"):
+            _require(isinstance(activity.get(key), list), f"repository_activity.{key} is required")
+        _require(
+            isinstance(activity.get("collection_failures"), dict),
+            "repository_activity.collection_failures is required",
+        )
+        rechecks = report.get("deferred_rechecks")
+        _require(isinstance(rechecks, dict), "deferred_rechecks is required")
+        _require(
+            rechecks.get("cooldown_enabled") is False,
+            "deferred recheck cooldown must remain disabled",
+        )
     details = report.get("candidate_details")
     _require(isinstance(details, list), "candidate_details must be a list")
     for candidate in details:

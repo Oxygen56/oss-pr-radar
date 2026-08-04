@@ -9,7 +9,7 @@ from typing import Any
 from .claims import detect_claims, detect_maintainer_approval
 from .github_client import GitHubClient, GitHubError
 from .relations import assess_relations
-from .repo_policy import discover_policy
+from .repo_policy import PolicySnapshot, discover_policy
 from .util import sha256_json
 
 HARDWARE_PATTERNS = {
@@ -61,6 +61,7 @@ def collect_evidence(
     *,
     current_actor: str = "Oxygen56",
     hardware_inventory: set[str] | None = None,
+    policy_snapshot: PolicySnapshot | None = None,
 ) -> EvidenceBundle:
     completeness: dict[str, str] = {}
 
@@ -76,7 +77,7 @@ def collect_evidence(
     issue = load("issue", lambda: client.issue(repo, issue_number), {})
     comments = load("comments", lambda: client.comments(repo, issue_number), [])
     timeline = load("timeline", lambda: client.timeline(repo, issue_number), [])
-    policy = discover_policy(client, repo)
+    policy = policy_snapshot or discover_policy(client, repo)
     completeness["repositoryPolicy"] = (
         "COMPLETE" if policy.status != "UNKNOWN" else f"ERROR:{policy.error or 'unknown'}"
     )

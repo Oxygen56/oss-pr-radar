@@ -3,7 +3,8 @@
 ## Schedules
 
 - `radar.yml`: every hour at minute 17 in `Asia/Shanghai`.
-- Local Codex dispatcher: every hour at minute 45, after the GitHub scan's delay budget.
+- Local Codex heartbeat dispatcher: every hour at minute 45, reusing one
+  controller task after the GitHub scan's delay budget.
 - Health watchdog: every hour at minute 55.
 - The local dispatcher also runs the health check, so scheduler failure is not
   monitored only by another workflow on the same scheduler.
@@ -15,10 +16,16 @@ an issue. Both the watchdog and the local dispatcher run the health check with
 they dispatch one manual fallback run. A recent active fallback suppresses a
 second repair, and workflow concurrency serializes a late natural run behind it.
 
-Deferred inspections are oldest-first and are treated as forced rechecks. A
+Deferred inspections are oldest-first and receive a dedicated 10-item budget
+in addition to the 30-item fresh-issue budget; there is no recheck cooldown. A
 terminal rejection drains the item; a transient evidence lookup failure remains
 eligible for retry. Candidates that exceed the per-run notification cap are
 stored as `candidate_overflow` instead of being silently lost.
+
+Watchlist evidence and open-PR follow-up run in parallel jobs. Watchlist items
+use three bounded workers and share one policy snapshot per repository; open PR
+checks use four bounded workers. Scanner policy text is reused only when the
+repository policy blob SHAs and the decision-contract digest are unchanged.
 
 ## Rollout Modes
 
@@ -36,6 +43,9 @@ a quality KPI or a publication-policy bypass.
   `python scripts/state_branch.py migrate` once for a legacy branch.
 - An expired or tampered intent is ignored locally.
 - An expired lease can be reclaimed; a dispatched receipt is idempotent.
+- A live lease is exclusive even if two controller runs reuse the same owner
+  label. A signed intent waiting at least 70 minutes, or a stale lease, produces
+  a deduplicated Feishu dispatch alert.
 - A task that remains dispatched without an outcome for 90 minutes enters the
   local recovery list. Only an obviously empty or `完成`-only task may receive
   one repeat of the exact canonical prompt. The reservation is written before
@@ -61,7 +71,8 @@ quota or discovery score.
 
 ## Local Dispatcher Order
 
-The desktop automation runs health with fallback repair, queue sync, PR lifecycle refresh, live
+The single-thread desktop heartbeat runs health with fallback repair, queue sync,
+dispatch-age alerts, PR lifecycle refresh, live
 claim/revalidation, exact-project worktree creation, task receipt verification,
 one-shot recovery, title synchronization, and `AUDIT_NO_GO` cleanup in that
 order. A canary WIP limit may leave valid pending intents in the queue; this is

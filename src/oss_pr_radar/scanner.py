@@ -36,6 +36,7 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_REPORTS = BASE_DIR / "reports"
 DEFAULT_SEEN = DEFAULT_REPORTS / "oss_pr_radar_seen.json"
 DEFAULT_STATE = DEFAULT_REPORTS / "pr_radar_runtime_state.json"
+DEFAULT_REPO_CACHE = BASE_DIR / "state" / "repo_cache.json"
 DEFAULT_CHAT_ID = os.environ.get("FEISHU_CHAT_ID", "")
 PROFILE = "agent_ai_infra_v2"
 SCANNER_VERSION = SCANNER_DECISION_REVISION
@@ -45,9 +46,12 @@ SEARCH_MIN_INTERVAL_SECONDS = 1.5
 SEARCH_RETRY_DELAYS_SECONDS = (3.0, 10.0, 30.0)
 FEISHU_RETRY_DELAYS_SECONDS = (0.0, 1.0, 3.0)
 SCAN_DEEP_INSPECTION_DEADLINE_SECONDS = 360.0
-REPO_COLLECTION_WORKERS = 4
+REPO_COLLECTION_WORKERS = 6
+REPO_QUALITY_CACHE_HOURS = 6
 MAX_ISSUES_TO_INSPECT = 30
-MAX_SEEN_RECHECKS = 18
+RECHECK_INSPECTION_BUDGET = 10
+MAX_SEEN_RECHECKS = RECHECK_INSPECTION_BUDGET
+MAX_PENDING_RECHECKS = 12
 MAX_SCANNER_MIGRATION_RECHECKS = 8
 SEEN_RECHECK_STATUSES = frozenset(
     {
@@ -746,11 +750,13 @@ def issue_body_pr_link_relation(issue_context: str, repo: str, pr_num: int) -> s
     return "reference"
 
 
-def base_priority(item: dict[str, Any]) -> tuple[int, int, int, int, str]:
+def base_priority(item: dict[str, Any]) -> tuple[int, int, int, int, int, int, str]:
     labels = " ".join(item.get("labels", []))
     title = str(item.get("title") or "").replace("_", " ").replace("-", " ")
     return (
         int(bool(item.get("_explicit_recheck"))),
+        int(item.get("_recheck_priority") or 0),
+        int(item.get("_defer_count") or 0),
         int(item.get("repo") in AGENT_INFRA_PRIORITY_REPOS),
         int(bool(re.search(r"\b(bug|regression|performance|refactor)\b", labels, re.I))),
         len({match.group(0).lower() for match in HIGH_RE.finditer(title)}),
@@ -762,23 +768,37 @@ def select_inspection_bases(
     bases: list[dict[str, Any]],
     *,
     limit: int = MAX_ISSUES_TO_INSPECT,
+    recheck_limit: int = RECHECK_INSPECTION_BUDGET,
     per_repo_limit: int = MAX_ISSUES_PER_REPO_PER_SCAN,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Reserve first-pass inspection capacity across repositories, then backfill."""
+    """Give persisted rechecks their own budget without starving fresh issues."""
     selected: list[dict[str, Any]] = []
     deferred: list[dict[str, Any]] = []
     repo_counts: Counter[str] = Counter()
-    for base in bases:
-        repo = str(base.get("repo") or "")
-        if len(selected) < limit and repo_counts[repo] < per_repo_limit:
-            selected.append(base)
-            repo_counts[repo] += 1
-        else:
-            deferred.append(base)
-    if len(selected) < limit and deferred:
-        capacity = limit - len(selected)
-        selected.extend(deferred[:capacity])
-        deferred = deferred[capacity:]
+
+    rechecks = [base for base in bases if base.get("_explicit_recheck")]
+    regular = [base for base in bases if not base.get("_explicit_recheck")]
+
+    def reserve(pool: list[dict[str, Any]], capacity: int) -> None:
+        overflow: list[dict[str, Any]] = []
+        accepted = 0
+        for base in pool:
+            repo = str(base.get("repo") or "")
+            if accepted < capacity and repo_counts[repo] < per_repo_limit:
+                selected.append(base)
+                repo_counts[repo] += 1
+                accepted += 1
+            else:
+                overflow.append(base)
+        # Backfill unused capacity after repository diversity has had first pick.
+        if accepted < capacity and overflow:
+            extra = min(capacity - accepted, len(overflow))
+            selected.extend(overflow[:extra])
+            overflow = overflow[extra:]
+        deferred.extend(overflow)
+
+    reserve(rechecks, max(0, recheck_limit))
+    reserve(regular, max(0, limit))
     return selected, deferred
 
 
@@ -1152,6 +1172,7 @@ class Radar:
         pending_rechecks: dict[str, Any] | None = None,
         deep_inspection_deadline_seconds: float = SCAN_DEEP_INSPECTION_DEADLINE_SECONDS,
         notify: bool = True,
+        repo_cache_path: Path = DEFAULT_REPO_CACHE,
     ):
         self.now = now.astimezone(timezone.utc)
         self.since = self.now - timedelta(hours=window_hours)
@@ -1165,6 +1186,14 @@ class Radar:
         self.errors: list[str] = []
         self.repo_cache: dict[str, tuple[bool, str]] = {}
         self.policy_cache: dict[str, str] = {}
+        self.repo_cache_path = repo_cache_path
+        cached = load_json(repo_cache_path, {})
+        self.persistent_repo_cache: dict[str, Any] = (
+            cached if isinstance(cached, dict) and cached.get("version") == "repo_cache_v1" else {}
+        )
+        self.persistent_repo_cache.setdefault("version", "repo_cache_v1")
+        self.persistent_repo_cache.setdefault("policies", {})
+        self.persistent_repo_cache.setdefault("quality", {})
         self.related_issue_cache: dict[str, tuple[list[dict[str, Any]] | None, str | None]] = {}
         self.search_failed = False
         self.rate_limited = False
@@ -1181,6 +1210,14 @@ class Radar:
         self.rejection_summary: dict[str, int] = {}
         self.rejection_examples: dict[str, list[dict[str, Any]]] = {}
         self._last_comments_lookup_error: str | None = None
+        self.queried_repos: set[str] = set()
+        self.matched_repos: set[str] = set()
+        self.qualified_repo_names: set[str] = set()
+        self.inspected_repo_names: set[str] = set()
+        self.collection_failures: dict[str, str] = {}
+        self.deferred_rechecks_before = 0
+        self.deferred_rechecks_attempted = 0
+        self.deferred_rechecks_remaining = 0
 
     def deep_inspection_deadline_reached(self) -> bool:
         reached = (
@@ -1251,6 +1288,7 @@ class Radar:
             repo = "/".join(repo_url.rsplit("/", 2)[-2:]) if repo_url else ""
             if not repo or repo_is_excluded(repo):
                 continue
+            self.matched_repos.add(repo)
             key = f"{repo}#{item.get('number')}"
             items.setdefault(
                 key,
@@ -1269,12 +1307,12 @@ class Radar:
 
     def add_repo_issues(
         self,
-        items: dict[str, dict[str, Any]],
         repo: str,
         per_page: int = 100,
-    ) -> None:
+    ) -> tuple[dict[str, dict[str, Any]], str | None, bool]:
         if repo_is_excluded(repo):
-            return
+            return {}, None, False
+        found: dict[str, dict[str, Any]] = {}
         data: Any | None = None
         err: str | None = None
         retry_delays = (1.0, 3.0)
@@ -1303,17 +1341,15 @@ class Radar:
             if attempt < len(retry_delays):
                 self.sleep_fn(retry_delays[attempt])
         if err or not isinstance(data, list):
-            self.errors.append(f"repo_issues:{repo}:{err or 'invalid_response'}")
-            self.search_failed = True
-            if err and ("rate limit" in err.lower() or "abuse detection" in err.lower()):
-                self.rate_limited = True
-            return
+            message = err or "invalid_response"
+            rate_limited = "rate limit" in message.lower() or "abuse detection" in message.lower()
+            return found, message, rate_limited
 
         for item in data:
             if item.get("pull_request") or item.get("state") != "open":
                 continue
             key = f"{repo}#{item.get('number')}"
-            items.setdefault(
+            found.setdefault(
                 key,
                 {
                     "repo": repo,
@@ -1327,6 +1363,7 @@ class Radar:
                     "body": item.get("body") or "",
                 },
             )
+        return found, None, False
 
     def collect_items(self) -> dict[str, dict[str, Any]]:
         items: dict[str, dict[str, Any]] = {}
@@ -1337,17 +1374,32 @@ class Radar:
         # Repository issue feeds are independent. Bound concurrency so one slow
         # endpoint cannot make the whole hourly scan exceed the outer harness
         # timeout, while retaining the same fail-closed completeness contract.
+        self.queried_repos.update(AGENT_INFRA_SCAN_REPOS)
         with ThreadPoolExecutor(max_workers=REPO_COLLECTION_WORKERS) as executor:
             futures = [
-                executor.submit(self.add_repo_issues, items, repo)
-                for repo in AGENT_INFRA_SCAN_REPOS
+                executor.submit(self.add_repo_issues, repo) for repo in AGENT_INFRA_SCAN_REPOS
             ]
-            done, _ = wait(futures)
-            for future in done:
+            wait(futures)
+            for repo, future in zip(AGENT_INFRA_SCAN_REPOS, futures, strict=True):
                 try:
-                    future.result()
+                    result = future.result()
+                    if not result:
+                        continue
+                    repo_items, error, rate_limited = result
+                    if error:
+                        self.errors.append(f"repo_issues:{repo}:{error}")
+                        self.collection_failures[repo] = error
+                        self.search_failed = True
+                        self.rate_limited = self.rate_limited or rate_limited
+                        continue
+                    if repo_items:
+                        self.matched_repos.add(repo)
+                    for key, item in repo_items.items():
+                        items.setdefault(key, item)
                 except Exception as exc:
-                    self.errors.append(f"repo_issues_worker:{type(exc).__name__}:{str(exc)[:120]}")
+                    message = f"{type(exc).__name__}:{str(exc)[:120]}"
+                    self.errors.append(f"repo_issues_worker:{repo}:{message}")
+                    self.collection_failures[repo] = message
                     self.search_failed = True
         discovery_index = int(self.now.timestamp() // 3600) % len(AGENT_INFRA_DISCOVERY_QUERIES)
         discovery_query = AGENT_INFRA_DISCOVERY_QUERIES[discovery_index]
@@ -1360,6 +1412,13 @@ class Radar:
             ),
             key=lambda pair: str(pair[1].get("requeued_at") or pair[1].get("analyzed") or ""),
         )[:MAX_SEEN_RECHECKS]
+        self.deferred_rechecks_before = len(
+            [
+                value
+                for value in self.seen.values()
+                if isinstance(value, dict) and value.get("status") in SEEN_RECHECK_STATUSES
+            ]
+        )
         recheck_keys = {key for key, _ in rechecks}
         self.forced_recheck_keys.update(recheck_keys)
         current_decision_digest = decision_contract_digest()
@@ -1400,7 +1459,14 @@ class Radar:
             )
             items[key]["_explicit_recheck"] = True
             items[key]["_recheck_status"] = entry.get("status")
-        for key, entry in list(self.pending_rechecks.items())[:MAX_SEEN_RECHECKS]:
+            items[key]["_recheck_priority"] = (
+                2
+                if entry.get("status") in {"inspection_budget_deferred", "candidate_overflow"}
+                else 1
+            )
+            items[key]["_defer_count"] = int(entry.get("defer_count") or 0)
+            items[key]["_first_deferred_at"] = entry.get("first_deferred_at") or ""
+        for key, entry in list(self.pending_rechecks.items())[:MAX_PENDING_RECHECKS]:
             repo, separator, number_text = key.rpartition("#")
             if not separator or not number_text.isdigit() or repo_is_excluded(repo):
                 continue
@@ -1415,6 +1481,7 @@ class Radar:
                 "updated": entry.get("issueUpdated") or "",
                 "_explicit_recheck": True,
                 "_recheck_status": "pending_queue",
+                "_recheck_priority": 3,
             }
         return items
 
@@ -1424,6 +1491,21 @@ class Radar:
         if known:
             self.repo_cache[repo] = (True, "curated_mature_repo")
             return self.repo_cache[repo]
+        cached = (self.persistent_repo_cache.get("quality") or {}).get(repo)
+        if isinstance(cached, dict):
+            checked_at = parse_github_time(
+                cached.get("checkedAt"), datetime.min.replace(tzinfo=timezone.utc)
+            )
+            if self.now - checked_at < timedelta(hours=REPO_QUALITY_CACHE_HOURS):
+                value = cached.get("value")
+                if (
+                    isinstance(value, list)
+                    and len(value) == 2
+                    and isinstance(value[0], bool)
+                    and isinstance(value[1], str)
+                ):
+                    self.repo_cache[repo] = (value[0], value[1])
+                    return self.repo_cache[repo]
         meta, err = gh(
             [
                 "repo",
@@ -1467,8 +1549,12 @@ class Radar:
         )
         if not has_code:
             self.repo_cache[repo] = (False, "no_code_surface")
-            return self.repo_cache[repo]
-        self.repo_cache[repo] = (True, f"stars:{stars}")
+        else:
+            self.repo_cache[repo] = (True, f"stars:{stars}")
+        self.persistent_repo_cache["quality"][repo] = {
+            "checkedAt": self.analyzed,
+            "value": list(self.repo_cache[repo]),
+        }
         return self.repo_cache[repo]
 
     def submission_policy(self, repo: str) -> str:
@@ -1513,7 +1599,35 @@ class Radar:
             for entry in entries
             if str(entry.get("name") or "").casefold() in policy_names and entry.get("path")
         ][:6]
+        primary_files = {
+            str(entry.get("path")): str(entry.get("sha") or "")
+            for entry in entries
+            if str(entry.get("path") or "") in policy_paths
+        }
+        cache_entry = (self.persistent_repo_cache.get("policies") or {}).get(repo)
+        if (
+            isinstance(cache_entry, dict)
+            and cache_entry.get("decisionDigest") == decision_contract_digest()
+            and cache_entry.get("staticRule") == static_rule
+            and cache_entry.get("primaryFiles") == primary_files
+            and isinstance(cache_entry.get("result"), str)
+        ):
+            linked_unchanged = True
+            for linked_path, linked_sha in (cache_entry.get("linkedFiles") or {}).items():
+                linked, linked_err = gh(["api", f"repos/{repo}/contents/{linked_path}"], timeout=15)
+                if (
+                    linked_err
+                    or not isinstance(linked, dict)
+                    or str(linked.get("sha") or "") != str(linked_sha)
+                ):
+                    linked_unchanged = False
+                    break
+            if linked_unchanged:
+                self.policy_cache[repo] = str(cache_entry["result"])
+                return self.policy_cache[repo]
+
         policy_text: list[str] = []
+        linked_files: dict[str, str] = {}
         for path in policy_paths:
             payload, payload_err = gh(["api", f"repos/{repo}/contents/{path}"], timeout=15)
             if payload_err or not isinstance(payload, dict):
@@ -1548,6 +1662,7 @@ class Radar:
                         policy_text.append(
                             base64.b64decode(linked["content"]).decode("utf-8", errors="replace")
                         )
+                        linked_files[normalized] = str(linked.get("sha") or "")
                     except (TypeError, ValueError):
                         self.policy_cache[repo] = "policy_unknown"
                         return self.policy_cache[repo]
@@ -1572,6 +1687,14 @@ class Radar:
         else:
             result = "normal"
         self.policy_cache[repo] = result
+        self.persistent_repo_cache["policies"][repo] = {
+            "checkedAt": self.analyzed,
+            "decisionDigest": decision_contract_digest(),
+            "staticRule": static_rule,
+            "primaryFiles": primary_files,
+            "linkedFiles": linked_files,
+            "result": result,
+        }
         return result
 
     def issue(self, repo: str, num: int) -> dict[str, Any] | None:
@@ -2881,9 +3004,13 @@ class Radar:
                     }
                 continue
             bases.append(base)
+            self.qualified_repo_names.add(str(base["repo"]))
 
         bases.sort(key=base_priority, reverse=True)
         inspection_bases, deferred_bases = select_inspection_bases(bases)
+        self.deferred_rechecks_attempted = sum(
+            bool(base.get("_explicit_recheck")) for base in inspection_bases
+        )
         for base in deferred_bases:
             defer(base, "inspection_budget_deferred")
         for base in deadline_deferred_bases:
@@ -2897,6 +3024,7 @@ class Radar:
                 deadline_deferred_bases.extend(inspection_bases[index:])
                 break
             key = f"{base['repo']}#{base['num']}"
+            self.inspected_repo_names.add(str(base["repo"]))
             issue = self.issue(base["repo"], base["num"])
             if not issue:
                 reject("issue_fetch_failed", base)
@@ -3160,6 +3288,10 @@ class Radar:
             defer(candidate, "candidate_overflow")
         if overflow_candidates:
             self.rejection_summary["candidate_overflow_deferred"] = len(overflow_candidates)
+        self.deferred_rechecks_remaining = sum(
+            isinstance(value, dict) and value.get("status") in SEEN_RECHECK_STATUSES
+            for value in self.seen.values()
+        )
         return selected, len(bases), inspected
 
     def feishu_post(
@@ -3283,7 +3415,11 @@ class Radar:
             return False, f"{type(exc).__name__}:{str(exc)[:120]}"
 
     def run(self, scan_path: Path | None) -> dict[str, Any]:
+        run_started = self.monotonic_fn()
         items = self.collect_items()
+        collect_finished = self.monotonic_fn()
+        shortlist_finished = collect_finished
+        llm_finished = collect_finished
         if self.search_failed:
             candidates: list[dict[str, Any]] = []
             qualified_repos = 0
@@ -3294,8 +3430,10 @@ class Radar:
             )
         else:
             candidates, qualified_repos, inspected = self.shortlist(items)
+            shortlist_finished = self.monotonic_fn()
             evaluator = DeepSeekEvaluator.from_environment(BASE_DIR / "state" / "llm_cache.json")
             candidates = evaluator.evaluate_candidates(candidates)
+            llm_finished = self.monotonic_fn()
             for key, rejected in getattr(evaluator, "rejected_candidates", {}).items():
                 candidate = rejected["candidate"]
                 reason = rejected["reason"]
@@ -3330,6 +3468,7 @@ class Radar:
             sent, send_error = (
                 self.send_feishu(notification_candidates) if self.notify else (False, None)
             )
+        notify_finished = self.monotonic_fn()
         if self.search_failed:
             notification_candidates = []
         if sent:
@@ -3373,6 +3512,8 @@ class Radar:
                 entry["decision_contract_digest"] = decision_contract_digest()
 
         atomic_write_json(self.seen_path, self.seen)
+        self.persistent_repo_cache["updatedAt"] = self.analyzed
+        atomic_write_json(self.repo_cache_path, self.persistent_repo_cache)
         auto_spawn_candidates = [
             candidate for candidate in candidates if candidate.get("auto_spawn")
         ]
@@ -3415,6 +3556,29 @@ class Radar:
             "inspected": inspected,
             "scan_deadline_reached": self.scan_deadline_reached,
             "deep_inspection_deadline_seconds": self.deep_inspection_deadline_seconds,
+            "timings_seconds": {
+                "collect": round(collect_finished - run_started, 3),
+                "shortlist": round(shortlist_finished - collect_finished, 3),
+                "llm": round(llm_finished - shortlist_finished, 3),
+                "notify": round(notify_finished - llm_finished, 3),
+                "total": round(notify_finished - run_started, 3),
+            },
+            "repository_activity": {
+                "fixed_scope": sorted(AGENT_INFRA_SCAN_REPOS),
+                "queried": sorted(self.queried_repos),
+                "matched": sorted(self.matched_repos),
+                "qualified": sorted(self.qualified_repo_names),
+                "inspected": sorted(self.inspected_repo_names),
+                "collection_failures": dict(sorted(self.collection_failures.items())),
+                "dynamic_discovery_enabled": True,
+            },
+            "deferred_rechecks": {
+                "queued_before": self.deferred_rechecks_before,
+                "attempted": self.deferred_rechecks_attempted,
+                "remaining": self.deferred_rechecks_remaining,
+                "per_run_budget": RECHECK_INSPECTION_BUDGET,
+                "cooldown_enabled": False,
+            },
             "candidates": len(candidates),
             "sent": sent,
             "send_error": send_error,
@@ -3485,6 +3649,7 @@ def main() -> int:
     parser.add_argument("--seen", type=Path, default=DEFAULT_SEEN)
     parser.add_argument("--state", type=Path, default=DEFAULT_STATE)
     parser.add_argument("--pending-rechecks", type=Path, default=None)
+    parser.add_argument("--repo-cache", type=Path, default=DEFAULT_REPO_CACHE)
     parser.add_argument("--max-backfill-hours", type=float, default=24.0)
     parser.add_argument("--chat-id", default=DEFAULT_CHAT_ID)
     parser.add_argument("--scan-out", type=Path, default=None)
@@ -3510,6 +3675,7 @@ def main() -> int:
         last_successful_scan=last_success,
         pending_rechecks=(load_json(args.pending_rechecks, {}) if args.pending_rechecks else {}),
         notify=not args.no_notify,
+        repo_cache_path=args.repo_cache,
     )
     result = radar.run(args.scan_out)
     next_state = dict(state) if isinstance(state, dict) else {}

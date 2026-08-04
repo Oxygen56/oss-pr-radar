@@ -99,3 +99,33 @@ def test_live_policy_digest_change_creates_forced_recheck():
     updated, report = recheck_watchlist(watchlist, PolicyChangeClient(), now=NOW)
     assert updated["items"][0]["status"] == "POLICY_CHANGED"
     assert report["pending_rechecks"]["a/b#1"]["reasonCode"] == ("POLICY_REVALIDATION_REQUIRED")
+
+
+def test_watch_reuses_one_policy_snapshot_for_same_repository():
+    class CountingClient(NoChangeClient):
+        def __init__(self):
+            self.tree_calls = 0
+
+        def repository_tree(self, repo, ref):
+            self.tree_calls += 1
+            return super().repository_tree(repo, ref)
+
+    watchlist = build_watchlist(
+        {
+            "candidate_details": [
+                held_candidate(num=1),
+                held_candidate(
+                    num=2,
+                    url="https://github.com/a/b/issues/2",
+                    title="Second runtime change",
+                ),
+            ]
+        },
+        now=NOW,
+    )
+    client = CountingClient()
+
+    _, report = recheck_watchlist(watchlist, client, now=NOW, workers=2)
+
+    assert client.tree_calls == 1
+    assert report["workers"] == 2

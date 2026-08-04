@@ -32,6 +32,7 @@ def test_lease_is_exclusive_and_commit_is_idempotent(tmp_path):
     assert store.enqueue(intent()) is True
     assert store.enqueue(intent()) is False
     assert store.claim("intent-1", "worker-a")
+    assert store.claim("intent-1", "worker-a") is None
     assert store.claim("intent-1", "worker-b") is None
     store.commit_dispatch(
         "intent-1",
@@ -162,6 +163,23 @@ def test_expired_intent_cannot_be_claimed(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(intent(expiresAt="2020-01-01T00:00:00Z"))
     assert store.claim("intent-1", "worker") is None
+
+
+def test_pending_intent_alerts_after_one_controller_cycle(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    now = datetime.now(UTC)
+    store.enqueue(
+        intent(
+            issuedAt=iso_z(now - timedelta(minutes=80)),
+            expiresAt=iso_z(now + timedelta(hours=1)),
+        )
+    )
+
+    pending = store.pending()[0]
+    alerts = store.pending_alerts(min_age_minutes=70)
+
+    assert pending["pendingAgeMinutes"] >= 79
+    assert alerts[0]["alertCode"] == "DISPATCH_PENDING_OVER_ONE_CYCLE"
 
 
 def test_submit_ready_requires_every_quality_gate(tmp_path):

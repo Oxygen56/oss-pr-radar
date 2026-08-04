@@ -21,6 +21,33 @@ is recorded as a lagging outcome, never used to judge discovery quality.
   branch, fork owner, base branch, PR title, and PR body digest.
 - Maintainer/policy watch, existing-PR follow-up, Feishu outbox delivery, state
   integrity checks, and natural-schedule health alerts.
+- Parallel watch/PR-follow-up jobs, SHA-bound repository-policy caching, and a
+  dedicated cross-run recheck budget that never uses a cooldown.
+- A single local controller thread plus explicit alerts when a signed intent
+  remains undispatched for more than one hourly controller cycle.
+
+## Scan Scope
+
+Every hour directly polls these repositories and also runs a bounded dynamic
+GitHub search for mature Agent/AI-infrastructure repositories outside the list:
+
+```text
+langchain-ai/langgraph                 pydantic/pydantic-ai
+microsoft/autogen                      microsoft/agent-framework
+huggingface/smolagents                 run-llama/llama_index
+agno-agi/agno                          browser-use/browser-use
+crewAIInc/crewAI                       modelcontextprotocol/python-sdk
+modelcontextprotocol/typescript-sdk    modelcontextprotocol/java-sdk
+modelcontextprotocol/csharp-sdk        openai/openai-agents-python
+microsoft/semantic-kernel              PrefectHQ/fastmcp
+vllm-project/vllm                      sgl-project/sglang
+ai-dynamo/dynamo
+```
+
+The scan artifact records five distinct repository sets: fixed scope, queried,
+matched, qualified, and deeply inspected. Dynamic discoveries must still pass
+the mature-repository and real-code-surface gates. `openai/codex` remains
+explicitly excluded.
 
 ## Trust Boundaries
 
@@ -85,6 +112,9 @@ python scripts/local_dispatch_bridge.py sync
 # Pure local read: no clone, project lookup, or task creation
 python scripts/local_dispatch_bridge.py list
 
+# Alert when a signed intent survives more than one controller cycle
+python scripts/local_dispatch_bridge.py alerts --min-age-minutes 70 --notify
+
 # Rolling controllable quality metrics
 python scripts/local_dispatch_bridge.py metrics --days 30
 
@@ -92,7 +122,7 @@ python scripts/local_dispatch_bridge.py metrics --days 30
 python scripts/check_workflow_health.py --notify --repair
 ```
 
-The hourly Codex automation calls `sync`, claims each pending intent through a
+The hourly Codex heartbeat reuses one controller task, calls `sync`, claims each pending intent through a
 fresh live audit, creates only the authorized worktree task in the exact source
 repository project, verifies its timestamped lifecycle title, prompt, repository
 origin, and worktree identity, then commits a receipt. It retries an obviously

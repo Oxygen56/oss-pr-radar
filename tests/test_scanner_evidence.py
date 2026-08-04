@@ -3,7 +3,13 @@ from datetime import UTC, datetime
 
 from oss_pr_radar import scanner
 from oss_pr_radar.policy import decision_contract_digest
-from oss_pr_radar.scanner import SCANNER_MIGRATION_RECHECK_STATUSES, SCANNER_VERSION, Radar
+from oss_pr_radar.scanner import (
+    SCANNER_MIGRATION_RECHECK_STATUSES,
+    SCANNER_VERSION,
+    Radar,
+    select_inspection_bases,
+)
+from oss_pr_radar.util import atomic_write_json
 
 
 def test_paginated_gh_flattens_every_page(monkeypatch):
@@ -231,3 +237,66 @@ def test_dispatch_decision_change_rechecks_queued_candidate(monkeypatch, tmp_pat
     assert decision_contract_digest() != "previous-decision-contract"
     assert items["example/project#11"]["_explicit_recheck"] is True
     assert "example/project#11" in radar.forced_recheck_keys
+
+
+def test_deferred_rechecks_have_capacity_in_addition_to_fresh_issues():
+    bases = [
+        {"repo": f"recheck/{index}", "num": index, "_explicit_recheck": True} for index in range(4)
+    ] + [{"repo": f"fresh/{index}", "num": index} for index in range(5)]
+
+    selected, deferred = select_inspection_bases(
+        bases,
+        limit=3,
+        recheck_limit=2,
+        per_repo_limit=1,
+    )
+
+    assert sum(bool(item.get("_explicit_recheck")) for item in selected) == 2
+    assert sum(not item.get("_explicit_recheck") for item in selected) == 3
+    assert len(deferred) == 4
+
+
+def test_repository_policy_cache_reuses_unchanged_blob_shas(monkeypatch, tmp_path):
+    cache_path = tmp_path / "repo_cache.json"
+    content_calls = []
+
+    def fake_gh(args, timeout=18):
+        endpoint = args[-1]
+        if endpoint == "repos/example/project/contents":
+            return [
+                {
+                    "name": "CONTRIBUTING.md",
+                    "path": "CONTRIBUTING.md",
+                    "sha": "policy-sha",
+                }
+            ], None
+        if endpoint == "repos/example/project/contents/CONTRIBUTING.md":
+            content_calls.append(endpoint)
+            return {
+                "sha": "policy-sha",
+                "content": "Q29udHJpYnV0aW9ucyBhcmUgd2VsY29tZS4=",
+            }, None
+        raise AssertionError(args)
+
+    monkeypatch.setattr(scanner, "gh", fake_gh)
+    first = Radar(
+        datetime(2026, 8, 4, tzinfo=UTC),
+        2,
+        tmp_path / "seen.json",
+        "",
+        dry_run=True,
+        repo_cache_path=cache_path,
+    )
+    assert first.submission_policy("example/project") == "normal"
+    atomic_write_json(cache_path, first.persistent_repo_cache)
+
+    second = Radar(
+        datetime(2026, 8, 4, 1, tzinfo=UTC),
+        2,
+        tmp_path / "seen.json",
+        "",
+        dry_run=True,
+        repo_cache_path=cache_path,
+    )
+    assert second.submission_policy("example/project") == "normal"
+    assert content_calls == ["repos/example/project/contents/CONTRIBUTING.md"]

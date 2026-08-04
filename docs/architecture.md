@@ -10,7 +10,8 @@ timing are external labels, not the north-star metric.
 ## Control Plane
 
 1. **Discovery** reads recently updated open issues with overlapping windows and
-   bounded backfill. Repository feeds and search discovery are both used.
+   bounded backfill. Repository feeds and search discovery are both used; every
+   artifact identifies fixed, queried, matched, qualified, and inspected repos.
 2. **Evidence** reads every comment and timeline page, recursive policy files,
    related PR details/files/checks/reviews, issue ownership, and hardware scope.
 3. **Decision** applies hard gates first. DeepSeek may reject, downgrade, or
@@ -53,3 +54,7 @@ recovery attempt; an ambiguous recovery is surfaced instead of retried.
 
 No API credential, task prompt, private evidence file, or local ledger is stored
 on the state branch.
+
+Repository-policy cache entries are part of the integrity-checked cloud state.
+They contain decisions and source blob SHAs, not credentials. A changed blob or
+decision-contract digest invalidates the entry before task authorization.

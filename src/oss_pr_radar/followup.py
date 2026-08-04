@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
+from time import monotonic
 from typing import Any
 
 from .github_client import GitHubClient, GitHubError
@@ -57,7 +59,9 @@ def collect_followup(
     existing: dict[str, Any] | None = None,
     limit: int = 40,
     now: datetime | None = None,
+    workers: int = 4,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
+    started = monotonic()
     current = (now or datetime.now(UTC)).astimezone(UTC)
     existing_version = str((existing or {}).get("version") or "")
     previous = {
@@ -68,21 +72,37 @@ def collect_followup(
     state_items: list[dict[str, Any]] = []
     updates: list[dict[str, Any]] = []
     errors: list[str] = []
-    for hit in client.open_pull_requests_by_author(author)[:limit]:
+
+    def fetch(
+        hit: dict[str, Any],
+    ) -> tuple[str, int, dict[str, Any], list[dict[str, Any]], list[dict[str, Any]], str | None]:
         repo = _repo_from_url(str(hit.get("repository_url") or ""))
         number = int(hit.get("number") or 0)
         if not repo or not number:
-            continue
-        key = f"{repo}#{number}"
-        previous_item = previous.get(key, {})
+            return repo, number, {}, [], [], "invalid_pull_reference"
         try:
             pull = client.pull_request(repo, number)
             reviews = client.pull_reviews(repo, number)
             head = str((pull.get("head") or {}).get("sha") or "")
             checks = client.check_runs(repo, head) if head else []
+            return repo, number, pull, reviews, checks, None
         except GitHubError as exc:
-            errors.append(f"{key}:{str(exc)[:160]}")
+            return repo, number, {}, [], [], str(exc)[:160]
+
+    hits = client.open_pull_requests_by_author(author)[:limit]
+    worker_count = max(1, min(int(workers), 6, len(hits) or 1))
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        fetched = list(executor.map(fetch, hits))
+
+    for repo, number, pull, reviews, checks, error in fetched:
+        if not repo or not number:
             continue
+        key = f"{repo}#{number}"
+        previous_item = previous.get(key, {})
+        if error:
+            errors.append(f"{key}:{error}")
+            continue
+        head = str((pull.get("head") or {}).get("sha") or "")
         maintainer_changes = [
             review
             for review in _latest_reviews_by_author(reviews)
@@ -193,5 +213,7 @@ def collect_followup(
         ],
         "updates": updates,
         "errors": errors,
+        "workers": worker_count,
+        "duration_seconds": round(monotonic() - started, 3),
     }
     return state, report

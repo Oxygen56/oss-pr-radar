@@ -23,7 +23,9 @@ from oss_pr_radar.evidence import collect_evidence  # noqa: E402
 from oss_pr_radar.github_client import GitHubClient  # noqa: E402
 from oss_pr_radar.ledger import RadarLedger  # noqa: E402
 from oss_pr_radar.metrics import assess_submit_ready, rolling_quality  # noqa: E402
+from oss_pr_radar.notifier import FeishuClient, NotificationError  # noqa: E402
 from oss_pr_radar.publication import request_publication  # noqa: E402
+from oss_pr_radar.util import sha256_json  # noqa: E402
 
 STATE = ROOT / "state"
 LEDGER_PATH = STATE / "radar_ledger.sqlite3"
@@ -183,9 +185,83 @@ def list_pending(path: Path = LEDGER_PATH) -> dict[str, Any]:
                 "mode": item["mode"],
                 "expiresAt": item["expiresAt"],
                 "ledgerStatus": item["ledgerStatus"],
+                "pendingSince": item["pendingSince"],
+                "pendingAgeMinutes": item["pendingAgeMinutes"],
+                "leaseStale": item["leaseStale"],
             }
             for item in values
         ],
+        "alerts": [
+            {
+                "intentId": item["intentId"],
+                "key": item["key"],
+                "issueUrl": item["issueUrl"],
+                "pendingAgeMinutes": item["pendingAgeMinutes"],
+                "alertCode": item["alertCode"],
+            }
+            for item in ledger(path).pending_alerts()
+        ],
+    }
+
+
+def dispatch_alerts(args: argparse.Namespace) -> dict[str, Any]:
+    alerts = ledger(args.ledger).pending_alerts(min_age_minutes=args.min_age_minutes)
+    public = [
+        {
+            "intentId": item["intentId"],
+            "key": item["key"],
+            "issueUrl": item["issueUrl"],
+            "pendingAgeMinutes": item["pendingAgeMinutes"],
+            "alertCode": item["alertCode"],
+        }
+        for item in alerts
+    ]
+    notified = False
+    error = None
+    if args.notify and public:
+        app_id = os.environ.get("FEISHU_APP_ID")
+        app_secret = os.environ.get("FEISHU_APP_SECRET")
+        chat_id = os.environ.get("FEISHU_CHAT_ID")
+        if not app_id or not app_secret or not chat_id:
+            error = "feishu_credentials_not_configured"
+        else:
+            card = {
+                "header": {
+                    "title": {"tag": "plain_text", "content": "OSS PR Radar 派发超时"},
+                    "template": "red",
+                },
+                "elements": [
+                    {
+                        "tag": "div",
+                        "text": {
+                            "tag": "lark_md",
+                            "content": "\n".join(
+                                f"**[{item['key']}]({item['issueUrl']})**："
+                                f"等待 {item['pendingAgeMinutes']} 分钟，{item['alertCode']}"
+                                for item in public
+                            ),
+                        },
+                    }
+                ],
+            }
+            try:
+                FeishuClient(app_id, app_secret, chat_id).send_card(
+                    card,
+                    idempotency_key=sha256_json(
+                        {
+                            "alerts": [[item["intentId"], item["alertCode"]] for item in public],
+                            "hour": datetime.now().astimezone().strftime("%Y-%m-%dT%H"),
+                        }
+                    ),
+                )
+                notified = True
+            except NotificationError as exc:
+                error = str(exc)[:200]
+    return {
+        "ok": not error,
+        "alerts": public,
+        "notified": notified,
+        "error": error,
     }
 
 
@@ -607,6 +683,9 @@ def main() -> int:
     subparsers = parser.add_subparsers(dest="operation", required=True)
     subparsers.add_parser("sync")
     subparsers.add_parser("list")
+    alerts_parser = subparsers.add_parser("alerts")
+    alerts_parser.add_argument("--min-age-minutes", type=int, default=70)
+    alerts_parser.add_argument("--notify", action="store_true")
     claim = subparsers.add_parser("claim")
     claim.add_argument("--intent-id", required=True)
     claim.add_argument("--owner", required=True)
@@ -666,6 +745,8 @@ def main() -> int:
         result = sync_queue(args.ledger)
     elif args.operation == "list":
         result = list_pending(args.ledger)
+    elif args.operation == "alerts":
+        result = dispatch_alerts(args)
     elif args.operation == "claim":
         result = claim_intent(args)
     elif args.operation == "commit":

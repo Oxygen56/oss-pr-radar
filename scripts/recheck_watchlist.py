@@ -21,6 +21,7 @@ def main() -> int:
     parser.add_argument("pending_rechecks", type=Path)
     parser.add_argument("report", type=Path)
     parser.add_argument("--limit", type=int, default=20)
+    parser.add_argument("--workers", type=int, default=3)
     args = parser.parse_args()
     if not args.watchlist.exists():
         atomic_write_json(args.pending_rechecks, {})
@@ -41,6 +42,7 @@ def main() -> int:
         limit=args.limit,
         current_actor=os.environ.get("GITHUB_ACTOR", "Oxygen56"),
         hardware_inventory=inventory,
+        workers=args.workers,
     )
     atomic_write_json(args.watchlist, updated)
     atomic_write_json(args.pending_rechecks, report["pending_rechecks"])

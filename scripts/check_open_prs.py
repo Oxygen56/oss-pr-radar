@@ -20,9 +20,12 @@ def main() -> int:
     parser.add_argument("state", type=Path)
     parser.add_argument("report", type=Path)
     parser.add_argument("--author", default=os.environ.get("RADAR_GITHUB_ACTOR", "Oxygen56"))
+    parser.add_argument("--workers", type=int, default=4)
     args = parser.parse_args()
     existing = json.loads(args.state.read_text(encoding="utf-8")) if args.state.exists() else None
-    state, report = collect_followup(GitHubClient(), author=args.author, existing=existing)
+    state, report = collect_followup(
+        GitHubClient(), author=args.author, existing=existing, workers=args.workers
+    )
     atomic_write_json(args.state, state)
     atomic_write_json(args.report, report)
     print(

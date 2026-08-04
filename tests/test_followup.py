@@ -41,6 +41,8 @@ def test_formal_maintainer_request_is_notified_once():
         Client(), author="Oxygen56", now=datetime(2026, 8, 4, tzinfo=UTC)
     )
     assert report["candidate_details"][0]["category"] == "PR_FOLLOWUP"
+    assert report["workers"] == 1
+    assert report["duration_seconds"] >= 0
     _, repeated = collect_followup(
         Client(),
         author="Oxygen56",

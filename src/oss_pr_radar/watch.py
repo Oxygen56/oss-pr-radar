@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
+from time import monotonic
 from typing import Any
 
 from .evidence import collect_evidence
 from .github_client import GitHubClient
+from .repo_policy import discover_policy
 from .util import iso_z, parse_time, sha256_json
 
 WATCHLIST_VERSION = "opportunity_watchlist_v1"
@@ -84,7 +87,9 @@ def recheck_watchlist(
     current_actor: str = "Oxygen56",
     hardware_inventory: set[str] | None = None,
     now: datetime | None = None,
+    workers: int = 3,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
+    started = monotonic()
     if watchlist.get("version") != WATCHLIST_VERSION:
         raise ValueError("unsupported opportunity watchlist")
     current = (now or datetime.now(UTC)).astimezone(UTC)
@@ -92,13 +97,28 @@ def recheck_watchlist(
     items.sort(key=lambda item: str(item.get("lastCheckedAt") or ""))
     updates: list[dict[str, Any]] = []
     pending_rechecks: dict[str, Any] = {}
-    for item in items[: max(0, limit)]:
+    selected = items[: max(0, limit)]
+    worker_count = max(1, min(int(workers), 4, len(selected) or 1))
+    repos = sorted({str(item["repo"]) for item in selected})
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        policies = dict(
+            zip(
+                repos,
+                executor.map(lambda repo: discover_policy(client, repo), repos),
+                strict=True,
+            )
+        )
+
+    def inspect(
+        item: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any] | None, dict[str, Any] | None]:
         evidence = collect_evidence(
             client,
             str(item["repo"]),
             int(item["issueNumber"]),
             current_actor=current_actor,
             hardware_inventory=hardware_inventory,
+            policy_snapshot=policies[str(item["repo"])],
         )
         previous_status = str(item.get("status") or "WATCHING")
         new_status = "WATCHING"
@@ -134,21 +154,33 @@ def recheck_watchlist(
             "RESCAN_REQUIRED",
             "POLICY_CHANGED",
         }:
-            updates.append(
-                {
-                    **item,
-                    "previousStatus": previous_status,
-                    "reasonCode": reason,
-                    "evidence": evidence.as_dict(),
-                }
-            )
-        if new_status in {"RESCAN_REQUIRED", "POLICY_CHANGED"}:
-            pending_rechecks[item["key"]] = {
+            update = {
+                **item,
+                "previousStatus": previous_status,
+                "reasonCode": reason,
+                "evidence": evidence.as_dict(),
+            }
+        else:
+            update = None
+        pending = (
+            {
                 "issueTitle": item["issueTitle"],
                 "issueUrl": item["issueUrl"],
                 "issueUpdated": evidence.issue.get("updated_at") or "",
                 "reasonCode": reason,
             }
+            if new_status in {"RESCAN_REQUIRED", "POLICY_CHANGED"}
+            else None
+        )
+        return item, update, pending
+
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        inspected = list(executor.map(inspect, selected))
+    for item, update, pending in inspected:
+        if update:
+            updates.append(update)
+        if pending:
+            pending_rechecks[item["key"]] = pending
     watchlist["generatedAt"] = iso_z(current)
     watchlist["digest"] = sha256_json(
         {key: value for key, value in watchlist.items() if key != "digest"}
@@ -174,5 +206,7 @@ def recheck_watchlist(
         ],
         "updates": updates,
         "pending_rechecks": pending_rechecks,
+        "workers": worker_count,
+        "duration_seconds": round(monotonic() - started, 3),
     }
     return watchlist, result

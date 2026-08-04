@@ -16,6 +16,7 @@ FILES = {
     "seen.json": Path("state/seen.json"),
     "runtime.json": Path("state/runtime.json"),
     "llm_cache.json": Path("state/llm_cache.json"),
+    "repo_cache.json": Path("state/repo_cache.json"),
     "dispatch_queue.json": Path("state/dispatch_queue.json"),
     "notification_outbox.json": Path("state/notification_outbox.json"),
     "watchlist.json": Path("state/watchlist.json"),
