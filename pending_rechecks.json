@@ -1,4 +1,10 @@
 {
+  "BerriAI/litellm#35711": {
+    "issueTitle": "[Bug]: `ollama/` streaming never reconstructs tool calls — tool call arrives as plain `delta.content` text with `finish_reason: \"stop\"`, while the non-streaming path reconstructs it correctly",
+    "issueUpdated": "2026-08-03T21:34:28Z",
+    "issueUrl": "https://github.com/BerriAI/litellm/issues/35711",
+    "reasonCode": "POLICY_REVALIDATION_REQUIRED"
+  },
   "DeusData/codebase-memory-mcp#1339": {
     "issueTitle": "Graph not updated when the working tree returns to clean (revert leaves false negatives)",
     "issueUpdated": "2026-08-03T21:13:53Z",
@@ -21,6 +27,18 @@
     "issueTitle": "[BUG] get_episodes from graphiti-mcp returns stale/old data when used in n8n",
     "issueUpdated": "2026-08-03T20:40:37Z",
     "issueUrl": "https://github.com/getzep/graphiti/issues/1062",
+    "reasonCode": "POLICY_REVALIDATION_REQUIRED"
+  },
+  "pydantic/pydantic-ai#7109": {
+    "issueTitle": "Durable-exec leaf-toolset `id` error never mentions the capability `id` that would fix it",
+    "issueUpdated": "2026-08-03T22:10:27Z",
+    "issueUrl": "https://github.com/pydantic/pydantic-ai/issues/7109",
+    "reasonCode": "POLICY_REVALIDATION_REQUIRED"
+  },
+  "vllm-project/vllm#50159": {
+    "issueTitle": "[Bug]: Model Runner V2 + Gemma-4: memory profiler reports ~0.9 GiB more \"available KV\" than MRv1 → no runtime headroom → CUDA OOM under saturating load (no spec involved); with EAGLE it crashes earlier at cudagraph capture (stable-ABI aten::empty)",
+    "issueUpdated": "2026-08-03T19:56:42Z",
+    "issueUrl": "https://github.com/vllm-project/vllm/issues/50159",
     "reasonCode": "POLICY_REVALIDATION_REQUIRED"
   }
 }

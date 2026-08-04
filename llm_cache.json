@@ -1,4 +1,64 @@
 {
+  "0a98c92367d8f789fb293f4eee553a84015b8d43450ee0efcd52ea76b26c9e33": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Investigate backend-specific tool call parsing",
+      "Potential fix in tool call parser or runner backend integration"
+    ],
+    "risks": [
+      "Possible duplicate work with open PRs",
+      "Backend-specific behavior may require maintainer design decisions"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Create minimal reproduction with deepseek-v4-flash and flashinfer_mxfp4",
+      "Run existing tool call tests with both backends"
+    ],
+    "unknowns": [
+      "Open PR lookup incomplete",
+      "Root cause not identified",
+      "Maintainer awareness unknown"
+    ],
+    "why": "Issue reports a tool call error when switching moe-runner-backend from marlin to flashinfer_mxfp4, but lacks a minimal reproduction and root cause analysis. Open PR lookup timed out, and related PRs may overlap. Maintainer input needed."
+  },
+  "162068556e534947cd14fb52fbc76e377d2cb25378c8eabd666948395d84aba4": {
+    "confidence": 0.6,
+    "contradictions": [
+      "User claims no config changes, but contributor points out wrong model name"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Investigate inference timeout handling",
+      "Possibly adjust timeout or retry logic"
+    ],
+    "risks": [
+      "May be a configuration issue rather than a code bug",
+      "Changing timeout logic could affect other users"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Create a minimal reproduction using the provided code snippet and session links",
+      "Run integration tests with LiveKit Inference to observe timeout behavior"
+    ],
+    "unknowns": [
+      "Exact root cause",
+      "Maintainer's stance on the issue",
+      "Whether the reported timeouts are reproducible in a controlled environment"
+    ],
+    "why": "Issue reports intermittent timeouts in LiveKit Inference but lacks a clear root cause; a contributor comment suggests possible misconfiguration (wrong model name), and no maintainer confirmation or design direction exists. The report is a bug report without a concrete code path or reproducible test, making it premature to start implementation."
+  },
   "696e02a999f1d011ae915149f892da85ad6d48baaeb77c7118e9f6f1d84d1d0e": {
     "confidence": 0.7,
     "contradictions": [
@@ -254,6 +314,32 @@
       "Maintainer's stance on proposed fix in #1724"
     ],
     "why": "Issue reports stale data in get_episodes; maintainer attributes to queue latency, but a user comment identifies a concrete root cause: keyset pagination hardcodes ORDER BY uuid DESC, returning arbitrary stable subset. Existing PR #1726 addresses this but has failing CI and lacks explicit issue link. A materially better PR with robust tests and clear root-cause fix is plausible."
+  },
+  "d0f25ec094f9677c72859d8a2aa6b432d9cb6298191f9d7fa940754b4e74a8b7": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims no solution, but comment provides a workaround."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "CLI argument parsing or model-type detection for diffusion models"
+    ],
+    "risks": [
+      "Potential duplicate PR or maintainer preference for a different fix; changing default behavior may affect other models."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with the provided docker command without --model-type, verify error; add --model-type diffusion and verify success; add a regression test for model-type auto-detection if applicable."
+    ],
+    "unknowns": [
+      "Whether maintainers have already planned a fix; whether the workaround is officially supported; open PR status."
+    ],
+    "why": "Issue reports a CLI argument parsing error for MiniMax-H3, but a comment suggests a workaround (adding --model-type diffusion). The root cause is likely missing model-type detection or default, but no maintainer confirmation or design preference is available. Open PR and related issue lookups failed, so duplicate work cannot be excluded."
   },
   "e1434717d760518bad9804ecb7735aa8c452c17b29278f88b4b41f2f6a3ba16e": {
     "confidence": 0.8,
