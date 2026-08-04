@@ -29,6 +29,7 @@ from .contracts import SCAN_SCHEMA, contract_digest
 from .llm import DeepSeekEvaluator
 from .messages import add_chinese_explanations
 from .policy import SCANNER_DECISION_REVISION
+from .repo_policy import AI_DISCLOSURE_RE, AI_PROHIBITION_RE
 from .util import sha256_json
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -382,18 +383,7 @@ MODEL_ARTIFACT_FAILURE_RE = re.compile(
     r"(?:safetensors?|checkpoint|model (?:file|weight|artifact))",
     re.I | re.S,
 )
-AI_DISCLOSURE_POLICY_RE = re.compile(
-    r"(?:agents?|ai[- ]assisted|llms?).{0,120}(?:must|required|always).{0,100}"
-    r"(?:identify|attribute|disclos)|"
-    r"(?:identify|attribute|disclos).{0,100}(?:agents?|ai[- ]assisted|llms?)|"
-    r"(?:ai[- ]generated|ai agents?|coding assistants?|llms?).{0,180}"
-    r"(?:labels?|tags?).{0,60}(?:required|mandatory|must)|"
-    r"(?:required|mandatory|must).{0,60}(?:labels?|tags?).{0,180}"
-    r"(?:ai[- ]generated|ai agents?|coding assistants?|llms?)|"
-    r"\bai\b.{0,120}(?:must|required|always).{0,100}(?:identify|attribute|disclos)|"
-    r"disclos(?:e|ure).{0,40}significant\s+ai\s+assistance",
-    re.I | re.S,
-)
+AI_DISCLOSURE_POLICY_RE = AI_DISCLOSURE_RE
 SECURITY_SENSITIVE_RE = re.compile(
     r"\b(?:security vulnerabilit(?:y|ies)|vulnerability disclosure|cve[- :#]?\d*|"
     r"remote code execution|arbitrary code execution|privilege escalation|"
@@ -1540,7 +1530,7 @@ class Radar:
 
         combined = "\n".join(policy_text)
         has_ai_disclosure = static_rule == "ai_disclosure_conflict" or bool(
-            AI_DISCLOSURE_POLICY_RE.search(combined)
+            AI_DISCLOSURE_POLICY_RE.search(combined) or AI_PROHIBITION_RE.search(combined)
         )
         needs_assignment = static_rule == "needs_assignment" or bool(
             ASSIGNMENT_POLICY_RE.search(combined)

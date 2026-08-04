@@ -27,17 +27,22 @@ POLICY_NAMES = {
 }
 POLICY_PARTS = {
     ".github/pull_request_template/",
-    ".github/issue_template/",
     "docs/contributing",
 }
 AI_DISCLOSURE_RE = re.compile(
     r"(?:generative ai|ai[- ]generated|ai[- ]assisted|ai tools?|"
     r"large language models?|llms?|coding assistants?).{0,160}"
     r"(?:must|required|mandatory|always).{0,100}(?:disclos|declare|identify|"
-    r"attribute|label|tag|mention)|"
+    r"attribute|mention)|"
     r"(?:must|required|mandatory|always).{0,100}(?:disclos|declare|identify|"
-    r"attribute|label|tag|mention).{0,160}(?:generative ai|ai[- ]generated|"
+    r"attribute|mention).{0,160}(?:generative ai|ai[- ]generated|"
     r"ai[- ]assisted|ai tools?|large language models?|llms?|coding assistants?)|"
+    r"(?:generative ai|ai[- ]generated|ai[- ]assisted|ai tools?|"
+    r"large language models?|llms?|coding assistants?).{0,180}"
+    r"(?:labels?|tags?).{0,60}(?:required|mandatory|must)|"
+    r"(?:required|mandatory|must).{0,60}(?:labels?|tags?).{0,180}"
+    r"(?:generative ai|ai[- ]generated|ai[- ]assisted|ai tools?|"
+    r"large language models?|llms?|coding assistants?)|"
     r"\bai (?:tool )?used\b|\bai disclosure\b|"
     r"disclos(?:e|ure).{0,60}(?:significant )?ai assistance",
     re.I | re.S,

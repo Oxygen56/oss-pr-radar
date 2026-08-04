@@ -80,3 +80,37 @@ def test_absence_of_repository_policy_is_not_an_unknown_fetch_failure():
     policy = discover_policy(FakeClient({"src/main.py": "pass"}), "example/project")
     assert policy.status == "NORMAL"
     assert policy.files == ()
+
+
+def test_issue_template_fields_do_not_become_pr_ai_disclosure_policy():
+    policy = discover_policy(
+        FakeClient(
+            {
+                ".github/ISSUE_TEMPLATE/bug_report.yaml": (
+                    "validations:\n  required: true\n"
+                    "attributes:\n  label: Models Used\n"
+                    '  description: "Your STT/LLM/TTS setup"\n'
+                ),
+                "CONTRIBUTING.md": "Run tests before opening a pull request.",
+            }
+        ),
+        "livekit/agents",
+    )
+    assert policy.status == "NORMAL"
+    assert policy.ai_disclosure is False
+    assert [item.path for item in policy.files] == ["CONTRIBUTING.md"]
+
+
+def test_pr_template_ai_disclosure_policy_is_still_detected():
+    policy = discover_policy(
+        FakeClient(
+            {
+                ".github/PULL_REQUEST_TEMPLATE/ai.md": (
+                    "AI-assisted contributions must disclose the coding assistant used."
+                )
+            }
+        ),
+        "example/project",
+    )
+    assert policy.status == "AI_POLICY_REVIEW"
+    assert policy.ai_disclosure is True
