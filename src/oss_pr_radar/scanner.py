@@ -59,6 +59,7 @@ SEEN_RECHECK_STATUSES = frozenset(
 SCANNER_MIGRATION_RECHECK_STATUSES = frozenset(
     {
         "frontend_interaction_issue",
+        "hardware_unavailable",
         "no_bug_or_maintainer_actionability",
         "notified",
     }

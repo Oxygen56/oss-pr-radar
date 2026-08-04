@@ -2,7 +2,7 @@ import json
 from datetime import UTC, datetime
 
 from oss_pr_radar import scanner
-from oss_pr_radar.scanner import Radar
+from oss_pr_radar.scanner import SCANNER_MIGRATION_RECHECK_STATUSES, Radar
 
 
 def test_paginated_gh_flattens_every_page(monkeypatch):
@@ -146,3 +146,7 @@ def test_seen_deferred_items_are_tracked_as_forced_rechecks(monkeypatch, tmp_pat
     items = radar.collect_items()
     assert items["example/project#9"]["_explicit_recheck"] is True
     assert "example/project#9" in radar.forced_recheck_keys
+
+
+def test_changed_hardware_filter_rechecks_old_rejections():
+    assert "hardware_unavailable" in SCANNER_MIGRATION_RECHECK_STATUSES
