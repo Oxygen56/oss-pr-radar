@@ -2,24 +2,46 @@
   "version": "repo_cache_v1",
   "policies": {
     "vllm-project/vllm": {
-      "checkedAt": "2026-08-04T08:40:25Z",
-      "decisionDigest": "7fdc703e76f3b5d96601ef7486106ba23124c913c8b09b3c8cda22740b629824",
+      "checkedAt": "2026-08-04T09:03:41Z",
+      "decisionDigest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739",
       "staticRule": "normal",
       "primaryFiles": {
         "AGENTS.md": "a53b81873cf0d168c23fa25eef505065cbdba3a0",
-        "CLAUDE.md": "43c994c2d3617f947bcb5adf1933e21dabe46bb5",
+        "SECURITY.md": "1e2a5a0adefb853ec087448f1de7dfb3dce4b641",
+        "rust/AGENTS.md": "37117c7490bb75328436c0ad2b4c01ebc8706c32",
         "CONTRIBUTING.md": "2947aad75ee5613b4bdf8019b581620b8073149c",
-        ".github/PULL_REQUEST_TEMPLATE.md": "8a3934670e440d3bba489bd6009d2d2eadb16679"
+        "CODE_OF_CONDUCT.md": "5268ff135c9d0d5b064dbe30aaa577e49071e33b",
+        "docs/usage/security.md": "7eb57c9aa24ec25ec07e2dcc87e867b60f26e3e8",
+        "rust/src/bench/AGENTS.md": "852138060c61e7d83f469f14f7952c68b70ac293",
+        "docs/contributing/README.md": "89acc6b7f5aecd564cddc7d656362c024f763638",
+        "docs/contributing/profiling.md": "c9bd0e5bdd98df12bb9b4a44dff1761de8acd13c",
+        ".github/PULL_REQUEST_TEMPLATE.md": "8a3934670e440d3bba489bd6009d2d2eadb16679",
+        "docs/contributing/ci/failures.md": "c57c430478f5b370206e226b1c9f5a975ac2a206",
+        "docs/contributing/model/basic.md": "0cc24baae9227f0a3ec55f4a9c2e8d9b809c376f",
+        "docs/contributing/model/tests.md": "92ce0170c3ba6dc472f238256d085ea10277f992",
+        "docs/contributing/model/README.md": "13f3edb7e1af1d9985d02d5a3d0070abe3633bcb",
+        "docs/contributing/model/multimodal.md": "33d89db75d3cded31bba466cbd404ad22412f50c",
+        "docs/contributing/ci/nightly_builds.md": "c6d83fd9fc78d2c6b473c1af8fa7a9cb8c8ddc83",
+        "docs/contributing/incremental_build.md": "6be35af6131b34e4ea6a4b4833ea7cc570d8ea27",
+        "docs/contributing/deprecation_policy.md": "1f0cc6715242347b5e07db944a40a1f564fa6ef9",
+        "docs/contributing/model/registration.md": "400d0f75caca5cd07c95734895029410cd73334c",
+        "docs/contributing/model/transcription.md": "f82bafa44d52d7e1c506f68021f311e433a94d03",
+        "docs/contributing/dockerfile/dockerfile.md": "14184b96936613d878f0235da3e43d96530eb487",
+        "docs/contributing/vulnerability_management.md": "75efbac90a16c8fcfa9acba06dc2c7e26c251704",
+        "docs/contributing/ci/update_pytorch_version.md": "1c29bf2438ceafb55325f79dca960d81a389d57b",
+        "docs/contributing/editing-agent-instructions.md": "7be5f594cd16a827faa54bfe35de4a2a9a3fe7b8"
       },
       "linkedFiles": {},
-      "result": "normal"
+      "result": "ai_disclosure_conflict"
     },
     "microsoft/semantic-kernel": {
-      "checkedAt": "2026-08-04T08:40:25Z",
-      "decisionDigest": "7fdc703e76f3b5d96601ef7486106ba23124c913c8b09b3c8cda22740b629824",
+      "checkedAt": "2026-08-04T09:03:41Z",
+      "decisionDigest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739",
       "staticRule": "normal",
       "primaryFiles": {
+        "SECURITY.md": "0ea1f256056a2e3607fd04c0029451daf19c20c1",
         "CONTRIBUTING.md": "14cbb9be650a38bfb6572d536ee044793b9e9d9a",
+        "CODE_OF_CONDUCT.md": "f9ba8cf65f3e3104dd061c178066ec8247811f33",
         ".github/pull_request_template.md": "38e62262d51d0405eb93d9dafd28f9d2020c0a2c"
       },
       "linkedFiles": {},
@@ -45,6 +67,32 @@
       "primaryFiles": {
         "CONTRIBUTING.md": "4c0cf82e3ebaf0ddfd9d7324180a96f70aa2a250",
         ".github/pull_request_template.md": "1ece8a98f02db7bbe103fafa3378f6a4a0125a80"
+      },
+      "linkedFiles": {},
+      "result": "normal"
+    },
+    "sgl-project/sglang": {
+      "checkedAt": "2026-08-04T09:03:41Z",
+      "decisionDigest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739",
+      "staticRule": "normal",
+      "primaryFiles": {
+        "docs/AGENTS.md": "dd60e68fbdec1da53be16cae93567cc751618aee",
+        "CODE_OF_CONDUCT.md": "cf433b8ce6df1f024e0a9b5a7f3634ae4a81aba8",
+        "docs/CONTRIBUTING.md": "fc42a9b2d5e0726267551ac2007fd435661c7370",
+        ".github/pull_request_template.md": "a2338baf30d92d491f499b7579dadcae647b6fee"
+      },
+      "linkedFiles": {},
+      "result": "normal"
+    },
+    "areal-project/AReaL": {
+      "checkedAt": "2026-08-04T09:03:41Z",
+      "decisionDigest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739",
+      "staticRule": "normal",
+      "primaryFiles": {
+        "AGENTS.md": "66b1fbd9be1c5312c834b999af73b6cc161a823d",
+        "CONTRIBUTING.md": "2284fd23c3b6e2e94fb0cbfba7df432116b436a9",
+        "CODE_OF_CONDUCT.md": "e59548817f933811b5d81595cd4c4903e2b67bd3",
+        ".github/PULL_REQUEST_TEMPLATE.md": "d3265683687e6cb7caf8dd8765ee9daa146d28b7"
       },
       "linkedFiles": {},
       "result": "normal"
@@ -99,7 +147,42 @@
         true,
         "stars:21693"
       ]
+    },
+    "micropython/micropython": {
+      "checkedAt": "2026-08-04T09:03:41Z",
+      "value": [
+        true,
+        "stars:21960"
+      ]
+    },
+    "anthropics/claude-code": {
+      "checkedAt": "2026-08-04T09:03:41Z",
+      "value": [
+        false,
+        "no_code_surface"
+      ]
+    },
+    "chatmail/core": {
+      "checkedAt": "2026-08-04T09:03:41Z",
+      "value": [
+        true,
+        "stars:915"
+      ]
+    },
+    "zts212653/clowder-ai": {
+      "checkedAt": "2026-08-04T09:03:41Z",
+      "value": [
+        true,
+        "stars:2598"
+      ]
+    },
+    "areal-project/AReaL": {
+      "checkedAt": "2026-08-04T09:03:41Z",
+      "value": [
+        true,
+        "stars:5639"
+      ]
     }
   },
-  "updatedAt": "2026-08-04T08:40:25Z"
+  "updatedAt": "2026-08-04T09:03:41Z"
 }

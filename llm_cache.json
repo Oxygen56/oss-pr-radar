@@ -285,6 +285,32 @@
     ],
     "why": "Issue provides a clear root cause (torch.stack on variable-size crops) and a reproducible test, but an existing PR #33458 directly addresses it with failing CI, and a maintainer has not yet approved or assigned. The gate decision is HUMAN_REVIEW, so we must wait for maintainer input."
   },
+  "2c3f1e7861212ab9543faa10e8ea644425aabc2d8c3ed0de62d3446d17078cb7": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/speculative/dflash_utils.py",
+      "python/sglang/srt/speculative/dspark_components/dspark_verify.py"
+    ],
+    "risks": [
+      "Potential duplicate PR already exists; attribute name change may affect other code paths."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 11,
+    "test_plan": [
+      "Add a regression test that starts DSPARK with min_tokens and verifies completion_tokens >= min_tokens.",
+      "Run existing speculative decoding unit tests."
+    ],
+    "unknowns": [
+      "Whether a PR already exists for this fix; maintainer preference on the exact attribute name."
+    ],
+    "why": "Issue identifies a likely typo in attribute name causing DSPARK to ignore min_tokens, with a concrete patch. However, open PR and related issue lookups timed out, so duplicate work cannot be excluded. Maintainer design confirmation is needed before implementing."
+  },
   "313a2336d5d09dafa2c250f1489749dc267149e6808b06f92ed40205b1381701": {
     "confidence": 0.7,
     "contradictions": [],
@@ -459,6 +485,37 @@
     ],
     "why": "The issue is a real user-facing bug with a clear repro and fresh evidence, but the deterministic gate requires HUMAN_REVIEW and the maintainer bot explicitly states a product decision is needed on cross-channel delivery policy. Existing PRs are closed/unmerged and do not settle the design. A new PR would be premature without maintainer direction."
   },
+  "4bad929f9c51b29ce7f132dab4aa28ca0b3ca597477b6cbc5fa601fd6d4b078c": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Adjust default cuda_graph_max_bs heuristic to scale with KV pool or reachable batch size",
+      "Add startup warning when cuda_graph_max_bs is far below max_running_requests",
+      "Document interaction in tuning guide"
+    ],
+    "risks": [
+      "Changing default may increase GPU memory usage and startup time",
+      "Potential impact on other models and hardware configurations",
+      "Need to ensure fix does not degrade performance for large models"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Reproduce the performance cliff using the provided benchmark script and configuration",
+      "Add a regression test that checks the default cuda_graph_max_bs is sufficient for typical max_running_requests",
+      "Measure TPOT and throughput at rates around the cliff to verify fix"
+    ],
+    "unknowns": [
+      "Whether there is an existing open PR addressing this issue (open PR lookup failed)",
+      "Whether maintainers have a preferred fix direction (issue asks for input)",
+      "Whether the issue reproduces on other models or hardware configurations"
+    ],
+    "why": "Issue provides detailed, reproducible evidence of a performance cliff caused by default CUDA graph batch size being too low relative to max_running_requests. The root cause is clear: decode steps above the captured batch size fall back to eager execution, causing significant latency degradation. However, the issue explicitly asks for maintainer input on the preferred fix direction, and the open PR and related issue lookups failed, so duplicate work cannot be ruled out. The deterministic gate is HUMAN_REVIEW, so a maintainer decision is required before implementation."
+  },
   "509321caa5e4851d799328957ef2fd9f358d913bd1752e98eb3d91e3387cca18": {
     "confidence": 0.7,
     "contradictions": [],
@@ -553,6 +610,37 @@
     ],
     "why": "Issue provides a clear, reproducible bug with root cause analysis and a proposed fix, but the deterministic gate requires HUMAN_REVIEW and there is an existing PR (#33449) with failed CI. Actionability depends on maintainer confirmation and PR quality assessment."
   },
+  "54c7c6dfd79c5d0f5aea068412233db74cbd643391ad603dcf55f4168f37b8d1": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify AOT cache key computation to include multimodal config and limit_mm_per_prompt",
+      "Possibly enable guard checking for disk-loaded artifacts",
+      "Add regression tests for cache collision scenarios"
+    ],
+    "risks": [
+      "Changing cache key may invalidate existing caches and cause recompilation overhead",
+      "Enabling guard checks might introduce performance overhead",
+      "Potential interaction with other cache-related features"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce the issue with the provided commands and verify crash",
+      "Apply fix and ensure both image:0 and image:1 runs succeed without cache wipe",
+      "Run existing test suite for vllm/config and vllm/compilation",
+      "Add unit tests for cache key generation with different multimodal settings"
+    ],
+    "unknowns": [
+      "Details of failed CI checks in PR #50908",
+      "Maintainer preference for fix approach"
+    ],
+    "why": "Issue provides a clear root cause (AOT cache key ignores multimodal config) and a reproducible crash. Existing PR #50908 addresses the issue but has failed CI checks and may be incomplete. A materially better PR with comprehensive tests and a robust fix is plausible."
+  },
   "5abf5544b263f836e09fc9a31e6d57ef047f8e875f704bbd5f300695bcb5c990": {
     "confidence": 0.7,
     "contradictions": [],
@@ -609,6 +697,38 @@
       "Whether PR #6770 fully addresses the issue or needs additional changes"
     ],
     "why": "Issue provides a clear root cause and a concrete fix, but an open PR (#6770) already targets the same code path and semantics. The PR is recent, has tests and CI, but does not reference the issue. Maintainer review is needed to decide whether to adopt the PR, request changes, or accept a new PR."
+  },
+  "698a6001bdf6e78512f1db61325c79ea6f8f86f4e84b5d0d18811cd7d5831ab0": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "TMS free() state-aware fix upstream",
+      "AReaL pin update and regression tests",
+      "v2 controller two-phase teardown",
+      "forked-service cleanup hardening"
+    ],
+    "risks": [
+      "Upstream TMS fix may be delayed or rejected",
+      "Temporary workaround could cause OOM",
+      "Scope split may conflict with existing PR #1571"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "test_plan": [
+      "Reproduce with provided config and assert no TMS CUDA free error and no orphan process",
+      "Add FSDP offload->destroy tests for one and two GPUs",
+      "Update tests/test_offload.py to verify success only after engine.destroy() and zero subprocess exit"
+    ],
+    "unknowns": [
+      "Upstream TMS fix timeline and acceptance",
+      "Maintainer decision on scope split and PR approach"
+    ],
+    "why": "Issue reports a reproducible teardown bug with a plausible root cause (TMS paused-free) and a maintainer has outlined a multi-step plan, but the fix depends on upstream TMS changes and maintainer guidance on scope. Existing PR #1571 is draft and incomplete, leaving room for a better PR, but actionability is blocked by pending upstream and design confirmation."
   },
   "69dcae18e87df49d614201959505726ca056cb8a676b0b90830c7475b7a20647": {
     "confidence": 0.6,

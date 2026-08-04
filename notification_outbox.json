@@ -1,5 +1,5 @@
 {
-  "digest": "1f44278048d2ef481c7b464f186791ff52dd4a9c9bdc195248edbe30d0f623c6",
+  "digest": "0c47fb6dd0fe7bda3ab79add09b25bac95b8d0a775c23580da0fd0721a9cceee",
   "events": [
     {
       "attempts": 1,
@@ -2556,9 +2556,141 @@
       "runId": "watch-1785832700",
       "sentAt": "2026-08-04T08:42:56.381149Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "microsoft/semantic-kernel#14265"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[microsoft/semantic-kernel#14265](https://github.com/microsoft/semantic-kernel/issues/14265) Bug: VertexAIEmbeddingGenerator hardcodes :predict, unusable with gemini-embedding models that only serve :embedContent**\n建议：PR_COMPETITION_OPPORTUNITY | 分数：11\n价值：Issue clearly identifies a hardcoded :predict endpoint causing failures with gemini-embedding-2. Existing PR #14266 addresses it but lacks tests and may be incomplete. A better PR with tests and minimal fix is plausible.\n改动：Modify VertexAIEmbeddingClient to select :embedContent for gemini-embedding models；Add unit/integration tests for endpoint selection\n验证：Reproduce with provided C# snippet against gemini-embedding-2；Add test asserting correct endpoint URI for gemini-embedding models\n风险：Potential maintainer preference for broader refactor；Risk of breaking other models if endpoint selection logic is too broad\n竞争：已有直接关联但证据不完整的 PR #14266：缺少测试文件；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：先复现 issue，再逐项对比已有 PR 的缺口；只有能提供更小改动、更强测试或更完整边界覆盖时才开 PR。\n证据：复现信号 3，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "green",
+          "title": {
+            "content": "OSS PR Radar: 可立即执行",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T09:07:24.275359Z",
+      "eventId": "b3b931dea35e4330ff42df92a7c389a452d33b4cef1758e00ca8a1c795458bda",
+      "idempotencyKey": "b3b931dea35e4330ff42df92a7c389a452d33b4cef1758e00c",
+      "kind": "immediate",
+      "runId": "scan-20260804T090341Z-5dede1901af5",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "areal-project/AReaL#1565",
+        "sgl-project/sglang#33483",
+        "vllm-project/vllm#50891",
+        "sgl-project/sglang#33493"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[areal-project/AReaL#1565](https://github.com/areal-project/AReaL/issues/1565) [BUG][v2] Teardown leaves an orphan process after torch-memory-saver CUDA free errors**\n建议：WAIT_MAINTAINER | 分数：10\n价值：Issue reports a reproducible teardown bug with a plausible root cause (TMS paused-free) and a maintainer has outlined a multi-step plan, but the fix depends on upstream TMS changes and maintainer guidance on scope. Existing PR #1571 is draft and incomplete, leaving room for a better PR, but actionability is blocked by pending upstream and design confirmation.\n改动：TMS free() state-aware fix upstream；AReaL pin update and regression tests；v2 controller two-phase teardown；forked-service cleanup hardening\n验证：Reproduce with provided config and assert no TMS CUDA free error and no orphan process；Add FSDP offload->destroy tests for one and two GPUs；Update tests/test_offload.py to verify success only after engine.destroy() and zero subprocess exit\n风险：Upstream TMS fix may be delayed or rejected；Temporary workaround could cause OOM；Scope split may conflict with existing PR #1571\n竞争：已有直接关联但证据不完整的 PR #1571：CI/check 信息不足; 仍是 draft; 改动面偏大；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：先复现 issue，再逐项对比已有 PR 的缺口；只有能提供更小改动、更强测试或更完整边界覆盖时才开 PR。\n证据：复现信号 7，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33483](https://github.com/sgl-project/sglang/issues/33483) [Bug] Default decode CUDA Graph coverage causes a sharp performance cliff when batch size exceeds 32**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue provides detailed, reproducible evidence of a performance cliff caused by default CUDA graph batch size being too low relative to max_running_requests. The root cause is clear: decode steps above the captured batch size fall back to eager execution, causing significant latency degradation. However, the issue explicitly asks for maintainer input on the preferred fix direction, and the open PR and related issue lookups failed, so duplicate work cannot be ruled out. The deterministic gate is HUMAN_REVIEW, so a maintainer decision is required before implementation.\n改动：Adjust default cuda_graph_max_bs heuristic to scale with KV pool or reachable batch size；Add startup warning when cuda_graph_max_bs is far below max_running_requests；Document interaction in tuning guide\n验证：Reproduce the performance cliff using the provided benchmark script and configuration；Add a regression test that checks the default cuda_graph_max_bs is sufficient for typical max_running_requests；Measure TPOT and throughput at rates around the cliff to verify fix\n风险：Changing default may increase GPU memory usage and startup time；Potential impact on other models and hardware configurations；Need to ensure fix does not degrade performance for large models\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 16，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50891](https://github.com/vllm-project/vllm/issues/50891) [Bug]: AOT compile cache key ignores limit_mm_per_prompt, so image:0 and image:1 runs collide and crash with AttributeError: 'NoneType' object has no attribute 'size'**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue provides a clear root cause (AOT cache key ignores multimodal config) and a reproducible crash. Existing PR #50908 addresses the issue but has failed CI checks and may be incomplete. A materially better PR with comprehensive tests and a robust fix is plausible.\n改动：Modify AOT cache key computation to include multimodal config and limit_mm_per_prompt；Possibly enable guard checking for disk-loaded artifacts；Add regression tests for cache collision scenarios\n验证：Reproduce the issue with the provided commands and verify crash；Apply fix and ensure both image:0 and image:1 runs succeed without cache wipe；Run existing test suite for vllm/config and vllm/compilation；Add unit tests for cache key generation with different multimodal settings\n风险：Changing cache key may invalidate existing caches and cause recompilation overhead；Enabling guard checks might introduce performance overhead；Potential interaction with other cache-related features\n竞争：已有直接关联但证据不完整的 PR #50908：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 6，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33493](https://github.com/sgl-project/sglang/issues/33493) [Bug] DSPARK retrieves wrong key \"acc_linear_penalities\" from sampling_info**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue identifies a likely typo in attribute name causing DSPARK to ignore min_tokens, with a concrete patch. However, open PR and related issue lookups timed out, so duplicate work cannot be excluded. Maintainer design confirmation is needed before implementing.\n改动：python/sglang/srt/speculative/dflash_utils.py；python/sglang/srt/speculative/dspark_components/dspark_verify.py\n验证：Add a regression test that starts DSPARK with min_tokens and verifies completion_tokens >= min_tokens.；Run existing speculative decoding unit tests.\n风险：Potential duplicate PR already exists; attribute name change may affect other code paths.\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 7，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T09:07:24.379893Z",
+      "eventId": "24bdcb1ca44ae15562ed0dd340a7c4b7a2bf50809233b46da5a62ccf50523e6b",
+      "idempotencyKey": "24bdcb1ca44ae15562ed0dd340a7c4b7a2bf50809233b46da5",
+      "kind": "review",
+      "runId": "scan-20260804T090341Z-5dede1901af5",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "can1357/oh-my-pi#7597"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[can1357/oh-my-pi#7597](https://github.com/can1357/oh-my-pi/issues/7597) grep/glob: semicolon multipath silently collapses to one literal path when the joined string is ENAMETOOLONG**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T09:07:24.495583Z",
+      "eventId": "398b3cc1703fe8f1d40fc195693a8d5ff6272f01f9c4892570440cfac0884624",
+      "idempotencyKey": "398b3cc1703fe8f1d40fc195693a8d5ff6272f01f9c4892570",
+      "kind": "watch",
+      "runId": "watch-1785834145",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-04T08:42:13.271214Z",
+  "generatedAt": "2026-08-04T09:07:24.657588Z",
   "newEventCount": 0,
   "version": "notification_outbox_v1"
 }

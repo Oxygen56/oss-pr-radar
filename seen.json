@@ -166,12 +166,17 @@
     "scanner_version": "oss_pr_radar_v13"
   },
   "sgl-project/sglang#17050": {
-    "analyzed": "2026-08-04T08:40:25Z",
-    "status": "no_bug_or_maintainer_actionability",
+    "analyzed": "2026-08-04T09:03:41Z",
+    "requeued_at": "2026-08-04T09:03:41Z",
+    "first_deferred_at": "2026-08-04T09:03:41Z",
+    "defer_count": 1,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
     "title": "[Tracking] CI Test Failures and Fixes",
+    "url": "https://github.com/sgl-project/sglang/issues/17050",
     "issue_updated": "2026-08-04T08:18:22Z",
-    "scanner_version": "oss_pr_radar_v21_parallel_evidence_dispatch",
-    "decision_contract_digest": "7fdc703e76f3b5d96601ef7486106ba23124c913c8b09b3c8cda22740b629824"
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
   },
   "pydantic/pydantic-ai#6977": {
     "analyzed": "2026-08-04T05:27:59Z",
@@ -575,25 +580,22 @@
     "scanner_version": "oss_pr_radar_v13"
   },
   "vllm-project/vllm#50705": {
-    "analyzed": "2026-08-04T08:40:25Z",
-    "requeued_at": "2026-08-04T08:40:25Z",
-    "first_deferred_at": "2026-08-04T07:04:47Z",
-    "defer_count": 2,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-04T09:03:41Z",
+    "status": "skip_open_pr_competition_saturated",
     "title": "[Bug]: sm_120 + local CUDA toolkit < 12.9: FlashInfer JIT failures kill engine init in three default paths (sampler, fused-MoE, FP8 KV) instead of falling back",
-    "url": "https://github.com/vllm-project/vllm/issues/50705",
+    "pr": "https://github.com/vllm-project/vllm/pull/48956",
+    "pr_assessment": "已有 3 个活跃直接关联 PR（#50995, #48956, #50751）；竞争已饱和，不应再创建重复实现",
     "issue_updated": "2026-08-04T06:25:31Z",
-    "scanner_version": "oss_pr_radar_v21_parallel_evidence_dispatch",
-    "decision_contract_digest": "7fdc703e76f3b5d96601ef7486106ba23124c913c8b09b3c8cda22740b629824"
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
   },
   "pydantic/pydantic-ai#3899": {
-    "analyzed": "2026-08-04T08:40:25Z",
+    "analyzed": "2026-08-04T09:03:41Z",
     "issue_updated": "2026-08-04T07:18:20Z",
     "status": "skip_prefilter",
     "title": "Tool output function with delegated another Agent inside, does not work reliably in sync environment. The `run_sync` freezes.",
-    "scanner_version": "oss_pr_radar_v21_parallel_evidence_dispatch",
-    "decision_contract_digest": "7fdc703e76f3b5d96601ef7486106ba23124c913c8b09b3c8cda22740b629824"
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
   },
   "vllm-project/vllm#39680": {
     "analyzed": "2026-08-03T21:51:51Z",
@@ -649,11 +651,12 @@
     "scanner_version": "oss_pr_radar_v13"
   },
   "sgl-project/sglang#33422": {
-    "analyzed": "2026-08-03T20:01:56Z",
+    "analyzed": "2026-08-04T09:03:41Z",
     "status": "rfc_or_roadmap_without_maintainer_split",
     "title": "[Perf] DeepSeek-V4 dsv4 prefill on SM120 (4x RTX PRO 6000, TP=4): ~2-7K tok/s vs ~12.5K reported via vLLM/marlin on identical hardware — expected? tuning guidance?",
-    "issue_updated": "2026-08-03T19:29:12Z",
-    "scanner_version": "oss_pr_radar_v13"
+    "issue_updated": "2026-08-04T08:44:35Z",
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
   },
   "sgl-project/sglang#33412": {
     "analyzed": "2026-08-03T20:01:56Z",
@@ -873,12 +876,12 @@
     "scanner_version": "oss_pr_radar_v14_trust_core"
   },
   "microsoft/autogen#7372": {
-    "analyzed": "2026-08-04T08:40:25Z",
+    "analyzed": "2026-08-04T09:03:41Z",
     "status": "maintenance_mode_non_bug",
     "title": "Cryptographic governance layer for AutoGen distributed agent runtime",
-    "issue_updated": "2026-08-04T07:49:25Z",
-    "scanner_version": "oss_pr_radar_v21_parallel_evidence_dispatch",
-    "decision_contract_digest": "7fdc703e76f3b5d96601ef7486106ba23124c913c8b09b3c8cda22740b629824"
+    "issue_updated": "2026-08-04T08:58:16Z",
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
   },
   "pydantic/pydantic-ai#7100": {
     "analyzed": "2026-08-04T06:53:05Z",
@@ -1304,17 +1307,17 @@
     "scanner_version": "oss_pr_radar_v14_trust_core"
   },
   "vllm-project/vllm#50925": {
-    "analyzed": "2026-08-04T08:40:25Z",
-    "requeued_at": "2026-08-04T08:40:25Z",
+    "analyzed": "2026-08-04T09:03:41Z",
+    "requeued_at": "2026-08-04T09:03:41Z",
     "first_deferred_at": "2026-08-04T07:04:47Z",
-    "defer_count": 2,
+    "defer_count": 3,
     "status": "inspection_budget_deferred",
     "reason": "inspection_budget_deferred",
     "title": "[Bug]: NVFP4 MoE falls back to Marlin on sm_121 (GB10) in published builds, making the model unservable on a unified 121 GiB pool",
     "url": "https://github.com/vllm-project/vllm/issues/50925",
     "issue_updated": "2026-08-04T06:14:33Z",
-    "scanner_version": "oss_pr_radar_v21_parallel_evidence_dispatch",
-    "decision_contract_digest": "7fdc703e76f3b5d96601ef7486106ba23124c913c8b09b3c8cda22740b629824"
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
   },
   "vllm-project/vllm#33267": {
     "analyzed": "2026-08-04T04:52:06Z",
@@ -1567,13 +1570,13 @@
     "scanner_version": "oss_pr_radar_v14_trust_core"
   },
   "yhfgyyf/vllm-deepseek-v4-sm89#46": {
-    "analyzed": "2026-08-04T07:04:47Z",
+    "analyzed": "2026-08-04T09:03:41Z",
     "status": "skip_repo_quality",
-    "reason": "low_stars:54",
+    "reason": "low_stars:56",
     "title": "[Bug]: cudagraph decode + MLA sparse 在大上下文请求下 illegal memory access（小上下文正常）",
-    "issue_updated": "2026-08-04T06:35:11Z",
-    "scanner_version": "oss_pr_radar_v20_full_decision_migration",
-    "decision_contract_digest": "91bb61a368e8cac87b8f6f46894c294bac69270f26d6885c82fda7e411f8fc91"
+    "issue_updated": "2026-08-04T08:51:26Z",
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
   },
   "adcontextprotocol/adcp#6018": {
     "analyzed": "2026-08-04T03:45:21Z",
@@ -1639,17 +1642,12 @@
     "scanner_version": "oss_pr_radar_v15_backlog_repair"
   },
   "vllm-project/vllm#50889": {
-    "analyzed": "2026-08-04T08:40:25Z",
-    "requeued_at": "2026-08-04T08:40:25Z",
-    "first_deferred_at": "2026-08-04T07:04:47Z",
-    "defer_count": 2,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-04T09:03:41Z",
+    "status": "someone_active",
     "title": "[Bug]: Gemma4 tool parser (non-streaming): finish_reason=tool_calls with empty tool_calls array — model's move silently lost under concurrent load",
-    "url": "https://github.com/vllm-project/vllm/issues/50889",
     "issue_updated": "2026-08-04T06:13:55Z",
-    "scanner_version": "oss_pr_radar_v21_parallel_evidence_dispatch",
-    "decision_contract_digest": "7fdc703e76f3b5d96601ef7486106ba23124c913c8b09b3c8cda22740b629824"
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
   },
   "sgl-project/sglang#29736": {
     "analyzed": "2026-08-04T06:26:27Z",
@@ -1687,17 +1685,17 @@
     "scanner_version": "oss_pr_radar_v15_backlog_repair"
   },
   "vllm-project/vllm#50953": {
-    "analyzed": "2026-08-04T08:40:25Z",
-    "requeued_at": "2026-08-04T08:40:25Z",
+    "analyzed": "2026-08-04T09:03:41Z",
+    "requeued_at": "2026-08-04T09:03:41Z",
     "first_deferred_at": "2026-08-04T07:04:47Z",
-    "defer_count": 2,
+    "defer_count": 3,
     "status": "inspection_budget_deferred",
     "reason": "inspection_budget_deferred",
     "title": "[Bug][Rocm] LMcache running issues for the kimik3 Dspark",
     "url": "https://github.com/vllm-project/vllm/issues/50953",
     "issue_updated": "2026-08-04T06:15:47Z",
-    "scanner_version": "oss_pr_radar_v21_parallel_evidence_dispatch",
-    "decision_contract_digest": "7fdc703e76f3b5d96601ef7486106ba23124c913c8b09b3c8cda22740b629824"
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
   },
   "sgl-project/sglang#33466": {
     "analyzed": "2026-08-04T05:27:59Z",
@@ -1717,14 +1715,12 @@
     "scanner_version": "oss_pr_radar_v19_pr_check_precision"
   },
   "sgl-project/sglang#33163": {
-    "analyzed": "2026-08-04T05:27:59Z",
-    "status": "llm_score_low",
+    "analyzed": "2026-08-04T09:03:41Z",
+    "status": "bot_or_stale_refresh",
     "title": "[Bug] deepseek-v4-flash toolcall error runner_backend from marlin to  flashinfer_mxfp4",
-    "url": "https://github.com/sgl-project/sglang/issues/33163",
-    "issue_updated": "2026-08-04T02:30:05Z",
-    "llm_decision": "WAIT_MAINTAINER",
-    "llm_score": 5,
-    "scanner_version": "oss_pr_radar_v15_backlog_repair"
+    "issue_updated": "2026-08-04T08:56:39Z",
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
   },
   "vllm-project/vllm#39735": {
     "analyzed": "2026-08-04T05:03:08Z",
@@ -1877,11 +1873,12 @@
     "scanner_version": "oss_pr_radar_v14_trust_core"
   },
   "microsoft/autogen#7405": {
-    "analyzed": "2026-08-04T03:45:21Z",
+    "analyzed": "2026-08-04T09:03:41Z",
     "status": "maintenance_mode_non_bug",
     "title": "Proposal: GuardrailProvider protocol for tool call interception",
-    "issue_updated": "2026-08-04T01:06:28Z",
-    "scanner_version": "oss_pr_radar_v14_trust_core"
+    "issue_updated": "2026-08-04T08:46:54Z",
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
   },
   "crewAIInc/crewAI#4877": {
     "analyzed": "2026-08-04T03:45:21Z",
@@ -1995,17 +1992,12 @@
     "decision_contract_digest": "7fdc703e76f3b5d96601ef7486106ba23124c913c8b09b3c8cda22740b629824"
   },
   "vllm-project/vllm#50963": {
-    "analyzed": "2026-08-04T08:40:25Z",
-    "requeued_at": "2026-08-04T08:40:25Z",
-    "first_deferred_at": "2026-08-04T07:04:47Z",
-    "defer_count": 2,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-04T09:03:41Z",
+    "status": "rfc_or_roadmap_without_maintainer_split",
     "title": "[Feature]: shared expert fusion via Flashinfer kernels",
-    "url": "https://github.com/vllm-project/vllm/issues/50963",
     "issue_updated": "2026-08-04T06:16:53Z",
-    "scanner_version": "oss_pr_radar_v21_parallel_evidence_dispatch",
-    "decision_contract_digest": "7fdc703e76f3b5d96601ef7486106ba23124c913c8b09b3c8cda22740b629824"
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
   },
   "vllm-project/vllm#50959": {
     "analyzed": "2026-08-04T08:40:25Z",
@@ -2335,17 +2327,16 @@
     "scanner_version": "oss_pr_radar_v16_relevance_precision"
   },
   "sgl-project/sglang#33483": {
-    "analyzed": "2026-08-04T07:04:47Z",
-    "requeued_at": "2026-08-04T07:04:47Z",
-    "first_deferred_at": "2026-08-04T07:04:47Z",
-    "defer_count": 1,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-04T09:03:41Z",
+    "notified": false,
+    "status": "queued_outbox",
+    "score": 12,
     "title": "[Bug] Default decode CUDA Graph coverage causes a sharp performance cliff when batch size exceeds 32",
     "url": "https://github.com/sgl-project/sglang/issues/33483",
     "issue_updated": "2026-08-04T05:23:51Z",
-    "scanner_version": "oss_pr_radar_v20_full_decision_migration",
-    "decision_contract_digest": "91bb61a368e8cac87b8f6f46894c294bac69270f26d6885c82fda7e411f8fc91"
+    "notification_digest": "25cd2030e7bb72c68525ba70e0cf41eca513d57f363971082f0af114d2ac04f2",
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
   },
   "woocommerce/woocommerce#47808": {
     "analyzed": "2026-08-04T05:43:20Z",
@@ -2370,43 +2361,32 @@
     "scanner_version": "oss_pr_radar_v16_relevance_precision"
   },
   "sgl-project/sglang#33493": {
-    "analyzed": "2026-08-04T07:04:47Z",
-    "requeued_at": "2026-08-04T07:04:47Z",
-    "first_deferred_at": "2026-08-04T07:04:47Z",
-    "defer_count": 1,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-04T09:03:41Z",
+    "notified": false,
+    "status": "queued_outbox",
+    "score": 11,
     "title": "[Bug] DSPARK retrieves wrong key \"acc_linear_penalities\" from sampling_info",
     "url": "https://github.com/sgl-project/sglang/issues/33493",
     "issue_updated": "2026-08-04T05:39:28Z",
-    "scanner_version": "oss_pr_radar_v20_full_decision_migration",
-    "decision_contract_digest": "91bb61a368e8cac87b8f6f46894c294bac69270f26d6885c82fda7e411f8fc91"
+    "notification_digest": "d516892984c07106bfc73ab742463a15b389c665cb523f590856cf013ecd1f1d",
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
   },
   "sgl-project/sglang#33409": {
-    "analyzed": "2026-08-04T07:04:47Z",
-    "requeued_at": "2026-08-04T07:04:47Z",
-    "first_deferred_at": "2026-08-04T07:04:47Z",
-    "defer_count": 1,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-04T09:03:41Z",
+    "status": "rfc_or_roadmap_without_maintainer_split",
     "title": "[RFC] Distributed multimodal preprocessing for large multi-image requests in multi-node TP deployments",
-    "url": "https://github.com/sgl-project/sglang/issues/33409",
     "issue_updated": "2026-08-04T05:34:22Z",
-    "scanner_version": "oss_pr_radar_v20_full_decision_migration",
-    "decision_contract_digest": "91bb61a368e8cac87b8f6f46894c294bac69270f26d6885c82fda7e411f8fc91"
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
   },
   "sgl-project/sglang#33388": {
-    "analyzed": "2026-08-04T07:04:47Z",
-    "requeued_at": "2026-08-04T07:04:47Z",
-    "first_deferred_at": "2026-08-04T07:04:47Z",
-    "defer_count": 1,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-04T09:03:41Z",
+    "status": "someone_active",
     "title": "[Bug] Multimodal tensor views cause 518x pickle memory amplification",
-    "url": "https://github.com/sgl-project/sglang/issues/33388",
     "issue_updated": "2026-08-04T05:31:56Z",
-    "scanner_version": "oss_pr_radar_v20_full_decision_migration",
-    "decision_contract_digest": "91bb61a368e8cac87b8f6f46894c294bac69270f26d6885c82fda7e411f8fc91"
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
   },
   "nearai/ironclaw#6896": {
     "analyzed": "2026-08-04T05:43:20Z",
@@ -2500,12 +2480,17 @@
     "scanner_version": "oss_pr_radar_v17_policy_scope_precision"
   },
   "vllm-project/vllm#50545": {
-    "analyzed": "2026-08-04T08:40:25Z",
-    "status": "hardware_unavailable",
+    "analyzed": "2026-08-04T09:03:41Z",
+    "requeued_at": "2026-08-04T09:03:41Z",
+    "first_deferred_at": "2026-08-04T09:03:41Z",
+    "defer_count": 1,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
     "title": "[Bug]: [XPU] Multi-GPU TP serving hangs on Intel Arc Pro B60 with torch 2.13 wheels (oneCCL 2022.x): warmup allreduce never returns, GuC timeouts, DEVICE_LOST`",
+    "url": "https://github.com/vllm-project/vllm/issues/50545",
     "issue_updated": "2026-08-04T07:39:40Z",
-    "scanner_version": "oss_pr_radar_v21_parallel_evidence_dispatch",
-    "decision_contract_digest": "7fdc703e76f3b5d96601ef7486106ba23124c913c8b09b3c8cda22740b629824"
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
   },
   "vllm-project/vllm#48627": {
     "analyzed": "2026-08-04T07:04:47Z",
@@ -2706,17 +2691,16 @@
     "decision_contract_digest": "7fdc703e76f3b5d96601ef7486106ba23124c913c8b09b3c8cda22740b629824"
   },
   "vllm-project/vllm#50891": {
-    "analyzed": "2026-08-04T08:40:25Z",
-    "requeued_at": "2026-08-04T08:40:25Z",
-    "first_deferred_at": "2026-08-04T07:04:47Z",
-    "defer_count": 2,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-04T09:03:41Z",
+    "notified": false,
+    "status": "queued_outbox",
+    "score": 12,
     "title": "[Bug]: AOT compile cache key ignores limit_mm_per_prompt, so image:0 and image:1 runs collide and crash with AttributeError: 'NoneType' object has no attribute 'size'",
     "url": "https://github.com/vllm-project/vllm/issues/50891",
     "issue_updated": "2026-08-04T06:14:02Z",
-    "scanner_version": "oss_pr_radar_v21_parallel_evidence_dispatch",
-    "decision_contract_digest": "7fdc703e76f3b5d96601ef7486106ba23124c913c8b09b3c8cda22740b629824"
+    "notification_digest": "abaa3092be0babe87bef211796217f4795555409c685a224b6789bbc3c7a2d09",
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
   },
   "makecindy/cindy#1645": {
     "analyzed": "2026-08-04T06:26:27Z",
@@ -2783,25 +2767,25 @@
     "scanner_version": "oss_pr_radar_v19_pr_check_precision"
   },
   "vllm-project/vllm#37979": {
-    "analyzed": "2026-08-04T08:40:25Z",
-    "requeued_at": "2026-08-04T08:40:25Z",
-    "first_deferred_at": "2026-08-04T07:04:47Z",
-    "defer_count": 2,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-04T09:03:41Z",
+    "status": "bot_or_stale_refresh",
     "title": "[RFC]: Intel Quantization Support Roadmap (H1 2026)",
-    "url": "https://github.com/vllm-project/vllm/issues/37979",
     "issue_updated": "2026-08-04T07:43:34Z",
-    "scanner_version": "oss_pr_radar_v21_parallel_evidence_dispatch",
-    "decision_contract_digest": "7fdc703e76f3b5d96601ef7486106ba23124c913c8b09b3c8cda22740b629824"
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
   },
   "sgl-project/sglang#33355": {
-    "analyzed": "2026-08-04T08:40:25Z",
-    "status": "no_bug_or_maintainer_actionability",
+    "analyzed": "2026-08-04T09:03:41Z",
+    "requeued_at": "2026-08-04T09:03:41Z",
+    "first_deferred_at": "2026-08-04T09:03:41Z",
+    "defer_count": 1,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
     "title": "[Feature][DCP] symm_a2a backend: peer-direct A2A for MLA decode on single-node NVLink/NVSwitch",
+    "url": "https://github.com/sgl-project/sglang/issues/33355",
     "issue_updated": "2026-08-04T06:30:21Z",
-    "scanner_version": "oss_pr_radar_v21_parallel_evidence_dispatch",
-    "decision_contract_digest": "7fdc703e76f3b5d96601ef7486106ba23124c913c8b09b3c8cda22740b629824"
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
   },
   "openclaw/openclaw#114169": {
     "analyzed": "2026-08-04T06:53:05Z",
@@ -2951,12 +2935,17 @@
     "decision_contract_digest": "7fdc703e76f3b5d96601ef7486106ba23124c913c8b09b3c8cda22740b629824"
   },
   "run-llama/llama_index#22313": {
-    "analyzed": "2026-08-04T08:40:25Z",
-    "status": "no_bug_or_maintainer_actionability",
+    "analyzed": "2026-08-04T09:03:41Z",
+    "requeued_at": "2026-08-04T09:03:41Z",
+    "first_deferred_at": "2026-08-04T09:03:41Z",
+    "defer_count": 1,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
     "title": "SQL/NoSQL injection in AzureCosmosNoSqlVectorStore.delete() via unparameterized ref_doc_id",
+    "url": "https://github.com/run-llama/llama_index/issues/22313",
     "issue_updated": "2026-08-04T06:49:58Z",
-    "scanner_version": "oss_pr_radar_v21_parallel_evidence_dispatch",
-    "decision_contract_digest": "7fdc703e76f3b5d96601ef7486106ba23124c913c8b09b3c8cda22740b629824"
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
   },
   "haierkeys/fast-note-sync-service#450": {
     "analyzed": "2026-08-04T06:53:05Z",
@@ -3079,65 +3068,64 @@
     "decision_contract_digest": "7fdc703e76f3b5d96601ef7486106ba23124c913c8b09b3c8cda22740b629824"
   },
   "areal-project/AReaL#1565": {
-    "analyzed": "2026-08-04T07:04:47Z",
-    "requeued_at": "2026-08-04T07:04:47Z",
-    "first_deferred_at": "2026-08-04T07:04:47Z",
-    "defer_count": 1,
-    "status": "candidate_overflow",
-    "reason": "candidate_overflow",
+    "analyzed": "2026-08-04T09:03:41Z",
+    "notified": false,
+    "status": "queued_outbox",
+    "score": 10,
     "title": "[BUG][v2] Teardown leaves an orphan process after torch-memory-saver CUDA free errors",
     "url": "https://github.com/areal-project/AReaL/issues/1565",
     "issue_updated": "2026-08-04T06:57:10Z",
-    "scanner_version": "oss_pr_radar_v20_full_decision_migration",
-    "decision_contract_digest": "91bb61a368e8cac87b8f6f46894c294bac69270f26d6885c82fda7e411f8fc91"
+    "notification_digest": "77f94d5eba11f274e241652358e07742d0de94aa29c75abb35a84ffb688517ba",
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
   },
   "vllm-project/vllm#50994": {
-    "analyzed": "2026-08-04T08:40:25Z",
-    "issue_updated": "2026-08-04T08:22:31Z",
+    "analyzed": "2026-08-04T09:03:41Z",
+    "issue_updated": "2026-08-04T08:57:51Z",
     "status": "skip_prefilter",
     "title": "[Doc]: is the docs down?",
-    "scanner_version": "oss_pr_radar_v21_parallel_evidence_dispatch",
-    "decision_contract_digest": "7fdc703e76f3b5d96601ef7486106ba23124c913c8b09b3c8cda22740b629824"
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
   },
   "pydantic/pydantic-ai#5583": {
-    "analyzed": "2026-08-04T08:40:25Z",
+    "analyzed": "2026-08-04T09:03:41Z",
     "issue_updated": "2026-08-04T07:28:59Z",
     "status": "skip_prefilter",
     "title": "Capability `for_run` implicit per-run state behavior is a footgun",
-    "scanner_version": "oss_pr_radar_v21_parallel_evidence_dispatch",
-    "decision_contract_digest": "7fdc703e76f3b5d96601ef7486106ba23124c913c8b09b3c8cda22740b629824"
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
   },
   "pydantic/pydantic-ai#6974": {
-    "analyzed": "2026-08-04T08:40:25Z",
+    "analyzed": "2026-08-04T09:03:41Z",
     "issue_updated": "2026-08-04T07:08:53Z",
     "status": "skip_prefilter",
     "title": "Temporal replay re-emits every Pydantic AI span, inflating telemetry 6-13x",
-    "scanner_version": "oss_pr_radar_v21_parallel_evidence_dispatch",
-    "decision_contract_digest": "7fdc703e76f3b5d96601ef7486106ba23124c913c8b09b3c8cda22740b629824"
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
   },
   "pydantic/pydantic-ai#6970": {
-    "analyzed": "2026-08-04T08:40:25Z",
+    "analyzed": "2026-08-04T09:03:41Z",
     "issue_updated": "2026-08-04T07:08:49Z",
     "status": "skip_prefilter",
     "title": "Support UI event streams end-to-end outside an HTTP request — `run_input` is required but unread by `VercelAIEventStream`",
-    "scanner_version": "oss_pr_radar_v21_parallel_evidence_dispatch",
-    "decision_contract_digest": "7fdc703e76f3b5d96601ef7486106ba23124c913c8b09b3c8cda22740b629824"
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
   },
   "pydantic/pydantic-ai#6976": {
-    "analyzed": "2026-08-04T08:40:25Z",
+    "analyzed": "2026-08-04T09:03:41Z",
     "issue_updated": "2026-08-04T07:08:42Z",
     "status": "skip_prefilter",
     "title": "Temporal: allow passing `deps` by reference instead of serializing them into every activity dispatch",
-    "scanner_version": "oss_pr_radar_v21_parallel_evidence_dispatch",
-    "decision_contract_digest": "7fdc703e76f3b5d96601ef7486106ba23124c913c8b09b3c8cda22740b629824"
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
   },
   "ai-dynamo/dynamo#9178": {
-    "analyzed": "2026-08-04T08:40:25Z",
+    "analyzed": "2026-08-04T09:03:41Z",
     "issue_updated": "2026-08-04T08:14:00Z",
     "status": "skip_prefilter",
     "title": "[Roadmap]: Dynamo roadmap for 1.2 (May) - 1.4 (Aug)",
-    "scanner_version": "oss_pr_radar_v21_parallel_evidence_dispatch",
-    "decision_contract_digest": "7fdc703e76f3b5d96601ef7486106ba23124c913c8b09b3c8cda22740b629824"
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
   },
   "hydra07/browser-control#8": {
     "analyzed": "2026-08-04T08:40:25Z",
@@ -3221,120 +3209,120 @@
     "decision_contract_digest": "7fdc703e76f3b5d96601ef7486106ba23124c913c8b09b3c8cda22740b629824"
   },
   "sgl-project/sglang#33504": {
-    "analyzed": "2026-08-04T08:40:25Z",
-    "requeued_at": "2026-08-04T08:40:25Z",
+    "analyzed": "2026-08-04T09:03:41Z",
+    "requeued_at": "2026-08-04T09:03:41Z",
     "first_deferred_at": "2026-08-04T08:40:25Z",
-    "defer_count": 1,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "defer_count": 2,
+    "status": "candidate_overflow",
+    "reason": "candidate_overflow",
     "title": "Title: Inconsistent error response format with OpenAI standard for non-streaming requests",
     "url": "https://github.com/sgl-project/sglang/issues/33504",
     "issue_updated": "2026-08-04T07:12:50Z",
-    "scanner_version": "oss_pr_radar_v21_parallel_evidence_dispatch",
-    "decision_contract_digest": "7fdc703e76f3b5d96601ef7486106ba23124c913c8b09b3c8cda22740b629824"
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
   },
   "sgl-project/sglang#33507": {
-    "analyzed": "2026-08-04T08:40:25Z",
-    "requeued_at": "2026-08-04T08:40:25Z",
-    "first_deferred_at": "2026-08-04T08:40:25Z",
-    "defer_count": 1,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-04T09:03:41Z",
+    "status": "off_topic",
     "title": "[Bug]",
-    "url": "https://github.com/sgl-project/sglang/issues/33507",
     "issue_updated": "2026-08-04T07:54:47Z",
-    "scanner_version": "oss_pr_radar_v21_parallel_evidence_dispatch",
-    "decision_contract_digest": "7fdc703e76f3b5d96601ef7486106ba23124c913c8b09b3c8cda22740b629824"
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
   },
   "sgl-project/sglang#33505": {
-    "analyzed": "2026-08-04T08:40:25Z",
-    "requeued_at": "2026-08-04T08:40:25Z",
+    "analyzed": "2026-08-04T09:03:41Z",
+    "requeued_at": "2026-08-04T09:03:41Z",
     "first_deferred_at": "2026-08-04T08:40:25Z",
-    "defer_count": 1,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "defer_count": 2,
+    "status": "candidate_overflow",
+    "reason": "candidate_overflow",
     "title": "[Bug] The --json-model-override-args  does not  recursively update the model configuration.",
     "url": "https://github.com/sgl-project/sglang/issues/33505",
     "issue_updated": "2026-08-04T07:40:31Z",
-    "scanner_version": "oss_pr_radar_v21_parallel_evidence_dispatch",
-    "decision_contract_digest": "7fdc703e76f3b5d96601ef7486106ba23124c913c8b09b3c8cda22740b629824"
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
   },
   "vllm-project/vllm#50719": {
-    "analyzed": "2026-08-04T08:40:25Z",
-    "requeued_at": "2026-08-04T08:40:25Z",
+    "analyzed": "2026-08-04T09:03:41Z",
+    "requeued_at": "2026-08-04T09:03:41Z",
     "first_deferred_at": "2026-08-04T08:40:25Z",
-    "defer_count": 1,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "defer_count": 2,
+    "status": "candidate_overflow",
+    "reason": "candidate_overflow",
     "title": "[Bug][PD][Mooncake] Decode requests stuck in WAITING_FOR_REMOTE_KVS and fail with Timeout waiting for P side ready",
     "url": "https://github.com/vllm-project/vllm/issues/50719",
     "issue_updated": "2026-08-04T07:40:21Z",
-    "scanner_version": "oss_pr_radar_v21_parallel_evidence_dispatch",
-    "decision_contract_digest": "7fdc703e76f3b5d96601ef7486106ba23124c913c8b09b3c8cda22740b629824"
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
   },
   "agno-agi/agno#9328": {
-    "analyzed": "2026-08-04T08:40:25Z",
+    "analyzed": "2026-08-04T09:03:41Z",
     "status": "incomplete_issue_template",
     "title": "[Bug] session_state changes in tool_hooks are not persisted to the database",
-    "issue_updated": "2026-08-04T07:15:00Z",
-    "scanner_version": "oss_pr_radar_v21_parallel_evidence_dispatch",
-    "decision_contract_digest": "7fdc703e76f3b5d96601ef7486106ba23124c913c8b09b3c8cda22740b629824"
+    "issue_updated": "2026-08-04T08:51:43Z",
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
   },
   "microsoft/autogen#7997": {
-    "analyzed": "2026-08-04T08:40:25Z",
+    "analyzed": "2026-08-04T09:03:41Z",
     "status": "security_disclosure_required",
     "title": "Proposal: Pre-execution Runtime Verification for Agent Tool Calls",
     "issue_updated": "2026-08-04T08:11:57Z",
-    "scanner_version": "oss_pr_radar_v21_parallel_evidence_dispatch",
-    "decision_contract_digest": "7fdc703e76f3b5d96601ef7486106ba23124c913c8b09b3c8cda22740b629824"
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
   },
   "microsoft/autogen#8008": {
-    "analyzed": "2026-08-04T08:40:25Z",
+    "analyzed": "2026-08-04T09:03:41Z",
     "status": "trivial",
     "title": "Workbench-level tool-call approval gate — a working implementation of #7405's 'Integration Point 2'",
-    "issue_updated": "2026-08-04T07:18:44Z",
-    "scanner_version": "oss_pr_radar_v21_parallel_evidence_dispatch",
-    "decision_contract_digest": "7fdc703e76f3b5d96601ef7486106ba23124c913c8b09b3c8cda22740b629824"
+    "issue_updated": "2026-08-04T09:00:50Z",
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
   },
   "agno-agi/agno#9329": {
-    "analyzed": "2026-08-04T08:40:25Z",
+    "analyzed": "2026-08-04T09:03:41Z",
     "status": "incomplete_issue_template",
     "title": "[Feature/Bug] Allow combining Gemini built-in tools (e.g. `search`) with custom function tools (Gemini 3+\\Gemma 4)",
     "issue_updated": "2026-08-04T08:19:47Z",
-    "scanner_version": "oss_pr_radar_v21_parallel_evidence_dispatch",
-    "decision_contract_digest": "7fdc703e76f3b5d96601ef7486106ba23124c913c8b09b3c8cda22740b629824"
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
   },
   "microsoft/autogen#7995": {
-    "analyzed": "2026-08-04T08:40:25Z",
+    "analyzed": "2026-08-04T09:03:41Z",
     "status": "maintenance_mode_non_bug",
     "title": "Mapping check: which AutoGen / Magentic-One surfaces should count as a pipeline's own fault-detection act?",
     "issue_updated": "2026-08-04T07:21:40Z",
-    "scanner_version": "oss_pr_radar_v21_parallel_evidence_dispatch",
-    "decision_contract_digest": "7fdc703e76f3b5d96601ef7486106ba23124c913c8b09b3c8cda22740b629824"
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
   },
   "langchain-ai/langgraph#8470": {
-    "analyzed": "2026-08-04T08:40:25Z",
-    "status": "no_bug_or_maintainer_actionability",
+    "analyzed": "2026-08-04T09:03:41Z",
+    "requeued_at": "2026-08-04T09:03:41Z",
+    "first_deferred_at": "2026-08-04T09:03:41Z",
+    "defer_count": 1,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
     "title": "Reading a nested subgraph's state hydrates every DeltaChannel empty",
+    "url": "https://github.com/langchain-ai/langgraph/issues/8470",
     "issue_updated": "2026-08-04T07:15:44Z",
-    "scanner_version": "oss_pr_radar_v21_parallel_evidence_dispatch",
-    "decision_contract_digest": "7fdc703e76f3b5d96601ef7486106ba23124c913c8b09b3c8cda22740b629824"
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
   },
   "openclaw/openclaw#101793": {
-    "analyzed": "2026-08-04T08:40:25Z",
+    "analyzed": "2026-08-04T09:03:41Z",
     "status": "bot_or_stale_refresh",
     "title": "[Bug]: Assistant text preceding a tool call in the same turn is silently dropped on Signal channel (Anthropic/Sonnet, non-streaming)",
-    "issue_updated": "2026-08-04T08:32:55Z",
-    "scanner_version": "oss_pr_radar_v21_parallel_evidence_dispatch",
-    "decision_contract_digest": "7fdc703e76f3b5d96601ef7486106ba23124c913c8b09b3c8cda22740b629824"
+    "issue_updated": "2026-08-04T08:59:33Z",
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
   },
   "openclaw/openclaw#109942": {
-    "analyzed": "2026-08-04T08:40:25Z",
+    "analyzed": "2026-08-04T09:03:41Z",
     "status": "incomplete_issue_template",
     "title": "[Bug]: OpenClaw v7.1 Dashboard Returns 400 Error with llamacpp due to Missing Regex Anchors in Auto-Generated GBNF Schema",
-    "issue_updated": "2026-08-04T08:37:42Z",
-    "scanner_version": "oss_pr_radar_v21_parallel_evidence_dispatch",
-    "decision_contract_digest": "7fdc703e76f3b5d96601ef7486106ba23124c913c8b09b3c8cda22740b629824"
+    "issue_updated": "2026-08-04T08:59:23Z",
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
   },
   "vllm-project/vllm-ascend#13478": {
     "analyzed": "2026-08-04T08:40:25Z",
@@ -3345,55 +3333,222 @@
     "decision_contract_digest": "7fdc703e76f3b5d96601ef7486106ba23124c913c8b09b3c8cda22740b629824"
   },
   "vllm-project/vllm#50989": {
-    "analyzed": "2026-08-04T08:40:25Z",
+    "analyzed": "2026-08-04T09:03:41Z",
     "status": "someone_active",
     "title": "[Bug]: Qwen 3.* models go into doom loop if you use strict mode with tools without arguments.",
     "issue_updated": "2026-08-04T08:33:44Z",
-    "scanner_version": "oss_pr_radar_v21_parallel_evidence_dispatch",
-    "decision_contract_digest": "7fdc703e76f3b5d96601ef7486106ba23124c913c8b09b3c8cda22740b629824"
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
   },
   "vllm-project/vllm#38175": {
-    "analyzed": "2026-08-04T08:40:25Z",
+    "analyzed": "2026-08-04T09:03:41Z",
     "status": "bot_or_stale_refresh",
     "title": "[RFC]: Support ViT Full CUDA Graph (Tracker)",
     "issue_updated": "2026-08-04T07:20:28Z",
-    "scanner_version": "oss_pr_radar_v21_parallel_evidence_dispatch",
-    "decision_contract_digest": "7fdc703e76f3b5d96601ef7486106ba23124c913c8b09b3c8cda22740b629824"
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
   },
   "esengine/DeepSeek-Reasonix#6545": {
-    "analyzed": "2026-08-04T08:40:25Z",
-    "notified": false,
-    "status": "queued_outbox",
-    "score": 9,
+    "analyzed": "2026-08-04T09:03:41Z",
+    "requeued_at": "2026-08-04T09:03:41Z",
+    "first_deferred_at": "2026-08-04T09:03:41Z",
+    "defer_count": 1,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
     "title": "[Bug]: `reasonix serve` 切换模型后 `ask` 工具失效，返回 'No interactive user answered'\"",
     "url": "https://github.com/esengine/DeepSeek-Reasonix/issues/6545",
     "issue_updated": "2026-08-04T08:36:03Z",
-    "notification_digest": "b9575b8400e340a7171b826a10754d04f3e3393b4ce461356e826d9af05eb865",
-    "scanner_version": "oss_pr_radar_v21_parallel_evidence_dispatch",
-    "decision_contract_digest": "7fdc703e76f3b5d96601ef7486106ba23124c913c8b09b3c8cda22740b629824"
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
   },
   "microsoft/semantic-kernel#14265": {
-    "analyzed": "2026-08-04T08:40:25Z",
+    "analyzed": "2026-08-04T09:03:41Z",
     "notified": false,
     "status": "queued_outbox",
     "score": 11,
     "title": "Bug: VertexAIEmbeddingGenerator hardcodes :predict, unusable with gemini-embedding models that only serve :embedContent",
     "url": "https://github.com/microsoft/semantic-kernel/issues/14265",
     "issue_updated": "2026-08-04T07:39:38Z",
-    "notification_digest": "75893d2857206b97934e3de7d9225d3d31dcb311593d9059c2c1f31c2e127896",
-    "scanner_version": "oss_pr_radar_v21_parallel_evidence_dispatch",
-    "decision_contract_digest": "7fdc703e76f3b5d96601ef7486106ba23124c913c8b09b3c8cda22740b629824"
+    "notification_digest": "7cc3181ad90f23171d1fb436f93fe00b3010c2b675aec8e053e3ef086d7ddb1f",
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
   },
   "PrefectHQ/fastmcp#4749": {
-    "analyzed": "2026-08-04T08:40:25Z",
-    "notified": false,
-    "status": "queued_outbox",
-    "score": 10,
+    "analyzed": "2026-08-04T09:03:41Z",
+    "requeued_at": "2026-08-04T09:03:41Z",
+    "first_deferred_at": "2026-08-04T09:03:41Z",
+    "defer_count": 1,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
     "title": "Resource list do not match the actual resource",
     "url": "https://github.com/PrefectHQ/fastmcp/issues/4749",
     "issue_updated": "2026-08-04T07:55:32Z",
-    "notification_digest": "9fad316b8a510304bf5de23f589a9f52e5cb6cab211bc8bbe643b6c0caa87fd5",
-    "scanner_version": "oss_pr_radar_v21_parallel_evidence_dispatch",
-    "decision_contract_digest": "7fdc703e76f3b5d96601ef7486106ba23124c913c8b09b3c8cda22740b629824"
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
+  },
+  "Blackcoin-Dev/Blackcoin#37": {
+    "analyzed": "2026-08-04T09:03:41Z",
+    "status": "skip_repo_quality",
+    "reason": "low_stars:0",
+    "title": "[P1] Gold Rush: automate stale PoW claim-component recovery and recycling",
+    "issue_updated": "2026-08-04T09:01:23Z",
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
+  },
+  "Blackcoin-Dev/Blackcoin#44": {
+    "analyzed": "2026-08-04T09:03:41Z",
+    "status": "skip_repo_quality",
+    "reason": "low_stars:0",
+    "title": "[P1] v30.1.4 release gate: Gold Rush recovery, staking safety, and coherent telemetry",
+    "issue_updated": "2026-08-04T09:01:21Z",
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
+  },
+  "NodeSpaceAI/nodespace-core#1960": {
+    "analyzed": "2026-08-04T09:03:41Z",
+    "status": "skip_repo_quality",
+    "reason": "low_stars:9",
+    "title": "ai-chat viewer gets stuck on Stop/typing-indicator after reply is fully persisted",
+    "issue_updated": "2026-08-04T08:58:15Z",
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
+  },
+  "NodeSpaceAI/nodespace-core#1957": {
+    "analyzed": "2026-08-04T09:03:41Z",
+    "status": "skip_repo_quality",
+    "reason": "low_stars:9",
+    "title": "search_nodes content filter silently returns zero results (wrong query path)",
+    "issue_updated": "2026-08-04T08:57:13Z",
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
+  },
+  "anthropics/claude-code#69336": {
+    "analyzed": "2026-08-04T09:03:41Z",
+    "status": "skip_repo_quality",
+    "reason": "no_code_surface",
+    "title": "[BUG] API Error: Connection closed mid-response — occurs immediately in new context window",
+    "issue_updated": "2026-08-04T08:53:05Z",
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
+  },
+  "rmstdope/neser#3139": {
+    "analyzed": "2026-08-04T09:03:41Z",
+    "status": "skip_repo_quality",
+    "reason": "low_stars:1",
+    "title": "SNES HDMA: transfers falling inside a general-purpose DMA burst are never armed, not just deferred",
+    "issue_updated": "2026-08-04T08:52:35Z",
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
+  },
+  "wmo-raf/adl#235": {
+    "analyzed": "2026-08-04T09:03:41Z",
+    "status": "skip_repo_quality",
+    "reason": "low_stars:14",
+    "title": "Ingestion diagnostic reports a fabricated OK at layers 4-5 for a connection with no upstream source",
+    "issue_updated": "2026-08-04T08:46:11Z",
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
+  },
+  "foXaCe/Fluidra-pool#175": {
+    "analyzed": "2026-08-04T09:03:41Z",
+    "status": "skip_repo_quality",
+    "reason": "low_stars:37",
+    "title": "Zodiac Exo IQ - Lacking \"Boost\" and \"Low\" binary sensors, as well as the mode for Aux 1 & Aux 2",
+    "issue_updated": "2026-08-04T08:44:43Z",
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
+  },
+  "openai/openai-agents-python#1681": {
+    "analyzed": "2026-08-04T09:03:41Z",
+    "status": "feature_without_maintainer_approval",
+    "title": "Calling MCP server tools with nested object params from Realtime API agents",
+    "issue_updated": "2026-08-04T08:45:40Z",
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
+  },
+  "langchain-ai/langgraph#7844": {
+    "analyzed": "2026-08-04T09:03:41Z",
+    "status": "someone_active",
+    "title": "Docs safety guidance: auditable final-state receipts for agent completion claims?",
+    "issue_updated": "2026-08-04T08:45:31Z",
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
+  },
+  "PrefectHQ/fastmcp#4734": {
+    "analyzed": "2026-08-04T09:03:41Z",
+    "status": "feature_without_maintainer_approval",
+    "title": "FastMCP HTTP transport allows unauthenticated access to MCP tools",
+    "issue_updated": "2026-08-04T08:45:25Z",
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
+  },
+  "pydantic/pydantic-ai#6842": {
+    "analyzed": "2026-08-04T09:03:41Z",
+    "status": "someone_active",
+    "title": "Expose finalized execution counts in Pydantic Evals telemetry",
+    "issue_updated": "2026-08-04T09:05:36Z",
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
+  },
+  "ai-dynamo/dynamo#10809": {
+    "analyzed": "2026-08-04T09:03:41Z",
+    "status": "rfc_or_roadmap_without_maintainer_split",
+    "title": "[CONTRIBUTION]: Add opt-in TLS and mTLS support to NATS and TCP transports",
+    "issue_updated": "2026-08-04T08:42:09Z",
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
+  },
+  "micropython/micropython#11638": {
+    "analyzed": "2026-08-04T09:03:41Z",
+    "status": "bot_or_stale_refresh",
+    "title": "Type Inference issue when using struct in viper",
+    "issue_updated": "2026-08-04T09:01:17Z",
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
+  },
+  "zts212653/clowder-ai#1292": {
+    "analyzed": "2026-08-04T09:03:41Z",
+    "status": "off_topic_dynamic_repo",
+    "title": "Bug: define successor routing contract for disabled collaborators",
+    "issue_updated": "2026-08-04T08:42:15Z",
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
+  },
+  "micropython/micropython#10690": {
+    "analyzed": "2026-08-04T09:03:41Z",
+    "status": "bot_or_stale_refresh",
+    "title": "rp2: micropython.schedule() thread safety",
+    "issue_updated": "2026-08-04T08:45:38Z",
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
+  },
+  "chatmail/core#8432": {
+    "analyzed": "2026-08-04T09:03:41Z",
+    "status": "off_topic_dynamic_repo",
+    "title": "\"Android Not Responding\" background freeze",
+    "issue_updated": "2026-08-04T08:43:14Z",
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
+  },
+  "sgl-project/sglang#26890": {
+    "analyzed": "2026-08-04T09:03:41Z",
+    "status": "bot_or_stale_refresh",
+    "title": "[AITER-Upgrade] AITER Scout Status",
+    "issue_updated": "2026-08-04T09:05:21Z",
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
+  },
+  "sgl-project/sglang#33207": {
+    "analyzed": "2026-08-04T09:03:41Z",
+    "requeued_at": "2026-08-04T09:03:41Z",
+    "first_deferred_at": "2026-08-04T09:03:41Z",
+    "defer_count": 1,
+    "status": "candidate_overflow",
+    "reason": "candidate_overflow",
+    "title": "[Bug] Unrecognized configuration class <class 'sglang.srt.utils.hf_transformers.common._DeepseekV4ConfigAlias'>",
+    "url": "https://github.com/sgl-project/sglang/issues/33207",
+    "issue_updated": "2026-08-04T09:04:27Z",
+    "scanner_version": "oss_pr_radar_v22_shared_repository_policy",
+    "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
   }
 }
