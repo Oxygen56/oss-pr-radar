@@ -799,6 +799,13 @@ def select_seen_rechecks(
     return candidates[: max(0, limit)]
 
 
+def count_seen_rechecks(seen: dict[str, Any]) -> int:
+    return sum(
+        isinstance(value, dict) and value.get("status") in SEEN_RECHECK_STATUSES
+        for value in seen.values()
+    )
+
+
 def parse_github_time(value: str | None, default: datetime) -> datetime:
     if not value:
         return default
@@ -1214,6 +1221,7 @@ class Radar:
         self.collection_failures: dict[str, str] = {}
         self.deferred_rechecks_before = 0
         self.deferred_rechecks_attempted = 0
+        self.deferred_rechecks_migration_selected = 0
         self.deferred_rechecks_remaining = 0
 
     def deep_inspection_deadline_reached(self) -> bool:
@@ -1402,13 +1410,7 @@ class Radar:
         discovery_query = AGENT_INFRA_DISCOVERY_QUERIES[discovery_index]
         self.add_search(items, f"{base} label:bug {discovery_query}", 15, required=False)
         rechecks = select_seen_rechecks(self.seen)
-        self.deferred_rechecks_before = len(
-            [
-                value
-                for value in self.seen.values()
-                if isinstance(value, dict) and value.get("status") in SEEN_RECHECK_STATUSES
-            ]
-        )
+        self.deferred_rechecks_before = count_seen_rechecks(self.seen)
         recheck_keys = {key for key, _ in rechecks}
         self.forced_recheck_keys.update(recheck_keys)
         current_decision_digest = decision_contract_digest()
@@ -1427,6 +1429,7 @@ class Radar:
             key=lambda pair: str(pair[1].get("issue_updated") or ""),
             reverse=True,
         )[:MAX_SCANNER_MIGRATION_RECHECKS]
+        self.deferred_rechecks_migration_selected = len(migration_rechecks)
         self.forced_recheck_keys.update(key for key, _ in migration_rechecks)
         rechecks.extend(migration_rechecks)
         for key, entry in rechecks:
@@ -3234,10 +3237,7 @@ class Radar:
             defer(candidate, "candidate_overflow")
         if overflow_candidates:
             self.rejection_summary["candidate_overflow_deferred"] = len(overflow_candidates)
-        self.deferred_rechecks_remaining = sum(
-            isinstance(value, dict) and value.get("status") in SEEN_RECHECK_STATUSES
-            for value in self.seen.values()
-        )
+        self.deferred_rechecks_remaining = count_seen_rechecks(self.seen)
         return selected, len(bases), inspected
 
     def feishu_post(
@@ -3457,6 +3457,9 @@ class Radar:
                 entry["scanner_version"] = SCANNER_VERSION
                 entry["decision_contract_digest"] = decision_contract_digest()
 
+        # LLM review and notification staging can resolve or create recheck states.
+        # Report the durable state that is actually written, not the shortlist snapshot.
+        self.deferred_rechecks_remaining = count_seen_rechecks(self.seen)
         atomic_write_json(self.seen_path, self.seen)
         self.persistent_repo_cache["updatedAt"] = self.analyzed
         atomic_write_json(self.repo_cache_path, self.persistent_repo_cache)
@@ -3521,6 +3524,7 @@ class Radar:
             "deferred_rechecks": {
                 "queued_before": self.deferred_rechecks_before,
                 "attempted": self.deferred_rechecks_attempted,
+                "migration_selected": self.deferred_rechecks_migration_selected,
                 "remaining": self.deferred_rechecks_remaining,
                 "per_run_budget": RECHECK_INSPECTION_BUDGET,
                 "cooldown_enabled": False,

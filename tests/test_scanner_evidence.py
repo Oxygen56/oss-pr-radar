@@ -7,6 +7,7 @@ from oss_pr_radar.scanner import (
     SCANNER_MIGRATION_RECHECK_STATUSES,
     SCANNER_VERSION,
     Radar,
+    count_seen_rechecks,
     select_inspection_bases,
     select_seen_rechecks,
 )
@@ -284,6 +285,19 @@ def test_seen_rechecks_prioritize_actionable_history_then_original_wait_time():
         "example/ordinary-old#3",
         "example/ordinary-new#1",
     ]
+
+
+def test_seen_recheck_count_reflects_final_durable_status():
+    seen = {
+        "example/deferred#1": {"status": "inspection_budget_deferred"},
+        "example/overflow#2": {"status": "candidate_overflow"},
+        "example/finished#3": {"status": "score_low"},
+    }
+
+    assert count_seen_rechecks(seen) == 2
+
+    seen["example/deferred#1"]["status"] = "queued_outbox"
+    assert count_seen_rechecks(seen) == 1
 
 
 def test_repository_policy_cache_reuses_unchanged_blob_shas(monkeypatch, tmp_path):

@@ -31,7 +31,9 @@ Deferred rechecks have a separate 24-item budget. Ordering uses the first
 deferred timestamp rather than the latest retry timestamp, and previously
 actionable candidates retain their score and receive priority. This prevents a
 busy fixed-repository feed from pushing the same opportunity to the back on
-every hourly run.
+every hourly run. The scan report records policy-migration selections
+separately, and recomputes the remaining count after LLM review and notification
+staging so it matches the durable `seen.json` state.
 
 ## Rollout Modes
 
