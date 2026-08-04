@@ -16,7 +16,7 @@ an issue. Both the watchdog and the local dispatcher run the health check with
 they dispatch one manual fallback run. A recent active fallback suppresses a
 second repair, and workflow concurrency serializes a late natural run behind it.
 
-Deferred inspections are oldest-first and receive a dedicated 10-item budget
+Deferred inspections are oldest-first and receive a dedicated 24-item budget
 in addition to the 30-item fresh-issue budget; there is no recheck cooldown. A
 terminal rejection drains the item; a transient evidence lookup failure remains
 eligible for retry. Candidates that exceed the per-run notification cap are
@@ -62,7 +62,13 @@ a quality KPI or a publication-policy bypass.
   provider success followed by a lost receipt remains a documented residual
   duplicate risk after the provider's one-hour deduplication window.
 - A publication side effect records `ATTEMPTED` before execution. Ambiguous
-  results become `RECONCILE_REQUIRED` and are never blindly retried.
+  results become `RECONCILE_REQUIRED` and are never blindly retried. Recovery
+  only reads the exact remote branch or pull request bound to the original
+  request digest. A successful pull request atomically marks the effect
+  successful, consumes the permit, records `PR_OPEN`, and releases dispatch
+  capacity. An expired permit can reconcile an existing ambiguous effect but
+  can never authorize a new public attempt; a consumed success may only replay
+  its stored receipt.
 
 ## Quality Review
 

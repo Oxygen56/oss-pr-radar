@@ -19,6 +19,10 @@ is recorded as a lagging outcome, never used to judge discovery quality.
   the radar project never substitutes for the target repository.
 - Publication requests and short-lived permits bound to the exact commit,
   branch, fork owner, base branch, PR title, and PR body digest.
+- Idempotent publication receipts: cross-fork PR lookup uses the exact REST
+  head filter with bounded visibility retries, while ambiguous effects can only
+  be reconciled read-only and successful PR creation releases dispatch capacity
+  in the same transaction.
 - Maintainer/policy watch, existing-PR follow-up, Feishu outbox delivery, state
   integrity checks, and natural-schedule health alerts.
 - Parallel watch/PR-follow-up jobs, bounded parallel policy-file reads,
