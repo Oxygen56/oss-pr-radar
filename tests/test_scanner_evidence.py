@@ -1,3 +1,4 @@
+import copy
 import json
 from datetime import UTC, datetime
 
@@ -7,6 +8,7 @@ from oss_pr_radar.scanner import (
     SCANNER_MIGRATION_RECHECK_STATUSES,
     SCANNER_VERSION,
     Radar,
+    candidate_notification_digest,
     count_seen_rechecks,
     select_inspection_bases,
     select_seen_rechecks,
@@ -28,6 +30,35 @@ def test_paginated_gh_flattens_every_page(monkeypatch):
     assert rows == [{"id": 1}, {"id": 2}]
     assert captured["args"][-2:] == ["--paginate", "--slurp"]
     assert captured["timeout"] == 41
+
+
+def test_notification_digest_ignores_llm_wording_and_age_churn():
+    candidate = {
+        "repo": "google/adk-python",
+        "num": 6585,
+        "title": "Remote stream ends before terminal state",
+        "category": "NEW_CLEAN_CANDIDATE",
+        "gate_decision": "ALLOW_TO_WORK",
+        "submission_policy": "normal",
+        "why": "First wording",
+        "expected_changes": "First implementation prose",
+        "llm_review": {"decision": "NEW_CLEAN_CANDIDATE", "confidence": 0.85},
+        "open_pr_assessment": {
+            "status": "none",
+            "summary": "No related pull request",
+            "prs": [{"number": 12, "state": "OPEN", "age_days": 20}],
+        },
+    }
+    reworded = copy.deepcopy(candidate)
+    reworded["why"] = "Equivalent second wording"
+    reworded["expected_changes"] = "Equivalent implementation prose"
+    reworded["llm_review"]["confidence"] = 0.8
+    reworded["open_pr_assessment"]["prs"][0]["age_days"] = 21
+
+    assert candidate_notification_digest(candidate) == candidate_notification_digest(reworded)
+
+    reworded["open_pr_assessment"]["prs"][0]["state"] = "CLOSED"
+    assert candidate_notification_digest(candidate) != candidate_notification_digest(reworded)
 
 
 def test_conditional_claim_blocks_cloud_candidate(tmp_path):

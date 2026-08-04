@@ -1181,11 +1181,24 @@ def candidate_notification_digest(candidate: dict[str, Any]) -> str:
 
     volatile = {
         "analyzed",
+        "age_days",
+        "evidence_digest",
+        "expected_changes",
         "fetched_at",
         "issue_updated",
+        "llm_review",
+        "next_step",
+        "notification_digest",
         "now",
+        "risk",
+        "role_eta",
+        "summary",
+        "strengths",
+        "gaps",
+        "test_path",
         "updated",
         "updated_at",
+        "why",
     }
 
     def normalized(value: Any) -> Any:

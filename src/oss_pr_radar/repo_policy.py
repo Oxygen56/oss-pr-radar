@@ -82,7 +82,11 @@ ASSIGNMENT_RE = re.compile(
     r"\bbefore\b.{0,80}\b(?:open(?:ing)?|submit(?:ting)?|start(?:ing)?|"
     r"implement(?:ing)?)\b.{0,100}\b(?:assignment|maintainer approval|lgtm)\b|"
     r"\b(?:assignment|maintainer approval|lgtm)\b.{0,100}\bbefore\b.{0,80}"
-    r"\b(?:open(?:ing)?|submit(?:ting)?|start(?:ing)?|implement(?:ing)?)\b",
+    r"\b(?:open(?:ing)?|submit(?:ting)?|start(?:ing)?|implement(?:ing)?)\b|"
+    r"\bfor\s+(?:all\s+)?other\s+issues\b.{0,100}\b(?:please\s+)?"
+    r"(?:kindly\s+)?ask\b.{0,60}\bbefore\s+contribut|"
+    r"\b(?:ask|check|confirm)\s+(?:with\s+)?(?:the\s+)?maintainers?\b"
+    r".{0,80}\bbefore\s+(?:contribut|implement|start)",
     re.I | re.S,
 )
 NO_UNSOLICITED_RE = re.compile(

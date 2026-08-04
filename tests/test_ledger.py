@@ -195,6 +195,23 @@ def test_no_go_revokes_task_context_publication_authorization(tmp_path):
     assert revoked["authorizationSource"] == "revoked_terminal_no_go"
 
 
+def test_same_no_go_decision_is_not_requeued_until_evidence_changes(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+    store.record_stage("a/b#1", "AUDIT_NO_GO", reason="MAINTAINER_APPROVAL_REQUIRED")
+
+    assert store.enqueue(intent(intentId="intent-2")) is False
+    assert store.enqueue(intent(intentId="intent-3", decisionDigest="new-decision")) is True
+
+
 def test_orphan_dispatch_can_reconcile_an_expired_async_handoff(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(intent())

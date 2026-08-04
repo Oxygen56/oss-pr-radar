@@ -195,3 +195,18 @@ def test_accepting_issues_and_pull_requests_remains_normal():
 
     assert policy.status == "NORMAL"
     assert submission_policy_from_text(text) == "normal"
+
+
+def test_other_issues_must_ask_before_contributing():
+    text = (
+        "Browse issues labeled good first issue or help wanted. "
+        "For other issues, please kindly ask before contributing to avoid duplication."
+    )
+
+    policy = discover_policy(
+        FakeClient({"CONTRIBUTING.md": text}),
+        "google/adk-python",
+    )
+
+    assert policy.assignment_required is True
+    assert submission_policy_from_text(text) == "needs_assignment"

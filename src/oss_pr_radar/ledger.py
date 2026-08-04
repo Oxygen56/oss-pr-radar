@@ -186,9 +186,10 @@ class RadarLedger:
                      AND (
                        (status IN ('PENDING','LEASED') AND expires_at>?)
                        OR status IN ('DISPATCHED','COMPLETED')
+                       OR (status='REJECTED' AND intent_digest=?)
                      )
                    LIMIT 1""",
-                (key, now),
+                (key, now, intent.get("decisionDigest") or intent["intentId"]),
             ).fetchone()
             if duplicate:
                 return False
