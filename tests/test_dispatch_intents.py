@@ -88,11 +88,44 @@ def test_human_review_and_llm_failure_are_not_dispatched():
     assert result["intents"] == []
 
 
-def test_existing_unconsumed_intent_survives_unobserved_scan_until_expiry():
+def test_existing_unconsumed_intent_survives_unobserved_scan_and_is_renewed():
     existing = MODULE.build(report(candidate()), signing_key=KEY, now=NOW)
     result = MODULE.build(report(), existing, signing_key=KEY, now=NOW + timedelta(minutes=30))
     assert [item["key"] for item in result["intents"]] == ["example/project#42"]
     assert result["newIntentCount"] == 0
+    assert result["intents"][0]["expiresAt"] > existing["intents"][0]["expiresAt"]
+
+
+def test_seen_recently_and_transient_failures_do_not_withdraw_pending_intent():
+    existing = MODULE.build(report(candidate()), signing_key=KEY, now=NOW)
+    for reason in (
+        "seen_recently",
+        "issue_fetch_failed",
+        "comments_lookup_failed",
+        "repo_quality:repo_meta_failed",
+    ):
+        current = report()
+        current["issue_outcomes"] = {"example/project#42": {"status": "rejected", "reason": reason}}
+        result = MODULE.build(
+            current,
+            existing,
+            signing_key=KEY,
+            now=NOW + timedelta(minutes=30),
+        )
+        assert [item["key"] for item in result["intents"]] == ["example/project#42"]
+
+
+def test_retained_intent_respects_current_rollout_mode():
+    existing = MODULE.build(report(candidate()), signing_key=KEY, now=NOW, mode="canary")
+    result = MODULE.build(
+        report(),
+        existing,
+        signing_key=KEY,
+        now=NOW + timedelta(minutes=30),
+        mode="shadow",
+    )
+    assert result["intents"][0]["autoSubmitAuthorized"] is False
+    assert result["intents"][0]["publicationMode"] == "shadow"
 
 
 def test_old_scanner_revision_intent_is_revoked_before_issue_recheck():

@@ -33,23 +33,23 @@ def build_watchlist(
                     retained[str(item["key"])] = item
             except (KeyError, TypeError, ValueError):
                 continue
-    observed = set()
     for candidate in report.get("candidate_details") or []:
         if not isinstance(candidate, dict):
             continue
         key = f"{candidate.get('repo')}#{candidate.get('num')}"
-        observed.add(key)
-        if candidate.get("auto_spawn") is True:
-            retained.pop(key, None)
-            continue
-        if (
+        queued = bool(
+            candidate.get("auto_spawn") is True
+            and candidate.get("gate_decision") == "ALLOW_TO_WORK"
+        )
+        held = bool(
             candidate.get("category")
-            not in {
+            in {
                 "WAIT_MAINTAINER",
                 "PR_COMPETITION_OPPORTUNITY",
             }
-            and candidate.get("gate_decision") != "HUMAN_REVIEW"
-        ):
+            or candidate.get("gate_decision") == "HUMAN_REVIEW"
+        )
+        if not queued and not held:
             retained.pop(key, None)
             continue
         previous = retained.get(key) or {}
@@ -62,7 +62,7 @@ def build_watchlist(
             "issueUpdated": candidate.get("issue_updated") or "",
             "category": candidate.get("category"),
             "gateDecision": candidate.get("gate_decision"),
-            "status": "WATCHING",
+            "status": "QUEUED" if queued else "WATCHING",
             "reason": candidate.get("next_step") or candidate.get("risk") or "",
             "evidenceDigest": candidate.get("evidence_digest") or "",
             "policyDigest": candidate.get("policy_digest") or "",
@@ -121,7 +121,7 @@ def recheck_watchlist(
             policy_snapshot=policies[str(item["repo"])],
         )
         previous_status = str(item.get("status") or "WATCHING")
-        new_status = "WATCHING"
+        new_status = previous_status if previous_status in {"QUEUED", "WATCHING"} else "WATCHING"
         reason = "NO_ACTIONABLE_CHANGE"
         if not evidence.complete:
             new_status = "DATA_HOLD"
@@ -162,6 +162,7 @@ def recheck_watchlist(
             }
         else:
             update = None
+        queued_state_changed = previous_status == "QUEUED" and new_status != "QUEUED"
         pending = (
             {
                 "issueTitle": item["issueTitle"],
@@ -169,7 +170,7 @@ def recheck_watchlist(
                 "issueUpdated": evidence.issue.get("updated_at") or "",
                 "reasonCode": reason,
             }
-            if new_status in {"RESCAN_REQUIRED", "POLICY_CHANGED"}
+            if new_status in {"RESCAN_REQUIRED", "POLICY_CHANGED"} or queued_state_changed
             else None
         )
         return item, update, pending

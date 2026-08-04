@@ -11,7 +11,7 @@ from typing import Any
 
 POLICY_VERSION = "submit_ready_quality_v1"
 SCANNER_DECISION_REVISION = "oss_pr_radar_v22_shared_repository_policy"
-DISPATCH_DECISION_REVISION = "signed_intent_v6_security_precision"
+DISPATCH_DECISION_REVISION = "signed_intent_v7_durable_backlog"
 DECISION_CONTRACT_SCHEMA = 4
 DECISION_CONTRACT_MANIFEST = {
     "schema": DECISION_CONTRACT_SCHEMA,

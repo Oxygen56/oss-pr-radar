@@ -67,12 +67,56 @@ class PolicyChangeClient(NoChangeClient):
         return "Contributions require maintainer assignment before implementation."
 
 
-def test_actionable_candidate_is_removed_from_watchlist():
+def test_actionable_candidate_is_kept_as_a_durable_queued_opportunity():
     existing = build_watchlist({"candidate_details": [held_candidate()]}, now=NOW)
     updated = build_watchlist(
-        {"candidate_details": [held_candidate(auto_spawn=True)]}, existing, now=NOW
+        {"candidate_details": [held_candidate(auto_spawn=True, gate_decision="ALLOW_TO_WORK")]},
+        existing,
+        now=NOW,
     )
-    assert updated["items"] == []
+    assert updated["items"][0]["status"] == "QUEUED"
+
+
+def test_queued_candidate_without_changes_stays_queued():
+    watchlist = build_watchlist(
+        {
+            "candidate_details": [
+                held_candidate(
+                    auto_spawn=True,
+                    gate_decision="ALLOW_TO_WORK",
+                    category="NEW_CLEAN_CANDIDATE",
+                )
+            ]
+        },
+        now=NOW,
+    )
+    updated, report = recheck_watchlist(watchlist, NoChangeClient(), now=NOW)
+    assert updated["items"][0]["status"] == "QUEUED"
+    assert report["pending_rechecks"] == {}
+
+
+def test_queued_candidate_ownership_change_forces_rescan():
+    class AssignedClient(NoChangeClient):
+        def issue(self, repo, number):
+            issue = super().issue(repo, number)
+            issue["assignees"] = [{"login": "another-contributor"}]
+            return issue
+
+    watchlist = build_watchlist(
+        {
+            "candidate_details": [
+                held_candidate(
+                    auto_spawn=True,
+                    gate_decision="ALLOW_TO_WORK",
+                    category="NEW_CLEAN_CANDIDATE",
+                )
+            ]
+        },
+        now=NOW,
+    )
+    updated, report = recheck_watchlist(watchlist, AssignedClient(), now=NOW)
+    assert updated["items"][0]["status"] == "COVERED"
+    assert report["pending_rechecks"]["a/b#1"]["reasonCode"] == "OWNERSHIP_CHANGED"
 
 
 def test_maintainer_green_light_creates_forced_recheck():

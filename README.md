@@ -27,6 +27,9 @@ is recorded as a lagging outcome, never used to judge discovery quality.
   a cooldown.
 - A single local controller thread plus explicit alerts when a signed intent
   remains undispatched for more than one hourly controller cycle.
+- A durable, live-rechecked opportunity backlog: unchanged or transiently
+  unreadable issues keep their signed intent, while ownership, closure, strong
+  competing PRs, or policy drift force a fresh decision before dispatch.
 
 ## Scan Scope
 

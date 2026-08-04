@@ -16,6 +16,14 @@ QUEUE_VERSION = "dispatch_intents_v4"
 INTENT_VERSION = "dispatch_intent_v4"
 SKILL = "[$gh-issue-pr](/Users/oxygen/.codex/skills/gh-issue-pr/SKILL.md)"
 ACTIONABLE_DECISIONS = {"NEW_CLEAN_CANDIDATE", "PR_COMPETITION_OPPORTUNITY"}
+MAX_INTENT_AGE_DAYS = 14
+NON_REVOKING_REJECTION_REASONS = {
+    "seen_recently",
+    "issue_fetch_failed",
+    "comments_lookup_failed",
+    "repo_quality:repo_meta_failed",
+    "repo_quality:repo_contents_failed",
+}
 
 
 class SignatureError(ValueError):
@@ -65,6 +73,12 @@ def _eligible(candidate: dict[str, Any]) -> bool:
     )
 
 
+def _rejection_revokes(outcome: dict[str, Any]) -> bool:
+    if outcome.get("status") != "rejected":
+        return False
+    return str(outcome.get("reason") or "") not in NON_REVOKING_REJECTION_REASONS
+
+
 def build_queue(
     report: dict[str, Any],
     signer: DispatchSigner,
@@ -92,9 +106,7 @@ def build_queue(
     observed.update(
         key
         for key, outcome in (report.get("issue_outcomes") or {}).items()
-        if isinstance(key, str)
-        and isinstance(outcome, dict)
-        and outcome.get("status") in {"candidate", "rejected"}
+        if isinstance(key, str) and isinstance(outcome, dict) and _rejection_revokes(outcome)
     )
     retained: dict[str, dict[str, Any]] = {}
     if isinstance(existing, dict) and existing.get("version") == QUEUE_VERSION:
@@ -109,9 +121,20 @@ def build_queue(
                     and item.get("scannerVersion") == scanner_version
                     and item.get("decisionContractDigest") == dispatch_contract_digest
                     and parse_time(str(item["expiresAt"])) > current
+                    and parse_time(str(item["issuedAt"]))
+                    > current - timedelta(days=MAX_INTENT_AGE_DAYS)
                     and item.get("status") == "PENDING"
                 ):
-                    retained[str(item["key"])] = item
+                    renewed = dict(item)
+                    renewed["expiresAt"] = iso_z(expires)
+                    renewed["renewedAt"] = iso_z(current)
+                    renewed["mode"] = mode
+                    renewed["publicationMode"] = mode
+                    renewed["autoSubmitAuthorized"] = bool(
+                        mode in {"canary", "active"}
+                        and renewed.get("publicSubmissionAllowed") is True
+                    )
+                    retained[str(item["key"])] = signer.seal(renewed)
         except (SignatureError, KeyError, TypeError, ValueError):
             retained = {}
 

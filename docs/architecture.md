@@ -61,3 +61,9 @@ decision-contract digest invalidates the entry before task authorization.
 Discovery and live authorization use the same policy-path selector and text
 classifier, so post-PR review instructions cannot be mistaken for a pre-PR
 assignment requirement by only one stage.
+
+Actionable opportunities remain in the watchlist and signed queue while they
+wait behind the WIP limit. Hourly watch evidence forces a rescan on ownership,
+closure, strong-PR, or policy changes. Duplicate suppression and transient API
+failures do not withdraw an otherwise-valid intent; every task and publication
+still performs its own live gate.
