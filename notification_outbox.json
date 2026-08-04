@@ -1,5 +1,5 @@
 {
-  "digest": "11454a6a75116c1457fa0bf27a4a79df14830cda49da2f42c9affc6aa70e365d",
+  "digest": "b9d27516adc74eb72dfd0ab9e4d5e18d9c4f53bd707a20ac0d98ac1efaae700d",
   "events": [
     {
       "attempts": 1,
@@ -1827,9 +1827,86 @@
       "runId": "watch-1785823018",
       "sentAt": "2026-08-04T06:09:54.145769Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "sgl-project/sglang#33483",
+        "can1357/oh-my-pi#7597",
+        "openclaw/openclaw#92199",
+        "sgl-project/sglang#33493",
+        "vllm-project/vllm#50959"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33483](https://github.com/sgl-project/sglang/issues/33483) [Bug] Default decode CUDA Graph coverage causes a sharp performance cliff when batch size exceeds 32**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue provides detailed, reproducible evidence of a performance cliff due to default CUDA graph batch size, with clear mechanism and controls. However, the candidate explicitly asks for maintainer input on preferred fix direction, and the deterministic gate requires HUMAN_REVIEW. Open PR and related issue lookups failed, so duplicate work cannot be excluded.\n改动：Adjust default cuda_graph_max_bs heuristic；Add startup warning when cuda_graph_max_bs is far below max_running_requests；Document interaction in tuning guide\n验证：Reproduce with provided benchmark script and rate sweep；Add regression test for default graph coverage vs max_running_requests；Measure TPOT and throughput at rates near cliff\n风险：Changing default may increase memory usage and startup time；Heuristic may not generalize across models and hardware；Potential duplicate implementation if existing PR exists\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 16，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[can1357/oh-my-pi#7597](https://github.com/can1357/oh-my-pi/issues/7597) grep/glob: semicolon multipath silently collapses to one literal path when the joined string is ENAMETOOLONG**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue provides a clear root cause and repro, but the deterministic gate requires HUMAN_REVIEW and an existing PR (#7598) already addresses it with failing CI. Competition is possible only if the PR's gaps are filled, but maintainer confirmation is needed.\n改动：Fix probeLiteralPathExists to classify ENAMETOOLONG as missing；Fix delimitedPathPartResolves similarly；Improve glob error handling\n验证：Add regression tests for NAME_MAX boundary (e.g., 12 entries) and PATH_MAX boundary (e.g., 50 entries)；Run existing test suite for the affected package\n风险：Existing PR #7598 may be merged or updated, making competition moot；Potential maintainer preference for a different fix approach\n竞争：已有直接关联但证据不完整的 PR #7598：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 21，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[openclaw/openclaw#92199](https://github.com/openclaw/openclaw/issues/92199) [Bug]: [ACP] Text before tool calls is lost in WeChat (intermediate messages dropped, not merged)**\n建议：WAIT_MAINTAINER | 分数：11\n价值：The issue is a real user-facing bug with a clear repro and fresh evidence, but the deterministic gate requires HUMAN_REVIEW and the maintainer bot explicitly states a product decision is needed on cross-channel delivery policy. Existing PRs are closed/unmerged and do not settle the design. A new PR would be premature without maintainer direction.\n改动：ACP terminal-event handling；replyResolver/final_only buffer behavior；WeChat channel delivery policy\n验证：Add regression test for multiple direct replies between tool calls in one turn；Run targeted unit tests for acp-projector and replyResolver；Perform live WeChat ACP trace to confirm delivery\n风险：Changing delivery policy may affect other channels；Projector-only fix may not address channel adapter issues\n竞争：发现关键词相关 PR，但未确认直接覆盖：#92804；需人工核对\n下一步：已有 PR 但强度不足；先看维护者规则和 issue 讨论，必要时先请求确认方案或分配。\n证据：复现信号 4，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33493](https://github.com/sgl-project/sglang/issues/33493) [Bug] DSPARK retrieves wrong key \"acc_linear_penalities\" from sampling_info**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue identifies a likely typo in attribute name causing DSPARK to ignore min_tokens, with a concrete patch and repro. However, open PR and related issue lookups timed out, so duplicate work cannot be excluded. Maintainer design preference is unknown.\n改动：dflash_utils.py；dspark_verify.py\n验证：Add a regression test that starts DSPARK with min_tokens and asserts completion_tokens >= min_tokens.\n风险：Attribute name may differ across versions; patch may need adjustment.\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 7，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50959](https://github.com/vllm-project/vllm/issues/50959) [Bug] fastsafetensors ParallelLoader broadcasts on group.WORLD; PP-scoped draft loads deadlock**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue describes a clear deadlock with root cause in fastsafetensors using WORLD group for PP-scoped draft loads, but lacks maintainer confirmation and has an existing PR (#50514) with failed CI that may already address the area.\n改动：Fix fastsafetensors ParallelLoader to use participant-scoped process group；Add regression test for PP-scoped draft load with fastsafetensors\n验证：Reproduce with TP8×PP2 and fastsafetensors; verify no hang；Run existing spec decode under PP tests\n风险：May conflict with existing PR #50514；Changing process group scoping could affect other load paths\n竞争：已有直接关联但证据不完整的 PR #50514：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 4，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T06:29:32.728534Z",
+      "eventId": "658ee899fefdb9792b63b55e27944e1598ce1d310d0703da66fd0f0488ca6920",
+      "idempotencyKey": "658ee899fefdb9792b63b55e27944e1598ce1d310d0703da66",
+      "kind": "review",
+      "runId": "scan-20260804T062627Z-7868e8db09a8",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-04T06:09:12.241246Z",
+  "generatedAt": "2026-08-04T06:29:32.997892Z",
   "newEventCount": 0,
   "version": "notification_outbox_v1"
 }
