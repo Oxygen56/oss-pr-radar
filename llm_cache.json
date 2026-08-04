@@ -365,6 +365,35 @@
     ],
     "why": "Issue reports a clear bug with root cause and minimal repro, but the deterministic gate requires HUMAN_REVIEW and the repository has an AI disclosure policy that blocks automated action. Existing PR #50955 is weak (failed CI) and may be a competition opportunity, but maintainer confirmation is needed."
   },
+  "123c7bbb6d209d7f7b8137403f4b78a784cfb751bc2d584508cee315d4847a4c": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify resume() to target nested tool-call leaf in resume.steps",
+      "Add requestContext option to InngestAgentResumeOptions and merge with snapshot context",
+      "Await inngest.send and handle failures by rejecting resume() and cleaning up stream/run-registry"
+    ],
+    "risks": [
+      "Potential API change to InngestAgentResumeOptions may require maintainer approval",
+      "Behavior change in error handling could affect existing callers"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create failing test reproducing nested suspension resume mis-targeting",
+      "Test requestContext merging with caller precedence",
+      "Test send failure rejects resume() and cleans up resources"
+    ],
+    "unknowns": [
+      "Exact internal structure of nested workflow steps may require code inspection to confirm leaf path"
+    ],
+    "why": "Issue describes three concrete, high-impact correctness bugs in createInngestAgent.resume() with clear root causes and expected behavior. No competing PR or related issue found. Maintainer acknowledged and labeled, but no active investigation or design confirmation needed. Actionable fix with minimal repro."
+  },
   "150fc25a81cebf519c84fbf5ebf5bb4084f6a8d4fdba5ebbb102e8f838fb12f0": {
     "confidence": 0.85,
     "contradictions": [],
@@ -1029,6 +1058,38 @@
       "Full server configuration and client used in reproduction"
     ],
     "why": "Issue reports a resource list mismatch in FastMCP HTTP transport, but lacks a minimal reproducer and root cause analysis. No maintainer confirmation or design direction exists, and the deterministic gate requires human review."
+  },
+  "35400c0b54daa99f9157d4e27639372382a08f7c1998e265162e9b51653747b9": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue suggests allocating tile_sched entry, but contributor argues this would just move the crash to an unsupported kernel"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add arch validation in _select_dsv4_attn_cls to reject FLASHMLA_SPARSE_DSV4 on unsupported compute capabilities",
+      "Possibly add a regression test for the fail-fast error"
+    ],
+    "risks": [
+      "Changing backend selection may affect users who rely on the current behavior",
+      "The fix does not enable DeepSeek-V4 on SM12x; it only makes the failure explicit, which may not satisfy users expecting a working backend"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Reproduce the crash with the provided launch command on SM12x hardware",
+      "Verify that after the fix, startup fails with a clear ValueError instead of the assertion",
+      "Run existing DeepSeek-V4 tests on supported architectures to ensure no regression"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer fail-fast vs. enabling SM12x support",
+      "Whether an open PR already exists for this fix (open PR lookup timed out)",
+      "Whether related issue #50720 will be resolved soon, affecting the priority of this fix"
+    ],
+    "why": "Issue reports a real crash on SM12x with FLASHMLA_SPARSE_DSV4, but a contributor has already proposed a fail-fast fix and is investigating. The proposed fix is a behavior change (rejecting unsupported backend) that needs maintainer confirmation. Open PR and related issue lookups timed out, so duplicate work cannot be excluded."
   },
   "3869a689a4ac88ee3cd663699f334b613175e4cd5375bedf7806eca3732ff12e": {
     "confidence": 0.85,
@@ -1797,6 +1858,40 @@
       "Maintainer's intent on whether to accept a new PR given existing closed PR #7125"
     ],
     "why": "Issue clearly identifies a missing capability id hint in the generic leaf-toolset error branch, with a concrete repro and root cause. However, the deterministic gate requires HUMAN_REVIEW, and an existing PR (#7125) already attempts to address this but is closed with failed CI, indicating maintainer attention is needed."
+  },
+  "5bf45d76199469c67b52e66ba9d44af803092ff07126fc4c61c1607d260a1672": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #19217 claims to fix related issue but has failed CI; issue #19252 is potential duplicate but may be a feature request"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix Inngest Realtime SDK subscription to not retain unread stream messages and properly close WebSocket on cancel",
+      "Modify CachingPubSub to exclude live-only watch events from replay cache",
+      "Remove or gate step-start event payloads that are never consumed"
+    ],
+    "risks": [
+      "Changing SDK subscription semantics may affect other consumers relying on the returned stream",
+      "Excluding watch events from cache could break replay functionality if any consumer actually reads them",
+      "Removing step-start payload may break consumers that do read it despite audit"
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Create a minimal reproduction script that subscribes to a durable agent stream, never reads the returned stream, and measures memory retention; assert memory stays bounded",
+      "Add a regression test that publishes watch events and verifies they are not stored in the replay cache",
+      "Add a test that step-start events do not include the full model request body"
+    ],
+    "unknowns": [
+      "Maintainer design preference on how to handle SDK stream retention",
+      "Whether any consumer actually reads step-start payload in production",
+      "Exact scope of changes needed to avoid breaking existing behavior"
+    ],
+    "why": "Issue provides detailed root-cause analysis and measured impact, but deterministic gate requires HUMAN_REVIEW and maintainer has not yet confirmed design or assignment. Existing PR #19217 is weak (failed CI) and #20661 overlaps partially, so a better PR is plausible but needs maintainer direction."
   },
   "5cf211765f9f5d711ac0b4f7f31491ca9e8ad8920812b34f6798768a0e74fccb": {
     "confidence": 0.8,
@@ -3093,6 +3188,37 @@
     ],
     "why": "Issue clearly identifies a real bug with a minimal repro and root cause in messages.py, but an open PR (#7053) has semantic overlap and the deterministic gate requires human review. Need maintainer confirmation to avoid duplicate work."
   },
+  "aa9313a01d7976467910f3969bdb17e27ddfddd7246bf5bd278c74fb2d35abb0": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify InngestPubSub in workflows/inngest/src/pubsub.ts to detect truncated messages and handle them appropriately",
+      "Reduce live publish payload for finish events to only fields consumers need (output.usage, output.text, stepResult)",
+      "Add logic to salvage truncated terminal events into minimal terminal envelopes",
+      "Drop truncated non-terminal messages instead of delivering them as unparseable strings"
+    ],
+    "risks": [
+      "Potential API behavior change if reducing payload fields breaks consumers expecting full data",
+      "Handling truncated messages may be fragile if truncation cuts at arbitrary points; need robust detection"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a minimal reproduction that publishes an oversized finish event and verify that attached streams close with a parseable terminal event",
+      "Add unit tests for the pubsub fallback branch with truncated JSON payloads",
+      "Run existing durable agent stream tests to ensure no regression"
+    ],
+    "unknowns": [
+      "Exact truncation behavior and whether the truncation point is always at a JSON boundary",
+      "Whether maintainers have a preferred design for payload reduction or salvage logic"
+    ],
+    "why": "The issue provides a clear root cause: Inngest Realtime truncates oversized messages, and the pubsub fallback wraps truncated JSON as an unparseable string, causing terminal events to be lost and streams to hang. The fix is well-scoped: reduce live event payloads and salvage truncated terminal events. No competing PR or issue exists, and the maintainer has labeled it for triage, indicating interest."
+  },
   "ab31a3b0438fbb896e5b59fe8e4b9a12f327e7367f7e9d96988094211bb81382": {
     "confidence": 0.7,
     "contradictions": [],
@@ -3879,6 +4005,32 @@
       "Whether existing PR can be improved or should be replaced"
     ],
     "why": "Issue reports two concrete bugs with root causes and reproduction steps, but the existing PR #33592 is weak (no tests, failing CI) and maintainer approval/design confirmation is missing. The deterministic gate says HUMAN_REVIEW, so we must wait for maintainer input."
+  },
+  "d9b2dea9ec4a04817c3fddee1e4ec999361926ba0075c802a84dc5dea712c64c": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify iteration state schema and update functions to preserve requestContextEntries",
+      "Forward requestContextEntries in map-to-llm-input for both core and Inngest workflows"
+    ],
+    "risks": [
+      "Potential API changes if schema modifications affect existing workflows",
+      "Need to ensure backward compatibility with existing serialized state"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a failing test that simulates a durable agent with dynamic model/tools and forces a registry-miss rebuild, asserting the request context is preserved across iterations"
+    ],
+    "unknowns": [
+      "Exact maintainer design preferences for handling request context in durable workflows"
+    ],
+    "why": "The issue provides a precise root cause: requestContextEntries is dropped from iteration state and not forwarded to the LLM step, causing dynamic resolvers to see an empty context after the first iteration. This is a high-impact bug with a clear reproduction path and no competing PR."
   },
   "df415d8405e9e398e78a2e1e0ac591cd9353fd22f263ec5549f4fe01c26291b5": {
     "confidence": 0.85,

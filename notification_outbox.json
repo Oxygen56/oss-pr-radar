@@ -1,5 +1,5 @@
 {
-  "digest": "1d15bdb4e3ed63e7b7ccc3dc30af386e7dc4be79ea0a3b3f5a95a5cc445e4d25",
+  "digest": "8234b19e6fd3ce6cfbeea9ea6cc30e6865a902d38ffb544fca5b1e858404f195",
   "events": [
     {
       "attempts": 1,
@@ -5939,9 +5939,251 @@
       "runId": "watch-1785873631",
       "sentAt": "2026-08-04T20:05:22.774007Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "mastra-ai/mastra#20671",
+        "mastra-ai/mastra#20673",
+        "mastra-ai/mastra#20670"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[mastra-ai/mastra#20671](https://github.com/mastra-ai/mastra/issues/20671) Oversized Inngest Realtime events are delivered truncated, permanently hanging durable agent streams**\n建议：NEW_CLEAN_CANDIDATE | 分数：11\n价值：The issue provides a clear root cause: Inngest Realtime truncates oversized messages, and the pubsub fallback wraps truncated JSON as an unparseable string, causing terminal events to be lost and streams to hang. The fix is well-scoped: reduce live event payloads and salvage truncated terminal events. No competing PR or issue exists, and the maintainer has labeled it for triage, indicating interest.\n改动：Modify InngestPubSub in workflows/inngest/src/pubsub.ts to detect truncated messages and handle them appropriately；Reduce live publish payload for finish events to only fields consumers need (output.usage, output.text, stepResult)；Add logic to salvage truncated terminal events into minimal terminal envelopes；Drop truncated non-terminal messages instead of delivering them as unparseable strings\n验证：Create a minimal reproduction that publishes an oversized finish event and verify that attached streams close with a parseable terminal event；Add unit tests for the pubsub fallback branch with truncated JSON payloads；Run existing durable agent stream tests to ensure no regression\n风险：Potential API behavior change if reducing payload fields breaks consumers expecting full data；Handling truncated messages may be fragile if truncation cuts at arbitrary points; need robust detection\n竞争：未发现相关 open PR\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 2，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[mastra-ai/mastra#20673](https://github.com/mastra-ai/mastra/issues/20673) Durable agents lose the request context after the first iteration: requestContextEntries is dropped from iteration state and never forwarded to the LLM step**\n建议：NEW_CLEAN_CANDIDATE | 分数：11\n价值：The issue provides a precise root cause: requestContextEntries is dropped from iteration state and not forwarded to the LLM step, causing dynamic resolvers to see an empty context after the first iteration. This is a high-impact bug with a clear reproduction path and no competing PR.\n改动：Modify iteration state schema and update functions to preserve requestContextEntries；Forward requestContextEntries in map-to-llm-input for both core and Inngest workflows\n验证：Create a failing test that simulates a durable agent with dynamic model/tools and forces a registry-miss rebuild, asserting the request context is preserved across iterations\n风险：Potential API changes if schema modifications affect existing workflows；Need to ensure backward compatibility with existing serialized state\n竞争：未发现相关 open PR\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 4，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[mastra-ai/mastra#20670](https://github.com/mastra-ai/mastra/issues/20670) createInngestAgent resume() mis-targets nested tool suspensions, drops caller request context, and swallows send failures**\n建议：NEW_CLEAN_CANDIDATE | 分数：11\n价值：Issue describes three concrete, high-impact correctness bugs in createInngestAgent.resume() with clear root causes and expected behavior. No competing PR or related issue found. Maintainer acknowledged and labeled, but no active investigation or design confirmation needed. Actionable fix with minimal repro.\n改动：Modify resume() to target nested tool-call leaf in resume.steps；Add requestContext option to InngestAgentResumeOptions and merge with snapshot context；Await inngest.send and handle failures by rejecting resume() and cleaning up stream/run-registry\n验证：Create failing test reproducing nested suspension resume mis-targeting；Test requestContext merging with caller precedence；Test send failure rejects resume() and cleans up resources\n风险：Potential API change to InngestAgentResumeOptions may require maintainer approval；Behavior change in error handling could affect existing callers\n竞争：未发现相关 open PR\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 4，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "green",
+          "title": {
+            "content": "OSS PR Radar: 可立即执行",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T21:45:42.728891Z",
+      "eventId": "d1395d92c69be329415e0ea39a095bbf87501b889c886b1570d938f6a74b15e8",
+      "idempotencyKey": "d1395d92c69be329415e0ea39a095bbf87501b889c886b1570",
+      "kind": "immediate",
+      "runId": "scan-20260804T214029Z-26c6ea554908",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "mastra-ai/mastra#20668"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[mastra-ai/mastra#20668](https://github.com/mastra-ai/mastra/issues/20668) Durable agent stream consumers retain every run event (SDK stream leak + dead watch-event cache), OOMing Cloudflare Workers isolates**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue provides detailed root-cause analysis and measured impact, but deterministic gate requires HUMAN_REVIEW and maintainer has not yet confirmed design or assignment. Existing PR #19217 is weak (failed CI) and #20661 overlaps partially, so a better PR is plausible but needs maintainer direction.\n改动：Fix Inngest Realtime SDK subscription to not retain unread stream messages and properly close WebSocket on cancel；Modify CachingPubSub to exclude live-only watch events from replay cache；Remove or gate step-start event payloads that are never consumed\n验证：Create a minimal reproduction script that subscribes to a durable agent stream, never reads the returned stream, and measures memory retention; assert memory stays bounded；Add a regression test that publishes watch events and verifies they are not stored in the replay cache；Add a test that step-start events do not include the full model request body\n风险：Changing SDK subscription semantics may affect other consumers relying on the returned stream；Excluding watch events from cache could break replay functionality if any consumer actually reads them；Removing step-start payload may break consumers that do read it despite audit\n竞争：已有直接关联但证据不完整的 PR #19217：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：先人工比较相关 issue 的根因、维护者归并方向和可提交代码路径；确认不是重复后再进入实现。\n证据：复现信号 2，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T21:45:42.852569Z",
+      "eventId": "062210b7e62201c1dda0c1fa0cf36c13f5312849f51b9c45bf2f0598f8f0020c",
+      "idempotencyKey": "062210b7e62201c1dda0c1fa0cf36c13f5312849f51b9c45bf",
+      "kind": "review",
+      "runId": "scan-20260804T214029Z-26c6ea554908",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "cline/cline#12913",
+        "crewAIInc/crewAI#6788",
+        "fastmachinelearning/hls4ml#1515",
+        "google/adk-python#6584",
+        "pydantic/pydantic-ai#7109",
+        "sgl-project/sglang#27937",
+        "sgl-project/sglang#33408",
+        "sgl-project/sglang#33470",
+        "sgl-project/sglang#33483",
+        "vllm-project/vllm#50891",
+        "vllm-project/vllm#50959",
+        "vllm-project/vllm#51016"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[cline/cline#12913](https://github.com/cline/cline/issues/12913) Bedrock prompt caching never engages: routing layer emits anthropic cache_control but @ai-sdk/amazon-bedrock only reads providerMetadata.bedrock.cachePoint (zero writers in binary)**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[crewAIInc/crewAI#6788](https://github.com/crewAIInc/crewAI/issues/6788) [BUG] total_tokens omits cache reads and writes on the native Anthropic provider**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[fastmachinelearning/hls4ml#1515](https://github.com/fastmachinelearning/hls4ml/issues/1515) profiling.numerical() fails for multi-input models**\n建议：WAIT_MAINTAINER\n价值：STRONG_PR_APPEARED\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[google/adk-python#6584](https://github.com/google/adk-python/issues/6584) RemoteA2aAgent: a terminal A2A task carrying tool activity fails is_final_response(), so the turn cannot be detected as finished (non-streaming peer)**\n建议：WAIT_MAINTAINER\n价值：OWNERSHIP_CHANGED\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[pydantic/pydantic-ai#7109](https://github.com/pydantic/pydantic-ai/issues/7109) Durable-exec leaf-toolset `id` error never mentions the capability `id` that would fix it**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#27937](https://github.com/sgl-project/sglang/issues/27937) [Failure Tracker] PR Test (AMD)**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33408](https://github.com/sgl-project/sglang/issues/33408) [Bug] Unlimited-OCR: server crashes when batching images with different gundam tile counts**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33470](https://github.com/sgl-project/sglang/issues/33470) inference_mode mismatch can break lazy buffers**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33483](https://github.com/sgl-project/sglang/issues/33483) [Bug] Default decode CUDA Graph coverage causes a sharp performance cliff when batch size exceeds 32**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50891](https://github.com/vllm-project/vllm/issues/50891) [Bug]: AOT compile cache key ignores limit_mm_per_prompt, so image:0 and image:1 runs collide and crash with AttributeError: 'NoneType' object has no attribute 'size'**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50959](https://github.com/vllm-project/vllm/issues/50959) [Bug] fastsafetensors ParallelLoader broadcasts on group.WORLD; PP-scoped draft loads deadlock**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#51016](https://github.com/vllm-project/vllm/issues/51016) [Bug]: extract_hidden_states fails with TP>1 when KV page size < hidden-state per-token cost**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T21:45:43.014984Z",
+      "eventId": "71b268aaeb9560751febb418ded1cc5851a01b79d4623930458453b9aa88bd65",
+      "idempotencyKey": "71b268aaeb9560751febb418ded1cc5851a01b79d462393045",
+      "kind": "watch",
+      "runId": "watch-1785879576",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-04T20:04:33.226666Z",
+  "generatedAt": "2026-08-04T21:45:43.165983Z",
   "newEventCount": 0,
   "version": "notification_outbox_v1"
 }
