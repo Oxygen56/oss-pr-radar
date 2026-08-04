@@ -1209,6 +1209,37 @@
     ],
     "why": "The issue describes a plausible bug in categorize.py where LLM reasoning output may cause misclassification, but the proposed fix is a simple string truncation that may not be robust across different LLM formats. The deterministic gate requires HUMAN_REVIEW, and there is no maintainer confirmation or active investigation. The related issue audit timed out, leaving unknowns about existing duplicates or ongoing work."
   },
+  "3e4fb90f75e655149bf06546f2b034c02f34e53bdcabb436483691782df37673": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Windows vs macOS behavior differs for old schema versions",
+      "Some users report success with shim, others report registration drop"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "server-filesystem tool schema generation",
+      "possibly client-side validation in Claude Desktop"
+    ],
+    "risks": [
+      "Changing server schema may break other clients",
+      "Client-side fix may be outside repository scope"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "test_plan": [
+      "Create a minimal MCP server with outputSchema and verify tools/call dispatch in affected client versions",
+      "Add regression test for tools/list schema compatibility"
+    ],
+    "unknowns": [
+      "Exact client validation logic",
+      "Maintainer preference for server-side vs client-side fix"
+    ],
+    "why": "Issue reports a high-impact tool-call failure in server-filesystem after a schema rewrite, with strong evidence of client-side rejection of outputSchema/structuredContent. However, root cause is not fully confirmed: a maintainer fix is needed in the client or server, and the issue is primarily a bug report without a proposed code change. The workaround shim suggests a potential server-side fix, but design confirmation is required."
+  },
   "424899631d80208034e39c85ad19d3383780c6dbf4a291c55b94bf74b2a8b44c": {
     "confidence": 0.7,
     "contradictions": [
@@ -1922,6 +1953,33 @@
       "Whether the two remaining quiet readers should be fixed in the same PR"
     ],
     "why": "Issue provides a precise root cause (two writers of requestContext user with different shapes) and a verified workaround. Existing PR #20690 is open but has failing CI/checks and may not cover all affected readers, leaving room for a materially better PR."
+  },
+  "5d39a492a84d1b06be35f4afe8e5345953abe29077f0a3989b8667bfb78da9c7": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify _incremental_decode in sglang_prepost.py to use emitted-character marker and hold back trailing U+FFFD",
+      "Add regression test for multi-byte UTF-8 streaming"
+    ],
+    "risks": [
+      "Potential overlap with existing PRs #10344, #12562, #11563",
+      "Holding back legitimate U+FFFD at finish requires flushing on finish_reason"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Reproduce with Korean prompt and count U+FFFD in streamed deltas",
+      "Run targeted unit tests for sglang_prepost.py"
+    ],
+    "unknowns": [
+      "Whether existing PRs already fix this exact issue",
+      "Maintainer preference on approach"
+    ],
+    "why": "Issue provides a clear root cause and a verified fix for a user-visible UTF-8 corruption bug, but the deterministic gate requires HUMAN_REVIEW and existing PRs overlap semantically, necessitating maintainer comparison before starting new work."
   },
   "5e4c0b3cfb0725a76c5e7aa225a5522cd8ed546062942df83393323f4505a9c0": {
     "confidence": 0.7,
@@ -3667,6 +3725,64 @@
       "Maintainer design preferences for binary content stripping in traces"
     ],
     "why": "Issue clearly identifies a real bug with a minimal repro and root cause in messages.py, but an open PR (#7053) has semantic overlap and the deterministic gate requires human review. Need maintainer confirmation on design and PR comparison before starting work."
+  },
+  "c3b6ae8e1ac189a7ffd4504aef23a93de3815a18b4ebfbcb705ee150ebead6e6": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "RemoteA2aAgent._run_async_impl to detect non-terminal stream end and either query task state, resubscribe, or emit error event",
+      "Add streaming regression tests for truncated A2A streams"
+    ],
+    "risks": [
+      "Potential API behavior changes if resubscription or state query is added; need maintainer design preference",
+      "May interact with existing PRs touching RemoteA2aAgent"
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Use the issue's reproduction steps to create a failing test that kills the peer mid-stream and asserts an error event or terminal state resolution",
+      "Run targeted unit tests for RemoteA2aAgent and static checks"
+    ],
+    "unknowns": [
+      "Maintainer design preference for handling truncated streams",
+      "Whether existing open PRs (e.g., #4686) might partially address this issue"
+    ],
+    "why": "Issue clearly describes a silent truncation bug in RemoteA2aAgent when A2A stream ends before terminal state, with reproduction steps and expected fixes. However, the deterministic gate requires HUMAN_REVIEW, and the submission policy needs assignment, so work should wait for maintainer confirmation."
+  },
+  "c50c4a640a7f7f94aa461e727896f49f8871afba692a14f37e7b72457e8233ae": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "datadog_llm_observability callback payload mapping",
+      "tool_calls placement in output messages",
+      "cache token metrics forwarding",
+      "tool_definitions in meta"
+    ],
+    "risks": [
+      "Potential maintainer design preferences on API schema changes",
+      "Risk of breaking existing Datadog integration behavior",
+      "Unknown if a similar PR already exists due to lookup timeout"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Create a failing test using the provided repro config and mock DD API to assert tool_calls and cache metrics are in expected fields",
+      "Run existing callback unit tests and static checks"
+    ],
+    "unknowns": [
+      "Open PR status and related issue audit results due to timeouts",
+      "Maintainer approval or design confirmation"
+    ],
+    "why": "The issue provides a detailed root cause and concrete fix suggestions for a real bug in the Datadog callback, but the deterministic gate requires HUMAN_REVIEW and open PR/related issue lookups timed out, so we cannot rule out existing implementations or maintainer preferences."
   },
   "c998e2e23395bea890e86932adcd2a03fd4beacc85b9c67017a830139e667254": {
     "confidence": 0.8,

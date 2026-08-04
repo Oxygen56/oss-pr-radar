@@ -1,5 +1,5 @@
 {
-  "digest": "1c743d5179cb712697dac78eeed97e340340ce683d7040031adc46ae30bf28de",
+  "digest": "03f17a8b157f3e033408451fdd9bbd9086b210ebcb9ab92b3a1d40e7aae1e21f",
   "events": [
     {
       "attempts": 1,
@@ -6190,9 +6190,251 @@
       "runId": "watch-1785879576",
       "sentAt": "2026-08-04T21:46:18.200601Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "mastra-ai/mastra#20701"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[mastra-ai/mastra#20701](https://github.com/mastra-ai/mastra/issues/20701) [BUG] When throwing an error in a tool, the state of that message is `output-available` not `output-error`**\n建议：PR_COMPETITION_OPPORTUNITY | 分数：11\n价值：Issue reports a clear user-visible bug with a public repro, but root cause is not identified. Existing PR #20705 directly addresses it but has failing CI and lacks maintainer approval, leaving room for a stronger PR with better tests and root-cause analysis.\n改动：core message state handling for tool errors；tests covering tool error state transitions\n验证：Use the provided minimal repro to create a failing test asserting output-error state；Run targeted unit tests for the relevant core module\n风险：Potential overlap with existing PR #20705; need to ensure differentiation；May require maintainer design confirmation on state semantics\n竞争：已有直接关联但证据不完整的 PR #20705：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：先复现 issue，再逐项对比已有 PR 的缺口；只有能提供更小改动、更强测试或更完整边界覆盖时才开 PR。\n证据：复现信号 5，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "green",
+          "title": {
+            "content": "OSS PR Radar: 可立即执行",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T23:32:36.855206Z",
+      "eventId": "235d0dd5f3a4e214952ab9b74f62fe430bb121da5c86a78c87da759058b3fc15",
+      "idempotencyKey": "235d0dd5f3a4e214952ab9b74f62fe430bb121da5c86a78c87",
+      "kind": "immediate",
+      "runId": "scan-20260804T232905Z-eda3cbdb6f8f",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "modelcontextprotocol/servers#4545",
+        "ai-dynamo/dynamo#12630",
+        "BerriAI/litellm#35786",
+        "google/adk-python#6585"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[modelcontextprotocol/servers#4545](https://github.com/modelcontextprotocol/servers/issues/4545) server-filesystem >=2025.11.25 (registerTool/outputSchema rewrite): 100% tool-call failure on Claude Desktop 1.24012.1 Windows — calls never dispatched to server**\n建议：WAIT_MAINTAINER | 分数：10\n价值：Issue reports a high-impact tool-call failure in server-filesystem after a schema rewrite, with strong evidence of client-side rejection of outputSchema/structuredContent. However, root cause is not fully confirmed: a maintainer fix is needed in the client or server, and the issue is primarily a bug report without a proposed code change. The workaround shim suggests a potential server-side fix, but design confirmation is required.\n改动：server-filesystem tool schema generation；possibly client-side validation in Claude Desktop\n验证：Create a minimal MCP server with outputSchema and verify tools/call dispatch in affected client versions；Add regression test for tools/list schema compatibility\n风险：Changing server schema may break other clients；Client-side fix may be outside repository scope\n竞争：仅发现未直接关联、无代码路径或强机制重合的 PR #3875；保留为搜索上下文，不阻止实现\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 1，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[ai-dynamo/dynamo#12630](https://github.com/ai-dynamo/dynamo/issues/12630) [Bug] sglang chat processor streaming detokenizer emits U+FFFD and drops completed characters on multi-byte UTF-8 (CJK) at chunk boundaries**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue provides a clear root cause and a verified fix for a user-visible UTF-8 corruption bug, but the deterministic gate requires HUMAN_REVIEW and existing PRs overlap semantically, necessitating maintainer comparison before starting new work.\n改动：Modify _incremental_decode in sglang_prepost.py to use emitted-character marker and hold back trailing U+FFFD；Add regression test for multi-byte UTF-8 streaming\n验证：Reproduce with Korean prompt and count U+FFFD in streamed deltas；Run targeted unit tests for sglang_prepost.py\n风险：Potential overlap with existing PRs #10344, #12562, #11563；Holding back legitimate U+FFFD at finish requires flushing on finish_reason\n竞争：发现 PR #10344 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 2，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#35786](https://github.com/BerriAI/litellm/issues/35786) [Bug]: datadog_llm_observability callback: tool_calls and cache tokens sent in meta.metadata instead of their designated API fields (meta.output.messages[].tool_calls and span metrics)**\n建议：WAIT_MAINTAINER | 分数：12\n价值：The issue provides a detailed root cause and concrete fix suggestions for a real bug in the Datadog callback, but the deterministic gate requires HUMAN_REVIEW and open PR/related issue lookups timed out, so we cannot rule out existing implementations or maintainer preferences.\n改动：datadog_llm_observability callback payload mapping；tool_calls placement in output messages；cache token metrics forwarding；tool_definitions in meta\n验证：Create a failing test using the provided repro config and mock DD API to assert tool_calls and cache metrics are in expected fields；Run existing callback unit tests and static checks\n风险：Potential maintainer design preferences on API schema changes；Risk of breaking existing Datadog integration behavior；Unknown if a similar PR already exists due to lookup timeout\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 11，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[google/adk-python#6585](https://github.com/google/adk-python/issues/6585) RemoteA2aAgent ends the invocation silently when the A2A stream stops before a terminal task state**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue clearly describes a silent truncation bug in RemoteA2aAgent when A2A stream ends before terminal state, with reproduction steps and expected fixes. However, the deterministic gate requires HUMAN_REVIEW, and the submission policy needs assignment, so work should wait for maintainer confirmation.\n改动：RemoteA2aAgent._run_async_impl to detect non-terminal stream end and either query task state, resubscribe, or emit error event；Add streaming regression tests for truncated A2A streams\n验证：Use the issue's reproduction steps to create a failing test that kills the peer mid-stream and asserts an error event or terminal state resolution；Run targeted unit tests for RemoteA2aAgent and static checks\n风险：Potential API behavior changes if resubscription or state query is added; need maintainer design preference；May interact with existing PRs touching RemoteA2aAgent\n竞争：仅发现未直接关联、无代码路径或强机制重合的 PR #4686；保留为搜索上下文，不阻止实现\n下一步：先请求维护者分配/确认方案，获批后再开 PR。\n证据：复现信号 2，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T23:32:36.957437Z",
+      "eventId": "78f54923d8e44aba08df5cff87c3efd23f16df0ce647e3dd2562c8f48e01c4c1",
+      "idempotencyKey": "78f54923d8e44aba08df5cff87c3efd23f16df0ce647e3dd25",
+      "kind": "review",
+      "runId": "scan-20260804T232905Z-eda3cbdb6f8f",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "areal-project/AReaL#1565",
+        "can1357/oh-my-pi#7601",
+        "mem0ai/mem0#6783",
+        "microsoft/agent-framework#7490",
+        "microsoft/agent-framework#7491",
+        "modelcontextprotocol/inspector#1858",
+        "modelcontextprotocol/inspector#1859",
+        "modelcontextprotocol/inspector#1914",
+        "modelcontextprotocol/inspector#1918",
+        "modelcontextprotocol/typescript-sdk#2614",
+        "sgl-project/sglang#33464"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[areal-project/AReaL#1565](https://github.com/areal-project/AReaL/issues/1565) [BUG][v2] Teardown leaves an orphan process after torch-memory-saver CUDA free errors**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[can1357/oh-my-pi#7601](https://github.com/can1357/oh-my-pi/issues/7601) [Windows] Shared headless browser daemon exits with code 21: system Chrome 150 silently exits on --remote-debugging-port=0**\n建议：WAIT_MAINTAINER\n价值：STRONG_PR_APPEARED\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[mem0ai/mem0#6783](https://github.com/mem0ai/mem0/issues/6783) [Codex plugin] Exported MEM0_API_KEY is filtered before MCP startup in managed environments**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[microsoft/agent-framework#7490](https://github.com/microsoft/agent-framework/issues/7490) Python: [Bug]: with `predict_state_config` set, EVERY tool result emits a full `StateSnapshotEvent` — including for tools the config never names**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[microsoft/agent-framework#7491](https://github.com/microsoft/agent-framework/issues/7491) Python: [Bug]: AG-UI `MESSAGES_SNAPSHOT` re-factors streamed messages under fresh ids — the reference `@ag-ui/client` merge then renders every mid-run tool call after the final text**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[modelcontextprotocol/inspector#1858](https://github.com/modelcontextprotocol/inspector/issues/1858) v2 hangs silently when connecting to streamable-http**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[modelcontextprotocol/inspector#1859](https://github.com/modelcontextprotocol/inspector/issues/1859) Sanbox not loaded: ENOENT: no such file or directory, open ..../@modelcontextprotocol/inspector/clients/web/static/sandbox_proxy.html**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[modelcontextprotocol/inspector#1914](https://github.com/modelcontextprotocol/inspector/issues/1914) Bug: Failed manual connection leaves un-modifiable ghost server entry**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[modelcontextprotocol/inspector#1918](https://github.com/modelcontextprotocol/inspector/issues/1918) Bug: GET api/servers Fails Within Headless Docker Container**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[modelcontextprotocol/typescript-sdk#2614](https://github.com/modelcontextprotocol/typescript-sdk/issues/2614) Client.listTools() corrupts its cached tool metadata when an output schema fails to compile**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33464](https://github.com/sgl-project/sglang/issues/33464) [Bug] EXIF orientation is never applied when decoding images for VLM serving**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T23:32:37.056124Z",
+      "eventId": "06cf7cb8d604b35512f6fc83d71f7af6e4f2e4cf08b0526722a067e32fc63d0d",
+      "idempotencyKey": "06cf7cb8d604b35512f6fc83d71f7af6e4f2e4cf08b0526722",
+      "kind": "watch",
+      "runId": "watch-1785886097",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-04T21:45:43.165983Z",
+  "generatedAt": "2026-08-04T23:32:37.143415Z",
   "newEventCount": 0,
   "version": "notification_outbox_v1"
 }
