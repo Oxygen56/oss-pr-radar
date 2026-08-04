@@ -257,7 +257,8 @@ ACTIVE_RE = re.compile(
     re.I,
 )
 RFC_RE = re.compile(
-    r"\b(rfc|dep(?:\s*\((?:light|full)\))?|roadmap|tracking issue|meta issue|epic|design proposal|"
+    r"\b(rfc|dep(?:\s*\((?:light|full)\))?|roadmap|tracking issue|failure tracker|"
+    r"failure tracking|meta issue|epic|design proposal|"
     r"architecture proposal|architecture question|mapping check|migration plan|"
     r"umbrella issue|feature request|integration proposal|new integration|"
     r"p0\s*[-–]\s*p[1-9]|dep:draft)\b",
@@ -2569,8 +2570,9 @@ class Radar:
             return None, "no_public_reproduction_or_root_cause"
         if not HIGH_RE.search(topic_text):
             return None, "off_topic"
+        dynamic_topic_text = re.sub(r"[_-]+", " ", f"{title}\n{labels_text}\n{body[:4000]}")
         if base["repo"] not in set(KNOWN_REPOS) and not is_dynamic_agent_infra_issue(
-            topic_text[:12000]
+            dynamic_topic_text
         ):
             return None, "off_topic_dynamic_repo"
 

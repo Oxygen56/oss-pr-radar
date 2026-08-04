@@ -50,6 +50,76 @@ def test_explicit_unavailable_hardware_requirement_is_preserved():
     )
 
 
+def test_failure_tracker_requires_a_maintainer_split(tmp_path):
+    radar = Radar(
+        datetime(2026, 8, 4, tzinfo=UTC),
+        2,
+        tmp_path / "seen.json",
+        "chat",
+        dry_run=True,
+        notify=False,
+    )
+    base = {
+        "repo": "sgl-project/sglang",
+        "num": 27937,
+        "title": "[Failure Tracker] PR Test (AMD)",
+        "url": "https://github.com/sgl-project/sglang/issues/27937",
+    }
+    issue = {
+        "state": "open",
+        "title": base["title"],
+        "body": (
+            "Steps to reproduce: inspect the linked jobs. Expected behavior: tests pass. "
+            "Actual behavior: this tracker aggregates unrelated JIT, network, timeout, "
+            "and runner failures with several possible root causes."
+        ),
+        "labels": [],
+        "assignees": [],
+        "user": {"login": "bot"},
+    }
+
+    candidate, reason = radar.score_issue(base, issue, [])
+
+    assert candidate is None
+    assert reason == "rfc_or_roadmap_without_maintainer_split"
+
+
+def test_environment_dump_does_not_make_commerce_issue_ai_infra(tmp_path):
+    radar = Radar(
+        datetime(2026, 8, 4, tzinfo=UTC),
+        2,
+        tmp_path / "seen.json",
+        "chat",
+        dry_run=True,
+        notify=False,
+    )
+    base = {
+        "repo": "woocommerce/woocommerce",
+        "num": 47808,
+        "title": "Attribute name showing as slug when using order again",
+        "url": "https://github.com/woocommerce/woocommerce/issues/47808",
+    }
+    issue = {
+        "state": "open",
+        "title": base["title"],
+        "body": (
+            "Steps to reproduce: purchase a product and use Order Again. "
+            "Expected behavior: the attribute name is shown. "
+            "Actual behavior: the attribute slug is shown instead.\n"
+            + ("Environment details. " * 300)
+            + "WP Memory Limit: 512 MB; User Agents table enabled."
+        ),
+        "labels": [{"name": "bug"}],
+        "assignees": [],
+        "user": {"login": "reporter"},
+    }
+
+    candidate, reason = radar.score_issue(base, issue, [])
+
+    assert candidate is None
+    assert reason == "off_topic_dynamic_repo"
+
+
 def test_single_shared_scenario_slug_is_not_a_duplicate_issue(tmp_path):
     radar = Radar(
         datetime(2026, 8, 4, tzinfo=UTC),
