@@ -84,6 +84,13 @@ def build_queue(
         for item in report.get("candidate_details") or []
         if isinstance(item, dict)
     }
+    observed.update(
+        key
+        for key, outcome in (report.get("issue_outcomes") or {}).items()
+        if isinstance(key, str)
+        and isinstance(outcome, dict)
+        and outcome.get("status") in {"candidate", "rejected"}
+    )
     retained: dict[str, dict[str, Any]] = {}
     if isinstance(existing, dict) and existing.get("version") == QUEUE_VERSION:
         try:

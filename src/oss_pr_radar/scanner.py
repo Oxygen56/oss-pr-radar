@@ -63,6 +63,7 @@ SCANNER_MIGRATION_RECHECK_STATUSES = frozenset(
         "hardware_unavailable",
         "no_bug_or_maintainer_actionability",
         "notified",
+        "queued_outbox",
     }
 )
 MAX_ISSUES_PER_REPO_PER_SCAN = 4
@@ -3394,6 +3395,7 @@ class Radar:
                 )
                 for key in sorted(self.forced_recheck_keys)
             },
+            "issue_outcomes": self.issue_outcomes,
             "rejection_summary": self.rejection_summary,
             "rejection_examples": self.rejection_examples,
             "titles": [

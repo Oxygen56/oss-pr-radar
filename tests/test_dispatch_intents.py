@@ -102,6 +102,42 @@ def test_observed_rejection_revokes_existing_intent():
     assert result["intents"] == []
 
 
+def test_scanner_rejection_outcome_revokes_existing_intent():
+    existing = MODULE.build(report(candidate()), signing_key=KEY, now=NOW)
+    rejected = report()
+    rejected["issue_outcomes"] = {
+        "example/project#42": {
+            "status": "rejected",
+            "reason": "managed_inference_service_incident",
+        }
+    }
+    result = MODULE.build(
+        rejected,
+        existing,
+        signing_key=KEY,
+        now=NOW + timedelta(minutes=10),
+    )
+    assert result["intents"] == []
+
+
+def test_deferred_outcome_does_not_revoke_existing_intent():
+    existing = MODULE.build(report(candidate()), signing_key=KEY, now=NOW)
+    deferred = report()
+    deferred["issue_outcomes"] = {
+        "example/project#42": {
+            "status": "deferred",
+            "reason": "inspection_budget_deferred",
+        }
+    }
+    result = MODULE.build(
+        deferred,
+        existing,
+        signing_key=KEY,
+        now=NOW + timedelta(minutes=10),
+    )
+    assert [item["key"] for item in result["intents"]] == ["example/project#42"]
+
+
 def test_tampering_and_expiry_fail_closed():
     result = MODULE.build(report(candidate()), signing_key=KEY, now=NOW)
     result["intents"][0]["title"] = "tampered"
