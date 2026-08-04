@@ -17,7 +17,9 @@ NOW = datetime(2026, 8, 4, 2, tzinfo=UTC)
 def test_missing_natural_schedule_is_unhealthy():
     result = MODULE.health([], now=NOW)
     assert result["healthy"] is False
+    assert result["naturalScheduleHealthy"] is False
     assert "NO_NATURAL_SCHEDULE_RUN" in result["issues"]
+    assert result["naturalScheduleIssues"] == result["issues"]
 
 
 def test_recent_successful_schedule_is_healthy():
@@ -34,6 +36,7 @@ def test_recent_successful_schedule_is_healthy():
         now=NOW,
     )
     assert result["healthy"] is True
+    assert result["naturalScheduleHealthy"] is True
 
 
 def test_recent_manual_success_keeps_effective_scan_fresh():

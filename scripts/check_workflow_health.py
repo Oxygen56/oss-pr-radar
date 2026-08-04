@@ -59,6 +59,8 @@ def health(workflow_runs: list[dict], *, now: datetime | None = None) -> dict:
     return {
         "healthy": not issues,
         "issues": issues,
+        "naturalScheduleHealthy": not issues,
+        "naturalScheduleIssues": issues,
         "latestScheduleUrl": latest_schedule.get("html_url") if latest_schedule else None,
         "latestSuccessUrl": latest_success.get("html_url") if latest_success else None,
         "checkedAt": current.isoformat().replace("+00:00", "Z"),
