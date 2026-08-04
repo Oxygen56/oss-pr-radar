@@ -89,7 +89,7 @@ python scripts/local_dispatch_bridge.py list
 python scripts/local_dispatch_bridge.py metrics --days 30
 
 # Independent natural-schedule check
-python scripts/check_workflow_health.py --notify
+python scripts/check_workflow_health.py --notify --repair
 ```
 
 The hourly Codex automation calls `sync`, claims each pending intent through a

@@ -17,6 +17,7 @@ def build_outbox(
     *,
     now: datetime | None = None,
     kind: str = "immediate",
+    exclude_candidate_keys: set[str] | None = None,
 ) -> dict[str, Any]:
     current = (now or datetime.now(UTC)).astimezone(UTC)
     keep_after = current - timedelta(days=7)
@@ -30,10 +31,12 @@ def build_outbox(
                     retained[str(event["eventId"])] = event
             except (KeyError, TypeError, ValueError):
                 continue
+    excluded = exclude_candidate_keys or set()
     candidates = [
         item
         for item in report.get("candidate_details") or []
         if isinstance(item, dict)
+        and f"{item.get('repo')}#{item.get('num')}" not in excluded
         and (
             bool(item.get("auto_spawn"))
             if kind == "immediate"

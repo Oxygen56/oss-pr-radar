@@ -1,6 +1,11 @@
 from datetime import UTC, datetime
 
-from oss_pr_radar.scanner import Radar, is_dynamic_agent_infra_issue
+from oss_pr_radar.scanner import (
+    BUG_ACTIONABILITY_RE,
+    Radar,
+    is_dynamic_agent_infra_issue,
+    requires_unavailable_hardware,
+)
 
 
 def test_dynamic_repo_requires_ai_specific_context():
@@ -17,6 +22,31 @@ def test_dynamic_repo_accepts_agent_or_inference_mechanism():
     )
     assert is_dynamic_agent_infra_issue(
         "CUDA model inference batching corrupts the KV cache after a cancelled request."
+    )
+
+
+def test_is_not_honored_is_a_concrete_bug_signal():
+    assert BUG_ACTIONABILITY_RE.search(
+        "ModelSettings.parallel_tool_calls is not honored by the provider."
+    )
+
+
+def test_backend_context_does_not_turn_a_software_bug_into_hardware_only():
+    assert not requires_unavailable_hardware(
+        "[ROCm] Structured output is misclassified after reasoning",
+        "bug, structured-output",
+        (
+            "This was reproduced while using ROCm, but it is not ROCm-specific. "
+            "The root cause is the reasoning parser classifying a tool-call payload."
+        ),
+    )
+
+
+def test_explicit_unavailable_hardware_requirement_is_preserved():
+    assert requires_unavailable_hardware(
+        "Kernel crash on MI300X",
+        "bug, rocm",
+        "The failure is only reproducible on MI300X and requires that accelerator.",
     )
 
 

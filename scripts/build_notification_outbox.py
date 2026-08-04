@@ -18,10 +18,24 @@ def main() -> int:
     parser.add_argument("report", type=Path)
     parser.add_argument("outbox", type=Path)
     parser.add_argument("--kind", choices=("immediate", "review", "watch"), default="immediate")
+    parser.add_argument("--exclude-report", type=Path)
     args = parser.parse_args()
     report = json.loads(args.report.read_text(encoding="utf-8"))
     existing = json.loads(args.outbox.read_text(encoding="utf-8")) if args.outbox.exists() else None
-    outbox = build_outbox(report, existing, kind=args.kind)
+    excluded: set[str] = set()
+    if args.exclude_report and args.exclude_report.exists():
+        exclusion_report = json.loads(args.exclude_report.read_text(encoding="utf-8"))
+        excluded = {
+            f"{item.get('repo')}#{item.get('num')}"
+            for item in exclusion_report.get("candidate_details") or []
+            if isinstance(item, dict) and item.get("repo") and item.get("num") is not None
+        }
+    outbox = build_outbox(
+        report,
+        existing,
+        kind=args.kind,
+        exclude_candidate_keys=excluded,
+    )
     atomic_write_json(args.outbox, outbox)
     print(
         json.dumps(

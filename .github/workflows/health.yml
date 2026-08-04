@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  actions: read
+  actions: write
   contents: read
 
 jobs:
@@ -25,4 +25,4 @@ jobs:
         with:
           python-version: "3.12"
       - name: Check natural schedule freshness
-        run: python scripts/check_workflow_health.py --notify
+        run: python scripts/check_workflow_health.py --notify --repair

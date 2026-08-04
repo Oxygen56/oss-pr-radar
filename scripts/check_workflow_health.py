@@ -65,13 +65,104 @@ def health(workflow_runs: list[dict], *, now: datetime | None = None) -> dict:
     }
 
 
+def effective_scan_freshness(
+    workflow_runs: list[dict],
+    *,
+    now: datetime | None = None,
+    max_age: timedelta = timedelta(minutes=75),
+    active_grace: timedelta = timedelta(minutes=50),
+) -> dict:
+    """Treat a recent fallback run as healthy and avoid duplicate repairs."""
+
+    current = (now or datetime.now(UTC)).astimezone(UTC)
+    relevant = [
+        item for item in workflow_runs if item.get("event") in {"schedule", "workflow_dispatch"}
+    ]
+    successful = [item for item in relevant if item.get("conclusion") == "success"]
+    active = [
+        item
+        for item in relevant
+        if item.get("status") in {"queued", "in_progress", "waiting", "requested", "pending"}
+        and item.get("created_at")
+        and parse_time(item["created_at"]) >= current - active_grace
+    ]
+    latest_success = max(
+        successful,
+        key=lambda item: parse_time(item["updated_at"]),
+        default=None,
+    )
+    latest_active = max(
+        active,
+        key=lambda item: parse_time(item["created_at"]),
+        default=None,
+    )
+    success_fresh = bool(
+        latest_success and parse_time(latest_success["updated_at"]) >= current - max_age
+    )
+    return {
+        "fresh": success_fresh or latest_active is not None,
+        "recentSuccess": success_fresh,
+        "recentActive": latest_active is not None,
+        "latestEffectiveUrl": ((latest_active or latest_success or {}).get("html_url")),
+        "maxAgeMinutes": int(max_age.total_seconds() // 60),
+    }
+
+
+def dispatch_scan(repo: str, ref: str, *, window_hours: float = 2.0) -> None:
+    completed = subprocess.run(
+        [
+            "gh",
+            "workflow",
+            "run",
+            "radar.yml",
+            "--repo",
+            repo,
+            "--ref",
+            ref,
+            "-f",
+            f"window_hours={window_hours:g}",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError((completed.stderr or completed.stdout)[:300])
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo", default="Oxygen56/oss-pr-radar")
     parser.add_argument("--notify", action="store_true")
+    parser.add_argument("--repair", action="store_true")
+    parser.add_argument("--dry-run-repair", action="store_true")
+    parser.add_argument("--ref", default="main")
+    parser.add_argument("--max-effective-age-minutes", type=int, default=75)
     args = parser.parse_args()
-    result = health(runs(args.repo))
-    if args.notify and not result["healthy"]:
+    workflow_runs = runs(args.repo)
+    result = health(workflow_runs)
+    effective = effective_scan_freshness(
+        workflow_runs,
+        max_age=timedelta(minutes=max(15, args.max_effective_age_minutes)),
+    )
+    repair_triggered = False
+    repair_would_trigger = False
+    repair_error = None
+    if args.repair and not effective["fresh"]:
+        repair_would_trigger = True
+        if not args.dry_run_repair:
+            try:
+                dispatch_scan(args.repo, args.ref)
+                repair_triggered = True
+            except (RuntimeError, subprocess.SubprocessError) as exc:
+                repair_error = f"{type(exc).__name__}:{str(exc)[:200]}"
+    result["effectiveScan"] = effective
+    result["repairTriggered"] = repair_triggered
+    result["repairWouldTrigger"] = repair_would_trigger
+    result["repairError"] = repair_error
+    result["operationalHealthy"] = effective["fresh"] or repair_triggered
+    if args.notify and (repair_would_trigger or repair_error):
         app_id = os.environ.get("FEISHU_APP_ID")
         app_secret = os.environ.get("FEISHU_APP_SECRET")
         chat_id = os.environ.get("FEISHU_CHAT_ID")
@@ -89,7 +180,11 @@ def main() -> int:
                         "tag": "div",
                         "text": {
                             "tag": "lark_md",
-                            "content": "\n".join(result["issues"]),
+                            "content": "\n".join(
+                                result["issues"]
+                                + (["FALLBACK_DISPATCH_TRIGGERED"] if repair_triggered else [])
+                                + ([f"REPAIR_FAILED: {repair_error}"] if repair_error else [])
+                            ),
                         },
                     }
                 ],
@@ -99,7 +194,7 @@ def main() -> int:
             ),
         )
     print(json.dumps(result, ensure_ascii=False))
-    return 0 if result["healthy"] else 2
+    return 0 if result["operationalHealthy"] else 2
 
 
 if __name__ == "__main__":

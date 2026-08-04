@@ -43,11 +43,19 @@ SEEN_RECHECK_HOURS = 24
 SEARCH_MIN_INTERVAL_SECONDS = 1.5
 SEARCH_RETRY_DELAYS_SECONDS = (3.0, 10.0, 30.0)
 FEISHU_RETRY_DELAYS_SECONDS = (0.0, 1.0, 3.0)
-SCAN_DEEP_INSPECTION_DEADLINE_SECONDS = 240.0
+SCAN_DEEP_INSPECTION_DEADLINE_SECONDS = 360.0
 REPO_COLLECTION_WORKERS = 4
-MAX_ISSUES_TO_INSPECT = 24
-MAX_SEEN_RECHECKS = 12
+MAX_ISSUES_TO_INSPECT = 30
+MAX_SEEN_RECHECKS = 18
 MAX_SCANNER_MIGRATION_RECHECKS = 8
+SEEN_RECHECK_STATUSES = frozenset(
+    {
+        "send_failed",
+        "status_update",
+        "inspection_budget_deferred",
+        "candidate_overflow",
+    }
+)
 SCANNER_MIGRATION_RECHECK_STATUSES = frozenset(
     {
         "frontend_interaction_issue",
@@ -271,7 +279,10 @@ BUG_ACTIONABILITY_RE = re.compile(
     r"deadlock|oom|memory leak|garbled|mismatch|collapse(?:s|d)?|"
     r"unbounded|runaway|catastrophic|degrad(?:e|es|ed|ation)|slowdown|"
     r"discard(?:s|ed|ing)?|silent(?:ly)?|missing|never|livelock(?:s|ed|ing)?)\b|"
-    r"\b(?:does not|doesn't|cannot|can't|fails? to|no way to)\b",
+    r"\b(?:does not|doesn't|cannot|can't|fails? to|no way to)\b|"
+    r"\b(?:is not|isn't|are not|aren't)\s+"
+    r"(?:honou?red|forwarded|applied|respected|propagated|preserved|serialized|"
+    r"handled|included|returned|closed)\b",
     re.I,
 )
 HELP_WANTED_RE = re.compile(r"\b(help wanted|contributions? welcome|good to implement)\b", re.I)
@@ -1038,14 +1049,25 @@ def requires_unavailable_hardware(title: str, labels_text: str, body: str) -> bo
     """Skip only issues whose unavailable hardware is part of the actual scope."""
 
     scoped = f"{title}\n{labels_text}"
-    if UNAVAILABLE_HARDWARE_RE.search(scoped):
-        return True
-    if not UNAVAILABLE_HARDWARE_RE.search(body):
+    has_scoped_hardware = bool(UNAVAILABLE_HARDWARE_RE.search(scoped))
+    has_body_hardware = bool(UNAVAILABLE_HARDWARE_RE.search(body))
+    if not has_scoped_hardware and not has_body_hardware:
+        return False
+    if re.search(
+        r"\bnot\s+(?:rocm|cuda|hardware|gpu|backend)[- ]specific\b|"
+        r"\b(?:reproduced|observed)\s+(?:across|on)\s+(?:both|multiple)\s+"
+        r"(?:backends?|platforms?|gpu vendors?)\b",
+        body[:5000],
+        re.I,
+    ):
         return False
     if AVAILABLE_HARDWARE_RE.search(f"{scoped}\n{body}"):
         return False
+    if has_scoped_hardware:
+        return True
     requirement = re.compile(
-        rf"(?:requires?|only|exclusively|specific to|reproduc(?:e|ed|ible) on|tested on|run(?:ning)? on|on one)"
+        rf"(?:requires?|exclusively|specific to|only reproduc(?:e|es|ed|ible) on|"
+        rf"reproduc(?:e|es|ed|ible) only on)"
         rf".{{0,50}}{UNAVAILABLE_HARDWARE_RE.pattern}|"
         rf"{UNAVAILABLE_HARDWARE_RE.pattern}.{{0,35}}(?:only|required|specific)",
         re.I | re.S,
@@ -1322,13 +1344,12 @@ class Radar:
             (
                 (key, value)
                 for key, value in self.seen.items()
-                if isinstance(value, dict)
-                and value.get("status")
-                in {"send_failed", "status_update", "inspection_budget_deferred"}
+                if isinstance(value, dict) and value.get("status") in SEEN_RECHECK_STATUSES
             ),
             key=lambda pair: str(pair[1].get("requeued_at") or pair[1].get("analyzed") or ""),
         )[:MAX_SEEN_RECHECKS]
         recheck_keys = {key for key, _ in rechecks}
+        self.forced_recheck_keys.update(recheck_keys)
         migration_rechecks = sorted(
             (
                 (key, value)
@@ -2720,6 +2741,23 @@ class Radar:
         def reject(reason: str, base: dict[str, Any]) -> None:
             key = f"{base.get('repo')}#{base.get('num')}"
             self.issue_outcomes[key] = {"status": "rejected", "reason": reason}
+            previous = self.seen.get(key)
+            if (
+                base.get("_explicit_recheck")
+                and isinstance(previous, dict)
+                and previous.get("status") in {"inspection_budget_deferred", "candidate_overflow"}
+            ):
+                retryable = reason.endswith("_failed")
+                self.seen[key] = {
+                    "analyzed": self.analyzed,
+                    "status": "status_update" if retryable else "rejected",
+                    "reason": reason,
+                    "title": base.get("title") or key,
+                    "url": base.get("url")
+                    or f"https://github.com/{base.get('repo')}/issues/{base.get('num')}",
+                    "issue_updated": base.get("updated") or base.get("issue_updated") or "",
+                    **({"requeued_at": self.analyzed} if retryable else {}),
+                }
             rejection_counts[reason] += 1
             if len(rejection_examples[reason]) < 2:
                 rejection_examples[reason].append(
@@ -2733,15 +2771,24 @@ class Radar:
 
         def defer(base: dict[str, Any], reason: str) -> None:
             key = f"{base['repo']}#{base['num']}"
+            previous = self.seen.get(key) if isinstance(self.seen.get(key), dict) else {}
             self.issue_outcomes[key] = {"status": "deferred", "reason": reason}
             self.seen[key] = {
                 "analyzed": self.analyzed,
                 "requeued_at": self.analyzed,
-                "status": "inspection_budget_deferred",
+                "first_deferred_at": previous.get("first_deferred_at")
+                or previous.get("requeued_at")
+                or self.analyzed,
+                "defer_count": int(previous.get("defer_count") or 0) + 1,
+                "status": (
+                    "candidate_overflow"
+                    if reason == "candidate_overflow"
+                    else "inspection_budget_deferred"
+                ),
                 "reason": reason,
                 "title": base.get("title") or key,
                 "url": base.get("url") or f"https://github.com/{base['repo']}/issues/{base['num']}",
-                "issue_updated": base.get("updated") or "",
+                "issue_updated": base.get("updated") or base.get("issue_updated") or "",
             }
 
         for base in items.values():
@@ -3064,7 +3111,13 @@ class Radar:
             for item in candidates
             if f"{item['repo']}#{item['num']}" not in self.forced_recheck_keys
         ]
-        selected = forced_candidates + regular_candidates[: max(0, 4 - len(forced_candidates))]
+        regular_capacity = max(0, 4 - len(forced_candidates))
+        selected = forced_candidates + regular_candidates[:regular_capacity]
+        overflow_candidates = regular_candidates[regular_capacity:]
+        for candidate in overflow_candidates:
+            defer(candidate, "candidate_overflow")
+        if overflow_candidates:
+            self.rejection_summary["candidate_overflow_deferred"] = len(overflow_candidates)
         return selected, len(bases), inspected
 
     def feishu_post(
@@ -3240,6 +3293,18 @@ class Radar:
                     "title": candidate["title"],
                     "url": candidate["url"],
                     "issue_updated": candidate.get("issue_updated") or "",
+                }
+        elif not self.notify:
+            for candidate in notification_candidates:
+                self.seen[f"{candidate['repo']}#{candidate['num']}"] = {
+                    "analyzed": self.analyzed,
+                    "notified": False,
+                    "status": "queued_outbox",
+                    "score": candidate["score"],
+                    "title": candidate["title"],
+                    "url": candidate["url"],
+                    "issue_updated": candidate.get("issue_updated") or "",
+                    "notification_digest": candidate["notification_digest"],
                 }
 
         for entry in self.seen.values():

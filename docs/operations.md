@@ -10,7 +10,15 @@
 
 GitHub scheduled workflows may be delayed under load. The scanner uses a
 two-hour update window plus bounded backfill, so one delayed run does not lose
-an issue.
+an issue. Both the watchdog and the local dispatcher run the health check with
+`--repair`: when neither a successful scan nor a still-active scan is recent,
+they dispatch one manual fallback run. A recent active fallback suppresses a
+second repair, and workflow concurrency serializes a late natural run behind it.
+
+Deferred inspections are oldest-first and are treated as forced rechecks. A
+terminal rejection drains the item; a transient evidence lookup failure remains
+eligible for retry. Candidates that exceed the per-run notification cap are
+stored as `candidate_overflow` instead of being silently lost.
 
 ## Rollout Modes
 
@@ -53,7 +61,7 @@ quota or discovery score.
 
 ## Local Dispatcher Order
 
-The desktop automation runs health, queue sync, PR lifecycle refresh, live
+The desktop automation runs health with fallback repair, queue sync, PR lifecycle refresh, live
 claim/revalidation, exact-project worktree creation, task receipt verification,
 one-shot recovery, title synchronization, and `AUDIT_NO_GO` cleanup in that
 order. A canary WIP limit may leave valid pending intents in the queue; this is

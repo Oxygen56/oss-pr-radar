@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from oss_pr_radar.notifier import FeishuClient
+from oss_pr_radar.notifier import FeishuClient, candidate_card
 from oss_pr_radar.outbox import build_outbox, validate_outbox
 
 NOW = datetime(2026, 8, 4, tzinfo=UTC)
@@ -44,6 +44,13 @@ def test_review_and_immediate_are_separate():
     assert review["events"][0]["candidateKeys"] == ["a/b#2"]
 
 
+def test_excluded_candidate_is_not_added_twice():
+    report = {"candidate_details": [candidate()]}
+    outbox = build_outbox(report, now=NOW, exclude_candidate_keys={"a/b#1"})
+    assert outbox["newEventCount"] == 0
+    assert outbox["events"] == []
+
+
 def test_outbox_digest_detects_tampering():
     outbox = build_outbox({"candidate_details": [candidate()]}, now=NOW)
     outbox["events"][0]["status"] = "SENT"
@@ -64,3 +71,21 @@ def test_feishu_uuid_is_sent(monkeypatch):
     monkeypatch.setattr(client, "_post", fake_post)
     client.send_card({"elements": []}, idempotency_key="x" * 64)
     assert calls[1][1]["uuid"] == "x" * 50
+
+
+def test_sparse_watch_card_omits_placeholder_noise():
+    card = candidate_card(
+        [
+            {
+                "repo": "a/b",
+                "num": 3,
+                "url": "https://github.com/a/b/issues/3",
+                "title": "Maintainer confirmed the issue",
+            }
+        ],
+        title="状态更新",
+    )
+    content = card["elements"][0]["text"]["content"]
+    assert "None" not in content
+    assert "尚未" not in content
+    assert "等待证据" not in content

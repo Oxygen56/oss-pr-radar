@@ -20,15 +20,29 @@ def candidate_card(candidates: list[dict[str, Any]], *, title: str) -> dict[str,
         evidence = candidate.get("actionability_evidence") or {}
         lines = [
             f"**[{candidate['repo']}#{candidate['num']}]({candidate['url']}) {candidate['title']}**",
-            f"建议：{candidate.get('category')} | 分数：{candidate.get('score')}",
-            f"价值：{candidate.get('why') or '等待证据'}",
-            f"改动：{candidate.get('expected_changes') or '尚未定位'}",
-            f"验证：{candidate.get('test_path') or '尚未给出'}",
-            f"风险：{candidate.get('risk') or '尚未识别'}",
-            f"竞争：{relation.get('summary') or '未发现直接覆盖'}",
-            f"下一步：{candidate.get('next_step') or '按贡献规则复核'}",
-            f"证据：复现信号 {evidence.get('public_repro_signals', 0)}，根因信号 {bool(evidence.get('root_cause_signal'))}",
         ]
+        recommendation = candidate.get("category")
+        score = candidate.get("score")
+        if recommendation or score is not None:
+            recommendation_line = f"建议：{recommendation or '复核'}"
+            if score is not None:
+                recommendation_line += f" | 分数：{score}"
+            lines.append(recommendation_line)
+        optional_lines = (
+            ("价值", candidate.get("why")),
+            ("改动", candidate.get("expected_changes")),
+            ("验证", candidate.get("test_path")),
+            ("风险", candidate.get("risk")),
+            ("竞争", relation.get("summary")),
+            ("下一步", candidate.get("next_step")),
+        )
+        lines.extend(f"{label}：{value}" for label, value in optional_lines if value)
+        if evidence:
+            lines.append(
+                "证据："
+                f"复现信号 {evidence.get('public_repro_signals', 0)}，"
+                f"根因信号 {bool(evidence.get('root_cause_signal'))}"
+            )
         elements.append(
             {
                 "tag": "div",

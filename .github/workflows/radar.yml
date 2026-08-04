@@ -140,6 +140,7 @@ jobs:
           reports/watch_updates.json
           state/notification_outbox.json
           --kind watch
+          --exclude-report reports/latest_scan.json
 
       - name: Add actionable open PR updates to outbox
         run: >-
