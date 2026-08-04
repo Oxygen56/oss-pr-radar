@@ -215,6 +215,34 @@
     ],
     "why": "Issue clearly identifies a missing capability id hint in a durable-exec error message, with a concrete repro and root cause. However, the deterministic gate says HUMAN_REVIEW, and existing PR #6696 has semantic overlap with the durable_exec leaf-toolset path, requiring maintainer comparison before starting work."
   },
+  "0a4ac8b4b7346ac989d82d68c9156d254bf895bbab86a139e8f3b07b67d42960": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Investigate tool-call parser behavior with flashinfer_mxfp4 backend",
+      "Potentially fix parser or backend integration"
+    ],
+    "risks": [
+      "May duplicate existing PRs",
+      "Root cause may be in external parser crate"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with provided config and long context",
+      "Add regression test for tool-call parsing with flashinfer_mxfp4"
+    ],
+    "unknowns": [
+      "Whether existing PRs fix this issue",
+      "Maintainer preference on backend-specific fixes"
+    ],
+    "why": "Issue reports a tool-call error when switching runner backend to flashinfer_mxfp4, but root cause is unclear and may be related to parser logic. Open PRs exist with potential fixes but none explicitly reference this issue, and open PR lookup timed out, so competition cannot be fully assessed."
+  },
   "0a98c92367d8f789fb293f4eee553a84015b8d43450ee0efcd52ea76b26c9e33": {
     "confidence": 0.7,
     "contradictions": [],
@@ -752,6 +780,34 @@
     ],
     "why": "Issue identifies a likely typo in attribute name causing DSPARK to ignore min_tokens, with a concrete patch. However, open PR and related issue lookups timed out, so duplicate work cannot be excluded. Maintainer design confirmation is needed before implementing."
   },
+  "2e341483c57b34162f0f84021c68c966a5d873501621da6ff435952d2aff70bd": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify create_error_response in sglang/srt/entrypoints/openai/serving_base.py to wrap error in 'error' key",
+      "Add regression tests for non-streaming error response format"
+    ],
+    "risks": [
+      "Potential breaking change for clients relying on current format",
+      "Need to ensure streaming error responses remain consistent"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "test_plan": [
+      "Reproduce with curl command from issue to confirm current format",
+      "Add unit test asserting response body has 'error' wrapper with correct fields",
+      "Run existing OpenAI-related test suite and ensure CI passes"
+    ],
+    "unknowns": [
+      "Exact CI failure details of PR #33534",
+      "Maintainer preference on error format change"
+    ],
+    "why": "Issue clearly identifies a non-streaming error response format mismatch with OpenAI standard and pinpoints the root cause in create_error_response. Existing PR #33534 directly addresses this but has failed CI checks and lacks complete evidence, leaving room for a materially better PR with robust tests and CI passing."
+  },
   "313a2336d5d09dafa2c250f1489749dc267149e6808b06f92ed40205b1381701": {
     "confidence": 0.7,
     "contradictions": [],
@@ -1252,6 +1308,31 @@
       "Whether the related PR #50514 will be merged and how it interacts with this fix"
     ],
     "why": "Issue describes a deterministic deadlock with clear root cause (WORLD-group broadcast in fastsafetensors loader when only PP-last-stage ranks load draft model). However, the supplied gate decision is HUMAN_REVIEW, and the related issue audit failed (timeout), leaving uncertainty about maintainer awareness and existing design preferences. The open PR #50514 is related but has failing CI and does not directly fix the loader issue."
+  },
+  "51d87afaf092458d78b1ac07988e63149990bf661331435205153c8cb9da853f": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/core/src/agent/agent.ts",
+      "memory title generation flow"
+    ],
+    "risks": [
+      "Changing to await may increase latency; background hook may not be supported on all runtimes."
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Add regression test simulating process.exit after generate() resolves, verifying title persisted when awaited or when background hook is used."
+    ],
+    "unknowns": [
+      "Maintainer preference on whether to await title persistence or use a runtime-supported background hook."
+    ],
+    "why": "Issue clearly identifies a detached promise in Agent#executeOnFinish causing title loss on serverless runtimes, with a public repro and maintainer acknowledgment. However, a contributor has asked for design direction (await vs background hook) and no maintainer has confirmed the intended behavior, so implementation choice is unresolved."
   },
   "53d950a5b046494851fa50c7ca77ecc413da27b51ed680746bb5cfc30906150f": {
     "confidence": 0.7,
@@ -2089,6 +2170,34 @@
       "Status of PR #33525 and its failing checks"
     ],
     "why": "Issue clearly identifies a shallow update in get_config causing recursive override failure, with a concrete reproduction. However, an existing PR #33525 directly addresses this but lacks tests and has failing CI, and the deterministic gate requires HUMAN_REVIEW. Maintainer design preference is unconfirmed."
+  },
+  "86ad73ceb9cfe16be7833bf006c8a2a7473b3b53e278f40ed19107d894ac2f71": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "litellm/llms/ollama/completion/transformation.py",
+      "Add tool-call reconstruction in streaming iterator",
+      "Set finish_reason to tool_calls when tool call detected"
+    ],
+    "risks": [
+      "Potential behavior change for existing streaming responses",
+      "Need to handle edge cases like partial JSON chunks"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "test_plan": [
+      "Add regression test that streams a tool call and asserts delta.tool_calls is populated and finish_reason is tool_calls",
+      "Run existing ollama tests and CI checks"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a different approach or have design constraints"
+    ],
+    "why": "Issue provides a clear, reproducible bug with root cause in the streaming path of the ollama/ provider. Existing PR #35782 is weak due to failed CI and incomplete evidence, so a materially better PR is plausible."
   },
   "86b7fa69f0424838e50d4a2f4d4245d8eef73797bc8c0370fdb579bfcdd2bbbf": {
     "confidence": 0.6,

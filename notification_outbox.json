@@ -1,5 +1,5 @@
 {
-  "digest": "fd12cc16c7f59b8c7f54c4d7c7a8b93380a3efe781e9990f4fd117d46ebe23cd",
+  "digest": "4d9f9bcb12d78b781a88ea24ed611b4da7bd6bc040120b5d38db20cde82cb8e0",
   "events": [
     {
       "attempts": 1,
@@ -4841,9 +4841,284 @@
       "runId": "watch-1785857959",
       "sentAt": "2026-08-04T15:45:08.440446Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "google/adk-python#6585",
+        "promptfoo/promptfoo#10298",
+        "microsoft/semantic-kernel#14265"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[google/adk-python#6585](https://github.com/google/adk-python/issues/6585) RemoteA2aAgent ends the invocation silently when the A2A stream stops before a terminal task state**\n建议：NEW_CLEAN_CANDIDATE | 分数：11\n价值：The issue clearly identifies a silent failure in RemoteA2aAgent when the A2A stream ends before a terminal state, with a concrete reproduction and expected behavior. No competing PR addresses this exact problem; existing PRs are keyword-overlap only.\n改动：Modify RemoteA2aAgent._run_async_impl to detect stream exhaustion without terminal state, then query task state or resubscribe, and emit error event if unresolved.；Add regression tests for stream truncation scenarios.\n验证：Create a test that simulates a peer dying mid-stream and assert an error event or terminal state resolution.；Run existing A2A agent tests to ensure no regressions.\n风险：Potential API behavior change if get_task/subscribe semantics are not fully understood.；May require coordination with a2a-sdk version compatibility.\n竞争：仅发现未直接关联、无代码路径或强机制重合的 PR #4686；保留为搜索上下文，不阻止实现\n下一步：按正常流程实现并验证；如要求 DCO 则自动 sign-off，PR 创建后报告 CLA 状态。\n证据：复现信号 2，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[promptfoo/promptfoo#10298](https://github.com/promptfoo/promptfoo/issues/10298) Azure OpenAI evaluator metrics fail with service principal authentication due to tenant mismatch**\n建议：NEW_CLEAN_CANDIDATE | 分数：11\n价值：Issue reports a concrete authentication failure in Azure OpenAI evaluator metrics with service principal auth, providing a minimal repro config and clear error. No competing PR or issue found. The root cause is likely a tenant mismatch in the auth flow for evaluator calls, but exact code path is unconfirmed.\n改动：Add regression test for Azure OpenAI service principal auth in evaluator metrics；Fix tenant handling in Azure OpenAI provider auth flow for evaluator calls\n验证：Create a test using the provided sample config and mock Azure OpenAI responses to reproduce the tenant mismatch error；Run existing Azure OpenAI provider tests and new regression test\n风险：May require maintainer design input on auth flow changes；Potential impact on existing Azure OpenAI authentication behavior\n竞争：未发现相关 open PR\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 2，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[microsoft/semantic-kernel#14265](https://github.com/microsoft/semantic-kernel/issues/14265) Bug: VertexAIEmbeddingGenerator hardcodes :predict, unusable with gemini-embedding models that only serve :embedContent**\n建议：PR_COMPETITION_OPPORTUNITY | 分数：11\n价值：Issue clearly identifies a hardcoded :predict endpoint causing 400 errors for gemini-embedding-2 models, with a public repro. Existing PR #14266 addresses the same root cause but lacks tests, leaving room for a stronger PR with regression tests and broader coverage.\n改动：Modify VertexAIEmbeddingClient to select :embedContent for gemini-embedding models；Add unit/integration tests for endpoint selection；Possibly update model metadata or configuration\n验证：Create a failing test using the issue's repro to verify :embedContent is used for gemini-embedding-2；Run existing connector tests and static analysis\n风险：Potential maintainer preference for a different design (e.g., configurable endpoint)；Risk of overlapping with existing PR #14266 if it gets updated with tests\n竞争：已有直接关联但证据不完整的 PR #14266：缺少测试文件；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：先复现 issue，再逐项对比已有 PR 的缺口；只有能提供更小改动、更强测试或更完整边界覆盖时才开 PR。\n证据：复现信号 3，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "green",
+          "title": {
+            "content": "OSS PR Radar: 可立即执行",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T17:44:47.025048Z",
+      "eventId": "b4dde6e6c5ecf00ac8ffb0404da3d8baec9a83bb60f14fc141710ddf0101abc3",
+      "idempotencyKey": "b4dde6e6c5ecf00ac8ffb0404da3d8baec9a83bb60f14fc141",
+      "kind": "immediate",
+      "runId": "scan-20260804T174002Z-84bee21a0355",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "mastra-ai/mastra#20682",
+        "BerriAI/litellm#35711",
+        "sgl-project/sglang#33504"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[mastra-ai/mastra#20682](https://github.com/mastra-ai/mastra/issues/20682) [BUG] Thread title is silently lost when generateTitle is used on serverless runtimes that freeze after the response (e.g. AWS Lambda)**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue clearly identifies a detached promise in Agent#executeOnFinish causing title loss on serverless runtimes, with a public repro and maintainer acknowledgment. However, a contributor has asked for design direction (await vs background hook) and no maintainer has confirmed the intended behavior, so implementation choice is unresolved.\n改动：packages/core/src/agent/agent.ts；memory title generation flow\n验证：Add regression test simulating process.exit after generate() resolves, verifying title persisted when awaited or when background hook is used.\n风险：Changing to await may increase latency; background hook may not be supported on all runtimes.\n竞争：发现 PR #16218 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 14，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#35711](https://github.com/BerriAI/litellm/issues/35711) [Bug]: `ollama/` streaming never reconstructs tool calls — tool call arrives as plain `delta.content` text with `finish_reason: \"stop\"`, while the non-streaming path reconstructs it correctly**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue provides a clear, reproducible bug with root cause in the streaming path of the ollama/ provider. Existing PR #35782 is weak due to failed CI and incomplete evidence, so a materially better PR is plausible.\n改动：litellm/llms/ollama/completion/transformation.py；Add tool-call reconstruction in streaming iterator；Set finish_reason to tool_calls when tool call detected\n验证：Add regression test that streams a tool call and asserts delta.tool_calls is populated and finish_reason is tool_calls；Run existing ollama tests and CI checks\n风险：Potential behavior change for existing streaming responses；Need to handle edge cases like partial JSON chunks\n竞争：已有直接关联但证据不完整的 PR #35782：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 10，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33504](https://github.com/sgl-project/sglang/issues/33504) Title: Inconsistent error response format with OpenAI standard for non-streaming requests**\n建议：WAIT_MAINTAINER | 分数：10\n价值：Issue clearly identifies a non-streaming error response format mismatch with OpenAI standard and pinpoints the root cause in create_error_response. Existing PR #33534 directly addresses this but has failed CI checks and lacks complete evidence, leaving room for a materially better PR with robust tests and CI passing.\n改动：Modify create_error_response in sglang/srt/entrypoints/openai/serving_base.py to wrap error in 'error' key；Add regression tests for non-streaming error response format\n验证：Reproduce with curl command from issue to confirm current format；Add unit test asserting response body has 'error' wrapper with correct fields；Run existing OpenAI-related test suite and ensure CI passes\n风险：Potential breaking change for clients relying on current format；Need to ensure streaming error responses remain consistent\n竞争：已有直接关联但证据不完整的 PR #33534：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 9，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T17:44:47.120424Z",
+      "eventId": "7d068958d6f8af25c3cb3c4c08c1aff2f870e7677498323b8aa65849850a2bae",
+      "idempotencyKey": "7d068958d6f8af25c3cb3c4c08c1aff2f870e7677498323b8a",
+      "kind": "review",
+      "runId": "scan-20260804T174002Z-84bee21a0355",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "vllm-project/vllm#50159",
+        "vllm-project/vllm#50719",
+        "vllm-project/vllm#50881",
+        "vllm-project/vllm#50948",
+        "ai-dynamo/dynamo#12630",
+        "areal-project/AReaL#1565",
+        "can1357/oh-my-pi#7601",
+        "esengine/DeepSeek-Reasonix#6545",
+        "openabdev/openab#1464",
+        "pydantic/pydantic-ai#7108"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50159](https://github.com/vllm-project/vllm/issues/50159) [Bug]: Model Runner V2 + Gemma-4: memory profiler reports ~0.9 GiB more \"available KV\" than MRv1 → no runtime headroom → CUDA OOM under saturating load (no spec involved); with EAGLE it crashes earlier at cudagraph capture (stable-ABI aten::empty)**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50719](https://github.com/vllm-project/vllm/issues/50719) [Bug][PD][Mooncake] Decode requests stuck in WAITING_FOR_REMOTE_KVS and fail with Timeout waiting for P side ready**\n建议：WAIT_MAINTAINER\n价值：OWNERSHIP_CHANGED\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50881](https://github.com/vllm-project/vllm/issues/50881) [Bug]: MiniMax-M3 fp8 KV cache on SM80 (A100/A800): coherent with --enforce-eager, garbage under CUDA graphs — root cause + working fix**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50948](https://github.com/vllm-project/vllm/issues/50948) [Bug]: Qwen parser routes grammar-constrained JSON to reasoning when `enable_in_reasoning=true`**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[ai-dynamo/dynamo#12630](https://github.com/ai-dynamo/dynamo/issues/12630) [Bug] sglang chat processor streaming detokenizer emits U+FFFD and drops completed characters on multi-byte UTF-8 (CJK) at chunk boundaries**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[areal-project/AReaL#1565](https://github.com/areal-project/AReaL/issues/1565) [BUG][v2] Teardown leaves an orphan process after torch-memory-saver CUDA free errors**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[can1357/oh-my-pi#7601](https://github.com/can1357/oh-my-pi/issues/7601) [Windows] Shared headless browser daemon exits with code 21: system Chrome 150 silently exits on --remote-debugging-port=0**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[esengine/DeepSeek-Reasonix#6545](https://github.com/esengine/DeepSeek-Reasonix/issues/6545) [Bug]: `reasonix serve` 切换模型后 `ask` 工具失效，返回 'No interactive user answered'\"**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[openabdev/openab#1464](https://github.com/openabdev/openab/issues/1464) bug(gateway/feishu): v0.9.0 unified mode broke all Feishu streaming modes + delete recovery**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[pydantic/pydantic-ai#7108](https://github.com/pydantic/pydantic-ai/issues/7108) `include_binary_content=False` is not honored for tool returns, `final_result`, or output-function arguments**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T17:44:47.259375Z",
+      "eventId": "5a3af7ba73e934f08ea07b4c282d1dc538885763cb73d616bb910a921fe435e9",
+      "idempotencyKey": "5a3af7ba73e934f08ea07b4c282d1dc538885763cb73d616bb",
+      "kind": "watch",
+      "runId": "watch-1785865059",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "hashicorp/terraform-mcp-server#442"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[hashicorp/terraform-mcp-server#442](https://github.com/hashicorp/terraform-mcp-server/pull/442) fix: honor optional no-code module variables**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、失败检查或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-04T17:44:47.358825Z",
+      "eventId": "087f1379c30616d7385ccec98c72c50c70af00cd4d8950593c245d78b4a117fd",
+      "idempotencyKey": "087f1379c30616d7385ccec98c72c50c70af00cd4d8950593c",
+      "kind": "watch",
+      "runId": "pr-followup-1785865058",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-04T15:44:32.324638Z",
-  "newEventCount": 0,
+  "generatedAt": "2026-08-04T17:44:47.358825Z",
+  "newEventCount": 1,
   "version": "notification_outbox_v1"
 }
