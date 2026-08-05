@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import json
 import os
@@ -857,6 +858,14 @@ def _executor(operation: str, arguments: list[str], *, ledger_path: Path) -> dic
 
 
 def run_publication_queue(args: argparse.Namespace) -> dict[str, Any]:
+    lock_path = Path(args.ledger).with_suffix(".publication.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+", encoding="utf-8") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        return _run_publication_queue_unlocked(args)
+
+
+def _run_publication_queue_unlocked(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
     published: list[dict[str, Any]] = []
     pending: list[dict[str, Any]] = []

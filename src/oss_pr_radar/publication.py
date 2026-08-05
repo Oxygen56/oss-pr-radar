@@ -24,6 +24,12 @@ PUBLIC_AI_DISCLOSURE_RE = re.compile(
     r"\b(?:ai|codex|chatgpt|llm)[- ]assisted\b|\bai disclosure\b",
     re.I,
 )
+PUBLIC_TOOL_BRANCH_RE = re.compile(
+    r"^(?:codex|chatgpt|claude|gemini|copilot)(?:$|[._/-])|"
+    r"(?:^|[._/-])(?:ai|codex|chatgpt|claude|gemini|copilot)[-_]?"
+    r"(?:generated|assisted)(?:$|[._/-])",
+    re.I,
+)
 
 
 class PublicationError(RuntimeError):
@@ -127,6 +133,8 @@ def request_publication(
     snapshot = _git_snapshot(worktree)
     if snapshot["status"]:
         raise PublicationError("worktree must be clean before publication request")
+    if not public_branch_is_safe(snapshot["branch"]):
+        raise PublicationError("public branch name exposes an AI tool")
     evidence, evidence_digest = _evidence_file(evidence_path)
     expected = {
         "issueUrl": issue_url,
@@ -208,6 +216,8 @@ def audit_publication_request(
         )
     if snapshot["status"]:
         return PublicationAudit("BLOCK", "WORKTREE_DIRTY", request_id, snapshot)
+    if not public_branch_is_safe(snapshot["branch"]):
+        return PublicationAudit("BLOCK", "PUBLIC_BRANCH_NAME_UNSAFE", request_id, snapshot)
     if snapshot["commitSha"] != request["commitSha"] or snapshot["branch"] != request["branch"]:
         return PublicationAudit("BLOCK", "COMMIT_OR_BRANCH_DRIFT", request_id, snapshot)
     if evidence_digest != request["evidenceDigest"]:
@@ -337,3 +347,7 @@ def broker_publication_request(
 
 def public_text_is_safe(title: str, body: str) -> bool:
     return not bool(PUBLIC_AI_DISCLOSURE_RE.search(f"{title}\n{body}"))
+
+
+def public_branch_is_safe(branch: str) -> bool:
+    return bool(branch.strip()) and not bool(PUBLIC_TOOL_BRANCH_RE.search(branch))

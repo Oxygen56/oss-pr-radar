@@ -148,6 +148,9 @@ python scripts/local_dispatch_bridge.py ingest-results
 # Advance independently revalidated publication requests
 python scripts/local_dispatch_bridge.py publication-run
 
+# Install the no-LLM local completion collector (20-second maximum pickup delay)
+python scripts/install_local_publication_agent.py
+
 # Rolling controllable quality metrics
 python scripts/local_dispatch_bridge.py metrics --days 30
 
@@ -169,6 +172,10 @@ committed or the desktop API explicitly rejects the request before returning
 an external ID. Child tasks report only through the Git-ignored
 `.oss-pr-radar/` directory; the controller ingests outcomes and executes the
 permit-bound publication path.
+An independent macOS LaunchAgent runs only the idempotent result-ingestion and
+permit-bound publication path every 20 seconds. It does not scan GitHub, invoke
+an LLM, create tasks, or rewrite active task contexts; the hourly controller
+remains a recovery fallback.
 Each sync also supersedes uncommitted local intents withdrawn from the latest
 signed cloud queue, so an older controller cannot dispatch a retracted decision.
 

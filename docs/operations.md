@@ -5,6 +5,8 @@
 - `radar.yml`: every hour at minute 17 in `Asia/Shanghai`.
 - Local Codex heartbeat dispatcher: every hour at minute 45, reusing one
   controller task after the GitHub scan's delay budget.
+- Local completion collector: every 20 seconds, ingesting only existing
+  workspace results and advancing existing publication requests without an LLM.
 - Health watchdog: every hour at minute 55.
 - The local dispatcher also runs the health check, so scheduler failure is not
   monitored only by another workflow on the same scheduler.
@@ -15,6 +17,9 @@ an issue. Both the watchdog and the local dispatcher run the health check with
 `--repair`: when neither a successful scan nor a still-active scan is recent,
 they dispatch one manual fallback run. A recent active fallback suppresses a
 second repair, and workflow concurrency serializes a late natural run behind it.
+The desktop controller never waits inside its execution window for that run to
+finish. It skips only queue sync, continues live revalidation of unexpired local
+signed intents, and retries sync at the end or on the next hourly cycle.
 
 Deferred inspections are oldest-first and receive a dedicated 24-item budget
 in addition to the 30-item fresh-issue budget; there is no recheck cooldown. A
@@ -85,6 +90,10 @@ a quality KPI or a publication-policy bypass.
   capacity. An expired permit can reconcile an existing ambiguous effect but
   can never authorize a new public attempt; a consumed success may only replay
   its stored receipt.
+- Install or refresh the local completion collector with
+  `python scripts/install_local_publication_agent.py`. Its stdout and stderr are
+  stored under `~/Library/Logs/oss-pr-radar/`; an idle cycle is silent. The
+  hourly controller repeats ingestion and publication as a fallback.
 
 ## Quality Review
 

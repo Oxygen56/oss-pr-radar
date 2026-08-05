@@ -148,6 +148,14 @@ def test_create_pr_replays_consumed_success_without_remote_lookup(monkeypatch, t
     assert store.succeeded == []
 
 
+def test_create_pr_rejects_tool_identity_in_public_branch(tmp_path):
+    args = pr_args(tmp_path)
+    args.branch = "codex/fix-one"
+
+    with pytest.raises(RuntimeError, match="branch name exposes"):
+        MODULE.create_pr(args, ReconcileStore())
+
+
 def test_existing_pr_uses_exact_rest_head_filter(monkeypatch):
     calls = []
 

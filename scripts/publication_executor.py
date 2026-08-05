@@ -18,6 +18,7 @@ from oss_pr_radar.ledger import RadarLedger  # noqa: E402
 from oss_pr_radar.publication import (  # noqa: E402
     ISSUE_URL,
     audit_publication_request,
+    public_branch_is_safe,
     public_text_is_safe,
 )
 from oss_pr_radar.util import sha256_json, sha256_text  # noqa: E402
@@ -209,6 +210,8 @@ def begin_effect(
 
 def push(args: argparse.Namespace, store: RadarLedger) -> dict[str, Any]:
     worktree = Path(args.worktree).resolve()
+    if not public_branch_is_safe(args.branch):
+        raise RuntimeError("public branch name exposes an AI tool")
     match = ISSUE_URL.match(args.issue_url)
     if not match:
         raise RuntimeError("invalid issue URL")
@@ -284,6 +287,8 @@ def push(args: argparse.Namespace, store: RadarLedger) -> dict[str, Any]:
 
 def create_pr(args: argparse.Namespace, store: RadarLedger) -> dict[str, Any]:
     worktree = Path(args.worktree).resolve()
+    if not public_branch_is_safe(args.branch):
+        raise RuntimeError("public branch name exposes an AI tool")
     match = ISSUE_URL.match(args.issue_url)
     if not match or match.group(1).casefold() != args.repo.casefold():
         raise RuntimeError("pull-request repository does not match the issue")
