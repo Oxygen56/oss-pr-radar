@@ -421,6 +421,42 @@
     ],
     "why": "Issue describes three concrete, high-impact correctness bugs in createInngestAgent.resume() with clear root causes and expected behavior. No competing PR or related issue found. Maintainer acknowledged and labeled, but no active investigation or design confirmation needed. Actionable fix with minimal repro."
   },
+  "12b16cabe82b6cb070e73b9e5069ab2ed2e2144c3f278ed79ca3f3b911755091": {
+    "confidence": 0.8,
+    "contradictions": [
+      "PR #40029 claims fix but lacks tests, while issue suggests route split; PR #39569 has tests but does not reference this issue"
+    ],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Split DatasetDocumentSegmentBatchImportApi into separate Resource classes",
+      "Add dataset-scoped route /datasets/<uuid:dataset_id>/batch_import_status/<uuid:job_id>",
+      "Update frontend polling URL in web/service/knowledge/use-segment.ts",
+      "Add regression tests for RBAC-enabled batch import status endpoint"
+    ],
+    "risks": [
+      "Potential maintainer preference for alternative fix (e.g., resource_required=False) not yet confirmed",
+      "Route change may break existing clients or require API versioning",
+      "Frontend change must be coordinated with backend to avoid polling failures"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce issue with RBAC_ENABLED=true and the provided steps",
+      "Add API test for GET /datasets/<dataset_id>/batch_import_status/<job_id> with RBAC enabled",
+      "Add frontend test or type-check for updated polling URL",
+      "Run targeted unit tests for datasets controller and RBAC wrappers"
+    ],
+    "unknowns": [
+      "Maintainer design preference for route shape vs. permission suppression",
+      "Whether PR #40029 will be updated with tests or closed",
+      "Exact frontend component changes needed beyond URL update"
+    ],
+    "why": "Issue provides a precise root cause and a concrete fix (route split + frontend update). Existing PR #40029 is weak: no tests, minimal changes, and lacks regression coverage. A materially better PR with tests and complete frontend changes is plausible."
+  },
   "150fc25a81cebf519c84fbf5ebf5bb4084f6a8d4fdba5ebbb102e8f838fb12f0": {
     "confidence": 0.85,
     "contradictions": [],
@@ -448,6 +484,32 @@
       "Status of related issue audit (timeout)"
     ],
     "why": "Issue provides a detailed root cause and a working fix, but the deterministic gate is HUMAN_REVIEW and the related issue audit timed out. Existing PR #50882 is draft, lacks tests, and has failed CI, so a better PR is plausible, but maintainer confirmation is needed before starting."
+  },
+  "151e4c439d52cf76a40e18ae63deea7ffd3aa51650d05baf6c46646325d4485f": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "integrations/mem0-plugin/.codex-mcp.json",
+      "docs/integrations/codex.mdx"
+    ],
+    "risks": [
+      "Breaking change if renaming MEM0_API_KEY; need migration note.",
+      "Broad allowlist may expose other secrets."
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "test_plan": [
+      "Add a test that verifies the plugin manifest uses a non-filtered env var name or that the documented allowlist works with Codex's default exclusions."
+    ],
+    "unknowns": [
+      "Maintainer's chosen direction (rename vs. allowlist) is not yet decided."
+    ],
+    "why": "Issue clearly identifies root cause: Codex filters env vars matching *KEY*, *SECRET*, *TOKEN* before MCP startup, and the plugin hardcodes MEM0_API_KEY. However, maintainers explicitly request design confirmation on the credential contract (rename vs. allowlist), and an existing PR #6792 partially addresses it but lacks tests. Work should wait for maintainer direction to avoid wasted effort."
   },
   "162068556e534947cd14fb52fbc76e377d2cb25378c8eabd666948395d84aba4": {
     "confidence": 0.6,
@@ -4622,6 +4684,32 @@
     ],
     "why": "The issue gives a precise root cause (snapshot assigns fresh ids to re-factored tool-call messages, breaking the client's id-keyed merge and causing ordering displacement) and proposes a concrete fix. However, maintainer triage is required: the gate says HUMAN_REVIEW, there are overlapping open PRs (#7423, #7479) that touch AG-UI snapshot/support paths, and a potential duplicate issue #7490 with shared behavior signals. The fix may also involve design choices about message identity that need maintainer confirmation."
   },
+  "b0d0dd1aae319e2a2001c18848aeb947d38cc1af85b93df92ba505f062d39d70": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "litellm/proxy/auth/auth_checks.py",
+      "litellm/proxy/utils.py",
+      "litellm/proxy/services/reset_budget_job.py"
+    ],
+    "risks": [
+      "Existing PR #25387 may be revived; overlapping changes could conflict."
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Add regression test that auto-creates an end user with max_end_user_budget_id and verifies budget_id is persisted and reset job runs."
+    ],
+    "unknowns": [
+      "Maintainer preference on whether to revive #25387 or accept a new PR."
+    ],
+    "why": "Issue clearly identifies a real bug with root cause and reproduction, but an existing PR (#25387) directly targets the same code paths and is closed with CI failures and no tests. Maintainer review is needed to decide whether to revive that PR or accept a new one."
+  },
   "b347652fdc0db16df38c8c454c5d23a0a2a093fd5fcc7d165370441e73008686": {
     "confidence": 0.8,
     "contradictions": [],
@@ -6101,6 +6189,34 @@
     ],
     "why": "Issue reports a clear user-visible bug with a plausible root cause (missing EnableInteractiveApproval on model switch) and public reproduction steps. No competing PR or issue found, and the gate allows work."
   },
+  "eeb331e4d04c4a62b4c7a6a861339e28da8237f83f6c57e2e2c84f98fca527a7": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "package.json: move @opencode-ai/plugin from peerDependencies to dependencies",
+      "tsup config: add noExternal: ['@opencode-ai/plugin'] to bundle the plugin"
+    ],
+    "risks": [
+      "Bundling @opencode-ai/plugin may increase bundle size or cause version conflicts if the host provides a different version",
+      "Promoting to a direct dependency may require updating lockfiles and could affect other consumers"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add a regression test that simulates the plugin cache environment (without @opencode-ai/plugin) and verifies the plugin loads successfully",
+      "Run the reproduction command from the issue to confirm the error is resolved",
+      "Run existing unit tests for the affected package"
+    ],
+    "unknowns": [
+      "Maintainer preference on whether to bundle or promote to dependency is not confirmed, but the issue suggests both options and the fix is low-risk"
+    ],
+    "why": "Issue provides a clear, reproducible root cause: DCP's runtime value import of @opencode-ai/plugin fails because it is only a peer dependency and opencode's plugin cache does not include it, causing silent load failure. The fix is straightforward (bundle or promote to direct dependency) and the issue includes a reproduction command and confirmed workaround."
+  },
   "f0de309411bf797fea9f94c5b698250563f23c83efe3fb49d7255a787e77fb1e": {
     "confidence": 0.85,
     "contradictions": [
@@ -6131,6 +6247,35 @@
       "Maintainer's preferred cross-channel delivery policy"
     ],
     "why": "Issue is a real user-facing bug with fresh live repro evidence, but the deterministic gate requires HUMAN_REVIEW and maintainer decision on cross-channel delivery policy is unresolved. Existing PRs are closed/unmerged and do not settle the policy."
+  },
+  "f12184ed0c1dff31b5a5e9040dd52966949b6ed91fce7c660d53667dbed5a8e0": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "workflows/inngest/src/run.ts",
+      "workflows/inngest/src/execution-engine.ts",
+      "workflows/inngest/src/workflow.ts",
+      "workflows/inngest/src/durable-agent/create-inngest-agent.ts"
+    ],
+    "risks": [
+      "Potential conflict with existing PR #20285",
+      "Backward compatibility with in-flight events during deploys"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Add regression tests asserting resume event payload contains no stepResults/initialState copies",
+      "Add suspend→resume round-trip test with snapshot rehydration"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the proposed fix over existing PR #20285"
+    ],
+    "why": "Issue provides a clear root cause and actionable fix direction, but the deterministic gate requires HUMAN_REVIEW and existing PR #20285 has semantic overlap with the same code paths, needing maintainer comparison before new work starts."
   },
   "f45c6fcbaca825d50f87627a5719ad5bdca321bbc991bf8e57a1910f6c4a2729": {
     "confidence": 0.7,

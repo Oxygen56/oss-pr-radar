@@ -1,5 +1,5 @@
 {
-  "digest": "60594bfa951233f930ae0948f9d208eb3baaadeb28d5af9d15e5edea1f236ec6",
+  "digest": "a0f09751fdea8107e98c3e9444ac1a6dad17a3c6dafeb4aee89d0a38c21e98b6",
   "events": [
     {
       "attempts": 1,
@@ -9152,9 +9152,339 @@
       "runId": "watch-1785943864",
       "sentAt": "2026-08-05T15:40:32.560668Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "Opencode-DCP/opencode-dynamic-context-pruning#585",
+        "langgenius/dify#39954"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[Opencode-DCP/opencode-dynamic-context-pruning#585](https://github.com/Opencode-DCP/opencode-dynamic-context-pruning/issues/585) [Bug]: Plugin silently fails to load — runtime value-import of @opencode-ai/plugin unresolved in plugin cache**\n建议：NEW_CLEAN_CANDIDATE | 分数：11\n价值：Issue provides a clear, reproducible root cause: DCP's runtime value import of @opencode-ai/plugin fails because it is only a peer dependency and opencode's plugin cache does not include it, causing silent load failure. The fix is straightforward (bundle or promote to direct dependency) and the issue includes a reproduction command and confirmed workaround.\n改动：package.json: move @opencode-ai/plugin from peerDependencies to dependencies；tsup config: add noExternal: ['@opencode-ai/plugin'] to bundle the plugin\n验证：Add a regression test that simulates the plugin cache environment (without @opencode-ai/plugin) and verifies the plugin loads successfully；Run the reproduction command from the issue to confirm the error is resolved；Run existing unit tests for the affected package\n风险：Bundling @opencode-ai/plugin may increase bundle size or cause version conflicts if the host provides a different version；Promoting to a direct dependency may require updating lockfiles and could affect other consumers\n竞争：未发现相关 open PR\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 5，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[langgenius/dify#39954](https://github.com/langgenius/dify/issues/39954) RBAC: GET /datasets/batch_import_status/<job_id> always returns 400 when RBAC_ENABLED**\n建议：PR_COMPETITION_OPPORTUNITY | 分数：12\n价值：Issue provides a precise root cause and a concrete fix (route split + frontend update). Existing PR #40029 is weak: no tests, minimal changes, and lacks regression coverage. A materially better PR with tests and complete frontend changes is plausible.\n改动：Split DatasetDocumentSegmentBatchImportApi into separate Resource classes；Add dataset-scoped route /datasets/<uuid:dataset_id>/batch_import_status/<uuid:job_id>；Update frontend polling URL in web/service/knowledge/use-segment.ts；Add regression tests for RBAC-enabled batch import status endpoint\n验证：Reproduce issue with RBAC_ENABLED=true and the provided steps；Add API test for GET /datasets/<dataset_id>/batch_import_status/<job_id> with RBAC enabled；Add frontend test or type-check for updated polling URL；Run targeted unit tests for datasets controller and RBAC wrappers\n风险：Potential maintainer preference for alternative fix (e.g., resource_required=False) not yet confirmed；Route change may break existing clients or require API versioning；Frontend change must be coordinated with backend to avoid polling failures\n竞争：已有直接关联但证据不完整的 PR #40029：缺少测试文件；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：先复现 issue，再逐项对比已有 PR 的缺口；只有能提供更小改动、更强测试或更完整边界覆盖时才开 PR。\n证据：复现信号 6，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "green",
+          "title": {
+            "content": "OSS PR Radar: 可立即执行",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-05T17:52:51.841957Z",
+      "eventId": "cbf720044d16e2738c18b911d0613f3585c01047b631bd0a95021f00b4dd4f35",
+      "idempotencyKey": "cbf720044d16e2738c18b911d0613f3585c01047b631bd0a95",
+      "kind": "immediate",
+      "runId": "scan-20260805T174830Z-14a2a978021b",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "mastra-ai/mastra#20672",
+        "BerriAI/litellm#35780",
+        "vllm-project/vllm#51035",
+        "BerriAI/litellm#25386",
+        "mem0ai/mem0#6783"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[mastra-ai/mastra#20672](https://github.com/mastra-ai/mastra/issues/20672) [BUG] `@mastra/inngest` resume events ship full stepResults/initialState copies, making resume impossible once durable state accumulates**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue provides a clear root cause and actionable fix direction, but the deterministic gate requires HUMAN_REVIEW and existing PR #20285 has semantic overlap with the same code paths, needing maintainer comparison before new work starts.\n改动：workflows/inngest/src/run.ts；workflows/inngest/src/execution-engine.ts；workflows/inngest/src/workflow.ts；workflows/inngest/src/durable-agent/create-inngest-agent.ts\n验证：Add regression tests asserting resume event payload contains no stepResults/initialState copies；Add suspend→resume round-trip test with snapshot rehydration\n风险：Potential conflict with existing PR #20285；Backward compatibility with in-flight events during deploys\n竞争：发现 PR #20285 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 4，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#35780](https://github.com/BerriAI/litellm/issues/35780) [Bug]: Responses API sends metadata to a strict OpenAI-compatible upstream although the client does not pass metadata**\n建议：WAIT_MAINTAINER | 分数：14\n价值：Issue reports a clear user-visible bug with a workaround, but root cause is unconfirmed and open PR/related issue lookups timed out, so duplicate implementation cannot be excluded.\n改动：Identify where metadata is injected in Proxy /v1/responses path；Ensure internal metadata is not serialized to upstream；Add regression test for strict upstream without metadata\n验证：Reproduce with provided config and strict upstream；Add test asserting no metadata in upstream request when not supplied；Run existing responses API tests\n风险：May alter API behavior if not carefully scoped；Potential duplicate PR exists due to lookup failure\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 10，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#51035](https://github.com/vllm-project/vllm/issues/51035) [Bug]: DeepSeek-V4 sparse-decode MLA kernel wedges in a spin loop with no timeout and no diagnostic (device-level capture on sm_103; surfaces 300 s later as an unrelated DeepGEMM assert)**\n建议：WAIT_MAINTAINER | 分数：12\n价值：The issue is a detailed, evidence-rich bug report about a silent device-side wedge in the sparse-decode MLA kernel, with a clear request for maintainer guidance on the correct owner and diagnostic path. However, the root cause is not established, the report explicitly asks for guidance rather than proposing a patch, and the deterministic gate is HUMAN_REVIEW. The open PR and related issue lookups failed, so duplicate work cannot be excluded. Actionability is limited by the need for maintainer input and the lack of a reliable reproducer.\n改动：Instrumentation or mitigation in FlashMLA/CUTLASS for tcgen05.alloc spin loops；Potential timeout and diagnostic in the TMEM allocation path\n验证：Use the existing cuda-gdb capture procedure to reproduce the wedge and validate any instrumentation；Run sustained benchmarking with burst/idle cycling to increase wedge frequency and test fixes\n风险：Root cause may be a hardware or ptxas-level issue not fixable at source level；Changes to kernel spin loops could affect performance or correctness\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 8，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#25386](https://github.com/BerriAI/litellm/issues/25386) max_end_user_budget_id does not persist budget_id to DB — budget reset never runs for auto-created end users**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue clearly identifies a real bug with root cause and reproduction, but an existing PR (#25387) directly targets the same code paths and is closed with CI failures and no tests. Maintainer review is needed to decide whether to revive that PR or accept a new one.\n改动：litellm/proxy/auth/auth_checks.py；litellm/proxy/utils.py；litellm/proxy/services/reset_budget_job.py\n验证：Add regression test that auto-creates an end user with max_end_user_budget_id and verifies budget_id is persisted and reset job runs.\n风险：Existing PR #25387 may be revived; overlapping changes could conflict.\n竞争：发现关键词相关 PR，但未确认直接覆盖：#25387；需人工核对\n下一步：已有 PR 但强度不足；先看维护者规则和 issue 讨论，必要时先请求确认方案或分配。\n证据：复现信号 2，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[mem0ai/mem0#6783](https://github.com/mem0ai/mem0/issues/6783) [Codex plugin] Exported MEM0_API_KEY is filtered before MCP startup in managed environments**\n建议：WAIT_MAINTAINER | 分数：15\n价值：Issue clearly identifies root cause: Codex filters env vars matching *KEY*, *SECRET*, *TOKEN* before MCP startup, and the plugin hardcodes MEM0_API_KEY. However, maintainers explicitly request design confirmation on the credential contract (rename vs. allowlist), and an existing PR #6792 partially addresses it but lacks tests. Work should wait for maintainer direction to avoid wasted effort.\n改动：integrations/mem0-plugin/.codex-mcp.json；docs/integrations/codex.mdx\n验证：Add a test that verifies the plugin manifest uses a non-filtered env var name or that the documented allowlist works with Codex's default exclusions.\n风险：Breaking change if renaming MEM0_API_KEY; need migration note.；Broad allowlist may expose other secrets.\n竞争：已有直接关联但证据不完整的 PR #6792：缺少测试文件；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：仅完成本地复现、修复、测试和私有提交包；由用户自行决定公开提交。\n证据：复现信号 13，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-05T17:52:51.969063Z",
+      "eventId": "301bc3ba0366f377f14782548b90271d380a3b47de2809e46c50f3934e1127ac",
+      "idempotencyKey": "301bc3ba0366f377f14782548b90271d380a3b47de2809e46c",
+      "kind": "review",
+      "runId": "scan-20260805T174830Z-14a2a978021b",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "esengine/DeepSeek-Reasonix#6545",
+        "google/adk-python#6585",
+        "modelcontextprotocol/python-sdk#3250",
+        "sgl-project/sglang#33408",
+        "sgl-project/sglang#33470",
+        "sgl-project/sglang#33483",
+        "sgl-project/sglang#33577",
+        "vllm-project/vllm#50891",
+        "BerriAI/litellm#35786",
+        "DeusData/codebase-memory-mcp#1416",
+        "PrefectHQ/fastmcp#4744",
+        "PrefectHQ/fastmcp#4748",
+        "PrefectHQ/fastmcp#4749",
+        "aaif-goose/goose#10751"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[esengine/DeepSeek-Reasonix#6545](https://github.com/esengine/DeepSeek-Reasonix/issues/6545) [Bug]: `reasonix serve` 切换模型后 `ask` 工具失效，返回 'No interactive user answered'\"**\n建议：WAIT_MAINTAINER\n价值：ISSUE_NOT_OPEN\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[google/adk-python#6585](https://github.com/google/adk-python/issues/6585) RemoteA2aAgent ends the invocation silently when the A2A stream stops before a terminal task state**\n建议：WAIT_MAINTAINER\n价值：OWNERSHIP_CHANGED\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[modelcontextprotocol/python-sdk#3250](https://github.com/modelcontextprotocol/python-sdk/issues/3250) OAuthClientProvider._initialize() breaks transparent refresh: missing update_token_expiry + missing oauth_metadata load**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33408](https://github.com/sgl-project/sglang/issues/33408) [Bug] Unlimited-OCR: server crashes when batching images with different gundam tile counts**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33470](https://github.com/sgl-project/sglang/issues/33470) inference_mode mismatch can break lazy buffers**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33483](https://github.com/sgl-project/sglang/issues/33483) [Bug] Default decode CUDA Graph coverage causes a sharp performance cliff when batch size exceeds 32**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33577](https://github.com/sgl-project/sglang/issues/33577) [Bug] DCP a2a backend NCCL crash at conc=64 (​unhandled cuda error​)**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50891](https://github.com/vllm-project/vllm/issues/50891) [Bug]: AOT compile cache key ignores limit_mm_per_prompt, so image:0 and image:1 runs collide and crash with AttributeError: 'NoneType' object has no attribute 'size'**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#35786](https://github.com/BerriAI/litellm/issues/35786) [Bug]: datadog_llm_observability callback: tool_calls and cache tokens sent in meta.metadata instead of their designated API fields (meta.output.messages[].tool_calls and span metrics)**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[DeusData/codebase-memory-mcp#1416](https://github.com/DeusData/codebase-memory-mcp/issues/1416) Windows: install/uninstall/doctor all fail with \"active CBM sessions and operations could not be stopped safely\"**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[PrefectHQ/fastmcp#4744](https://github.com/PrefectHQ/fastmcp/issues/4744) serialize_by_alias=False ignored for nested Pydantic models**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[PrefectHQ/fastmcp#4748](https://github.com/PrefectHQ/fastmcp/issues/4748) OAuth consent cookie is rejected behind Azure Functions**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[PrefectHQ/fastmcp#4749](https://github.com/PrefectHQ/fastmcp/issues/4749) Resource list do not match the actual resource**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[aaif-goose/goose#10751](https://github.com/aaif-goose/goose/issues/10751) ACP WebSocket silently drops connection on oversized session/prompt (no JSON-RPC error, no log)**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-05T17:52:52.133471Z",
+      "eventId": "258232d123cfe5379ea726c6d8f653ec96378651cace6d2345cbc0537e605627",
+      "idempotencyKey": "258232d123cfe5379ea726c6d8f653ec96378651cace6d2345",
+      "kind": "watch",
+      "runId": "watch-1785952043",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "usekaneo/kaneo#1493"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[usekaneo/kaneo#1493](https://github.com/usekaneo/kaneo/pull/1493) fix(mcp): share OAuth state across replicas**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、失败检查或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-05T17:52:52.289799Z",
+      "eventId": "c9fe8afed8b1eb4d48df9c0ee792c34a262c746222d9137d5a3e1e74327194bf",
+      "idempotencyKey": "c9fe8afed8b1eb4d48df9c0ee792c34a262c746222d9137d5a",
+      "kind": "watch",
+      "runId": "pr-followup-1785952052",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-05T15:37:32.496934Z",
-  "newEventCount": 0,
+  "generatedAt": "2026-08-05T17:52:52.289799Z",
+  "newEventCount": 1,
   "version": "notification_outbox_v1"
 }
