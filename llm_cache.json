@@ -601,6 +601,38 @@
     ],
     "why": "Issue provides a clear root cause and minimal reproduction for a user-visible bug, but the deterministic gate requires HUMAN_REVIEW and the related issue audit failed due to timeout. Existing PR #50955 is weak with failed CI, so a better PR may be possible, but maintainer confirmation is needed."
   },
+  "1d54e8fb93c8e0bc200ebbda605b51126fdffd0a2268ace466d4e7b2a23e650b": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Sanitize watch event payloads in packages/core/src/workflows/default.ts",
+      "Sanitize watch event payloads in packages/core/src/workflows/handlers/control-flow.ts",
+      "Sanitize watch event payloads in packages/core/src/workflows/handlers/step.ts",
+      "Add focused tests for loop/nested workflows, failed results, suspend/resume, and foreach resume"
+    ],
+    "risks": [
+      "Potential compatibility impact on consumers relying on undocumented extra event fields",
+      "Risk of incomplete fix if evented and inherited Inngest paths are not both addressed",
+      "Need to avoid changing run snapshot persistence semantics"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a failing test that reproduces the duplicate payload in workflow-step-start events for a looped step",
+      "Add regression tests asserting absence of stale fields (output, error, endedAt, suspendedAt, suspendPayload, suspendOutput, tripwire, nonRetryable) in watch events",
+      "Run targeted unit tests for the workflows package and static checks"
+    ],
+    "unknowns": [
+      "Exact failing CI checks in PR #20661 and whether they are fixable",
+      "Maintainer preference on whether to modify undocumented event fields"
+    ],
+    "why": "The issue clearly identifies a high-impact bug: workflow watch events duplicate step state, causing OOM on Cloudflare Workers. The root cause is well-documented with code references and measured impact. Existing PR #20661 is open but has failing CI and lacks comprehensive tests, leaving room for a materially better PR with robust regression coverage."
+  },
   "1f53e9b99d0be3dbe80ef80533a54c160e03b984ec185bf1f5c81187df7d0cd8": {
     "confidence": 0.7,
     "contradictions": [],
@@ -1303,6 +1335,34 @@
     ],
     "why": "Issue reports a user-visible regression in LiveKit inference timeouts since mid-July, with public reproduction steps and session links. No competing PR or issue found. The bug is in the inference path, which is critical for real-time voice agents. The root cause is not yet identified, but the issue provides enough signal to start a reproducible investigation."
   },
+  "45dad8c03af1650e32e34151b53788cbedfba96362944a4855c429be75858c81": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/core/src/agent/agent.ts",
+      "memory title generation flow"
+    ],
+    "risks": [
+      "Changing await semantics may increase latency or alter durability guarantees",
+      "Potential overlap with PR #16218 requires careful comparison to avoid duplicate work"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Add regression test simulating process.exit after generate() resolves, verifying title is persisted before exit",
+      "Run targeted unit tests for agent and memory packages"
+    ],
+    "unknowns": [
+      "Maintainer preference on design (await vs background hook) is unresolved",
+      "Whether PR #16218 already fixes the root cause is not confirmed"
+    ],
+    "why": "Issue clearly identifies a detached promise causing title loss on serverless runtimes, with a public repro. However, the deterministic gate requires HUMAN_REVIEW, and a contributor has asked for maintainer design direction on whether to await persistence or use a background hook. Existing PR #16218 overlaps the code path but is not directly linked, so manual comparison is needed before starting work."
+  },
   "46ab74884ce598c08f8d5fc5bb1e394a46ad2b9d15c1d9b1c3520dcbd2e767d2": {
     "confidence": 0.85,
     "contradictions": [],
@@ -1508,6 +1568,36 @@
     ],
     "why": "Issue provides detailed, reproducible evidence of a performance cliff caused by default CUDA graph batch size being too low relative to max_running_requests. The root cause is clear: decode steps above the captured batch size fall back to eager execution, causing significant latency degradation. However, the issue explicitly asks for maintainer input on the preferred fix direction, and the open PR and related issue lookups failed, so duplicate work cannot be ruled out. The deterministic gate is HUMAN_REVIEW, so a maintainer decision is required before implementation."
   },
+  "4d9a1b4bcf278a04f973785a8f69eaa2ca6b1e4190849cae36fdc254f5252d5f": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Reporter says bug persists in latest version, but collaborator says fixed since v0.5.15"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Verify fix on v0.5.15+",
+      "If still reproducible, add regression test for DSA CUDA graph metadata near context limit"
+    ],
+    "risks": [
+      "Fix may already be merged; duplicate effort",
+      "Reproduction requires specific hardware (Blackwell) and model, may be hard to run"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with v0.5.15+ using the provided launch command and GLM-5.2-FP8 model",
+      "If reproduces, add a unit test for _apply_cuda_graph_metadata with boundary sequence lengths"
+    ],
+    "unknowns": [
+      "Whether the bug reproduces on v0.5.15+",
+      "Open PR status and related issue status due to timeouts"
+    ],
+    "why": "Issue reports a real crash but a collaborator claims it is fixed in v0.5.15 via #30274 and #33581, with a code-level trace. The reporter used v0.5.14 and has not confirmed on newer versions. Open PR and related issue lookups timed out, so duplicate work cannot be excluded. Maintainer confirmation is needed before starting a fix."
+  },
   "4db6fb065e7fe90289cbae872760babc49a6ba29f23bcb2d1c298e7848c266e2": {
     "confidence": 0.85,
     "contradictions": [],
@@ -1536,6 +1626,35 @@
       "Exact root cause of the stall (phase mismatch, visibility, hardware state)"
     ],
     "why": "The issue is a detailed, evidence-rich bug report about a silent device-side wedge in the sparse-decode MLA kernel, with a clear request for maintainer guidance on the correct owner and diagnostic path. However, the root cause is not established, the report explicitly asks for guidance rather than proposing a patch, and the deterministic gate is HUMAN_REVIEW. The open PR and related issue lookups failed, so duplicate work cannot be excluded. Actionability is limited by the need for maintainer input and the lack of a reliable reproducer."
+  },
+  "500517cbf255fee567560bbf1062504efe750027d44678da28871a95e46ec410": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "diagnostic improvements",
+      "potential fix in dsv4 attention or DSPARK speculative decoding path"
+    ],
+    "risks": [
+      "unknown root cause may require significant investigation",
+      "possible duplicate work due to incomplete PR search"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "reproduce with long-context decode under DSPARK and CUDA graph",
+      "capture stack traces with SYS_PTRACE and NCCL_DEBUG"
+    ],
+    "unknowns": [
+      "deterministic reproducer",
+      "root cause",
+      "existing PRs or related issues"
+    ],
+    "why": "Issue reports a severe hang but lacks deterministic reproducer and root cause; open PR and related issue lookups timed out, so duplicate work cannot be excluded. Maintainer has not confirmed design or assignment."
   },
   "509321caa5e4851d799328957ef2fd9f358d913bd1752e98eb3d91e3387cca18": {
     "confidence": 0.7,
@@ -2329,6 +2448,35 @@
     ],
     "why": "Issue clearly identifies a detached promise causing silent title loss on serverless runtimes, with a minimal repro. However, the deterministic gate requires HUMAN_REVIEW, and existing PRs (e.g., #16218) overlap semantically, requiring maintainer comparison before creating a new task."
   },
+  "6ecbed38eadb820a3b69e356d1bcee463324ce6beb8d2bab1d140143e3163656": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Normalize user shape at write site in server auth helpers or update all readers including workspace, authorship, composio, and SDK tenant resolver",
+      "Add regression tests for owner access, cross-org rejection, and missing-active-org rejection"
+    ],
+    "risks": [
+      "Changing write-site normalization may affect other consumers expecting raw shape",
+      "Need to ensure session.activeOrganizationId is always set; otherwise fail-closed behavior may reject legitimate users"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce issue by restarting Factory with better-auth provider and verifying 500 errors",
+      "Run existing PR tests and add tests for the two remaining readers (authorship, composio)",
+      "Run package-specific unit tests and static checks"
+    ],
+    "unknowns": [
+      "Maintainer preference on write-site vs read-site normalization",
+      "Whether the two remaining readers are in scope for this fix"
+    ],
+    "why": "Issue provides a precise root cause (two writers of requestContext user slot with different shapes) and a verified workaround. Existing PR #20690 is weak due to failed CI and incomplete coverage of two other readers, leaving room for a materially better PR that addresses all readers and passes CI."
+  },
   "7064df3b525479e3d19215ef46074fec08ad5384af52536831c99ae029864eba": {
     "confidence": 0.7,
     "contradictions": [
@@ -2611,6 +2759,37 @@
       "Exact code path causing the issue"
     ],
     "why": "Issue reports a clear bug: nested Pydantic models in dicts ignore serialize_by_alias=False. No open PR or related issue found, but the repository requires assignment and AI disclosure. Root cause is not yet confirmed; likely in serialization path for nested models."
+  },
+  "81df0ad94bd60095243081cd70140516fe2e9ec9addcdf2f009ad06d4ee1f634": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Introduce shared storage (e.g., Redis or DB) for OAuth clients, authorization requests, and codes with expiration and atomic consume semantics.",
+      "Update MCP OAuth controllers to use shared storage instead of in-memory maps.",
+      "Add integration test covering registration, authorization, and token exchange across different replicas."
+    ],
+    "risks": [
+      "Introducing shared storage may require additional infrastructure (e.g., Redis) and configuration changes.",
+      "Potential security implications if shared storage is not properly secured or if tokens are stored insecurely.",
+      "May require careful handling of expiration and atomic consume to avoid race conditions."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce the issue by deploying two replicas and following the steps in the issue to confirm invalid_client.",
+      "Add an integration test that simulates two instances sharing storage and verifies the full OAuth flow succeeds.",
+      "Run existing unit tests for the MCP OAuth module to ensure no regressions."
+    ],
+    "unknowns": [
+      "Maintainer's preferred storage solution (e.g., Redis vs. database) is not specified.",
+      "Whether the project already has a shared storage dependency that can be leveraged."
+    ],
+    "why": "The issue provides a deterministic reproduction with two replicas, identifies the root cause as process-local storage of OAuth state, and points to specific code locations. No competing PR or issue exists, and the maintainer has not yet responded, but the bug is clear and actionable."
   },
   "8571b4f5d107e53e6f6b3192d617a20ec15745d4a71c99fb2bf037450e817e92": {
     "confidence": 0.7,
@@ -4148,6 +4327,32 @@
     ],
     "why": "The issue provides a precise root cause: requestContextEntries is dropped from iteration state and not forwarded to the LLM step, causing dynamic resolvers to see an empty context after the first iteration. This is a high-impact bug with a clear reproduction path and no competing PR."
   },
+  "de8e3be8d2caa575f3a6d3f30599b4f95edbaa20f33c469d091227c43423de33": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Reporter claims issue persists despite trying several URL styles, but maintainer comment suggests base URL should work"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Possibly documentation clarification or proxy endpoint compatibility adjustments if confirmed as a LiteLLM defect"
+    ],
+    "risks": [
+      "May be a VSCode configuration issue, not a LiteLLM code change; maintainer may prefer documentation update only"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with VSCode custom endpoint using base URL and /v1 variants; capture network requests and response bodies to verify model discovery and inference"
+    ],
+    "unknowns": [
+      "Actual requested URL and response body from VSCode logs; whether the suggested base URL configuration resolves the issue; open PR status due to timeout"
+    ],
+    "why": "The issue reports a VSCode BYOK integration failure with LiteLLM, but the root cause is likely a VSCode configuration misunderstanding (URL should be base, not /v1) rather than a LiteLLM bug. The reporter has not confirmed the suggested fix, and the deterministic gate requires HUMAN_REVIEW. Open PR and related issue lookups timed out, so duplicate work cannot be excluded."
+  },
   "df415d8405e9e398e78a2e1e0ac591cd9353fd22f263ec5549f4fe01c26291b5": {
     "confidence": 0.85,
     "contradictions": [],
@@ -4678,6 +4883,29 @@
       "Reporter verification on RC1/current main is pending; maintainer has not confirmed final resolution."
     ],
     "why": "The issue is a well-documented bug with independent reproductions and a confirmed fix in RC1, but the maintainer has explicitly requested verification on RC1/current main and marked it awaiting-reporter. The candidate is not a new clean contribution; it is a regression case already routed for RC. Work should wait for maintainer confirmation and reporter verification."
+  },
+  "f9647b989ee67bc5a469745af0540e922f047aacd5ebfc2352ec0487c3070b40": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "litellm/proxy/utils.py get_data method: convert prisma model to dict, use .get(), and pop last_refreshed_at before reconstruction"
+    ],
+    "risks": [
+      "Potential API behavior changes if not carefully scoped; maintainer may have design preferences for handling deprecated tokens."
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Reproduce by regenerating a key with grace_periode and authenticating with the old key; add a regression test that asserts old key works during grace period."
+    ],
+    "unknowns": [
+      "Open PR status and related issue status are unknown due to lookup timeouts; maintainer approval or design confirmation is missing."
+    ],
+    "why": "Issue provides a clear root cause and proposed fix for a user-visible bug, but the deterministic gate requires HUMAN_REVIEW and open PR/related issue lookups failed, so we cannot rule out duplicates or confirm maintainer intent."
   },
   "fd47108caeda7314532797a09655a868ff9cb7e4c7f7a2cc8922ebb520281895": {
     "confidence": 0.7,

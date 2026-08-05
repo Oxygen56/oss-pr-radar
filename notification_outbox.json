@@ -1,5 +1,5 @@
 {
-  "digest": "61949afc61b63726ed9071614db172f61f6c87e932098b513ed71c777580b7fc",
+  "digest": "e5e60771285eacaedc8e594e7a57b8fb3c9a68054490a14a55079d260f7177f3",
   "events": [
     {
       "attempts": 1,
@@ -6441,9 +6441,295 @@
       "runId": "watch-1785886097",
       "sentAt": "2026-08-04T23:33:10.896584Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "promptfoo/promptfoo#10298",
+        "usekaneo/kaneo#1484",
+        "mastra-ai/mastra#20688",
+        "mastra-ai/mastra#20660",
+        "microsoft/semantic-kernel#14265"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[promptfoo/promptfoo#10298](https://github.com/promptfoo/promptfoo/issues/10298) Azure OpenAI evaluator metrics fail with service principal authentication due to tenant mismatch**\n建议：NEW_CLEAN_CANDIDATE | 分数：11\n价值：Issue reports a concrete authentication failure in Azure OpenAI evaluator metrics with service principal auth, providing a minimal repro config and clear error. No competing PR or issue found. The root cause is likely a tenant mismatch in the auth flow for evaluator calls, but exact code path is unconfirmed.\n改动：Add regression test for Azure OpenAI service principal auth in evaluator metrics；Fix tenant handling in Azure OpenAI provider auth flow for evaluator calls\n验证：Create a test using the provided sample config and mock Azure OpenAI responses to reproduce the tenant mismatch error；Run existing Azure OpenAI provider tests and new regression test\n风险：May require maintainer design input on auth flow changes；Potential impact on existing Azure OpenAI authentication behavior\n竞争：未发现相关 open PR\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 2，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[usekaneo/kaneo#1484](https://github.com/usekaneo/kaneo/issues/1484) [Bug]: Remote MCP OAuth returns invalid_client when requests hit different Kaneo replicas**\n建议：NEW_CLEAN_CANDIDATE | 分数：10\n价值：The issue provides a deterministic reproduction with two replicas, identifies the root cause as process-local storage of OAuth state, and points to specific code locations. No competing PR or issue exists, and the maintainer has not yet responded, but the bug is clear and actionable.\n改动：Introduce shared storage (e.g., Redis or DB) for OAuth clients, authorization requests, and codes with expiration and atomic consume semantics.；Update MCP OAuth controllers to use shared storage instead of in-memory maps.；Add integration test covering registration, authorization, and token exchange across different replicas.\n验证：Reproduce the issue by deploying two replicas and following the steps in the issue to confirm invalid_client.；Add an integration test that simulates two instances sharing storage and verifies the full OAuth flow succeeds.；Run existing unit tests for the MCP OAuth module to ensure no regressions.\n风险：Introducing shared storage may require additional infrastructure (e.g., Redis) and configuration changes.；Potential security implications if shared storage is not properly secured or if tokens are stored insecurely.；May require careful handling of expiration and atomic consume to avoid race conditions.\n竞争：未发现相关 open PR\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 15，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[mastra-ai/mastra#20688](https://github.com/mastra-ai/mastra/issues/20688) Factory: workspace factory reads the raw better-auth user shape, so every session becomes 'not available to the current user' after a restart**\n建议：PR_COMPETITION_OPPORTUNITY | 分数：12\n价值：Issue provides a precise root cause (two writers of requestContext user slot with different shapes) and a verified workaround. Existing PR #20690 is weak due to failed CI and incomplete coverage of two other readers, leaving room for a materially better PR that addresses all readers and passes CI.\n改动：Normalize user shape at write site in server auth helpers or update all readers including workspace, authorship, composio, and SDK tenant resolver；Add regression tests for owner access, cross-org rejection, and missing-active-org rejection\n验证：Reproduce issue by restarting Factory with better-auth provider and verifying 500 errors；Run existing PR tests and add tests for the two remaining readers (authorship, composio)；Run package-specific unit tests and static checks\n风险：Changing write-site normalization may affect other consumers expecting raw shape；Need to ensure session.activeOrganizationId is always set; otherwise fail-closed behavior may reject legitimate users\n竞争：已有直接关联但证据不完整的 PR #20690：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：先复现 issue，再逐项对比已有 PR 的缺口；只有能提供更小改动、更强测试或更完整边界覆盖时才开 PR。\n证据：复现信号 6，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[mastra-ai/mastra#20660](https://github.com/mastra-ai/mastra/issues/20660) Workflow watch events re-publish step state twice, OOMing Cloudflare Workers isolates on durable agent runs**\n建议：PR_COMPETITION_OPPORTUNITY | 分数：11\n价值：The issue clearly identifies a high-impact bug: workflow watch events duplicate step state, causing OOM on Cloudflare Workers. The root cause is well-documented with code references and measured impact. Existing PR #20661 is open but has failing CI and lacks comprehensive tests, leaving room for a materially better PR with robust regression coverage.\n改动：Sanitize watch event payloads in packages/core/src/workflows/default.ts；Sanitize watch event payloads in packages/core/src/workflows/handlers/control-flow.ts；Sanitize watch event payloads in packages/core/src/workflows/handlers/step.ts；Add focused tests for loop/nested workflows, failed results, suspend/resume, and foreach resume\n验证：Create a failing test that reproduces the duplicate payload in workflow-step-start events for a looped step；Add regression tests asserting absence of stale fields (output, error, endedAt, suspendedAt, suspendPayload, suspendOutput, tripwire, nonRetryable) in watch events；Run targeted unit tests for the workflows package and static checks\n风险：Potential compatibility impact on consumers relying on undocumented extra event fields；Risk of incomplete fix if evented and inherited Inngest paths are not both addressed；Need to avoid changing run snapshot persistence semantics\n竞争：已有直接关联但证据不完整的 PR #20661：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：先复现 issue，再逐项对比已有 PR 的缺口；只有能提供更小改动、更强测试或更完整边界覆盖时才开 PR。\n证据：复现信号 3，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[microsoft/semantic-kernel#14265](https://github.com/microsoft/semantic-kernel/issues/14265) Bug: VertexAIEmbeddingGenerator hardcodes :predict, unusable with gemini-embedding models that only serve :embedContent**\n建议：PR_COMPETITION_OPPORTUNITY | 分数：11\n价值：Issue clearly identifies a hardcoded :predict endpoint causing 400 errors for gemini-embedding-2 models, with a public repro. Existing PR #14266 addresses the same root cause but lacks tests, leaving room for a stronger PR with regression tests and broader coverage.\n改动：Modify VertexAIEmbeddingClient to select :embedContent for gemini-embedding models；Add unit/integration tests for endpoint selection；Possibly update model metadata or configuration\n验证：Create a failing test using the issue's repro to verify :embedContent is used for gemini-embedding-2；Run existing connector tests and static analysis\n风险：Potential maintainer preference for a different design (e.g., configurable endpoint)；Risk of overlapping with existing PR #14266 if it gets updated with tests\n竞争：已有直接关联但证据不完整的 PR #14266：缺少测试文件；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：先复现 issue，再逐项对比已有 PR 的缺口；只有能提供更小改动、更强测试或更完整边界覆盖时才开 PR。\n证据：复现信号 3，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "green",
+          "title": {
+            "content": "OSS PR Radar: 可立即执行",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-05T01:53:36.870935Z",
+      "eventId": "10f665ff1c6e0a78ca5713b186719807eb6f97e2057bf985a83391e00f66ba29",
+      "idempotencyKey": "10f665ff1c6e0a78ca5713b186719807eb6f97e2057bf985a8",
+      "kind": "immediate",
+      "runId": "scan-20260805T014800Z-2f0f98dc9d1a",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "mastra-ai/mastra#20682",
+        "BerriAI/litellm#35789",
+        "BerriAI/litellm#35797",
+        "sgl-project/sglang#33577"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[mastra-ai/mastra#20682](https://github.com/mastra-ai/mastra/issues/20682) [BUG] Thread title is silently lost when generateTitle is used on serverless runtimes that freeze after the response (e.g. AWS Lambda)**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue clearly identifies a detached promise causing title loss on serverless runtimes, with a public repro. However, the deterministic gate requires HUMAN_REVIEW, and a contributor has asked for maintainer design direction on whether to await persistence or use a background hook. Existing PR #16218 overlaps the code path but is not directly linked, so manual comparison is needed before starting work.\n改动：packages/core/src/agent/agent.ts；memory title generation flow\n验证：Add regression test simulating process.exit after generate() resolves, verifying title is persisted before exit；Run targeted unit tests for agent and memory packages\n风险：Changing await semantics may increase latency or alter durability guarantees；Potential overlap with PR #16218 requires careful comparison to avoid duplicate work\n竞争：发现 PR #16218 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 14，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#35789](https://github.com/BerriAI/litellm/issues/35789) [Bug]: Expired UI session tokens pollute SpendLogs — dashboard info-route 401s are recorded as failed LLM requests**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue provides a clear root cause and reproduction, but the supplied gate decision is HUMAN_REVIEW and the related issue audit failed (timeout). An existing PR #35791 directly addresses the issue but has failing CI checks, making it a weak competition opportunity. Maintainer confirmation is needed before starting work.\n改动：litellm/proxy/utils.py；litellm/proxy/hooks/proxy_track_cost_callback.py\n验证：Reproduce by setting LITELLM_UI_SESSION_DURATION=10m, letting session expire, and observing SpendLogs rows; add regression test for info-route failures from UI session tokens not being logged.\n风险：Potential behavior change for info-route failures from real virtual keys if not carefully scoped.；Existing PR #35791 may already cover the fix; competing could be redundant.\n竞争：已有直接关联但证据不完整的 PR #35791：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 3，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#35797](https://github.com/BerriAI/litellm/issues/35797) [Bug]: Grace periode during key rotation not working `TypeError: Litellm_VerificationTokenView` object**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue provides a clear root cause and proposed fix for a user-visible bug, but the deterministic gate requires HUMAN_REVIEW and open PR/related issue lookups failed, so we cannot rule out duplicates or confirm maintainer intent.\n改动：litellm/proxy/utils.py get_data method: convert prisma model to dict, use .get(), and pop last_refreshed_at before reconstruction\n验证：Reproduce by regenerating a key with grace_periode and authenticating with the old key; add a regression test that asserts old key works during grace period.\n风险：Potential API behavior changes if not carefully scoped; maintainer may have design preferences for handling deprecated tokens.\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 8，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33577](https://github.com/sgl-project/sglang/issues/33577) [Bug] DCP a2a backend NCCL crash at conc=64 (​unhandled cuda error​)**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue reports two concrete bugs with root causes and reproduction steps, but the existing PR #33592 is weak (no tests, failing CI) and maintainer approval/design confirmation is missing. The deterministic gate says HUMAN_REVIEW, so we must wait for maintainer input.\n改动：Fix pynccl enablement in _all_to_all_single；Account for symmetric memory pool allocation in memory budget\n验证：Reproduce with 64 concurrent requests and the given flags; verify no NCCL crash and no OOM；Add regression tests for pynccl state and memory accounting\n风险：Existing PR may be superseded; maintainer may have design preferences；Hardware-dependent reproduction may be flaky\n竞争：已有直接关联但证据不完整的 PR #33592：缺少测试文件; 存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 3，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-05T01:53:36.969641Z",
+      "eventId": "2087db104b769d322a08c30ff642f1550f7b3a18d9d6d0bbbcc04496149282e5",
+      "idempotencyKey": "2087db104b769d322a08c30ff642f1550f7b3a18d9d6d0bbbc",
+      "kind": "review",
+      "runId": "scan-20260805T014800Z-2f0f98dc9d1a",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "sgl-project/sglang#33493",
+        "sgl-project/sglang#33504",
+        "sgl-project/sglang#33549",
+        "BerriAI/litellm#35780",
+        "DeusData/codebase-memory-mcp#1416",
+        "PrefectHQ/fastmcp#4748",
+        "aaif-goose/goose#10751",
+        "openabdev/openab#1464",
+        "openclaw/openclaw#92199",
+        "pydantic/pydantic-ai#7108",
+        "sgl-project/sglang#33505"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33493](https://github.com/sgl-project/sglang/issues/33493) [Bug] DSPARK retrieves wrong key \"acc_linear_penalities\" from sampling_info**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33504](https://github.com/sgl-project/sglang/issues/33504) Title: Inconsistent error response format with OpenAI standard for non-streaming requests**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33549](https://github.com/sgl-project/sglang/issues/33549) [Bug] DeepSeek-V4 (dsv4 backend + DSPARK) TP=8 on 8×H20: decode forward hangs indefinitely at ~245K context — all GPUs spin at 100% util / low power, watchdog kills server**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#35780](https://github.com/BerriAI/litellm/issues/35780) [Bug]: Responses API sends metadata to a strict OpenAI-compatible upstream although the client does not pass metadata**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[DeusData/codebase-memory-mcp#1416](https://github.com/DeusData/codebase-memory-mcp/issues/1416) Windows: install/uninstall/doctor all fail with \"active CBM sessions and operations could not be stopped safely\"**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[PrefectHQ/fastmcp#4748](https://github.com/PrefectHQ/fastmcp/issues/4748) OAuth consent cookie is rejected behind Azure Functions**\n建议：WAIT_MAINTAINER\n价值：OWNERSHIP_CHANGED\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[aaif-goose/goose#10751](https://github.com/aaif-goose/goose/issues/10751) ACP WebSocket silently drops connection on oversized session/prompt (no JSON-RPC error, no log)**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[openabdev/openab#1464](https://github.com/openabdev/openab/issues/1464) bug(gateway/feishu): v0.9.0 unified mode broke all Feishu streaming modes + delete recovery**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[openclaw/openclaw#92199](https://github.com/openclaw/openclaw/issues/92199) [Bug]: [ACP] Text before tool calls is lost in WeChat (intermediate messages dropped, not merged)**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[pydantic/pydantic-ai#7108](https://github.com/pydantic/pydantic-ai/issues/7108) `include_binary_content=False` is not honored for tool returns, `final_result`, or output-function arguments**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33505](https://github.com/sgl-project/sglang/issues/33505) [Bug] The --json-model-override-args  does not  recursively update the model configuration.**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-05T01:53:37.070615Z",
+      "eventId": "009426bb9942da8e153cb7c5e10fc8228979597f437417a7932061e4f1a7c1cd",
+      "idempotencyKey": "009426bb9942da8e153cb7c5e10fc8228979597f437417a793",
+      "kind": "watch",
+      "runId": "watch-1785894439",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-04T23:32:37.143415Z",
+  "generatedAt": "2026-08-05T01:53:37.191835Z",
   "newEventCount": 0,
   "version": "notification_outbox_v1"
 }
