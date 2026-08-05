@@ -811,6 +811,37 @@
     ],
     "why": "Issue is a real bug with clear root cause and workaround, but an existing PR #5742 directly addresses it and is technically complete, though it has failing CI. The deterministic gate is HUMAN_REVIEW, and maintainer confirmation is needed before starting a competing PR."
   },
+  "20e8abb87731be9c91742fdc45cd82a12d01f8181643b15b13ddaf0aed1ea75f": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix TMS free() state-awareness upstream",
+      "Update AReaL TMS pin and add regression tests",
+      "Harden v2 controller teardown two-phase",
+      "Improve forked-service cleanup"
+    ],
+    "risks": [
+      "Upstream TMS fix may be delayed",
+      "Temporary workaround could cause OOM",
+      "Large scope may require maintainer approval"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add FSDP offload->destroy tests for one and two GPUs",
+      "Integration test asserting no TMS CUDA free errors and no orphan processes"
+    ],
+    "unknowns": [
+      "Maintainer preference on waiting for upstream vs temporary workaround",
+      "Whether PR #1571 will be updated or superseded"
+    ],
+    "why": "Issue provides detailed reproduction and root-cause analysis, but maintainer guidance is pending on scope and upstream dependency fix; existing PR #1571 is draft and incomplete, leaving competition opportunity but requiring design confirmation."
+  },
   "2157666a01c6611d2766485a271f0397669624ec708a68262cc7b7566eb2239d": {
     "confidence": 0.7,
     "contradictions": [],
@@ -2885,6 +2916,34 @@
       "Exact root cause of the 0.9 GiB gap on the original issue vs 0.59 GiB in follow-up"
     ],
     "why": "Issue provides strong evidence of a real bug: MRv2 reports more available KV memory than runtime can back, causing OOM under load; root cause is likely CUDA graph capture headroom accounting, but not fully confirmed. Existing draft PR #49233 attempts a fix but is incomplete and has failed CI. Maintainer direction is unclear; issue needs maintainer confirmation before work starts."
+  },
+  "615cb814a1e7a188854b34263a5802040c3808520065673c46ed52394f2937d0": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/utils/hf_transformers/config.py: implement recursive merge for json-model-override-args",
+      "add regression tests for nested override behavior"
+    ],
+    "risks": [
+      "Potential behavior change for existing shallow override usage",
+      "Need to ensure compatibility with transformers config validation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "test_plan": [
+      "Reproduce with the provided command and assert no AttributeError",
+      "Add unit test for get_config with nested dict overrides verifying deep merge"
+    ],
+    "unknowns": [
+      "Maintainer preference on recursive merge semantics",
+      "Exact CI failure reasons for PR #33525"
+    ],
+    "why": "Issue clearly identifies a shallow update in get_config causing recursive override failure, with a concrete repro. Existing PR #33525 addresses the same root cause but lacks tests and has CI failures, leaving room for a stronger PR with regression tests and a minimal fix."
   },
   "62d7ffd4f59ecac890fff9112144d4d3a4a978d89f3e0cc1a0e542e5b2f683d8": {
     "confidence": 0.7,
@@ -6281,6 +6340,33 @@
       "Maintainer preference on fix approach"
     ],
     "why": "Issue reports a clear bug: nested Pydantic models in dicts ignore serialize_by_alias=False. The root cause is likely in FastMCP's serialization path, but not yet confirmed. No open PR or related issue found, and no maintainer input. The gate decision is HUMAN_REVIEW, so we must wait for maintainer guidance."
+  },
+  "ede4abec7806a1c7bcceef5153e6068762f7a13dcb9fa50d624e6c46e02de705": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Add after_durable_model_request hook to AbstractCapability",
+      "Invoke hook in BaseDurabilityCapability and engine-specific units",
+      "Update _agent_graph.model_request for non-durable path"
+    ],
+    "risks": [
+      "Potential overhead or behavior change for existing capabilities",
+      "Need to ensure hook invocation points are correct across all engines"
+    ],
+    "root_cause_clarity": "high",
+    "score": 13,
+    "test_plan": [
+      "Create failing test with a capability that writes to external store under Temporal replay",
+      "Run targeted unit tests for durable_exec modules and capability chain"
+    ],
+    "unknowns": [
+      "Maintainer design preference and whether assignment is required"
+    ],
+    "why": "Issue identifies a real architectural gap: capability hooks run outside durable units, causing side effects to replay. Proposal is technically sound and references precedents, but requires maintainer design confirmation and assignment."
   },
   "edff09199f1721bcbfc79808790a17e27beb21125e76893e82ee9241a6dc31cb": {
     "confidence": 0.7,
