@@ -867,6 +867,33 @@
     ],
     "why": "Issue reports a high-impact Windows bug with multiple commands failing, but root cause is unclear: one reporter sees activation error, another sees daemon timeout, and Windows-level file access denials suggest OS-level issues. Maintainer has acknowledged and routed as high-priority, but no design confirmation or active investigation. A PR could be premature without maintainer direction on the intended fix."
   },
+  "25e07f8d71cf1262698d4add8de8c6dcf8d12432d8f0832ff2a72b1383d794cc": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Add failing test for standalone virtual key soft_budget alert",
+      "Fix budget alert propagation and deduplication logic"
+    ],
+    "risks": [
+      "Potential duplicate implementation if existing PR exists",
+      "Changing alert deduplication may affect retry behavior"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 11,
+    "test_plan": [
+      "Reproduce with provided steps and verify no Slack alert",
+      "Add regression test for standalone key soft_budget crossing"
+    ],
+    "unknowns": [
+      "Whether maintainers have already investigated or have design preferences",
+      "Whether an existing PR addresses this issue"
+    ],
+    "why": "Issue reports a user-visible bug with a plausible code path but lacks a confirmed root cause; related issue and open PR lookups timed out, so duplicate work cannot be excluded. Maintainer input is needed to confirm expected behavior and design."
+  },
   "299193e33be75e17c4de14a725267dadb6b46592dacd4bdf988adf4aa81509ad": {
     "confidence": 0.7,
     "contradictions": [
@@ -1091,6 +1118,62 @@
     ],
     "why": "Issue reports a resource list mismatch in FastMCP HTTP transport, but lacks a minimal reproducer and root cause analysis. No maintainer confirmation or design direction exists, and the deterministic gate requires human review."
   },
+  "33b5005f95e84a2d96eca178ae4419267f102451b12aa73132087e852f8f25ac": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add a failing test for memory-enabled agent target in startExperiment",
+      "Modify experiment runner to supply threadId or handle memory config"
+    ],
+    "risks": [
+      "Potential API design changes for threadId/memory options",
+      "Interaction with in-flight PRs on experiment execution"
+    ],
+    "root_cause_clarity": "high",
+    "score": 15,
+    "test_plan": [
+      "Use the provided repro to create a failing test",
+      "Run targeted unit tests for dataset.startExperiment and agent memory"
+    ],
+    "unknowns": [
+      "Maintainer design preference for handling memory in experiments",
+      "Whether related PRs will address this issue"
+    ],
+    "why": "Issue reports a clear bug with root cause pointers and a minimal repro, but maintainer has labeled it for triage and requested a minimal reproduction, indicating design confirmation is needed. No existing PR directly addresses this issue, but related PRs are in flight."
+  },
+  "34bb800971bbab733ff321d7b7e92dae085a3bf01d65015c28d93fc4befa4bc2": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "src/mcp/client/auth/oauth2.py: update _initialize() to call update_token_expiry and load oauth_metadata",
+      "Add regression tests for token expiry and metadata loading"
+    ],
+    "risks": [
+      "Potential API behavior change if storage lacks load_oauth_metadata; need to ensure backward compatibility",
+      "Existing PR #3251 may be merged or updated, making competition moot"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a unit test that initializes provider with expired token and verifies is_token_valid() returns False",
+      "Test that _refresh_token() uses the correct token endpoint when oauth_metadata is loaded from storage",
+      "Run existing auth test suite and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred design or are actively working on this",
+      "Exact status of PR #3251's failed CI and whether it can be fixed quickly"
+    ],
+    "why": "Issue provides a clear root cause and a minimal fix for two bugs in OAuthClientProvider._initialize() that break transparent token refresh. Existing PR #3251 is weak (failed CI) and lacks complete evidence, leaving room for a materially better PR with robust tests and full root-cause coverage."
+  },
   "35400c0b54daa99f9157d4e27639372382a08f7c1998e265162e9b51653747b9": {
     "confidence": 0.7,
     "contradictions": [
@@ -1184,6 +1267,36 @@
       "Whether PR #20690 will be updated to pass CI"
     ],
     "why": "Issue provides a clear root cause and reproduction, but an existing PR (#20690) directly addresses it with tests, yet has failing CI and unresolved maintainer scope decisions. The deterministic gate requires HUMAN_REVIEW, and the presence of a competing PR with gaps makes this a wait-for-maintainer situation."
+  },
+  "3a3cbb805e9f805a3e3c7f155aec42a430204f56779a9b332daee80799b6880b": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify `parse_streaming_chunk` to return `Result<Option<StreamingChunk>, ProviderError>` and skip metadata-only frames",
+      "Update both call sites (main loop and tool-call inner loop) to `continue` on `Ok(None)`",
+      "Add regression tests for metadata-first, interleaved, mid-tool-call, empty-choices, and error frames"
+    ],
+    "risks": [
+      "Potential maintainer preference for a different fix (e.g., `#[serde(default)]`) despite the issue's caution",
+      "Risk of conflicting with existing PR #10942 if not coordinated"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Use the provided Python reproducer to verify the bug on current main",
+      "Add Rust unit tests in `crates/goose-provider-types/src/formats/openai.rs` covering all scenarios",
+      "Run targeted tests and static checks for the affected crate"
+    ],
+    "unknowns": [
+      "Whether maintainers have expressed a design preference beyond the issue's suggestion",
+      "Whether PR #10942 has been updated with tests since assessment"
+    ],
+    "why": "Issue provides a precise root cause (mandatory `choices` field in `parse_streaming_chunk`), a minimal reproducer, and a suggested fix with regression tests. Existing PR #10942 is weak (no tests) and may not cover the mid-tool-call case, leaving room for a materially better PR."
   },
   "3b30db525367b290cee6f4b77cd1785221d7c49c860939589f0e03cde3182a41": {
     "confidence": 0.8,
@@ -1479,6 +1592,36 @@
     ],
     "why": "The issue clearly describes a bug with a root cause and reproduction, but the maintainer has labeled it for triage and requested a minimal reproduction, indicating design confirmation is needed. The proposed fixes (auto-create thread, expose threadId option, or ignore lone resourceId) have different API implications, so maintainer direction is required before implementation."
   },
+  "4a1ebf25473d5efaed65a6f2a2f89d9f121de661e7977933522cd137215a613a": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Update browser_use/mcp dependency versions to align with mcp SDK API",
+      "Add compatibility handling for missing list_tools method",
+      "Ensure browser tool failure does not crash entire chat request"
+    ],
+    "risks": [
+      "Dependency upgrade may introduce other breaking changes",
+      "Fix may need to be applied to multiple packaging paths (exe, pip)"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce with provided steps on Windows with local llama.cpp",
+      "Add unit test for CustomBrowserUseServer initialization with current mcp SDK",
+      "Run existing browser tool tests and integration tests for chat flow"
+    ],
+    "unknowns": [
+      "Exact versions of browser_use and mcp SDK in the release",
+      "Maintainer preference for dependency pinning vs code fix"
+    ],
+    "why": "Issue reports a clear, user-visible 500 error caused by a version mismatch between browser_use and mcp SDK, with a stack trace pinpointing the exact failing call. No competing PR or issue exists, and the fix is a straightforward dependency pin/upgrade or compatibility shim."
+  },
   "4b3aee146f076609481d5cc61c8f1cb6b982b62e131e3d3336feba1ff85f5671": {
     "confidence": 0.7,
     "contradictions": [],
@@ -1567,6 +1710,34 @@
       "Whether the issue reproduces on other models or hardware configurations"
     ],
     "why": "Issue provides detailed, reproducible evidence of a performance cliff caused by default CUDA graph batch size being too low relative to max_running_requests. The root cause is clear: decode steps above the captured batch size fall back to eager execution, causing significant latency degradation. However, the issue explicitly asks for maintainer input on the preferred fix direction, and the open PR and related issue lookups failed, so duplicate work cannot be ruled out. The deterministic gate is HUMAN_REVIEW, so a maintainer decision is required before implementation."
+  },
+  "4d7883194b5d9b6c505daef55aa11f0eef27e7175f23992759144a5e5df51ab2": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Standardize inference_mode usage across warmup/autotune and real forward paths",
+      "Possibly add eager initialization phase for backend workspaces"
+    ],
+    "risks": [
+      "Changing inference_mode may affect performance or autograd behavior",
+      "Broad changes could impact multiple backends"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Reproduce with provided command and assert no RuntimeError",
+      "Add regression test for lazy buffer allocation across inference_mode contexts"
+    ],
+    "unknowns": [
+      "Whether an existing PR already addresses this issue (open PR lookup failed)",
+      "Maintainer preference on design option (no_grad vs no_grad+inference_mode)"
+    ],
+    "why": "Issue clearly identifies a correctness bug from inconsistent inference_mode usage, with reproduction and maintainer discussion. However, open PR lookup timed out and related issue audit failed, so duplicate implementation cannot be excluded. Maintainer comments indicate design decision pending (align to no_grad vs no_grad+inference_mode), requiring maintainer confirmation before implementation."
   },
   "4d9a1b4bcf278a04f973785a8f69eaa2ca6b1e4190849cae36fdc254f5252d5f": {
     "confidence": 0.7,
@@ -2163,6 +2334,33 @@
       "Exact root cause of the 0.9 GiB gap on the original issue vs 0.59 GiB in follow-up"
     ],
     "why": "Issue provides strong evidence of a real bug: MRv2 reports more available KV memory than runtime can back, causing OOM under load; root cause is likely CUDA graph capture headroom accounting, but not fully confirmed. Existing draft PR #49233 attempts a fix but is incomplete and has failed CI. Maintainer direction is unclear; issue needs maintainer confirmation before work starts."
+  },
+  "62d7ffd4f59ecac890fff9112144d4d3a4a978d89f3e0cc1a0e542e5b2f683d8": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Add regression test for mixed-version codec negotiation",
+      "Implement per-worker codec negotiation or fallback to JSON for legacy workers"
+    ],
+    "risks": [
+      "May require design confirmation on codec negotiation approach",
+      "Potential API behavior changes if not minimal"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce with v1.2 worker and v1.4 frontend; assert request succeeds",
+      "Run existing runtime tests and new test for codec negotiation"
+    ],
+    "unknowns": [
+      "Maintainer preference on fix approach",
+      "Exact code path for codec negotiation"
+    ],
+    "why": "Issue clearly describes a version-skew bug with root cause (codec default change) and reproduction steps. Existing PR #12658 is weak (draft, no tests, failing CI), leaving room for a better PR with tests and complete fix."
   },
   "62f7e949f9b37e73e95c2d0803e0feb1b48c3259960172ce67b5995842d4adac": {
     "confidence": 0.7,
@@ -3049,6 +3247,34 @@
     ],
     "why": "Issue reports stale get_episodes data; maintainer attributes to queue latency, but a commenter identifies a concrete root cause: get_episodes uses keyset pagination with ORDER BY uuid DESC, returning arbitrary stable subset instead of most recent. Existing PR #1726 claims to fix this but has failing CI/check and lacks evidence of root-cause analysis. A materially better PR with proper tests and root-cause explanation is plausible."
   },
+  "8de24e9cd4380f38ab3035a84d8d3a14faa714b0c6be8d60048aec77da22cfdf": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Fix internal MCP URL derivation in mcp_oauth_store.py to respect WEB_HOST scheme and avoid 405",
+      "Add graceful handling of MCP connection failures in _runtime_mcp_tools to not block agent readiness"
+    ],
+    "risks": [
+      "Changing URL derivation may affect other MCP configurations",
+      "Graceful handling might mask real MCP issues"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce with rootless Podman and empty mcp_config; assert no 405 and conversation proceeds",
+      "Add unit test for URL construction with various WEB_HOST values",
+      "Regression test for SSL error when scheme is missing"
+    ],
+    "unknowns": [
+      "Exact code path for URL construction in mcp_oauth_store.py",
+      "Maintainer preference on handling internal MCP failures"
+    ],
+    "why": "Issue reports a reproducible, high-impact bug in the internal MCP self-connection path, with clear stack trace and root cause hypothesis. No competing PR or issue found. The fix is actionable: adjust URL derivation or error handling in mcp_oauth_store.py."
+  },
   "90182521e884f542be511482949503ccd1b2b115d61c0f144d5b7358435816bc": {
     "confidence": 0.7,
     "contradictions": [
@@ -3680,6 +3906,35 @@
     ],
     "why": "Issue provides a detailed root cause and proposed fix, but the deterministic gate requires HUMAN_REVIEW and there is an existing PR (#7423) with semantic overlap that needs maintainer comparison. Also, potential duplicate issue #7490 and design confirmation are needed."
   },
+  "b9bea567ff660854ce5fba7a19d344bc07ed2b50306eeef84de07e7e4aa91d88": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "core message state handling for tool errors",
+      "tests covering tool error state transitions"
+    ],
+    "risks": [
+      "Potential overlap with existing PRs; need to avoid duplication",
+      "May require maintainer design preference on state handling"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "test_plan": [
+      "Run the provided minimal repro to confirm the bug",
+      "Add regression test asserting output-error state after tool throw",
+      "Run targeted unit tests for the modified module"
+    ],
+    "unknowns": [
+      "Root cause not yet identified",
+      "Exact failing CI checks in PR #20705 not specified"
+    ],
+    "why": "Issue reports a clear user-visible bug with a public repro, but root cause is not identified. Existing PR #20705 directly references the issue and is technically complete, yet has failing CI checks, leaving room for a stronger PR with better tests and root-cause analysis."
+  },
   "b9db9b78955bec014b000a0eacf9959aef3efa9f114b530bf859ed6a4bdcf821": {
     "confidence": 0.7,
     "contradictions": [],
@@ -3847,6 +4102,36 @@
       "Maintainer's chosen direction (rename vs. allowlist) not yet decided."
     ],
     "why": "Issue clearly identifies root cause: Codex filters env vars matching *KEY* before MCP startup, and plugin hardcodes MEM0_API_KEY. However, maintainers explicitly request design confirmation on credential contract (rename vs. allowlist), and existing PR #6792 is weak (no tests, failing CI). Work should wait for maintainer direction."
+  },
+  "beef5fdc892e3327d4f9975d5f58218b9e243f5e594d2aa0b42f28c9fb7bf602": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "workflows/inngest/src/run.ts",
+      "workflows/inngest/src/execution-engine.ts",
+      "workflows/inngest/src/workflow.ts",
+      "workflows/inngest/src/durable-agent/create-inngest-agent.ts"
+    ],
+    "risks": [
+      "Existing PR #20285 may already address the issue; need to compare implementation boundaries",
+      "Backward compatibility with in-flight events must be maintained"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Add regression tests asserting resume event payload contains no stepResults/initialState copies",
+      "Add end-to-end suspend→resume round-trip test verifying correct step results via snapshot rehydration"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a specific fix approach or have design preferences",
+      "Exact status of PR #20285 relative to this issue"
+    ],
+    "why": "Issue provides a detailed, high-impact bug with clear root cause and suggested fix, but the deterministic gate requires HUMAN_REVIEW and existing PR #20285 has semantic overlap with the code paths, necessitating maintainer comparison before starting new work."
   },
   "bf7a7492d3eaa127d552d503815d6210dab8778071dc4024972f8b10166ebc98": {
     "confidence": 0.7,
