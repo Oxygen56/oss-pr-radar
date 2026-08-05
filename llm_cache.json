@@ -1768,6 +1768,35 @@
     ],
     "why": "Issue reports a clear, user-visible 500 error caused by a version mismatch between browser_use and mcp SDK, with a stack trace pinpointing the exact failing call. No competing PR or issue exists, and the fix is a straightforward dependency pin/upgrade or compatibility shim."
   },
+  "4a7f159047763b921b726b7ef3f1b2652a9751689ebef8e71aa178910610ca46": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add startup warmup for fused_dsa_target_verify_metadata kernel",
+      "Investigate CUDA driver concurrent module load deadlock"
+    ],
+    "risks": [
+      "May be specific to internal fork and not reproducible on main",
+      "Warmup change may not fix underlying driver deadlock"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 11,
+    "test_plan": [
+      "Reproduce with provided 1P1D mooncake PD setup and smoke request",
+      "Add regression test that triggers first EAGLE verify after startup"
+    ],
+    "unknowns": [
+      "Whether issue reproduces on public main branch",
+      "Whether maintainers have already investigated or have design preference",
+      "Open PR status due to lookup timeout"
+    ],
+    "why": "Issue reports a deterministic hang in EAGLE verify on DSA decode, with detailed stack and reproduction. However, it is an internal fork (feat-mooncache) with custom flags, and the root cause (CUDA driver deadlock vs missing warmup) is unconfirmed. Open PR and related issue lookups timed out, so duplicate work cannot be excluded."
+  },
   "4b3aee146f076609481d5cc61c8f1cb6b982b62e131e3d3336feba1ff85f5671": {
     "confidence": 0.7,
     "contradictions": [],
@@ -2215,6 +2244,32 @@
     ],
     "why": "Issue reports a clear crash with root cause and repro, but the supplied deterministic gate says HUMAN_REVIEW and the related issue audit timed out. An existing draft PR (#50894) directly addresses the issue but is incomplete (draft, pre-run-check failure)."
   },
+  "56a49d69d145fac5894e4e4b07d6be8c3cd401ccc11c30b1e833ad3744522948": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue reports bug in 1.16.1, but bot comment states both bugs are fixed in merged PRs; no explicit confirmation from reporter that the issue persists after fixes."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Verify if the issue persists after including PR #39424 and #39587; if so, add regression tests for WebSocket token parsing and pub/sub timeout behavior."
+    ],
+    "risks": [
+      "The issue may already be fixed by merged PRs, making new work redundant; root cause may involve additional configuration issues not covered by the identified fixes."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with Docker compose on Dify 1.16.1, apply the two merged fixes, and confirm workflow page loads; add a regression test for WebSocket token validation with mismatched SECRET_KEY."
+    ],
+    "unknowns": [
+      "Whether the reporter has tested the latest code with the merged fixes; whether the root cause is fully captured by the two identified bugs; maintainer confirmation on the need for further action."
+    ],
+    "why": "Issue reports a user-visible bug but lacks a clear root cause; the bot comment identifies two likely causes already fixed by merged PRs #39424 and #39587, so the issue may be resolved in a future release. No open PR competition exists, but the candidate is not actionable without confirmation that the bug persists after applying those fixes."
+  },
   "57d21a79a02e2144ac6e390c4883d4d842ef83ea8ee2ee8264820ae55549d435": {
     "confidence": 0.85,
     "contradictions": [],
@@ -2271,6 +2326,33 @@
       "Maintainer stance on the proposed fix and whether PR #35791 is salvageable."
     ],
     "why": "Issue provides a clear root cause and reproduction, but the supplied gate decision is HUMAN_REVIEW and the related issue audit failed (timeout). An existing PR #35791 directly addresses the issue but has failing CI checks, making it a weak competition opportunity. Maintainer confirmation is needed before starting work."
+  },
+  "58fc1e0adbeea4894177270f3c549b0789c865557588337f5a3b444a13ceee49": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Fix FlashInfer reshape handling for zero-element tensors",
+      "Adjust kernel selection or block size for sm120"
+    ],
+    "risks": [
+      "Potential duplicate implementation if existing PR exists",
+      "Hardware-specific fix may not generalize"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 12,
+    "test_plan": [
+      "Reproduce with DeepSeek-V4-Flash-0731 on RTX PRO 5000 with given flags",
+      "Add unit test for zero-element reshape in FlashInfer integration"
+    ],
+    "unknowns": [
+      "Whether an open PR already addresses this issue",
+      "Maintainer's preferred fix approach"
+    ],
+    "why": "Issue reports a crash in FlashInfer reshape with zero elements on RTX PRO 5000, but root cause is not fully diagnosed; open PR and related issue lookups timed out, so duplicate work cannot be excluded. Maintainer design preference is unknown and the repository requires AI disclosure, which conflicts with automated public actions."
   },
   "59d8d15af87f333e2a0b9cc214dd240ad387204e6a4258d3653a6baa77a0a2cb": {
     "confidence": 0.7,
@@ -2387,6 +2469,33 @@
       "Exact scope of changes needed to avoid breaking existing behavior"
     ],
     "why": "Issue provides detailed root-cause analysis and measured impact, but deterministic gate requires HUMAN_REVIEW and maintainer has not yet confirmed design or assignment. Existing PR #19217 is weak (failed CI) and #20661 overlaps partially, so a better PR is plausible but needs maintainer direction."
+  },
+  "5cbba08bfaf7da5508509ad9d9759f071866fd4327a842a0c06d19e02437b201": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Fix request body key ordering in AnthropicConfig.transform_request() to place system/tools before messages",
+      "Add regression test for multi-turn cache hits with vertex_ai/claude-sonnet-5"
+    ],
+    "risks": [
+      "Changing key order may affect other providers or API compatibility",
+      "Root cause may be more complex than key ordering; need maintainer confirmation"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 12,
+    "test_plan": [
+      "Reproduce the 6-turn scenario with the provided config and assert cache_read_input_tokens > 0 from turn 2 onward",
+      "Run existing Anthropic transformation unit tests and integration tests for Vertex AI"
+    ],
+    "unknowns": [
+      "Open PR status unknown due to timeout; related issue audit failed",
+      "Maintainer design preference or active investigation not confirmed"
+    ],
+    "why": "Issue reports a reproducible cache miss in Vertex AI Claude Sonnet 5, with a plausible root cause (JSON key ordering) and a workaround. However, the open PR and related issue lookups timed out, so duplicate work cannot be excluded. The maintainer has not confirmed the design or requested a fix, and the root cause is not fully confirmed."
   },
   "5cf211765f9f5d711ac0b4f7f31491ca9e8ad8920812b34f6798768a0e74fccb": {
     "confidence": 0.8,
@@ -2615,6 +2724,34 @@
       "Maintainer preference on whether to fix the stacking bug directly or rely on per-request isolation from issue #26751."
     ],
     "why": "Issue provides a clear root cause (torch.stack on variable-size crops) and a reproducible test, but the deterministic gate requires HUMAN_REVIEW. An existing PR #33458 directly addresses the issue but has failing CI checks, and a commenter has proposed a focused fix. Maintainer direction is not confirmed."
+  },
+  "686af751a2fb10cbd8a14214142943ef75894b33383ac25d553df0a68b6cb3d0": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "model_prices_and_context_window.json",
+      "add regression tests for pricing entries"
+    ],
+    "risks": [
+      "Existing PR #35911 may be merged or updated, making a new PR redundant.",
+      "Maintainer may have design preferences on how pricing corrections are validated."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add a unit test that loads model_prices_and_context_window.json and asserts the corrected per-token rates for the four Vertex MaaS models.",
+      "Run the existing pricing test suite and verify no regressions."
+    ],
+    "unknowns": [
+      "Whether the existing PR #35911 will be updated with tests or merged soon.",
+      "Whether maintainers prefer a new PR or improvements to the existing PR."
+    ],
+    "why": "Issue clearly identifies four incorrect Vertex AI MaaS prices with authoritative billing catalog evidence and a concrete reproduction. However, an existing PR #35911 already addresses the same issue but lacks tests and has not been merged. The deterministic gate requires HUMAN_REVIEW, and maintainer confirmation is needed to avoid duplicate or conflicting work."
   },
   "68c2888be696321cd2321d0fccfd08aeddd7a30bdae02ec845e32a28b3bac952": {
     "confidence": 0.8,
@@ -3763,6 +3900,36 @@
     ],
     "why": "Issue reports a clear crash with root cause and repro, but the deterministic gate says HUMAN_REVIEW and the related issue audit timed out. An existing draft PR (#50894) directly addresses the bug but has failed CI and is incomplete, so a better PR may be possible. However, maintainer design preference and PR status need confirmation."
   },
+  "9b9cea26215309a64b1e273ca1e408f050a516b93be9a098ba9cac21f3b586ae": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add 'max' to OPENAI_REASONING_EFFORT_OPTIONS in apps/vscode/src/shared/storage/types.ts",
+      "Add 'max' to ACTIVE_REASONING_EFFORTS in apps/cli/src/utils/reasoning.ts",
+      "Optionally update proto enum and CLI arg parser validation"
+    ],
+    "risks": [
+      "Potential need to update proto enum and related switch statements if gRPC paths are used",
+      "UI may show 'max' for all models, but SDK normalization prevents errors; acceptable per issue"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add unit test for UI selector showing 'max' for models advertising it",
+      "Add CLI test for --reasoning-effort max parsing",
+      "Add regression test ensuring 'max' degrades to nearest effort for unsupported models",
+      "Run existing reasoning-related tests in affected packages"
+    ],
+    "unknowns": [
+      "Maintainer preference on whether to filter dropdown per model or just add 'max' globally"
+    ],
+    "why": "Issue provides precise root cause: UI and CLI whitelists omit 'max' while SDK already supports it. Proposed fix is minimal and well-scoped, with clear evidence from models.dev and API docs. No competing PR or related issue found."
+  },
   "9c1fb3e2991987f1a7f8345147e1298e9b6a8bed38e5f16a7327e38b76aa0708": {
     "confidence": 0.85,
     "contradictions": [],
@@ -3819,6 +3986,36 @@
       "Maintainer preference among the suggested options"
     ],
     "why": "Issue clearly identifies a correctness bug from inconsistent inference_mode usage, with a concrete reproduction and maintainer discussion. However, open PR lookup and related issue audit timed out, so duplicate/competing work cannot be excluded. Maintainer comments indicate design options are still being considered, requiring maintainer confirmation before implementation."
+  },
+  "9c88e8666d909c0be52641e08d53d322e280c31e620757d8bb755c10e8ad72d4": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Dosu's comment states the issue is confirmed and root cause identified, but the issue body does not mention any maintainer confirmation"
+    ],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify api/controllers/mcp/mcp.py to replace sessionmaker().begin() with plain Session and explicit commit handling",
+      "Add regression test for MCP tool invocation that triggers internal commit during generation"
+    ],
+    "risks": [
+      "Potential behavior change in transaction handling if not carefully aligned with existing session patterns",
+      "Cloud-specific infrastructure may require coordination with Dify Cloud team for deployment"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce the error by calling an MCP tool via n8n client against a Dify Cloud MCP server",
+      "Add a unit/integration test that simulates the MCP controller flow with a downstream commit to ensure no closed-transaction error"
+    ],
+    "unknowns": [
+      "Whether maintainers have already assigned or are actively working on a fix",
+      "Exact code path in AppGenerateService that performs the internal commit"
+    ],
+    "why": "Issue reports a clear regression in Dify Cloud MCP servers with a specific SQLAlchemy closed-transaction error. Dosu's comment identifies the root cause as PR #34281's sessionmaker().begin() usage in api/controllers/mcp/mcp.py, conflicting with internal commits in the generation pipeline. No open PR addresses this; existing merged PRs are historical and not direct competition. The fix is actionable: revert to plain Session with explicit commit management, mirroring PR #36392."
   },
   "9d15012cd782a1372690774e0367b510a6a4e416d6b291a00db8c35f5ac4cd82": {
     "confidence": 0.8,
@@ -5011,6 +5208,34 @@
       "Whether maintainers prefer the scoping fix or the defensive refusal; whether PR #50514's failed CI is related and will be fixed."
     ],
     "why": "Issue reports a deterministic deadlock in fastsafetensors ParallelLoader when loading draft models under pipeline parallelism, with a clear root cause (hard-coded WORLD group) and a suggested fix. However, the deterministic gate is HUMAN_REVIEW, and there is an existing PR (#50514) with failed CI that may already address the area. Maintainer has acknowledged the issue but no design confirmation or assignment yet."
+  },
+  "d89f4a7b39b7a43715f1e9e96b359f2915f673bb39e90e609fee9f510165daf4": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/core/src/workflows/workflow.ts",
+      "WorkflowsStorage interface and adapters"
+    ],
+    "risks": [
+      "Storage adapter compatibility and migration",
+      "Potential API changes for resume conflict semantics"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Use the public repro to create a failing test for concurrent resume calls",
+      "Add regression test for storage-backed atomic claim/CAS"
+    ],
+    "unknowns": [
+      "Maintainer preference on storage-backed vs in-process mitigation",
+      "Exact WorkflowsStorage contract changes required"
+    ],
+    "why": "Issue clearly describes a race condition in workflow resume with public repro and production evidence, but the proposed fix requires storage-level atomic claim/CAS and maintainer confirmation on the WorkflowsStorage contract. Existing PR #20512 was closed as insufficient, and maintainer input is needed to choose between single-process mitigation and storage-backed solution."
   },
   "d90931ce4843cfecd8a001954c60a99fdce15220b3581596f86a4ce0f7c06f5a": {
     "confidence": 0.8,
