@@ -215,3 +215,46 @@ def test_orphan_list_recovers_unique_async_worktree_task(monkeypatch, tmp_path):
     assert result["blocked"] == []
     assert result["candidates"][0]["threadId"] == "thread-1"
     assert result["candidates"][0]["desiredTitle"].startswith("[有价值·GO]")
+
+
+def test_orphan_list_does_not_report_expired_lease_as_active(monkeypatch, tmp_path):
+    now = datetime.now(UTC)
+    thread_db = tmp_path / "threads.sqlite3"
+    worktree_root = tmp_path / "worktrees"
+    worktree_root.mkdir()
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            """CREATE TABLE threads (
+                id TEXT, cwd TEXT, title TEXT, first_user_message TEXT,
+                git_origin_url TEXT, archived INTEGER, created_at INTEGER,
+                created_at_ms INTEGER
+            )"""
+        )
+
+    class Store:
+        def orphaned_handoffs(self):
+            return [
+                {
+                    "key": "a/b#1",
+                    "issueUrl": "https://github.com/a/b/issues/1",
+                    "title": "Runtime bug",
+                    "intentId": "intent-1",
+                    "intentStatus": "LEASED",
+                    "leaseOwner": "controller",
+                    "leaseStartedAt": iso_z(now - timedelta(minutes=31)),
+                    "leaseUntil": iso_z(now - timedelta(minutes=1)),
+                    "expiresAt": iso_z(now + timedelta(hours=1)),
+                    "repo": "a/b",
+                }
+            ]
+
+        def bound_thread_ids(self):
+            return set()
+
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "WORKTREE_ROOT", worktree_root)
+
+    result = MODULE.orphan_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert result == {"ok": True, "candidates": [], "blocked": [], "unmatched": []}

@@ -88,6 +88,42 @@ def test_expired_pending_intent_does_not_block_a_fresh_snapshot(tmp_path):
     assert store.enqueue(intent(intentId="intent-2", decisionDigest="new")) is True
 
 
+def test_same_signed_intent_renews_pending_expiry(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    initial = intent(expiresAt=iso_z(datetime.now(UTC) + timedelta(minutes=5)))
+    renewed_expiry = iso_z(datetime.now(UTC) + timedelta(hours=2))
+    assert store.enqueue(initial) is True
+
+    assert store.enqueue(intent(expiresAt=renewed_expiry)) is False
+
+    pending = store.pending()
+    assert len(pending) == 1
+    assert pending[0]["expiresAt"] == renewed_expiry
+
+
+def test_same_signed_intent_reopens_an_expired_lease(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "old-controller")
+    with store.connect() as connection:
+        connection.execute(
+            """UPDATE intents SET expires_at=?,lease_until=?
+               WHERE intent_id='intent-1'""",
+            (
+                iso_z(datetime.now(UTC) - timedelta(minutes=2)),
+                iso_z(datetime.now(UTC) - timedelta(minutes=1)),
+            ),
+        )
+
+    renewed_expiry = iso_z(datetime.now(UTC) + timedelta(hours=2))
+    assert store.enqueue(intent(expiresAt=renewed_expiry)) is False
+
+    pending = store.pending()
+    assert len(pending) == 1
+    assert pending[0]["ledgerStatus"] == "PENDING"
+    assert pending[0]["expiresAt"] == renewed_expiry
+
+
 def test_latest_signed_queue_supersedes_withdrawn_uncommitted_intent(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(intent())

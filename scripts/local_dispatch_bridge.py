@@ -452,6 +452,7 @@ def orphan_list(args: argparse.Namespace) -> dict[str, Any]:
     candidates: list[dict[str, Any]] = []
     blocked: list[dict[str, Any]] = []
     unmatched: list[dict[str, Any]] = []
+    now = datetime.now().astimezone().timestamp()
     worktree_root = WORKTREE_ROOT.resolve()
     for handoff in handoffs:
         started = parse_time(str(handoff["leaseStartedAt"])).timestamp() - 60
@@ -475,7 +476,8 @@ def orphan_list(args: argparse.Namespace) -> dict[str, Any]:
                 continue
             matches.append(row)
         if not matches:
-            if handoff["intentStatus"] == "LEASED":
+            lease_until = parse_time(str(lease_end)).timestamp()
+            if handoff["intentStatus"] == "LEASED" and lease_until > now:
                 unmatched.append(
                     {
                         "intentId": handoff["intentId"],

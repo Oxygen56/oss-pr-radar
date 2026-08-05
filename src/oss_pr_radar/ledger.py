@@ -176,9 +176,40 @@ class RadarLedger:
         payload = canonical_json(intent)
         with self.transaction() as connection:
             existing = connection.execute(
-                "SELECT status FROM intents WHERE intent_id=?", (intent["intentId"],)
+                """SELECT status,expires_at,lease_until FROM intents
+                   WHERE intent_id=?""",
+                (intent["intentId"],),
             ).fetchone()
             if existing:
+                incoming_expiry = parse_time(str(intent["expiresAt"]))
+                renewable = existing["status"] in {
+                    "PENDING",
+                    "LEASED",
+                    "EXPIRED",
+                    "SUPERSEDED",
+                }
+                if renewable and incoming_expiry > datetime.now(UTC):
+                    lease_active = bool(
+                        existing["status"] == "LEASED"
+                        and existing["lease_until"]
+                        and parse_time(str(existing["lease_until"])) > datetime.now(UTC)
+                    )
+                    next_status = "LEASED" if lease_active else "PENDING"
+                    connection.execute(
+                        """UPDATE intents SET status=?,expires_at=?,payload_json=?,
+                           lease_owner=CASE WHEN ? THEN lease_owner ELSE NULL END,
+                           lease_until=CASE WHEN ? THEN lease_until ELSE NULL END,
+                           updated_at=? WHERE intent_id=?""",
+                        (
+                            next_status,
+                            intent["expiresAt"],
+                            payload,
+                            lease_active,
+                            lease_active,
+                            now,
+                            intent["intentId"],
+                        ),
+                    )
                 return False
             duplicate = connection.execute(
                 """SELECT intent_id FROM intents
