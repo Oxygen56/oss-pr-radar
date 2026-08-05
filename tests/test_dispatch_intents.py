@@ -96,6 +96,17 @@ def test_existing_unconsumed_intent_survives_unobserved_scan_and_is_renewed():
     assert result["intents"][0]["expiresAt"] > existing["intents"][0]["expiresAt"]
 
 
+def test_expired_unconsumed_intent_is_renewed_until_live_claim_revalidation():
+    existing = MODULE.build(report(candidate()), signing_key=KEY, now=NOW)
+    result = MODULE.build(report(), existing, signing_key=KEY, now=NOW + timedelta(hours=3))
+    assert [item["key"] for item in result["intents"]] == ["example/project#42"]
+    assert result["newIntentCount"] == 0
+    renewed_expiry = datetime.fromisoformat(
+        result["intents"][0]["expiresAt"].replace("Z", "+00:00")
+    )
+    assert renewed_expiry > NOW + timedelta(hours=3)
+
+
 def test_seen_recently_and_transient_failures_do_not_withdraw_pending_intent():
     existing = MODULE.build(report(candidate()), signing_key=KEY, now=NOW)
     for reason in (

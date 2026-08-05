@@ -32,6 +32,53 @@ def test_paginated_gh_flattens_every_page(monkeypatch):
     assert captured["timeout"] == 41
 
 
+def test_optional_discovery_retries_rate_limit(monkeypatch, tmp_path):
+    calls = 0
+    clock = [0.0]
+    sleeps = []
+
+    def fake_gh(_args, timeout=18):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return None, "API rate limit exceeded for installation"
+        return {
+            "items": [
+                {
+                    "number": 7,
+                    "title": "Remote MCP state is process-local",
+                    "html_url": "https://github.com/example/project/issues/7",
+                    "repository_url": "https://api.github.com/repos/example/project",
+                    "state": "open",
+                    "labels": [{"name": "bug"}],
+                    "assignees": [],
+                }
+            ]
+        }, None
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        clock[0] += seconds
+
+    monkeypatch.setattr(scanner, "gh", fake_gh)
+    radar = Radar(
+        datetime.now(UTC),
+        2,
+        tmp_path / "seen.json",
+        "",
+        dry_run=True,
+        sleep_fn=sleep,
+        monotonic_fn=lambda: clock[0],
+    )
+    items = {}
+    radar.add_search(items, "is:issue is:open label:bug MCP", 15, required=False)
+
+    assert calls == 2
+    assert 3.0 in sleeps
+    assert radar.errors == []
+    assert "example/project#7" in items
+
+
 def test_notification_digest_ignores_llm_wording_and_age_churn():
     candidate = {
         "repo": "google/adk-python",

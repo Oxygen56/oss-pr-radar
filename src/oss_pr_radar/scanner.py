@@ -1434,7 +1434,7 @@ class Radar:
     ) -> None:
         data: Any | None = None
         err: str | None = None
-        retry_delays = SEARCH_RETRY_DELAYS_SECONDS if required else ()
+        retry_delays = SEARCH_RETRY_DELAYS_SECONDS
         for attempt in range(len(retry_delays) + 1):
             if self._last_search_at is not None:
                 elapsed = self.monotonic_fn() - self._last_search_at

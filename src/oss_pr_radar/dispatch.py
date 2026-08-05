@@ -120,7 +120,6 @@ def build_queue(
                     item.get("key") not in observed
                     and item.get("scannerVersion") == scanner_version
                     and item.get("decisionContractDigest") == dispatch_contract_digest
-                    and parse_time(str(item["expiresAt"])) > current
                     and parse_time(str(item["issuedAt"]))
                     > current - timedelta(days=MAX_INTENT_AGE_DAYS)
                     and item.get("status") == "PENDING"
