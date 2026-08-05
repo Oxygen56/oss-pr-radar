@@ -82,6 +82,105 @@ def test_same_issue_cannot_create_a_second_live_task(tmp_path):
     assert store.enqueue(intent(intentId="intent-2", decisionDigest="new")) is False
 
 
+def test_creating_state_survives_expired_lease_and_blocks_duplicate(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "controller")
+    creation = store.reserve_creation("intent-1", owner="controller")
+    store.bind_creation_client(
+        "intent-1",
+        owner="controller",
+        creation_token=creation["creationToken"],
+        client_thread_id="client-1",
+    )
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE intents SET lease_until=?,expires_at=? WHERE intent_id='intent-1'",
+            (
+                iso_z(datetime.now(UTC) - timedelta(hours=1)),
+                iso_z(datetime.now(UTC) - timedelta(minutes=30)),
+            ),
+        )
+
+    assert store.enqueue(intent(intentId="intent-2", decisionDigest="new")) is False
+    assert store.claim("intent-1", "controller") is None
+    assert store.active_dispatch_count() == 1
+    assert store.has_live_handoff(issue_url="https://github.com/a/b/issues/1") is True
+    pending = store.pending()
+    assert pending[0]["ledgerStatus"] == "CREATING"
+    assert pending[0]["clientThreadId"] == "client-1"
+    assert store.pending_alerts() == []
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE intents SET creation_started_at=? WHERE intent_id='intent-1'",
+            (iso_z(datetime.now(UTC) - timedelta(hours=2)),),
+        )
+    assert store.pending_alerts()[0]["alertCode"] == "TASK_CREATION_PENDING"
+
+
+def test_late_created_thread_can_commit_after_lease_expiry(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "controller")
+    creation = store.reserve_creation("intent-1", owner="controller")
+    store.bind_creation_client(
+        "intent-1",
+        owner="controller",
+        creation_token=creation["creationToken"],
+        client_thread_id="client-1",
+    )
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE intents SET lease_until=? WHERE intent_id='intent-1'",
+            (iso_z(datetime.now(UTC) - timedelta(hours=1)),),
+        )
+
+    store.commit_dispatch(
+        "intent-1",
+        owner="controller",
+        thread_id="thread-late",
+        project_id="github",
+        worktree_path="/tmp/worktree",
+    )
+
+    context = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-late",
+    )
+    assert context is not None
+    assert context["intentStatus"] == "DISPATCHED"
+
+
+def test_creation_can_only_be_cancelled_before_client_id_is_bound(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "controller")
+    creation = store.reserve_creation("intent-1", owner="controller")
+    store.cancel_creation(
+        "intent-1",
+        owner="controller",
+        creation_token=creation["creationToken"],
+        reason="create_thread_rejected_before_dispatch",
+    )
+    assert store.pending()[0]["ledgerStatus"] == "PENDING"
+
+    store.claim("intent-1", "controller")
+    creation = store.reserve_creation("intent-1", owner="controller")
+    store.bind_creation_client(
+        "intent-1",
+        owner="controller",
+        creation_token=creation["creationToken"],
+        client_thread_id="client-1",
+    )
+    with pytest.raises(LedgerError, match="cannot be cancelled"):
+        store.cancel_creation(
+            "intent-1",
+            owner="controller",
+            creation_token=creation["creationToken"],
+            reason="timeout",
+        )
+
+
 def test_expired_pending_intent_does_not_block_a_fresh_snapshot(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(intent(expiresAt="2020-01-01T00:00:00Z"))

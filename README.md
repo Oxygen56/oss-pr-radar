@@ -17,6 +17,12 @@ is recorded as a lagging outcome, never used to judge discovery quality.
 - Local live revalidation before a Codex task is created.
 - Exact source-repository projects and isolated worktrees for implementation;
   the radar project never substitutes for the target repository.
+- Write-ahead task creation with a durable `CREATING` state and persisted
+  `clientThreadId`; an unresolved asynchronous request can never be dispatched
+  a second time merely because its lease or queue intent expired.
+- Workspace-local task context and result files. Child tasks never open the
+  Radar or Plan Hub databases and never need elevated filesystem permission;
+  the privileged controller owns lifecycle updates and publication.
 - Publication requests and short-lived permits bound to the exact commit,
   branch, fork owner, base branch, PR title, and PR body digest.
 - Idempotent publication receipts: cross-fork PR lookup uses the exact REST
@@ -75,9 +81,10 @@ flowchart LR
   G["GitHub read-only scan"] --> S["Validated scan artifact"]
   S --> Q["HMAC-signed dispatch intent"]
   Q --> L["Local SQLite ledger"]
-  L --> V["Live issue, policy, PR, hardware recheck"]
-  V --> T["Codex worktree task"]
-  T --> R["SubmitReady evidence"]
+L --> V["Live issue, policy, PR, hardware recheck"]
+V --> C["Durable CREATING receipt"]
+C --> T["Codex worktree task"]
+T --> R["Workspace result evidence"]
   R --> B["Independent publication broker"]
   B --> P["Short-lived commit and PR-payload permit"]
   P --> E["Idempotent push and PR executor"]
@@ -134,6 +141,13 @@ python scripts/local_dispatch_bridge.py list
 # Alert when a signed intent survives more than one controller cycle
 python scripts/local_dispatch_bridge.py alerts --min-age-minutes 70 --notify
 
+# Repair workspace-local task contexts and ingest completed task results
+python scripts/local_dispatch_bridge.py context-sync
+python scripts/local_dispatch_bridge.py ingest-results
+
+# Advance independently revalidated publication requests
+python scripts/local_dispatch_bridge.py publication-run
+
 # Rolling controllable quality metrics
 python scripts/local_dispatch_bridge.py metrics --days 30
 
@@ -149,7 +163,12 @@ empty task at most once through a write-ahead recovery receipt. It archives a
 task only after that task records `AUDIT_NO_GO` and its title has first been
 synchronized to the visible `[无价值]` lifecycle prefix. If asynchronous
 worktree creation returns only a client ID, the controller can reconcile the
-unique prompt/origin/worktree match before the next lifecycle action.
+unique prompt/origin/worktree match before the next lifecycle action. The
+creation request remains in durable `CREATING` state until that match is
+committed or the desktop API explicitly rejects the request before returning
+an external ID. Child tasks report only through the Git-ignored
+`.oss-pr-radar/` directory; the controller ingests outcomes and executes the
+permit-bound publication path.
 Each sync also supersedes uncommitted local intents withdrawn from the latest
 signed cloud queue, so an older controller cannot dispatch a retracted decision.
 

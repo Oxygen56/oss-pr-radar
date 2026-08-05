@@ -139,6 +139,107 @@ def test_nontechnical_triage_failure_does_not_create_pr_competition(monkeypatch,
     assert "存在失败 CI/check" not in result["prs"][0]["gaps"]
 
 
+def test_vercel_authorization_failure_is_not_competition_evidence(monkeypatch, tmp_path):
+    instance = radar(tmp_path)
+    monkeypatch.setattr(instance, "open_pr_hits", lambda *args: [{"number": 20661}])
+    monkeypatch.setattr(
+        instance,
+        "pr_detail",
+        lambda *args: {
+            "number": 20661,
+            "title": "fix(workflows): preserve nested watch state",
+            "url": "https://github.com/mastra-ai/mastra/pull/20661",
+            "body": (
+                "Fixes #20660. This fixes the nested workflow watch root cause and adds "
+                "focused regression coverage for all affected state transitions. The "
+                "implementation remains scoped to the workflow runtime path."
+            ),
+            "state": "OPEN",
+            "isDraft": False,
+            "updatedAt": "2026-08-04T12:00:00Z",
+            "files": [
+                {"path": "packages/core/src/workflows/watch.ts"},
+                {"path": "packages/core/src/workflows/watch.test.ts"},
+            ],
+            "additions": 120,
+            "deletions": 20,
+            "changedFiles": 2,
+            "statusCheckRollup": [
+                {"name": "unit", "conclusion": "SUCCESS"},
+                {
+                    "name": "Preview deployment",
+                    "conclusion": "FAILURE",
+                    "detailsUrl": "https://vercel.com/git/authorize",
+                },
+            ],
+            "reviewDecision": "REVIEW_REQUIRED",
+            "comments": [],
+            "closingIssuesReferences": [{"number": 20660}],
+        },
+    )
+
+    result = instance.assess_open_prs(
+        "mastra-ai/mastra",
+        20660,
+        "Workflow watch loses nested state",
+        "packages/core/src/workflows/watch.ts nested workflow watch state",
+    )
+
+    assert result["status"] == "covered_strong"
+    assert result["prs"][0]["ignored_nontechnical_failed_checks"] == [
+        "Preview deployment"
+    ]
+    assert result["prs"][0]["ci_competition_weight"] == 0
+
+
+def test_technical_ci_failure_alone_does_not_make_complete_pr_competitive(
+    monkeypatch, tmp_path
+):
+    instance = radar(tmp_path)
+    monkeypatch.setattr(instance, "open_pr_hits", lambda *args: [{"number": 10}])
+    monkeypatch.setattr(
+        instance,
+        "pr_detail",
+        lambda *args: {
+            "number": 10,
+            "title": "fix(runtime): preserve streamed tool result",
+            "url": "https://github.com/a/b/pull/10",
+            "body": (
+                "Fixes #7. Preserve the streamed tool result at the runtime boundary and "
+                "cover synchronous and asynchronous tool-call paths with focused regression "
+                "tests. The change does not alter unrelated provider behavior."
+            ),
+            "state": "OPEN",
+            "isDraft": False,
+            "updatedAt": "2026-08-04T12:00:00Z",
+            "files": [
+                {"path": "src/runtime/tool_stream.py"},
+                {"path": "tests/test_tool_stream.py"},
+            ],
+            "additions": 90,
+            "deletions": 12,
+            "changedFiles": 2,
+            "statusCheckRollup": [
+                {"name": "unit tests", "conclusion": "FAILURE"},
+            ],
+            "reviewDecision": "REVIEW_REQUIRED",
+            "comments": [],
+            "closingIssuesReferences": [{"number": 7}],
+        },
+    )
+
+    result = instance.assess_open_prs(
+        "a/b",
+        7,
+        "Streaming tool result is lost",
+        "src/runtime/tool_stream.py async tool call",
+    )
+
+    assert result["status"] == "covered_strong"
+    assert result["prs"][0]["technical_failed_checks"] == ["unit tests"]
+    assert result["prs"][0]["ci_competition_weight"] == 0
+
+
 def test_stack_trace_basename_and_semantics_block_unlinked_covering_pr(monkeypatch, tmp_path):
     instance = radar(tmp_path)
     monkeypatch.setattr(instance, "open_pr_hits", lambda *args: [{"number": 1439}])

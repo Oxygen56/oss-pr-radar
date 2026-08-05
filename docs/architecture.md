@@ -17,21 +17,30 @@ timing are external labels, not the north-star metric.
    Unlinked PRs are held for review when a stack-trace path or distinctive file
    basename overlaps the PR diff and the issue/PR semantics also overlap;
    generic names such as `utils.py` never establish coverage by themselves.
+   Check failures are diagnostic only. Preview/auth/policy statuses are
+   classified separately, and even a technical failure cannot authorize a
+   competing PR without a material root-cause, critical-path, or test gap.
 3. **Decision** applies hard gates first. DeepSeek may reject, downgrade, or
    classify semantic competition; it cannot produce a positive authorization.
 4. **Cloud handoff** validates the immutable report and signs a promptless,
    expiring intent with HMAC. Notification messages use a durable outbox.
 5. **Local authorization** verifies the signature, leases an intent in SQLite,
-   repeats all live gates, and creates the canonical prompt locally.
+   repeats all live gates, and creates the canonical prompt locally. Before
+   calling the desktop task API it records `CREATING`; the returned
+   `clientThreadId` is persisted before any polling.
 6. **Task identity** binds issue, Codex task ID, project, source repository,
    worktree, first user input, and expected timestamped lifecycle title. The
    selected project must be the exact source repository and must advertise a
    Git repository; parent folders and the radar repository are invalid targets.
    When worktree creation returns only an asynchronous client ID, a later
-   reconciliation may bind the task only if lease time, canonical prompt,
-   repository origin, and previously unbound worktree identify exactly one task.
-7. **Delivery** records either `AUDIT_NO_GO` or SubmitReady evidence. Only the
-   latter can create a publication request.
+   reconciliation may bind the task only if creation start time, canonical
+   prompt, repository origin, and a previously unbound worktree identify
+   exactly one task. `CREATING` does not expire with the lease, so a late task
+   cannot race a replacement.
+7. **Delivery** gives the child a Git-ignored workspace context. The child
+   writes either `AUDIT_NO_GO` or SubmitReady evidence locally and never opens
+   the external ledger or performs public actions. The controller validates and
+   ingests that result; only SubmitReady evidence can create a publication request.
 8. **Publication** rechecks the exact clean commit, branch, diff, evidence,
    ownership, duplicates, policy, DCO, identity, fork owner, base branch, PR
    title, and PR body digest. A permit expires quickly and is consumed by the
@@ -39,7 +48,7 @@ timing are external labels, not the north-star metric.
 
 ## Lifecycle
 
-`QUALIFIED -> LEASED -> DISPATCHED -> AUDIT_PASS -> FIX_READY -> PR_OPEN -> CI_GREEN -> MAINTAINER_ACCEPTED -> MERGED`
+`QUALIFIED -> LEASED -> CREATING -> DISPATCHED -> AUDIT_PASS -> FIX_READY -> PR_OPEN -> CI_GREEN -> MAINTAINER_ACCEPTED -> MERGED`
 
 `AUDIT_NO_GO` is a terminal no-value outcome and is the only lifecycle state
 that authorizes automatic task archival. Archival remains blocked until the

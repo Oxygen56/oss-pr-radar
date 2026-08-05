@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -25,7 +26,7 @@ from oss_pr_radar.github_client import GitHubClient  # noqa: E402
 from oss_pr_radar.ledger import RadarLedger  # noqa: E402
 from oss_pr_radar.metrics import assess_submit_ready, rolling_quality  # noqa: E402
 from oss_pr_radar.notifier import FeishuClient, NotificationError  # noqa: E402
-from oss_pr_radar.publication import request_publication  # noqa: E402
+from oss_pr_radar.publication import broker_publication_request, request_publication  # noqa: E402
 from oss_pr_radar.util import parse_time, sha256_json  # noqa: E402
 
 STATE = ROOT / "state"
@@ -37,6 +38,9 @@ KEYCHAIN_SERVICE = "oss-pr-radar-dispatch"
 ISSUE_URL = re.compile(r"^https://github\.com/([^/]+/[^/]+)/issues/(\d+)$")
 DELEGATED_INPUT = re.compile(r"<input>(.*?)</input>", re.DOTALL)
 MAX_TITLE_CHARS = 59
+TASK_PRIVATE_DIR = ".oss-pr-radar"
+TASK_CONTEXT_SCHEMA = "radar-task-context-v1"
+TASK_RESULT_SCHEMA = "radar-task-result-v1"
 TITLE_PREFIXES = {
     "GO": "[有价值·GO]",
     "AUDIT_NO_GO": "[无价值]",
@@ -194,6 +198,9 @@ def list_pending(path: Path = LEDGER_PATH) -> dict[str, Any]:
                 "pendingSince": item["pendingSince"],
                 "pendingAgeMinutes": item["pendingAgeMinutes"],
                 "leaseStale": item["leaseStale"],
+                "clientThreadId": item.get("clientThreadId"),
+                "creationStartedAt": item.get("creationStartedAt"),
+                "creationAgeMinutes": item.get("creationAgeMinutes"),
             }
             for item in values
         ],
@@ -382,6 +389,93 @@ def git_path(*args: str, cwd: Path) -> Path:
     return Path(command(["git", *args], cwd=cwd)).resolve()
 
 
+def _atomic_json(path: Path, value: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, path)
+
+
+def _exclude_private_task_dir(worktree: Path) -> None:
+    raw = command(["git", "rev-parse", "--git-path", "info/exclude"], cwd=worktree)
+    exclude = Path(raw)
+    if not exclude.is_absolute():
+        exclude = (worktree / exclude).resolve()
+    exclude.parent.mkdir(parents=True, exist_ok=True)
+    existing = exclude.read_text(encoding="utf-8") if exclude.exists() else ""
+    rule = f"/{TASK_PRIVATE_DIR}/"
+    if rule not in {line.strip() for line in existing.splitlines()}:
+        with exclude.open("a", encoding="utf-8") as handle:
+            if existing and not existing.endswith("\n"):
+                handle.write("\n")
+            handle.write(rule + "\n")
+
+
+def write_task_context(store: RadarLedger, *, issue_url: str, thread_id: str, cwd: Path) -> Path:
+    context = store.task_context(
+        issue_url=issue_url,
+        thread_id=thread_id,
+        worktree_path=str(cwd.resolve()),
+    )
+    if context is None:
+        raise RuntimeError("registered task context is unavailable")
+    _exclude_private_task_dir(cwd)
+    private_dir = cwd / TASK_PRIVATE_DIR
+    private_dir.mkdir(parents=True, exist_ok=True)
+    os.chmod(private_dir, 0o700)
+    payload = {
+        "schemaVersion": TASK_CONTEXT_SCHEMA,
+        **context,
+        "resultPath": str((private_dir / "result.json").resolve()),
+        "controllerOwnsLifecycle": True,
+        "controllerOwnsPublication": True,
+        "externalLedgerAccessAllowed": False,
+        "planHubRequired": False,
+    }
+    payload["contextDigest"] = sha256_json(
+        {
+            "schemaVersion": TASK_CONTEXT_SCHEMA,
+            "key": context["key"],
+            "issueUrl": context["issueUrl"],
+            "intentId": context["intentId"],
+            "threadId": context["threadId"],
+            "worktreePath": context["worktreePath"],
+        }
+    )
+    path = private_dir / "task-context.json"
+    _atomic_json(path, payload)
+    return path
+
+
+def creation_start(args: argparse.Namespace) -> dict[str, Any]:
+    result = ledger(args.ledger).reserve_creation(args.intent_id, owner=args.owner)
+    return {"ok": True} | result
+
+
+def creation_bind(args: argparse.Namespace) -> dict[str, Any]:
+    result = ledger(args.ledger).bind_creation_client(
+        args.intent_id,
+        owner=args.owner,
+        creation_token=args.creation_token,
+        client_thread_id=args.client_thread_id,
+    )
+    return {"ok": True} | result
+
+
+def creation_cancel(args: argparse.Namespace) -> dict[str, Any]:
+    ledger(args.ledger).cancel_creation(
+        args.intent_id,
+        owner=args.owner,
+        creation_token=args.creation_token,
+        reason=args.reason,
+    )
+    return {"ok": True, "intentId": args.intent_id, "cancelled": True}
+
+
 def commit_receipt(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
     pending = {item["intentId"]: item for item in store.pending()}
@@ -424,7 +518,18 @@ def commit_receipt(args: argparse.Namespace) -> dict[str, Any]:
         worktree_path=str(cwd),
         title_time=args.title_time,
     )
-    return {"ok": True, "key": intent["key"], "threadId": args.thread_id}
+    context_path = write_task_context(
+        store,
+        issue_url=intent["issueUrl"],
+        thread_id=args.thread_id,
+        cwd=cwd,
+    )
+    return {
+        "ok": True,
+        "key": intent["key"],
+        "threadId": args.thread_id,
+        "taskContextPath": str(context_path),
+    }
 
 
 def _thread_created_at(row: sqlite3.Row) -> float:
@@ -455,15 +560,22 @@ def orphan_list(args: argparse.Namespace) -> dict[str, Any]:
     now = datetime.now().astimezone().timestamp()
     worktree_root = WORKTREE_ROOT.resolve()
     for handoff in handoffs:
-        started = parse_time(str(handoff["leaseStartedAt"])).timestamp() - 60
+        creation_started_at = handoff.get("creationStartedAt")
+        started = parse_time(
+            str(creation_started_at or handoff["leaseStartedAt"])
+        ).timestamp() - 60
         lease_end = handoff.get("leaseUntil") or handoff.get("expiresAt")
-        ended = parse_time(str(lease_end)).timestamp() + 300
+        ended = (
+            None
+            if handoff["intentStatus"] == "CREATING"
+            else parse_time(str(lease_end)).timestamp() + 300
+        )
         matches: list[sqlite3.Row] = []
         for row in rows:
             if row["id"] in bound_thread_ids:
                 continue
             created = _thread_created_at(row)
-            if created < started or created > ended:
+            if created < started or (ended is not None and created > ended):
                 continue
             if canonical_prompt(row["first_user_message"] or "") != issue_prompt(
                 handoff["issueUrl"]
@@ -477,12 +589,17 @@ def orphan_list(args: argparse.Namespace) -> dict[str, Any]:
             matches.append(row)
         if not matches:
             lease_until = parse_time(str(lease_end)).timestamp()
-            if handoff["intentStatus"] == "LEASED" and lease_until > now:
+            if handoff["intentStatus"] == "CREATING" or (
+                handoff["intentStatus"] == "LEASED" and lease_until > now
+            ):
                 unmatched.append(
                     {
                         "intentId": handoff["intentId"],
                         "key": handoff["key"],
                         "leaseStartedAt": handoff["leaseStartedAt"],
+                        "creationStartedAt": creation_started_at,
+                        "clientThreadId": handoff.get("clientThreadId"),
+                        "creationPending": handoff["intentStatus"] == "CREATING",
                     }
                 )
             continue
@@ -556,7 +673,8 @@ def orphan_commit(args: argparse.Namespace) -> dict[str, Any]:
         connection.close()
     if row is None or int(row[1] or 0) != 0 or row[0] != args.desired_title:
         raise RuntimeError("orphan thread title was not applied")
-    ledger(args.ledger).commit_orphan_dispatch(
+    store = ledger(args.ledger)
+    store.commit_orphan_dispatch(
         args.intent_id,
         thread_id=args.thread_id,
         project_id=args.project_id,
@@ -564,11 +682,264 @@ def orphan_commit(args: argparse.Namespace) -> dict[str, Any]:
         title_time=candidate["titleTime"],
         lease_started_at=candidate["leaseStartedAt"],
     )
+    context_path = write_task_context(
+        store,
+        issue_url=candidate["issueUrl"],
+        thread_id=args.thread_id,
+        cwd=cwd,
+    )
     return {
         "ok": True,
         "key": candidate["key"],
         "threadId": args.thread_id,
         "reconciled": True,
+        "taskContextPath": str(context_path),
+    }
+
+
+def _task_result_path(candidate: dict[str, Any]) -> Path:
+    return Path(candidate["worktreePath"]).resolve() / TASK_PRIVATE_DIR / "result.json"
+
+
+def sync_task_contexts(args: argparse.Namespace) -> dict[str, Any]:
+    store = ledger(args.ledger)
+    written: list[dict[str, str]] = []
+    errors: list[dict[str, str]] = []
+    for candidate in store.task_result_candidates():
+        try:
+            path = write_task_context(
+                store,
+                issue_url=candidate["issueUrl"],
+                thread_id=candidate["threadId"],
+                cwd=Path(candidate["worktreePath"]),
+            )
+            written.append({"key": candidate["key"], "path": str(path)})
+        except (OSError, RuntimeError, ValueError) as exc:
+            errors.append({"key": candidate["key"], "error": str(exc)[:300]})
+    return {"ok": not errors, "written": written, "errors": errors}
+
+
+def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
+    store = ledger(args.ledger)
+    ingested: list[dict[str, Any]] = []
+    publication_requests: list[dict[str, Any]] = []
+    errors: list[dict[str, str]] = []
+    for candidate in store.task_result_candidates():
+        result_path = _task_result_path(candidate)
+        if not result_path.exists():
+            continue
+        try:
+            raw = result_path.read_bytes()
+            value = json.loads(raw)
+            if not isinstance(value, dict):
+                raise RuntimeError("task result must be an object")
+            context_path = result_path.parent / "task-context.json"
+            context = json.loads(context_path.read_text(encoding="utf-8"))
+            if not isinstance(context, dict) or value.get("contextDigest") != context.get(
+                "contextDigest"
+            ):
+                raise RuntimeError("task result context digest mismatch")
+            expected = {
+                "schemaVersion": TASK_RESULT_SCHEMA,
+                "key": candidate["key"],
+                "issueUrl": candidate["issueUrl"],
+                "threadId": candidate["threadId"],
+                "worktreePath": str(Path(candidate["worktreePath"]).resolve()),
+            }
+            for key, expected_value in expected.items():
+                if value.get(key) != expected_value:
+                    raise RuntimeError(f"task result mismatch: {key}")
+            stage = str(value.get("stage") or "")
+            digest = hashlib.sha256(raw).hexdigest()
+            if stage == "AUDIT_NO_GO":
+                reason = str(value.get("reason") or "").strip()
+                if not reason or not re.fullmatch(r"[A-Z][A-Z0-9_]{2,80}", reason):
+                    raise RuntimeError("AUDIT_NO_GO requires a machine-readable reason")
+                store.record_stage(
+                    candidate["key"],
+                    "AUDIT_NO_GO",
+                    evidence=value.get("evidence") if isinstance(value.get("evidence"), dict) else {},
+                    reason=reason,
+                    dedupe_key=digest,
+                )
+                ingested.append(
+                    {"key": candidate["key"], "stage": stage, "reason": reason}
+                )
+            elif stage == "FIX_READY":
+                quality = value.get("quality")
+                if not isinstance(quality, dict):
+                    raise RuntimeError("FIX_READY requires a quality object")
+                if candidate["stage"] != "FIX_READY":
+                    assessment = assess_submit_ready(quality)
+                    if not assessment.ready:
+                        raise RuntimeError(
+                            f"submit-ready evidence missing: {','.join(assessment.missing)}"
+                        )
+                    store.record_stage(
+                        candidate["key"],
+                        "FIX_READY",
+                        evidence=quality,
+                        dedupe_key=digest,
+                    )
+                request = request_publication(
+                    store,
+                    issue_url=candidate["issueUrl"],
+                    thread_id=candidate["threadId"],
+                    worktree=Path(candidate["worktreePath"]),
+                    evidence_path=result_path,
+                )
+                publication_requests.append(
+                    {
+                        "key": candidate["key"],
+                        "requestId": request.get("request_id") or request.get("requestId"),
+                        "status": request.get("status"),
+                    }
+                )
+                ingested.append({"key": candidate["key"], "stage": stage})
+            else:
+                raise RuntimeError("unsupported task result stage")
+        except (OSError, ValueError, RuntimeError) as exc:
+            errors.append({"key": candidate["key"], "error": str(exc)[:300]})
+    return {
+        "ok": not errors,
+        "ingested": ingested,
+        "publicationRequests": publication_requests,
+        "errors": errors,
+    }
+
+
+def ensure_fork_remote(worktree: Path, repo: str, head_owner: str) -> str:
+    repository_name = repo.rsplit("/", 1)[1]
+    fork_repo = f"{head_owner}/{repository_name}"
+    try:
+        metadata = json.loads(command(["gh", "api", f"repos/{fork_repo}"], timeout=45))
+    except RuntimeError:
+        command(["gh", "repo", "fork", repo, "--clone=false"], timeout=180)
+        metadata = json.loads(command(["gh", "api", f"repos/{fork_repo}"], timeout=45))
+    parent = metadata.get("parent") if isinstance(metadata, dict) else None
+    if not isinstance(metadata, dict) or metadata.get("fork") is not True:
+        raise RuntimeError("expected publication repository is not a fork")
+    if not isinstance(parent, dict) or str(parent.get("full_name") or "").casefold() != repo.casefold():
+        raise RuntimeError("existing fork does not belong to the target upstream repository")
+
+    expected_url = f"https://github.com/{fork_repo}.git"
+    remotes = command(["git", "remote"], cwd=worktree).splitlines()
+    for remote in remotes:
+        current = command(["git", "remote", "get-url", remote], cwd=worktree)
+        if normalize_origin(current) == fork_repo.casefold():
+            return remote
+    remote = "radar-fork"
+    if remote in remotes:
+        remote = f"radar-fork-{head_owner.casefold()}"
+    if remote in remotes:
+        raise RuntimeError("no safe remote name is available for the publication fork")
+    command(["git", "remote", "add", remote, expected_url], cwd=worktree)
+    return remote
+
+
+def _executor(operation: str, arguments: list[str], *, ledger_path: Path) -> dict[str, Any]:
+    raw = command(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "publication_executor.py"),
+            "--ledger",
+            str(ledger_path),
+            operation,
+            *arguments,
+        ],
+        timeout=420,
+    )
+    value = json.loads(raw)
+    if not isinstance(value, dict) or value.get("ok") is not True:
+        raise RuntimeError("publication executor returned an invalid result")
+    return value
+
+
+def run_publication_queue(args: argparse.Namespace) -> dict[str, Any]:
+    store = ledger(args.ledger)
+    published: list[dict[str, Any]] = []
+    pending: list[dict[str, Any]] = []
+    blocked: list[dict[str, Any]] = []
+    errors: list[dict[str, str]] = []
+    for item in store.publication_work_items():
+        request_id = str(item["request_id"])
+        request = item["request"]
+        try:
+            broker = broker_publication_request(store, request_id)
+            if broker.get("pending"):
+                pending.append(
+                    {
+                        "requestId": request_id,
+                        "reason": (broker.get("audit") or {}).get("reason"),
+                    }
+                )
+                continue
+            if not broker.get("granted"):
+                blocked.append(
+                    {
+                        "requestId": request_id,
+                        "reason": (broker.get("audit") or {}).get("reason"),
+                    }
+                )
+                continue
+            permit = broker["permit"]
+            publication = request["publication"]
+            issue_url = str(request["issueUrl"])
+            match = ISSUE_URL.match(issue_url)
+            if not match:
+                raise RuntimeError("publication request contains an invalid issue URL")
+            repo = match.group(1)
+            worktree = Path(request["worktreePath"]).resolve()
+            head_owner = str(publication["headOwner"])
+            remote = ensure_fork_remote(worktree, repo, head_owner)
+            common = [
+                "--permit-id",
+                str(permit["permit_id"]),
+                "--issue-url",
+                issue_url,
+                "--worktree",
+                str(worktree),
+                "--commit-sha",
+                str(request["commitSha"]),
+                "--branch",
+                str(request["branch"]),
+                "--head-owner",
+                head_owner,
+            ]
+            push_result = _executor(
+                "push", [*common, "--remote", remote], ledger_path=args.ledger
+            )
+            pr_result = _executor(
+                "create-pr",
+                [
+                    *common,
+                    "--repo",
+                    repo,
+                    "--base",
+                    str(publication["baseBranch"]),
+                    "--title",
+                    str(publication["title"]),
+                    "--body-file",
+                    str(publication["bodyPath"]),
+                ],
+                ledger_path=args.ledger,
+            )
+            published.append(
+                {
+                    "requestId": request_id,
+                    "key": request["opportunityKey"],
+                    "prUrl": pr_result.get("prUrl"),
+                    "pushReconciled": push_result.get("reconciled", False),
+                }
+            )
+        except (KeyError, OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
+            errors.append({"requestId": request_id, "error": str(exc)[:400]})
+    return {
+        "ok": not errors,
+        "published": published,
+        "pending": pending,
+        "blocked": blocked,
+        "errors": errors,
     }
 
 
@@ -881,6 +1252,19 @@ def main() -> int:
     commit.add_argument("--cwd", required=True)
     commit.add_argument("--source-repo", required=True)
     commit.add_argument("--title-time", required=True)
+    creation_start_parser = subparsers.add_parser("creation-start")
+    creation_start_parser.add_argument("--intent-id", required=True)
+    creation_start_parser.add_argument("--owner", required=True)
+    creation_bind_parser = subparsers.add_parser("creation-bind")
+    creation_bind_parser.add_argument("--intent-id", required=True)
+    creation_bind_parser.add_argument("--owner", required=True)
+    creation_bind_parser.add_argument("--creation-token", required=True)
+    creation_bind_parser.add_argument("--client-thread-id", required=True)
+    creation_cancel_parser = subparsers.add_parser("creation-cancel")
+    creation_cancel_parser.add_argument("--intent-id", required=True)
+    creation_cancel_parser.add_argument("--owner", required=True)
+    creation_cancel_parser.add_argument("--creation-token", required=True)
+    creation_cancel_parser.add_argument("--reason", required=True)
     subparsers.add_parser("orphan-list")
     orphan_commit_parser = subparsers.add_parser("orphan-commit")
     orphan_commit_parser.add_argument("--intent-id", required=True)
@@ -906,6 +1290,9 @@ def main() -> int:
     publication_check_parser.add_argument("--commit-sha", required=True)
     publication_check_parser.add_argument("--branch", required=True)
     subparsers.add_parser("cleanup-list")
+    subparsers.add_parser("context-sync")
+    subparsers.add_parser("ingest-results")
+    subparsers.add_parser("publication-run")
     cleanup_commit_parser = subparsers.add_parser("cleanup-commit")
     cleanup_commit_parser.add_argument("--thread-id", required=True)
     cleanup_commit_parser.add_argument("--cleanup-nonce", required=True)
@@ -942,6 +1329,12 @@ def main() -> int:
         result = claim_intent(args)
     elif args.operation == "commit":
         result = commit_receipt(args)
+    elif args.operation == "creation-start":
+        result = creation_start(args)
+    elif args.operation == "creation-bind":
+        result = creation_bind(args)
+    elif args.operation == "creation-cancel":
+        result = creation_cancel(args)
     elif args.operation == "orphan-list":
         result = orphan_list(args)
     elif args.operation == "orphan-commit":
@@ -954,6 +1347,12 @@ def main() -> int:
         result = publication_check(args)
     elif args.operation == "cleanup-list":
         result = cleanup_list(args)
+    elif args.operation == "context-sync":
+        result = sync_task_contexts(args)
+    elif args.operation == "ingest-results":
+        result = ingest_task_results(args)
+    elif args.operation == "publication-run":
+        result = run_publication_queue(args)
     elif args.operation == "cleanup-commit":
         result = cleanup_commit(args)
     elif args.operation == "title-list":

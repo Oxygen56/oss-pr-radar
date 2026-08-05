@@ -54,14 +54,22 @@ a quality KPI or a publication-policy bypass.
 - A missing or corrupt state manifest stops the scan. Run
   `python scripts/state_branch.py migrate` once for a legacy branch.
 - An expired or tampered intent is ignored locally.
-- An expired lease can be reclaimed; a dispatched receipt is idempotent.
+- An expired ordinary lease can be reclaimed only before task creation starts;
+  a `CREATING` record remains exclusive until the exact asynchronous task is
+  reconciled or the desktop API explicitly rejects the call without returning
+  an external ID.
 - A live lease is exclusive even if two controller runs reuse the same owner
   label. A signed intent waiting at least 70 minutes, or a stale lease, produces
   a deduplicated Feishu dispatch alert.
 - Before queue sync, `orphan-list` reconciles asynchronous worktree creations
   whose real task ID appeared after the controller's initial lookup. Only one
-  unbound task matching the lease window, canonical prompt, repository origin,
-  and Codex worktree can be committed; ambiguity fails closed.
+  unbound task matching creation start time, canonical prompt, repository
+  origin, and Codex worktree can be committed; ambiguity fails closed. A bound
+  `clientThreadId` remains visible in alerts and is never silently reclaimed.
+- `context-sync` writes a Git-ignored task context into each registered
+  worktree. `ingest-results` validates the exact issue, thread, worktree, and
+  context digest before recording lifecycle evidence. Child tasks never need
+  external database access or interactive approval.
 - A task that remains dispatched without an outcome for 90 minutes enters the
   local recovery list. Only an obviously empty or `完成`-only task may receive
   one repeat of the exact canonical prompt. The reservation is written before
@@ -89,20 +97,22 @@ Run `local_dispatch_bridge.py metrics --days 30`. Review:
 - failure classes and exact quality evidence for calibration.
 
 Merge, review, and CI outcomes are retained for diagnosis but are not used as a
-quota or discovery score.
+quota or discovery score. A failed status alone never makes an existing PR a
+competition opportunity.
 
 ## Local Dispatcher Order
 
 The single-thread desktop heartbeat runs health with fallback repair, asynchronous
 task reconciliation, queue sync,
 dispatch-age alerts, PR lifecycle refresh, live
-claim/revalidation, exact-project worktree creation, task receipt verification,
-one-shot recovery, title synchronization, and `AUDIT_NO_GO` cleanup in that
-order. A canary WIP limit may leave valid pending intents in the queue; this is
-normal and must not be treated as a failed run.
+claim/revalidation, write-ahead creation, exact-project worktree creation, task
+receipt verification, workspace context sync, result ingestion, publication
+advancement, one-shot recovery, title synchronization, and `AUDIT_NO_GO`
+cleanup in that order. A canary WIP limit may leave valid pending intents in
+the queue; this is normal and must not be treated as a failed run.
 `githubNaturalScheduleHealthy` refers only to GitHub Actions cron delivery;
 `operationalHealthy` also accepts a recent successful or currently active
 manual/fallback scan. The desktop heartbeat's own trigger is a separate signal.
-An issue task's first `task-context` lookup waits up to three minutes only when the ledger
-shows a live lease for that exact issue, closing the create-thread/receipt race
-without treating an unregistered prompt as authorization.
+An issue task waits up to three minutes for its workspace-local context. A
+missing file ends privately without Plan Hub, external ledger access, elevated
+permission, or inferred authorization.

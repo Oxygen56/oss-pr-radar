@@ -18,6 +18,7 @@ STAGES = (
     "RANKED",
     "QUALIFIED",
     "LEASED",
+    "CREATING",
     "DISPATCHED",
     "AUDIT_PASS",
     "AUDIT_NO_GO",
@@ -169,6 +170,12 @@ class RadarLedger:
                 connection.execute("ALTER TABLE intents ADD COLUMN title_time TEXT")
             if "title_synced_state" not in columns:
                 connection.execute("ALTER TABLE intents ADD COLUMN title_synced_state TEXT")
+            if "creation_token" not in columns:
+                connection.execute("ALTER TABLE intents ADD COLUMN creation_token TEXT")
+            if "client_thread_id" not in columns:
+                connection.execute("ALTER TABLE intents ADD COLUMN client_thread_id TEXT")
+            if "creation_started_at" not in columns:
+                connection.execute("ALTER TABLE intents ADD COLUMN creation_started_at TEXT")
 
     def enqueue(self, intent: dict[str, Any]) -> bool:
         now = iso_z(datetime.now(UTC))
@@ -216,6 +223,7 @@ class RadarLedger:
                    WHERE opportunity_key=?
                      AND (
                        (status IN ('PENDING','LEASED') AND expires_at>?)
+                       OR status='CREATING'
                        OR status IN ('DISPATCHED','COMPLETED')
                        OR (status='REJECTED' AND intent_digest=?)
                      )
@@ -335,9 +343,9 @@ class RadarLedger:
             if max_active is not None:
                 active = connection.execute(
                     """SELECT COUNT(*) FROM intents
-                       WHERE status IN ('LEASED','DISPATCHED')
+                       WHERE status IN ('LEASED','CREATING','DISPATCHED')
                          AND intent_id<>?
-                         AND (status='DISPATCHED' OR lease_until>?)""",
+                         AND (status IN ('CREATING','DISPATCHED') OR lease_until>?)""",
                     (intent_id, now),
                 ).fetchone()[0]
                 if int(active) >= max(0, max_active):
@@ -363,6 +371,140 @@ class RadarLedger:
             payload["leaseUntil"] = lease_until
             return payload
 
+    def reserve_creation(self, intent_id: str, *, owner: str) -> dict[str, Any]:
+        """Write-ahead a task creation before invoking the desktop side effect."""
+
+        now_dt = datetime.now(UTC)
+        now = iso_z(now_dt)
+        token = secrets.token_urlsafe(24)
+        with self.transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM intents WHERE intent_id=?", (intent_id,)
+            ).fetchone()
+            if row is None:
+                raise LedgerError("intent not found")
+            if row["status"] == "CREATING":
+                if row["lease_owner"] != owner or not row["creation_token"]:
+                    raise LedgerError("task creation is owned by another controller")
+                return {
+                    "intentId": intent_id,
+                    "creationToken": row["creation_token"],
+                    "clientThreadId": row["client_thread_id"],
+                    "creationStartedAt": row["creation_started_at"],
+                }
+            if row["status"] != "LEASED" or row["lease_owner"] != owner:
+                raise LedgerError("intent is not leased by this owner")
+            if not row["lease_until"] or parse_time(row["lease_until"]) <= now_dt:
+                raise LedgerError("dispatch lease expired")
+            connection.execute(
+                """UPDATE intents SET status='CREATING',creation_token=?,
+                   creation_started_at=?,updated_at=? WHERE intent_id=?""",
+                (token, now, now, intent_id),
+            )
+            connection.execute(
+                "UPDATE opportunities SET stage='CREATING',updated_at=? WHERE key=?",
+                (now, row["opportunity_key"]),
+            )
+            self._event(
+                connection,
+                row["opportunity_key"],
+                "CREATION_RESERVED",
+                token,
+                {"intentId": intent_id, "owner": owner, "creationToken": token},
+                now,
+            )
+        return {
+            "intentId": intent_id,
+            "creationToken": token,
+            "clientThreadId": None,
+            "creationStartedAt": now,
+        }
+
+    def bind_creation_client(
+        self,
+        intent_id: str,
+        *,
+        owner: str,
+        creation_token: str,
+        client_thread_id: str,
+    ) -> dict[str, Any]:
+        """Persist the asynchronous client task id returned by create_thread."""
+
+        if not client_thread_id.strip():
+            raise LedgerError("client thread id is required")
+        now = iso_z(datetime.now(UTC))
+        with self.transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM intents WHERE intent_id=?", (intent_id,)
+            ).fetchone()
+            if row is None or row["status"] != "CREATING":
+                raise LedgerError("task creation is not reserved")
+            if row["lease_owner"] != owner or row["creation_token"] != creation_token:
+                raise LedgerError("task creation authorization mismatch")
+            if row["client_thread_id"] and row["client_thread_id"] != client_thread_id:
+                raise LedgerError("task creation is already bound to another client id")
+            connection.execute(
+                "UPDATE intents SET client_thread_id=?,updated_at=? WHERE intent_id=?",
+                (client_thread_id, now, intent_id),
+            )
+            self._event(
+                connection,
+                row["opportunity_key"],
+                "CREATION_CLIENT_BOUND",
+                client_thread_id,
+                {
+                    "intentId": intent_id,
+                    "creationToken": creation_token,
+                    "clientThreadId": client_thread_id,
+                },
+                now,
+            )
+        return {
+            "intentId": intent_id,
+            "creationToken": creation_token,
+            "clientThreadId": client_thread_id,
+        }
+
+    def cancel_creation(
+        self,
+        intent_id: str,
+        *,
+        owner: str,
+        creation_token: str,
+        reason: str,
+    ) -> None:
+        """Cancel only a creation call known to have failed without an external id."""
+
+        now = iso_z(datetime.now(UTC))
+        with self.transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM intents WHERE intent_id=?", (intent_id,)
+            ).fetchone()
+            if row is None or row["status"] != "CREATING":
+                raise LedgerError("task creation is not reserved")
+            if row["lease_owner"] != owner or row["creation_token"] != creation_token:
+                raise LedgerError("task creation authorization mismatch")
+            if row["client_thread_id"]:
+                raise LedgerError("bound task creation cannot be cancelled")
+            connection.execute(
+                """UPDATE intents SET status='PENDING',lease_owner=NULL,lease_until=NULL,
+                   creation_token=NULL,creation_started_at=NULL,updated_at=?
+                   WHERE intent_id=?""",
+                (now, intent_id),
+            )
+            connection.execute(
+                "UPDATE opportunities SET stage='QUALIFIED',updated_at=? WHERE key=?",
+                (now, row["opportunity_key"]),
+            )
+            self._event(
+                connection,
+                row["opportunity_key"],
+                "CREATION_CANCELLED",
+                creation_token,
+                {"intentId": intent_id, "reason": reason},
+                now,
+            )
+
     def commit_dispatch(
         self,
         intent_id: str,
@@ -383,9 +525,12 @@ class RadarLedger:
                 raise LedgerError("intent not found")
             if row["status"] == "DISPATCHED" and row["thread_id"] == thread_id:
                 return
-            if row["status"] != "LEASED" or row["lease_owner"] != owner:
+            if row["status"] not in {"LEASED", "CREATING"} or row["lease_owner"] != owner:
                 raise LedgerError("intent is not leased by this owner")
-            if not row["lease_until"] or parse_time(row["lease_until"]) <= now_dt:
+            if (
+                row["status"] == "LEASED"
+                and (not row["lease_until"] or parse_time(row["lease_until"]) <= now_dt)
+            ):
                 raise LedgerError("dispatch lease expired")
             connection.execute(
                 """UPDATE intents SET status='DISPATCHED',thread_id=?,project_id=?,
@@ -412,7 +557,8 @@ class RadarLedger:
         with self.connect() as connection:
             rows = connection.execute(
                 """SELECT o.key,o.issue_url,o.title,i.intent_id,i.status,i.lease_owner,
-                          i.lease_until,i.expires_at,i.payload_json,
+                          i.lease_until,i.expires_at,i.payload_json,i.creation_token,
+                          i.client_thread_id,i.creation_started_at,
                           l.created_at AS lease_started_at,l.payload_json AS lease_payload
                    FROM opportunities o JOIN intents i ON i.opportunity_key=o.key
                    JOIN events l ON l.id=(
@@ -420,13 +566,13 @@ class RadarLedger:
                      WHERE e.opportunity_key=o.key AND e.event_type='LEASED'
                      ORDER BY e.created_at DESC,e.id DESC LIMIT 1
                    )
-                   WHERE i.status IN ('LEASED','EXPIRED','SUPERSEDED')
+                   WHERE i.status IN ('CREATING','LEASED','EXPIRED','SUPERSEDED')
                      AND i.thread_id IS NULL
                      AND NOT EXISTS (
                        SELECT 1 FROM intents newer
                        WHERE newer.opportunity_key=i.opportunity_key
                          AND newer.intent_id<>i.intent_id
-                         AND newer.status IN ('PENDING','LEASED','DISPATCHED')
+                         AND newer.status IN ('PENDING','LEASED','CREATING','DISPATCHED')
                      )
                    ORDER BY l.created_at"""
             ).fetchall()
@@ -446,6 +592,9 @@ class RadarLedger:
                     "leaseUntil": row["lease_until"] or lease_payload.get("leaseUntil"),
                     "expiresAt": row["expires_at"],
                     "repo": payload.get("repo"),
+                    "creationToken": row["creation_token"],
+                    "clientThreadId": row["client_thread_id"],
+                    "creationStartedAt": row["creation_started_at"],
                 }
             )
         return values
@@ -479,13 +628,13 @@ class RadarLedger:
                 raise LedgerError("intent not found")
             if row["status"] == "DISPATCHED" and row["thread_id"] == thread_id:
                 return
-            if row["status"] not in {"LEASED", "EXPIRED", "SUPERSEDED"}:
+            if row["status"] not in {"CREATING", "LEASED", "EXPIRED", "SUPERSEDED"}:
                 raise LedgerError("intent is not eligible for orphan reconciliation")
             if row["thread_id"] is not None:
                 raise LedgerError("intent already has a thread")
             newer = connection.execute(
                 """SELECT 1 FROM intents WHERE opportunity_key=? AND intent_id<>?
-                   AND status IN ('PENDING','LEASED','DISPATCHED') LIMIT 1""",
+                   AND status IN ('PENDING','LEASED','CREATING','DISPATCHED') LIMIT 1""",
                 (row["opportunity_key"], intent_id),
             ).fetchone()
             if newer:
@@ -694,8 +843,10 @@ class RadarLedger:
         now = iso_z(now_dt)
         with self.connect() as connection:
             rows = connection.execute(
-                """SELECT payload_json,status,issued_at,lease_until FROM intents
-                   WHERE status IN ('PENDING','LEASED') AND expires_at>?
+                """SELECT payload_json,status,issued_at,lease_until,client_thread_id,
+                          creation_started_at FROM intents
+                   WHERE (status IN ('PENDING','LEASED') AND expires_at>?)
+                      OR status='CREATING'
                    ORDER BY issued_at""",
                 (now,),
             ).fetchall()
@@ -708,6 +859,17 @@ class RadarLedger:
                 and row["lease_until"]
                 and parse_time(row["lease_until"]) <= now_dt
             )
+            creation_age_minutes = (
+                max(
+                    0,
+                    int(
+                        (now_dt - parse_time(row["creation_started_at"])).total_seconds()
+                        // 60
+                    ),
+                )
+                if row["creation_started_at"]
+                else None
+            )
             values.append(
                 json.loads(row["payload_json"])
                 | {
@@ -715,6 +877,9 @@ class RadarLedger:
                     "pendingSince": row["issued_at"],
                     "pendingAgeMinutes": age_minutes,
                     "leaseStale": lease_stale,
+                    "clientThreadId": row["client_thread_id"],
+                    "creationStartedAt": row["creation_started_at"],
+                    "creationAgeMinutes": creation_age_minutes,
                 }
             )
         return values
@@ -726,6 +891,10 @@ class RadarLedger:
             code = None
             if item.get("leaseStale"):
                 code = "DISPATCH_LEASE_STALE"
+            elif item.get("ledgerStatus") == "CREATING" and int(
+                item.get("creationAgeMinutes") or 0
+            ) >= threshold:
+                code = "TASK_CREATION_PENDING"
             elif int(item.get("pendingAgeMinutes") or 0) >= threshold:
                 code = "DISPATCH_PENDING_OVER_ONE_CYCLE"
             if code:
@@ -735,8 +904,8 @@ class RadarLedger:
     def active_dispatch_count(self, *, exclude_intent_id: str | None = None) -> int:
         now = iso_z(datetime.now(UTC))
         query = """SELECT COUNT(*) FROM intents
-                   WHERE status IN ('LEASED','DISPATCHED')
-                     AND (status='DISPATCHED' OR lease_until>?)"""
+                   WHERE status IN ('LEASED','CREATING','DISPATCHED')
+                     AND (status IN ('CREATING','DISPATCHED') OR lease_until>?)"""
         params: tuple[Any, ...] = (now,)
         if exclude_intent_id:
             query += " AND intent_id<>?"
@@ -909,14 +1078,52 @@ class RadarLedger:
             ),
         }
 
+    def task_result_candidates(self) -> list[dict[str, Any]]:
+        """Return thread-bound tasks whose private workspace result can be ingested."""
+
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT o.key,o.stage,o.issue_url,i.intent_id,i.thread_id,
+                          i.worktree_path,i.status,i.payload_json
+                   FROM opportunities o JOIN intents i ON i.opportunity_key=o.key
+                   WHERE i.thread_id IS NOT NULL AND i.worktree_path IS NOT NULL
+                     AND (
+                       i.status='DISPATCHED'
+                       OR (
+                         o.stage='FIX_READY'
+                         AND NOT EXISTS (
+                           SELECT 1 FROM publication_requests p
+                           WHERE p.opportunity_key=o.key
+                         )
+                       )
+                     )
+                   ORDER BY i.updated_at"""
+            ).fetchall()
+        return [
+            {
+                "key": row["key"],
+                "stage": row["stage"],
+                "issueUrl": row["issue_url"],
+                "intentId": row["intent_id"],
+                "threadId": row["thread_id"],
+                "worktreePath": row["worktree_path"],
+                "intentStatus": row["status"],
+                "intent": json.loads(row["payload_json"]),
+            }
+            for row in rows
+        ]
+
     def has_live_handoff(self, *, issue_url: str) -> bool:
         now = iso_z(datetime.now(UTC))
         with self.connect() as connection:
             row = connection.execute(
                 """SELECT 1 FROM opportunities o
                    JOIN intents i ON i.opportunity_key=o.key
-                   WHERE o.issue_url=? AND i.status='LEASED'
-                     AND i.expires_at>? AND i.lease_until>?
+                   WHERE o.issue_url=? AND (
+                     i.status='CREATING' OR (
+                       i.status='LEASED' AND i.expires_at>? AND i.lease_until>?
+                     )
+                   )
                    LIMIT 1""",
                 (issue_url, now, now),
             ).fetchone()
@@ -1039,6 +1246,19 @@ class RadarLedger:
                 (request_id,),
             ).fetchone()
         return dict(row) | {"request": json.loads(row["request_json"])} if row else None
+
+    def publication_work_items(self) -> list[dict[str, Any]]:
+        """Return publication requests that the privileged controller may advance."""
+
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT * FROM publication_requests
+                   WHERE status IN ('PENDING','GRANTED')
+                   ORDER BY created_at"""
+            ).fetchall()
+        return [
+            dict(row) | {"request": json.loads(row["request_json"])} for row in rows
+        ]
 
     def defer_publication_request(self, request_id: str, reason: str) -> None:
         now = iso_z(datetime.now(UTC))

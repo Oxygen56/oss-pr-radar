@@ -693,9 +693,30 @@ TEST_FILE_RE = re.compile(
 )
 NON_TECHNICAL_CHECK_RE = re.compile(
     r"\b(?:cla(?:\s*assistant)?|(?:pull request|pr) triage|triage|labeler|"
-    r"conventional commits?|semantic (?:pull request|pr)|pr title|title check)\b",
+    r"conventional commits?|semantic (?:pull request|pr)|pr title|title check|"
+    r"preview deployment|deploy preview|vercel|netlify|cloudflare pages|"
+    r"authorization|authorisation|permission|secret|policy gate)\b",
     re.I,
 )
+
+
+def check_label(check: dict[str, Any]) -> str:
+    """Return all check metadata that can identify non-code status gates."""
+
+    return " ".join(
+        str(check.get(key) or "")
+        for key in (
+            "name",
+            "workflowName",
+            "detailsUrl",
+            "targetUrl",
+            "url",
+        )
+    )
+
+
+def is_nontechnical_check(check: dict[str, Any]) -> bool:
+    return bool(NON_TECHNICAL_CHECK_RE.search(check_label(check)))
 
 
 def repo_is_excluded(repo: str) -> bool:
@@ -2375,10 +2396,7 @@ class Radar:
         technical_checks = [
             check
             for check in checks
-            if isinstance(check, dict)
-            and not NON_TECHNICAL_CHECK_RE.search(
-                f"{check.get('name') or ''} {check.get('workflowName') or ''}"
-            )
+            if isinstance(check, dict) and not is_nontechnical_check(check)
         ]
         check_states = [
             str(check.get("conclusion") or check.get("state") or check.get("status") or "").upper()
@@ -2396,9 +2414,15 @@ class Radar:
                 check.get("conclusion") or check.get("state") or check.get("status") or ""
             ).upper()
             in {"FAILURE", "FAILED", "ERROR", "TIMED_OUT"}
-            and NON_TECHNICAL_CHECK_RE.search(
-                f"{check.get('name') or ''} {check.get('workflowName') or ''}"
-            )
+            and is_nontechnical_check(check)
+        ]
+        technical_failed_checks = [
+            str(check.get("name") or check.get("workflowName") or "unnamed")
+            for check in technical_checks
+            if str(
+                check.get("conclusion") or check.get("state") or check.get("status") or ""
+            ).upper()
+            in {"FAILURE", "FAILED", "ERROR", "TIMED_OUT"}
         ]
         updated = parse_github_time(detail.get("updatedAt") or hit.get("updated_at"), self.now)
         age_days = max(0, (self.now - updated).days)
@@ -2432,10 +2456,13 @@ class Radar:
             score += 12
             strengths.append("已有成功 CI/check")
         elif failed_checks:
-            score -= 18
-            gaps.append("存在失败 CI/check")
+            # A red status is diagnostic evidence, not proof that a competing
+            # implementation is warranted. Attribution requires logs and a
+            # substantive implementation gap, neither of which a rollup state
+            # establishes on its own.
+            strengths.append("CI 失败待归因，不作为竞争依据")
         else:
-            gaps.append("CI/check 信息不足")
+            strengths.append("CI/check 信息不足，不作为竞争依据")
         if detail.get("reviewDecision") == "APPROVED":
             score += 18
             strengths.append("已有 review approval")
@@ -2477,9 +2504,16 @@ class Radar:
             references_issue
             and test_files
             and changed_files > 0
-            and len(body.strip()) >= 160
-            and (successful_checks or rule_closed or maintainer_owned)
         )
+        material_competition_gaps = []
+        if not test_files:
+            material_competition_gaps.append("缺少回归测试")
+        if changed_files <= 0:
+            material_competition_gaps.append("未发现实现改动")
+        if detail.get("isDraft"):
+            material_competition_gaps.append("仍是 draft")
+        if age_days >= 30:
+            material_competition_gaps.append("超过 30 天未更新")
 
         return {
             "number": pr_num,
@@ -2504,7 +2538,10 @@ class Radar:
             "maintainer_owned": maintainer_owned,
             "author_association": author_association,
             "technical_complete": technical_complete,
+            "material_competition_gaps": material_competition_gaps,
             "ignored_nontechnical_failed_checks": ignored_failed_checks[:3],
+            "technical_failed_checks": technical_failed_checks[:3],
+            "ci_competition_weight": 0,
             "strengths": strengths[:4],
             "gaps": gaps[:5],
         }
@@ -2613,10 +2650,8 @@ class Radar:
         elif active_direct:
             best = max(active_direct, key=lambda item: item["score"])
         strong_active = any(
-            item.get("technical_complete")
-            and item.get("score", 0) >= 55
+            (item.get("technical_complete") or item.get("maintainer_owned") or item.get("rule_closed"))
             and not item.get("is_draft")
-            and ("存在失败 CI/check" not in item.get("gaps", []) or item.get("maintainer_owned"))
             and "超过 30 天未更新" not in item.get("gaps", [])
             for item in active_direct
         )
@@ -2634,8 +2669,7 @@ class Radar:
             if active_direct:
                 summary = (
                     f"已有活跃且直接关联 issue 的 PR #{best['number']}；"
-                    "Draft、CI 失败、缺测试或活跃度不足只是现有 PR 的改进点，"
-                    "不是自动创建竞争 PR 的理由"
+                    "CI 状态只作诊断，不能据此自动创建竞争 PR"
                 )
             else:
                 summary = f"已有较强 PR：#{best['number']} score={best['score']}，{'; '.join(best['strengths'])}"
