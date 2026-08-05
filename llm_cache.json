@@ -1009,6 +1009,37 @@
     ],
     "why": "Issue identifies a likely typo in attribute name causing DSPARK to ignore min_tokens, with a concrete patch. However, open PR and related issue lookups timed out, so duplicate work cannot be excluded. Maintainer design confirmation is needed before implementing."
   },
+  "2d3131eed40d8a6c528b3c8d546107967200b3b3b5f7e9883548805f7084be2d": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Comment reports fix in Claude Desktop 1.24012.9, conflicting with ongoing issue",
+      "Different platforms show different behavior (Windows vs macOS) for old schema"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Potential server-side workaround to avoid outputSchema/structuredContent in tools/list",
+      "Add compatibility tests for older clients"
+    ],
+    "risks": [
+      "Changing server schema may break newer clients",
+      "Maintainer may prefer client-side fix, not server-side"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "test_plan": [
+      "Reproduce with Claude Desktop 1.24012.1 and server-filesystem >=2025.11.25, verify tools/call never dispatched",
+      "Test server with sanitized tools/list (removing outputSchema) to confirm dispatch restored"
+    ],
+    "unknowns": [
+      "Whether maintainers intend to fix in client or server",
+      "Exact client validation logic causing rejection"
+    ],
+    "why": "Issue reports a severe 100% tool-call failure in Claude Desktop after server-filesystem update, with strong evidence of client-side rejection of outputSchema/structuredContent. However, root cause is not fully confirmed; a maintainer fix in Claude Desktop 1.24012.9 is reported, and the issue is in modelcontextprotocol/servers repo, not the client. The candidate lacks a clear code path in this repo and requires maintainer direction."
+  },
   "2e341483c57b34162f0f84021c68c966a5d873501621da6ff435952d2aff70bd": {
     "confidence": 0.7,
     "contradictions": [],
@@ -1232,6 +1263,34 @@
       "Whether related issue #50720 will be resolved soon, affecting the priority of this fix"
     ],
     "why": "Issue reports a real crash on SM12x with FLASHMLA_SPARSE_DSV4, but a contributor has already proposed a fail-fast fix and is investigating. The proposed fix is a behavior change (rejecting unsupported backend) that needs maintainer confirmation. Open PR and related issue lookups timed out, so duplicate work cannot be excluded."
+  },
+  "3635835ec2fe6988fac7d72ac6fe01542b1a715e35c839104084725bb7aff9d1": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix _all_to_all_single to enable pynccl state",
+      "Adjust symmetric memory pool allocation to account for preallocated memory"
+    ],
+    "risks": [
+      "Existing PR #33592 may already address the issue; need to avoid duplicate work",
+      "NCCL version-specific behavior may not be reproducible in CI"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 12,
+    "test_plan": [
+      "Reproduce NCCL crash with conc=64 and eager decode; add regression test for pynccl enablement",
+      "Add startup OOM test with --enable-symm-mem and memory budget verification"
+    ],
+    "unknowns": [
+      "Maintainer preference on the proposed fix approach",
+      "Whether PR #33592 is technically sound despite missing tests"
+    ],
+    "why": "Issue reports two concrete bugs with root cause hypotheses, but the supplied gate decision is HUMAN_REVIEW and related issue audit timed out. Existing PR #33592 is open but lacks tests and has CI failures, so competition is possible but not clearly superior. Maintainer confirmation is needed before starting work."
   },
   "363e3b86243ec625f94b923e65f3f6715a4321bb012f3fde241cf5891ac3a425": {
     "confidence": 0.8,
@@ -1564,6 +1623,36 @@
       "Maintainer interest in fixing this specific issue"
     ],
     "why": "Issue reports a user-visible regression in LiveKit inference timeouts since mid-July, with public reproduction steps and session links. No competing PR or issue found. The bug is in the inference path, which is critical for real-time voice agents. The root cause is not yet identified, but the issue provides enough signal to start a reproducible investigation."
+  },
+  "44e40295ec80bba4ec088320d33d4758b2ac9b04f13e68736d1d27b4e6b1fcda": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims `glm-5.2[1m]` is documented, but other public integrations report it is rejected by the live API"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Z.AI provider model name handling",
+      "documentation for Z.AI Coding Plan model variants"
+    ],
+    "risks": [
+      "Upstream API may reject the model name regardless of LiteLLM changes",
+      "Changing model name parsing could affect other providers"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Add a regression test that sends `zai/glm-5.2[1m]` through the proxy and asserts a clear error or successful pass-through",
+      "Run existing Z.AI provider unit tests"
+    ],
+    "unknowns": [
+      "Whether the upstream Z.AI API accepts `glm-5.2[1m]` at all",
+      "Whether an existing PR or fix already addresses this issue"
+    ],
+    "why": "Issue reports a user-visible bug with a clear repro, but root cause is ambiguous: the `[1m]` suffix may be invalid upstream or mishandled by LiteLLM. Open PR and related issue lookups timed out, so duplicate work cannot be excluded. Maintainer confirmation is needed before implementation."
   },
   "45dad8c03af1650e32e34151b53788cbedfba96362944a4855c429be75858c81": {
     "confidence": 0.7,
@@ -2752,6 +2841,33 @@
       "Whether maintainers prefer a new PR or improvements to the existing PR."
     ],
     "why": "Issue clearly identifies four incorrect Vertex AI MaaS prices with authoritative billing catalog evidence and a concrete reproduction. However, an existing PR #35911 already addresses the same issue but lacks tests and has not been merged. The deterministic gate requires HUMAN_REVIEW, and maintainer confirmation is needed to avoid duplicate or conflicting work."
+  },
+  "688335dc4ab896b5006210209f2766b0f253c567a7ee96bb33b9af2f88cc4dd7": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Rust parser minimax_m3.rs: tolerate elided first-parameter opening tag",
+      "Python bridge rust_tool_parser.py: strip sentinel markup on parse failure"
+    ],
+    "risks": [
+      "Potential conflict with existing PR #51075; need to ensure fix is compatible and tests are added",
+      "Changing parser tolerance may affect other edge cases; need to verify no regressions"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Add regression test with the provided reproduction to the Rust parser unit tests and Python tool parser tests",
+      "Run targeted tests for minimax_m3 parser and tool parser integration"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the existing PR or a new one; whether the proposed fix is accepted",
+      "Whether the model emission is due to model behavior or detokenization; but parser fix is still valid"
+    ],
+    "why": "Issue provides a detailed root cause and reproduction, but the deterministic gate is HUMAN_REVIEW and an existing PR (#51075) directly addresses the same bug with a plausible fix, though it lacks tests. The candidate is actionable but requires maintainer confirmation and competition assessment."
   },
   "68c2888be696321cd2321d0fccfd08aeddd7a30bdae02ec845e32a28b3bac952": {
     "confidence": 0.8,
@@ -5677,6 +5793,31 @@
       "Maintainer's intended fix direction"
     ],
     "why": "Issue reports CLI args error for MiniMax-H3; comments suggest adding --model-type diffusion as workaround, and a merged PR #33365 may already address related local-path detection. Open PR lookup timed out, so competition status is incomplete."
+  },
+  "e92aa5b9c72a490aa778720cb596ea5b740b3ca39557d831218680ada2062c82": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/v1/worker/gpu_model_runner.py",
+      "vllm/lora/layers/vocal_parallel_embedding.py"
+    ],
+    "risks": [
+      "Potential maintainer preference against fixing niche bug; risk of changing LoRA embedding behavior affecting other models."
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Add a regression test using the provided repro script to verify no illegal memory access with enable_prompt_embeds and enable_lora on Llama."
+    ],
+    "unknowns": [
+      "Maintainer decision on whether to prioritize this niche bug; whether existing PR #51123 will be merged or needs competition."
+    ],
+    "why": "Issue provides a detailed root cause and repro for a real crash, but the deterministic gate requires HUMAN_REVIEW and a maintainer has questioned the niche value, so assignment/design confirmation is needed."
   },
   "e9fef21c6a2cfd201e804e6659ac954075fd8fac688ee74d93ab9b56aa1cd9a0": {
     "confidence": 0.8,
