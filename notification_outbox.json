@@ -1,5 +1,5 @@
 {
-  "digest": "eea6c8371962f3df44dff948be70be8d01ed07ca7ff690c6d664e08c9be7c83b",
+  "digest": "9eecc352861457f76f7196543947d748ac44550268f78d038238b54e1f41f260",
   "events": [
     {
       "attempts": 1,
@@ -10192,9 +10192,218 @@
       "runId": "watch-1785959907",
       "sentAt": "2026-08-05T20:04:07.779205Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "promptfoo/promptfoo#10307",
+        "OpenHands/OpenHands#16339",
+        "OpenHands/OpenHands#16341"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[promptfoo/promptfoo#10307](https://github.com/promptfoo/promptfoo/issues/10307) Error using Opus 5 with Bedrock provider**\n建议：NEW_CLEAN_CANDIDATE | 分数：8\n价值：Issue clearly identifies a recurring bug: new Claude models fail because temperature is deprecated, and the fix requires a robust approach rather than per-model additions. No open PR or issue addresses this, and the issue provides a concrete reproduction.\n改动：Modify Bedrock provider to omit temperature for Claude models that do not support it, likely by detecting model family or version instead of maintaining an explicit list.；Add regression tests for new Claude model versions.\n验证：Create a minimal promptfooconfig.yaml using bedrock:us.anthropic.claude-opus-5 and run an eval to reproduce the error.；Add unit tests for the provider's parameter construction to ensure temperature is omitted for unsupported models.\n风险：Changing behavior for all Claude models might affect existing users who rely on temperature; need to ensure backward compatibility or proper detection.\n竞争：未发现相关 open PR；仅发现未直接关联 issue 的历史 PR\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 3，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[OpenHands/OpenHands#16339](https://github.com/OpenHands/OpenHands/issues/16339) [Bug] Agent not informed of file location for files uploaded via canvas in cloud**\n建议：NEW_CLEAN_CANDIDATE | 分数：11\n价值：The issue clearly describes a user-visible bug: files uploaded via canvas in cloud are not surfaced to the agent or Files tab, despite being placed in the sandbox. The root cause is likely a missing notification or event propagation from the upload handler to the agent and file index. This is actionable and no competing PR exists.\n改动：Modify file upload flow to emit an event or update agent context with the file path；Ensure Files tab refresh or index update on upload\n验证：Create a minimal reproduction test that uploads a file via canvas and asserts the agent receives the file path；Run existing tests for file upload and agent context\n风险：Potential changes to API behavior or event system could affect other upload paths；Need to confirm maintainer design preferences for event propagation\n竞争：未发现相关 open PR\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 2，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[OpenHands/OpenHands#16341](https://github.com/OpenHands/OpenHands/issues/16341) [Bug]: Code-explorer subagent frequently errors**\n建议：NEW_CLEAN_CANDIDATE | 分数：10\n价值：Issue reports a user-visible bug where code-explorer subagent hangs and fails, with a concrete repro prompt and environment. No competing PR or issue found, and the gate allows work. However, root cause is unknown and no maintainer confirmation exists, so confidence is moderate.\n改动：Add a failing regression test reproducing the hang/error；Investigate and fix the code-explorer subagent invocation path in agent runtime or provider\n验证：Use the provided prompt and setup to create a minimal reproduction test；Run targeted unit/integration tests for the subagent and related runtime\n风险：Root cause may be external (e.g., minimax provider) and not fixable in repo；Potential need for maintainer design input on subagent behavior\n竞争：未发现相关 open PR\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 5，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "green",
+          "title": {
+            "content": "OSS PR Radar: 可立即执行",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-05T21:36:46.097555Z",
+      "eventId": "1f9dd2aedcb974ce004305a8daaf922252e9454b9df2827e42a638ca6040a4eb",
+      "idempotencyKey": "1f9dd2aedcb974ce004305a8daaf922252e9454b9df2827e42",
+      "kind": "immediate",
+      "runId": "scan-20260805T213231Z-65ae67f9a556",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "sgl-project/sglang#33483"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33483](https://github.com/sgl-project/sglang/issues/33483) [Bug] Default decode CUDA Graph coverage causes a sharp performance cliff when batch size exceeds 32**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue provides detailed, reproducible evidence of a performance cliff caused by default CUDA graph batch size being too low relative to max_running_requests. The root cause is clear: decode steps above the captured batch size fall back to eager execution, causing significant latency degradation. However, the issue explicitly asks for maintainer input on the preferred fix direction, and the open PR and related issue lookups failed, so duplicate work cannot be ruled out. The deterministic gate is HUMAN_REVIEW, so a maintainer decision is required before implementation.\n改动：Adjust default cuda_graph_max_bs heuristic to scale with KV pool or reachable batch size；Add startup warning when cuda_graph_max_bs is far below max_running_requests；Document interaction in tuning guide\n验证：Reproduce the performance cliff using the provided benchmark script and configuration；Add a regression test that checks the default cuda_graph_max_bs is sufficient for typical max_running_requests；Measure TPOT and throughput at rates around the cliff to verify fix\n风险：Changing default may increase GPU memory usage and startup time；Potential impact on other models and hardware configurations；Need to ensure fix does not degrade performance for large models\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 16，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-05T21:36:46.253263Z",
+      "eventId": "dd995b58db5f2ba35af0e3874fe2556cd32d4327e60e50708eae5bbca720229c",
+      "idempotencyKey": "dd995b58db5f2ba35af0e3874fe2556cd32d4327e60e50708e",
+      "kind": "review",
+      "runId": "scan-20260805T213231Z-65ae67f9a556",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "mastra-ai/mastra#20682",
+        "mastra-ai/mastra#20701",
+        "pydantic/pydantic-ai#7109",
+        "sgl-project/sglang#27937",
+        "usekaneo/kaneo#1484",
+        "vllm-project/vllm#50159",
+        "vllm-project/vllm#50719",
+        "vllm-project/vllm#50881",
+        "vllm-project/vllm#51122"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[mastra-ai/mastra#20682](https://github.com/mastra-ai/mastra/issues/20682) [BUG] Thread title is silently lost when generateTitle is used on serverless runtimes that freeze after the response (e.g. AWS Lambda)**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[mastra-ai/mastra#20701](https://github.com/mastra-ai/mastra/issues/20701) [BUG] When throwing an error in a tool, the state of that message is `output-available` not `output-error`**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[pydantic/pydantic-ai#7109](https://github.com/pydantic/pydantic-ai/issues/7109) Durable-exec leaf-toolset `id` error never mentions the capability `id` that would fix it**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#27937](https://github.com/sgl-project/sglang/issues/27937) [Failure Tracker] PR Test (AMD)**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[usekaneo/kaneo#1484](https://github.com/usekaneo/kaneo/issues/1484) [Bug]: Remote MCP OAuth returns invalid_client when requests hit different Kaneo replicas**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50159](https://github.com/vllm-project/vllm/issues/50159) [Bug]: Model Runner V2 + Gemma-4: memory profiler reports ~0.9 GiB more \"available KV\" than MRv1 → no runtime headroom → CUDA OOM under saturating load (no spec involved); with EAGLE it crashes earlier at cudagraph capture (stable-ABI aten::empty)**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50719](https://github.com/vllm-project/vllm/issues/50719) [Bug][PD][Mooncake] Decode requests stuck in WAITING_FOR_REMOTE_KVS and fail with Timeout waiting for P side ready**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50881](https://github.com/vllm-project/vllm/issues/50881) [Bug]: MiniMax-M3 fp8 KV cache on SM80 (A100/A800): coherent with --enforce-eager, garbage under CUDA graphs — root cause + working fix**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#51122](https://github.com/vllm-project/vllm/issues/51122) [Bug]: `enable_prompt_embeds` + `enable_lora` on Llama crashes with `illegal memory access` under concurrency**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-05T21:36:46.421972Z",
+      "eventId": "90e5e43d22ccc57b419124a3ec41393f0b7b0c490ba5a593812c25842d4fa65f",
+      "idempotencyKey": "90e5e43d22ccc57b419124a3ec41393f0b7b0c490ba5a59381",
+      "kind": "watch",
+      "runId": "watch-1785965494",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-05T20:03:32.853957Z",
+  "generatedAt": "2026-08-05T21:36:46.576853Z",
   "newEventCount": 0,
   "version": "notification_outbox_v1"
 }
