@@ -1,5 +1,5 @@
 {
-  "digest": "94a12f5b28345e09d47d6811c465d98ea7c46024540e89c4f899485a1f8cf6e3",
+  "digest": "8db2b91067f7f46e4f868b3c8de3745f4cbd5a07060efd7035e9f2baa0eb4894",
   "events": [
     {
       "attempts": 1,
@@ -10410,9 +10410,262 @@
       "runId": "watch-1785965494",
       "sentAt": "2026-08-05T21:37:22.312420Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "frontman-ai/frontman#1347"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[frontman-ai/frontman#1347](https://github.com/frontman-ai/frontman/issues/1347) Stop or pause executions on task switch and disconnect**\n建议：NEW_CLEAN_CANDIDATE | 分数：10\n价值：Issue describes a concrete production incident with clear lifecycle gaps: task switch/disconnect does not terminate or pause prior execution, causing resource leaks and stale tool calls. Acceptance criteria and targeted tests are specific, and code paths are identified. No competing PR or related issue found, and the gate allows work.\n改动：Add lifecycle handling in task_channel.ex for switch/disconnect events；Modify tasks.ex to terminate or pause old executions and resolve outstanding tools with typed reason；Update tool_executor.ex to cascade cancellation and prevent late results from reviving canceled runs\n验证：Integration test: switch tasks during LLM streaming and verify old run resolves promptly；Race test: late tool result arriving during cleanup does not revive execution；Reconnect test: no dispatch before MCP reinitialization and user resume；Multi-task test: only abandoned task is affected\n风险：Potential behavior change in task lifecycle may affect existing workflows; needs careful design to avoid canceling newly selected task；Race conditions in cancellation may be complex; requires thorough testing\n竞争：未发现相关 open PR\n下一步：按正常流程实现并验证；如要求 DCO 则自动 sign-off，PR 创建后报告 CLA 状态。\n证据：复现信号 0，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "green",
+          "title": {
+            "content": "OSS PR Radar: 可立即执行",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-05T21:41:10.428285Z",
+      "eventId": "13d0c300ad72cf695e14ff44c8e47da0d062d0a5ed7742b43069a1c6cb642813",
+      "idempotencyKey": "13d0c300ad72cf695e14ff44c8e47da0d062d0a5ed7742b430",
+      "kind": "immediate",
+      "runId": "scan-20260805T213835Z-af14854c797a",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "DeusData/codebase-memory-mcp#1339",
+        "raullenchai/Rapid-MLX#1494"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[DeusData/codebase-memory-mcp#1339](https://github.com/DeusData/codebase-memory-mcp/issues/1339) Graph not updated when the working tree returns to clean (revert leaves false negatives)**\n建议：WAIT_MAINTAINER | 分数：11\n价值：The issue is a well-documented bug with independent reproductions and a clear root cause: the watcher fails to re-index on the dirty-to-clean transition. However, the maintainer has already routed it as a high-priority RC regression case and requested verification on RC1, which has been provided. The fix appears to be already implemented in v0.9.1-rc.1, and the issue is awaiting maintainer verification. Starting a new PR would duplicate existing work and conflict with the maintainer's active investigation.\n改动：No new code changes expected; the fix is already in v0.9.1-rc.1.\n验证：No new tests needed; the existing reproduction steps serve as regression tests.\n风险：Potential duplicate PR if work starts without maintainer confirmation.\n竞争：未发现相关 open PR\n下一步：按正常流程实现并验证；如要求 DCO 则自动 sign-off，PR 创建后报告 CLA 状态。\n证据：复现信号 2，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[raullenchai/Rapid-MLX#1494](https://github.com/raullenchai/Rapid-MLX/issues/1494) `/v1/status` always reports `prompt_tps`/`generation_tps` as `0.0` for standard (non-MLLM) text models**\n建议：NEW_CLEAN_CANDIDATE | 分数：11\n价值：Issue provides a clear, reproducible bug with root cause traced to missing timing/tps tracking in the non-MLLM scheduler path. No competing PR or issue exists. The fix is localized and actionable.\n改动：Add timing/tps tracking to Scheduler in vllm_mlx/scheduler.py；Forward batch_generator stats in BatchedEngine.get_stats() for text path；Update /v1/status handler if needed\n验证：Reproduce with provided serve command and curl polling to confirm tps are 0.0；Add unit test for Scheduler.get_stats() to include prompt_tps/generation_tps；Integration test: serve a text model, generate tokens, poll /v1/status and assert non-zero tps\n风险：Potential performance overhead from timing instrumentation；API behavior change if /v1/status response shape changes\n竞争：未发现相关 open PR\n下一步：仅完成本地复现、修复、测试和私有提交包；由用户自行决定公开提交。\n证据：复现信号 19，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-05T21:41:10.562886Z",
+      "eventId": "2dc0005649a32f1890ce209af000ab63afcf3a8639a1c7ff42a61f3c9b23fc59",
+      "idempotencyKey": "2dc0005649a32f1890ce209af000ab63afcf3a8639a1c7ff42",
+      "kind": "review",
+      "runId": "scan-20260805T213835Z-af14854c797a",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "BerriAI/litellm#35786",
+        "DeusData/codebase-memory-mcp#1416",
+        "PrefectHQ/fastmcp#4744",
+        "PrefectHQ/fastmcp#4748",
+        "PrefectHQ/fastmcp#4749",
+        "aaif-goose/goose#10751",
+        "esengine/DeepSeek-Reasonix#6545",
+        "google/adk-python#6585",
+        "modelcontextprotocol/python-sdk#3250",
+        "sgl-project/sglang#29149",
+        "sgl-project/sglang#33408",
+        "sgl-project/sglang#33470",
+        "sgl-project/sglang#33483",
+        "vllm-project/vllm#50891"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#35786](https://github.com/BerriAI/litellm/issues/35786) [Bug]: datadog_llm_observability callback: tool_calls and cache tokens sent in meta.metadata instead of their designated API fields (meta.output.messages[].tool_calls and span metrics)**\n建议：WAIT_MAINTAINER\n价值：STRONG_PR_APPEARED\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[DeusData/codebase-memory-mcp#1416](https://github.com/DeusData/codebase-memory-mcp/issues/1416) Windows: install/uninstall/doctor all fail with \"active CBM sessions and operations could not be stopped safely\"**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[PrefectHQ/fastmcp#4744](https://github.com/PrefectHQ/fastmcp/issues/4744) serialize_by_alias=False ignored for nested Pydantic models**\n建议：WAIT_MAINTAINER\n价值：STRONG_PR_APPEARED\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[PrefectHQ/fastmcp#4748](https://github.com/PrefectHQ/fastmcp/issues/4748) OAuth consent cookie is rejected behind Azure Functions**\n建议：WAIT_MAINTAINER\n价值：OWNERSHIP_CHANGED\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[PrefectHQ/fastmcp#4749](https://github.com/PrefectHQ/fastmcp/issues/4749) Resource list do not match the actual resource**\n建议：WAIT_MAINTAINER\n价值：ISSUE_NOT_OPEN\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[aaif-goose/goose#10751](https://github.com/aaif-goose/goose/issues/10751) ACP WebSocket silently drops connection on oversized session/prompt (no JSON-RPC error, no log)**\n建议：WAIT_MAINTAINER\n价值：OWNERSHIP_CHANGED\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[esengine/DeepSeek-Reasonix#6545](https://github.com/esengine/DeepSeek-Reasonix/issues/6545) [Bug]: `reasonix serve` 切换模型后 `ask` 工具失效，返回 'No interactive user answered'\"**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[google/adk-python#6585](https://github.com/google/adk-python/issues/6585) RemoteA2aAgent ends the invocation silently when the A2A stream stops before a terminal task state**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[modelcontextprotocol/python-sdk#3250](https://github.com/modelcontextprotocol/python-sdk/issues/3250) OAuthClientProvider._initialize() breaks transparent refresh: missing update_token_expiry + missing oauth_metadata load**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#29149](https://github.com/sgl-project/sglang/issues/29149) [Bug] `--enable-deterministic-inference` crashes during startup on NVIDIA L40S with Triton shared-memory OutOfResources**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33408](https://github.com/sgl-project/sglang/issues/33408) [Bug] Unlimited-OCR: server crashes when batching images with different gundam tile counts**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33470](https://github.com/sgl-project/sglang/issues/33470) inference_mode mismatch can break lazy buffers**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33483](https://github.com/sgl-project/sglang/issues/33483) [Bug] Default decode CUDA Graph coverage causes a sharp performance cliff when batch size exceeds 32**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50891](https://github.com/vllm-project/vllm/issues/50891) [Bug]: AOT compile cache key ignores limit_mm_per_prompt, so image:0 and image:1 runs collide and crash with AttributeError: 'NoneType' object has no attribute 'size'**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-05T21:41:10.700778Z",
+      "eventId": "abb8e78fadd0c4d2a7259e3cd53e1c1f75141a6830f22d42e763c5b2776a161f",
+      "idempotencyKey": "abb8e78fadd0c4d2a7259e3cd53e1c1f75141a6830f22d42e7",
+      "kind": "watch",
+      "runId": "watch-1785965872",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-05T21:36:46.576853Z",
+  "generatedAt": "2026-08-05T21:41:10.868973Z",
   "newEventCount": 0,
   "version": "notification_outbox_v1"
 }

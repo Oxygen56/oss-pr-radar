@@ -2412,6 +2412,34 @@
     ],
     "why": "The issue is a detailed, evidence-rich bug report about a silent device-side wedge in the sparse-decode MLA kernel, with a clear request for maintainer guidance on the correct owner and diagnostic path. However, the root cause is not established, the report explicitly asks for guidance rather than proposing a patch, and the deterministic gate is HUMAN_REVIEW. The open PR and related issue lookups failed, so duplicate work cannot be excluded. Actionability is limited by the need for maintainer input and the lack of a reliable reproducer."
   },
+  "4f5e2d859dcfd656ce47760ad45f3e0b098c4367c0e794db93d63d03603d585a": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Add timing/tps tracking to Scheduler in vllm_mlx/scheduler.py",
+      "Forward batch_generator stats in BatchedEngine.get_stats() for text path",
+      "Update /v1/status handler if needed"
+    ],
+    "risks": [
+      "Potential performance overhead from timing instrumentation",
+      "API behavior change if /v1/status response shape changes"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce with provided serve command and curl polling to confirm tps are 0.0",
+      "Add unit test for Scheduler.get_stats() to include prompt_tps/generation_tps",
+      "Integration test: serve a text model, generate tokens, poll /v1/status and assert non-zero tps"
+    ],
+    "unknowns": [
+      "Maintainer preference on implementation approach (e.g., windowed vs cumulative tps)"
+    ],
+    "why": "Issue provides a clear, reproducible bug with root cause traced to missing timing/tps tracking in the non-MLLM scheduler path. No competing PR or issue exists. The fix is localized and actionable."
+  },
   "500517cbf255fee567560bbf1062504efe750027d44678da28871a95e46ec410": {
     "confidence": 0.7,
     "contradictions": [],
@@ -3941,6 +3969,35 @@
       "Whether the project already has a shared storage dependency that can be leveraged."
     ],
     "why": "The issue provides a deterministic reproduction with two replicas, identifies the root cause as process-local storage of OAuth state, and points to specific code locations. No competing PR or issue exists, and the maintainer has not yet responded, but the bug is clear and actionable."
+  },
+  "81e63f5ce1441001559f8fce3db9d93b67289081385f756b13eb38a45dbb9a75": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Add lifecycle handling in task_channel.ex for switch/disconnect events",
+      "Modify tasks.ex to terminate or pause old executions and resolve outstanding tools with typed reason",
+      "Update tool_executor.ex to cascade cancellation and prevent late results from reviving canceled runs"
+    ],
+    "risks": [
+      "Potential behavior change in task lifecycle may affect existing workflows; needs careful design to avoid canceling newly selected task",
+      "Race conditions in cancellation may be complex; requires thorough testing"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Integration test: switch tasks during LLM streaming and verify old run resolves promptly",
+      "Race test: late tool result arriving during cleanup does not revive execution",
+      "Reconnect test: no dispatch before MCP reinitialization and user resume",
+      "Multi-task test: only abandoned task is affected"
+    ],
+    "unknowns": [
+      "No maintainer confirmation on desired default behavior (terminate vs pause) or design preferences; but not blocking as issue proposes clear behavior"
+    ],
+    "why": "Issue describes a concrete production incident with clear lifecycle gaps: task switch/disconnect does not terminate or pause prior execution, causing resource leaks and stale tool calls. Acceptance criteria and targeted tests are specific, and code paths are identified. No competing PR or related issue found, and the gate allows work."
   },
   "8571b4f5d107e53e6f6b3192d617a20ec15745d4a71c99fb2bf037450e817e92": {
     "confidence": 0.7,
