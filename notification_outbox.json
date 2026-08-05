@@ -1,5 +1,5 @@
 {
-  "digest": "a8a272c875a3c4535b72b881ebae74c336c1bdf47f9dcec0dcfc40de1c8ea978",
+  "digest": "b2b0af073727d1cffb0bd8c10fe686206e4930ed8b7e7ad2d7bb143600ad7609",
   "events": [
     {
       "attempts": 1,
@@ -9897,9 +9897,295 @@
       "runId": "watch-1785957553",
       "sentAt": "2026-08-05T19:24:48.969385Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "OpenHands/OpenHands#16270",
+        "promptfoo/promptfoo#10307"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[OpenHands/OpenHands#16270](https://github.com/OpenHands/OpenHands/issues/16270) [Bug]: AttributeError: 'Server' object has no attribute 'list_tools' when browser tool is used (breaks chat with 500 error)**\n建议：NEW_CLEAN_CANDIDATE | 分数：12\n价值：Issue reports a clear, user-visible 500 error caused by a version mismatch between browser_use and mcp SDK, with a stack trace pinpointing the exact failing call. No competing PR or issue exists, and the fix is a straightforward dependency pin/upgrade or compatibility shim.\n改动：Update browser_use/mcp dependency versions to align with mcp SDK API；Add compatibility handling for missing list_tools method；Ensure browser tool failure does not crash entire chat request\n验证：Reproduce with provided steps on Windows with local llama.cpp；Add unit test for CustomBrowserUseServer initialization with current mcp SDK；Run existing browser tool tests and integration tests for chat flow\n风险：Dependency upgrade may introduce other breaking changes；Fix may need to be applied to multiple packaging paths (exe, pip)\n竞争：未发现相关 open PR\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 5，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[promptfoo/promptfoo#10307](https://github.com/promptfoo/promptfoo/issues/10307) Error using Opus 5 with Bedrock provider**\n建议：NEW_CLEAN_CANDIDATE | 分数：8\n价值：Issue clearly identifies a recurring bug: new Claude models fail because temperature is deprecated, and the fix requires a robust approach rather than per-model additions. No open PR or issue addresses this, and the issue provides a concrete reproduction.\n改动：Modify Bedrock provider to omit temperature for Claude models that do not support it, likely by detecting model family or version instead of maintaining an explicit list.；Add regression tests for new Claude model versions.\n验证：Create a minimal promptfooconfig.yaml using bedrock:us.anthropic.claude-opus-5 and run an eval to reproduce the error.；Add unit tests for the provider's parameter construction to ensure temperature is omitted for unsupported models.\n风险：Changing behavior for all Claude models might affect existing users who rely on temperature; need to ensure backward compatibility or proper detection.\n竞争：未发现相关 open PR；仅发现未直接关联 issue 的历史 PR\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 3，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "green",
+          "title": {
+            "content": "OSS PR Radar: 可立即执行",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-05T20:03:32.345393Z",
+      "eventId": "83941517aac68e7a72bc3ba5946cd2c452a298ad0353f2ead6410346635abd29",
+      "idempotencyKey": "83941517aac68e7a72bc3ba5946cd2c452a298ad0353f2ead6",
+      "kind": "immediate",
+      "runId": "scan-20260805T195916Z-ad9179abe5db",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "vllm-project/vllm#51140",
+        "pydantic/pydantic-ai#7146",
+        "pydantic/pydantic-ai#7177",
+        "pydantic/pydantic-ai#7180"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#51140](https://github.com/vllm-project/vllm/issues/51140) [Bug]: Gemma 4 31B | Incoherent responses high context**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue reports a high-context correctness bug in Gemma 4 31B with a clear reproduction path and maintainer-requested ablation data. However, the deterministic gate is HUMAN_REVIEW, and the related issue audit failed due to timeout, leaving uncertainty about existing coverage. An open PR #40391 may address a related KV cache alignment issue but lacks strong semantic overlap and is stale.\n改动：Add a regression test for high-context Gemma 4 31B coherence；Investigate and fix KV cache page-size alignment or attention backend behavior at long context\n验证：Reproduce with the provided 64k context scenario and greedy decoding；Run ablation tests as requested by maintainer to isolate target-only vs MTP failure；Add a regression test that fails on current main and passes after fix\n风险：Potential overlap with existing PR #40391 or other long-context issues；Root cause may be in model weights or external dependencies rather than vLLM code\n竞争：已有直接关联但证据不完整的 PR #40391：超过 30 天未更新; 与 issue 关键词匹配弱；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 3，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[pydantic/pydantic-ai#7146](https://github.com/pydantic/pydantic-ai/issues/7146) `download_item` trusts the response `Content-Type` for every `FileUrl`, so spoofed or mismatched bytes are forwarded to providers**\n建议：WAIT_MAINTAINER | 分数：10\n价值：Issue clearly identifies a shared-boundary bug where download_item trusts Content-Type without byte validation, with a verified repro and suggested direction. However, an existing PR (#7162) is closed and technically incomplete (CI failures), and the repository requires assignment, so maintainer confirmation is needed before starting.\n改动：pydantic_ai_slim/pydantic_ai/models/__init__.py；pydantic_ai_slim/pydantic_ai/images/_media_type.py\n验证：Add regression tests for honest HTML, spoofed image/png, octet-stream with genuine image, redirects, and unfamiliar image MIME.\n风险：Design decisions on extending validation to AudioUrl/DocumentUrl/VideoUrl and allowing unfamiliar MIME types need maintainer input.\n竞争：已有 PR 但强度不足，且仓库通常需要先分配/确认：#7162 score=69\n下一步：已有 PR 但强度不足；先看维护者规则和 issue 讨论，必要时先请求确认方案或分配。\n证据：复现信号 3，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[pydantic/pydantic-ai#7177](https://github.com/pydantic/pydantic-ai/issues/7177) The `innermost` ordering tier is overloaded, and members cannot order themselves within it**\n建议：WAIT_MAINTAINER | 分数：10\n价值：Issue identifies a real design flaw in capability ordering with a clear root cause and reproducible failure, but the proposed fix involves API design changes (new ordering tier, intra-tier ordering, public method) that require maintainer confirmation. The deterministic gate is HUMAN_REVIEW, and the issue is not assigned or approved.\n改动：Add a new ordering tier between normal and durability；Implement intra-tier ordering constraints；Add public has_wrap_model_request and is_durable markers\n验证：Create failing test with SpendLimits and InputGuardrail(parallel=True) in both list orders；Run targeted unit tests for capability ordering and composition；Run static checks and full test suite\n风险：API design changes may conflict with maintainer preferences；New tier could affect existing capability behavior；Public markers may need deprecation or compatibility considerations\n竞争：未发现相关 open PR\n下一步：先请求维护者分配/确认方案，获批后再开 PR。\n证据：复现信号 3，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[pydantic/pydantic-ai#7180](https://github.com/pydantic/pydantic-ai/issues/7180) `AgentSpec` schema generation silently publishes an empty capability in two distinct ways**\n建议：WAIT_MAINTAINER | 分数：9\n价值：Issue identifies two silent schema-generation defects in pydantic-ai's AgentSpec, with concrete code paths and downstream impact. However, the submission policy requires assignment and the gate is HUMAN_REVIEW, so maintainer confirmation is needed before implementation.\n改动：Modify _get_schema_target to avoid silent fallback on NameError；Modify filter_serializable_type or union handling to surface unrepresentable types；Add regression tests for both silent paths\n验证：Create minimal reproducer for each path and assert schema generation raises or includes fields；Run existing pydantic-ai test suite and static checks\n风险：Changing error behavior may break existing capabilities that rely on silent fallback；Need to align with maintainer design preferences for error handling\n竞争：未发现相关 open PR\n下一步：先请求维护者分配/确认方案，获批后再开 PR。\n证据：复现信号 0，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-05T20:03:32.497443Z",
+      "eventId": "2fd2d50ed462265f58a8dc5286a43a9e166b2e7e0247172fd0f05f8ca6ecac8d",
+      "idempotencyKey": "2fd2d50ed462265f58a8dc5286a43a9e166b2e7e0247172fd0",
+      "kind": "review",
+      "runId": "scan-20260805T195916Z-ad9179abe5db",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "crewAIInc/crewAI#6788",
+        "fastmachinelearning/hls4ml#1515",
+        "google/adk-python#6584",
+        "langgenius/dify#40003",
+        "maka-agent/maka-agent#2074",
+        "pydantic/pydantic-ai#7147",
+        "sgl-project/sglang#33493",
+        "sgl-project/sglang#33504",
+        "sgl-project/sglang#33505",
+        "sgl-project/sglang#33549",
+        "sgl-project/sglang#33656",
+        "vllm-project/vllm#51073",
+        "vllm-project/vllm#51080",
+        "BerriAI/litellm#35800"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[crewAIInc/crewAI#6788](https://github.com/crewAIInc/crewAI/issues/6788) [BUG] total_tokens omits cache reads and writes on the native Anthropic provider**\n建议：WAIT_MAINTAINER\n价值：ISSUE_NOT_OPEN\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[fastmachinelearning/hls4ml#1515](https://github.com/fastmachinelearning/hls4ml/issues/1515) profiling.numerical() fails for multi-input models**\n建议：WAIT_MAINTAINER\n价值：STRONG_PR_APPEARED\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[google/adk-python#6584](https://github.com/google/adk-python/issues/6584) RemoteA2aAgent: a terminal A2A task carrying tool activity fails is_final_response(), so the turn cannot be detected as finished (non-streaming peer)**\n建议：WAIT_MAINTAINER\n价值：OWNERSHIP_CHANGED\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[langgenius/dify#40003](https://github.com/langgenius/dify/issues/40003) AgentV2 (dify-agent) sends empty-content system prompts and empty tool descriptions to Bedrock, causing ValidationException**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[maka-agent/maka-agent#2074](https://github.com/maka-agent/maka-agent/issues/2074) bug(runtime): a stopped run parked on AskUserQuestion never lands a terminal fact, and prior-run context then silently drops the whole turn**\n建议：WAIT_MAINTAINER\n价值：ISSUE_NOT_OPEN\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[pydantic/pydantic-ai#7147](https://github.com/pydantic/pydantic-ai/issues/7147) Capability-contributed local tools drop their token usage from `RunUsage` and `UsageLimits`**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33493](https://github.com/sgl-project/sglang/issues/33493) [Bug] DSPARK retrieves wrong key \"acc_linear_penalities\" from sampling_info**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33504](https://github.com/sgl-project/sglang/issues/33504) Title: Inconsistent error response format with OpenAI standard for non-streaming requests**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33505](https://github.com/sgl-project/sglang/issues/33505) [Bug] The --json-model-override-args  does not  recursively update the model configuration.**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33549](https://github.com/sgl-project/sglang/issues/33549) [Bug] DeepSeek-V4 (dsv4 backend + DSPARK) TP=8 on 8×H20: decode forward hangs indefinitely at ~245K context — all GPUs spin at 100% util / low power, watchdog kills server**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33656](https://github.com/sgl-project/sglang/issues/33656) [Bug] DeepSeek-V4 + hierarchical cache: deterministic SWA KV position corruption (kv-canary TAIL_K_SWA write_position), downstream NaN sampling crash**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#51073](https://github.com/vllm-project/vllm/issues/51073) [Bug]: MinimaxM3ToolParser (Rust) fails on MiniMaxAI/MiniMax-M3-MXFP8 tool output; raw markup + ']<]minimax[>[' special token leaks into content**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#51080](https://github.com/vllm-project/vllm/issues/51080) [Bug]: CPU offload cannot pin regions of 512 GiB or more (single cudaHostRegister call)**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#35800](https://github.com/BerriAI/litellm/issues/35800) [Bug]: Standalone virtual-key soft_budget alert is not sent to Slack**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-05T20:03:32.657775Z",
+      "eventId": "ee455ff5250942ab4076cbc403c1995aea1f2c0e851d0274cb8eab9b4d7c0a63",
+      "idempotencyKey": "ee455ff5250942ab4076cbc403c1995aea1f2c0e851d0274cb",
+      "kind": "watch",
+      "runId": "watch-1785959907",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-05T19:24:12.237205Z",
+  "generatedAt": "2026-08-05T20:03:32.853957Z",
   "newEventCount": 0,
   "version": "notification_outbox_v1"
 }

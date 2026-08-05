@@ -189,6 +189,34 @@
     ],
     "why": "Issue provides a clear root cause (WORLD-group broadcast deadlock in fastsafetensors under PP-scoped draft loads) and a concrete repro, but the deterministic gate requires HUMAN_REVIEW and the related issue audit timed out. Existing PR #50514 is directly related but has failing CI and incomplete evidence, so a new PR may be premature until maintainer confirms design direction."
   },
+  "0814ca6f3f9a83de47c73259e266967ef5c9dfbec207ac72df168cd6d715e045": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify _get_schema_target to avoid silent fallback on NameError",
+      "Modify filter_serializable_type or union handling to surface unrepresentable types",
+      "Add regression tests for both silent paths"
+    ],
+    "risks": [
+      "Changing error behavior may break existing capabilities that rely on silent fallback",
+      "Need to align with maintainer design preferences for error handling"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create minimal reproducer for each path and assert schema generation raises or includes fields",
+      "Run existing pydantic-ai test suite and static checks"
+    ],
+    "unknowns": [
+      "Maintainer confirmation on desired behavior for silent schema generation"
+    ],
+    "why": "Issue identifies two silent schema-generation defects in pydantic-ai's AgentSpec, with concrete code paths and downstream impact. However, the submission policy requires assignment and the gate is HUMAN_REVIEW, so maintainer confirmation is needed before implementation."
+  },
   "09825a63c7595dbc0ab01b0f35ce09e3128060df67572bc7681e652c013b6039": {
     "confidence": 0.7,
     "contradictions": [],
@@ -1043,6 +1071,32 @@
     ],
     "why": "Issue reports a user-visible bug with a plausible code path but lacks a confirmed root cause; related issue and open PR lookups timed out, so duplicate work cannot be excluded. Maintainer input is needed to confirm expected behavior and design."
   },
+  "28c7c49a9828479e0220ccacac289be2e25052f52c0b68e822a8783ba2f90847": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify Bedrock provider to omit temperature for Claude models that do not support it, likely by detecting model family or version instead of maintaining an explicit list.",
+      "Add regression tests for new Claude model versions."
+    ],
+    "risks": [
+      "Changing behavior for all Claude models might affect existing users who rely on temperature; need to ensure backward compatibility or proper detection."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a minimal promptfooconfig.yaml using bedrock:us.anthropic.claude-opus-5 and run an eval to reproduce the error.",
+      "Add unit tests for the provider's parameter construction to ensure temperature is omitted for unsupported models."
+    ],
+    "unknowns": [
+      "Exact code location and current implementation of the no-temperature list; maintainer preference for approach."
+    ],
+    "why": "Issue clearly identifies a recurring bug: new Claude models fail because temperature is deprecated, and the fix requires a robust approach rather than per-model additions. No open PR or issue addresses this, and the issue provides a concrete reproduction."
+  },
   "299193e33be75e17c4de14a725267dadb6b46592dacd4bdf988adf4aa81509ad": {
     "confidence": 0.7,
     "contradictions": [
@@ -1682,6 +1736,37 @@
       "Whether there are existing open PRs or issues addressing this (related issue audit timed out)"
     ],
     "why": "The issue describes a plausible bug in categorize.py where LLM reasoning output may cause misclassification, but the proposed fix is a simple string truncation that may not be robust across different LLM formats. The deterministic gate requires HUMAN_REVIEW, and there is no maintainer confirmation or active investigation. The related issue audit timed out, leaving unknowns about existing duplicates or ongoing work."
+  },
+  "3db84fbee4d2fe729438f1634524fe82276d1bbe33298a8b27f63662847b4c23": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add a new ordering tier between normal and durability",
+      "Implement intra-tier ordering constraints",
+      "Add public has_wrap_model_request and is_durable markers"
+    ],
+    "risks": [
+      "API design changes may conflict with maintainer preferences",
+      "New tier could affect existing capability behavior",
+      "Public markers may need deprecation or compatibility considerations"
+    ],
+    "root_cause_clarity": "high",
+    "score": 10,
+    "test_plan": [
+      "Create failing test with SpendLimits and InputGuardrail(parallel=True) in both list orders",
+      "Run targeted unit tests for capability ordering and composition",
+      "Run static checks and full test suite"
+    ],
+    "unknowns": [
+      "Maintainer design preferences for capability ordering API",
+      "Whether a new tier is acceptable or alternative solutions are preferred"
+    ],
+    "why": "Issue identifies a real design flaw in capability ordering with a clear root cause and reproducible failure, but the proposed fix involves API design changes (new ordering tier, intra-tier ordering, public method) that require maintainer confirmation. The deterministic gate is HUMAN_REVIEW, and the issue is not assigned or approved."
   },
   "3e4fb90f75e655149bf06546f2b034c02f34e53bdcabb436483691782df37673": {
     "confidence": 0.7,
@@ -4837,6 +4922,37 @@
     ],
     "why": "The issue gives a precise root cause (snapshot assigns fresh ids to re-factored tool-call messages, breaking the client's id-keyed merge and causing ordering displacement) and proposes a concrete fix. However, maintainer triage is required: the gate says HUMAN_REVIEW, there are overlapping open PRs (#7423, #7479) that touch AG-UI snapshot/support paths, and a potential duplicate issue #7490 with shared behavior signals. The fix may also involve design choices about message identity that need maintainer confirmation."
   },
+  "af93e795ad3c6bda430639c6c9fae128bf392221249184eaeba6d3c228ddb5fa": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Bot comments suggest duplicates, but lookup failed to confirm"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "UI component for collapsing intermediate AI work",
+      "Configuration option for default collapse behavior",
+      "Expansion interaction for viewing details"
+    ],
+    "risks": [
+      "Potential duplicate of existing issues/PRs",
+      "Maintainer may have design preferences not yet expressed"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Manual UI test to verify default collapse and expand behavior",
+      "Automated component test for toggle functionality"
+    ],
+    "unknowns": [
+      "Whether existing PRs or issues already implement this feature",
+      "Maintainer's design intent and acceptance criteria"
+    ],
+    "why": "The issue requests a UI feature to collapse AI work details by default. The deterministic gate is HUMAN_REVIEW, and the open PR and related issue lookups failed due to timeouts, so duplicate implementations cannot be ruled out. The bot comments suggest possible duplicates (#35193, #14511) and a related comment link, but these are not fully verified. No maintainer approval or design confirmation is present."
+  },
   "b0d0dd1aae319e2a2001c18848aeb947d38cc1af85b93df92ba505f062d39d70": {
     "confidence": 0.8,
     "contradictions": [],
@@ -5395,6 +5511,38 @@
       "Maintainer approval or design confirmation"
     ],
     "why": "The issue provides a detailed root cause and concrete fix suggestions for a real bug in the Datadog callback, but the deterministic gate requires HUMAN_REVIEW and open PR/related issue lookups timed out, so we cannot rule out existing implementations or maintainer preferences."
+  },
+  "c78819723a9dfbb6c078d3c7378a50b3076acf74cd2788dd611a9b00e81cccde": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue title mentions Gemma 4 31B but environment shows vLLM 0.26.0 which may not support that model; user reports issue persists without MTP but also with enforce-eager, suggesting multiple factors"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add a regression test for high-context Gemma 4 31B coherence",
+      "Investigate and fix KV cache page-size alignment or attention backend behavior at long context"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #40391 or other long-context issues",
+      "Root cause may be in model weights or external dependencies rather than vLLM code"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 12,
+    "test_plan": [
+      "Reproduce with the provided 64k context scenario and greedy decoding",
+      "Run ablation tests as requested by maintainer to isolate target-only vs MTP failure",
+      "Add a regression test that fails on current main and passes after fix"
+    ],
+    "unknowns": [
+      "Exact root cause and whether it is specific to vLLM or model/config",
+      "Whether maintainer has already assigned or is actively investigating",
+      "Full details of related issues #39049 and #39407 due to lookup timeout"
+    ],
+    "why": "Issue reports a high-context correctness bug in Gemma 4 31B with a clear reproduction path and maintainer-requested ablation data. However, the deterministic gate is HUMAN_REVIEW, and the related issue audit failed due to timeout, leaving uncertainty about existing coverage. An open PR #40391 may address a related KV cache alignment issue but lacks strong semantic overlap and is stale."
   },
   "c998e2e23395bea890e86932adcd2a03fd4beacc85b9c67017a830139e667254": {
     "confidence": 0.8,
