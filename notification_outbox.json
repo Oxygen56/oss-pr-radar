@@ -1,5 +1,5 @@
 {
-  "digest": "f3aee1cf62d9b76b471d825cb22c6bb4cadb392a4017caa4c2c8e533e706447a",
+  "digest": "e842d7e7935d1e0ab375a584ca31e4e738f75ca81278b1da9aa6f0838b065b4e",
   "events": [
     {
       "attempts": 1,
@@ -10672,9 +10672,207 @@
       "runId": "watch-1785965872",
       "sentAt": "2026-08-05T21:41:58.584429Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "mastra-ai/mastra#20671",
+        "mastra-ai/mastra#20673",
+        "mastra-ai/mastra#20670",
+        "langgenius/dify#39954"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[mastra-ai/mastra#20671](https://github.com/mastra-ai/mastra/issues/20671) Oversized Inngest Realtime events are delivered truncated, permanently hanging durable agent streams**\n建议：NEW_CLEAN_CANDIDATE | 分数：11\n价值：The issue provides a clear root cause: Inngest Realtime truncates oversized messages, and the pubsub fallback wraps truncated JSON as an unparseable string, causing terminal events to be lost and streams to hang. The fix is well-scoped: reduce live event payloads and salvage truncated terminal events. No competing PR or issue exists, and the maintainer has labeled it for triage, indicating interest.\n改动：Modify InngestPubSub in workflows/inngest/src/pubsub.ts to detect truncated messages and handle them appropriately；Reduce live publish payload for finish events to only fields consumers need (output.usage, output.text, stepResult)；Add logic to salvage truncated terminal events into minimal terminal envelopes；Drop truncated non-terminal messages instead of delivering them as unparseable strings\n验证：Create a minimal reproduction that publishes an oversized finish event and verify that attached streams close with a parseable terminal event；Add unit tests for the pubsub fallback branch with truncated JSON payloads；Run existing durable agent stream tests to ensure no regression\n风险：Potential API behavior change if reducing payload fields breaks consumers expecting full data；Handling truncated messages may be fragile if truncation cuts at arbitrary points; need robust detection\n竞争：未发现相关 open PR\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 2，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[mastra-ai/mastra#20673](https://github.com/mastra-ai/mastra/issues/20673) Durable agents lose the request context after the first iteration: requestContextEntries is dropped from iteration state and never forwarded to the LLM step**\n建议：NEW_CLEAN_CANDIDATE | 分数：11\n价值：The issue provides a precise root cause: requestContextEntries is dropped from iteration state and not forwarded to the LLM step, causing dynamic resolvers to see an empty context after the first iteration. This is a high-impact bug with a clear reproduction path and no competing PR.\n改动：Modify iteration state schema and update functions to preserve requestContextEntries；Forward requestContextEntries in map-to-llm-input for both core and Inngest workflows\n验证：Create a failing test that simulates a durable agent with dynamic model/tools and forces a registry-miss rebuild, asserting the request context is preserved across iterations\n风险：Potential API changes if schema modifications affect existing workflows；Need to ensure backward compatibility with existing serialized state\n竞争：未发现相关 open PR\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 4，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[mastra-ai/mastra#20670](https://github.com/mastra-ai/mastra/issues/20670) createInngestAgent resume() mis-targets nested tool suspensions, drops caller request context, and swallows send failures**\n建议：NEW_CLEAN_CANDIDATE | 分数：11\n价值：Issue describes three concrete, high-impact correctness bugs in createInngestAgent.resume() with clear root causes and expected behavior. No competing PR or related issue found. Maintainer acknowledged and labeled, but no active investigation or design confirmation needed. Actionable fix with minimal repro.\n改动：Modify resume() to target nested tool-call leaf in resume.steps；Add requestContext option to InngestAgentResumeOptions and merge with snapshot context；Await inngest.send and handle failures by rejecting resume() and cleaning up stream/run-registry\n验证：Create failing test reproducing nested suspension resume mis-targeting；Test requestContext merging with caller precedence；Test send failure rejects resume() and cleans up resources\n风险：Potential API change to InngestAgentResumeOptions may require maintainer approval；Behavior change in error handling could affect existing callers\n竞争：未发现相关 open PR\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 4，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[langgenius/dify#39954](https://github.com/langgenius/dify/issues/39954) RBAC: GET /datasets/batch_import_status/<job_id> always returns 400 when RBAC_ENABLED**\n建议：PR_COMPETITION_OPPORTUNITY | 分数：12\n价值：Issue provides a precise root cause and a concrete fix (route split + frontend update). Existing PR #40029 is weak: no tests, minimal changes, and lacks regression coverage. A materially better PR with tests and complete frontend changes is plausible.\n改动：Split DatasetDocumentSegmentBatchImportApi into separate Resource classes；Add dataset-scoped route /datasets/<uuid:dataset_id>/batch_import_status/<uuid:job_id>；Update frontend polling URL in web/service/knowledge/use-segment.ts；Add regression tests for RBAC-enabled batch import status endpoint\n验证：Reproduce issue with RBAC_ENABLED=true and the provided steps；Add API test for GET /datasets/<dataset_id>/batch_import_status/<job_id> with RBAC enabled；Add frontend test or type-check for updated polling URL；Run targeted unit tests for datasets controller and RBAC wrappers\n风险：Potential maintainer preference for alternative fix (e.g., resource_required=False) not yet confirmed；Route change may break existing clients or require API versioning；Frontend change must be coordinated with backend to avoid polling failures\n竞争：已有直接关联但证据不完整的 PR #40029：缺少测试文件；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：先复现 issue，再逐项对比已有 PR 的缺口；只有能提供更小改动、更强测试或更完整边界覆盖时才开 PR。\n证据：复现信号 6，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "green",
+          "title": {
+            "content": "OSS PR Radar: 可立即执行",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-05T23:31:21.094243Z",
+      "eventId": "e741c20aeb28ff8ed0fd2a5d53eadf09ccc823ee2cc7e4e2e0e1d32fa83a9f49",
+      "idempotencyKey": "e741c20aeb28ff8ed0fd2a5d53eadf09ccc823ee2cc7e4e2e0",
+      "kind": "immediate",
+      "runId": "scan-20260805T232639Z-01e55af17394",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "vllm-project/vllm#51187"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#51187](https://github.com/vllm-project/vllm/issues/51187) [Bug]: VLLM_BATCH_INVARIANT=1 returns non-identical logprobs across repeats of a byte-identical concurrent workload at ~44 co-resident sequences**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue reports a nondeterminism bug in VLLM_BATCH_INVARIANT=1 with detailed reproduction and ruled-out factors, but root cause is unknown and maintainer investigation/design confirmation is needed. Open PR and related issue lookups failed, so duplicate work cannot be excluded.\n改动：Add failing regression test for batch invariance with concurrent identical workloads；Investigate and fix nondeterminism in sampling/logprob computation under batch invariance\n验证：Use the issue's reproduction script to create a failing test that asserts identical logprobs across repeats；Run targeted unit tests for batch invariance and sampling determinism\n风险：Root cause may be deep in runtime or hardware-specific; fix may require design changes；Potential duplicate work if existing PR addresses this\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 13，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-05T23:31:21.207839Z",
+      "eventId": "98348c7332bbae77ffa4739b109e3eaf49987e047bc33c6b5c05368ff593e1dc",
+      "idempotencyKey": "98348c7332bbae77ffa4739b109e3eaf49987e047bc33c6b5c",
+      "kind": "review",
+      "runId": "scan-20260805T232639Z-01e55af17394",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "BerriAI/litellm#35808",
+        "BerriAI/litellm#35823",
+        "BerriAI/litellm#35904",
+        "BerriAI/litellm#35908",
+        "mem0ai/mem0#6783",
+        "microsoft/agent-framework#7490",
+        "microsoft/agent-framework#7491"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#35808](https://github.com/BerriAI/litellm/issues/35808) [Bug]: explicit `additionalProperties: true` is forwarded to Anthropic `output_format.schema` and 400s (filter only fills in when absent)**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#35823](https://github.com/BerriAI/litellm/issues/35823) [Bug]: Databricks AI Gateway - Failure when using M2M auth.**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#35904](https://github.com/BerriAI/litellm/issues/35904) Four Vertex AI MaaS models have incorrect prices in model_prices_and_context_window.json**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#35908](https://github.com/BerriAI/litellm/issues/35908) [Bug]: vertex_ai/claude-sonnet-5 (global endpoint) prompt cache does not reliably hit across multi-turn conversation**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[mem0ai/mem0#6783](https://github.com/mem0ai/mem0/issues/6783) [Codex plugin] Exported MEM0_API_KEY is filtered before MCP startup in managed environments**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[microsoft/agent-framework#7490](https://github.com/microsoft/agent-framework/issues/7490) Python: [Bug]: with `predict_state_config` set, EVERY tool result emits a full `StateSnapshotEvent` — including for tools the config never names**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[microsoft/agent-framework#7491](https://github.com/microsoft/agent-framework/issues/7491) Python: [Bug]: AG-UI `MESSAGES_SNAPSHOT` re-factors streamed messages under fresh ids — the reference `@ag-ui/client` merge then renders every mid-run tool call after the final text**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-05T23:31:21.373386Z",
+      "eventId": "14fc38635d69914c5538313a30336dc0b36af5e50af3a93c7d8553f2074af155",
+      "idempotencyKey": "14fc38635d69914c5538313a30336dc0b36af5e50af3a93c7d",
+      "kind": "watch",
+      "runId": "watch-1785972364",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-05T21:41:10.868973Z",
+  "generatedAt": "2026-08-05T23:31:21.491544Z",
   "newEventCount": 0,
   "version": "notification_outbox_v1"
 }
