@@ -689,6 +689,35 @@
     ],
     "why": "Issue reports a real bug with detailed reproduction and ruled-out factors, but open PR and related issue lookups timed out, so duplicate work cannot be excluded. The repository requires AI disclosure, which conflicts with automated public action. Maintainer approval is absent and design confirmation is needed for the suspected areas."
   },
+  "1fc3190cdf1b6d6310681412e5873b89365b7ad18501ba71edb363d0d8b5de87": {
+    "confidence": 0.85,
+    "contradictions": [
+      "One comment suggests gating on sharedMemPerBlockOptin, another shows that same limit works on SM120, so device-limit gating alone is insufficient."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify sglang/srt/batch_invariant_ops/batch_invariant_ops.py to handle Triton OutOfResources at runtime, e.g., retry with reduced num_stages or BLOCK_SIZE_N, or query kernel metadata before launch."
+    ],
+    "risks": [
+      "Changing kernel config may affect performance or determinism guarantees; must ensure accumulation order remains unchanged.",
+      "Runtime retry could mask real issues or add overhead; need careful caching."
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Run the provided repro script on an Ada GPU (e.g., L40S or RTX 4060 Laptop) with the fix and verify /health_generate becomes available.",
+      "Add a unit test that mocks Triton OutOfResources and verifies fallback config selection."
+    ],
+    "unknowns": [
+      "Whether an existing PR or issue already addresses this (lookup timed out).",
+      "Maintainer preference on fix approach (runtime retry vs. arch-aware config selection)."
+    ],
+    "why": "Issue reports a clear startup crash on Ada GPUs due to Triton shared-memory OOR in the deterministic matmul kernel, with multiple independent reproductions and local mitigations. However, the open PR and related issue lookups timed out, so duplicate work cannot be excluded. Maintainer has not confirmed the fix direction, and the contributor comment suggests arch-aware fallback while another comment warns against simple device-limit gating, indicating design confirmation is needed."
+  },
   "1fc593c5dc203e31ed256bba7f704c7b0cbf25f3187106749ac49e25d6d2777f": {
     "confidence": 0.8,
     "contradictions": [
@@ -1885,6 +1914,34 @@
       "Open PR status due to lookup timeout"
     ],
     "why": "Issue reports a deterministic hang in EAGLE verify on DSA decode, with detailed stack and reproduction. However, it is an internal fork (feat-mooncache) with custom flags, and the root cause (CUDA driver deadlock vs missing warmup) is unconfirmed. Open PR and related issue lookups timed out, so duplicate work cannot be excluded."
+  },
+  "4b0badf5edf7dbf279a741191bcdd0788b1d6ebc29684ddb3836786c9eb329bc": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add regression test reproducing mixed-version codec failure",
+      "Implement codec negotiation or fallback in request-plane runtime"
+    ],
+    "risks": [
+      "May require design confirmation on codec negotiation approach",
+      "Potential overlap with existing PR #12658 if it is completed"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create integration test simulating v1.2 worker with v1.4 frontend and assert successful request",
+      "Run targeted unit tests for request-plane codec handling"
+    ],
+    "unknowns": [
+      "Maintainer preference on codec negotiation strategy",
+      "Whether existing PR #12658 will be updated with tests"
+    ],
+    "why": "Issue clearly describes a version-skew bug during rolling updates: v1.4 frontend sends MsgPack to v1.2 workers that only accept JSON. Existing PR #12658 is a draft with no tests and failing CI, leaving room for a more complete fix with regression tests."
   },
   "4b3aee146f076609481d5cc61c8f1cb6b982b62e131e3d3336feba1ff85f5671": {
     "confidence": 0.7,
@@ -3817,6 +3874,34 @@
     ],
     "why": "Issue reports stale get_episodes data; maintainer attributes to queue latency, but a commenter identifies a concrete root cause: get_episodes uses keyset pagination with ORDER BY uuid DESC, returning arbitrary stable subset instead of most recent. Existing PR #1726 claims to fix this but has failing CI/check and lacks evidence of root-cause analysis. A materially better PR with proper tests and root-cause explanation is plausible."
   },
+  "8d0efb2cc63a5bc0fa58f256cb6d94726b91db6ea38584e7b2e47eaf00d2ffa2": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix hidden size mismatch in fused_moe_triton for DeepSeek V4 FP8",
+      "Add regression test for DeepSeek V4 FP8 forward pass"
+    ],
+    "risks": [
+      "Potential overlap with existing PRs or issues not found due to lookup timeout",
+      "Fix may require changes in multiple modules (model, MoE layer, quantization)"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with the reported model and configuration to confirm the assertion",
+      "Add a unit test that exercises the failing path with a small model"
+    ],
+    "unknowns": [
+      "Exact model configuration and command to reproduce",
+      "Whether maintainers have already identified a fix or have design preferences"
+    ],
+    "why": "The issue reports a clear assertion failure in the DeepSeek V4 model with FP8 quantization, but lacks a minimal reproducible example and environment details. The open PR and related issue lookups timed out, so duplicate work cannot be excluded. The gate decision is HUMAN_REVIEW, and the candidate is not yet actionable without maintainer confirmation."
+  },
   "8de24e9cd4380f38ab3035a84d8d3a14faa714b0c6be8d60048aec77da22cfdf": {
     "confidence": 0.85,
     "contradictions": [],
@@ -5382,6 +5467,64 @@
     ],
     "why": "Issue reports a deterministic deadlock in fastsafetensors ParallelLoader when loading draft models under pipeline parallelism, with a clear root cause (hard-coded WORLD group) and a suggested fix. However, the deterministic gate is HUMAN_REVIEW, and there is an existing PR (#50514) with failed CI that may already address the area. Maintainer has acknowledged the issue but no design confirmation or assignment yet."
   },
+  "d7a04bdb4def010444f45071371431ed885071b0752c9868cfdba05f2a917e85": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Potential fix in KV cache page-size alignment or attention backend for Gemma 4 high context",
+      "Potential fix in speculative decoding (MTP) long-context correctness"
+    ],
+    "risks": [
+      "Root cause may be in multiple interacting components (KV cache, attention, MTP)",
+      "Existing PR #40391 may be insufficient or outdated"
+    ],
+    "root_cause_clarity": "low",
+    "score": 12,
+    "test_plan": [
+      "User to run controlled ablation with greedy decoding at 32K/48K/60K/64K tokens, comparing target-only vs MTP, with/without prefix caching, async scheduling, and enforce-eager",
+      "Add regression test for Gemma 4 long-context coherence if root cause identified"
+    ],
+    "unknowns": [
+      "User has not yet provided ablation results",
+      "Exact attention backend and speculative acceptance rate unknown",
+      "Whether target-only fails is unknown"
+    ],
+    "why": "Issue reports incoherent output at high context for Gemma 4 31B, but root cause is unconfirmed. Maintainer requested controlled ablation experiments to isolate whether target-only or MTP path fails. Existing PR #40391 is open but stale and lacks strong semantic overlap. Actionability is blocked pending user-provided reproduction data and maintainer analysis."
+  },
+  "d83cb699561986b97604b82baceae1d6070c1f219cf70192e1f4ef3f1102349a": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify `parse_streaming_chunk` to return `Result<Option<StreamingChunk>, ProviderError>` and skip frames without `choices` at both call sites in `crates/goose-provider-types/src/formats/openai.rs`",
+      "Add regression tests covering metadata-first, interleaved, mid-tool-call, empty-choices, and error frames"
+    ],
+    "risks": [
+      "Potential maintainer preference for a different fix approach (e.g., serde default) despite the issue's caution",
+      "Risk of overlapping with existing PR #10942 and needing to differentiate clearly"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Use the provided Python reproducer to establish failing behavior on current main",
+      "Add unit tests in `mod tests` for `parse_streaming_chunk` covering metadata-only frames and tool-call argument integrity",
+      "Run targeted tests for the openai provider package and static checks"
+    ],
+    "unknowns": [
+      "Maintainer's design preference for the fix (Option vs serde default) is not confirmed",
+      "Whether existing PR #10942 will be updated with tests, which could reduce competition opportunity"
+    ],
+    "why": "The issue provides a clear root cause (mandatory `choices` field in `StreamingChunk` causes abort on metadata-only frames) and a detailed reproducer. Existing PR #10942 addresses it but lacks regression tests, leaving room for a materially better PR with tests and a more robust fix (Option-based skip vs serde default)."
+  },
   "d89f4a7b39b7a43715f1e9e96b359f2915f673bb39e90e609fee9f510165daf4": {
     "confidence": 0.8,
     "contradictions": [],
@@ -5463,6 +5606,33 @@
       "Exact maintainer design preferences for handling request context in durable workflows"
     ],
     "why": "The issue provides a precise root cause: requestContextEntries is dropped from iteration state and not forwarded to the LLM step, causing dynamic resolvers to see an empty context after the first iteration. This is a high-impact bug with a clear reproduction path and no competing PR."
+  },
+  "de6fa0ca75c8567a85583f908e83570b57ca51708ac54f8240eb935a0d41a8d2": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add failing test for memory-enabled agent target in startExperiment",
+      "Modify experiment runner to supply threadId or handle missing threadId gracefully"
+    ],
+    "risks": [
+      "Potential API design changes for threadId/memory options",
+      "May conflict with ongoing maintainer work on experiment features"
+    ],
+    "root_cause_clarity": "high",
+    "score": 15,
+    "test_plan": [
+      "Reproduce with provided code snippet and assert no throw",
+      "Run existing dataset experiment tests"
+    ],
+    "unknowns": [
+      "Maintainer design preference for handling memory in experiments"
+    ],
+    "why": "Issue reports a clear bug with root cause pointers and a minimal reproduction, but the deterministic gate requires HUMAN_REVIEW and maintainer confirmation is needed before implementation."
   },
   "de8e3be8d2caa575f3a6d3f30599b4f95edbaa20f33c469d091227c43423de33": {
     "confidence": 0.6,

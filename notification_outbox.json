@@ -1,5 +1,5 @@
 {
-  "digest": "e7c7372d5258c5a0f8410969241ef99cd905d8a23be0632d1003ea32148eb780",
+  "digest": "03effd0a604c8504f26a1014c59b329a11bcdf8487407701e94ab3e75a891070",
   "events": [
     {
       "attempts": 1,
@@ -8868,9 +8868,284 @@
       "runId": "watch-1785937652",
       "sentAt": "2026-08-05T13:53:43.473001Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "OpenHands/OpenHands#16323",
+        "OpenHands/OpenHands#16270",
+        "aaif-goose/goose#10935",
+        "ai-dynamo/dynamo#12657"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[OpenHands/OpenHands#16323](https://github.com/OpenHands/OpenHands/issues/16323) [Bug]: Internal MCP self-connection fails with \"405 Method Not Allowed\" on rootless Podman (blocks all conversations)**\n建议：NEW_CLEAN_CANDIDATE | 分数：12\n价值：Issue reports a reproducible, high-impact bug in the internal MCP self-connection path, with clear stack trace and root cause hypothesis. No competing PR or issue found. The fix is actionable: adjust URL derivation or error handling in mcp_oauth_store.py.\n改动：Fix internal MCP URL derivation in mcp_oauth_store.py to respect WEB_HOST scheme and avoid 405；Add graceful handling of MCP connection failures in _runtime_mcp_tools to not block agent readiness\n验证：Reproduce with rootless Podman and empty mcp_config; assert no 405 and conversation proceeds；Add unit test for URL construction with various WEB_HOST values；Regression test for SSL error when scheme is missing\n风险：Changing URL derivation may affect other MCP configurations；Graceful handling might mask real MCP issues\n竞争：未发现相关 open PR\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 7，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[OpenHands/OpenHands#16270](https://github.com/OpenHands/OpenHands/issues/16270) [Bug]: AttributeError: 'Server' object has no attribute 'list_tools' when browser tool is used (breaks chat with 500 error)**\n建议：NEW_CLEAN_CANDIDATE | 分数：12\n价值：Issue reports a clear, user-visible 500 error caused by a version mismatch between browser_use and mcp SDK, with a stack trace pinpointing the exact failing call. No competing PR or issue exists, and the fix is a straightforward dependency pin/upgrade or compatibility shim.\n改动：Update browser_use/mcp dependency versions to align with mcp SDK API；Add compatibility handling for missing list_tools method；Ensure browser tool failure does not crash entire chat request\n验证：Reproduce with provided steps on Windows with local llama.cpp；Add unit test for CustomBrowserUseServer initialization with current mcp SDK；Run existing browser tool tests and integration tests for chat flow\n风险：Dependency upgrade may introduce other breaking changes；Fix may need to be applied to multiple packaging paths (exe, pip)\n竞争：未发现相关 open PR\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 5，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[aaif-goose/goose#10935](https://github.com/aaif-goose/goose/issues/10935) OpenAI-compatible streaming parser aborts the whole turn on metadata-only SSE frames (missing `choices`)**\n建议：PR_COMPETITION_OPPORTUNITY | 分数：12\n价值：The issue provides a clear root cause (mandatory `choices` field in `StreamingChunk` causes abort on metadata-only frames) and a detailed reproducer. Existing PR #10942 addresses it but lacks regression tests, leaving room for a materially better PR with tests and a more robust fix (Option-based skip vs serde default).\n改动：Modify `parse_streaming_chunk` to return `Result<Option<StreamingChunk>, ProviderError>` and skip frames without `choices` at both call sites in `crates/goose-provider-types/src/formats/openai.rs`；Add regression tests covering metadata-first, interleaved, mid-tool-call, empty-choices, and error frames\n验证：Use the provided Python reproducer to establish failing behavior on current main；Add unit tests in `mod tests` for `parse_streaming_chunk` covering metadata-only frames and tool-call argument integrity；Run targeted tests for the openai provider package and static checks\n风险：Potential maintainer preference for a different fix approach (e.g., serde default) despite the issue's caution；Risk of overlapping with existing PR #10942 and needing to differentiate clearly\n竞争：已有直接关联但证据不完整的 PR #10942：缺少测试文件；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：先复现 issue，再逐项对比已有 PR 的缺口；只有能提供更小改动、更强测试或更完整边界覆盖时才开 PR。\n证据：复现信号 21，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[ai-dynamo/dynamo#12657](https://github.com/ai-dynamo/dynamo/issues/12657) bug(request-plane): v1.4 frontend cannot communicate with v1.2 workers during rollout**\n建议：PR_COMPETITION_OPPORTUNITY | 分数：11\n价值：Issue clearly describes a version-skew bug during rolling updates: v1.4 frontend sends MsgPack to v1.2 workers that only accept JSON. Existing PR #12658 is a draft with no tests and failing CI, leaving room for a more complete fix with regression tests.\n改动：Add regression test reproducing mixed-version codec failure；Implement codec negotiation or fallback in request-plane runtime\n验证：Create integration test simulating v1.2 worker with v1.4 frontend and assert successful request；Run targeted unit tests for request-plane codec handling\n风险：May require design confirmation on codec negotiation approach；Potential overlap with existing PR #12658 if it is completed\n竞争：已有直接关联但证据不完整的 PR #12658：缺少测试文件; 仍是 draft；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：先复现 issue，再逐项对比已有 PR 的缺口；只有能提供更小改动、更强测试或更完整边界覆盖时才开 PR。\n证据：复现信号 3，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "green",
+          "title": {
+            "content": "OSS PR Radar: 可立即执行",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-05T15:37:31.958419Z",
+      "eventId": "7ad3aa3cfbee186e41032fe368db6125acee35b77c125391326e96e72bf3acf5",
+      "idempotencyKey": "7ad3aa3cfbee186e41032fe368db6125acee35b77c12539132",
+      "kind": "immediate",
+      "runId": "scan-20260805T153252Z-d96559e2efb6",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "mastra-ai/mastra#20663",
+        "sgl-project/sglang#29149",
+        "vllm-project/vllm#51140",
+        "BerriAI/litellm#35800"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[mastra-ai/mastra#20663](https://github.com/mastra-ai/mastra/issues/20663) [BUG] `dataset.startExperiment` with a Memory-enabled agent target throws `AGENT_MEMORY_MISSING_RESOURCE_ID` — no way to supply `threadId`**\n建议：WAIT_MAINTAINER | 分数：15\n价值：Issue reports a clear bug with root cause pointers and a minimal reproduction, but the deterministic gate requires HUMAN_REVIEW and maintainer confirmation is needed before implementation.\n改动：Add failing test for memory-enabled agent target in startExperiment；Modify experiment runner to supply threadId or handle missing threadId gracefully\n验证：Reproduce with provided code snippet and assert no throw；Run existing dataset experiment tests\n风险：Potential API design changes for threadId/memory options；May conflict with ongoing maintainer work on experiment features\n竞争：仅发现未直接关联、无代码路径或强机制重合的 PR #20136；保留为搜索上下文，不阻止实现\n下一步：先在 issue 下请求分配/确认方案，获批后再开 PR。\n证据：复现信号 3，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#29149](https://github.com/sgl-project/sglang/issues/29149) [Bug] `--enable-deterministic-inference` crashes during startup on NVIDIA L40S with Triton shared-memory OutOfResources**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue reports a clear startup crash on Ada GPUs due to Triton shared-memory OOR in the deterministic matmul kernel, with multiple independent reproductions and local mitigations. However, the open PR and related issue lookups timed out, so duplicate work cannot be excluded. Maintainer has not confirmed the fix direction, and the contributor comment suggests arch-aware fallback while another comment warns against simple device-limit gating, indicating design confirmation is needed.\n改动：Modify sglang/srt/batch_invariant_ops/batch_invariant_ops.py to handle Triton OutOfResources at runtime, e.g., retry with reduced num_stages or BLOCK_SIZE_N, or query kernel metadata before launch.\n验证：Run the provided repro script on an Ada GPU (e.g., L40S or RTX 4060 Laptop) with the fix and verify /health_generate becomes available.；Add a unit test that mocks Triton OutOfResources and verifies fallback config selection.\n风险：Changing kernel config may affect performance or determinism guarantees; must ensure accumulation order remains unchanged.；Runtime retry could mask real issues or add overhead; need careful caching.\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 9，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#51140](https://github.com/vllm-project/vllm/issues/51140) [Bug]: Gemma 4 31B | Incoherent responses high context**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue reports incoherent output at high context for Gemma 4 31B, but root cause is unconfirmed. Maintainer requested controlled ablation experiments to isolate whether target-only or MTP path fails. Existing PR #40391 is open but stale and lacks strong semantic overlap. Actionability is blocked pending user-provided reproduction data and maintainer analysis.\n改动：Potential fix in KV cache page-size alignment or attention backend for Gemma 4 high context；Potential fix in speculative decoding (MTP) long-context correctness\n验证：User to run controlled ablation with greedy decoding at 32K/48K/60K/64K tokens, comparing target-only vs MTP, with/without prefix caching, async scheduling, and enforce-eager；Add regression test for Gemma 4 long-context coherence if root cause identified\n风险：Root cause may be in multiple interacting components (KV cache, attention, MTP)；Existing PR #40391 may be insufficient or outdated\n竞争：已有直接关联但证据不完整的 PR #40391：超过 30 天未更新; 与 issue 关键词匹配弱；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 3，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#35800](https://github.com/BerriAI/litellm/issues/35800) [Bug]: Standalone virtual-key soft_budget alert is not sent to Slack**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue reports a user-visible bug with a plausible code path but lacks a confirmed root cause; related issue and open PR lookups timed out, so duplicate work cannot be excluded. Maintainer input is needed to confirm expected behavior and design.\n改动：Add failing test for standalone virtual key soft_budget alert；Fix budget alert propagation and deduplication logic\n验证：Reproduce with provided steps and verify no Slack alert；Add regression test for standalone key soft_budget crossing\n风险：Potential duplicate implementation if existing PR exists；Changing alert deduplication may affect retry behavior\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 5，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-05T15:37:32.099127Z",
+      "eventId": "ce5a7c223927027c21ca41b7fb699e5784f9d6d2d389374678e0c77167578e78",
+      "idempotencyKey": "ce5a7c223927027c21ca41b7fb699e5784f9d6d2d389374678",
+      "kind": "review",
+      "runId": "scan-20260805T153252Z-d96559e2efb6",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "mastra-ai/mastra#20682",
+        "mastra-ai/mastra#20701",
+        "pydantic/pydantic-ai#7109",
+        "sgl-project/sglang#27937",
+        "usekaneo/kaneo#1484",
+        "vllm-project/vllm#50159",
+        "vllm-project/vllm#50719",
+        "vllm-project/vllm#50881",
+        "DeusData/codebase-memory-mcp#1339",
+        "aaif-goose/goose#10917",
+        "ai-dynamo/dynamo#12630"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[mastra-ai/mastra#20682](https://github.com/mastra-ai/mastra/issues/20682) [BUG] Thread title is silently lost when generateTitle is used on serverless runtimes that freeze after the response (e.g. AWS Lambda)**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[mastra-ai/mastra#20701](https://github.com/mastra-ai/mastra/issues/20701) [BUG] When throwing an error in a tool, the state of that message is `output-available` not `output-error`**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[pydantic/pydantic-ai#7109](https://github.com/pydantic/pydantic-ai/issues/7109) Durable-exec leaf-toolset `id` error never mentions the capability `id` that would fix it**\n建议：WAIT_MAINTAINER\n价值：OWNERSHIP_CHANGED\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#27937](https://github.com/sgl-project/sglang/issues/27937) [Failure Tracker] PR Test (AMD)**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[usekaneo/kaneo#1484](https://github.com/usekaneo/kaneo/issues/1484) [Bug]: Remote MCP OAuth returns invalid_client when requests hit different Kaneo replicas**\n建议：WAIT_MAINTAINER\n价值：STRONG_PR_APPEARED\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50159](https://github.com/vllm-project/vllm/issues/50159) [Bug]: Model Runner V2 + Gemma-4: memory profiler reports ~0.9 GiB more \"available KV\" than MRv1 → no runtime headroom → CUDA OOM under saturating load (no spec involved); with EAGLE it crashes earlier at cudagraph capture (stable-ABI aten::empty)**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50719](https://github.com/vllm-project/vllm/issues/50719) [Bug][PD][Mooncake] Decode requests stuck in WAITING_FOR_REMOTE_KVS and fail with Timeout waiting for P side ready**\n建议：WAIT_MAINTAINER\n价值：OWNERSHIP_CHANGED\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50881](https://github.com/vllm-project/vllm/issues/50881) [Bug]: MiniMax-M3 fp8 KV cache on SM80 (A100/A800): coherent with --enforce-eager, garbage under CUDA graphs — root cause + working fix**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[DeusData/codebase-memory-mcp#1339](https://github.com/DeusData/codebase-memory-mcp/issues/1339) Graph not updated when the working tree returns to clean (revert leaves false negatives)**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[aaif-goose/goose#10917](https://github.com/aaif-goose/goose/issues/10917) [BUG] Connection-refused to a down local provider is retried for ~2 minutes before surfacing an error**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[ai-dynamo/dynamo#12630](https://github.com/ai-dynamo/dynamo/issues/12630) [Bug] sglang chat processor streaming detokenizer emits U+FFFD and drops completed characters on multi-byte UTF-8 (CJK) at chunk boundaries**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-05T15:37:32.340652Z",
+      "eventId": "485d22ce76c7fe342f549d976c92958ea6f47bd14b1b6031517385d5dccfcf6e",
+      "idempotencyKey": "485d22ce76c7fe342f549d976c92958ea6f47bd14b1b603151",
+      "kind": "watch",
+      "runId": "watch-1785943864",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-05T13:53:12.146184Z",
+  "generatedAt": "2026-08-05T15:37:32.496934Z",
   "newEventCount": 0,
   "version": "notification_outbox_v1"
 }
