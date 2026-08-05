@@ -3275,6 +3275,34 @@
     ],
     "why": "Issue reports a reproducible, high-impact bug in the internal MCP self-connection path, with clear stack trace and root cause hypothesis. No competing PR or issue found. The fix is actionable: adjust URL derivation or error handling in mcp_oauth_store.py."
   },
+  "8e75fcce7c39680cb514c385d7d274ac36e060ce1b169ae6f9948aaf3573914e": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims no one hits this, but maintainer is already working on a fix."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/model_executor/model_loader/weight_utils.py",
+      "fastsafetensors/frameworks/_torch.py",
+      "vllm/v1/worker/gpu/spec_decode/dspark/utils.py"
+    ],
+    "risks": [
+      "Changing group scoping may affect other load paths; need to ensure fallback to WORLD for engine-wide loads."
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Reproduce with TP8 PP2 and fastsafetensors on a draft model; verify no hang and correct load."
+    ],
+    "unknowns": [
+      "Exact fix details from maintainer; whether existing PR #50514 will be updated or superseded."
+    ],
+    "why": "Issue reports a clear deadlock in fastsafetensors ParallelLoader due to WORLD-group broadcast during PP-scoped draft loads, with a suggested fix. However, a maintainer is actively investigating and has implemented a fix, and an existing PR (#50514) is related but has failed CI. The deterministic gate requires HUMAN_REVIEW, and the submission policy conflicts with AI disclosure. Thus, wait for maintainer direction."
+  },
   "90182521e884f542be511482949503ccd1b2b115d61c0f144d5b7358435816bc": {
     "confidence": 0.7,
     "contradictions": [
@@ -5057,6 +5085,37 @@
       "Whether maintainers prefer a specific fix approach"
     ],
     "why": "Issue reports a clear user-visible bug with a public repro, but root cause is not identified. Existing PR #20705 directly addresses it but has failing CI and lacks maintainer approval, leaving room for a stronger PR with better tests and root-cause analysis."
+  },
+  "f5f865e683b56e39b01086fcf2f4cc3f6254456ca732f57f723fc9a0a0fae0d3": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Maintainer removed 'good first issue' label and requested mockup, conflicting with contributor's suggestion to work directly"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "UI component in collapsed sidebar to access conversation list",
+      "i18n strings for new labels"
+    ],
+    "risks": [
+      "Design not confirmed by maintainer",
+      "Duplicate or conflicting with existing PR #16105"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Manual test with collapsed sidebar to verify conversation list access",
+      "Existing component tests for sidebar and conversation panel"
+    ],
+    "unknowns": [
+      "No root cause analysis",
+      "No maintainer approval of proposed design",
+      "Existing PR #16105 has failed CI, unclear if it can be improved"
+    ],
+    "why": "The issue is a clear UI bug, but a maintainer explicitly requested a mockup before code, and an existing PR (#16105) has failed CI. The candidate lacks root cause analysis and design confirmation, making it premature to start work."
   },
   "f653ec6d3be35a9d693773c9a54c0c573c9ed31a5eb264ad38ba6fbedbd949fb": {
     "confidence": 0.8,
