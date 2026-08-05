@@ -1233,6 +1233,35 @@
     ],
     "why": "Issue reports a real crash on SM12x with FLASHMLA_SPARSE_DSV4, but a contributor has already proposed a fail-fast fix and is investigating. The proposed fix is a behavior change (rejecting unsupported backend) that needs maintainer confirmation. Open PR and related issue lookups timed out, so duplicate work cannot be excluded."
   },
+  "363e3b86243ec625f94b923e65f3f6715a4321bb012f3fde241cf5891ac3a425": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify parse_streaming_chunk to return Result<Option<StreamingChunk>, ProviderError>",
+      "Skip frames without choices key at both call sites",
+      "Add regression tests for metadata-first, interleaved, mid-tool-call, empty-choices, and error frames"
+    ],
+    "risks": [
+      "Potential maintainer preference for a different fix approach",
+      "Risk of breaking existing error handling if not careful with ordering of checks"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Use the provided Python reproducer to reproduce the bug on current main",
+      "Add unit tests in crates/goose-provider-types/src/formats/openai.rs covering all cases",
+      "Run targeted tests and static checks"
+    ],
+    "unknowns": [
+      "Maintainer's design preference for the fix (Option vs serde default) is not confirmed"
+    ],
+    "why": "Issue provides a clear root cause (missing `choices` key in metadata-only SSE frames) and a detailed reproducer with multiple cases. Existing PR #10942 is weak: it lacks regression tests and may not handle the mid-tool-call case correctly. A materially better PR with comprehensive tests and the suggested Option-based fix is plausible."
+  },
   "3822ab7d77b5cdb1d1bc748b0a29dfcf70784ed8639fbfcfb787c743b4ccac34": {
     "confidence": 0.8,
     "contradictions": [],
@@ -1594,6 +1623,35 @@
       "Whether the related issue audit failure indicates missing context that could affect actionability"
     ],
     "why": "Issue provides a clear root cause and reproduction, but the supplied deterministic gate says HUMAN_REVIEW and the related issue audit failed with timeout. An existing PR (#33449) directly addresses the issue but has failed CI checks, so a materially better PR may be possible, but maintainer confirmation is needed."
+  },
+  "477dc03a7b3a67b3c04962c25431fb23ed294c621ee5072c9de53286f237f2c5": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify common_tools/image_generation.py",
+      "Modify common_tools/x_search.py",
+      "Modify capabilities/image_generation.py",
+      "Add usage accrual logic (ctx.usage.incr + requests increment) across all three paths"
+    ],
+    "risks": [
+      "Fix may be silently ineffective under Temporal if not coordinated with #6886 design.",
+      "Changing _DirectImageGenerationTool signature may have broader API impact."
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "test_plan": [
+      "Create a regression test using FunctionModel with different token counts for outer and subagent runs, asserting RunUsage includes subagent tokens and UsageLimits triggers correctly.",
+      "Run existing test suite for pydantic-ai to ensure no regressions."
+    ],
+    "unknowns": [
+      "Maintainer decision on #6886 design for durable-exec return channel.",
+      "Whether existing PR #6324 already addresses this issue or conflicts."
+    ],
+    "why": "Issue clearly identifies a real bug: local capability-contributed tools drop token usage from RunUsage and UsageLimits. Root cause is well-documented with a verified repro and implementation note. However, the issue is explicitly gated on #6886, which awaits a maintainer design decision on durable-exec return channels. Also, existing PR #6324 has semantic overlap and requires human comparison. Thus, work should wait for maintainer guidance."
   },
   "47ab3aa2bd748efc0ee029cd47e3649eca77bdaf88dc0265cd05009c4f7ed55a": {
     "confidence": 0.7,
@@ -5337,6 +5395,31 @@
       "Maintainer's intended fix direction"
     ],
     "why": "Issue reports CLI args error for MiniMax-H3; comments suggest adding --model-type diffusion as workaround, and a merged PR #33365 may already address related local-path detection. Open PR lookup timed out, so competition status is incomplete."
+  },
+  "e9fef21c6a2cfd201e804e6659ac954075fd8fac688ee74d93ab9b56aa1cd9a0": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "pydantic_ai_slim/pydantic_ai/models/__init__.py",
+      "pydantic_ai_slim/pydantic_ai/images/_media_type.py"
+    ],
+    "risks": [
+      "Design decisions on extending validation to AudioUrl/DocumentUrl/VideoUrl and allowing unfamiliar MIME types need maintainer input."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add regression tests for honest HTML, spoofed image/png, octet-stream with genuine image, redirects, and unfamiliar image MIME."
+    ],
+    "unknowns": [
+      "Maintainer preference on design direction and whether the closed PR #7162 will be revived or superseded."
+    ],
+    "why": "Issue clearly identifies a shared-boundary bug where download_item trusts Content-Type without byte validation, with a verified repro and suggested direction. However, an existing PR (#7162) is closed and technically incomplete (CI failures), and the repository requires assignment, so maintainer confirmation is needed before starting."
   },
   "ea8c4d6a087e45855f487e879dbe1b52088e0e33062c845599cff3f09ea5202a": {
     "confidence": 0.8,
