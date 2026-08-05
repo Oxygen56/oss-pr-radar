@@ -561,9 +561,7 @@ def orphan_list(args: argparse.Namespace) -> dict[str, Any]:
     worktree_root = WORKTREE_ROOT.resolve()
     for handoff in handoffs:
         creation_started_at = handoff.get("creationStartedAt")
-        started = parse_time(
-            str(creation_started_at or handoff["leaseStartedAt"])
-        ).timestamp() - 60
+        started = parse_time(str(creation_started_at or handoff["leaseStartedAt"])).timestamp() - 60
         lease_end = handoff.get("leaseUntil") or handoff.get("expiresAt")
         ended = (
             None
@@ -758,13 +756,13 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 store.record_stage(
                     candidate["key"],
                     "AUDIT_NO_GO",
-                    evidence=value.get("evidence") if isinstance(value.get("evidence"), dict) else {},
+                    evidence=value.get("evidence")
+                    if isinstance(value.get("evidence"), dict)
+                    else {},
                     reason=reason,
                     dedupe_key=digest,
                 )
-                ingested.append(
-                    {"key": candidate["key"], "stage": stage, "reason": reason}
-                )
+                ingested.append({"key": candidate["key"], "stage": stage, "reason": reason})
             elif stage == "FIX_READY":
                 quality = value.get("quality")
                 if not isinstance(quality, dict):
@@ -819,7 +817,10 @@ def ensure_fork_remote(worktree: Path, repo: str, head_owner: str) -> str:
     parent = metadata.get("parent") if isinstance(metadata, dict) else None
     if not isinstance(metadata, dict) or metadata.get("fork") is not True:
         raise RuntimeError("expected publication repository is not a fork")
-    if not isinstance(parent, dict) or str(parent.get("full_name") or "").casefold() != repo.casefold():
+    if (
+        not isinstance(parent, dict)
+        or str(parent.get("full_name") or "").casefold() != repo.casefold()
+    ):
         raise RuntimeError("existing fork does not belong to the target upstream repository")
 
     expected_url = f"https://github.com/{fork_repo}.git"
@@ -906,9 +907,7 @@ def run_publication_queue(args: argparse.Namespace) -> dict[str, Any]:
                 "--head-owner",
                 head_owner,
             ]
-            push_result = _executor(
-                "push", [*common, "--remote", remote], ledger_path=args.ledger
-            )
+            push_result = _executor("push", [*common, "--remote", remote], ledger_path=args.ledger)
             pr_result = _executor(
                 "create-pr",
                 [

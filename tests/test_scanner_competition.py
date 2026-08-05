@@ -186,15 +186,11 @@ def test_vercel_authorization_failure_is_not_competition_evidence(monkeypatch, t
     )
 
     assert result["status"] == "covered_strong"
-    assert result["prs"][0]["ignored_nontechnical_failed_checks"] == [
-        "Preview deployment"
-    ]
+    assert result["prs"][0]["ignored_nontechnical_failed_checks"] == ["Preview deployment"]
     assert result["prs"][0]["ci_competition_weight"] == 0
 
 
-def test_technical_ci_failure_alone_does_not_make_complete_pr_competitive(
-    monkeypatch, tmp_path
-):
+def test_technical_ci_failure_alone_does_not_make_complete_pr_competitive(monkeypatch, tmp_path):
     instance = radar(tmp_path)
     monkeypatch.setattr(instance, "open_pr_hits", lambda *args: [{"number": 10}])
     monkeypatch.setattr(

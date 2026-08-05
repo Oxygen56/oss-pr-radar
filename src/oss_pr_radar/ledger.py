@@ -527,9 +527,8 @@ class RadarLedger:
                 return
             if row["status"] not in {"LEASED", "CREATING"} or row["lease_owner"] != owner:
                 raise LedgerError("intent is not leased by this owner")
-            if (
-                row["status"] == "LEASED"
-                and (not row["lease_until"] or parse_time(row["lease_until"]) <= now_dt)
+            if row["status"] == "LEASED" and (
+                not row["lease_until"] or parse_time(row["lease_until"]) <= now_dt
             ):
                 raise LedgerError("dispatch lease expired")
             connection.execute(
@@ -862,10 +861,7 @@ class RadarLedger:
             creation_age_minutes = (
                 max(
                     0,
-                    int(
-                        (now_dt - parse_time(row["creation_started_at"])).total_seconds()
-                        // 60
-                    ),
+                    int((now_dt - parse_time(row["creation_started_at"])).total_seconds() // 60),
                 )
                 if row["creation_started_at"]
                 else None
@@ -891,9 +887,10 @@ class RadarLedger:
             code = None
             if item.get("leaseStale"):
                 code = "DISPATCH_LEASE_STALE"
-            elif item.get("ledgerStatus") == "CREATING" and int(
-                item.get("creationAgeMinutes") or 0
-            ) >= threshold:
+            elif (
+                item.get("ledgerStatus") == "CREATING"
+                and int(item.get("creationAgeMinutes") or 0) >= threshold
+            ):
                 code = "TASK_CREATION_PENDING"
             elif int(item.get("pendingAgeMinutes") or 0) >= threshold:
                 code = "DISPATCH_PENDING_OVER_ONE_CYCLE"
@@ -1256,9 +1253,7 @@ class RadarLedger:
                    WHERE status IN ('PENDING','GRANTED')
                    ORDER BY created_at"""
             ).fetchall()
-        return [
-            dict(row) | {"request": json.loads(row["request_json"])} for row in rows
-        ]
+        return [dict(row) | {"request": json.loads(row["request_json"])} for row in rows]
 
     def defer_publication_request(self, request_id: str, reason: str) -> None:
         now = iso_z(datetime.now(UTC))

@@ -2500,11 +2500,7 @@ class Radar:
             score += 8
             strengths.append("改动文件与 issue 代码路径重合")
 
-        technical_complete = bool(
-            references_issue
-            and test_files
-            and changed_files > 0
-        )
+        technical_complete = bool(references_issue and test_files and changed_files > 0)
         material_competition_gaps = []
         if not test_files:
             material_competition_gaps.append("缺少回归测试")
@@ -2650,7 +2646,11 @@ class Radar:
         elif active_direct:
             best = max(active_direct, key=lambda item: item["score"])
         strong_active = any(
-            (item.get("technical_complete") or item.get("maintainer_owned") or item.get("rule_closed"))
+            (
+                item.get("technical_complete")
+                or item.get("maintainer_owned")
+                or item.get("rule_closed")
+            )
             and not item.get("is_draft")
             and "超过 30 天未更新" not in item.get("gaps", [])
             for item in active_direct

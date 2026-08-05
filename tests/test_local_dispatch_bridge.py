@@ -207,9 +207,7 @@ def test_controller_ingests_workspace_no_go_without_child_ledger_access(tmp_path
         encoding="utf-8",
     )
 
-    result = MODULE.ingest_task_results(
-        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3")
-    )
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
 
     assert result["ok"] is True
     assert result["ingested"] == [
