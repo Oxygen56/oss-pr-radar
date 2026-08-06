@@ -72,6 +72,7 @@ def advance_once(
     ]
     ingested = list(ingestion.get("ingested") or [])
     requests = list(ingestion.get("publicationRequests") or [])
+    validation_deferred = list(ingestion.get("validationDeferred") or [])
     blocked = list(publication.get("blocked") or [])
     pending = list(publication.get("pending") or [])
     activity = bool(ingested or requests or published or blocked or errors)
@@ -83,6 +84,7 @@ def advance_once(
         "activity": activity,
         "resultsIngested": ingested,
         "publicationRequests": requests,
+        "validationDeferred": validation_deferred,
         "published": published,
         "contextsSynced": list(context_sync.get("written") or []),
         "pending": pending,

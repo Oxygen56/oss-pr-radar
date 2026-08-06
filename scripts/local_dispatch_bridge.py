@@ -1078,6 +1078,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
     ingested: list[dict[str, Any]] = []
     publication_requests: list[dict[str, Any]] = []
+    validation_deferred: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
     for candidate in store.task_result_candidates():
         result_path = _task_result_path(candidate)
@@ -1140,9 +1141,14 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                         publication_blocked and set(assessment.missing) == {"policy_verified"}
                     )
                     if not assessment.ready and not local_policy_only:
-                        raise RuntimeError(
-                            f"submit-ready evidence missing: {','.join(assessment.missing)}"
+                        validation_deferred.append(
+                            {
+                                "key": candidate["key"],
+                                "reason": "SUBMIT_READY_EVIDENCE_INCOMPLETE",
+                                "missing": list(assessment.missing),
+                            }
                         )
+                        continue
                     store.record_stage(
                         candidate["key"],
                         "FIX_READY",
@@ -1185,6 +1191,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
         "ok": not errors,
         "ingested": ingested,
         "publicationRequests": publication_requests,
+        "validationDeferred": validation_deferred,
         "errors": errors,
     }
 

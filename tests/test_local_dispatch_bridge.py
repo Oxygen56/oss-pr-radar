@@ -486,6 +486,7 @@ def _controller_commit_result(
     tmp_path: Path,
     *,
     policy_verified: bool = True,
+    missing_quality: tuple[str, ...] = (),
     publication_blocked_reason: str | None = None,
     dco_required: bool = False,
 ) -> tuple[RadarLedger, Path, Path]:
@@ -509,6 +510,8 @@ def _controller_commit_result(
     result_path = Path(context["resultPath"])
     quality = {field: True for field in QUALITY_FIELDS}
     quality["policy_verified"] = policy_verified
+    for field in missing_quality:
+        quality[field] = False
     result = {
         "schemaVersion": "radar-task-result-v1",
         "contextDigest": context["contextDigest"],
@@ -585,6 +588,73 @@ def test_controller_keeps_ai_disclosure_fix_local_and_signs_dco(tmp_path):
     finalized = json.loads(result_path.read_text(encoding="utf-8"))
     assert finalized["handoffMode"] == "controller_commit_complete"
     assert store.publication_work_items() == []
+
+
+def test_controller_defers_blocked_local_fix_with_incomplete_validation(tmp_path):
+    store, _worktree, result_path = _controller_commit_result(
+        tmp_path,
+        missing_quality=("regression_test_verified", "relevant_tests_green"),
+        publication_blocked_reason="AI_DISCLOSURE_REQUIRED",
+    )
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert result["ok"] is True
+    assert result["validationDeferred"] == [
+        {
+            "key": "a/b#1",
+            "reason": "SUBMIT_READY_EVIDENCE_INCOMPLETE",
+            "missing": ["regression_test_verified", "relevant_tests_green"],
+        }
+    ]
+    assert result["publicationRequests"] == []
+    assert result["ingested"] == []
+    finalized = json.loads(result_path.read_text(encoding="utf-8"))
+    assert finalized["handoffMode"] == "controller_commit_complete"
+    assert (
+        store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")[
+            "stage"
+        ]
+        == "DISPATCHED"
+    )
+
+
+def test_controller_defers_unvalidated_publishable_fix_without_agent_failure(tmp_path):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        missing_quality=(
+            "regression_test_verified",
+            "relevant_tests_green",
+            "independent_review_passed",
+        ),
+    )
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert result["ok"] is True
+    assert result["ingested"] == []
+    assert result["publicationRequests"] == []
+    assert result["validationDeferred"] == [
+        {
+            "key": "a/b#1",
+            "reason": "SUBMIT_READY_EVIDENCE_INCOMPLETE",
+            "missing": [
+                "regression_test_verified",
+                "relevant_tests_green",
+                "independent_review_passed",
+            ],
+        }
+    ]
+    finalized = json.loads(result_path.read_text(encoding="utf-8"))
+    assert finalized["handoffMode"] == "controller_commit_complete"
+    assert finalized["commitSha"] == run_git(worktree, "rev-parse", "HEAD")
+    assert store.publication_work_items() == []
+    assert (
+        store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")[
+            "stage"
+        ]
+        == "DISPATCHED"
+    )
 
 
 def test_privileged_controller_runs_granted_publication_queue(monkeypatch, tmp_path):

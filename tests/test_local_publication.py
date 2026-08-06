@@ -55,6 +55,31 @@ def test_fast_publication_is_quiet_when_no_result_or_request_exists(tmp_path):
     assert result["activity"] is False
 
 
+def test_incomplete_validation_is_healthy_and_quiet(tmp_path):
+    deferred = {
+        "key": "a/b#1",
+        "reason": "SUBMIT_READY_EVIDENCE_INCOMPLETE",
+        "missing": ["relevant_tests_green"],
+    }
+
+    def runner(_root: Path, operation: str):
+        if operation == "ingest-results":
+            return {
+                "ok": True,
+                "ingested": [],
+                "publicationRequests": [],
+                "validationDeferred": [deferred],
+                "errors": [],
+            }
+        return {"ok": True, "published": [], "pending": [], "blocked": [], "errors": []}
+
+    result = advance_once(tmp_path, runner=runner)
+
+    assert result["ok"] is True
+    assert result["activity"] is False
+    assert result["validationDeferred"] == [deferred]
+
+
 def test_launch_agent_uses_local_venv_and_contains_no_credentials(tmp_path):
     root = tmp_path / "radar"
     python = root / ".venv" / "bin" / "python"
