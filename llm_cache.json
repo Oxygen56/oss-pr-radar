@@ -1523,6 +1523,33 @@
     ],
     "why": "Issue provides a clear root cause and a minimal fix for two bugs in OAuthClientProvider._initialize() that break transparent token refresh. Existing PR #3251 is weak (failed CI) and lacks complete evidence, leaving room for a materially better PR with robust tests and full root-cause coverage."
   },
+  "34fd20de14acf1ac5fa463ce07c4670a3cfb770590d4ebed0678937f01f91c4f": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Fix ScatterNDUpdate shape inference or model conversion for LFM2.5 models",
+      "Add regression test for LFM2.5 models on GPU"
+    ],
+    "risks": [
+      "Potential fix may be in OpenVINO core rather than OVMS, requiring cross-repo coordination",
+      "GPU-specific behavior may not be reproducible in CI without GPU hardware"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce with provided docker commands and curl request",
+      "Add a test that loads LFM2.5-350M-int8-ov and sends a chat completion request, expecting a valid response"
+    ],
+    "unknowns": [
+      "Whether the issue is specific to OVMS or also occurs with plain OpenVINO GenAI",
+      "Exact model configuration details (e.g., openvino_config.json) that might affect shape inference"
+    ],
+    "why": "Issue provides a clear, reproducible failure with exact error from ScatterNDUpdate shape inference, affecting two public models on GPU. No competing PR or related issue exists. The root cause is likely in model conversion or OVMS handling of dynamic shapes, making it actionable."
+  },
   "35400c0b54daa99f9157d4e27639372382a08f7c1998e265162e9b51653747b9": {
     "confidence": 0.7,
     "contradictions": [
@@ -4056,6 +4083,34 @@
     ],
     "why": "Issue describes a concrete production incident with clear lifecycle gaps: task switch/disconnect does not terminate or pause prior execution, causing resource leaks and stale tool calls. Acceptance criteria and targeted tests are specific, and code paths are identified. No competing PR or related issue found, and the gate allows work."
   },
+  "82dea1ccd548c9454b5ab0eb5b73b8d8d205f83fa46dbb110c464dead2d9b1d2": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify equality filter generation in buildFilterQuery and buildDeleteFilterQuery to use ->> for top-level fields",
+      "Add regression tests for top-level and nested metadata filters"
+    ],
+    "risks": [
+      "Changing query shape may affect existing deployments relying on #>> behavior",
+      "Potential inconsistency with nested path handling if not carefully scoped"
+    ],
+    "root_cause_clarity": "high",
+    "score": 15,
+    "test_plan": [
+      "Create a failing test using the provided SQL reproduction to assert index usage",
+      "Run targeted unit tests for @mastra/pg filter query generation"
+    ],
+    "unknowns": [
+      "Maintainer design preference on whether to change query or index creation",
+      "Whether a minimal reproducible example will be provided as requested"
+    ],
+    "why": "Issue clearly identifies a real performance bug with a concrete root cause and reproduction, but maintainer has not confirmed design direction and the issue is labeled 'needs triage' with a request for minimal reproduction. The proposed fix is actionable but requires maintainer confirmation to avoid conflicting with intended query semantics."
+  },
   "8571b4f5d107e53e6f6b3192d617a20ec15745d4a71c99fb2bf037450e817e92": {
     "confidence": 0.7,
     "contradictions": [],
@@ -4342,6 +4397,34 @@
       "Whether maintainers prefer a specific fix approach or have design constraints"
     ],
     "why": "Issue reports stale get_episodes data; maintainer attributes to queue latency, but a commenter identifies a concrete root cause: get_episodes uses keyset pagination with ORDER BY uuid DESC, returning arbitrary stable subset instead of most recent. Existing PR #1726 claims to fix this but has failing CI/check and lacks evidence of root-cause analysis. A materially better PR with proper tests and root-cause explanation is plausible."
+  },
+  "8cb3b7bcaaf3c6c8ffef73796514f44617eeb168c098602a4df55d7a997ce1f8": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "api/controllers/mcp/mcp.py",
+      "session management in MCP controllers"
+    ],
+    "risks": [
+      "Cloud-specific fix may not be applicable to self-hosted",
+      "Potential API behavior changes if session handling is modified"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "test_plan": [
+      "Reproduce the error with n8n MCP client against a Dify Cloud MCP server",
+      "Add regression test for MCP controller session handling"
+    ],
+    "unknowns": [
+      "Maintainer confirmation of the root cause and desired fix",
+      "Whether the fix requires Cloud infrastructure changes beyond code"
+    ],
+    "why": "Issue reports a clear regression in Dify Cloud MCP with a specific error, and Dosu's comment identifies a likely root cause in session management. However, the issue is Cloud-specific and the fix may require infrastructure changes; no maintainer confirmation or active investigation is present. The existing PRs are merged but lack tests and do not directly reference this issue, so a new PR could be valuable but needs maintainer guidance."
   },
   "8d0efb2cc63a5bc0fa58f256cb6d94726b91db6ea38584e7b2e47eaf00d2ffa2": {
     "confidence": 0.6,
