@@ -1,5 +1,5 @@
 {
-  "digest": "ec96b3512a2112b1b47ef4c945bae3607cc4cc246a5043214b7dda7191e5eb0b",
+  "digest": "948926d54d702cf2cd863110ee00f827c9f81993bb706eecddc29a27552deb97",
   "events": [
     {
       "attempts": 1,
@@ -11472,9 +11472,229 @@
       "runId": "pr-followup-1785987124",
       "sentAt": "2026-08-06T03:38:18.248716Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "OpenHands/OpenHands#16323",
+        "promptfoo/promptfoo#10307",
+        "aaif-goose/goose#10935",
+        "ai-dynamo/dynamo#12657"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[OpenHands/OpenHands#16323](https://github.com/OpenHands/OpenHands/issues/16323) [Bug]: Internal MCP self-connection fails with \"405 Method Not Allowed\" on rootless Podman (blocks all conversations)**\n建议：NEW_CLEAN_CANDIDATE | 分数：12\n价值：Issue reports a reproducible, high-impact bug in the internal MCP self-connection path, with clear stack trace and root cause hypothesis. No competing PR or issue found. The fix is actionable: adjust URL derivation or error handling in mcp_oauth_store.py.\n改动：Fix internal MCP URL derivation in mcp_oauth_store.py to respect WEB_HOST scheme and avoid 405；Add graceful handling of MCP connection failures in _runtime_mcp_tools to not block agent readiness\n验证：Reproduce with rootless Podman and empty mcp_config; assert no 405 and conversation proceeds；Add unit test for URL construction with various WEB_HOST values；Regression test for SSL error when scheme is missing\n风险：Changing URL derivation may affect other MCP configurations；Graceful handling might mask real MCP issues\n竞争：未发现相关 open PR\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 7，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[promptfoo/promptfoo#10307](https://github.com/promptfoo/promptfoo/issues/10307) Error using Opus 5 with Bedrock provider**\n建议：NEW_CLEAN_CANDIDATE | 分数：8\n价值：Issue clearly identifies a recurring bug: new Claude models fail because temperature is deprecated, and the fix requires a robust approach rather than per-model additions. No open PR or issue addresses this, and the issue provides a concrete reproduction.\n改动：Modify Bedrock provider to omit temperature for Claude models that do not support it, likely by detecting model family or version instead of maintaining an explicit list.；Add regression tests for new Claude model versions.\n验证：Create a minimal promptfooconfig.yaml using bedrock:us.anthropic.claude-opus-5 and run an eval to reproduce the error.；Add unit tests for the provider's parameter construction to ensure temperature is omitted for unsupported models.\n风险：Changing behavior for all Claude models might affect existing users who rely on temperature; need to ensure backward compatibility or proper detection.\n竞争：未发现相关 open PR；仅发现未直接关联 issue 的历史 PR\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 3，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[aaif-goose/goose#10935](https://github.com/aaif-goose/goose/issues/10935) OpenAI-compatible streaming parser aborts the whole turn on metadata-only SSE frames (missing `choices`)**\n建议：PR_COMPETITION_OPPORTUNITY | 分数：12\n价值：The issue provides a clear root cause (missing `choices` key aborts stream) and a detailed reproducer with multiple cases. Existing PR #10942 addresses the issue but lacks regression tests, leaving room for a materially better PR with comprehensive tests and the suggested Option-based fix.\n改动：Modify parse_streaming_chunk to return Result<Option<StreamingChunk>, ProviderError>；Skip metadata-only frames at both call sites；Add regression tests for metadata-first, interleaved, mid-tool-call, empty-choices, and error frames\n验证：Use the provided Python reproducer to verify the bug on current main；Add unit tests in crates/goose-provider-types/src/formats/openai.rs covering all cases；Run targeted tests and static checks\n风险：Potential maintainer preference for a different fix approach；Risk of conflicting with existing PR #10942 if not coordinated\n竞争：已有直接关联但证据不完整的 PR #10942：缺少测试文件；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：先复现 issue，再逐项对比已有 PR 的缺口；只有能提供更小改动、更强测试或更完整边界覆盖时才开 PR。\n证据：复现信号 21，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[ai-dynamo/dynamo#12657](https://github.com/ai-dynamo/dynamo/issues/12657) bug(request-plane): v1.4 frontend cannot communicate with v1.2 workers during rollout**\n建议：PR_COMPETITION_OPPORTUNITY | 分数：11\n价值：Issue clearly describes a user-visible bug during rolling upgrades due to codec mismatch between v1.4 frontend and v1.2 workers. Existing PR #12658 addresses the issue but lacks regression tests and has a large change surface, leaving room for a more focused, well-tested fix.\n改动：Add regression test reproducing mixed-version codec failure；Implement minimal codec negotiation or fallback in request plane\n验证：Create integration test simulating v1.4 frontend to v1.2 worker with MsgPack payload；Run existing request-plane unit tests and new regression test\n风险：Potential maintainer design preference for codec negotiation approach；Risk of expanding API behavior changes if not minimal\n竞争：已有直接关联但证据不完整的 PR #12658：缺少测试文件; 改动面偏大；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：先复现 issue，再逐项对比已有 PR 的缺口；只有能提供更小改动、更强测试或更完整边界覆盖时才开 PR。\n证据：复现信号 3，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "green",
+          "title": {
+            "content": "OSS PR Radar: 可立即执行",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-06T03:47:41.982796Z",
+      "eventId": "3cca162b50d25b6db49da808b7d98c75cb416b38b996fa0e967dc400620bbbd6",
+      "idempotencyKey": "3cca162b50d25b6db49da808b7d98c75cb416b38b996fa0e96",
+      "kind": "immediate",
+      "runId": "scan-20260806T034431Z-3ac04ce1a68f",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "mastra-ai/mastra#20771",
+        "vllm-project/vllm#51200"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[mastra-ai/mastra#20771](https://github.com/mastra-ai/mastra/issues/20771) [BUG] Trace continuity is lost across workflow suspend/resume with OtelBridge and BraintrustExporter**\n建议：WAIT_MAINTAINER | 分数：14\n价值：Issue provides a detailed root cause analysis and a suggested fix, but the deterministic gate requires HUMAN_REVIEW and maintainer confirmation is pending. The issue is labeled 'needs triage' and the only comment is a triage acknowledgment. No maintainer has approved the proposed design or confirmed the fix approach.\n改动：OtelBridge.createSpan() to use explicit non-recording OTel parent when traceId and parentSpanId are supplied but parent is absent from otelSpanMap；BraintrustExporter to pass parentSpanIds and map Mastra W3C trace ID to Braintrust rootSpanId\n验证：Create a failing test that reproduces the issue: start a workflow, suspend, resume with same run ID, and assert that the resumed span retains the original Mastra trace ID and is parented to the suspended span in Braintrust.；Run targeted unit tests for OtelBridge and BraintrustExporter packages.\n风险：Potential API behavior changes in OtelBridge and BraintrustExporter could affect other exporters or tracing scenarios.；The suggested fix may not cover all edge cases, such as when the parent span is still active or when traceId is invalid.\n竞争：仅发现未直接关联、无代码路径或强机制重合的 PR #19523；保留为搜索上下文，不阻止实现\n下一步：先在 issue 下请求分配/确认方案，获批后再开 PR。\n证据：复现信号 8，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#51200](https://github.com/vllm-project/vllm/issues/51200) [Bug]: `MiniMAXGemmaRMSNorm` unconditionally calls FlashInfer CUDA kernels, breaking MiniMax-M3 on every non-CUDA platform**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue clearly identifies a platform-conditional bug in MiniMAXGemmaRMSNorm with a concrete reproduction and a suggested fix. However, a maintainer comment indicates the NVIDIA model is intentionally CUDA-only and expects platform-specific implementations, conflicting with the issue's proposal to modify the shared NVIDIA path. This design disagreement requires maintainer confirmation before implementation.\n改动：Modify MiniMAXGemmaRMSNorm to fall back to a portable implementation when FlashInfer/CUDA is unavailable, or add a new platform-specific package for non-CUDA platforms.\n验证：Run the provided reproduction script on a non-CUDA platform (e.g., CPU or Neuron) to confirm the failure, then verify the fix allows the layer to execute without CUDA.\n风险：Changing the NVIDIA path may affect CUDA performance or behavior; adding a new platform package may be preferred by maintainers.\n竞争：已有直接关联但证据不完整的 PR #45881：缺少测试文件; 仍是 draft; 超过 30 天未更新；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 11，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-06T03:47:42.121958Z",
+      "eventId": "64b26f2ed8786a356a8df0e890d3d8e28713c3778870d8fe43dbaa248b534a8e",
+      "idempotencyKey": "64b26f2ed8786a356a8df0e890d3d8e28713c3778870d8fe43",
+      "kind": "review",
+      "runId": "scan-20260806T034431Z-3ac04ce1a68f",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "sgl-project/sglang#33504",
+        "sgl-project/sglang#33505",
+        "sgl-project/sglang#33549",
+        "sgl-project/sglang#33656",
+        "vllm-project/vllm#51073",
+        "aaif-goose/goose#10917",
+        "ai-dynamo/dynamo#12630",
+        "areal-project/AReaL#1565"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33504](https://github.com/sgl-project/sglang/issues/33504) Title: Inconsistent error response format with OpenAI standard for non-streaming requests**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33505](https://github.com/sgl-project/sglang/issues/33505) [Bug] The --json-model-override-args  does not  recursively update the model configuration.**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33549](https://github.com/sgl-project/sglang/issues/33549) [Bug] DeepSeek-V4 (dsv4 backend + DSPARK) TP=8 on 8×H20: decode forward hangs indefinitely at ~245K context — all GPUs spin at 100% util / low power, watchdog kills server**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33656](https://github.com/sgl-project/sglang/issues/33656) [Bug] DeepSeek-V4 + hierarchical cache: deterministic SWA KV position corruption (kv-canary TAIL_K_SWA write_position), downstream NaN sampling crash**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#51073](https://github.com/vllm-project/vllm/issues/51073) [Bug]: MinimaxM3ToolParser (Rust) fails on MiniMaxAI/MiniMax-M3-MXFP8 tool output; raw markup + ']<]minimax[>[' special token leaks into content**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[aaif-goose/goose#10917](https://github.com/aaif-goose/goose/issues/10917) [BUG] Connection-refused to a down local provider is retried for ~2 minutes before surfacing an error**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[ai-dynamo/dynamo#12630](https://github.com/ai-dynamo/dynamo/issues/12630) [Bug] sglang chat processor streaming detokenizer emits U+FFFD and drops completed characters on multi-byte UTF-8 (CJK) at chunk boundaries**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[areal-project/AReaL#1565](https://github.com/areal-project/AReaL/issues/1565) [BUG][v2] Teardown leaves an orphan process after torch-memory-saver CUDA free errors**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-06T03:47:42.357283Z",
+      "eventId": "ad80a710fde6a66b39dfcf723411286e2181406649534480c6c282fc76543705",
+      "idempotencyKey": "ad80a710fde6a66b39dfcf723411286e2181406649534480c6",
+      "kind": "watch",
+      "runId": "watch-1785987820",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-06T03:37:40.714879Z",
-  "newEventCount": 1,
+  "generatedAt": "2026-08-06T03:47:42.527981Z",
+  "newEventCount": 0,
   "version": "notification_outbox_v1"
 }

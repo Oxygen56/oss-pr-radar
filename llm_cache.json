@@ -1762,6 +1762,33 @@
     ],
     "why": "Issue provides a precise root cause (mandatory `choices` field in `parse_streaming_chunk`), a minimal reproducer, and a suggested fix with regression tests. Existing PR #10942 is weak (no tests) and may not cover the mid-tool-call case, leaving room for a materially better PR."
   },
+  "3a84d39438704a06d53295f3884e7ad0f2aedd3ddb4647ec994b69fb3e0fab9d": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Add regression test reproducing mixed-version codec failure",
+      "Implement minimal codec negotiation or fallback in request plane"
+    ],
+    "risks": [
+      "Potential maintainer design preference for codec negotiation approach",
+      "Risk of expanding API behavior changes if not minimal"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create integration test simulating v1.4 frontend to v1.2 worker with MsgPack payload",
+      "Run existing request-plane unit tests and new regression test"
+    ],
+    "unknowns": [
+      "Exact code path for codec negotiation in current codebase",
+      "Maintainer preference for fix approach"
+    ],
+    "why": "Issue clearly describes a user-visible bug during rolling upgrades due to codec mismatch between v1.4 frontend and v1.2 workers. Existing PR #12658 addresses the issue but lacks regression tests and has a large change surface, leaving room for a more focused, well-tested fix."
+  },
   "3b2b9b7c73213495c130b948d4923b71045d3de4581197c71dd6a24c291681a5": {
     "confidence": 0.85,
     "contradictions": [
@@ -2850,6 +2877,34 @@
     ],
     "why": "The issue provides a clear root cause (AOT cache key ignores limit_mm_per_prompt/multimodal_config) and a reproducible crash, but the deterministic gate requires HUMAN_REVIEW and an existing PR (#50908) already attempts a fix with failing CI. Maintainer direction is needed to avoid duplicate or conflicting work."
   },
+  "58356bcdb5df86afeda59072ba7af64504a2b3284113c981b958ded282db84fd": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "OtelBridge.createSpan() to use explicit non-recording OTel parent when traceId and parentSpanId are supplied but parent is absent from otelSpanMap",
+      "BraintrustExporter to pass parentSpanIds and map Mastra W3C trace ID to Braintrust rootSpanId"
+    ],
+    "risks": [
+      "Potential API behavior changes in OtelBridge and BraintrustExporter could affect other exporters or tracing scenarios.",
+      "The suggested fix may not cover all edge cases, such as when the parent span is still active or when traceId is invalid."
+    ],
+    "root_cause_clarity": "high",
+    "score": 14,
+    "test_plan": [
+      "Create a failing test that reproduces the issue: start a workflow, suspend, resume with same run ID, and assert that the resumed span retains the original Mastra trace ID and is parented to the suspended span in Braintrust.",
+      "Run targeted unit tests for OtelBridge and BraintrustExporter packages."
+    ],
+    "unknowns": [
+      "Maintainer design preference or approval for the suggested fix approach.",
+      "Whether the existing PR #19877 (draft) will be updated to address this issue, potentially making it a competing implementation."
+    ],
+    "why": "Issue provides a detailed root cause analysis and a suggested fix, but the deterministic gate requires HUMAN_REVIEW and maintainer confirmation is pending. The issue is labeled 'needs triage' and the only comment is a triage acknowledgment. No maintainer has approved the proposed design or confirmed the fix approach."
+  },
   "586eaf6b21103c7d6f23544acd4b5c3e4ec6df55a491a4031ea5657e59f508f4": {
     "confidence": 0.7,
     "contradictions": [
@@ -3224,6 +3279,35 @@
     ],
     "why": "Issue clearly describes a version-skew bug with root cause (codec default change) and reproduction steps. Existing PR #12658 is weak (draft, no tests, failing CI), leaving room for a better PR with tests and complete fix."
   },
+  "62e48da1ef071e0b11b21d587ba39d463d74e361e01170271c10c560147c4606": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify parse_streaming_chunk to return Result<Option<StreamingChunk>, ProviderError>",
+      "Skip metadata-only frames at both call sites",
+      "Add regression tests for metadata-first, interleaved, mid-tool-call, empty-choices, and error frames"
+    ],
+    "risks": [
+      "Potential maintainer preference for a different fix approach",
+      "Risk of conflicting with existing PR #10942 if not coordinated"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Use the provided Python reproducer to verify the bug on current main",
+      "Add unit tests in crates/goose-provider-types/src/formats/openai.rs covering all cases",
+      "Run targeted tests and static checks"
+    ],
+    "unknowns": [
+      "Maintainer's design preference for the fix (Option vs serde default) is not confirmed"
+    ],
+    "why": "The issue provides a clear root cause (missing `choices` key aborts stream) and a detailed reproducer with multiple cases. Existing PR #10942 addresses the issue but lacks regression tests, leaving room for a materially better PR with comprehensive tests and the suggested Option-based fix."
+  },
   "62f7e949f9b37e73e95c2d0803e0feb1b48c3259960172ce67b5995842d4adac": {
     "confidence": 0.7,
     "contradictions": [],
@@ -3597,6 +3681,35 @@
     ],
     "why": "Issue clearly identifies a detached promise causing silent title loss on serverless runtimes, with a minimal repro. However, the deterministic gate requires HUMAN_REVIEW, and existing PRs (e.g., #16218) overlap semantically, requiring maintainer comparison before creating a new task."
   },
+  "6c90b161b9d1fd85994fbac7434b0b98d7f206b4efbd9e67456a3ffc0925a46d": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add warning or support for prefix caching in hybrid SSM models",
+      "Possibly modify prefix cache logic to handle recurrent state"
+    ],
+    "risks": [
+      "PR #50991 may already address this, making new work redundant",
+      "Design choice (warn vs. support) requires maintainer decision"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with provided metrics and verify 0% hits",
+      "Add regression test for hybrid model prefix caching behavior"
+    ],
+    "unknowns": [
+      "Whether PR #50991 fully resolves the issue",
+      "Current behavior on main branch",
+      "Maintainer preference on warning vs. caching support"
+    ],
+    "why": "Issue reports a silent no-op for prefix caching on Mamba-2/GDN hybrids, but root cause is not fully confirmed (no code path analysis). A collaborator referenced PR #50991 which may address this, but open PR lookup failed due to timeout, so competition status is unknown. Maintainer input is needed to confirm design direction (warn vs. support recurrent state caching)."
+  },
   "6ecbed38eadb820a3b69e356d1bcee463324ce6beb8d2bab1d140143e3163656": {
     "confidence": 0.8,
     "contradictions": [],
@@ -3786,6 +3899,32 @@
       "Exact CI failure details of PR #35811; maintainer preference on coercion approach"
     ],
     "why": "Issue provides a precise root cause and minimal repro; existing PR #35811 is weak due to failed CI, leaving room for a stronger PR with comprehensive tests and coverage."
+  },
+  "7a433a046ec698544ac5a0b3645938c74f695c63b0b3d94a5fee9331c3c00fd6": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Maintainer comment states NVIDIA model is for NV GPU only, conflicting with issue's suggestion to fix the shared NVIDIA path."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify MiniMAXGemmaRMSNorm to fall back to a portable implementation when FlashInfer/CUDA is unavailable, or add a new platform-specific package for non-CUDA platforms."
+    ],
+    "risks": [
+      "Changing the NVIDIA path may affect CUDA performance or behavior; adding a new platform package may be preferred by maintainers."
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Run the provided reproduction script on a non-CUDA platform (e.g., CPU or Neuron) to confirm the failure, then verify the fix allows the layer to execute without CUDA."
+    ],
+    "unknowns": [
+      "Maintainer preference on whether to modify the NVIDIA path or add a new platform package; whether a PR would be accepted."
+    ],
+    "why": "Issue clearly identifies a platform-conditional bug in MiniMAXGemmaRMSNorm with a concrete reproduction and a suggested fix. However, a maintainer comment indicates the NVIDIA model is intentionally CUDA-only and expects platform-specific implementations, conflicting with the issue's proposal to modify the shared NVIDIA path. This design disagreement requires maintainer confirmation before implementation."
   },
   "7ab32ae82a3f39286a4cee7fbf5cfafa1d094ceb263bf8600a3d5173c56e673c": {
     "confidence": 0.85,
