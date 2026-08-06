@@ -1,5 +1,5 @@
 {
-  "digest": "1df2d1c91bbe681758ccc11dce81ec0389dcd10bea1fcc37bf057f1f79467c09",
+  "digest": "93dc8c014a3914e069c2c6d2f07731dbc892292e917f467752e953444e27d46d",
   "events": [
     {
       "attempts": 1,
@@ -11152,9 +11152,317 @@
       "runId": "watch-1785979947",
       "sentAt": "2026-08-06T01:38:02.571784Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "openai/openai-agents-python#4244"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[openai/openai-agents-python#4244](https://github.com/openai/openai-agents-python/issues/4244) Tool approval is not honored on resume when `Runner.run` is given a context**\n建议：NEW_CLEAN_CANDIDATE | 分数：12\n价值：Issue provides a minimal, self-contained repro with no external dependencies, clearly isolating the bug to the approval/resume path when a context is supplied. The root cause is likely in approval-key derivation or context handling during resume, and the issue explicitly rules out common red herrings. No competing PR exists, and the maintainer has not yet responded, but the evidence is strong enough to start work.\n改动：Fix approval resume logic in Runner.run to honor approvals regardless of context presence；Add regression test covering context variants (dict, dataclass, context_override, strict_context)\n验证：Use the provided repro script as a regression test, asserting all six rows produce final_output='done' and invoked=['cA']；Run existing test suite for the agents package to ensure no regressions\n风险：Potential design preference on how approvals are keyed; may need maintainer input on intended behavior；Changes might affect other resume scenarios; need careful testing of serialization round-trips\n竞争：仅发现未直接关联、无代码路径或强机制重合的 PR #4243；保留为搜索上下文，不阻止实现\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 11，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "green",
+          "title": {
+            "content": "OSS PR Radar: 可立即执行",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-06T03:37:40.314491Z",
+      "eventId": "70f34c77455f067064d0cb8c1790830aa50624e81481472622764b9ae455fda2",
+      "idempotencyKey": "70f34c77455f067064d0cb8c1790830aa50624e81481472622",
+      "kind": "immediate",
+      "runId": "scan-20260806T033245Z-121b45f23b2d",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "mem0ai/mem0#6812",
+        "pydantic/pydantic-ai#7185",
+        "mem0ai/mem0#6810"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[mem0ai/mem0#6812](https://github.com/mem0ai/mem0/issues/6812) `import mem0` crashes when the config directory cannot be created (module-level `os.makedirs` in memory/setup.py)**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue clearly identifies a module-level unguarded os.makedirs causing import failure in restricted environments. Existing PR #6813 directly addresses it but lacks tests, leaving room for a materially better PR with regression tests.\n改动：mem0/memory/setup.py；mem0/__init__.py；mem0/memory/telemetry.py\n验证：Add regression test simulating read-only HOME or MEM0_DIR pointing to non-creatable path, asserting import mem0 succeeds.\n风险：Potential maintainer preference for lazy initialization; need to avoid changing public API behavior.\n竞争：已有直接关联但证据不完整的 PR #6813：缺少测试文件；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：先人工比较相关 issue 的根因、维护者归并方向和可提交代码路径；确认不是重复后再进入实现。\n证据：复现信号 8，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[pydantic/pydantic-ai#7185](https://github.com/pydantic/pydantic-ai/issues/7185) OpenRouter streaming loses reasoning details, causing GPT-5.6 continuation to fail with invalid_encrypted_content**\n建议：WAIT_MAINTAINER | 分数：9\n价值：Issue describes a real streaming bug with a plausible code-level mechanism (id dropped on ThinkingPartDelta), but exact failure point unconfirmed without provider key; fix surface is an open architectural decision with no maintainer precedent. Gate requires HUMAN_REVIEW.\n改动：streaming parts manager id-on-delta handling；OpenRouter streaming reasoning serialization\n验证：reproduce with provided script and provider key；add regression test for streaming reasoning round-trip\n风险：changing shared parts manager may affect other providers；provider-specific payload inspection needed\n竞争：仅发现未直接关联、无代码路径或强机制重合的 PR #7018；保留为搜索上下文，不阻止实现\n下一步：先人工比较相关 issue 的根因、维护者归并方向和可提交代码路径；确认不是重复后再进入实现。\n证据：复现信号 6，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[mem0ai/mem0#6810](https://github.com/mem0ai/mem0/issues/6810) `import mem0` raises PackageNotFoundError from a source checkout, breaking the whole pytest suite**\n建议：PR_COMPETITION_OPPORTUNITY | 分数：11\n价值：Issue clearly identifies a root cause: importlib.metadata.version('mem0ai') fails without installed distribution, breaking source-tree imports and pytest. Existing PR #6811 directly addresses this but lacks regression tests, leaving room for a materially better PR with tests and robust fallback.\n改动：mem0/__init__.py: wrap version lookup in try/except with sentinel fallback；Add regression test for source-tree import without installed distribution\n验证：Create a test that simulates missing distribution metadata (e.g., monkeypatch importlib.metadata.version to raise PackageNotFoundError) and assert import mem0 succeeds and __version__ is a sentinel；Run pytest tests/ to ensure collection succeeds\n风险：Potential maintainer preference for a different version fallback strategy；Sentinel version may affect telemetry or downstream version checks\n竞争：已有直接关联但证据不完整的 PR #6811：缺少测试文件；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：仅完成本地复现、修复、测试和私有提交包；由用户自行决定公开提交。\n证据：复现信号 16，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-06T03:37:40.450288Z",
+      "eventId": "0a378a0844a459f678863dc19eb386f60c817b99b51df10e7657bcfae62ee0fb",
+      "idempotencyKey": "0a378a0844a459f678863dc19eb386f60c817b99b51df10e76",
+      "kind": "review",
+      "runId": "scan-20260806T033245Z-121b45f23b2d",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "pydantic/pydantic-ai#7108",
+        "sgl-project/sglang#33464",
+        "sgl-project/sglang#33642",
+        "vllm-project/vllm#51106",
+        "BerriAI/litellm#35800",
+        "OpenHands/OpenHands#16270",
+        "crewAIInc/crewAI#6788",
+        "fastmachinelearning/hls4ml#1515",
+        "google/adk-python#6584",
+        "langgenius/dify#40003",
+        "maka-agent/maka-agent#2074",
+        "mastra-ai/mastra#20663",
+        "mastra-ai/mastra#20672",
+        "pydantic/pydantic-ai#7146",
+        "pydantic/pydantic-ai#7176"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[pydantic/pydantic-ai#7108](https://github.com/pydantic/pydantic-ai/issues/7108) `include_binary_content=False` is not honored for tool returns, `final_result`, or output-function arguments**\n建议：WAIT_MAINTAINER\n价值：OWNERSHIP_CHANGED\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33464](https://github.com/sgl-project/sglang/issues/33464) [Bug] EXIF orientation is never applied when decoding images for VLM serving**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33642](https://github.com/sgl-project/sglang/issues/33642) [Bug] All schedulers hang in cuModuleLoadData on first EAGLE verify (DSA attention, PD-disagg decode), watchdog timeout**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#51106](https://github.com/vllm-project/vllm/issues/51106) [Bug]: DeepSeek-V4-Flash-0731 crashes on RTX PRO 5000 because FlashInfer cannot reshape a tensor with 0 elements into the shape [0, -1]**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#35800](https://github.com/BerriAI/litellm/issues/35800) [Bug]: Standalone virtual-key soft_budget alert is not sent to Slack**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[OpenHands/OpenHands#16270](https://github.com/OpenHands/OpenHands/issues/16270) [Bug]: AttributeError: 'Server' object has no attribute 'list_tools' when browser tool is used (breaks chat with 500 error)**\n建议：WAIT_MAINTAINER\n价值：ISSUE_NOT_OPEN\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[crewAIInc/crewAI#6788](https://github.com/crewAIInc/crewAI/issues/6788) [BUG] total_tokens omits cache reads and writes on the native Anthropic provider**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[fastmachinelearning/hls4ml#1515](https://github.com/fastmachinelearning/hls4ml/issues/1515) profiling.numerical() fails for multi-input models**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[google/adk-python#6584](https://github.com/google/adk-python/issues/6584) RemoteA2aAgent: a terminal A2A task carrying tool activity fails is_final_response(), so the turn cannot be detected as finished (non-streaming peer)**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[langgenius/dify#40003](https://github.com/langgenius/dify/issues/40003) AgentV2 (dify-agent) sends empty-content system prompts and empty tool descriptions to Bedrock, causing ValidationException**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[maka-agent/maka-agent#2074](https://github.com/maka-agent/maka-agent/issues/2074) bug(runtime): a stopped run parked on AskUserQuestion never lands a terminal fact, and prior-run context then silently drops the whole turn**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[mastra-ai/mastra#20663](https://github.com/mastra-ai/mastra/issues/20663) [BUG] `dataset.startExperiment` with a Memory-enabled agent target throws `AGENT_MEMORY_MISSING_RESOURCE_ID` — no way to supply `threadId`**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[mastra-ai/mastra#20672](https://github.com/mastra-ai/mastra/issues/20672) [BUG] `@mastra/inngest` resume events ship full stepResults/initialState copies, making resume impossible once durable state accumulates**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[pydantic/pydantic-ai#7146](https://github.com/pydantic/pydantic-ai/issues/7146) `download_item` trusts the response `Content-Type` for every `FileUrl`, so spoofed or mismatched bytes are forwarded to providers**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[pydantic/pydantic-ai#7176](https://github.com/pydantic/pydantic-ai/issues/7176) Capability hooks that touch external state cannot commit exactly once under durable execution**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-06T03:37:40.571058Z",
+      "eventId": "32e09fd7a7ecd61c9715212b7f72baf63fd56490d9d0ebf5733122e41f4a5d42",
+      "idempotencyKey": "32e09fd7a7ecd61c9715212b7f72baf63fd56490d9d0ebf573",
+      "kind": "watch",
+      "runId": "watch-1785987124",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "vllm-project/vllm#48109"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#48109](https://github.com/vllm-project/vllm/pull/48109) [Bugfix][XPU] Fix Mamba state pointer overflow**\n建议：PR_FOLLOWUP\n价值：CI 检查失败\n验证：查看正式 review、失败检查或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-06T03:37:40.714879Z",
+      "eventId": "0f08f0cc13fefccc11984e91ef8ab9f47142c72c0cf25a4f7b682aae8e758669",
+      "idempotencyKey": "0f08f0cc13fefccc11984e91ef8ab9f47142c72c0cf25a4f7b",
+      "kind": "watch",
+      "runId": "pr-followup-1785987124",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-06T01:37:26.764206Z",
-  "newEventCount": 0,
+  "generatedAt": "2026-08-06T03:37:40.714879Z",
+  "newEventCount": 1,
   "version": "notification_outbox_v1"
 }
