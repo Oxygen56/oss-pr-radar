@@ -670,6 +670,40 @@
     ],
     "why": "Issue provides a precise root cause and a concrete fix (route split + frontend update). Existing PR #40029 is weak: no tests, minimal changes, and lacks regression coverage. A materially better PR with tests and complete frontend changes is plausible."
   },
+  "13e7bc093eda0d8f5641120c95af6a91a69e561113b6f386a0812789f9fc4e99": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate category claims PR_COMPETITION_OPPORTUNITY but open PR #2452 is technically complete and only stale"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Model loading memory guard",
+      "LRU eviction policy",
+      "Request serialization for unload/reload"
+    ],
+    "risks": [
+      "May duplicate existing PR #2452",
+      "Memory estimation may be inaccurate across backends",
+      "Eviction policy may disrupt active requests"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with multiple large models on constrained memory",
+      "Verify OOM killer is not triggered and error responses are returned",
+      "Test LRU eviction and serialized reload behavior"
+    ],
+    "unknowns": [
+      "Maintainer preference on LRU vs simple guard",
+      "Exact memory accounting method for llama.cpp backends",
+      "Whether PR #2452 is still viable or abandoned"
+    ],
+    "why": "The issue describes an OOM crash when multiple models are loaded, but the root cause is a resource management problem in the server, not an LLM algorithm defect. The track requires algorithm-level mechanisms, yet the evidence is operational (memory eviction, serialization). Existing PR #2452 already addresses OOM guard and is open, so competition is possible but requires maintainer confirmation on design and scope."
+  },
   "150fc25a81cebf519c84fbf5ebf5bb4084f6a8d4fdba5ebbb102e8f838fb12f0": {
     "confidence": 0.85,
     "contradictions": [],
@@ -1587,6 +1621,27 @@
       "Whether maintainers have already triaged these failures; whether any open PRs address them (lookup failed)."
     ],
     "why": "Issue is a CI failure tracker with multiple distinct AMD failures, some with clear root causes (e.g., gated HF model, JIT compile errors) but others are infra flakiness. No maintainer approval or help-wanted signal. Open PR lookup timed out, so duplicate work cannot be excluded. The candidate is a tracking issue, not a code change, and requires maintainer triage to prioritize actionable fixes."
+  },
+  "3152700fea989b9269ac23de7e468f844b83970e373e03cce7002870109d96b4": {
+    "confidence": 0.95,
+    "contradictions": [],
+    "decision": "REJECT",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify _normalize_response_message_for_chat to handle list outputs for function_call_output"
+    ],
+    "risks": [
+      "Potential edge cases with nested content parts or mixed types; low risk."
+    ],
+    "root_cause_clarity": "high",
+    "score": 1,
+    "test_plan": [
+      "Add a unit test that sends a /v1/responses request with function_call_output output as a list and asserts a 200 response with normalized content."
+    ],
+    "unknowns": [],
+    "why": "The issue is a straightforward API request normalization bug in serving_responses.py, not an LLM algorithm defect. The proposed fix is a simple list-handling change with no algorithmic mechanism, training objective, or numerical validation. It falls under ordinary API plumbing, which is explicitly out of scope for track=llm_algorithm."
   },
   "32150a03a57d47438635e97b5147769aabe46dc5d47fe6392eea7a3ac2dab65e": {
     "confidence": 0.85,
@@ -3175,6 +3230,36 @@
     ],
     "why": "Issue reports a user-visible bug but lacks a clear root cause; the bot comment identifies two likely causes already fixed by merged PRs #39424 and #39587, so the issue may be resolved in a future release. No open PR competition exists, but the candidate is not actionable without confirmation that the bug persists after applying those fixes."
   },
+  "578f9687d69535676d3127f46c044fa6c3f566b6c642291ef3667284300bdf51": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify repairMalformedToolCall or parseJsonStream to detect truncation",
+      "Gate repair on finishReason/stop_reason",
+      "Add regression tests for truncated tool-call arguments"
+    ],
+    "risks": [
+      "May conflict with PR #12835 implementation",
+      "Changing repair behavior could break legitimate repairs of syntactically invalid JSON"
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Use provided repro JSON to assert parseJsonStream throws or flags truncation",
+      "Simulate max_tokens truncation in provider stream and verify no silent execution",
+      "Run existing SDK tests for ai-sdk and shared parse modules"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer gating on finishReason vs flagging repaired result",
+      "Whether PR #12835 already addresses this exact issue"
+    ],
+    "why": "Issue clearly identifies a silent data-corruption bug in tool-call repair path with concrete repro and root cause. However, existing PR #12835 has semantic overlap and is still draft; maintainer design preference is unconfirmed. Gate requires HUMAN_REVIEW."
+  },
   "57d21a79a02e2144ac6e390c4883d4d842ef83ea8ee2ee8264820ae55549d435": {
     "confidence": 0.85,
     "contradictions": [],
@@ -4238,6 +4323,33 @@
     ],
     "why": "Issue provides detailed root cause and repro, but existing PR #2078 is draft and may already address it; maintainer design preferences and PR quality need assessment before starting competing work."
   },
+  "746c29f9b63ead5e6ba0ae81b53ae8195e7e58338c14c5ca04475675668d1a9f": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify Bedrock provider to conditionally omit temperature for Claude models that do not support it, likely by detecting model version or using a capability flag.",
+      "Add regression tests for new Claude model versions to ensure temperature is not sent."
+    ],
+    "risks": [
+      "Changing behavior for all Claude models might break existing users who rely on temperature being sent, though recent models reject it.",
+      "Need to ensure the fix is generic enough to handle future model versions without requiring updates."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a minimal promptfooconfig.yaml with bedrock:us.anthropic.claude-opus-5 and run eval to reproduce the error.",
+      "Add unit tests for the provider's request construction to verify temperature is omitted for models in the deprecated list or for all Claude models above a certain version."
+    ],
+    "unknowns": [
+      "No maintainer confirmation on preferred design (e.g., version-based detection vs. explicit list).",
+      "Exact list of models that currently reject temperature is not provided in the issue."
+    ],
+    "why": "Issue clearly identifies a recurring bug: new Claude models fail because temperature is deprecated, and the fix requires a maintainable approach rather than per-model hardcoding. No existing PR addresses this issue, and the issue is actionable with a clear reproduction."
+  },
   "75a64662e62c6630f640c7ce029076eaac2480d39b08a2879087f65d7060b1f7": {
     "confidence": 0.7,
     "contradictions": [],
@@ -4778,6 +4890,33 @@
       "Whether there is an existing open PR addressing this issue"
     ],
     "why": "The issue reports a clear assertion failure in the DeepSeek V4 MoE layer, but the root cause is not definitively identified. The comment suggests possible version incompatibility or configuration issues, but no maintainer confirmation or reproduction details are provided. The open PR and related issue lookups timed out, so duplicate work cannot be ruled out."
+  },
+  "845556cf2f51b8a383d5a48a72ba0137b2d23c934eabdba7f097e1592b2d2172": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify Agent#executeOnFinish to await title generation or provide a configurable inline/background mode",
+      "Add regression test simulating serverless freeze"
+    ],
+    "risks": [
+      "Changing default behavior may increase response latency",
+      "Potential API changes need maintainer approval"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Use the provided repro script to demonstrate title loss with immediate process.exit",
+      "Add a unit test that mocks genTitle and verifies it is awaited before generate() resolves when configured inline"
+    ],
+    "unknowns": [
+      "Maintainer preference on design (await vs background hook) is not yet confirmed"
+    ],
+    "why": "Issue clearly identifies a detached promise in Agent#executeOnFinish causing title loss on serverless runtimes, with a minimal repro and a contributor asking for design direction. However, the deterministic gate is HUMAN_REVIEW and the contributor explicitly requests maintainer preference on whether to await title persistence or use a background hook, which changes latency and durability semantics. Existing PRs have semantic overlap but none directly address this issue, so a new PR could be viable but requires design confirmation."
   },
   "8571b4f5d107e53e6f6b3192d617a20ec15745d4a71c99fb2bf037450e817e92": {
     "confidence": 0.7,
@@ -6441,6 +6580,40 @@
     ],
     "why": "Issue provides a clear root cause and a concrete reproduction, but the deterministic gate requires HUMAN_REVIEW and there is potential overlap with existing issue #1585. Maintainer confirmation is needed before starting work."
   },
+  "b9fbb0746f593d042073f05aebedcf05941429c2e45799ae12405a23f8272d1f": {
+    "confidence": 0.7,
+    "contradictions": [
+      "None"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify guardrail_registry.py to pass llm_router to initializer when signature accepts it",
+      "Update LLMAsAJudgeGuardrail.initialize_guardrail to accept and store llm_router",
+      "Modify _run_judge to use llm_router.acompletion when router is available, falling back to litellm.acompletion"
+    ],
+    "risks": [
+      "Changing initializer signature may affect other guardrails; need to ensure backward compatibility",
+      "Router.acompletion may have different behavior than litellm.acompletion (e.g., retries, timeouts); need to align parameters",
+      "Potential duplicate fix exists in open PR that could not be checked due to timeout"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "test_plan": [
+      "Add regression test: configure a vllm/openai-compatible judge model via proxy, run guardrail, assert no BadRequestError and judge call succeeds",
+      "Test fallback path with direct model (e.g., gpt-4o) to ensure no regression",
+      "Run existing guardrail and proxy unit tests"
+    ],
+    "unknowns": [
+      "Whether maintainers have already assigned or are working on this issue",
+      "Whether an open PR already addresses this issue (lookup failed)",
+      "Exact expected behavior for guardrail when router is unavailable"
+    ],
+    "why": "Issue reports a clear bug: llm_as_a_judge guardrail fails when judge model is proxy-registered (vllm/openai-compatible) because it calls litellm.acompletion directly without router resolution. Contributor comment identifies root cause and proposes fix: pass llm_router to guardrail initializer and use router.acompletion. However, open PR and related issue lookup failed (timeout), so duplicate implementation cannot be excluded. Also, maintainer approval/design confirmation is absent, and the fix touches guardrail registry API, requiring maintainer input."
+  },
   "ba469bd5c94418bd3fdf7ff2f217e4cac4ca0cb69587f3c0ea186546a5cf99b6": {
     "confidence": 0.82,
     "decision": "WAIT_MAINTAINER",
@@ -6696,6 +6869,38 @@
       "Maintainer preference on which inference_mode alignment option to adopt"
     ],
     "why": "Issue identifies a clear inconsistency in inference_mode usage between warmup/autotune and real forward, with a concrete failure mode and reproduction. However, open PR lookup timed out and related issue audit failed, so duplicate implementation cannot be excluded. Maintainer comment raises design question about aligning modes, requiring maintainer decision."
+  },
+  "c0ba76ae47e3750946c1e502ee01758f4b2e8ef175ba29fdd21b606f7296e429": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Candidate claims algorithm evidence with mechanisms distributed_training and evaluation_method, but issue is about runtime metrics and gunicorn, not LLM algorithms."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "RuntimeWorker post-fork rebind logic",
+      "constant_tags preservation in periodic()",
+      "documentation for gunicorn and entity ID"
+    ],
+    "risks": [
+      "Potential performance impact of PID checks",
+      "Behavior change in runtime-id cardinality may affect dashboards"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with provided Docker matrix and verify dd_sum/ΣVmRSS ratio",
+      "Test entity ID preservation with DD_ENTITY_ID set",
+      "Add regression tests for post-fork rebind and tag preservation"
+    ],
+    "unknowns": [
+      "Maintainer confirmation on desired fix approach",
+      "Whether the issue is considered in scope for the llm_algorithm track"
+    ],
+    "why": "The issue is a bug report about runtime metrics undercounting RSS and dropped entity tags in gunicorn pre-fork scenarios. It includes a public repro and detailed analysis, but the track is llm_algorithm, which requires a concrete algorithm mechanism. The issue is about process management and metrics collection, not an LLM algorithm. The candidate's algorithm evidence is fabricated (matched terms like 'bootstrap', 'contamination', 'zero' are not present in the issue). The issue is actionable for a library bug fix, but it does not meet the llm_algorithm track requirements. The deterministic gate says ALLOW_TO_WORK, but the track mismatch and lack of algorithm evidence make it a maintainer decision."
   },
   "c31f56ba0affaf935cc3daa11cb6d52389718f19b63c8feb6ccec90f65f1ab61": {
     "confidence": 0.7,
@@ -7262,6 +7467,37 @@
     ],
     "why": "Issue reports CLI argument parsing failure for MiniMax-H3, but comments indicate a workaround (--model-type diffusion) and a merged PR #33365 may already address related local-path detection. Open PR lookup timed out, so competition cannot be fully assessed."
   },
+  "d4ccf82713410fd1d27a196f14591ed86ce9b70af698f8a2729553f628ce3887": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Adjust default residual_diff_threshold or document its behavior",
+      "Add audio quality metric for MiniMax-H3",
+      "Investigate Bn>0 performance regression"
+    ],
+    "risks": [
+      "Changing defaults may affect other models or workloads",
+      "Single-run measurements may not be statistically reliable",
+      "Missing audio metric could be a larger feature than a quick fix"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "test_plan": [
+      "Reproduce the reported hit-rate and quality numbers with the provided setup",
+      "Add a regression test that checks the default threshold is not inert on a representative model",
+      "Evaluate audio SNR as part of quality gates"
+    ],
+    "unknowns": [
+      "Whether maintainers have already discussed or planned changes",
+      "Whether an existing PR addresses these issues (lookup timed out)",
+      "Whether the reported quality bar is officially required for T2VA"
+    ],
+    "why": "The issue reports empirical observations about DBCache knobs on MiniMax-H3, but lacks a clear root cause for the inert default threshold and the quality gap. It is filed as a set of observations, not a concrete code fix. The open PR and related issue lookups timed out, so duplicate work cannot be excluded. The deterministic gate requires HUMAN_REVIEW."
+  },
   "d6f5c17e0a453451c25fd087020d0c4c4c9d041e8b8ad9a434f049f228f87ef8": {
     "confidence": 0.8,
     "contradictions": [
@@ -7456,6 +7692,37 @@
     ],
     "why": "The issue provides a precise root cause: requestContextEntries is dropped from iteration state and not forwarded to the LLM step, causing dynamic resolvers to see an empty context after the first iteration. This is a high-impact bug with a clear reproduction path and no competing PR."
   },
+  "dd133218a0472782b27d62ae78bf525358c089554982bab7b494e411e9c9d4cf": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue title suggests backend-related, comments suggest parser-related"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "tool-call parser logic",
+      "moe-runner-backend integration"
+    ],
+    "risks": [
+      "Duplicate effort with open PRs",
+      "Root cause may be in parser not backend"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with provided config and long-context tool-call requests",
+      "Run existing tool-call parser tests with flashinfer_mxfp4 backend"
+    ],
+    "unknowns": [
+      "Exact error trace and logs",
+      "Whether open PRs fix this issue",
+      "Maintainer preference on backend vs parser fix"
+    ],
+    "why": "Issue reports a user-visible bug when switching moe-runner-backend to flashinfer_mxfp4, but root cause is unclear and may be related to tool-call parser rather than backend. Open PRs exist with potential fixes but are unmerged and unverified. Maintainer input needed to confirm scope and avoid duplicate work."
+  },
   "de6fa0ca75c8567a85583f908e83570b57ca51708ac54f8240eb935a0d41a8d2": {
     "confidence": 0.8,
     "contradictions": [],
@@ -7531,6 +7798,34 @@
       "Maintainer preference on cookie handling approach; whether a fix is already in progress."
     ],
     "why": "Issue reports a clear bug: Azure Functions adds Domain attribute to __Host- cookie, causing browser rejection and 403. Root cause is well understood and reproducible. However, the deterministic gate says HUMAN_REVIEW, and there is no maintainer approval or help-wanted signal. The fix may involve design choices about cookie handling and deployment compatibility, so maintainer input is needed."
+  },
+  "e03a166acc822a28dafd0201f359f54bf36b7dc610b2205fc92d1497d90d2476": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "CLI installation logic for pnpm",
+      "template compatibility check"
+    ],
+    "risks": [
+      "Potential maintainer design preferences",
+      "Scope creep beyond minimal fix"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with pnpm create mastra and verify success",
+      "Add regression test for pnpm installation"
+    ],
+    "unknowns": [
+      "Exact root cause of version tag resolution failure",
+      "Maintainer confirmation of desired fix approach"
+    ],
+    "why": "The issue reports a CLI installation failure with pnpm but lacks a clear root cause; the maintainer has only acknowledged triage, and the track is agent_ai_infra, not llm_algorithm. The gate decision is HUMAN_REVIEW, so no upgrade is allowed."
   },
   "e04f447b8e020a18f8da20de1a3ecc2579a82cde256f72f9ccfc5c75bee93d96": {
     "confidence": 0.7,
