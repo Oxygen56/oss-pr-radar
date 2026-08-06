@@ -212,6 +212,10 @@
       "legacy": true,
       "seenAt": "2026-08-05T21:41:10.562886Z"
     },
+    "review|DeusData/codebase-memory-mcp#1406": {
+      "seenAt": "2026-08-06T12:27:01.088159Z",
+      "stateId": "81f37a9650940eb4cbe4f4ae61e6f45a7b6a1e3900235921907823802bc3a065"
+    },
     "review|DeusData/codebase-memory-mcp#1416": {
       "legacy": true,
       "seenAt": "2026-08-04T15:44:31.847929Z"
@@ -263,6 +267,10 @@
     "review|cline/cline#12913": {
       "legacy": true,
       "seenAt": "2026-08-04T14:54:39.838052Z"
+    },
+    "review|cline/cline#13003": {
+      "seenAt": "2026-08-06T12:27:01.088159Z",
+      "stateId": "aec343c8a796b618b104dffb3198e6ae0ba55682507fa139bc130aa8b58ed5a8"
     },
     "review|continuedev/continue#12382": {
       "legacy": true,
@@ -571,6 +579,10 @@
     "review|vllm-project/vllm#51200": {
       "legacy": true,
       "seenAt": "2026-08-06T03:47:42.121958Z"
+    },
+    "review|vllm-project/vllm#51250": {
+      "seenAt": "2026-08-06T12:27:01.088159Z",
+      "stateId": "a485e2ee5d53775be21c67e49acb6c1576b72dba55d674df54598418fd355340"
     },
     "watch|BerriAI/litellm#25386": {
       "legacy": true,
@@ -985,7 +997,7 @@
       "seenAt": "2026-08-06T10:09:13.778625Z"
     }
   },
-  "digest": "f0eaf88e3d29784839a23c885f4af49cb4c85979d593861eaa2eae85327eae21",
+  "digest": "0414c8d0475583c4aa95154c7740495395db3ad7bd178bbbb9fe1c0fa61228c3",
   "events": [
     {
       "attempts": 1,
@@ -13757,9 +13769,87 @@
       "runId": "scan-20260806T113306Z-bb4d947556de",
       "sentAt": "2026-08-06T11:40:33.289968Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "DeusData/codebase-memory-mcp#1406",
+        "cline/cline#13003",
+        "vllm-project/vllm#51250"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "d7f95d54119aafc4fc4a70ed17dc7fa5bdf6fd3dbccdd0b812b0b88f62ad84ba",
+          "key": "DeusData/codebase-memory-mcp#1406",
+          "kind": "review",
+          "stateId": "81f37a9650940eb4cbe4f4ae61e6f45a7b6a1e3900235921907823802bc3a065"
+        },
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "ec1e57f7a6fc44fe2c0f100d48a7e7c77b02d923f1a80024b3d19a79f2bfc835",
+          "key": "cline/cline#13003",
+          "kind": "review",
+          "stateId": "aec343c8a796b618b104dffb3198e6ae0ba55682507fa139bc130aa8b58ed5a8"
+        },
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "74cbd6f98ec0d8c515a792163be26dcb2e7dd7e72aafdc03eaba78aa5f3e3ec6",
+          "key": "vllm-project/vllm#51250",
+          "kind": "review",
+          "stateId": "a485e2ee5d53775be21c67e49acb6c1576b72dba55d674df54598418fd355340"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[DeusData/codebase-memory-mcp#1406](https://github.com/DeusData/codebase-memory-mcp/issues/1406) fast mode silently excludes `scripts/` — first-class Python source dropped from graph (built-in skip list?)**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue and comments identify a concrete bug: fast mode silently excludes 'scripts/' via hardcoded FAST_SKIP_DIRS in discover.c, with reproduction and root cause. However, the track is llm_algorithm, and the issue is about repository indexing behavior, not an LLM algorithm mechanism. The candidate's algorithm_evidence is inflated (matched terms 'adapter' and 'zero' are coincidental), and there is no training objective, model mechanism, or numerical method. The deterministic gate is ALLOW_TO_WORK, but the track requirement is not met. Maintainer has acknowledged the bug and routed it, so work is actionable, but the track mismatch and lack of algorithm validation path make it unsuitable for NEW_CLEAN_CANDIDATE. The issue is a clear bug fix opportunity, but per track rules it should be rejected or wait for maintainer clarification. Given the maintainer's active response and the need for design confirmation on the fix (e.g., whether to remove 'scripts' or make list configurable), WAIT_MAINTA\n改动：Modify FAST_SKIP_DIRS in src/discover/discover.c to remove 'scripts' or gate it behind a heuristic；Add warning when built-in skip list excludes top-level source directories；Possibly make skip list configurable via .cbmignore\n验证：Create minimal repo with scripts/ containing importable modules and run index_repository --mode fast; assert scripts/ files are indexed；Run existing test suite for discover.c；Add regression test for fast mode file coverage parity with full mode\n风险：Removing 'scripts' may increase indexing time or include unwanted files; need to balance with heuristic；Changing skip list behavior may affect existing users relying on exclusion\n竞争：仅发现未直接关联、无代码路径或强机制重合的 PR #582；保留为搜索上下文，不阻止实现\n下一步：按正常流程实现并验证；如要求 DCO 则自动 sign-off，PR 创建后报告 CLA 状态。\n证据：复现信号 4，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[cline/cline#13003](https://github.com/cline/cline/issues/13003) LiteLLM provider on \"Next\" fails with \"Not Found\" - uses `/v1/responses` instead of `/v1/chat/completions`**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue clearly identifies a regression in the Next architecture where the LiteLLM provider uses the Responses API instead of Chat Completions, causing 404 on common gateways. Root cause is pinpointed to a protocol override in the provider spec. Existing PR #12866 overlaps semantically but does not directly address this issue, leaving room for a focused fix.\n改动：Modify sdk/packages/llms/src/providers/builtins.ts to remove or adjust the protocol override for litellm；Add a regression test verifying LiteLLM uses /chat/completions\n验证：Create a test that mocks an OpenAI-compatible gateway returning 404 for /responses and 200 for /chat/completions, then assert the provider uses the correct endpoint；Run existing provider tests in sdk/packages/llms\n风险：Changing the protocol may affect users relying on Responses API for LiteLLM; consider adding a configuration option instead of a hardcoded change；Potential merge conflicts with existing PR #12866\n竞争：发现 PR #12866 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 4，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#51250](https://github.com/vllm-project/vllm/issues/51250) [Bug]: Prefix caching is ineffective on Mamba-2/GDN hybrid (Qwen3_5MoeForConditionalGeneration)**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue reports prefix caching ineffective for Mamba-2/GDN hybrid due to missing recurrent state caching. Maintainer comment suggests PR #46384 (merged) may address it, but open PR lookup timed out and related issue audit failed. Need to verify if merged PR resolves the issue and confirm current behavior on main.\n改动：Verify if merged PR #46384 fixes prefix caching for hybrid models；If not, implement caching of recurrent conv+SSM state in APC；Add warning when prefix caching is ineffective for hybrid models\n验证：Reproduce on current main with Qwen3.6-35B-A3B and shared prefix；Run metrics check for prefix_cache_hits_total > 0；Add regression test for hybrid model prefix caching\n风险：Merged PR may not fully address the issue；Hardware-specific behavior (GB10 vs GB200)；Need to distinguish algorithmic fix from user error (block size)\n竞争：open PR 检索不完整，需等待下轮重试后再判断碰撞\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 2，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-06T12:27:01.088159Z",
+      "eventId": "3b485e92385f475942641b2e64cf142e0f8c2002e4c60f18de7cea25b6c0f2da",
+      "idempotencyKey": "3b485e92385f475942641b2e64cf142e0f8c2002e4c60f18de",
+      "kind": "review",
+      "runId": "scan-20260806T122218Z-15209a502458",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-06T11:39:59.081833Z",
+  "generatedAt": "2026-08-06T12:27:01.381650Z",
   "newEventCount": 0,
   "version": "notification_outbox_v2"
 }
