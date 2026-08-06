@@ -58,6 +58,37 @@
     ],
     "why": "Issue reports a silent no-op for prefix caching on Mamba-2/GDN hybrids, but root cause is not fully confirmed; maintainer comment suggests user error (cache size vs block size), and a related PR was merged that may address the behavior. Open PR lookup failed, so competition status is unknown."
   },
+  "033db4eaa987dbdcdf628d97b4c9218228d1661dd30a55733519d8afa15d077f": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Collaborator could not reproduce on same version",
+      "Reporter's own llama.cpp tests show correct tokenization"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Investigate tokenizer loading and encoding handling on Windows CPU backend",
+      "Potential fix in tokenizer initialization or UTF-8 handling"
+    ],
+    "risks": [
+      "Environment-specific issue may not be reproducible in standard CI",
+      "No clear code path identified yet"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with exact Windows environment and GBK codepage",
+      "Compare tokenization counts and outputs across platforms and backends"
+    ],
+    "unknowns": [
+      "Exact root cause and whether it is a code bug or environment issue",
+      "Maintainer confirmation or assignment"
+    ],
+    "why": "The issue reports tokenizer misbehavior on Windows CPU but lacks a clear root cause; a collaborator could not reproduce, and the reporter's own debugging suggests environment-specific factors. The track requires algorithm-level evidence, but the issue is primarily a bug report with no concrete algorithm mechanism or validation path."
+  },
   "0611b49e9b5505e5bfdf7607a94c7adb98deb13db4c434a6e499cc84aabfce4f": {
     "confidence": 0.7,
     "contradictions": [
@@ -1459,6 +1490,35 @@
     ],
     "why": "Issue clearly identifies a missing capability id hint in error message with a concrete repro and root cause. However, an existing PR (#7125) already attempts to fix it but is closed with failed CI, and the repo requires assignment. Maintainer confirmation is needed before starting new work."
   },
+  "2b05ee727b54ea07e51f67734bd79bf6332b64177047240cc85ba01983b4eb83": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add validation in OpenAI-compatible embedding adapter to check response count matches input count",
+      "Improve error handling in embed_chunks to avoid assertion crash"
+    ],
+    "risks": [
+      "Changing adapter behavior may affect other providers or performance",
+      "Potential need for maintainer design preference on error handling vs silent correction"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Create a unit test mocking an embedding API that returns fewer vectors than input chunks and verify graceful error or correct handling",
+      "Reproduce with the provided LiteLLM/Gemini configuration and a subtitle file to confirm the fix"
+    ],
+    "unknowns": [
+      "Exact root cause of vector count mismatch (LiteLLM vs Gemini API vs adapter parsing)",
+      "Whether maintainers have acknowledged or are investigating the issue",
+      "Related issue audit failed due to timeout, so no confirmation of duplicate or existing fix"
+    ],
+    "why": "The issue reports a crash in embedding_service.py due to a vector count mismatch, but the root cause is not fully confirmed; the bot suggests possible causes in the OpenAI-compatible adapter but no maintainer has confirmed or assigned. The deterministic gate is HUMAN_REVIEW, and related issue lookup failed due to timeout, so actionability is uncertain."
+  },
   "2b314d5633f0a51030f778a41fcbb266854ceacd768d02208d1ee3c7cb264d6d": {
     "confidence": 0.7,
     "contradictions": [],
@@ -2343,6 +2403,36 @@
     ],
     "why": "The issue precisely identifies a dead code path in BaseInputTransport._audio_task_handler where the TimeoutError branch is empty, causing silent audio stalls. It provides a self-contained repro script and a concrete proposed fix (log once on stall and recovery) that addresses the original noise complaint. No competing PR exists."
   },
+  "44c3e7d595901f91ceb9f390dd1be72e32a5066270d227f341c99a5e270a1bca": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims no duplicate PR, but open PR #7104 has semantic overlap with tool_search and round_trip paths"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify _model_response_part_discriminator and _model_request_part_discriminator to invoke narrow_type and fallback to base part on validation failure",
+      "Add regression tests for JSON round-trip with non-typed tool-search content"
+    ],
+    "risks": [
+      "Potential conflict with PR #7104 which touches overlapping code paths; need to ensure fix aligns with maintainer design",
+      "Changing discriminator behavior might affect other typed parts; need careful scoping"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add test in tests/test_messages.py that round-trips NativeToolReturnPart and ToolReturnPart with tool_kind='tool-search' and non-typed content via ModelMessagesTypeAdapter.dump_json/validate_json, expecting success and tool_kind stripped",
+      "Run existing test suite to ensure no regressions"
+    ],
+    "unknowns": [
+      "Whether maintainers have already decided on a fix approach or prefer to merge PR #7104 first",
+      "Whether PR #7104 already addresses this issue or requires additional changes"
+    ],
+    "why": "Issue provides a clear, reproducible bug with root cause in discriminator bypassing narrow_type, but gate_decision is HUMAN_REVIEW and open PR #7104 has semantic overlap requiring manual comparison. No maintainer approval or assignment confirmation."
+  },
   "44e40295ec80bba4ec088320d33d4758b2ac9b04f13e68736d1d27b4e6b1fcda": {
     "confidence": 0.7,
     "contradictions": [
@@ -2553,6 +2643,37 @@
       "Whether the loss is in generic ACP lifecycle or WeChat adapter"
     ],
     "why": "The issue is a real user-facing bug with a clear repro and fresh evidence, but the deterministic gate requires HUMAN_REVIEW and the maintainer bot explicitly states a product decision is needed on cross-channel delivery policy. Existing PRs are closed/unmerged and do not settle the design. A new PR would be premature without maintainer direction."
+  },
+  "4961b0a13b56d79c4df2e927f409e444e51418867a185f336ac491791c91a41f": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Investigate Quark FP8-to-MXFP4 conversion for invalid weights/scales",
+      "Investigate FP8 checkpoint completion length increase",
+      "Fix chat template enable_thinking switch if needed"
+    ],
+    "risks": [
+      "Root cause may be in Quark conversion tooling rather than sglang",
+      "Numerical noise vs systematic error needs careful isolation",
+      "Hardware-specific (ROCm) may limit reproducibility"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 12,
+    "test_plan": [
+      "Reproduce with single request on MXFP4 checkpoint and verify repeated '!'",
+      "Compare FP8 and MXFP4 weight/scale statistics for outliers",
+      "Run GSM8K with fixed seed and template to measure completion length ratio"
+    ],
+    "unknowns": [
+      "Open PR status (lookup timeout)",
+      "Related issue status (lookup timeout)",
+      "Maintainer confirmation or assignment"
+    ],
+    "why": "Issue reports a concrete LLM algorithm regression: FP8-to-MXFP4 conversion yields degenerate output and FP8 completion length doubles. It includes conversion config, reproduction details, and expected behavior, but root cause is unconfirmed and related-issue/open-PR lookups timed out, so duplicate work cannot be excluded."
   },
   "497956747ca2caf0ab86b8f812d382c3d43b8cdcc8ff113d26359603706dfec4": {
     "confidence": 0.7,
@@ -5582,6 +5703,37 @@
     ],
     "why": "The issue provides a detailed root cause and reproduction for a bug in picture parsing where empty chunks are marked as success when OCR text is short and no image2text model is configured. However, the deterministic gate requires HUMAN_REVIEW, and the related issue audit failed due to timeout, leaving potential duplicate or related work unverified. The candidate is actionable but requires maintainer confirmation and further investigation."
   },
+  "9858ffbb886031775210de367ef30f973a68ee5a20e813d8a8c639a680ea9608": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims slow on multiple devices, but comment suggests Xet env var improves speed, implying configuration issue"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Investigate download performance in huggingface_hub's HTTP client or Xet integration",
+      "Potential fix in download chunking, retry logic, or Xet configuration"
+    ],
+    "risks": [
+      "Root cause may be external (server-side or network) and not fixable in the client",
+      "Changing download behavior could impact stability or compatibility"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Create a reproducible benchmark script downloading a known model and measuring throughput",
+      "Compare performance with and without HF_XET_HIGH_PERFORMANCE to isolate Xet-related slowdown"
+    ],
+    "unknowns": [
+      "No maintainer response or investigation status",
+      "No minimal reproduction script or logs",
+      "No confirmation whether the issue is client-side or server-side"
+    ],
+    "why": "Issue reports slow downloads but lacks a concrete root cause or reproducible code path. Comments suggest workarounds (HF_XET_HIGH_PERFORMANCE) and multiple users report similar symptoms, but no maintainer investigation or design confirmation. The track is agent_ai_infra, not llm_algorithm, so algorithm evidence is not required, but the lack of a clear technical cause and maintainer input makes it premature to start work."
+  },
   "986ceb96c5620291424d09fe66153de1a423ab850095ac13db6be05f89158019": {
     "confidence": 0.7,
     "contradictions": [],
@@ -8535,6 +8687,65 @@
       "Maintainer preference on whether to bundle or promote to dependency is not confirmed, but the issue suggests both options and the fix is low-risk"
     ],
     "why": "Issue provides a clear, reproducible root cause: DCP's runtime value import of @opencode-ai/plugin fails because it is only a peer dependency and opencode's plugin cache does not include it, causing silent load failure. The fix is straightforward (bundle or promote to direct dependency) and the issue includes a reproduction command and confirmed workaround."
+  },
+  "eedb6f98197eeaad63421e0e15c27cbe8c237c8bdbfc92fdb985bfed58858d04": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "crates/goose-provider-types/src/errors.rs",
+      "crates/goose-provider-types/src/retry.rs",
+      "crates/goose-providers/src/ollama.rs"
+    ],
+    "risks": [
+      "Changing retry behavior may regress transient network recovery (e.g., wifi drop)",
+      "New error variant may require updates across provider implementations"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add unit test for should_retry/max_retries_for with ConnectionFailed error",
+      "Integration test simulating connection-refused to localhost and asserting fast error surfacing"
+    ],
+    "unknowns": [
+      "Exact desired retry count/backoff for connection failures",
+      "Whether maintainer prefers system message approach over faster error surfacing"
+    ],
+    "why": "Issue provides a clear root cause: connection-refused is mapped to retryable NetworkError, and Ollama's generous retry budget causes ~2min delay. Maintainer confirms the behavior and discusses trade-offs, but no PR exists. A focused fix distinguishing permanent connection failures from transient network errors is actionable and testable."
+  },
+  "f051fc2b0529efd5a7799e65bae45196c9d09d8ef7eaac187dc388f7efc7d577": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Investigate code-explorer subagent failure path",
+      "Add regression test for subagent hang/error"
+    ],
+    "risks": [
+      "Root cause may be external (model/provider)",
+      "Fix may require maintainer design input"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with provided prompt and model",
+      "Capture logs and identify failure point",
+      "Add test for subagent completion"
+    ],
+    "unknowns": [
+      "Exact error logs",
+      "Whether maintainers have acknowledged or are investigating",
+      "Whether a related PR exists (none found)"
+    ],
+    "why": "Issue reports a user-visible bug in the code-explorer subagent but lacks root cause, logs, or a minimal repro. No maintainer confirmation or design direction. The track is agent_ai_infra, not llm_algorithm, so algorithm evidence is not required, but the bug is not actionable without more investigation."
   },
   "f0de309411bf797fea9f94c5b698250563f23c83efe3fb49d7255a787e77fb1e": {
     "confidence": 0.85,
