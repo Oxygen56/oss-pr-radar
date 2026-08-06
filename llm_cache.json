@@ -629,6 +629,33 @@
     ],
     "why": "Issue provides a clear root cause and minimal reproduction for a user-visible bug in Qwen parser routing. However, an existing PR #50955 directly references this issue but has failing CI and incomplete evidence, and the deterministic gate requires HUMAN_REVIEW. Maintainer design preference is unconfirmed, so work should wait for maintainer guidance."
   },
+  "1a529736c5274daa720ebf934fbade8a20e08166bed3ceb0958eae778b531109": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Adjust z-index/stacking of command flyout menu to be above working indicator",
+      "Possibly add CSS or component-level fix in desktop UI"
+    ],
+    "risks": [
+      "May need maintainer design preference on overlay behavior",
+      "Potential impact on other UI elements if z-index changed broadly"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "test_plan": [
+      "Manual reproduction: open chat, submit long prompt, type '/' and verify menu is on top",
+      "Add a UI regression test if feasible (e.g., Playwright) to assert menu z-order"
+    ],
+    "unknowns": [
+      "Exact UI framework and component structure for desktop UI",
+      "Whether maintainers have existing design guidelines for overlays"
+    ],
+    "why": "Clear UI bug with reproducible steps and screenshot; no competing PR or related issue; actionable fix in desktop UI z-index/overlay handling."
+  },
   "1a78df8fd06c33660a4083f30e4e00c4f7294e39ffc3c714f7ca1e3b8f2ff0b1": {
     "confidence": 0.7,
     "contradictions": [
@@ -2697,6 +2724,41 @@
     ],
     "why": "Issue provides a clear root cause and reproduction, but an existing PR (#33449) directly addresses it with failing CI checks. The deterministic gate requires HUMAN_REVIEW, and the PR's technical completeness is uncertain due to failed checks. A new candidate would compete with an existing weak PR, but maintainer confirmation is needed to avoid duplicate effort."
   },
+  "5433979e0d02f33e94000641db3ca2bed41b237a845264e5376be6719a9ca56c": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue reports fp32 artifact causing quantization error, but fp32 should not contain MatMulNBits",
+      "Comment suggests CoreML may not be suitable, conflicting with earlier assumption"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "kompress_compressor.py",
+      "proxy startup env var handling",
+      "artifact validation"
+    ],
+    "risks": [
+      "Potential duplicate of issue #2360",
+      "Fix may require changes to artifact distribution or proxy lifecycle",
+      "Performance constraints on M-series may not be fully solvable in code"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with fresh proxy start and explicit env var; verify ONNX file resolved in startup logs",
+      "Add regression test for MatMulNBits error with fp32 artifact",
+      "Test with HEADROOM_KOMPRESS_BACKEND=pytorch to compare behavior"
+    ],
+    "unknowns": [
+      "Whether the env var reaches the running proxy",
+      "Whether the fp32 artifact is mislabeled or broken",
+      "Maintainer's preferred fix direction"
+    ],
+    "why": "The issue reports a user-visible compression failure on macOS M-series with a specific ONNX runtime error. However, the root cause is ambiguous: the reporter's explicit use of the fp32 artifact contradicts the quantization error, and a contributor's comment suggests the env var may not reach the running proxy or the artifact may be mislabeled. Existing PRs #2448 and #2740 are merged and address related kompress issues, but neither directly resolves this issue. The maintainer has not confirmed the design or requested work, and the issue is still open with active discussion. The candidate is actionable but requires maintainer confirmation on the intended fix direction."
+  },
   "5436e9fe0cd5e342232eebe90e06a1bf15c3ab02189deb63ec0d4322acff99b9": {
     "confidence": 0.7,
     "contradictions": [
@@ -4073,6 +4135,38 @@
     ],
     "why": "Issue provides a clear root cause and repro, but maintainer comment questions the desired behavior (retry vs fast fail) and suggests possible UX mitigation, indicating design confirmation is needed before implementation."
   },
+  "7ffc092f6097897ffb61cc4818a501139b39891f7517ecdc84cad0e0b33b9ad3": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims bug is unintended, but comments indicate project is no longer actively maintained"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "PR check session keying by head SHA",
+      "status posting to fresh task IDs",
+      "supersede old sessions",
+      "CLI error handling for org-scoped status"
+    ],
+    "risks": [
+      "Repository is read-only; maintainer may not accept changes",
+      "Duplicate PR may exist but was not found due to lookup failure"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 12,
+    "test_plan": [
+      "Reproduce with a test repo and multiple checks; push a fix commit and verify new task IDs appear",
+      "Add regression test for synchronize event creating fresh sessions"
+    ],
+    "unknowns": [
+      "Whether any open PR already addresses this",
+      "Whether maintainers will accept contributions given read-only status"
+    ],
+    "why": "The issue describes a plausible stale-session bug in Continue's PR checks, but the repository is now read-only and unmaintained after acquisition, and the open-PR lookup failed, so duplicate work cannot be excluded. The report is detailed but lacks a confirmed root cause and maintainer confirmation."
+  },
   "811580dbec57b0c5aaecf3a0702132258e6bf6c914b6aa5a28a7b416860e8e5b": {
     "confidence": 0.7,
     "contradictions": [],
@@ -4506,6 +4600,41 @@
       "Whether existing PRs (e.g., #6324) already partially address this issue in overlapping code paths."
     ],
     "why": "Issue clearly identifies a real bug with a verified repro and a precise two-statement fix, but it is explicitly gated on #6886 which awaits a maintainer design decision on the return channel for usage under durable execution. The fix must be coordinated across three paths and must not silently fail under Temporal. Existing PRs overlap semantically but none directly address this issue, so a new PR could be valuable, but the design dependency and need for maintainer confirmation make it premature to start."
+  },
+  "89e69bc597fa05e2c74fd4f26ee520b06b92f712485acffff3ddc5ef5f259120": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Comments suggest NCCL build swap may fix the issue, conflicting with the hypothesis of a vLLM code bug",
+      "Different NCCL versions/builds show different stability, indicating the root cause may be external"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Investigate and fix TP divergence in MiniMax-M2 forward pass, specifically around MoE output all-reduce",
+      "Add instrumentation or logging for collective sequence numbers to detect rank desync",
+      "Potentially add a regression test for multi-node TP with MiniMax-M2"
+    ],
+    "risks": [
+      "Root cause may be in NCCL build or hardware-specific, not vLLM code",
+      "Fix may require changes to model code or distributed runtime, which could affect other models",
+      "No minimal repro available; testing requires multi-node hardware and long runtime"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 11,
+    "test_plan": [
+      "Reproduce the stall on a 4-node TP=4 setup with MiniMax-M2 under sustained load",
+      "Capture py-spy stacks and NCCL debug logs during stall to confirm root cause",
+      "Run a soak test with the fix to ensure no stall for >5 hours"
+    ],
+    "unknowns": [
+      "Whether maintainers have acknowledged or are investigating the issue",
+      "Whether an existing PR or fix is already in progress (open PR lookup failed)",
+      "Whether the root cause is in vLLM code or NCCL build/environment"
+    ],
+    "why": "Issue reports a reproducible multi-node TP deadlock with strong evidence (NCCL spin signature, py-spy stacks, multiple reproductions) and a plausible root cause (TP divergence in MoE all-reduce). However, the issue is a bug report, not a code contribution; no patch is proposed. The deterministic gate requires HUMAN_REVIEW, and open PR/related issue lookups failed, so duplicate work cannot be excluded. Maintainer involvement is absent, and the root cause is not fully confirmed (NCCL build differences may be a workaround)."
   },
   "8aea60e09083802fb3fd5f35002ade0ff1b1e76a1412745d1f9409a7a94eda42": {
     "confidence": 0.85,
