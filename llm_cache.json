@@ -222,6 +222,37 @@
     ],
     "why": "Issue provides a clear root cause (WORLD-group broadcast deadlock in fastsafetensors under PP-scoped draft loads) and a concrete repro, but the deterministic gate requires HUMAN_REVIEW and the related issue audit timed out. Existing PR #50514 is directly related but has failing CI and incomplete evidence, so a new PR may be premature until maintainer confirms design direction."
   },
+  "0800a641e3c341c34ef31972486da3cbd6daefda89121fc39392dff8b6644106": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Comment reports tool_choice required also fails, while issue says required works on both versions"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Gemma4EngineToolParser support for named/required tool_choice",
+      "Serving layer finish_reason handling for tool_calls"
+    ],
+    "risks": [
+      "Potential duplicate PR or issue already tracked",
+      "Fix may require design decision on whether to enforce or error"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 13,
+    "test_plan": [
+      "Reproduce with provided curl on v0.26.0 and v0.21.0",
+      "Add regression test for named forced tool_choice with gemma4 parser",
+      "Verify tool_choice required returns tool_calls or explicit error"
+    ],
+    "unknowns": [
+      "Open PR status and related issue status due to lookup timeout",
+      "Maintainer confirmation on desired behavior"
+    ],
+    "why": "The issue reports a concrete regression in vLLM's gemma4 tool parser where named forced tool_choice is silently ignored, with a clear reproduction and version comparison. However, the deterministic gate is HUMAN_REVIEW, and the open PR and related issue lookups timed out, so duplicate work cannot be excluded. The root cause is plausibly in the parser's support flags, but maintainer confirmation is needed."
+  },
   "0814ca6f3f9a83de47c73259e266967ef5c9dfbec207ac72df168cd6d715e045": {
     "confidence": 0.7,
     "contradictions": [],
@@ -1421,6 +1452,33 @@
     ],
     "why": "Issue reports a severe 100% tool-call failure in Claude Desktop after server-filesystem update, with strong evidence of client-side rejection of outputSchema/structuredContent. However, root cause is not fully confirmed; a maintainer fix in Claude Desktop 1.24012.9 is reported, and the issue is in modelcontextprotocol/servers repo, not the client. The candidate lacks a clear code path in this repo and requires maintainer direction."
   },
+  "2d845399957847884410d46ac98d82df1f435f14e17a96e384acd4895e87246f": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Fix soft_budget alert propagation for standalone virtual keys",
+      "Ensure budget alert deduplication does not suppress retries on Slack send failure"
+    ],
+    "risks": [
+      "Potential duplicate implementation due to failed open PR lookup",
+      "Changing alert behavior may affect existing users"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 11,
+    "test_plan": [
+      "Create a standalone virtual key with soft_budget, exceed it, and verify Slack alert is sent",
+      "Add regression test for alert retry when Slack send fails"
+    ],
+    "unknowns": [
+      "Whether maintainers have already investigated or have design preferences",
+      "Whether an open PR already addresses this issue"
+    ],
+    "why": "Issue reports a user-visible bug with a plausible code path but lacks a confirmed root cause; open PR and related issue lookups timed out, so duplicate work cannot be excluded. Maintainer design confirmation is needed before implementation."
+  },
   "2e341483c57b34162f0f84021c68c966a5d873501621da6ff435952d2aff70bd": {
     "confidence": 0.7,
     "contradictions": [],
@@ -2148,6 +2206,29 @@
       "Exact mechanism not identified"
     ],
     "why": "Issue reports a nondeterminism bug in VLLM_BATCH_INVARIANT=1 with detailed reproduction and ruled-out factors, but root cause is unknown and maintainer investigation/design confirmation is needed. Open PR and related issue lookups failed, so duplicate work cannot be excluded."
+  },
+  "4350f9c2a6884bf2a9da9f3a87390585ee9dc3eef6c8a2d204f0c0b3043b0689": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify BaseInputTransport._audio_task_handler to log a warning once when input audio stalls and once on recovery, using a stalled flag and last_audio_at timestamp."
+    ],
+    "risks": [
+      "Potential behavior change if the fix emits a UserStoppedSpeakingFrame or other events; need to confirm with maintainers whether that is desired."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add a regression test using the provided repro script or a unit test that simulates a stalled input audio stream and asserts that a warning is logged exactly once during the stall and once on recovery."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a log-only fix or also want an event/frame emitted; whether the forced UserStoppedSpeakingFrame removal is a regression that needs addressing."
+    ],
+    "why": "The issue precisely identifies a dead code path in BaseInputTransport._audio_task_handler where the TimeoutError branch is empty, causing silent audio stalls. It provides a self-contained repro script and a concrete proposed fix (log once on stall and recovery) that addresses the original noise complaint. No competing PR exists."
   },
   "44e40295ec80bba4ec088320d33d4758b2ac9b04f13e68736d1d27b4e6b1fcda": {
     "confidence": 0.7,
@@ -3580,6 +3661,33 @@
     ],
     "why": "The issue provides strong evidence of a real bug: providerOptions.deepseek.thinking is dropped by the Gateway, causing reasoning to remain enabled. However, the root cause is not yet identified, and the deterministic gate requires HUMAN_REVIEW. The issue is actionable but needs maintainer confirmation on the preferred fix direction."
   },
+  "6718722f6768f44e94cf351a7228c61d420d4c02a77329d7a8dc4c8cc6792ff9": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix multi-tokenizer request/response routing for queue-full AbortReq responses",
+      "Add regression test for tokenizer-worker-num > 1 under queue overflow"
+    ],
+    "risks": [
+      "Root cause may be elsewhere (e.g., scheduler or HTTP layer); fix may be non-trivial and require maintainer design input"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 13,
+    "test_plan": [
+      "Reproduce with provided benchmark and tokenizer-worker-num 2; verify no hanging connections and all requests receive terminal responses",
+      "Run same benchmark with tokenizer-worker-num 1 as control"
+    ],
+    "unknowns": [
+      "Open PR status and related issue audit failed due to timeout; cannot confirm no existing fix",
+      "Maintainer has not confirmed the bug or assigned priority"
+    ],
+    "why": "The issue reports a reproducible hang with tokenizer-worker-num 2 and provides a clear A/B comparison, but the root cause is only hypothesized (routing of AbortReq responses). The deterministic gate requires HUMAN_REVIEW, and open PR/related issue lookups failed, so duplicate work cannot be excluded. The track is llm_algorithm but the bug is operational (request routing) rather than an algorithm mechanism; no concrete training objective or numerical method is involved."
+  },
   "684ee8688f348de5ece7552a2b00443acc5faca9c330f44ba30d645a0f0e2374": {
     "confidence": 0.7,
     "contradictions": [
@@ -3781,6 +3889,34 @@
       "Maintainer's design intent for tool loading and knowledge usage"
     ],
     "why": "Issue reports a user-visible bug but lacks a clear root cause and minimal reproduction. The maintainer asked a clarifying question, and the reporter's response is incomplete. No code path or module is identified, and no open PR exists. The issue is actionable only after maintainer confirmation and a concrete repro."
+  },
+  "6a1b7468790a8c73b1b8a0f589f17b22abaf433b0391d66c67c4720a601abc2e": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add tracingContext to AgentSkillsContext interface and propagate it in the skills resolver",
+      "Possibly adjust agent-run span timing to include skills resolution"
+    ],
+    "risks": [
+      "Changing AgentSkillsContext may break existing implementations that do not expect the new field",
+      "Moving skills resolution inside the agent-run span could alter execution order or performance characteristics"
+    ],
+    "root_cause_clarity": "high",
+    "score": 15,
+    "test_plan": [
+      "Create a failing test that asserts a span is present in the skills resolver when called via both direct agent invocation and served HTTP endpoint",
+      "Run targeted unit tests for @mastra/core and @mastra/observability"
+    ],
+    "unknowns": [
+      "Maintainer preference between the two proposed fixes",
+      "Whether the maintainer will accept an external PR for this issue"
+    ],
+    "why": "The issue identifies a concrete tracing-context gap in the skills resolver and provides a clear reproduction showing inconsistent AsyncLocalStorage behavior across entry points. However, the deterministic gate is HUMAN_REVIEW and the maintainer has only labeled for triage without confirming the proposed fix direction. The issue offers two viable fixes (adding tracingContext to AgentSkillsContext or resolving skills inside the agent-run span), requiring design confirmation before implementation."
   },
   "6a24359e93a1c61ac18373b4a9978cb3e09b334c9522e5cc41780c61276d2d48": {
     "confidence": 0.7,
@@ -5098,6 +5234,35 @@
     ],
     "why": "The issue reports a clear packaging defect: the published npm package lacks the static/sandbox_proxy.html file, causing the Apps tab to fail for all npx users. A maintainer triaged it as High priority, and a user confirmed a local fix. No competing PR exists, and the fix is straightforward: include the missing static file in the npm package."
   },
+  "92f8afbeb17182e7b2388928832393fa0897b5e631fe420eaa5bf44967dea465": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify conversation state to store profile reference instead of resolved LLM config",
+      "Re-resolve credentials on resume",
+      "Add error handling and UI guidance for stale credentials"
+    ],
+    "risks": [
+      "Potential behavior change for custom credentials",
+      "Need to ensure backward compatibility with existing saved conversations"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a conversation with profile A, rotate key, resume and assert graceful fallback or clear error",
+      "Add unit test for re-resolving credentials from profile store on resume",
+      "Test bulk re-key endpoint if implemented"
+    ],
+    "unknowns": [
+      "Maintainer design preferences for storing profile references",
+      "Exact internal architecture for LLM config resolution"
+    ],
+    "why": "The issue clearly identifies a user-visible bug: LLM config is frozen at conversation creation, causing permanent authentication failures after key rotation. The proposed fix is actionable and includes a concrete repro and multiple solution levels. No competing PR or issue found."
+  },
   "976b4ba1dc070c3b4427e1660bc07cdd14958c14ad095a6f32d90fd3bce68e5b": {
     "confidence": 0.7,
     "contradictions": [],
@@ -5154,6 +5319,39 @@
       "Whether issue #4838 is truly duplicate"
     ],
     "why": "Issue is a real bug with clear root cause and workaround, but an open PR #5742 already addresses it with a proposed fix. The PR has failing CI and lacks complete evidence, so a better PR could be competitive, but maintainer review is needed to confirm direction and avoid duplicate work."
+  },
+  "97fbde2b290a85970f57496c532ef65e266e8ba926d61adefdf49198a8420b21": {
+    "confidence": 0.8,
+    "contradictions": [
+      "The issue title mentions OCR≤32 and image2text unset, but the body also discusses large sparse images; the primary fix may be independent of image size"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify rag/app/picture.py to tokenize non-empty OCR text regardless of length",
+      "Modify rag/svr/task_executor.py to propagate failure when chunks are empty and an error occurred",
+      "Consider improving OCR detection for large sparse images"
+    ],
+    "risks": [
+      "Changing empty-chunk handling may affect other parsing paths",
+      "Tokenizing short OCR text may produce low-quality chunks",
+      "Large image handling changes may impact performance"
+    ],
+    "root_cause_clarity": "high",
+    "score": 13,
+    "test_plan": [
+      "Reproduce with the provided 8000x8000 image and no image2text model, verify chunk_num > 0 or task fails",
+      "Add regression test for short OCR text without image2text",
+      "Test with dense image to ensure no regression"
+    ],
+    "unknowns": [
+      "Whether maintainers have already planned a fix or have preferences on the approach",
+      "Whether there are other related issues or PRs not captured due to timeout"
+    ],
+    "why": "The issue provides a detailed root cause and reproduction for a bug in picture parsing where empty chunks are marked as success when OCR text is short and no image2text model is configured. However, the deterministic gate requires HUMAN_REVIEW, and the related issue audit failed due to timeout, leaving potential duplicate or related work unverified. The candidate is actionable but requires maintainer confirmation and further investigation."
   },
   "986ceb96c5620291424d09fe66153de1a423ab850095ac13db6be05f89158019": {
     "confidence": 0.7,
@@ -5670,6 +5868,41 @@
       "Whether #7491 is a duplicate or requires separate handling"
     ],
     "why": "Issue provides a clear root cause and minimal repro, but requires maintainer design confirmation due to potential overlap with #7491 and need to align with maintainer preferences on fix scope."
+  },
+  "ac553920bd412a17a26482b4718dff959c811094b3d3fdd52c4485e5bcb18249": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Maintainer initially suggested closing as duplicate of #1296, but later confirmed it is not a duplicate",
+      "Reporter's initial uncertainty about root cause was resolved by maintainer's fix"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Potential improvements to change-visibility latency (adaptive debounce or configurable interval)",
+      "Documentation of watch scope and propagation delay",
+      "Investigation of edge-count nondeterminism"
+    ],
+    "risks": [
+      "Changing debounce or refresh intervals may impact larger repos",
+      "Documentation changes may be low value without code changes",
+      "Edge-count nondeterminism may be a separate issue requiring its own investigation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "test_plan": [
+      "Regression test for dirty-to-clean transition on current main",
+      "Performance test measuring propagation latency on small repos",
+      "Test for watch scope behavior across sessions"
+    ],
+    "unknowns": [
+      "Whether the maintainer wants further work on secondary observations",
+      "Whether the edge-count nondeterminism is considered a bug or acceptable",
+      "Exact debounce/refresh mechanism causing latency"
+    ],
+    "why": "The issue is a well-reproduced bug with clear evidence that the watcher fails to update the graph on return-to-clean transitions. However, the maintainer has already acknowledged the bug, added a fix in current main, and requested verification on RC1. The reporter confirmed the fix works on RC1, so the core issue is resolved. Remaining concerns are secondary observations (latency, watch scope, edge-count nondeterminism) that are not fully actionable without maintainer direction. The deterministic gate is ALLOW_TO_WORK, but the maintainer's active involvement and request for verification indicate that further work should wait for maintainer confirmation."
   },
   "ae5841585ce6e1f648a203913ce6a20911d34f6c9f855023e8553450f23109a4": {
     "confidence": 0.8,
@@ -6230,6 +6463,32 @@
     ],
     "why": "Issue describes a clear user-facing bug with a known root cause (image blocks replayed to text-only providers) and a proposed fix (filter based on supports_image_input). However, the deterministic gate is HUMAN_REVIEW, and the issue is labeled 'triage: needs-decision' with design confirmation required. A recent comment indicates a maintainer-recommended direction and a working config-based workaround, but the default policy for unknown models remains unresolved. No open PR exists, so a new PR could be valuable, but maintainer confirmation is needed."
   },
+  "be2c563fe4aba0273707932dac03182c8f9b3e2f9399ca290f4bef2ee7fac3ba": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Register PyLayoutType in pyo3 bindings to allow device_layout_type override",
+      "Aggregate adjacent NIXL descriptors before transfer or convert layouts on transfer path"
+    ],
+    "risks": [
+      "Aggregation may require careful handling of mixed attention types where uniform KV cache is not available",
+      "Performance gains depend on storage characteristics; may not benefit local NVMe"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce with vLLM + KVBM on NFS, force disk read, measure READ ops/bytes in mountstats; assert ops per block is 1 instead of 96",
+      "Run existing KVBM tests with a mock NIXL to verify descriptor count and layout handling"
+    ],
+    "unknowns": [
+      "No maintainer confirmation or open PR; but issue is self-contained and actionable"
+    ],
+    "why": "The issue identifies a concrete performance bug in the vLLM connector's KV cache disk-to-device onboarding path, where per-layer NIXL descriptors cause ~10x throughput loss on network storage. Root cause is precisely located: layout_type is always LayerSeparate due to missing PyLayoutType registration and no FullyContiguous path. The fix is actionable and testable via NFS mountstats or nfsiostat, with clear expected vs actual behavior."
+  },
   "be72e5ed70b5db940444bf630f4e6e22c4320ae7c1cf8387fb9adcb9f0e09468": {
     "confidence": 0.8,
     "contradictions": [],
@@ -6400,6 +6659,29 @@
       "Maintainer approval or design confirmation"
     ],
     "why": "The issue provides a detailed root cause and concrete fix suggestions for a real bug in the Datadog callback, but the deterministic gate requires HUMAN_REVIEW and open PR/related issue lookups timed out, so we cannot rule out existing implementations or maintainer preferences."
+  },
+  "c6e92a17d895672a38cb6b666e7f77e55137af579bdbf873de9523201a42b353": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Update pystemmer constraint in llama-index-integrations/retrievers/llama-index-retrievers-bm25/pyproject.toml from <3 to <4"
+    ],
+    "risks": [
+      "Potential API differences between PyStemmer 2.x and 3.x not covered by the simple usage; need to ensure the two API calls remain compatible across versions."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Attempt to install the package on Python 3.14 in an air-gapped environment to reproduce the failure, then verify the fix allows installation without source build."
+    ],
+    "unknowns": [
+      "No maintainer confirmation on accepting the fix, but the issue is clear and the change is minimal."
+    ],
+    "why": "The issue identifies a clear dependency pin that breaks Python 3.14 installs in air-gapped environments, with a minimal fix (relaxing the upper bound) and verified API compatibility. This is a concrete, actionable bug fix with high user impact."
   },
   "c78819723a9dfbb6c078d3c7378a50b3076acf74cd2788dd611a9b00e81cccde": {
     "confidence": 0.7,
@@ -7524,6 +7806,34 @@
     ],
     "why": "Issue provides a detailed root cause and repro for a real crash, but the deterministic gate requires HUMAN_REVIEW and a maintainer has questioned the niche value, so assignment/design confirmation is needed."
   },
+  "e978276646fcd0104adc6abd64f55fb72a84bb630a2686a4b3ecf85be9527b09": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify engine_workers.py to determine sleep_level before resume, or mirror resume tags to sleep release",
+      "Adjust async_sglang_server.py wake_up to branch on lora_as_adapter for symmetric tag handling"
+    ],
+    "risks": [
+      "Changing resume tag set may break non-LoRA colocated path that relies on unconditional weights resume",
+      "Potential race or ordering issues if sleep_level is set at construction from model_config"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce with FSDP+LoRA, free_cache_engine=true, colocated rollout; run first weight sync and assert no KeyError",
+      "Add unit test for resume/sleep tag symmetry with sleep_level=1",
+      "Run non-LoRA colocated path regression to ensure resume(['weights']) remains valid"
+    ],
+    "unknowns": [
+      "Exact callers of lora_served_as_adapter and whether setting sleep_level earlier affects other paths",
+      "Whether maintainers prefer mirroring resume tags or pre-determining sleep_level"
+    ],
+    "why": "The issue identifies a concrete state-machine ordering bug in the LoRA adapter path of verl's engine_workers.py, with a clear root cause: resume('weights') is called before sleep_level is set, causing a KeyError in SGLang's strict set removal. The fix is actionable and testable, and no competing PR exists."
+  },
   "e9fef21c6a2cfd201e804e6659ac954075fd8fac688ee74d93ab9b56aa1cd9a0": {
     "confidence": 0.8,
     "contradictions": [],
@@ -8056,6 +8366,36 @@
       "Maintainer interest or design confirmation for the proposed approach"
     ],
     "why": "Issue provides a detailed root cause, quantified impact (26.7% of GGUF repos dropped), and a concrete proposed design. Existing PR #11005 is a draft with material gaps (still draft, no maintainer approval), leaving room for a stronger, more complete implementation."
+  },
+  "f9d42edbf321d592b6a3944529b7cb43cb35297eadc509d9782e2530f47ce7a4": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Issue claims serializer does not filter images, but maintainer says it already does"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Capability policy for unknown models",
+      "Possibly per-model image support configuration"
+    ],
+    "risks": [
+      "Changing default may break custom vision endpoints",
+      "Scope creep into per-agent routing (#683) if not separated"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 13,
+    "test_plan": [
+      "Reproduce with text-only model and image block; verify session survives with explicit input config",
+      "Test default behavior for unknown models to confirm current failure"
+    ],
+    "unknowns": [
+      "Maintainer's preferred default policy for unknown models",
+      "Whether per-agent routing (#683) is in scope"
+    ],
+    "why": "Issue describes a real session-breaking bug, but maintainer comment indicates the serializer fix is already in place and the remaining root cause is a capability-default policy decision for unknown models. User comments confirm a workaround exists via per-model input config. No open PR or related issue, but design confirmation is required before implementation."
   },
   "fd47108caeda7314532797a09655a868ff9cb7e4c7f7a2cc8922ebb520281895": {
     "confidence": 0.7,
