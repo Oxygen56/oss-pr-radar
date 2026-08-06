@@ -1,5 +1,5 @@
 {
-  "digest": "b20018b81a746f0d1a295f7c18b9ba4a73f3088fe1ab769f324ab3ba1e095c85",
+  "digest": "bd62b7b962de33b77ae7b7e12e6ecb7a838ec2c6362570c6cd6145b10998c0e3",
   "events": [
     {
       "attempts": 1,
@@ -12203,9 +12203,207 @@
       "runId": "watch-1785998935",
       "sentAt": "2026-08-06T06:54:36.156400Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "aaif-goose/goose#11004"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[aaif-goose/goose#11004](https://github.com/aaif-goose/goose/issues/11004) Local inference silently drops ~27% of GGUF repos because weight filenames must start with the repo name**\n建议：PR_COMPETITION_OPPORTUNITY | 分数：12\n价值：Issue provides a detailed root cause, quantified impact (26.7% of GGUF repos dropped), and a concrete proposed design. Existing PR #11005 is a draft with material gaps (still draft, no maintainer approval), leaving room for a stronger, more complete implementation.\n改动：crates/goose-local-inference/src/hf_models.rs；crates/goose-local-inference/tests/gguf_filename_parsing.rs\n验证：Add regression tests for real filename shapes from Google/Qwen/unsloth/bartowski/MaziyarPanahi/DavidAU repos；Run cargo test -p goose-local-inference；Manual verification: search for gemma-4-26B-A4B-it-qat in desktop UI and confirm variant appears and downloads\n风险：Potential maintainer design preference not yet confirmed；Risk of overlapping with existing PR #11005; need to differentiate or supersede\n竞争：已有直接关联但证据不完整的 PR #11005：仍是 draft；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：先复现 issue，再逐项对比已有 PR 的缺口；只有能提供更小改动、更强测试或更完整边界覆盖时才开 PR。\n证据：复现信号 8，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "green",
+          "title": {
+            "content": "OSS PR Radar: 可立即执行",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-06T08:26:18.893825Z",
+      "eventId": "e02b2806462899bb3f6ff1b0224093065c67805fffd1fc37227de2b9c61d6992",
+      "idempotencyKey": "e02b2806462899bb3f6ff1b0224093065c67805fffd1fc3722",
+      "kind": "immediate",
+      "runId": "scan-20260806T082121Z-11ba2f9e1bb0",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "vercel/ai#18503",
+        "sgl-project/sglang#33789",
+        "sgl-project/sglang#33783"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vercel/ai#18503](https://github.com/vercel/ai/issues/18503) Gateway: DeepSeek thinking cannot be disabled — providerOptions.deepseek.thinking is dropped**\n建议：WAIT_MAINTAINER | 分数：11\n价值：The issue provides strong evidence of a real bug: providerOptions.deepseek.thinking is dropped by the Gateway, causing reasoning to remain enabled. However, the root cause is not yet identified, and the deterministic gate requires HUMAN_REVIEW. The issue is actionable but needs maintainer confirmation on the preferred fix direction.\n改动：Gateway forwarding of providerOptions.deepseek.thinking；Gateway handling of providerOptions.gateway.reasoning；Potential validation of unsupported provider options\n验证：Add a regression test using the provided minimal reproduction to assert that providerOptions.deepseek.thinking is forwarded and honored via the Gateway.；Add a test verifying that providerOptions.gateway.reasoning with enabled:false actually disables reasoning generation, not just hides output.\n风险：Changing Gateway behavior may affect existing users relying on current behavior.；The fix may require coordination with the Gateway backend, which is not fully open-source.\n竞争：未发现相关 open PR\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 6，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33789](https://github.com/sgl-project/sglang/issues/33789) [Bug] NIXL P/D stops serving after one role is replaced**\n建议：WAIT_MAINTAINER | 分数：10\n价值：Issue reports a user-visible bug in NIXL P/D replacement with clear repro steps, but root cause is unknown and open PR/related issue lookups timed out, so duplicate work cannot be excluded.\n改动：NIXL P/D reconnection logic；health reporting for replaced roles；regression test for both replacement directions\n验证：Reproduce with provided steps on SGLang v0.5.16；Add integration test replacing Decode and Prefill separately, verifying service resumes or reports unhealthy\n风险：May require maintainer design decision on expected behavior；Potential duplicate implementation exists but not verifiable due to lookup failures\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 2，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33783](https://github.com/sgl-project/sglang/issues/33783) flush_cache can never succeed while generation is paused with mode=\"retract\"**\n建议：WAIT_MAINTAINER | 分数：9\n价值：Issue provides a clear root cause and a minimal fix, but the existing PR #33784 is a draft lacking tests and has CI failures. Maintainer design preference is unknown, and the issue audit timed out. The candidate is actionable but requires maintainer confirmation and a stronger PR.\n改动：Modify flush_cache to allow flushing while paused with mode='retract'；Add regression tests for flush_cache during retract pause\n验证：Reproduce the issue with the provided scenario and verify flush_cache succeeds；Run existing scheduler and cache tests\n风险：Potential semantic change to flush_cache behavior；Memory usage changes in colocated deployments\n竞争：已有直接关联但证据不完整的 PR #33784：缺少测试文件; 仍是 draft；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 1，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-06T08:26:19.057085Z",
+      "eventId": "dce8456c99c60a70d5e29e6b6052a4d3253de6bc1946ba5efa0107895b5ef3e0",
+      "idempotencyKey": "dce8456c99c60a70d5e29e6b6052a4d3253de6bc1946ba5efa",
+      "kind": "review",
+      "runId": "scan-20260806T082121Z-11ba2f9e1bb0",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "langgenius/dify#39954",
+        "mem0ai/mem0#6783",
+        "vllm-project/vllm#51035",
+        "vllm-project/vllm#51140",
+        "BerriAI/litellm#35711",
+        "BerriAI/litellm#35789",
+        "BerriAI/litellm#35797",
+        "can1357/oh-my-pi#7597"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[langgenius/dify#39954](https://github.com/langgenius/dify/issues/39954) RBAC: GET /datasets/batch_import_status/<job_id> always returns 400 when RBAC_ENABLED**\n建议：WAIT_MAINTAINER\n价值：STRONG_PR_APPEARED\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[mem0ai/mem0#6783](https://github.com/mem0ai/mem0/issues/6783) [Codex plugin] Exported MEM0_API_KEY is filtered before MCP startup in managed environments**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#51035](https://github.com/vllm-project/vllm/issues/51035) [Bug]: DeepSeek-V4 sparse-decode MLA kernel wedges in a spin loop with no timeout and no diagnostic (device-level capture on sm_103; surfaces 300 s later as an unrelated DeepGEMM assert)**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#51140](https://github.com/vllm-project/vllm/issues/51140) [Bug]: Gemma 4 31B | Incoherent responses high context**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#35711](https://github.com/BerriAI/litellm/issues/35711) [Bug]: `ollama/` streaming never reconstructs tool calls — tool call arrives as plain `delta.content` text with `finish_reason: \"stop\"`, while the non-streaming path reconstructs it correctly**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#35789](https://github.com/BerriAI/litellm/issues/35789) [Bug]: Expired UI session tokens pollute SpendLogs — dashboard info-route 401s are recorded as failed LLM requests**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#35797](https://github.com/BerriAI/litellm/issues/35797) [Bug]: Grace periode during key rotation not working `TypeError: Litellm_VerificationTokenView` object**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[can1357/oh-my-pi#7597](https://github.com/can1357/oh-my-pi/issues/7597) grep/glob: semicolon multipath silently collapses to one literal path when the joined string is ENAMETOOLONG**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-06T08:26:19.273604Z",
+      "eventId": "b0c2975c7abbd20366c578582e610efa2b702251d19847830efd96bf51dd7495",
+      "idempotencyKey": "b0c2975c7abbd20366c578582e610efa2b702251d19847830e",
+      "kind": "watch",
+      "runId": "watch-1786004435",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-06T06:53:57.340882Z",
+  "generatedAt": "2026-08-06T08:26:19.416081Z",
   "newEventCount": 0,
   "version": "notification_outbox_v1"
 }
