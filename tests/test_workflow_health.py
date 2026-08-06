@@ -43,6 +43,44 @@ def test_recent_successful_schedule_is_healthy():
     assert result["healthy"] is True
     assert result["githubNaturalScheduleHealthy"] is True
     assert result["naturalScheduleHealthy"] is True
+    assert result["naturalScheduleCoverage"]["assessed"] is False
+
+
+def test_sparse_natural_schedule_coverage_is_reported_without_hiding_freshness():
+    runs = [
+        {
+            "event": "schedule",
+            "conclusion": "success",
+            "created_at": (NOW - timedelta(hours=offset)).isoformat(),
+            "updated_at": (NOW - timedelta(hours=offset) + timedelta(minutes=10)).isoformat(),
+            "html_url": f"https://github.com/a/b/actions/runs/{offset}",
+        }
+        for offset in range(1, 25, 3)
+    ]
+    runs.append(
+        {
+            "event": "workflow_dispatch",
+            "conclusion": "success",
+            "created_at": (NOW - timedelta(hours=25)).isoformat(),
+            "updated_at": (NOW - timedelta(hours=25) + timedelta(minutes=10)).isoformat(),
+            "html_url": "https://github.com/a/b/actions/runs/old",
+        }
+    )
+
+    result = MODULE.health(runs, now=NOW)
+
+    assert result["githubNaturalScheduleHealthy"] is False
+    assert "NATURAL_SCHEDULE_COVERAGE_LOW" in result["issues"]
+    assert "NATURAL_SCHEDULE_GAP_EXCESSIVE" in result["issues"]
+    assert result["naturalScheduleCoverage"] == {
+        "assessed": True,
+        "windowHours": 24,
+        "successfulRuns": 8,
+        "expectedRuns": 24,
+        "minimumRuns": 12,
+        "coverageRatio": 0.333,
+        "maxGapMinutes": 180,
+    }
 
 
 def test_runs_retries_transient_github_api_failure(monkeypatch):

@@ -6,8 +6,15 @@ from pathlib import Path
 
 import pytest
 
-from oss_pr_radar.dispatch import DispatchSigner, SignatureError, verify_queue
+from oss_pr_radar.dispatch import (
+    LEGACY_QUEUE_CONTRACTS,
+    DispatchSigner,
+    SignatureError,
+    canonical_prompt,
+    verify_queue,
+)
 from oss_pr_radar.policy import SCANNER_DECISION_REVISION, decision_contract_digest
+from oss_pr_radar.util import iso_z, sha256_text
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "build_dispatch_intents.py"
 SPEC = importlib.util.spec_from_file_location("build_dispatch_intents", SCRIPT)
@@ -25,6 +32,7 @@ def candidate(**updates):
         "num": 42,
         "url": "https://github.com/example/project/issues/42",
         "title": "Runtime bug",
+        "track": "agent_ai_infra",
         "category": "NEW_CLEAN_CANDIDATE",
         "score": 9,
         "gate_decision": "ALLOW_TO_WORK",
@@ -74,6 +82,32 @@ def test_canary_envelope_carries_narrow_publication_authorization():
     assert intent["autoSubmitAuthorized"] is True
     assert intent["publicationMode"] == "canary"
     assert intent["authorizationSource"] == "signed_live_revalidation_required"
+
+
+def test_algorithm_evidence_is_bound_into_dispatch_intent():
+    algorithm_evidence = {
+        "score": 9,
+        "depth": "high",
+        "mechanisms": ["post_training_objective", "training_optimization"],
+        "mechanism_count": 2,
+        "operational_only": False,
+        "qualified": True,
+    }
+    result = MODULE.build(
+        report(
+            candidate(
+                track="llm_algorithm",
+                algorithm_evidence=algorithm_evidence,
+                actionability_evidence={"public_repro_signals": 2},
+            )
+        ),
+        signing_key=KEY,
+        now=NOW,
+    )
+
+    intent = result["intents"][0]
+    assert intent["track"] == "llm_algorithm"
+    assert intent["algorithmEvidence"] == algorithm_evidence
 
 
 def test_human_review_and_llm_failure_are_not_dispatched():
@@ -220,3 +254,37 @@ def test_tampering_and_expiry_fail_closed():
 
     fresh = MODULE.build(report(candidate()), signing_key=KEY, now=NOW)
     assert verify_queue(fresh, DispatchSigner(KEY), now=NOW + timedelta(hours=3)) == []
+
+
+def test_signed_v4_queue_remains_readable_during_v5_deployment():
+    signer = DispatchSigner(KEY)
+    legacy = LEGACY_QUEUE_CONTRACTS["dispatch_intents_v4"]
+    issue_url = "https://github.com/example/project/issues/42"
+    intent = signer.seal(
+        {
+            "version": legacy["intentVersion"],
+            "intentId": "legacy-intent",
+            "key": "example/project#42",
+            "repo": "example/project",
+            "issueNumber": 42,
+            "issueUrl": issue_url,
+            "scannerVersion": legacy["scannerVersion"],
+            "decisionContractDigest": legacy["decisionContractDigest"],
+            "contractDigest": legacy["contractDigest"],
+            "promptDigest": sha256_text(canonical_prompt(issue_url)),
+            "issuedAt": iso_z(NOW),
+            "expiresAt": iso_z(NOW + timedelta(hours=2)),
+            "status": "PENDING",
+        }
+    )
+    queue = signer.seal(
+        {
+            "version": "dispatch_intents_v4",
+            "scannerVersion": legacy["scannerVersion"],
+            "decisionContractDigest": legacy["decisionContractDigest"],
+            "contractDigest": legacy["contractDigest"],
+            "intents": [intent],
+        }
+    )
+
+    assert verify_queue(queue, signer, now=NOW) == [intent]

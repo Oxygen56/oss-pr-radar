@@ -48,6 +48,9 @@ AI_DISCLOSURE_RE = re.compile(
     r"large language models?|llms?|coding assistants?)|"
     r"\bai (?:tool )?used\b|\bai disclosure\b|"
     r"disclos(?:e|ure).{0,60}(?:significant )?ai assistance|"
+    r"(?:pull requests?|prs?).{0,100}(?:created|generated)\s+by\s+(?:an?\s+)?"
+    r"(?:automated|coding|ai)\s+agents?.{0,160}"
+    r"(?:add|include|specify|state).{0,80}(?:tool name|from\s+<tool name>)|"
     r"(?:new\s+)?branches?\s+(?:should|must|are required to)\s+use\s+"
     r"(?:the\s+)?[`'\"]?codex/",
     re.I | re.S,
@@ -118,6 +121,16 @@ ISSUES_ONLY_RE = re.compile(
 )
 CLA_RE = re.compile(r"\bcontributor license agreement\b|\bCLA\b", re.I)
 DCO_RE = re.compile(r"\bdeveloper certificate of origin\b|\bDCO\b|signed-off-by", re.I)
+NONSTANDARD_AGREEMENT_RE = re.compile(
+    r"(?:by\s+(?:submitting|opening)|when\s+you\s+(?:submit|open)|"
+    r"contribution agreement).{0,240}"
+    r"(?:perpetual|irrevocable).{0,180}(?:transferable|sublicen[sc]able|re-?license)"
+    r".{0,220}(?:commercial|proprietary|any terms)|"
+    r"grant.{0,120}(?:maintainers?|project).{0,180}"
+    r"(?:perpetual|irrevocable).{0,180}(?:transferable|sublicen[sc]able|re-?license)"
+    r".{0,220}(?:commercial|proprietary|any terms)",
+    re.I | re.S,
+)
 
 
 @dataclass(frozen=True)
@@ -138,6 +151,7 @@ class PolicySnapshot:
     unsolicited_pr_blocked: bool
     cla: bool
     dco: bool
+    nonstandard_agreement: bool = False
     error: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
@@ -154,6 +168,7 @@ class PolicyTextClassification:
     unsolicited_pr_blocked: bool
     cla: bool
     dco: bool
+    nonstandard_agreement: bool
 
 
 def is_policy_path(path: str) -> bool:
@@ -168,6 +183,33 @@ def is_policy_path(path: str) -> bool:
 
 
 def select_policy_entries(tree: list[dict[str, Any]], limit: int = 24) -> list[dict[str, Any]]:
+    def priority(item: dict[str, Any]) -> tuple[int, int, str]:
+        path = str(item["path"]).casefold()
+        name = PurePosixPath(path).name
+        if "pull_request_template" in path or name.startswith("ai_") or name.startswith("ai-"):
+            rank = 0
+        elif "/" not in path and name in {
+            "contributing.md",
+            "contributing.rst",
+            "contributors.md",
+            "cla.md",
+            "dco.md",
+            "license",
+            "license.md",
+        }:
+            rank = 1
+        elif name in {"cla.md", "dco.md", "ai_disclosure.md"}:
+            rank = 2
+        elif name == "agents.md" and "/" not in path:
+            rank = 3
+        elif name == "agents.md":
+            rank = 5
+        elif path.startswith("docs/"):
+            rank = 6
+        else:
+            rank = 4
+        return rank, len(path), path
+
     return sorted(
         (
             item
@@ -176,7 +218,7 @@ def select_policy_entries(tree: list[dict[str, Any]], limit: int = 24) -> list[d
             and isinstance(item.get("path"), str)
             and is_policy_path(item["path"])
         ),
-        key=lambda item: (len(str(item["path"])), str(item["path"])),
+        key=priority,
     )[:limit]
 
 
@@ -188,6 +230,7 @@ def classify_policy_text(text: str) -> PolicyTextClassification:
         unsolicited_pr_blocked=bool(NO_UNSOLICITED_RE.search(text) or ISSUES_ONLY_RE.search(text)),
         cla=bool(CLA_RE.search(text)),
         dco=bool(DCO_RE.search(text)),
+        nonstandard_agreement=bool(NONSTANDARD_AGREEMENT_RE.search(text)),
     )
 
 
@@ -198,8 +241,13 @@ def submission_policy_from_text(text: str, static_rule: str = "normal") -> str:
     )
     needs_assignment = static_rule == "needs_assignment" or flags.assignment_required
     contributions_closed = static_rule == "contributions_closed" or flags.unsolicited_pr_blocked
+    nonstandard_agreement = (
+        static_rule == "nonstandard_contribution_agreement" or flags.nonstandard_agreement
+    )
     if contributions_closed:
         return "contributions_closed"
+    if nonstandard_agreement:
+        return "nonstandard_contribution_agreement"
     if has_ai_policy and needs_assignment:
         return "ai_disclosure_and_assignment"
     if has_ai_policy:
@@ -237,6 +285,8 @@ def discover_policy(client: GitHubClient, repo: str) -> PolicySnapshot:
         status = (
             "CONTRIBUTIONS_CLOSED"
             if flags.unsolicited_pr_blocked
+            else "LEGAL_POLICY_REVIEW"
+            if flags.nonstandard_agreement
             else "AI_POLICY_REVIEW"
             if flags.ai_disclosure or flags.ai_prohibited
             else "NORMAL"
@@ -253,6 +303,7 @@ def discover_policy(client: GitHubClient, repo: str) -> PolicySnapshot:
                     flags.unsolicited_pr_blocked,
                     flags.cla,
                     flags.dco,
+                    flags.nonstandard_agreement,
                 ],
             }
         )
@@ -266,6 +317,7 @@ def discover_policy(client: GitHubClient, repo: str) -> PolicySnapshot:
             unsolicited_pr_blocked=flags.unsolicited_pr_blocked,
             cla=flags.cla,
             dco=flags.dco,
+            nonstandard_agreement=flags.nonstandard_agreement,
         )
     except GitHubError as exc:
         return PolicySnapshot(
@@ -278,5 +330,6 @@ def discover_policy(client: GitHubClient, repo: str) -> PolicySnapshot:
             unsolicited_pr_blocked=False,
             cla=False,
             dco=False,
+            nonstandard_agreement=False,
             error=str(exc)[:300],
         )

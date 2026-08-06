@@ -8,9 +8,9 @@ from typing import Any
 from .util import sha256_json
 
 SCAN_SCHEMA = "oss-pr-radar.scan.v2"
-CANDIDATE_SCHEMA = "oss-pr-radar.candidate.v2"
+CANDIDATE_SCHEMA = "oss-pr-radar.candidate.v3"
 EVIDENCE_SCHEMA = "oss-pr-radar.evidence.v1"
-CONTRACT_REVISION = "trust-core-v4-scan-observability"
+CONTRACT_REVISION = "trust-core-v5-llm-algorithm-track"
 
 CONTRACT_MANIFEST = {
     "scanSchema": SCAN_SCHEMA,
@@ -18,6 +18,7 @@ CONTRACT_MANIFEST = {
     "evidenceSchema": EVIDENCE_SCHEMA,
     "revision": CONTRACT_REVISION,
     "llmPositiveAuthorization": False,
+    "tracks": ["agent_ai_infra", "llm_algorithm"],
     "requiredEvidence": [
         "issue",
         "comments",
@@ -72,6 +73,24 @@ def validate_candidate(candidate: dict[str, Any]) -> None:
         "candidate.url must be a GitHub URL",
     )
     _require(isinstance(candidate.get("auto_spawn"), bool), "candidate.auto_spawn must be boolean")
+    track = str(candidate.get("track") or "")
+    _require(track in {"agent_ai_infra", "llm_algorithm"}, "candidate.track is invalid")
+    if track == "llm_algorithm":
+        algorithm = candidate.get("algorithm_evidence")
+        _require(isinstance(algorithm, dict), "algorithm candidate requires algorithm_evidence")
+        _require(algorithm.get("qualified") is True, "algorithm evidence must be qualified")
+        _require(
+            int(algorithm.get("score") or 0) >= 7,
+            "algorithm evidence score is below threshold",
+        )
+        _require(
+            int(algorithm.get("mechanism_count") or 0) >= 1,
+            "algorithm candidate requires a concrete mechanism",
+        )
+        _require(
+            algorithm.get("operational_only") is False,
+            "operational-only work cannot enter the algorithm track",
+        )
     review = candidate.get("llm_review")
     _require(isinstance(review, dict), "candidate.llm_review is required")
     if candidate["auto_spawn"]:
@@ -98,6 +117,10 @@ def validate_report(report: dict[str, Any], *, require_v2: bool = False) -> Repo
         _require(report.get("contract_digest") == contract_digest(), "stale decision contract")
         _require(bool(report.get("run_id")), "run_id is required")
         _require(bool(report.get("snapshot_id")), "snapshot_id is required")
+        _require(
+            report.get("tracks") == ["agent_ai_infra", "llm_algorithm"],
+            "scan tracks are incomplete",
+        )
         timings = report.get("timings_seconds")
         _require(isinstance(timings, dict), "timings_seconds is required")
         _require(

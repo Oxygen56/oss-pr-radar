@@ -10,9 +10,9 @@ from pathlib import Path
 from typing import Any
 
 POLICY_VERSION = "submit_ready_quality_v1"
-SCANNER_DECISION_REVISION = "oss_pr_radar_v27_ci_neutral_competition"
+SCANNER_DECISION_REVISION = "oss_pr_radar_v29_pre_dispatch_hardening"
 DISPATCH_DECISION_REVISION = "signed_intent_v8_durable_creation"
-DECISION_CONTRACT_SCHEMA = 4
+DECISION_CONTRACT_SCHEMA = 5
 DECISION_CONTRACT_MANIFEST = {
     "schema": DECISION_CONTRACT_SCHEMA,
     "policyVersion": POLICY_VERSION,
@@ -21,6 +21,7 @@ DECISION_CONTRACT_MANIFEST = {
     "tiers": ["TIER_A", "BUILD_AND_HOLD", "WATCH", "DROP"],
     "northStar": "rolling_submit_ready_rate",
     "externalMergeCountIsKpi": False,
+    "tracks": ["agent_ai_infra", "llm_algorithm"],
     "calibration": {
         "requiredMature": 50,
         "requiredPrecision": 0.80,
@@ -150,6 +151,17 @@ def predict_candidate(
         return Prediction("WATCH", "POLICY_BLOCKED")
     if candidate.get("hardware_compatible") is not True:
         return Prediction("WATCH", "HARDWARE_BLOCKED")
+    if candidate.get("track") == "llm_algorithm":
+        algorithm = candidate.get("algorithm_evidence")
+        if not isinstance(algorithm, dict):
+            return Prediction("DROP", "ALGORITHM_EVIDENCE_MISSING")
+        if (
+            algorithm.get("qualified") is not True
+            or algorithm.get("operational_only") is not False
+            or int(algorithm.get("score") or 0) < 7
+            or int(algorithm.get("mechanism_count") or 0) < 1
+        ):
+            return Prediction("DROP", "ALGORITHM_EVIDENCE_WEAK")
     clean_candidate = bool(category == "NEW_CLEAN_CANDIDATE" and gate == "ALLOW_TO_WORK")
     if not private_only and not clean_candidate and not weak_competition:
         return Prediction("WATCH", "RADAR_GATE_NOT_CLEAN")

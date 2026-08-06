@@ -60,24 +60,31 @@ def advance_once(
     root = root.resolve()
     ingestion = runner(root, "ingest-results")
     publication = runner(root, "publication-run")
+    published = list(publication.get("published") or [])
+    context_sync = (
+        runner(root, "context-sync") if published else {"ok": True, "written": [], "errors": []}
+    )
 
     errors = [
         *list(ingestion.get("errors") or []),
         *list(publication.get("errors") or []),
+        *list(context_sync.get("errors") or []),
     ]
     ingested = list(ingestion.get("ingested") or [])
     requests = list(ingestion.get("publicationRequests") or [])
-    published = list(publication.get("published") or [])
     blocked = list(publication.get("blocked") or [])
     pending = list(publication.get("pending") or [])
     activity = bool(ingested or requests or published or blocked or errors)
     return {
-        "ok": not errors and ingestion.get("ok") is not False
-        and publication.get("ok") is not False,
+        "ok": not errors
+        and ingestion.get("ok") is not False
+        and publication.get("ok") is not False
+        and context_sync.get("ok") is not False,
         "activity": activity,
         "resultsIngested": ingested,
         "publicationRequests": requests,
         "published": published,
+        "contextsSynced": list(context_sync.get("written") or []),
         "pending": pending,
         "blocked": blocked,
         "errors": errors,

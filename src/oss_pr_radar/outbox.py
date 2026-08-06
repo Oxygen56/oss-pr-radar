@@ -8,7 +8,33 @@ from typing import Any
 from .notifier import candidate_card
 from .util import iso_z, parse_time, sha256_json
 
-OUTBOX_VERSION = "notification_outbox_v1"
+OUTBOX_VERSION = "notification_outbox_v2"
+LEGACY_OUTBOX_VERSION = "notification_outbox_v1"
+EVENT_RETENTION_DAYS = 7
+STATE_RETENTION_DAYS = 180
+
+
+def _candidate_state(item: dict[str, Any], *, kind: str) -> dict[str, str]:
+    value = {
+        "key": f"{item['repo']}#{item['num']}",
+        "digest": str(item.get("notification_digest") or item.get("evidence_digest") or ""),
+        "category": str(item.get("category") or ""),
+        "kind": kind,
+    }
+    value["stateId"] = sha256_json(value)
+    return value
+
+
+def _state_index_key(kind: str, key: str) -> str:
+    return f"{kind}|{key}"
+
+
+def _valid_seen_at(value: Any, *, keep_after: datetime) -> str | None:
+    try:
+        parsed = parse_time(str(value))
+    except (TypeError, ValueError):
+        return None
+    return iso_z(parsed) if parsed >= keep_after else None
 
 
 def build_outbox(
@@ -20,17 +46,55 @@ def build_outbox(
     exclude_candidate_keys: set[str] | None = None,
 ) -> dict[str, Any]:
     current = (now or datetime.now(UTC)).astimezone(UTC)
-    keep_after = current - timedelta(days=7)
+    keep_after = current - timedelta(days=EVENT_RETENTION_DAYS)
+    keep_state_after = current - timedelta(days=STATE_RETENTION_DAYS)
     retained: dict[str, dict[str, Any]] = {}
-    if isinstance(existing, dict) and existing.get("version") == OUTBOX_VERSION:
+    state_index: dict[str, dict[str, str | bool]] = {}
+    if isinstance(existing, dict) and existing.get("version") in {
+        OUTBOX_VERSION,
+        LEGACY_OUTBOX_VERSION,
+    }:
+        existing_index = existing.get("candidateStateIndex")
+        if isinstance(existing_index, dict):
+            for index_key, entry in existing_index.items():
+                if not isinstance(index_key, str) or not isinstance(entry, dict):
+                    continue
+                seen_at = _valid_seen_at(entry.get("seenAt"), keep_after=keep_state_after)
+                state_id = entry.get("stateId")
+                if seen_at and isinstance(state_id, str) and state_id:
+                    state_index[index_key] = {"stateId": state_id, "seenAt": seen_at}
         for event in existing.get("events") or []:
             if not isinstance(event, dict):
                 continue
             try:
-                if parse_time(str(event["createdAt"])) >= keep_after:
+                created_at = parse_time(str(event["createdAt"]))
+                if created_at >= keep_after:
                     retained[str(event["eventId"])] = event
             except (KeyError, TypeError, ValueError):
                 continue
+            if created_at < keep_state_after:
+                continue
+            event_kind = str(event.get("kind") or "")
+            seen_at = iso_z(created_at)
+            states = event.get("candidateStates")
+            if isinstance(states, list):
+                for state in states:
+                    if not isinstance(state, dict):
+                        continue
+                    key = str(state.get("key") or "")
+                    state_id = str(state.get("stateId") or "")
+                    if key and state_id:
+                        state_index[_state_index_key(event_kind, key)] = {
+                            "stateId": state_id,
+                            "seenAt": seen_at,
+                        }
+            else:
+                for key in event.get("candidateKeys") or []:
+                    if key:
+                        state_index[_state_index_key(event_kind, str(key))] = {
+                            "legacy": True,
+                            "seenAt": seen_at,
+                        }
     excluded = exclude_candidate_keys or set()
     candidates = [
         item
@@ -42,19 +106,26 @@ def build_outbox(
             if kind == "immediate"
             else not bool(item.get("auto_spawn"))
         )
+        and (kind != "watch" or item.get("notify") is True)
     ]
+    candidates.sort(key=lambda item: f"{item['repo']}#{item['num']}")
+    candidate_states = [_candidate_state(item, kind=kind) for item in candidates]
+    new_pairs: list[tuple[dict[str, Any], dict[str, str]]] = []
+    for item, state in zip(candidates, candidate_states, strict=True):
+        index_key = _state_index_key(kind, state["key"])
+        previous = state_index.get(index_key)
+        if not previous or (
+            previous.get("stateId") != state["stateId"] and previous.get("legacy") is not True
+        ):
+            new_pairs.append((item, state))
+        state_index[index_key] = {"stateId": state["stateId"], "seenAt": iso_z(current)}
+    candidates = [item for item, _state in new_pairs]
+    candidate_states = [state for _item, state in new_pairs]
     new_count = 0
     if candidates:
         basis = {
             "kind": kind,
-            "candidates": [
-                {
-                    "key": f"{item['repo']}#{item['num']}",
-                    "digest": item.get("notification_digest") or item.get("evidence_digest"),
-                    "category": item.get("category"),
-                }
-                for item in candidates
-            ],
+            "candidateStateIds": [state["stateId"] for state in candidate_states],
         }
         event_id = sha256_json(basis)
         if event_id not in retained:
@@ -66,11 +137,12 @@ def build_outbox(
                 "attempts": 0,
                 "createdAt": iso_z(current),
                 "runId": report.get("run_id"),
-                "candidateKeys": [item["key"] for item in basis["candidates"]],
+                "candidateKeys": [state["key"] for state in candidate_states],
+                "candidateStates": candidate_states,
                 "card": candidate_card(
                     candidates,
                     title=(
-                        "OSS PR Radar: 可立即执行"
+                        "OSS PR Radar: 已进入自动派发队列"
                         if kind == "immediate"
                         else "OSS PR Radar: 需要确认"
                         if kind == "review"
@@ -83,6 +155,7 @@ def build_outbox(
         "version": OUTBOX_VERSION,
         "generatedAt": iso_z(current),
         "events": sorted(retained.values(), key=lambda item: item["createdAt"]),
+        "candidateStateIndex": dict(sorted(state_index.items())),
         "newEventCount": new_count,
     }
     result["digest"] = sha256_json({key: value for key, value in result.items() if key != "digest"})

@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import asdict, dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any, Iterable
+
+from .util import parse_time
 
 WORD_RE = re.compile(r"[a-z][a-z0-9_+-]{2,}", re.I)
 STOP = {
@@ -26,6 +29,7 @@ STOP = {
     "update",
     "add",
 }
+ACTIVE_EXACT_PR_WINDOW = timedelta(days=30)
 
 
 @dataclass(frozen=True)
@@ -59,6 +63,16 @@ def _overlap(left: str, right: str) -> float:
     return len(lterms & rterms) / len(lterms | rterms)
 
 
+def _active_exact_pr(updated_at: str, *, now: datetime) -> bool:
+    if not updated_at:
+        # Missing freshness evidence cannot justify creating a competing PR.
+        return True
+    try:
+        return parse_time(updated_at) >= now - ACTIVE_EXACT_PR_WINDOW
+    except (TypeError, ValueError):
+        return True
+
+
 def assess_relations(
     *,
     repo: str,
@@ -67,6 +81,7 @@ def assess_relations(
     pull_requests: Iterable[dict[str, Any]],
 ) -> list[PullRelation]:
     relations: list[PullRelation] = []
+    now = datetime.now(UTC)
     exact_patterns = (
         re.compile(
             rf"\b(?:fixe[sd]?|close[sd]?|resolve[sd]?|address(?:e[sd])?|refs?|references?)"
@@ -113,14 +128,13 @@ def assess_relations(
             pr.get("author_association") or pr.get("authorAssociation") or ""
         ).upper()
         maintainer_owned = author_association in {"OWNER", "MEMBER", "COLLABORATOR"}
+        updated_at = str(pr.get("updated_at") or pr.get("updatedAt") or "")
         if exact and merged:
             relation = "STRONG_MERGED_COVERAGE"
         elif (
             exact
             and state == "OPEN"
-            and has_tests
-            and not draft
-            and (checks_green is True or maintainer_approved or maintainer_owned)
+            and (_active_exact_pr(updated_at, now=now) or maintainer_approved or maintainer_owned)
         ):
             relation = "STRONG_EXACT_DUPLICATE"
         elif exact and state == "OPEN":
@@ -145,7 +159,7 @@ def assess_relations(
                 draft=draft,
                 state=state,
                 merged=merged,
-                updated_at=str(pr.get("updated_at") or pr.get("updatedAt") or ""),
+                updated_at=updated_at,
             )
         )
     return relations

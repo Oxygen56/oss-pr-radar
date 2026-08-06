@@ -33,6 +33,7 @@ def evidence(body: str) -> EvidenceBundle:
 
 def candidate() -> dict:
     return {
+        "track": "agent_ai_infra",
         "category": "NEW_CLEAN_CANDIDATE",
         "gate_decision": "ALLOW_TO_WORK",
         "auto_spawn": True,
@@ -62,3 +63,42 @@ def test_actual_security_vulnerability_is_blocked():
 
     assert result.status == "BLOCK"
     assert result.reason_code == "SECURITY_SENSITIVE"
+
+
+def test_live_gate_rejects_weak_algorithm_snapshot():
+    value = candidate()
+    value.update(
+        {
+            "track": "llm_algorithm",
+            "algorithm_evidence": {
+                "score": 5,
+                "mechanism_count": 1,
+                "qualified": False,
+                "operational_only": True,
+            },
+        }
+    )
+
+    result = authorize(value, evidence("A normal training bug report."))
+
+    assert result.status == "BLOCK"
+    assert result.reason_code == "ALGORITHM_EVIDENCE_WEAK"
+
+
+def test_live_gate_blocks_nonstandard_contribution_agreement():
+    current = evidence("A normal runtime bug report.")
+    value = EvidenceBundle(
+        **{
+            **current.__dict__,
+            "policy": current.policy
+            | {
+                "status": "LEGAL_POLICY_REVIEW",
+                "nonstandard_agreement": True,
+            },
+        }
+    )
+
+    result = authorize(candidate(), value)
+
+    assert result.status == "BLOCK"
+    assert result.reason_code == "NONSTANDARD_CONTRIBUTION_AGREEMENT"

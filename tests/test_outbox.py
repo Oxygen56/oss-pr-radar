@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -42,6 +42,123 @@ def test_review_and_immediate_are_separate():
     review = build_outbox(report, now=NOW, kind="review")
     assert immediate["events"][0]["candidateKeys"] == ["a/b#1"]
     assert review["events"][0]["candidateKeys"] == ["a/b#2"]
+
+
+def test_candidate_is_not_resent_when_only_the_surrounding_cohort_changes():
+    first = build_outbox(
+        {"candidate_details": [candidate()]},
+        now=NOW,
+        kind="immediate",
+    )
+    second = build_outbox(
+        {
+            "candidate_details": [
+                candidate(),
+                candidate(num=2, key="a/b#2", evidence_digest="evidence-2"),
+            ]
+        },
+        first,
+        now=NOW,
+        kind="immediate",
+    )
+
+    assert second["newEventCount"] == 1
+    assert second["events"][-1]["candidateKeys"] == ["a/b#2"]
+
+
+def test_candidate_material_state_change_can_be_notified_again():
+    first = build_outbox(
+        {"candidate_details": [candidate()]},
+        now=NOW,
+        kind="immediate",
+    )
+    second = build_outbox(
+        {"candidate_details": [candidate(evidence_digest="new-evidence")]},
+        first,
+        now=NOW,
+        kind="immediate",
+    )
+
+    assert second["newEventCount"] == 1
+    assert len(second["events"]) == 2
+
+
+def test_candidate_dedup_survives_event_retention_cleanup():
+    first = build_outbox(
+        {"candidate_details": [candidate()]},
+        now=NOW,
+        kind="immediate",
+    )
+    second = build_outbox(
+        {"candidate_details": [candidate()]},
+        first,
+        now=NOW + timedelta(days=8),
+        kind="immediate",
+    )
+
+    assert second["newEventCount"] == 0
+    assert second["events"] == []
+    assert len(second["candidateStateIndex"]) == 1
+
+
+def test_material_change_after_event_cleanup_is_notified():
+    first = build_outbox(
+        {"candidate_details": [candidate()]},
+        now=NOW,
+        kind="immediate",
+    )
+    second = build_outbox(
+        {"candidate_details": [candidate(evidence_digest="new-evidence")]},
+        first,
+        now=NOW + timedelta(days=8),
+        kind="immediate",
+    )
+
+    assert second["newEventCount"] == 1
+    assert second["events"][0]["candidateKeys"] == ["a/b#1"]
+
+
+def test_legacy_outbox_suppresses_one_time_migration_resend():
+    legacy = {
+        "version": "notification_outbox_v1",
+        "events": [
+            {
+                "eventId": "legacy-event",
+                "kind": "immediate",
+                "createdAt": "2026-08-04T00:00:00Z",
+                "candidateKeys": ["a/b#1"],
+            }
+        ],
+    }
+
+    migrated = build_outbox(
+        {"candidate_details": [candidate(evidence_digest="changed")]},
+        legacy,
+        now=NOW,
+        kind="immediate",
+    )
+
+    assert migrated["version"] == "notification_outbox_v2"
+    assert migrated["newEventCount"] == 0
+
+
+def test_watch_outbox_only_sends_actionable_updates():
+    report = {
+        "candidate_details": [
+            candidate(auto_spawn=False, notify=False),
+            candidate(
+                num=2,
+                key="a/b#2",
+                auto_spawn=False,
+                notify=True,
+                evidence_digest="green-light",
+            ),
+        ]
+    }
+
+    outbox = build_outbox(report, now=NOW, kind="watch")
+
+    assert outbox["events"][0]["candidateKeys"] == ["a/b#2"]
 
 
 def test_excluded_candidate_is_not_added_twice():

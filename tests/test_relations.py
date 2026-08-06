@@ -1,7 +1,7 @@
 from oss_pr_radar.relations import assess_relations
 
 
-def test_strong_exact_pr_requires_tests_and_green_checks():
+def test_active_exact_pr_blocks_regardless_of_review_quality():
     result = assess_relations(
         repo="a/b",
         issue_number=7,
@@ -20,12 +20,30 @@ def test_strong_exact_pr_requires_tests_and_green_checks():
     assert result[0].relation == "STRONG_EXACT_DUPLICATE"
 
 
-def test_exact_draft_without_tests_is_weak():
+def test_active_exact_draft_without_tests_is_still_duplicate():
     result = assess_relations(
         repo="a/b",
         issue_number=7,
         issue_title="Streaming bug",
         pull_requests=[{"number": 9, "body": "Fixes #7", "title": "Fix", "draft": True}],
+    )
+    assert result[0].relation == "STRONG_EXACT_DUPLICATE"
+
+
+def test_stale_exact_pr_without_maintainer_signal_can_be_competitive():
+    result = assess_relations(
+        repo="a/b",
+        issue_number=7,
+        issue_title="Streaming bug",
+        pull_requests=[
+            {
+                "number": 9,
+                "body": "Fixes #7",
+                "title": "Fix",
+                "draft": True,
+                "updated_at": "2000-01-01T00:00:00Z",
+            }
+        ],
     )
     assert result[0].relation == "WEAK_OR_PARTIAL_EXACT"
 

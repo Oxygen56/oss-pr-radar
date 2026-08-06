@@ -22,8 +22,15 @@ timing are external labels, not the north-star metric.
    competing PR without a material root-cause, critical-path, or test gap.
 3. **Decision** applies hard gates first. DeepSeek may reject, downgrade, or
    classify semantic competition; it cannot produce a positive authorization.
+   `llm_algorithm` is a separate track whose snapshot must bind concrete
+   mechanism evidence and a reference, numerical, or controlled-experiment
+   validation path. Repository identity alone never qualifies algorithm work.
 4. **Cloud handoff** validates the immutable report and signs a promptless,
-   expiring intent with HMAC. Notification messages use a durable outbox.
+   expiring intent with HMAC. The signed intent preserves the selected track and
+   algorithm evidence. Cloud notifications use a durable, per-candidate-state
+   outbox only for maintainer decisions and actionable status changes; a clean
+   candidate is not announced as dispatched until the local controller records
+   the real Codex task.
 5. **Local authorization** verifies the signature, leases an intent in SQLite,
    repeats all live gates, and creates the canonical prompt locally. Before
    calling the desktop task API it records `CREATING`; the returned
@@ -37,10 +44,16 @@ timing are external labels, not the north-star metric.
    prompt, repository origin, and a previously unbound worktree identify
    exactly one task. `CREATING` does not expire with the lease, so a late task
    cannot race a replacement.
-7. **Delivery** gives the child a Git-ignored workspace context. The child
-   writes either `AUDIT_NO_GO` or SubmitReady evidence locally and never opens
-   the external ledger or performs public actions. The controller validates and
-   ingests that result; only SubmitReady evidence can create a publication request.
+7. **Delivery** gives the child a Git-ignored workspace context containing the
+   controller-captured issue, comments, ownership, related-PR, policy, and
+   hardware evidence. The child treats that snapshot as untrusted data, never
+   requests network or elevated permission, writes either `AUDIT_NO_GO` or
+   SubmitReady evidence locally, and never opens the external ledger, writes Git
+   metadata, or performs public actions. For `FIX_READY`, the child leaves an
+   exact changed-file allowlist plus proposed branch and commit message. The
+   controller validates that allowlist, creates the local commit, and ingests the
+   result. A late AI-disclosure finding remains a local-fix outcome and cannot
+   create a publication request.
 8. **Publication** rechecks the exact clean commit, branch, diff, evidence,
    ownership, duplicates, policy, DCO, identity, fork owner, base branch, PR
    title, and PR body digest. A permit expires quickly and is consumed by the
@@ -80,8 +93,10 @@ assignment requirement by only one stage. Explicit issues-only contribution
 policies, including `CONTRIBUTORS.md` rules that accept issues or prompts but
 reject source pull requests, are hard-blocked before dispatch.
 
-Actionable opportunities remain in the watchlist and signed queue while they
-wait behind the WIP limit. Hourly watch evidence forces a rescan on ownership,
+Actionable opportunities remain in the watchlist and signed queue until local
+dispatch. Private Codex task concurrency is independent of publication rollout
+mode; an optional `RADAR_MAX_ACTIVE_TASKS` limit can be set explicitly, while
+the default does not serialize investigations. Hourly watch evidence forces a rescan on ownership,
 closure, strong-PR, or policy changes. Duplicate suppression and transient API
 failures do not withdraw an otherwise-valid intent; every task and publication
 still performs its own live gate.

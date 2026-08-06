@@ -199,6 +199,7 @@ def recheck_watchlist(
                 "category": "WAIT_MAINTAINER",
                 "score": None,
                 "auto_spawn": False,
+                "notify": item["reasonCode"] == "MAINTAINER_GREEN_LIGHT",
                 "why": item["reasonCode"],
                 "test_path": "重新运行完整扫描和贡献规则检查",
                 "evidence_digest": item["latestEvidenceDigest"],

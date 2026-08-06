@@ -33,7 +33,7 @@ def runs(repo: str) -> list[dict]:
                     "GET",
                     f"repos/{repo}/actions/workflows/radar.yml/runs",
                     "-f",
-                    "per_page=20",
+                    "per_page=100",
                 ],
                 check=False,
                 capture_output=True,
@@ -65,6 +65,31 @@ def health(workflow_runs: list[dict], *, now: datetime | None = None) -> dict:
         issues.append("SUCCESSFUL_SCHEDULE_STALE")
     if sum(item.get("conclusion") == "failure" for item in scheduled[:3]) >= 2:
         issues.append("REPEATED_SCHEDULE_FAILURE")
+
+    coverage_window = timedelta(hours=24)
+    window_start = current - coverage_window
+    run_times = [parse_time(item["created_at"]) for item in workflow_runs if item.get("created_at")]
+    coverage_assessed = bool(run_times and min(run_times) <= window_start)
+    successful_times = sorted(
+        parse_time(item["created_at"])
+        for item in successful
+        if item.get("created_at") and parse_time(item["created_at"]) >= window_start
+    )
+    expected_runs = 24
+    minimum_runs = 12
+    coverage_ratio = min(1.0, len(successful_times) / expected_runs)
+    gap_points = [window_start, *successful_times, current]
+    max_gap_minutes = max(
+        (
+            int((right - left).total_seconds() // 60)
+            for left, right in zip(gap_points, gap_points[1:], strict=False)
+        ),
+        default=None,
+    )
+    if coverage_assessed and len(successful_times) < minimum_runs:
+        issues.append("NATURAL_SCHEDULE_COVERAGE_LOW")
+    if coverage_assessed and max_gap_minutes is not None and max_gap_minutes > 150:
+        issues.append("NATURAL_SCHEDULE_GAP_EXCESSIVE")
     return {
         "healthy": not issues,
         "issues": issues,
@@ -76,6 +101,15 @@ def health(workflow_runs: list[dict], *, now: datetime | None = None) -> dict:
         "naturalScheduleIssues": issues,
         "latestScheduleUrl": latest_schedule.get("html_url") if latest_schedule else None,
         "latestSuccessUrl": latest_success.get("html_url") if latest_success else None,
+        "naturalScheduleCoverage": {
+            "assessed": coverage_assessed,
+            "windowHours": 24,
+            "successfulRuns": len(successful_times),
+            "expectedRuns": expected_runs,
+            "minimumRuns": minimum_runs,
+            "coverageRatio": round(coverage_ratio, 3),
+            "maxGapMinutes": max_gap_minutes,
+        },
         "checkedAt": current.isoformat().replace("+00:00", "Z"),
     }
 

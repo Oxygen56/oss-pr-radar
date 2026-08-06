@@ -9,10 +9,11 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sqlite3
 import subprocess
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from time import monotonic, sleep
 from typing import Any
@@ -26,9 +27,14 @@ from oss_pr_radar.evidence import collect_evidence  # noqa: E402
 from oss_pr_radar.github_client import GitHubClient  # noqa: E402
 from oss_pr_radar.ledger import RadarLedger  # noqa: E402
 from oss_pr_radar.metrics import assess_submit_ready, rolling_quality  # noqa: E402
-from oss_pr_radar.notifier import FeishuClient, NotificationError  # noqa: E402
-from oss_pr_radar.publication import broker_publication_request, request_publication  # noqa: E402
-from oss_pr_radar.util import parse_time, sha256_json  # noqa: E402
+from oss_pr_radar.notifier import FeishuClient, NotificationError, candidate_card  # noqa: E402
+from oss_pr_radar.publication import (  # noqa: E402
+    broker_publication_request,
+    public_branch_is_safe,
+    public_text_is_safe,
+    request_publication,
+)
+from oss_pr_radar.util import iso_z, parse_time, sha256_json  # noqa: E402
 
 STATE = ROOT / "state"
 LEDGER_PATH = STATE / "radar_ledger.sqlite3"
@@ -134,21 +140,37 @@ def source_repo(repo: str) -> Path:
         except RuntimeError:
             continue
         if normalize_origin(origin) == repo.casefold():
-            command(["git", "fetch", "--prune", "origin"], cwd=path)
+            command(
+                ["git", "fetch", "--prune", "--no-tags", "--filter=blob:none", "origin"],
+                cwd=path,
+                timeout=180,
+            )
             return path.resolve()
     destination = GITHUB_ROOT / repo.rsplit("/", 1)[1]
     if destination.exists():
         destination = GITHUB_ROOT / repo.replace("/", "--")
-    command(
-        [
-            "git",
-            "clone",
-            "--filter=blob:none",
-            f"https://github.com/{repo}.git",
-            str(destination),
-        ],
-        timeout=900,
-    )
+    clone_target = destination.with_name(f".{destination.name}.radar-clone-{os.getpid()}")
+    try:
+        command(
+            [
+                "git",
+                "clone",
+                "--depth=1",
+                "--single-branch",
+                "--no-tags",
+                "--filter=blob:none",
+                f"https://github.com/{repo}.git",
+                str(clone_target),
+            ],
+            timeout=180,
+        )
+        if destination.exists():
+            shutil.rmtree(clone_target, ignore_errors=True)
+            return source_repo(repo)
+        clone_target.replace(destination)
+    except Exception:
+        shutil.rmtree(clone_target, ignore_errors=True)
+        raise
     return destination.resolve()
 
 
@@ -241,7 +263,7 @@ def dispatch_alerts(args: argparse.Namespace) -> dict[str, Any]:
         else:
             card = {
                 "header": {
-                    "title": {"tag": "plain_text", "content": "OSS PR Radar 派发超时"},
+                    "title": {"tag": "plain_text", "content": "OSS PR Radar 派发异常"},
                     "template": "red",
                 },
                 "elements": [
@@ -251,7 +273,8 @@ def dispatch_alerts(args: argparse.Namespace) -> dict[str, Any]:
                             "tag": "lark_md",
                             "content": "\n".join(
                                 f"**[{item['key']}]({item['issueUrl']})**："
-                                f"等待 {item['pendingAgeMinutes']} 分钟，{item['alertCode']}"
+                                f"{item['alertCode']}，已持续 "
+                                f"{item['pendingAgeMinutes']} 分钟"
                                 for item in public
                             ),
                         },
@@ -279,17 +302,121 @@ def dispatch_alerts(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def dispatch_notifications(args: argparse.Namespace) -> dict[str, Any]:
+    store = ledger(args.ledger)
+    candidates = store.dispatch_notification_candidates()
+    if not candidates or not args.notify:
+        return {"ok": True, "pending": candidates, "notified": [], "errors": []}
+    app_id = os.environ.get("FEISHU_APP_ID")
+    app_secret = os.environ.get("FEISHU_APP_SECRET")
+    chat_id = os.environ.get("FEISHU_CHAT_ID")
+    if not app_id or not app_secret or not chat_id:
+        return {
+            "ok": False,
+            "pending": candidates,
+            "notified": [],
+            "errors": [{"error": "feishu_credentials_not_configured"}],
+        }
+    client = FeishuClient(app_id, app_secret, chat_id)
+    notified: list[dict[str, str]] = []
+    errors: list[dict[str, str]] = []
+    for item in candidates:
+        idempotency_key = sha256_json(
+            {
+                "kind": "codex_thread_created_v1",
+                "threadId": item["threadId"],
+            }
+        )
+        card = candidate_card(
+            [
+                {
+                    "repo": item["repo"],
+                    "num": item["issueNumber"],
+                    "url": item["issueUrl"],
+                    "title": item["title"],
+                    "category": "CODEX_TASK_CREATED",
+                    "auto_spawn": True,
+                    "next_step": "Codex 会话已创建，正在本地审计与实现",
+                }
+            ],
+            title="OSS PR Radar：Codex 会话已创建",
+        )
+        try:
+            client.send_card(card, idempotency_key=idempotency_key)
+            store.commit_dispatch_notification(
+                thread_id=item["threadId"],
+                idempotency_key=idempotency_key,
+            )
+            notified.append({"key": item["key"], "threadId": item["threadId"]})
+        except (NotificationError, RuntimeError) as exc:
+            errors.append({"key": item["key"], "error": str(exc)[:200]})
+    return {
+        "ok": not errors,
+        "pending": candidates,
+        "notified": notified,
+        "errors": errors,
+    }
+
+
 def _candidate(intent: dict[str, Any]) -> dict[str, Any]:
     return {
         "repo": intent["repo"],
         "num": intent["issueNumber"],
         "url": intent["issueUrl"],
         "title": intent["title"],
+        "track": intent.get("track"),
         "category": intent["category"],
         "gate_decision": intent.get("scanGate"),
         "auto_spawn": intent.get("autoSpawn") is True,
         "llm_review": intent.get("llmReview") or {},
+        "actionability_evidence": intent.get("actionabilityEvidence") or {},
+        "algorithm_evidence": intent.get("algorithmEvidence"),
     }
+
+
+def _hardware_inventory() -> set[str]:
+    return {
+        item.strip().casefold()
+        for item in os.environ.get("RADAR_HARDWARE", "4090,5090,a100,v100").split(",")
+        if item.strip()
+    }
+
+
+def _audit_intent(intent: dict[str, Any]) -> tuple[Any, Any]:
+    match = ISSUE_URL.match(str(intent.get("issueUrl") or ""))
+    if not match:
+        raise RuntimeError("invalid issue URL")
+    repo, number = match.groups()
+    evidence = collect_evidence(
+        GitHubClient(),
+        repo,
+        int(number),
+        current_actor=os.environ.get("GITHUB_ACTOR", "Oxygen56"),
+        hardware_inventory=_hardware_inventory(),
+    )
+    return evidence, authorize(_candidate(intent), evidence)
+
+
+def _audit_payload(evidence: Any, verdict: Any) -> dict[str, Any]:
+    return {
+        "authorization": verdict.as_dict(),
+        "evidenceDigest": evidence.digest,
+        "liveAudit": {
+            "capturedAt": iso_z(datetime.now(UTC)),
+            "evidence": evidence.as_dict(),
+        },
+    }
+
+
+def _private_task_limit() -> int | None:
+    raw = os.environ.get("RADAR_MAX_ACTIVE_TASKS", "0").strip()
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise RuntimeError("RADAR_MAX_ACTIVE_TASKS must be an integer") from exc
+    if value < 0 or value > 64:
+        raise RuntimeError("RADAR_MAX_ACTIVE_TASKS must be between 0 and 64")
+    return value or None
 
 
 def claim_intent(args: argparse.Namespace) -> dict[str, Any]:
@@ -298,23 +425,7 @@ def claim_intent(args: argparse.Namespace) -> dict[str, Any]:
     intent = pending.get(args.intent_id)
     if not intent:
         raise RuntimeError("intent is not pending")
-    match = ISSUE_URL.match(str(intent.get("issueUrl") or ""))
-    if not match:
-        raise RuntimeError("invalid issue URL")
-    repo, number = match.groups()
-    inventory = {
-        item.strip().casefold()
-        for item in os.environ.get("RADAR_HARDWARE", "4090,5090,a100,v100").split(",")
-        if item.strip()
-    }
-    evidence = collect_evidence(
-        GitHubClient(),
-        repo,
-        int(number),
-        current_actor=os.environ.get("GITHUB_ACTOR", "Oxygen56"),
-        hardware_inventory=inventory,
-    )
-    verdict = authorize(_candidate(intent), evidence)
+    evidence, verdict = _audit_intent(intent)
     if verdict.status != "ALLOW":
         store.record_stage(
             intent["key"],
@@ -330,11 +441,8 @@ def claim_intent(args: argparse.Namespace) -> dict[str, Any]:
     store.record_stage(
         intent["key"],
         "AUDIT_PASS",
-        evidence={
-            "authorization": verdict.as_dict(),
-            "evidenceDigest": evidence.digest,
-        },
-        dedupe_key=f"{intent['intentId']}:{evidence.digest}",
+        evidence=_audit_payload(evidence, verdict),
+        dedupe_key=f"{intent['intentId']}:{evidence.digest}:live-audit-v1",
     )
     if intent.get("mode") == "shadow":
         store.observe_shadow(
@@ -350,22 +458,23 @@ def claim_intent(args: argparse.Namespace) -> dict[str, Any]:
             "shadow": True,
             "decision": verdict.as_dict(),
         }
-    canary = intent.get("mode") == "canary"
+    max_active = _private_task_limit()
     claimed = store.claim(
         intent["intentId"],
         args.owner,
         lease_minutes=args.lease_minutes,
-        max_active=1 if canary else None,
+        max_active=max_active,
     )
     if not claimed:
         wip_limited = (
-            canary and store.active_dispatch_count(exclude_intent_id=intent["intentId"]) >= 1
+            max_active is not None
+            and store.active_dispatch_count(exclude_intent_id=intent["intentId"]) >= max_active
         )
         return {
             "ok": True,
             "authorized": True,
             "claimed": False,
-            "reason": "canary_wip_limit" if wip_limited else "lease_unavailable",
+            "reason": "task_wip_limit" if wip_limited else "lease_unavailable",
         }
     result: dict[str, Any] = {
         "ok": True,
@@ -377,8 +486,16 @@ def claim_intent(args: argparse.Namespace) -> dict[str, Any]:
         "decision": verdict.as_dict(),
     }
     if args.prepare:
-        path = source_repo(str(intent["repo"]))
-        command(["codex", "app", str(path)], timeout=30)
+        try:
+            path = source_repo(str(intent["repo"]))
+            command(["codex", "app", str(path)], timeout=30)
+        except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+            store.release_claim(
+                intent["intentId"],
+                owner=args.owner,
+                reason=f"{type(exc).__name__}:{str(exc)[:240]}",
+            )
+            raise
         title_time = datetime.now().astimezone().strftime("%m-%d %H:%M")
         result["sourceRepoPath"] = str(path)
         result["titleTime"] = title_time
@@ -424,6 +541,9 @@ def write_task_context(store: RadarLedger, *, issue_url: str, thread_id: str, cw
     )
     if context is None:
         raise RuntimeError("registered task context is unavailable")
+    live_audit = context.get("liveAudit")
+    if not isinstance(live_audit, dict) or not isinstance(live_audit.get("evidence"), dict):
+        raise RuntimeError("registered task context is missing controller live audit")
     _exclude_private_task_dir(cwd)
     private_dir = cwd / TASK_PRIVATE_DIR
     private_dir.mkdir(parents=True, exist_ok=True)
@@ -434,8 +554,12 @@ def write_task_context(store: RadarLedger, *, issue_url: str, thread_id: str, cw
         "resultPath": str((private_dir / "result.json").resolve()),
         "controllerOwnsLifecycle": True,
         "controllerOwnsPublication": True,
+        "controllerOwnsCommit": True,
         "externalLedgerAccessAllowed": False,
         "planHubRequired": False,
+        "networkPolicy": "controller_snapshot_only",
+        "childMayRequestApproval": False,
+        "childMayWriteGitMetadata": False,
     }
     payload["contextDigest"] = sha256_json(
         {
@@ -443,6 +567,9 @@ def write_task_context(store: RadarLedger, *, issue_url: str, thread_id: str, cw
             "key": context["key"],
             "issueUrl": context["issueUrl"],
             "intentId": context["intentId"],
+            "track": context.get("track"),
+            "algorithmEvidence": context.get("algorithmEvidence"),
+            "liveAuditDigest": live_audit["evidence"].get("digest"),
             "threadId": context["threadId"],
             "worktreePath": context["worktreePath"],
         }
@@ -531,6 +658,36 @@ def commit_receipt(args: argparse.Namespace) -> dict[str, Any]:
         "threadId": args.thread_id,
         "taskContextPath": str(context_path),
     }
+
+
+def retry_dispatch(args: argparse.Namespace) -> dict[str, Any]:
+    if not re.fullmatch(r"[A-Z][A-Z0-9_]{2,80}", args.reason):
+        raise RuntimeError("retry reason must be machine-readable")
+    connection = sqlite3.connect(THREAD_DB)
+    connection.row_factory = sqlite3.Row
+    try:
+        row = connection.execute(
+            "SELECT cwd,archived FROM threads WHERE id=?", (args.thread_id,)
+        ).fetchone()
+    finally:
+        connection.close()
+    if row is None or int(row["archived"] or 0) != 1:
+        raise RuntimeError("retry requires the old task to be archived first")
+    cwd = Path(row["cwd"]).resolve()
+    if WORKTREE_ROOT.resolve() not in cwd.parents:
+        raise RuntimeError("retry task cwd is not a Codex worktree")
+    if cwd.exists():
+        if (cwd / TASK_PRIVATE_DIR / "result.json").exists():
+            raise RuntimeError("retry refused because the task already produced a result")
+        if command(["git", "status", "--porcelain"], cwd=cwd):
+            raise RuntimeError("retry refused because the task worktree is not clean")
+    elif int(row["archived"] or 0) != 1:
+        raise RuntimeError("retry task worktree is missing before archival")
+    value = ledger(args.ledger).reset_dispatch_for_retry(
+        thread_id=args.thread_id,
+        reason=args.reason,
+    )
+    return {"ok": True, "retried": value}
 
 
 def _thread_created_at(row: sqlite3.Row) -> float:
@@ -700,12 +857,205 @@ def _task_result_path(candidate: dict[str, Any]) -> Path:
     return Path(candidate["worktreePath"]).resolve() / TASK_PRIVATE_DIR / "result.json"
 
 
+def _local_changed_files(worktree: Path) -> list[str]:
+    values: set[str] = set()
+    for args in (
+        ["git", "diff", "--name-only"],
+        ["git", "diff", "--cached", "--name-only"],
+        ["git", "ls-files", "--others", "--exclude-standard"],
+    ):
+        values.update(line for line in command(args, cwd=worktree).splitlines() if line)
+    return sorted(values)
+
+
+def _validated_changed_files(value: Any) -> list[str]:
+    if not isinstance(value, list) or not value:
+        raise RuntimeError("controller commit requires a non-empty changedFiles list")
+    normalized: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            raise RuntimeError("changedFiles entries must be strings")
+        path = Path(item)
+        if (
+            not item.strip()
+            or item != path.as_posix()
+            or path.is_absolute()
+            or ".." in path.parts
+            or path.parts[0] == TASK_PRIVATE_DIR
+            or "\n" in item
+        ):
+            raise RuntimeError("changedFiles contains an unsafe path")
+        normalized.append(item)
+    if len(set(normalized)) != len(normalized):
+        raise RuntimeError("changedFiles contains duplicate paths")
+    return sorted(normalized)
+
+
+def _optional_command(args: list[str], *, cwd: Path) -> str | None:
+    completed = subprocess.run(
+        args,
+        cwd=cwd,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    return completed.stdout.strip() if completed.returncode == 0 else None
+
+
+def _switch_controller_branch(worktree: Path, branch: str) -> None:
+    current = _optional_command(["git", "symbolic-ref", "--short", "HEAD"], cwd=worktree)
+    if current == branch:
+        return
+    head = command(["git", "rev-parse", "HEAD"], cwd=worktree)
+    existing = _optional_command(
+        ["git", "rev-parse", "--verify", f"refs/heads/{branch}"], cwd=worktree
+    )
+    if existing is None:
+        command(["git", "switch", "-c", branch], cwd=worktree)
+        return
+    if existing != head:
+        raise RuntimeError("controller branch already exists at another commit")
+    command(["git", "switch", branch], cwd=worktree)
+
+
+def _policy_from_context(context: dict[str, Any]) -> dict[str, Any]:
+    live_audit = context.get("liveAudit")
+    evidence = live_audit.get("evidence") if isinstance(live_audit, dict) else None
+    policy = evidence.get("policy") if isinstance(evidence, dict) else None
+    return policy if isinstance(policy, dict) else {}
+
+
+def _finalize_controller_commit(
+    *,
+    candidate: dict[str, Any],
+    context: dict[str, Any],
+    value: dict[str, Any],
+    result_path: Path,
+) -> tuple[dict[str, Any], bytes]:
+    if value.get("handoffMode") != "controller_commit_required":
+        return value, result_path.read_bytes()
+
+    worktree = Path(candidate["worktreePath"]).resolve()
+    changed_files = _validated_changed_files(value.get("changedFiles"))
+    branch = str(value.get("branch") or "").strip()
+    commit_message = str(value.get("commitMessage") or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{2,119}", branch):
+        raise RuntimeError("controller commit requires a safe branch name")
+    if not public_branch_is_safe(branch):
+        raise RuntimeError("controller branch name exposes an AI tool")
+    if not commit_message or "\n" in commit_message or len(commit_message) > 120:
+        raise RuntimeError("controller commit requires one concise commitMessage")
+    if not public_text_is_safe(commit_message, ""):
+        raise RuntimeError("controller commit message contains an AI-assistance disclosure")
+
+    actual = _local_changed_files(worktree)
+    if actual:
+        if actual != changed_files:
+            raise RuntimeError(
+                "controller commit changedFiles mismatch: "
+                f"expected={changed_files!r} actual={actual!r}"
+            )
+        _switch_controller_branch(worktree, branch)
+        command(["git", "add", "--", *changed_files], cwd=worktree)
+        commit_args = ["git", "commit", "-m", commit_message]
+        policy = _policy_from_context(context)
+        if policy.get("dco") is True or value.get("dcoRequired") is True:
+            name = command(["git", "config", "user.name"], cwd=worktree)
+            email = command(["git", "config", "user.email"], cwd=worktree)
+            if not name or not email:
+                raise RuntimeError("DCO sign-off requires configured Git identity")
+            commit_args.insert(2, "--signoff")
+        command(commit_args, cwd=worktree)
+    else:
+        # Recover idempotently if the process stopped after the commit but before
+        # rewriting result.json.
+        _switch_controller_branch(worktree, branch)
+        committed = sorted(
+            line
+            for line in command(
+                ["git", "show", "--pretty=format:", "--name-only", "HEAD"], cwd=worktree
+            ).splitlines()
+            if line
+        )
+        if committed != changed_files:
+            raise RuntimeError("controller commit handoff has no matching local changes")
+
+    status = command(["git", "status", "--porcelain"], cwd=worktree)
+    if status:
+        raise RuntimeError("controller commit did not leave a clean worktree")
+    committed = sorted(
+        line
+        for line in command(
+            ["git", "show", "--pretty=format:", "--name-only", "HEAD"], cwd=worktree
+        ).splitlines()
+        if line
+    )
+    if committed != changed_files:
+        raise RuntimeError("controller commit does not match changedFiles")
+
+    finalized = dict(value)
+    finalized["commitSha"] = command(["git", "rev-parse", "HEAD"], cwd=worktree)
+    finalized["branch"] = command(["git", "symbolic-ref", "--short", "HEAD"], cwd=worktree)
+    finalized["changedFiles"] = changed_files
+    finalized["handoffMode"] = "controller_commit_complete"
+    _atomic_json(result_path, finalized)
+    return finalized, result_path.read_bytes()
+
+
+def _publication_block_reason(context: dict[str, Any], value: dict[str, Any]) -> str | None:
+    explicit = str(value.get("publicationBlockedReason") or "").strip()
+    if explicit in {"AI_DISCLOSURE_REQUIRED", "AI_USE_PROHIBITED"}:
+        return explicit
+    policy = _policy_from_context(context)
+    if policy.get("ai_prohibited") is True:
+        return "AI_USE_PROHIBITED"
+    if policy.get("ai_disclosure") is True:
+        return "AI_DISCLOSURE_REQUIRED"
+    return None
+
+
 def sync_task_contexts(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
     written: list[dict[str, str]] = []
+    refreshed: list[dict[str, str]] = []
+    no_go: list[dict[str, str]] = []
     errors: list[dict[str, str]] = []
-    for candidate in store.task_result_candidates():
+    for candidate in store.task_context_candidates():
         try:
+            current = store.task_context(
+                issue_url=candidate["issueUrl"],
+                thread_id=candidate["threadId"],
+                worktree_path=candidate["worktreePath"],
+            )
+            if current is None:
+                raise RuntimeError("registered task context is unavailable")
+            current_audit = current.get("liveAudit")
+            if not isinstance(current_audit, dict) or not isinstance(
+                current_audit.get("evidence"), dict
+            ):
+                evidence, verdict = _audit_intent(candidate["intent"])
+                if verdict.status != "ALLOW":
+                    store.record_stage(
+                        candidate["key"],
+                        "AUDIT_NO_GO",
+                        evidence={
+                            "authorization": verdict.as_dict(),
+                            "evidence": evidence.as_dict(),
+                        },
+                        reason=verdict.reason_code,
+                        dedupe_key=(
+                            f"{candidate['intentId']}:{evidence.digest}:context-refresh-no-go"
+                        ),
+                    )
+                    no_go.append({"key": candidate["key"], "reason": verdict.reason_code})
+                    continue
+                store.record_audit_snapshot(
+                    candidate["key"],
+                    evidence=_audit_payload(evidence, verdict),
+                    dedupe_key=(f"{candidate['intentId']}:{evidence.digest}:context-refresh"),
+                )
+                refreshed.append({"key": candidate["key"], "evidenceDigest": evidence.digest})
             path = write_task_context(
                 store,
                 issue_url=candidate["issueUrl"],
@@ -715,7 +1065,13 @@ def sync_task_contexts(args: argparse.Namespace) -> dict[str, Any]:
             written.append({"key": candidate["key"], "path": str(path)})
         except (OSError, RuntimeError, ValueError) as exc:
             errors.append({"key": candidate["key"], "error": str(exc)[:300]})
-    return {"ok": not errors, "written": written, "errors": errors}
+    return {
+        "ok": not errors,
+        "written": written,
+        "refreshed": refreshed,
+        "noGo": no_go,
+        "errors": errors,
+    }
 
 
 def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
@@ -749,8 +1105,8 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 if value.get(key) != expected_value:
                     raise RuntimeError(f"task result mismatch: {key}")
             stage = str(value.get("stage") or "")
-            digest = hashlib.sha256(raw).hexdigest()
             if stage == "AUDIT_NO_GO":
+                digest = hashlib.sha256(raw).hexdigest()
                 reason = str(value.get("reason") or "").strip()
                 if not reason or not re.fullmatch(r"[A-Z][A-Z0-9_]{2,80}", reason):
                     raise RuntimeError("AUDIT_NO_GO requires a machine-readable reason")
@@ -768,33 +1124,59 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 quality = value.get("quality")
                 if not isinstance(quality, dict):
                     raise RuntimeError("FIX_READY requires a quality object")
+                value, raw = _finalize_controller_commit(
+                    candidate=candidate,
+                    context=context,
+                    value=value,
+                    result_path=result_path,
+                )
+                quality = value.get("quality")
+                assert isinstance(quality, dict)
+                digest = hashlib.sha256(raw).hexdigest()
+                publication_blocked = _publication_block_reason(context, value)
                 if candidate["stage"] != "FIX_READY":
                     assessment = assess_submit_ready(quality)
-                    if not assessment.ready:
+                    local_policy_only = bool(
+                        publication_blocked and set(assessment.missing) == {"policy_verified"}
+                    )
+                    if not assessment.ready and not local_policy_only:
                         raise RuntimeError(
                             f"submit-ready evidence missing: {','.join(assessment.missing)}"
                         )
                     store.record_stage(
                         candidate["key"],
                         "FIX_READY",
-                        evidence=quality,
+                        evidence=(
+                            quality | {"publication_blocked_reason": publication_blocked}
+                            if publication_blocked
+                            else quality
+                        ),
                         dedupe_key=digest,
                     )
-                request = request_publication(
-                    store,
-                    issue_url=candidate["issueUrl"],
-                    thread_id=candidate["threadId"],
-                    worktree=Path(candidate["worktreePath"]),
-                    evidence_path=result_path,
-                )
-                publication_requests.append(
-                    {
-                        "key": candidate["key"],
-                        "requestId": request.get("request_id") or request.get("requestId"),
-                        "status": request.get("status"),
-                    }
-                )
-                ingested.append({"key": candidate["key"], "stage": stage})
+                if publication_blocked:
+                    ingested.append(
+                        {
+                            "key": candidate["key"],
+                            "stage": stage,
+                            "publicationBlockedReason": publication_blocked,
+                        }
+                    )
+                else:
+                    request = request_publication(
+                        store,
+                        issue_url=candidate["issueUrl"],
+                        thread_id=candidate["threadId"],
+                        worktree=Path(candidate["worktreePath"]),
+                        evidence_path=result_path,
+                    )
+                    publication_requests.append(
+                        {
+                            "key": candidate["key"],
+                            "requestId": request.get("request_id") or request.get("requestId"),
+                            "status": request.get("status"),
+                        }
+                    )
+                    ingested.append({"key": candidate["key"], "stage": stage})
             else:
                 raise RuntimeError("unsupported task result stage")
         except (OSError, ValueError, RuntimeError) as exc:
@@ -1247,6 +1629,8 @@ def main() -> int:
     alerts_parser = subparsers.add_parser("alerts")
     alerts_parser.add_argument("--min-age-minutes", type=int, default=70)
     alerts_parser.add_argument("--notify", action="store_true")
+    dispatch_notifications_parser = subparsers.add_parser("dispatch-notifications")
+    dispatch_notifications_parser.add_argument("--notify", action="store_true")
     claim = subparsers.add_parser("claim")
     claim.add_argument("--intent-id", required=True)
     claim.add_argument("--owner", required=True)
@@ -1260,6 +1644,9 @@ def main() -> int:
     commit.add_argument("--cwd", required=True)
     commit.add_argument("--source-repo", required=True)
     commit.add_argument("--title-time", required=True)
+    retry_dispatch_parser = subparsers.add_parser("retry-dispatch")
+    retry_dispatch_parser.add_argument("--thread-id", required=True)
+    retry_dispatch_parser.add_argument("--reason", required=True)
     creation_start_parser = subparsers.add_parser("creation-start")
     creation_start_parser.add_argument("--intent-id", required=True)
     creation_start_parser.add_argument("--owner", required=True)
@@ -1333,10 +1720,14 @@ def main() -> int:
         result = list_pending(args.ledger)
     elif args.operation == "alerts":
         result = dispatch_alerts(args)
+    elif args.operation == "dispatch-notifications":
+        result = dispatch_notifications(args)
     elif args.operation == "claim":
         result = claim_intent(args)
     elif args.operation == "commit":
         result = commit_receipt(args)
+    elif args.operation == "retry-dispatch":
+        result = retry_dispatch(args)
     elif args.operation == "creation-start":
         result = creation_start(args)
     elif args.operation == "creation-bind":

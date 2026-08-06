@@ -9,6 +9,7 @@ def candidate(**updates):
         "num": 1,
         "url": "https://github.com/a/b/issues/1",
         "title": "Bug",
+        "track": "agent_ai_infra",
         "category": "WAIT_MAINTAINER",
         "gate_decision": "HUMAN_REVIEW",
         "auto_spawn": False,
@@ -47,6 +48,7 @@ def test_v2_report_requires_scan_observability_contract():
         "contract_digest": contract_digest(),
         "run_id": "run-1",
         "snapshot_id": "snapshot-1",
+        "tracks": ["agent_ai_infra", "llm_algorithm"],
         "candidate_details": [],
         "timings_seconds": {"collect": 1.0, "total": 2.0},
         "repository_activity": {

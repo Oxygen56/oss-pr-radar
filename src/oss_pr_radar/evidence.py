@@ -94,15 +94,17 @@ def collect_evidence(
     enriched_prs: list[dict[str, Any]] = []
     for raw in raw_prs:
         number = int(raw.get("number") or 0)
+        pr_repo = str(raw.get("_repo") or repo)
         try:
-            detail = client.pull_request(repo, number)
-            files = client.pull_files(repo, number)
-            reviews = client.pull_reviews(repo, number)
+            detail = client.pull_request(pr_repo, number)
+            files = client.pull_files(pr_repo, number)
+            reviews = client.pull_reviews(pr_repo, number)
             head = str((detail.get("head") or {}).get("sha") or "")
-            checks = client.check_runs(repo, head) if head else []
+            checks = client.check_runs(pr_repo, head) if head else []
             enriched_prs.append(
                 detail
                 | {
+                    "_repo": pr_repo,
                     "files": files,
                     "checks": checks,
                     "reviews": reviews,

@@ -6,6 +6,7 @@ def candidate_with_weak_pr():
         "repo": "owner/repo",
         "num": 7,
         "title": "Streaming tool-call state is lost",
+        "track": "agent_ai_infra",
         "category": "PR_COMPETITION_OPPORTUNITY",
         "gate_decision": "ALLOW_TO_WORK",
         "public_submission_allowed": True,
@@ -45,3 +46,25 @@ def test_strong_direct_pr_still_drops():
     prediction = predict_candidate(candidate)
     assert prediction.tier == "DROP"
     assert prediction.reason_code == "DUPLICATE"
+
+
+def test_algorithm_track_requires_qualified_mechanism_evidence():
+    candidate = candidate_with_weak_pr()
+    candidate.update(
+        {
+            "track": "llm_algorithm",
+            "category": "NEW_CLEAN_CANDIDATE",
+            "open_pr_assessment": {"status": "none", "prs": []},
+            "algorithm_evidence": {
+                "score": 4,
+                "mechanism_count": 1,
+                "qualified": False,
+                "operational_only": True,
+            },
+        }
+    )
+
+    prediction = predict_candidate(candidate)
+
+    assert prediction.tier == "DROP"
+    assert prediction.reason_code == "ALGORITHM_EVIDENCE_WEAK"

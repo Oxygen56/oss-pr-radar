@@ -10,6 +10,7 @@ def candidate(**overrides):
         "repo": "example/project",
         "num": 42,
         "title": "Streaming tool calls lose arguments",
+        "track": "agent_ai_infra",
         "score": 8,
         "category": "NEW_CLEAN_CANDIDATE",
         "gate_decision": "ALLOW_TO_WORK",

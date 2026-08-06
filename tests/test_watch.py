@@ -117,6 +117,7 @@ def test_queued_candidate_ownership_change_forces_rescan():
     updated, report = recheck_watchlist(watchlist, AssignedClient(), now=NOW)
     assert updated["items"][0]["status"] == "COVERED"
     assert report["pending_rechecks"]["a/b#1"]["reasonCode"] == "OWNERSHIP_CHANGED"
+    assert report["candidate_details"][0]["notify"] is False
 
 
 def test_maintainer_green_light_creates_forced_recheck():
@@ -126,6 +127,7 @@ def test_maintainer_green_light_creates_forced_recheck():
     updated, report = recheck_watchlist(watchlist, GreenLightClient(), now=NOW)
     assert updated["items"][0]["status"] == "RESCAN_REQUIRED"
     assert report["pending_rechecks"]["a/b#1"]
+    assert report["candidate_details"][0]["notify"] is True
 
 
 def test_policy_baseline_does_not_create_a_false_change():

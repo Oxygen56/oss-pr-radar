@@ -224,6 +224,7 @@ def collect_followup(
                 "category": "PR_FOLLOWUP",
                 "score": None,
                 "auto_spawn": False,
+                "notify": True,
                 "why": "；".join(item["actions"]),
                 "test_path": "查看正式 review、失败检查或冲突详情后处理",
                 "evidence_digest": item["actionDigest"],

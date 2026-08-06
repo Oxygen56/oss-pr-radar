@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -65,6 +66,28 @@ def test_canary_wip_limit_is_transactional_and_released_by_outcome(tmp_path):
     assert store.claim("intent-2", "worker-b", max_active=1) is None
     store.record_stage("a/b#1", "FIX_READY", evidence={})
     assert store.claim("intent-2", "worker-b", max_active=1)
+
+
+def test_clean_unresolved_dispatch_can_be_reset_for_retry(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "controller")
+    store.commit_dispatch(
+        "intent-1",
+        owner="controller",
+        thread_id="thread-1",
+        project_id="github",
+        worktree_path="/tmp/worktree",
+    )
+
+    result = store.reset_dispatch_for_retry(
+        thread_id="thread-1", reason="INVALID_EXECUTION_ENVIRONMENT"
+    )
+
+    assert result["intentId"] == "intent-1"
+    pending = store.pending()[0]
+    assert pending["ledgerStatus"] == "PENDING"
+    assert store.active_dispatch_count() == 0
 
 
 def test_enqueue_starts_submit_ready_denominator(tmp_path):
@@ -241,6 +264,28 @@ def test_latest_signed_queue_supersedes_withdrawn_uncommitted_intent(tmp_path):
     assert store.enqueue(intent(intentId="intent-2", decisionDigest="new")) is True
 
 
+def test_failed_preparation_can_release_an_exclusive_lease(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    assert store.claim("intent-1", "controller") is not None
+
+    assert store.release_claim("intent-1", owner="other", reason="wrong owner") is False
+    assert store.release_claim("intent-1", owner="controller", reason="clone timeout") is True
+
+    pending = store.pending()
+    assert len(pending) == 1
+    assert pending[0]["ledgerStatus"] == "PENDING"
+    with store.connect() as connection:
+        event = connection.execute(
+            "SELECT payload_json FROM events WHERE event_type='LEASE_RELEASED'"
+        ).fetchone()
+        stage = connection.execute("SELECT stage FROM opportunities WHERE key='a/b#1'").fetchone()[
+            "stage"
+        ]
+    assert json.loads(event["payload_json"])["reason"] == "clone timeout"
+    assert stage == "AUDIT_PASS"
+
+
 def test_title_state_advances_from_go_to_fix_ready(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(intent())
@@ -263,6 +308,41 @@ def test_title_state_advances_from_go_to_fix_ready(tmp_path):
         nonce=candidate["titleNonce"],
     )
     assert store.title_candidates() == []
+
+
+def test_post_publication_no_go_audit_does_not_downgrade_lifecycle(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+        title_time="08-04 05:25",
+    )
+    store.record_stage("a/b#1", "PR_OPEN", evidence={"prUrl": "https://example.test/pr/1"})
+    candidate = store.title_candidates()[0]
+    store.commit_title(
+        thread_id="thread-1",
+        state="PR_OPEN",
+        nonce=candidate["titleNonce"],
+    )
+
+    store.record_stage("a/b#1", "AUDIT_NO_GO", reason="ISSUE_CLOSED")
+
+    assert store.title_candidates() == []
+    with store.connect() as connection:
+        opportunity = connection.execute(
+            "SELECT stage,terminal_reason FROM opportunities WHERE key='a/b#1'"
+        ).fetchone()
+        ignored = connection.execute(
+            "SELECT payload_json FROM events WHERE opportunity_key='a/b#1' "
+            "AND event_type='POST_PUBLICATION_AUDIT_NO_GO'"
+        ).fetchone()
+    assert dict(opportunity) == {"stage": "PR_OPEN", "terminal_reason": None}
+    assert json.loads(ignored["payload_json"])["reason"] == "ISSUE_CLOSED"
 
 
 def test_no_go_requires_title_sync_before_cleanup(tmp_path):
@@ -430,7 +510,7 @@ def test_expired_intent_cannot_be_claimed(tmp_path):
     assert store.claim("intent-1", "worker") is None
 
 
-def test_pending_intent_alerts_after_one_controller_cycle(tmp_path):
+def test_plain_pending_backlog_is_not_reported_as_dispatch_failure(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     now = datetime.now(UTC)
     store.enqueue(
@@ -444,7 +524,7 @@ def test_pending_intent_alerts_after_one_controller_cycle(tmp_path):
     alerts = store.pending_alerts(min_age_minutes=70)
 
     assert pending["pendingAgeMinutes"] >= 79
-    assert alerts[0]["alertCode"] == "DISPATCH_PENDING_OVER_ONE_CYCLE"
+    assert alerts == []
 
 
 def test_submit_ready_requires_every_quality_gate(tmp_path):

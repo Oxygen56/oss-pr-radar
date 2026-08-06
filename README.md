@@ -1,14 +1,22 @@
 # OSS PR Radar
 
-OSS PR Radar discovers high-value code contributions in agent runtimes and AI
-infrastructure, then carries qualified work through a local, evidence-gated PR
-workflow. Its primary metric is the rolling **SubmitReady hit rate**. Merge count
-is recorded as a lagging outcome, never used to judge discovery quality.
+OSS PR Radar discovers high-value code contributions in agent runtimes, AI
+infrastructure, and LLM algorithms, then carries qualified work through a local,
+evidence-gated PR workflow. Its primary metric is the rolling **SubmitReady hit
+rate**. Merge count is recorded as a lagging outcome, never used to judge
+discovery quality.
 
 ## What Runs Automatically
 
 - Hourly GitHub discovery across agent runtime, MCP, tool calling, structured
-  output, workflow/state, inference serving, scheduling, and cache projects.
+  output, workflow/state, inference serving, post-training, PEFT/modeling,
+  distributed training, quantization/numerics, kernels, and evaluation projects.
+- Independent inspection and candidate lanes for `agent_ai_infra` and
+  `llm_algorithm`, so busy runtime repositories cannot starve algorithm work.
+- Algorithm candidates must expose a concrete mechanism plus a numerical,
+  reference, or controlled-experiment validation path. Configuration, CLI,
+  installation, docs, wrappers, and ordinary integrations are rejected before
+  local task creation.
 - Full issue comments and timeline reads, recursive repository-policy discovery,
   claim detection, related PR strength analysis, and hardware checks.
 - DeepSeek semantic review as a negative/re-ranking signal. It cannot authorize
@@ -35,8 +43,8 @@ is recorded as a lagging outcome, never used to judge discovery quality.
   SHA-bound repository-policy caching, one shared recursive policy classifier
   for scan/live gates, and a dedicated cross-run recheck budget that never uses
   a cooldown.
-- A single local controller thread plus explicit alerts when a signed intent
-  remains undispatched for more than one hourly controller cycle.
+- A single local controller thread plus explicit alerts only for stale leases
+  or task-creation handoffs. Ordinary queued work is never labeled a timeout.
 - A durable, live-rechecked opportunity backlog: unchanged or transiently
   unreadable issues keep their signed intent, while ownership, closure, strong
   competing PRs, or policy drift force a fresh decision before dispatch.
@@ -46,9 +54,9 @@ is recorded as a lagging outcome, never used to judge discovery quality.
 
 ## Scan Scope
 
-Every hour directly polls 52 mature repositories and also runs a bounded
-dynamic GitHub search for Agent/AI-infrastructure repositories outside the
-curated list. The fixed scope is grouped by the code surface it contributes:
+Every hour directly polls 74 mature repositories and also runs bounded dynamic
+GitHub searches for Agent/AI-infrastructure and LLM-algorithm repositories outside
+the curated list. The fixed scope is grouped by the code surface it contributes:
 
 ```text
 Agent runtimes:
@@ -67,6 +75,19 @@ Gateways, evals, observability, and workflow platforms:
 
 Inference serving:
   vLLM, SGLang, NVIDIA Dynamo
+
+LLM post-training:
+  TRL, verl, OpenRLHF, Open Instruct
+
+Modeling, PEFT, and kernels:
+  Transformers, PEFT, LLaMA-Factory, ms-swift, Axolotl, LitGPT,
+  FlashAttention, xFormers, DeepSeek-V3, DeepGEMM
+
+Distributed training, optimization, and quantization:
+  Megatron-LM, DeepSpeed, TorchTitan, Accelerate, bitsandbytes, DeepEP
+
+LLM evaluation:
+  lm-evaluation-harness, LightEval
 ```
 
 The scan artifact records the fixed scope both as a flat list and by domain,
@@ -84,8 +105,9 @@ flowchart LR
 L --> V["Live issue, policy, PR, hardware recheck"]
 V --> C["Durable CREATING receipt"]
 C --> T["Codex worktree task"]
-T --> R["Workspace result evidence"]
-  R --> B["Independent publication broker"]
+T --> R["Workspace patch and result evidence"]
+R --> C2["Controller-validated local commit"]
+C2 --> B["Independent publication broker"]
   B --> P["Short-lived commit and PR-payload permit"]
   P --> E["Idempotent push and PR executor"]
 ```
@@ -100,9 +122,11 @@ https://github.com/owner/repo/issues/123
 ```
 
 Repositories that explicitly require AI-use disclosure or prohibit AI-assisted
-contributions are held for the user. CLA requirements do not block PR creation,
-but the system never accepts a CLA. DCO sign-off is permitted only with the
-user's configured Git identity and is revalidated before publication.
+contributions cannot enter automatic publication. CLA requirements do not block
+PR creation, but the system never accepts a CLA. DCO sign-off is permitted only
+with the user's configured Git identity and is revalidated before publication.
+Broader relicensing or proprietary-use contribution agreements are not treated
+as ordinary CLA/DCO and are filtered before task creation.
 
 ## Setup
 
@@ -125,9 +149,9 @@ GitHub Actions secrets:
 - `RADAR_DISPATCH_HMAC_KEY`
 
 The signing setup stores the local copy in macOS Keychain and sends the same
-value to GitHub Actions without writing it to the repository. `canary` mode
-allows one active implementation at a time. `shadow` performs live audits
-without creating tasks; `active` removes the one-task limit.
+value to GitHub Actions without writing it to the repository. `canary` limits
+automatic public publication, not private Codex investigation tasks. `shadow`
+performs live audits without creating tasks; `active` enables normal publication.
 
 ## Local Commands
 
@@ -138,8 +162,11 @@ python scripts/local_dispatch_bridge.py sync
 # Pure local read: no clone, project lookup, or task creation
 python scripts/local_dispatch_bridge.py list
 
-# Alert when a signed intent survives more than one controller cycle
+# Alert only on a stale lease or a stuck asynchronous task creation
 python scripts/local_dispatch_bridge.py alerts --min-age-minutes 70 --notify
+
+# Notify Feishu only after a Codex task has actually been created
+python scripts/local_dispatch_bridge.py dispatch-notifications --notify
 
 # Repair workspace-local task contexts and ingest completed task results
 python scripts/local_dispatch_bridge.py context-sync
@@ -172,6 +199,9 @@ committed or the desktop API explicitly rejects the request before returning
 an external ID. Child tasks report only through the Git-ignored
 `.oss-pr-radar/` directory; the controller ingests outcomes and executes the
 permit-bound publication path.
+The legacy Done-Gate hourly wrapper invokes `scripts/run_scanner.py`, so local
+traces and GitHub Actions share this repository's scanner and decision revision
+instead of maintaining a second copy of discovery rules.
 An independent macOS LaunchAgent runs only the idempotent result-ingestion and
 permit-bound publication path every 20 seconds. It does not scan GitHub, invoke
 an LLM, create tasks, or rewrite active task contexts; the hourly controller

@@ -65,6 +65,8 @@ def authorize(candidate: dict[str, Any], evidence: EvidenceBundle) -> Authorizat
     policy = evidence.policy
     if policy.get("status") == "CONTRIBUTIONS_CLOSED":
         return decision("BLOCK", "UNSOLICITED_PRS_BLOCKED", "policy")
+    if policy.get("nonstandard_agreement"):
+        return decision("BLOCK", "NONSTANDARD_CONTRIBUTION_AGREEMENT", "policy")
     if policy.get("ai_prohibited"):
         return decision("BLOCK", "AI_USE_PROHIBITED", "policy")
     if policy.get("ai_disclosure"):
@@ -88,6 +90,17 @@ def authorize(candidate: dict[str, Any], evidence: EvidenceBundle) -> Authorizat
         return decision("HOLD", "SEMANTIC_PR_OVERLAP_REQUIRES_REVIEW", "duplicate")
     if not evidence.hardware.get("compatible"):
         return decision("HOLD", "HARDWARE_UNAVAILABLE", "hardware")
+    if candidate.get("track") == "llm_algorithm":
+        algorithm = candidate.get("algorithm_evidence")
+        if not isinstance(algorithm, dict):
+            return decision("BLOCK", "ALGORITHM_EVIDENCE_MISSING", "evidence")
+        if (
+            algorithm.get("qualified") is not True
+            or algorithm.get("operational_only") is not False
+            or int(algorithm.get("score") or 0) < 7
+            or int(algorithm.get("mechanism_count") or 0) < 1
+        ):
+            return decision("BLOCK", "ALGORITHM_EVIDENCE_WEAK", "evidence")
     if DESIGN_RE.search(text) and not evidence.maintainer_approvals:
         return decision("HOLD", "DESIGN_APPROVAL_REQUIRED", "design")
     review = candidate.get("llm_review") or {}

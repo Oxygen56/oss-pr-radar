@@ -26,7 +26,7 @@ from typing import Any
 from urllib.parse import quote
 
 from .claims import detect_claims
-from .contracts import SCAN_SCHEMA, contract_digest
+from .contracts import CANDIDATE_SCHEMA, SCAN_SCHEMA, contract_digest
 from .llm import DeepSeekEvaluator
 from .messages import add_chinese_explanations
 from .policy import SCANNER_DECISION_REVISION, decision_contract_digest
@@ -44,6 +44,9 @@ DEFAULT_STATE = DEFAULT_REPORTS / "pr_radar_runtime_state.json"
 DEFAULT_REPO_CACHE = BASE_DIR / "state" / "repo_cache.json"
 DEFAULT_CHAT_ID = os.environ.get("FEISHU_CHAT_ID", "")
 PROFILE = "agent_ai_infra_v2"
+AGENT_INFRA_TRACK = "agent_ai_infra"
+LLM_ALGORITHM_TRACK = "llm_algorithm"
+SCAN_TRACKS = (AGENT_INFRA_TRACK, LLM_ALGORITHM_TRACK)
 SCANNER_VERSION = SCANNER_DECISION_REVISION
 MIN_ACTIONABLE_SCORE = 8
 SEEN_RECHECK_HOURS = 24
@@ -153,6 +156,25 @@ KNOWN_REPOS = [
     "anomalyco/opencode",
     "cline/cline",
     "infiniflow/ragflow",
+    "huggingface/trl",
+    "huggingface/peft",
+    "huggingface/transformers",
+    "huggingface/accelerate",
+    "huggingface/lighteval",
+    "verl-project/verl",
+    "OpenRLHF/OpenRLHF",
+    "allenai/open-instruct",
+    "Hiyouga/LLaMA-Factory",
+    "modelscope/ms-swift",
+    "axolotl-ai-cloud/axolotl",
+    "Lightning-AI/litgpt",
+    "NVIDIA/Megatron-LM",
+    "deepspeedai/DeepSpeed",
+    "pytorch/torchtitan",
+    "bitsandbytes-foundation/bitsandbytes",
+    "EleutherAI/lm-evaluation-harness",
+    "Dao-AILab/flash-attention",
+    "facebookresearch/xformers",
 ]
 
 AGENT_RUNTIME_REPOS = {
@@ -219,6 +241,47 @@ INFERENCE_SERVING_REPOS = {
     "ai-dynamo/dynamo",
 }
 
+LLM_POST_TRAINING_REPOS = {
+    "huggingface/trl",
+    "verl-project/verl",
+    "OpenRLHF/OpenRLHF",
+    "allenai/open-instruct",
+}
+
+LLM_MODELING_PEFT_REPOS = {
+    "huggingface/transformers",
+    "huggingface/peft",
+    "Hiyouga/LLaMA-Factory",
+    "modelscope/ms-swift",
+    "axolotl-ai-cloud/axolotl",
+    "Lightning-AI/litgpt",
+    "Dao-AILab/flash-attention",
+    "facebookresearch/xformers",
+    "deepseek-ai/DeepSeek-V3",
+    "deepseek-ai/DeepGEMM",
+}
+
+LLM_DISTRIBUTED_TRAINING_REPOS = {
+    "NVIDIA/Megatron-LM",
+    "deepspeedai/DeepSpeed",
+    "pytorch/torchtitan",
+    "huggingface/accelerate",
+    "bitsandbytes-foundation/bitsandbytes",
+    "deepseek-ai/DeepEP",
+}
+
+LLM_EVALUATION_REPOS = {
+    "EleutherAI/lm-evaluation-harness",
+    "huggingface/lighteval",
+}
+
+LLM_ALGORITHM_PRIORITY_REPOS = (
+    LLM_POST_TRAINING_REPOS
+    | LLM_MODELING_PEFT_REPOS
+    | LLM_DISTRIBUTED_TRAINING_REPOS
+    | LLM_EVALUATION_REPOS
+)
+
 AGENT_INFRA_PRIORITY_REPOS = (
     AGENT_RUNTIME_REPOS | AGENT_TOOLING_REPOS | AGENT_PLATFORM_REPOS | INFERENCE_SERVING_REPOS
 )
@@ -227,6 +290,12 @@ AGENT_INFRA_SCAN_REPOS = [repo for repo in KNOWN_REPOS if repo in AGENT_INFRA_PR
 AGENT_INFRA_SCAN_REPOS = [
     repo for repo in AGENT_INFRA_SCAN_REPOS if repo.casefold() not in EXCLUDED_REPOS
 ]
+LLM_ALGORITHM_SCAN_REPOS = [
+    repo
+    for repo in KNOWN_REPOS
+    if repo in LLM_ALGORITHM_PRIORITY_REPOS and repo.casefold() not in EXCLUDED_REPOS
+]
+ALL_SCAN_REPOS = list(dict.fromkeys([*AGENT_INFRA_SCAN_REPOS, *LLM_ALGORITHM_SCAN_REPOS]))
 SEARCH_REPO_CHUNK_SIZE = 4
 
 AGENT_INFRA_TERMS = [
@@ -250,6 +319,11 @@ AGENT_INFRA_TERMS = [
 AGENT_INFRA_DISCOVERY_QUERIES = [
     '("tool call" OR "agent runtime" OR MCP OR "structured output")',
     '(inference OR "KV cache" OR scheduler OR "streaming tool")',
+]
+
+LLM_ALGORITHM_DISCOVERY_QUERIES = [
+    '(GRPO OR DPO OR RLHF OR LoRA OR "reward model" OR distillation)',
+    '("tensor parallel" OR FSDP OR MoE OR quantization OR "evaluation harness")',
 ]
 
 BROAD_TERMS = AGENT_INFRA_TERMS + [
@@ -503,6 +577,84 @@ CONFIGURATION_CONTEXT_RE = re.compile(
 )
 MAINTAINER_CONFIGURATION_GUIDANCE_RE = re.compile(
     r"\b(?:try|use|set|enable|add|pass|run)\s+(?:this|the following|these|--[a-z0-9])",
+    re.I,
+)
+LLM_ALGORITHM_SIGNAL_PATTERNS = {
+    "post_training_objective": re.compile(
+        r"\b(?:RLHF|GRPO|DPO|PPO|RLOO|KTO|ORPO|SFT|reward model|policy gradient|"
+        r"importance (?:sampling )?ratio|advantage(?:s| estimation)?|KL(?: divergence)?|"
+        r"log[- ]?prob(?:ability|abilities|s)?|entropy bonus|clip(?:ped|ping)? objective|"
+        r"knowledge distillation)\b",
+        re.I,
+    ),
+    "parameter_efficient_finetuning": re.compile(
+        r"\b(?:LoRA\+?|QLoRA|DoRA|AdaLoRA|IA3|prefix tuning|prompt tuning|adapter(?:s)?|"
+        r"low[- ]rank|rank pattern|target modules?|merge(?:d|s|ing)? weights?)\b",
+        re.I,
+    ),
+    "model_architecture": re.compile(
+        r"\b(?:attention|self[- ]attention|cross[- ]attention|RoPE|rotary embedding|"
+        r"position(?:al)? embedding|hidden states?|logits?|vocab(?:ulary)? projection|"
+        r"KV heads?|GQA|MQA|MLP|activation function|normalization|RMSNorm|"
+        r"mixture of experts|MoE|router logits?|expert routing)\b",
+        re.I,
+    ),
+    "training_optimization": re.compile(
+        r"\b(?:gradient(?:s| norm| clipping| accumulation)?|optimizer states?|AdamW?|"
+        r"learning rate|weight decay|loss scaling|backprop(?:agation)?|autograd|"
+        r"activation checkpoint(?:ing)?|sequence packing|loss function|training loss)\b",
+        re.I,
+    ),
+    "distributed_training": re.compile(
+        r"\b(?:FSDP2?|DeepSpeed|ZeRO[- ]?[123]?|tensor parallel(?:ism)?|"
+        r"pipeline parallel(?:ism)?|context parallel(?:ism)?|sequence parallel(?:ism)?|"
+        r"expert parallel(?:ism)?|data parallel(?:ism)?|distributed checkpoint(?:ing)?|"
+        r"all[- ]reduce|reduce[- ]scatter|all[- ]gather|process group|shard(?:ed|ing)?)\b",
+        re.I,
+    ),
+    "numerics_quantization": re.compile(
+        r"\b(?:FP(?:4|8|16|32)|BF16|INT(?:4|8)|quantiz(?:e|ed|ation)|dequantiz(?:e|ation)|"
+        r"QAT|GPTQ|AWQ|bitsandbytes|mixed precision|numerical (?:stability|parity)|"
+        r"underflow|overflow|NaN|Inf|rounding|scaling factor)\b",
+        re.I,
+    ),
+    "evaluation_method": re.compile(
+        r"\b(?:evaluation harness|benchmark task|few[- ]shot|loglikelihood|perplexity|"
+        r"exact match|pass@k|contamination|metric normalization|macro[- ]average|"
+        r"micro[- ]average|bootstrap|confidence interval|statistical significance|"
+        r"sampling variance|chat template)\b",
+        re.I,
+    ),
+    "kernel_algorithm": re.compile(
+        r"\b(?:FlashAttention|fused kernel|CUDA kernel|Triton kernel|GEMM|matmul|"
+        r"memory[- ]efficient attention|block size|tile size|warp(?:s)?|occupancy|"
+        r"kernel dispatch|autotun(?:e|er|ing))\b",
+        re.I,
+    ),
+}
+LLM_ALGORITHM_FORMULA_RE = re.compile(
+    r"(?:\\(?:frac|sum|mathbb|mathcal|operatorname)|\$[^$]{3,}\$|"
+    r"\b(?:loss|reward|advantage|logprob|ratio|gradient)\s*[=:]|"
+    r"[A-Za-z][A-Za-z0-9_]*\s*(?:<=|>=|==|\+|-|\*|/)\s*[A-Za-z0-9_(])",
+    re.I,
+)
+LLM_ALGORITHM_EXPERIMENT_RE = re.compile(
+    r"\b(?:steps? to reproduce|minimal repro|expected (?:behavior|result|value|loss)|"
+    r"actual (?:behavior|result|value|loss)|benchmark|ablation|baseline|loss curve|"
+    r"accuracy|perplexity|numerical parity|reference implementation|unit test|"
+    r"regression test|seed(?:ed)?|deterministic)\b",
+    re.I,
+)
+LLM_ALGORITHM_CODE_PATH_RE = re.compile(
+    r"(?:^|[\s`(])(?:[\w.-]+/)+(?:[\w.-]+\.(?:py|cu|cpp|cc|cuh|rs))\b|"
+    r"\b(?:class|def|function|module|kernel)\s+[A-Za-z_][A-Za-z0-9_]*",
+    re.I | re.M,
+)
+LLM_OPERATIONAL_ONLY_RE = re.compile(
+    r"\b(?:install(?:ation|ing)?|setup|environment|dependency|requirements?|packaging|"
+    r"docker(?:file)?|container image|command line|CLI|argument parser|config(?:uration)?|"
+    r"yaml|readme|documentation|tutorial|example notebook|import error|module not found|"
+    r"windows support|macos support|version bump|release note)\b",
     re.I,
 )
 MAINTAINER_ACTIVE_INVESTIGATION_RE = re.compile(
@@ -867,9 +1019,85 @@ def issue_body_pr_link_relation(issue_context: str, repo: str, pr_num: int) -> s
     return "reference"
 
 
+def llm_algorithm_evidence(
+    repo: str,
+    text: str,
+    *,
+    public_repro_signals: int = 0,
+    root_cause_signal: bool = False,
+) -> dict[str, Any]:
+    """Extract deterministic evidence that an issue exercises an LLM algorithm surface."""
+
+    mechanisms: list[str] = []
+    matched_terms: list[str] = []
+    for mechanism, pattern in LLM_ALGORITHM_SIGNAL_PATTERNS.items():
+        matches = {match.group(0).strip().lower() for match in pattern.finditer(text)}
+        if matches:
+            mechanisms.append(mechanism)
+            matched_terms.extend(sorted(matches)[:3])
+    formula_signal = bool(LLM_ALGORITHM_FORMULA_RE.search(text))
+    experiment_signal = bool(LLM_ALGORITHM_EXPERIMENT_RE.search(text))
+    code_path_signal = bool(LLM_ALGORITHM_CODE_PATH_RE.search(text))
+    mechanism_count = len(mechanisms)
+    score = min(
+        10,
+        min(6, mechanism_count * 2)
+        + int(formula_signal)
+        + int(experiment_signal)
+        + int(code_path_signal)
+        + int(root_cause_signal)
+        + int(public_repro_signals >= 2),
+    )
+    single_mechanism_deep = bool(
+        mechanism_count == 1
+        and formula_signal
+        and experiment_signal
+        and root_cause_signal
+        and code_path_signal
+    )
+    qualified = bool(score >= 7 and (mechanism_count >= 2 or single_mechanism_deep))
+    operational_only = bool(
+        LLM_OPERATIONAL_ONLY_RE.search(text)
+        and mechanism_count <= 1
+        and not (formula_signal and experiment_signal)
+    )
+    return {
+        "score": score,
+        "depth": "high" if score >= 9 else "medium" if qualified else "low",
+        "mechanisms": mechanisms,
+        "mechanism_count": mechanism_count,
+        "matched_terms": sorted(set(matched_terms))[:12],
+        "formula_signal": formula_signal,
+        "experiment_signal": experiment_signal,
+        "code_path_signal": code_path_signal,
+        "operational_only": operational_only,
+        "qualified": qualified and not operational_only,
+        "curated_repo": repo in LLM_ALGORITHM_PRIORITY_REPOS,
+    }
+
+
+def issue_track(repo: str, text: str, evidence: dict[str, Any] | None = None) -> str:
+    algorithm = evidence or llm_algorithm_evidence(repo, text)
+    if repo in LLM_ALGORITHM_PRIORITY_REPOS or algorithm.get("qualified") is True:
+        return LLM_ALGORITHM_TRACK
+    return AGENT_INFRA_TRACK
+
+
+def is_dynamic_llm_algorithm_issue(text: str) -> bool:
+    return llm_algorithm_evidence("", text).get("qualified") is True
+
+
+def is_algorithm_base(item: dict[str, Any]) -> bool:
+    repo = str(item.get("repo") or "")
+    if repo in LLM_ALGORITHM_PRIORITY_REPOS:
+        return True
+    text = f"{item.get('title') or ''}\n{item.get('body') or ''}"
+    return is_dynamic_llm_algorithm_issue(text)
+
+
 def base_priority(
     item: dict[str, Any],
-) -> tuple[int, int, int, int, int, int, int, int, str, str]:
+) -> tuple[int, int, int, int, int, int, int, int, int, str, str]:
     labels = " ".join(item.get("labels", []))
     title = str(item.get("title") or "").replace("_", " ").replace("-", " ")
     context = f"{title}\n{item.get('body') or ''}"
@@ -878,6 +1106,7 @@ def base_priority(
         int(item.get("_recheck_priority") or 0),
         int(item.get("_prior_score") or 0),
         int(item.get("_defer_count") or 0),
+        int(is_algorithm_base(item)),
         int(item.get("repo") in AGENT_INFRA_PRIORITY_REPOS),
         int(bool(re.search(r"\b(bug|regression|performance|refactor)\b", labels, re.I))),
         len(
@@ -917,7 +1146,7 @@ def select_inspection_bases(
         pool: list[dict[str, Any]],
         capacity: int,
         selected: list[dict[str, Any]],
-    ) -> None:
+    ) -> list[dict[str, Any]]:
         overflow: list[dict[str, Any]] = []
         accepted = 0
         for base in pool:
@@ -933,10 +1162,20 @@ def select_inspection_bases(
             extra = min(capacity - accepted, len(overflow))
             selected.extend(overflow[:extra])
             overflow = overflow[extra:]
-        deferred.extend(overflow)
+        return overflow
 
-    reserve(rechecks, max(0, recheck_limit), selected_rechecks)
-    reserve(regular, max(0, limit), selected_regular)
+    deferred.extend(reserve(rechecks, max(0, recheck_limit), selected_rechecks))
+    algorithm_regular = [base for base in regular if is_algorithm_base(base)]
+    agent_regular = [base for base in regular if not is_algorithm_base(base)]
+    algorithm_capacity = min(12, max(0, limit))
+    agent_capacity = max(0, limit - algorithm_capacity)
+    algorithm_overflow = reserve(algorithm_regular, algorithm_capacity, selected_regular)
+    agent_overflow = reserve(agent_regular, agent_capacity, selected_regular)
+    remaining_capacity = max(0, limit - len(selected_regular))
+    combined_overflow = sorted(
+        [*algorithm_overflow, *agent_overflow], key=base_priority, reverse=True
+    )
+    deferred.extend(reserve(combined_overflow, remaining_capacity, selected_regular))
 
     # Network-heavy duplicate and policy checks can hit the wall-clock deadline
     # before both budgets are exhausted. Interleave durable rechecks with fresh
@@ -1565,13 +1804,11 @@ class Radar:
         # Repository issue feeds are independent. Bound concurrency so one slow
         # endpoint cannot make the whole hourly scan exceed the outer harness
         # timeout, while retaining the same fail-closed completeness contract.
-        self.queried_repos.update(AGENT_INFRA_SCAN_REPOS)
+        self.queried_repos.update(ALL_SCAN_REPOS)
         with ThreadPoolExecutor(max_workers=REPO_COLLECTION_WORKERS) as executor:
-            futures = [
-                executor.submit(self.add_repo_issues, repo) for repo in AGENT_INFRA_SCAN_REPOS
-            ]
+            futures = [executor.submit(self.add_repo_issues, repo) for repo in ALL_SCAN_REPOS]
             wait(futures)
-            for repo, future in zip(AGENT_INFRA_SCAN_REPOS, futures, strict=True):
+            for repo, future in zip(ALL_SCAN_REPOS, futures, strict=True):
                 try:
                     result = future.result()
                     if not result:
@@ -1595,6 +1832,9 @@ class Radar:
         discovery_index = int(self.now.timestamp() // 3600) % len(AGENT_INFRA_DISCOVERY_QUERIES)
         discovery_query = AGENT_INFRA_DISCOVERY_QUERIES[discovery_index]
         self.add_search(items, f"{base} label:bug {discovery_query}", 15, required=False)
+        algorithm_index = int(self.now.timestamp() // 3600) % len(LLM_ALGORITHM_DISCOVERY_QUERIES)
+        algorithm_query = LLM_ALGORITHM_DISCOVERY_QUERIES[algorithm_index]
+        self.add_search(items, f"{base} label:bug {algorithm_query}", 15, required=False)
         rechecks = select_seen_rechecks(self.seen)
         self.deferred_rechecks_before = count_seen_rechecks(self.seen)
         recheck_keys = {key for key, _ in rechecks}
@@ -2645,14 +2885,13 @@ class Radar:
             best = max(merged_direct, key=lambda item: item["score"])
         elif active_direct:
             best = max(active_direct, key=lambda item: item["score"])
+        # An active PR that explicitly targets this issue owns the implementation
+        # opportunity. Draft state, test coverage, and CI are review-quality
+        # signals, not permission to create a competing PR.
         strong_active = any(
-            (
-                item.get("technical_complete")
-                or item.get("maintainer_owned")
-                or item.get("rule_closed")
-            )
-            and not item.get("is_draft")
-            and "超过 30 天未更新" not in item.get("gaps", [])
+            item.get("maintainer_owned")
+            or item.get("rule_closed")
+            or int(item.get("age_days") or 0) < 30
             for item in active_direct
         )
         strong = best.get("state") == "MERGED" or strong_active
@@ -2747,6 +2986,13 @@ class Radar:
         needs_confirmation = bool(WAIT_LABEL_RE.search(labels_text))
         public_repro_signals = public_reproduction_signal_count(body)
         root_cause_signal = bool(ROOT_CAUSE_RE.search(title + "\n" + body))
+        algorithm_evidence = llm_algorithm_evidence(
+            base["repo"],
+            scoring_text,
+            public_repro_signals=public_repro_signals,
+            root_cause_signal=root_cause_signal,
+        )
+        track = issue_track(base["repo"], scoring_text, algorithm_evidence)
         design_confirmation = bool(
             re.search(r"\btriage\b", labels_text, re.I)
             or API_DESIGN_RE.search(title + "\n" + body[:3000])
@@ -2886,11 +3132,17 @@ class Radar:
             public_repro_signals < 2 and not root_cause_signal
         ):
             return None, "no_public_reproduction_or_root_cause"
-        if not HIGH_RE.search(topic_text):
+        if track == LLM_ALGORITHM_TRACK:
+            if algorithm_evidence["operational_only"]:
+                return None, "algorithm_operational_or_configuration_only"
+            if not algorithm_evidence["qualified"]:
+                return None, "algorithm_mechanism_evidence_low"
+        if track != LLM_ALGORITHM_TRACK and not HIGH_RE.search(topic_text):
             return None, "off_topic"
         dynamic_topic_text = re.sub(r"[_-]+", " ", f"{title}\n{labels_text}\n{body[:4000]}")
-        if base["repo"] not in set(KNOWN_REPOS) and not is_dynamic_agent_infra_issue(
-            dynamic_topic_text
+        if base["repo"] not in set(KNOWN_REPOS) and not (
+            is_dynamic_agent_infra_issue(dynamic_topic_text)
+            or is_dynamic_llm_algorithm_issue(dynamic_topic_text)
         ):
             return None, "off_topic_dynamic_repo"
 
@@ -2930,6 +3182,8 @@ class Radar:
         score += 1
         if base["repo"] in AGENT_INFRA_PRIORITY_REPOS:
             score += 1
+        if track == LLM_ALGORITHM_TRACK:
+            score = max(score + 1, int(algorithm_evidence["score"]))
         if repo_rules(base["repo"]) == "needs_assignment":
             score -= 2
         if public_repro_signals >= 2:
@@ -2976,7 +3230,47 @@ class Radar:
         test_path = (
             "用 issue 的公开最小复现先建立失败测试，再运行目标 package 的定向单测和静态检查。"
         )
-        if KERNEL_RE.search(title):
+        risk = "需确认是否已有 maintainer 设计偏好；避免扩大 API 行为变更。"
+        role_eta = f"{difficulty}难度 / 预计 4-12 小时，适合作为 runtime/provider 修复型 PR。"
+        if track == LLM_ALGORITHM_TRACK:
+            mechanism_names = "、".join(algorithm_evidence["mechanisms"][:4])
+            why = [f"命中可验证的 LLM 算法机制：{mechanism_names}"]
+            if algorithm_evidence["formula_signal"]:
+                why.append("包含公式/目标函数级证据，可形成算法正确性故事")
+            if algorithm_evidence["experiment_signal"]:
+                why.append("具备可比较实验或数值回归路径")
+            mechanisms = set(algorithm_evidence["mechanisms"])
+            if "post_training_objective" in mechanisms:
+                expected = (
+                    "固定 reward/logprob/advantage 等目标函数不变量，定位训练目标或采样路径根因，"
+                    "以最小实现修正并补数值回归。"
+                )
+            elif "parameter_efficient_finetuning" in mechanisms:
+                expected = (
+                    "复现 adapter 参数选择、分组或合并差异，修正 PEFT 数学语义并补参数级回归测试。"
+                )
+            elif "distributed_training" in mechanisms:
+                expected = (
+                    "复现并行切分、同步或 checkpoint 不变量，修正分布式训练路径并补多 rank 回归。"
+                )
+            elif "evaluation_method" in mechanisms:
+                expected = "固定样本、模板和指标定义，修正评测计算或聚合逻辑，并补基准兼容性回归。"
+            elif "numerics_quantization" in mechanisms:
+                expected = (
+                    "建立高精度 reference，对比量化/混合精度误差，修正缩放或数值路径并补容差测试。"
+                )
+            else:
+                expected = (
+                    "建立 reference 输出和模型机制不变量，定位架构/优化实现偏差并补数值正确性回归。"
+                )
+            test_path = (
+                "先用小模型、固定 seed 和合成 batch 建立 CPU/单卡 reference；"
+                "再运行目标算法单测、数值容差检查，必要时补多卡或 GPU 对照实验。"
+            )
+            risk = "需区分数学语义错误与浮点/随机波动；测试必须固定基线、seed、容差和适用硬件。"
+            role_eta = "高含金量算法工程 PR / 预计 8-24 小时，适合展示公式到实现再到实验的闭环。"
+            difficulty = "高" if algorithm_evidence["depth"] == "high" else "中"
+        elif KERNEL_RE.search(title):
             expected = "复现数值或批次不变量，定位 kernel 选择/块大小/数据布局根因，并补确定性正确性回归测试。"
             test_path = "先用 CPU/mock 或现有 kernel 单测固定输入输出不变量；具备匹配 GPU 时再补真实硬件复现。"
         elif "stream" in title_lower:
@@ -3006,6 +3300,7 @@ class Radar:
             "url": issue.get("html_url") or base["url"],
             "issue_updated": issue.get("updated_at") or base.get("updated") or "",
             "profile": PROFILE,
+            "track": track,
             "scanner_version": SCANNER_VERSION,
             "category": category,
             "gate_decision": (
@@ -3023,6 +3318,7 @@ class Radar:
             "auto_spawn": bucket == "immediate",
             "public_submission_allowed": bucket != "conflict",
             "hardware_compatible": True,
+            "algorithm_evidence": algorithm_evidence if track == LLM_ALGORITHM_TRACK else None,
             "actionability_evidence": {
                 "public_repro_signals": public_repro_signals,
                 "root_cause_signal": root_cause_signal,
@@ -3037,7 +3333,7 @@ class Radar:
             "why": "；".join(why[:3]),
             "expected_changes": expected,
             "test_path": test_path,
-            "risk": "需确认是否已有 maintainer 设计偏好；避免扩大 API 行为变更。",
+            "risk": risk,
             "next_step": (
                 "阅读相关实现和测试，先本地复现，再决定是否开 PR。"
                 if bucket == "immediate"
@@ -3047,7 +3343,7 @@ class Radar:
                     else "先在 issue 下请求分配/确认方案，获批后再开 PR。"
                 )
             ),
-            "role_eta": f"{difficulty}难度 / 预计 4-12 小时，适合作为 runtime/provider 修复型 PR。",
+            "role_eta": role_eta,
             "open_pr_assessment": None,
             "related_issue_assessment": None,
         }, None
@@ -3227,6 +3523,15 @@ class Radar:
                     "issue_updated": issue.get("updated_at") or base.get("updated") or "",
                 }
                 continue
+            if policy == "nonstandard_contribution_agreement":
+                reject("nonstandard_contribution_agreement", base)
+                self.seen[key] = {
+                    "analyzed": self.analyzed,
+                    "status": "nonstandard_contribution_agreement",
+                    "title": issue.get("title") or base["title"],
+                    "issue_updated": issue.get("updated_at") or base.get("updated") or "",
+                }
+                continue
             if policy == "ai_disclosure_conflict":
                 scored["bucket"] = "conflict"
                 scored["category"] = "LOCAL_FIX_ONLY"
@@ -3398,6 +3703,7 @@ class Radar:
             self.issue_outcomes[key] = {
                 "status": "candidate",
                 "auto_spawn": bool(scored.get("auto_spawn")),
+                "track": scored.get("track"),
                 "category": scored.get("category"),
                 "gate_decision": scored.get("gate_decision"),
                 "submission_policy": scored.get("submission_policy"),
@@ -3441,9 +3747,27 @@ class Radar:
             for item in candidates
             if f"{item['repo']}#{item['num']}" not in self.forced_recheck_keys
         ]
-        regular_capacity = max(0, 4 - len(forced_candidates))
-        selected = forced_candidates + regular_candidates[:regular_capacity]
-        overflow_candidates = regular_candidates[regular_capacity:]
+        algorithm_candidates = [
+            item for item in regular_candidates if item.get("track") == LLM_ALGORITHM_TRACK
+        ]
+        agent_candidates = [
+            item for item in regular_candidates if item.get("track") != LLM_ALGORITHM_TRACK
+        ]
+        selected_regular = [*algorithm_candidates[:3], *agent_candidates[:3]]
+        selected_ids = {id(item) for item in selected_regular}
+        remaining = [item for item in regular_candidates if id(item) not in selected_ids]
+        selected_regular.extend(remaining[: max(0, 6 - len(selected_regular))])
+        selected_ids = {id(item) for item in selected_regular}
+        overflow_candidates = [item for item in regular_candidates if id(item) not in selected_ids]
+        selected = [*forced_candidates, *selected_regular]
+        selected.sort(
+            key=lambda item: (
+                bucket_rank.get(item["bucket"], 9),
+                0 if item.get("track") == LLM_ALGORITHM_TRACK else 1,
+                -item["score"],
+                item["repo"],
+            )
+        )
         for candidate in overflow_candidates:
             defer(candidate, "candidate_overflow")
         if overflow_candidates:
@@ -3493,6 +3817,7 @@ class Radar:
                 content = (
                     f"**{candidate['repo']}#{candidate['num']}** "
                     f"[{candidate['title']}]({candidate['url']})\n"
+                    f"赛道：{candidate.get('track', AGENT_INFRA_TRACK)} | "
                     f"类型：{candidate['category']} | Done-Gate：{candidate['gate_decision']}\n"
                     f"含金量分：{candidate['score']} | 难度：{candidate['difficulty']} | "
                     f"Impact：{candidate['impact']}\n"
@@ -3677,16 +4002,32 @@ class Radar:
         auto_spawn_candidates = [
             candidate for candidate in candidates if candidate.get("auto_spawn")
         ]
+        candidate_counts_by_track = dict(
+            sorted(
+                Counter(
+                    str(candidate.get("track") or "unknown") for candidate in candidates
+                ).items()
+            )
+        )
+        auto_spawn_counts_by_track = dict(
+            sorted(
+                Counter(
+                    str(candidate.get("track") or "unknown") for candidate in auto_spawn_candidates
+                ).items()
+            )
+        )
         run_id = f"scan-{self.now.strftime('%Y%m%dT%H%M%SZ')}-{sha256_json({'since': self.since_str, 'items': sorted(items)})[:12]}"
         for candidate in candidates:
-            candidate["schema_version"] = "oss-pr-radar.candidate.v2"
+            candidate["schema_version"] = CANDIDATE_SCHEMA
             candidate["evidence_digest"] = sha256_json(
                 {
                     "repo": candidate.get("repo"),
                     "num": candidate.get("num"),
+                    "track": candidate.get("track"),
                     "issueUpdated": candidate.get("issue_updated"),
                     "labels": candidate.get("labels"),
                     "actionability": candidate.get("actionability_evidence"),
+                    "algorithmEvidence": candidate.get("algorithm_evidence"),
                     "openPrAssessment": candidate.get("open_pr_assessment"),
                     "relatedIssueAssessment": candidate.get("related_issue_assessment"),
                 }
@@ -3703,6 +4044,7 @@ class Radar:
             "contract_digest": contract_digest(),
             "run_id": run_id,
             "profile": PROFILE,
+            "tracks": list(SCAN_TRACKS),
             "scanner_version": SCANNER_VERSION,
             "now": self.analyzed,
             "since": self.since_str,
@@ -3724,12 +4066,16 @@ class Radar:
                 "total": round(notify_finished - run_started, 3),
             },
             "repository_activity": {
-                "fixed_scope": sorted(AGENT_INFRA_SCAN_REPOS),
+                "fixed_scope": sorted(ALL_SCAN_REPOS),
                 "fixed_scope_by_domain": {
                     "agent_runtime": sorted(AGENT_RUNTIME_REPOS),
                     "agent_tooling": sorted(AGENT_TOOLING_REPOS),
                     "agent_platform": sorted(AGENT_PLATFORM_REPOS),
                     "inference_serving": sorted(INFERENCE_SERVING_REPOS),
+                    "llm_post_training": sorted(LLM_POST_TRAINING_REPOS),
+                    "llm_modeling_peft": sorted(LLM_MODELING_PEFT_REPOS),
+                    "llm_distributed_training": sorted(LLM_DISTRIBUTED_TRAINING_REPOS),
+                    "llm_evaluation": sorted(LLM_EVALUATION_REPOS),
                 },
                 "queried": sorted(self.queried_repos),
                 "matched": sorted(self.matched_repos),
@@ -3754,6 +4100,8 @@ class Radar:
             "dry_run": self.dry_run,
             "notification_mode": "direct" if self.notify else "outbox",
             "auto_spawn_candidates": len(auto_spawn_candidates),
+            "candidate_counts_by_track": candidate_counts_by_track,
+            "auto_spawn_counts_by_track": auto_spawn_counts_by_track,
             "forced_recheck_results": {
                 key: self.issue_outcomes.get(
                     key, {"status": "rejected", "reason": "inspection_budget_deferred"}

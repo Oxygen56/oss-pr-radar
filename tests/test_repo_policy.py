@@ -1,4 +1,8 @@
-from oss_pr_radar.repo_policy import discover_policy, submission_policy_from_text
+from oss_pr_radar.repo_policy import (
+    discover_policy,
+    select_policy_entries,
+    submission_policy_from_text,
+)
 
 
 class FakeClient:
@@ -114,6 +118,62 @@ def test_pr_template_ai_disclosure_policy_is_still_detected():
     )
     assert policy.status == "AI_POLICY_REVIEW"
     assert policy.ai_disclosure is True
+
+
+def test_automated_agent_tool_name_template_is_ai_disclosure_policy():
+    text = (
+        "If this PR was created by an automated agent, add `From <Tool Name>` "
+        "as the final line of the description."
+    )
+
+    policy = discover_policy(
+        FakeClient({".github/pull_request_template.md": text}),
+        "example/project",
+    )
+
+    assert policy.status == "AI_POLICY_REVIEW"
+    assert policy.ai_disclosure is True
+    assert submission_policy_from_text(text) == "ai_disclosure_conflict"
+
+
+def test_pr_template_is_prioritized_over_nested_policy_noise():
+    tree = [
+        {"type": "blob", "path": f"docs/lang-{index}/CONTRIBUTING.md", "sha": str(index)}
+        for index in range(30)
+    ]
+    tree.extend(
+        {"type": "blob", "path": f"package-{index}/AGENTS.md", "sha": f"a-{index}"}
+        for index in range(30)
+    )
+    tree.append(
+        {
+            "type": "blob",
+            "path": ".github/pull_request_template.md",
+            "sha": "template",
+        }
+    )
+
+    selected = select_policy_entries(tree)
+
+    assert selected[0]["path"] == ".github/pull_request_template.md"
+
+
+def test_nonstandard_relicensing_agreement_is_not_treated_as_cla_or_dco():
+    text = (
+        "By submitting a Pull Request, you grant the project maintainers a "
+        "non-exclusive, perpetual, irrevocable, worldwide, royalty-free, "
+        "transferable license to use, modify, and re-license your contributions "
+        "under any terms, including commercial or proprietary licenses."
+    )
+
+    policy = discover_policy(
+        FakeClient({"CONTRIBUTING.md": text}),
+        "example/project",
+    )
+
+    assert policy.status == "LEGAL_POLICY_REVIEW"
+    assert policy.nonstandard_agreement is True
+    assert submission_policy_from_text(text) == "nonstandard_contribution_agreement"
 
 
 def test_required_public_codex_branch_prefix_is_a_disclosure_conflict():

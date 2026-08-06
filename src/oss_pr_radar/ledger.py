@@ -30,6 +30,7 @@ STAGES = (
     "CLOSED",
 )
 TERMINAL_STAGES = {"AUDIT_NO_GO", "MERGED", "CLOSED"}
+PUBLISHED_STAGES = {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED", "MERGED", "CLOSED"}
 
 
 class LedgerError(RuntimeError):
@@ -370,6 +371,36 @@ class RadarLedger:
             payload = json.loads(row["payload_json"])
             payload["leaseUntil"] = lease_until
             return payload
+
+    def release_claim(self, intent_id: str, *, owner: str, reason: str) -> bool:
+        now = iso_z(datetime.now(UTC))
+        with self.transaction() as connection:
+            row = connection.execute(
+                "SELECT opportunity_key,status,lease_owner,lease_until FROM intents "
+                "WHERE intent_id=?",
+                (intent_id,),
+            ).fetchone()
+            if row is None or row["status"] != "LEASED" or row["lease_owner"] != owner:
+                return False
+            connection.execute(
+                """UPDATE intents SET status='PENDING',lease_owner=NULL,lease_until=NULL,
+                   updated_at=? WHERE intent_id=?""",
+                (now, intent_id),
+            )
+            connection.execute(
+                """UPDATE opportunities SET stage='AUDIT_PASS',terminal_reason=NULL,
+                   updated_at=? WHERE key=?""",
+                (now, row["opportunity_key"]),
+            )
+            self._event(
+                connection,
+                row["opportunity_key"],
+                "LEASE_RELEASED",
+                f"{intent_id}:{row['lease_until']}",
+                {"intentId": intent_id, "owner": owner, "reason": reason},
+                now,
+            )
+            return True
 
     def reserve_creation(self, intent_id: str, *, owner: str) -> dict[str, Any]:
         """Write-ahead a task creation before invoking the desktop side effect."""
@@ -785,9 +816,25 @@ class RadarLedger:
             raise ValueError(f"unsupported lifecycle stage: {stage}")
         now = iso_z(datetime.now(UTC))
         with self.transaction() as connection:
-            row = connection.execute("SELECT key FROM opportunities WHERE key=?", (key,)).fetchone()
+            row = connection.execute(
+                "SELECT key,stage FROM opportunities WHERE key=?", (key,)
+            ).fetchone()
             if row is None:
                 raise LedgerError("opportunity not found")
+            if stage == "AUDIT_NO_GO" and row["stage"] in PUBLISHED_STAGES:
+                self._event(
+                    connection,
+                    key,
+                    "POST_PUBLICATION_AUDIT_NO_GO",
+                    dedupe_key or f"POST_PUBLICATION_AUDIT_NO_GO:{now}",
+                    {
+                        "preservedStage": row["stage"],
+                        "reason": reason,
+                        "evidence": evidence or {},
+                    },
+                    now,
+                )
+                return
             connection.execute(
                 "UPDATE opportunities SET stage=?,terminal_reason=?,updated_at=? WHERE key=?",
                 (stage, reason if stage in TERMINAL_STAGES else None, now, key),
@@ -892,8 +939,6 @@ class RadarLedger:
                 and int(item.get("creationAgeMinutes") or 0) >= threshold
             ):
                 code = "TASK_CREATION_PENDING"
-            elif int(item.get("pendingAgeMinutes") or 0) >= threshold:
-                code = "DISPATCH_PENDING_OVER_ONE_CYCLE"
             if code:
                 alerts.append(item | {"alertCode": code, "thresholdMinutes": threshold})
         return alerts
@@ -1049,14 +1094,60 @@ class RadarLedger:
                     ORDER BY i.updated_at DESC LIMIT 1""",
                 tuple(params),
             ).fetchone()
+            audit_row = (
+                connection.execute(
+                    """SELECT payload_json,created_at FROM events
+                       WHERE opportunity_key=?
+                         AND event_type IN ('AUDIT_PASS','AUDIT_SNAPSHOT')
+                       ORDER BY id DESC LIMIT 1""",
+                    (row["key"],),
+                ).fetchone()
+                if row is not None
+                else None
+            )
+            publication_row = (
+                connection.execute(
+                    """SELECT r.status AS request_status,r.commit_sha,r.branch,
+                              r.created_at AS requested_at,r.updated_at AS request_updated_at,
+                              p.status AS permit_status,p.pr_url,
+                              p.updated_at AS permit_updated_at
+                       FROM publication_requests r
+                       LEFT JOIN publication_permits p ON p.request_id=r.request_id
+                       WHERE r.opportunity_key=?
+                       ORDER BY r.updated_at DESC LIMIT 1""",
+                    (row["key"],),
+                ).fetchone()
+                if row is not None
+                else None
+            )
         if row is None:
             return None
         payload = json.loads(row["payload_json"])
+        audit_payload = json.loads(audit_row["payload_json"]) if audit_row else {}
         authorization_active = row["status"] != "REJECTED" and row["stage"] != "AUDIT_NO_GO"
+        publication_receipt = None
+        if publication_row is not None:
+            pr_url = publication_row["pr_url"]
+            receipt_status = (
+                "PR_OPEN"
+                if pr_url
+                else publication_row["permit_status"] or publication_row["request_status"]
+            )
+            publication_receipt = {
+                "status": receipt_status,
+                "prUrl": pr_url,
+                "commitSha": publication_row["commit_sha"],
+                "branch": publication_row["branch"],
+                "requestedAt": publication_row["requested_at"],
+                "updatedAt": publication_row["permit_updated_at"]
+                or publication_row["request_updated_at"],
+            }
         return {
             "key": row["key"],
             "stage": row["stage"],
             "issueUrl": row["issue_url"],
+            "track": payload.get("track") or "agent_ai_infra",
+            "algorithmEvidence": payload.get("algorithmEvidence"),
             "intentId": row["intent_id"],
             "threadId": row["thread_id"],
             "worktreePath": row["worktree_path"],
@@ -1073,6 +1164,163 @@ class RadarLedger:
                 if authorization_active
                 else "revoked_terminal_no_go"
             ),
+            "liveAudit": audit_payload.get("liveAudit"),
+            "liveAuditRecordedAt": audit_row["created_at"] if audit_row else None,
+            "publicationReceipt": publication_receipt,
+        }
+
+    def task_context_candidates(self) -> list[dict[str, Any]]:
+        """Return live, thread-bound tasks whose controller context should stay current."""
+
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT o.key,o.stage,o.issue_url,i.intent_id,i.thread_id,
+                          i.worktree_path,i.status,i.payload_json
+                   FROM opportunities o JOIN intents i ON i.opportunity_key=o.key
+                   WHERE i.thread_id IS NOT NULL AND i.worktree_path IS NOT NULL
+                     AND i.status IN ('DISPATCHED','COMPLETED')
+                     AND o.stage<>'AUDIT_NO_GO'
+                   ORDER BY i.updated_at"""
+            ).fetchall()
+        return [
+            {
+                "key": row["key"],
+                "stage": row["stage"],
+                "issueUrl": row["issue_url"],
+                "intentId": row["intent_id"],
+                "threadId": row["thread_id"],
+                "worktreePath": row["worktree_path"],
+                "intentStatus": row["status"],
+                "intent": json.loads(row["payload_json"]),
+            }
+            for row in rows
+        ]
+
+    def record_audit_snapshot(
+        self,
+        key: str,
+        *,
+        evidence: dict[str, Any],
+        dedupe_key: str,
+    ) -> None:
+        now = iso_z(datetime.now(UTC))
+        with self.transaction() as connection:
+            if (
+                connection.execute("SELECT 1 FROM opportunities WHERE key=?", (key,)).fetchone()
+                is None
+            ):
+                raise LedgerError("opportunity not found")
+            self._event(
+                connection,
+                key,
+                "AUDIT_SNAPSHOT",
+                dedupe_key,
+                evidence,
+                now,
+            )
+
+    def dispatch_notification_candidates(self) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT o.key,o.repo,o.issue_number,o.issue_url,o.title,
+                          i.thread_id,i.title_time,i.updated_at
+                   FROM opportunities o JOIN intents i ON i.opportunity_key=o.key
+                   WHERE i.status='DISPATCHED' AND i.thread_id IS NOT NULL
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events e
+                       WHERE e.opportunity_key=o.key
+                         AND e.event_type='DISPATCH_NOTIFICATION_SENT'
+                         AND e.dedupe_key=i.thread_id
+                     )
+                   ORDER BY i.updated_at"""
+            ).fetchall()
+        return [
+            {
+                "key": row["key"],
+                "repo": row["repo"],
+                "issueNumber": row["issue_number"],
+                "issueUrl": row["issue_url"],
+                "title": row["title"],
+                "threadId": row["thread_id"],
+                "titleTime": row["title_time"],
+            }
+            for row in rows
+        ]
+
+    def commit_dispatch_notification(
+        self,
+        *,
+        thread_id: str,
+        idempotency_key: str,
+    ) -> None:
+        now = iso_z(datetime.now(UTC))
+        with self.transaction() as connection:
+            row = connection.execute(
+                """SELECT opportunity_key FROM intents
+                   WHERE thread_id=? AND status='DISPATCHED'""",
+                (thread_id,),
+            ).fetchone()
+            if row is None:
+                raise LedgerError("dispatch notification task not found")
+            self._event(
+                connection,
+                row["opportunity_key"],
+                "DISPATCH_NOTIFICATION_SENT",
+                thread_id,
+                {"threadId": thread_id, "idempotencyKey": idempotency_key},
+                now,
+            )
+
+    def reset_dispatch_for_retry(self, *, thread_id: str, reason: str) -> dict[str, Any]:
+        now_dt = datetime.now(UTC)
+        now = iso_z(now_dt)
+        with self.transaction() as connection:
+            row = connection.execute(
+                """SELECT i.intent_id,i.opportunity_key,i.status,i.expires_at,
+                          o.stage,o.issue_url,o.title,i.payload_json
+                   FROM intents i JOIN opportunities o ON o.key=i.opportunity_key
+                   WHERE i.thread_id=?""",
+                (thread_id,),
+            ).fetchone()
+            if row is None:
+                raise LedgerError("dispatch retry task not found")
+            if row["status"] != "DISPATCHED" or row["stage"] != "DISPATCHED":
+                raise LedgerError("only an unresolved dispatched task can be retried")
+            if parse_time(row["expires_at"]) <= now_dt:
+                raise LedgerError("dispatch intent expired before retry")
+            if connection.execute(
+                """SELECT 1 FROM publication_requests
+                   WHERE opportunity_key=? LIMIT 1""",
+                (row["opportunity_key"],),
+            ).fetchone():
+                raise LedgerError("task with a publication request cannot be retried")
+            connection.execute(
+                """UPDATE intents SET status='PENDING',lease_owner=NULL,lease_until=NULL,
+                          thread_id=NULL,project_id=NULL,worktree_path=NULL,title_time=NULL,
+                          title_synced_state=NULL,creation_token=NULL,client_thread_id=NULL,
+                          creation_started_at=NULL,updated_at=?
+                   WHERE intent_id=?""",
+                (now, row["intent_id"]),
+            )
+            connection.execute(
+                """UPDATE opportunities SET stage='QUALIFIED',terminal_reason=NULL,
+                          updated_at=? WHERE key=?""",
+                (now, row["opportunity_key"]),
+            )
+            self._event(
+                connection,
+                row["opportunity_key"],
+                "DISPATCH_RETRY",
+                thread_id,
+                {"threadId": thread_id, "reason": reason},
+                now,
+            )
+        return {
+            "intentId": row["intent_id"],
+            "key": row["opportunity_key"],
+            "issueUrl": row["issue_url"],
+            "title": row["title"],
+            "intent": json.loads(row["payload_json"]),
         }
 
     def task_result_candidates(self) -> list[dict[str, Any]]:

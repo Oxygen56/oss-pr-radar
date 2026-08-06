@@ -187,13 +187,6 @@ jobs:
           --queue state/dispatch_queue.json
           --mode "$RADAR_DISPATCH_MODE"
 
-      - name: Build idempotent notification outbox
-        run: >-
-          python scripts/build_notification_outbox.py
-          reports/latest_scan.json
-          state/notification_outbox.json
-          --kind immediate
-
       - name: Add new maintainer-review opportunities to outbox
         run: >-
           python scripts/build_notification_outbox.py

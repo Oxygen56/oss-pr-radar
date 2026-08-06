@@ -12,8 +12,18 @@ from .contracts import contract_digest, validate_report
 from .policy import SCANNER_DECISION_REVISION, decision_contract_digest
 from .util import canonical_json, iso_z, parse_time, sha256_json, sha256_text
 
-QUEUE_VERSION = "dispatch_intents_v4"
-INTENT_VERSION = "dispatch_intent_v4"
+QUEUE_VERSION = "dispatch_intents_v5"
+INTENT_VERSION = "dispatch_intent_v5"
+LEGACY_QUEUE_CONTRACTS = {
+    "dispatch_intents_v4": {
+        "intentVersion": "dispatch_intent_v4",
+        "scannerVersion": "oss_pr_radar_v27_ci_neutral_competition",
+        "decisionContractDigest": (
+            "67d712a249b740b0516d2768493b9a74f0b664fc19bea1d73639db20bc3827b2"
+        ),
+        "contractDigest": ("bb474c033eab57bb01cd4a6bc377966ba8e80c3fd6ea97c5065d161763301ecc"),
+    }
+}
 SKILL = "[$gh-issue-pr](/Users/oxygen/.codex/skills/gh-issue-pr/SKILL.md)"
 ACTIONABLE_DECISIONS = {"NEW_CLEAN_CANDIDATE", "PR_COMPETITION_OPPORTUNITY"}
 MAX_INTENT_AGE_DAYS = 14
@@ -146,6 +156,7 @@ def build_queue(
         issue_url = str(candidate["url"])
         decision_basis = {
             "key": key,
+            "track": candidate.get("track"),
             "category": candidate.get("category"),
             "gateDecision": candidate.get("gate_decision"),
             "evidenceDigest": candidate.get("evidence_digest")
@@ -155,6 +166,7 @@ def build_queue(
             or report.get("contract_digest")
             or contract_digest(),
             "llmReview": candidate.get("llm_review"),
+            "algorithmEvidence": candidate.get("algorithm_evidence"),
         }
         candidate_decision_digest = sha256_json(decision_basis)
         intent_id = sha256_text(
@@ -168,6 +180,7 @@ def build_queue(
             "issueNumber": candidate["num"],
             "issueUrl": issue_url,
             "title": candidate["title"],
+            "track": candidate.get("track"),
             "category": candidate["category"],
             "score": candidate.get("score"),
             "scanGate": candidate.get("gate_decision"),
@@ -182,6 +195,8 @@ def build_queue(
                 key: (candidate.get("llm_review") or {}).get(key)
                 for key in ("status", "decision", "confidence", "model")
             },
+            "actionabilityEvidence": candidate.get("actionability_evidence") or {},
+            "algorithmEvidence": candidate.get("algorithm_evidence"),
             "runId": report.get("run_id") or report.get("now"),
             "sourceSha": source_sha,
             "snapshotId": report.get("snapshot_id") or sha256_json(report),
@@ -220,13 +235,23 @@ def build_queue(
 def verify_queue(
     queue: dict[str, Any], signer: DispatchSigner, *, now: datetime | None = None
 ) -> list[dict[str, Any]]:
-    if queue.get("version") != QUEUE_VERSION:
+    version = str(queue.get("version") or "")
+    if version == QUEUE_VERSION:
+        expected = {
+            "intentVersion": INTENT_VERSION,
+            "scannerVersion": SCANNER_DECISION_REVISION,
+            "decisionContractDigest": decision_contract_digest(),
+            "contractDigest": contract_digest(),
+        }
+    else:
+        expected = LEGACY_QUEUE_CONTRACTS.get(version)
+    if expected is None:
         raise SignatureError("unsupported dispatch queue")
-    if queue.get("contractDigest") != contract_digest():
+    if queue.get("contractDigest") != expected["contractDigest"]:
         raise SignatureError("stale dispatch contract")
-    if queue.get("scannerVersion") != SCANNER_DECISION_REVISION:
+    if queue.get("scannerVersion") != expected["scannerVersion"]:
         raise SignatureError("stale scanner decision revision")
-    if queue.get("decisionContractDigest") != decision_contract_digest():
+    if queue.get("decisionContractDigest") != expected["decisionContractDigest"]:
         raise SignatureError("stale dispatch decision revision")
     signer.verify(queue)
     current = (now or datetime.now(UTC)).astimezone(UTC)
@@ -235,11 +260,11 @@ def verify_queue(
         if not isinstance(item, dict):
             raise SignatureError("invalid dispatch intent")
         signer.verify(item)
-        if item.get("version") != INTENT_VERSION:
+        if item.get("version") != expected["intentVersion"]:
             raise SignatureError("unsupported dispatch intent")
-        if item.get("scannerVersion") != SCANNER_DECISION_REVISION:
+        if item.get("scannerVersion") != expected["scannerVersion"]:
             raise SignatureError("stale intent scanner revision")
-        if item.get("decisionContractDigest") != decision_contract_digest():
+        if item.get("decisionContractDigest") != expected["decisionContractDigest"]:
             raise SignatureError("stale intent decision revision")
         if parse_time(str(item["expiresAt"])) <= current:
             continue

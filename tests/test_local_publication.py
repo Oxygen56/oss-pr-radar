@@ -19,6 +19,11 @@ def test_fast_publication_runs_ingestion_and_publication_in_order(tmp_path):
             "blocked": [],
             "errors": [],
         },
+        "context-sync": {
+            "ok": True,
+            "written": [{"key": "a/b#1", "path": "/tmp/task-context.json"}],
+            "errors": [],
+        },
     }
 
     def runner(root: Path, operation: str):
@@ -27,10 +32,15 @@ def test_fast_publication_runs_ingestion_and_publication_in_order(tmp_path):
 
     result = advance_once(tmp_path, runner=runner)
 
-    assert [operation for _, operation in calls] == ["ingest-results", "publication-run"]
+    assert [operation for _, operation in calls] == [
+        "ingest-results",
+        "publication-run",
+        "context-sync",
+    ]
     assert result["ok"] is True
     assert result["activity"] is True
     assert result["published"][0]["prUrl"] == "https://github.com/a/b/pull/2"
+    assert result["contextsSynced"][0]["key"] == "a/b#1"
 
 
 def test_fast_publication_is_quiet_when_no_result_or_request_exists(tmp_path):

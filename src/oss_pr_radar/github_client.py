@@ -131,13 +131,18 @@ class GitHubClient:
         unique_terms = list(dict.fromkeys(terms))[:3]
         if len(unique_terms) >= 2:
             queries.append(f"repo:{repo} is:pr is:open {' '.join(unique_terms[:2])} in:title")
-        found: dict[int, dict[str, Any]] = {}
+        found: dict[str, dict[str, Any]] = {}
         for event in timeline or []:
             source = (event.get("source") or {}).get("issue") or {}
             url = str(source.get("html_url") or "")
-            match = re.search(rf"github\.com/{re.escape(repo)}/pull/(\d+)", url, re.I)
+            match = re.search(r"github\.com/([^/]+/[^/]+)/pull/(\d+)", url, re.I)
             if match:
-                found[int(match.group(1))] = source | {"_linked_from_timeline": True}
+                source_repo = match.group(1)
+                source_number = int(match.group(2))
+                found[f"{source_repo.casefold()}#{source_number}"] = source | {
+                    "_linked_from_timeline": True,
+                    "_repo": source_repo,
+                }
         for query in queries:
             result = self.api(
                 "search/issues",
@@ -146,7 +151,7 @@ class GitHubClient:
             )
             for item in result:
                 if isinstance(item, dict) and isinstance(item.get("number"), int):
-                    found[item["number"]] = item
+                    found[f"{repo.casefold()}#{item['number']}"] = item | {"_repo": repo}
         return list(found.values())
 
     def pull_request(self, repo: str, number: int) -> dict[str, Any]:
