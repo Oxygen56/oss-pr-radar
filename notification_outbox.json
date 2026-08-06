@@ -1,5 +1,5 @@
 {
-  "digest": "9a18c31152c410038e7efa39eae906e24b288d415618304d941c43eff5907b2e",
+  "digest": "4719bd56bdad3794dffc7b725a6b23184013ff57bb7403bd9455239aee4da837",
   "events": [
     {
       "attempts": 1,
@@ -12410,9 +12410,262 @@
       "runId": "watch-1786004435",
       "sentAt": "2026-08-06T08:26:48.138824Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "promptfoo/promptfoo#10298",
+        "modelcontextprotocol/python-sdk#3256",
+        "microsoft/semantic-kernel#14265"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[promptfoo/promptfoo#10298](https://github.com/promptfoo/promptfoo/issues/10298) Azure OpenAI evaluator metrics fail with service principal authentication due to tenant mismatch**\n建议：NEW_CLEAN_CANDIDATE | 分数：11\n价值：Issue reports a concrete authentication failure in Azure OpenAI evaluator metrics with service principal auth, providing a minimal repro config and clear error. No competing PR or issue found. The root cause is likely a tenant mismatch in the auth flow for evaluator calls, but exact code path is unconfirmed.\n改动：Add regression test for Azure OpenAI service principal auth in evaluator metrics；Fix tenant handling in Azure OpenAI provider auth flow for evaluator calls\n验证：Create a test using the provided sample config and mock Azure OpenAI responses to reproduce the tenant mismatch error；Run existing Azure OpenAI provider tests and new regression test\n风险：May require maintainer design input on auth flow changes；Potential impact on existing Azure OpenAI authentication behavior\n竞争：未发现相关 open PR\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 2，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[modelcontextprotocol/python-sdk#3256](https://github.com/modelcontextprotocol/python-sdk/issues/3256) OAuth client can never recover from an expired DCR client secret — even though the SDK's own server issues and enforces one**\n建议：PR_COMPETITION_OPPORTUNITY | 分数：12\n价值：The issue clearly identifies a client-side bug where expired DCR client secrets are never invalidated, causing permanent auth failure. The existing PR #3260 is a draft with incomplete evidence and lacks a deterministic reproduction, leaving room for a stronger PR with a failing test and robust fix.\n改动：src/mcp/client/auth/oauth2.py；src/mcp/client/auth/storage.py\n验证：Add a unit test using ExpiredClientStorage to reproduce the stuck state and verify re-registration occurs.；Add integration test with SDK server using client_secret_expiry_seconds to confirm recovery.\n风险：Potential API behavior change if invalidating client info on invalid_client is too aggressive.；Need to handle varying HTTP status codes (401 vs 400) by keying on error field.\n竞争：已有直接关联但证据不完整的 PR #3260：仍是 draft；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：先复现 issue，再逐项对比已有 PR 的缺口；只有能提供更小改动、更强测试或更完整边界覆盖时才开 PR。\n证据：复现信号 5，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[microsoft/semantic-kernel#14265](https://github.com/microsoft/semantic-kernel/issues/14265) Bug: VertexAIEmbeddingGenerator hardcodes :predict, unusable with gemini-embedding models that only serve :embedContent**\n建议：PR_COMPETITION_OPPORTUNITY | 分数：11\n价值：Issue clearly identifies a hardcoded :predict endpoint causing 400 errors for gemini-embedding-2 models. Existing PR #14266 addresses the same root cause but lacks regression tests, leaving room for a materially better PR with tests and minimal fix.\n改动：Modify VertexAIEmbeddingClient to select :embedContent for gemini-embedding models；Add regression test for gemini-embedding-2 endpoint selection\n验证：Create a unit test mocking HTTP responses to verify correct endpoint is used for gemini-embedding-2；Run existing Connectors.Google test suite\n风险：Potential maintainer preference for a different design or API change；Risk of duplicating existing PR if not coordinated\n竞争：已有直接关联但证据不完整的 PR #14266：缺少测试文件；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：先复现 issue，再逐项对比已有 PR 的缺口；只有能提供更小改动、更强测试或更完整边界覆盖时才开 PR。\n证据：复现信号 3，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "green",
+          "title": {
+            "content": "OSS PR Radar: 可立即执行",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-06T10:09:13.422765Z",
+      "eventId": "55f74c53c9685d4a43a9005323307256b345f6c255c9d60abfc60e347cf8ef85",
+      "idempotencyKey": "55f74c53c9685d4a43a9005323307256b345f6c255c9d60abf",
+      "kind": "immediate",
+      "runId": "scan-20260806T100257Z-ed8ec4e4aff8",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "pydantic/pydantic-ai#7211",
+        "1jehuang/jcode#755",
+        "sgl-project/sglang#30781",
+        "vllm-project/vllm#38515",
+        "sgl-project/sglang#33817",
+        "vllm-project/vllm#34948",
+        "sgl-project/sglang#33828"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[pydantic/pydantic-ai#7211](https://github.com/pydantic/pydantic-ai/issues/7211) [roundtrip-sweep] `ModelMessagesTypeAdapter`: `tool_kind='tool-search'` return part with non-typed content fails JSON round-trip (`ValidationError\n[Content truncated due to length]**\n建议：WAIT_MAINTAINER | 分数：10\n价值：Issue provides a clear, reproducible bug with a well-defined root cause and a suggested fix. However, the deterministic gate requires HUMAN_REVIEW, and there is an open PR (#7104) with semantic overlap that needs maintainer comparison before starting new work.\n改动：Modify discriminator functions in pydantic_ai/messages.py to invoke narrow_type() fallback for tool-search return parts；Add regression tests for JSON round-trip of non-typed tool-search content\n验证：Add test in tests/test_messages.py that round-trips NativeToolReturnPart and ToolReturnPart with non-typed content via ModelMessagesTypeAdapter；Run existing test suite to ensure no regressions\n风险：Potential behavior change in JSON deserialization that might affect other typed parts；Need to ensure fallback logic does not mask genuine validation errors\n竞争：发现 PR #7104 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 8，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[1jehuang/jcode#755](https://github.com/1jehuang/jcode/issues/755) Images in chat history break text-only model sessions (GLM-5.2 and other non-vision providers)**\n建议：WAIT_MAINTAINER | 分数：13\n价值：Issue describes a clear user-facing bug with a known root cause (image blocks replayed to text-only providers) and a proposed fix (filter based on supports_image_input). However, the deterministic gate is HUMAN_REVIEW, and the issue is labeled 'triage: needs-decision' with design confirmation required. A recent comment indicates a maintainer-recommended direction and a working config-based workaround, but the default policy for unknown models remains unresolved. No open PR exists, so a new PR could be valuable, but maintainer confirmation is needed.\n改动：Provider runtime message serialization: filter out ContentBlock::Image when supports_image_input() is false；Possibly TUI feature to remove images from history\n验证：Add a regression test that simulates a text-only provider (supports_image_input false) and verifies image blocks are stripped or replaced before sending；Run existing provider runtime unit tests and integration tests for OpenAI-compatible endpoints\n风险：Changing default behavior for unknown models may break existing workflows that rely on sending images；Filtering images could lose context; need to ensure replacement marker preserves ordering\n竞争：未发现相关 open PR\n下一步：先在 issue 下请求分配/确认方案，获批后再开 PR。\n证据：复现信号 3，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#30781](https://github.com/sgl-project/sglang/issues/30781) [Bug] sgl-model-gateway router rejects /v1/responses requests with tool type \"custom\" — openai-protocol crate out of sync with Python protocol.py**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue clearly identifies a version mismatch between Rust openai-protocol crate and Python protocol.py causing router rejection of custom tool types. However, existing PR #31184 is open but lacks tests and has CI failures, and maintainer approval is absent. The gate decision is HUMAN_REVIEW, so we must wait for maintainer input.\n改动：Update openai-protocol crate ResponseToolType enum to include all Python variants；Add regression tests for /v1/responses with custom tool types；Possibly adjust router validation to be more permissive\n验证：Reproduce with curl request via router as described in issue；Add unit tests for Rust enum deserialization of all tool types；Run existing test suite for sgl-model-gateway\n风险：Changing enum may break other consumers of openai-protocol crate；Overly permissive validation could mask backend errors；PR #31184 may be superseded or need coordination\n竞争：已有直接关联但证据不完整的 PR #31184：缺少测试文件; 超过 14 天未更新; 改动面偏大；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 12，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#38515](https://github.com/vllm-project/vllm/issues/38515) [Bug]: vLLM crashed when working with CPU offloading**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue reports a crash in vLLM metrics logging when CPU offloading is enabled, with a clear stack trace and multiple user confirmations. However, the root cause is not fully isolated; a comment suggests it may be a duplicate of #36755 and already fixed in dev. Open PR and related issue lookups timed out, so duplicate implementation cannot be ruled out. The deterministic gate is HUMAN_REVIEW, and the repository requires AI disclosure, which conflicts with automatic public actions.\n改动：vllm/v1/metrics/loggers.py；kv offloading backend\n验证：Reproduce with the provided cluster-agnostic reproducer on vLLM 0.17.1, then verify fix on dev branch.；Add a regression test that simulates negative token deltas in metrics logging.\n风险：Potential duplicate of existing fix; need to confirm with maintainers.；Defensive guard may hide underlying accounting bugs.\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 22，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33817](https://github.com/sgl-project/sglang/issues/33817) [Bug][Qwen3.5] Converted checkpoint cannot generate valid text, and FP8 output length increased significantly**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue reports a user-visible bug and performance regression, but root cause is unknown and requires maintainer investigation. Open PR and related issue lookups timed out, so duplicate work cannot be excluded. No maintainer approval or design confirmation.\n改动：Investigate FP8-to-MXFP4 conversion validity；Identify cause of increased FP8 completion length；Add regression tests for generation coherence and token length\n验证：Reproduce MXFP4 repeated '!' generation with single request；Compare FP8 completion lengths between checkpoints；Validate converted weights/scales against source\n风险：Potential duplicate implementation if existing PR exists；Requires GPU hardware for reproduction；May need maintainer design input for fix approach\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 6，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#34948](https://github.com/vllm-project/vllm/issues/34948) [Bug]: Qwen3.5 CUDA Illegal Memory Access in GDN Kernel**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue reports a critical CUDA illegal memory access in GDN kernel with multiple reproductions, but root cause is unclear and may involve multiple components (FlashInfer, Triton, custom allreduce). Open PR and related issue lookups failed, so duplicate work cannot be excluded. Maintainer input is needed to prioritize and confirm scope.\n改动：Identify root cause in GDN kernel or related fusion passes；Fix memory access violation；Add regression test for long-context prefill and multi-GPU scenarios\n验证：Reproduce with minimal config (single GPU, long prefill) as described；Test with TP=2 and FlashInfer MNNVL fuse_allreduce_rms disabled to isolate；Run stress tests with varying concurrency and sequence lengths\n风险：Multiple potential root causes (kernel, fusion, quantization)；Hardware-specific behavior (H200, RTX 5090)；Potential need for maintainer design decisions\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 4，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33828](https://github.com/sgl-project/sglang/issues/33828) MiniMax-H3 + DBCache: default residual_diff_threshold is inert, and T2VA cannot reach the documented quality bar**\n建议：WAIT_MAINTAINER | 分数：9\n价值：Issue provides detailed measurements showing default residual_diff_threshold is inert for MiniMax-H3, but lacks root-cause isolation and open PR/issue lookup failed, so duplicate work cannot be excluded.\n改动：default residual_diff_threshold adjustment or documentation；possibly add audio metric for quality gate\n验证：Reproduce with provided configuration on B200 to confirm inert threshold；Add regression test for threshold behavior on MiniMax-H3\n风险：Changing default may affect other models; need maintainer design confirmation；Potential duplicate implementation due to failed PR lookup\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 1，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-06T10:09:13.598229Z",
+      "eventId": "f2971f55881f0a33079bb81ca2eb5030cab8a12d596d80f548ec783967331c4f",
+      "idempotencyKey": "f2971f55881f0a33079bb81ca2eb5030cab8a12d596d80f548",
+      "kind": "review",
+      "runId": "scan-20260806T100257Z-ed8ec4e4aff8",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "cline/cline#12947",
+        "mastra-ai/mastra#20443",
+        "mastra-ai/mastra#20660",
+        "modelcontextprotocol/inspector#1918",
+        "modelcontextprotocol/typescript-sdk#2614",
+        "vllm-project/vllm#51016",
+        "vllm-project/vllm#51187"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[cline/cline#12947](https://github.com/cline/cline/issues/12947) Reasoning Effort dropdown caps at \"xhigh\" - \"max\" missing from OPENAI_REASONING_EFFORT_OPTIONS though models.dev/DeepSeek advertise it**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[mastra-ai/mastra#20443](https://github.com/mastra-ai/mastra/issues/20443) [BUG] Concurrent resume calls for the same suspended workflow execute downstream steps more than once**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[mastra-ai/mastra#20660](https://github.com/mastra-ai/mastra/issues/20660) Workflow watch events re-publish step state twice, OOMing Cloudflare Workers isolates on durable agent runs**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[modelcontextprotocol/inspector#1918](https://github.com/modelcontextprotocol/inspector/issues/1918) Bug: GET api/servers Fails Within Headless Docker Container**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[modelcontextprotocol/typescript-sdk#2614](https://github.com/modelcontextprotocol/typescript-sdk/issues/2614) Client.listTools() corrupts its cached tool metadata when an output schema fails to compile**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#51016](https://github.com/vllm-project/vllm/issues/51016) [Bug]: extract_hidden_states fails with TP>1 when KV page size < hidden-state per-token cost**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#51187](https://github.com/vllm-project/vllm/issues/51187) [Bug]: VLLM_BATCH_INVARIANT=1 returns non-identical logprobs across repeats of a byte-identical concurrent workload at ~44 co-resident sequences**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-06T10:09:13.778625Z",
+      "eventId": "e4e59ece880fcb6e07a1c5bbfa6fc0459646cf256ccb0fd18f60f8c92c8fb20f",
+      "idempotencyKey": "e4e59ece880fcb6e07a1c5bbfa6fc0459646cf256ccb0fd18f",
+      "kind": "watch",
+      "runId": "watch-1786010518",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-06T08:26:19.416081Z",
+  "generatedAt": "2026-08-06T10:09:13.962444Z",
   "newEventCount": 0,
   "version": "notification_outbox_v1"
 }
