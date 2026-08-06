@@ -5017,6 +5017,30 @@
     ],
     "why": "Issue clearly identifies a security-relevant bug in shared download path with verified repro and suggested fix direction. However, existing PR #7162 is closed and weak, and repository requires assignment; maintainer design confirmation is needed for scope (which URL types to validate)."
   },
+  "9d87c218114ab0d707fcabaf59dbcdc98b8da1f986d6eee57343d366c65f7a77": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Move explanatory string literals inside overload stub bodies in fastmcp_slim/fastmcp/server/context.py"
+    ],
+    "risks": [
+      "Potential maintainer preference for a different fix approach; risk of overlapping with closed PR #4774."
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Add a mypy regression test that runs mypy on a minimal repro or the actual context.py to ensure all overloads are visible."
+    ],
+    "unknowns": [
+      "Maintainer's intent regarding the closed PR #4774 and whether they prefer a new PR with tests."
+    ],
+    "why": "Issue clearly identifies a mypy overload chain break caused by interleaved string literals, with a minimal repro and a suggested fix. However, an existing PR (#4774) directly addresses the issue but is closed and lacks regression tests, requiring maintainer review to decide whether to reopen or accept a new PR."
+  },
   "9f56014d00bc17e68f460b2d1b643185db72b637b6cff4202360ce6076790957": {
     "confidence": 0.85,
     "contradictions": [
@@ -6305,6 +6329,36 @@
       "No explicit maintainer approval or design confirmation, but the issue is clear and the fix is standard practice"
     ],
     "why": "The issue clearly identifies a user-visible bug: process-local OAuth state causes invalid_client errors in multi-replica deployments. The root cause is well-documented with code references and a deterministic reproduction. No competing PR or issue exists, and the fix is actionable: introduce shared storage with expiration and atomic consume semantics."
+  },
+  "d43db7b71e91bb6637185008ce0bfb1162d67cf94f99705a214982a47a284672": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Comment suggests --model-type diffusion fixes error, but issue body does not mention it"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "CLI argument validation for diffusion models",
+      "documentation or error message for required --model-type"
+    ],
+    "risks": [
+      "Potential overlap with merged PR #33365",
+      "Maintainer may prefer documentation-only fix"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with provided docker command and verify error",
+      "Add regression test for CLI parsing with MiniMax-H3 flags"
+    ],
+    "unknowns": [
+      "Whether merged PR #33365 fully resolves this issue",
+      "Maintainer's preferred fix direction"
+    ],
+    "why": "Issue reports CLI argument parsing failure for MiniMax-H3, but comments indicate a workaround (--model-type diffusion) and a merged PR #33365 may already address related local-path detection. Open PR lookup timed out, so competition cannot be fully assessed."
   },
   "d6f5c17e0a453451c25fd087020d0c4c4c9d041e8b8ad9a434f049f228f87ef8": {
     "confidence": 0.8,

@@ -1,5 +1,5 @@
 {
-  "digest": "787b8966b59a70b4d79fb877da0533f32db5c7620c201deb0627daf76f742a92",
+  "digest": "444b19b35f1dfc6de95efd38eee066d6b71b167ae39f24348f15f87a45ff05d8",
   "events": [
     {
       "attempts": 1,
@@ -11701,9 +11701,251 @@
       "runId": "watch-1785987820",
       "sentAt": "2026-08-06T03:48:18.720276Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "OpenHands/OpenHands#16339",
+        "OpenHands/OpenHands#16341"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[OpenHands/OpenHands#16339](https://github.com/OpenHands/OpenHands/issues/16339) [Bug] Agent not informed of file location for files uploaded via canvas in cloud**\n建议：NEW_CLEAN_CANDIDATE | 分数：11\n价值：The issue clearly describes a user-visible bug: files uploaded via canvas in cloud are not surfaced to the agent or Files tab, despite being placed in the sandbox. The root cause is likely a missing notification or event propagation from the upload handler to the agent and file index. This is actionable and no competing PR exists.\n改动：Modify file upload flow to emit an event or update agent context with the file path；Ensure Files tab refresh or index update on upload\n验证：Create a minimal reproduction test that uploads a file via canvas and asserts the agent receives the file path；Run existing tests for file upload and agent context\n风险：Potential changes to API behavior or event system could affect other upload paths；Need to confirm maintainer design preferences for event propagation\n竞争：未发现相关 open PR\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 2，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[OpenHands/OpenHands#16341](https://github.com/OpenHands/OpenHands/issues/16341) [Bug]: Code-explorer subagent frequently errors**\n建议：NEW_CLEAN_CANDIDATE | 分数：10\n价值：Issue reports a user-visible bug where code-explorer subagent hangs and fails, with a concrete repro prompt and environment. No competing PR or issue found, and the gate allows work. However, root cause is unknown and no maintainer confirmation exists, so confidence is moderate.\n改动：Add a failing regression test reproducing the hang/error；Investigate and fix the code-explorer subagent invocation path in agent runtime or provider\n验证：Use the provided prompt and setup to create a minimal reproduction test；Run targeted unit/integration tests for the subagent and related runtime\n风险：Root cause may be external (e.g., minimax provider) and not fixable in repo；Potential need for maintainer design input on subagent behavior\n竞争：未发现相关 open PR\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 5，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "green",
+          "title": {
+            "content": "OSS PR Radar: 可立即执行",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-06T05:40:58.962608Z",
+      "eventId": "1a4f34a81241e36f81113372b3035285a4012f59a74cac9344ba282d7d119867",
+      "idempotencyKey": "1a4f34a81241e36f81113372b3035285a4012f59a74cac9344",
+      "kind": "immediate",
+      "runId": "scan-20260806T053553Z-56fd19e7468f",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "PrefectHQ/fastmcp#4773",
+        "pydantic/pydantic-ai#7177",
+        "pydantic/pydantic-ai#7180"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[PrefectHQ/fastmcp#4773](https://github.com/PrefectHQ/fastmcp/issues/4773) Context.elicit overload chain is broken for mypy: bare string literals between the @overload stubs**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue clearly identifies a mypy overload chain break caused by interleaved string literals, with a minimal repro and a suggested fix. However, an existing PR (#4774) directly addresses the issue but is closed and lacks regression tests, requiring maintainer review to decide whether to reopen or accept a new PR.\n改动：Move explanatory string literals inside overload stub bodies in fastmcp_slim/fastmcp/server/context.py\n验证：Add a mypy regression test that runs mypy on a minimal repro or the actual context.py to ensure all overloads are visible.\n风险：Potential maintainer preference for a different fix approach; risk of overlapping with closed PR #4774.\n竞争：发现关键词相关 PR，但未确认直接覆盖：#4774；需人工核对\n下一步：已有 PR 但强度不足；先看维护者规则和 issue 讨论，必要时先请求确认方案或分配。\n证据：复现信号 13，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[pydantic/pydantic-ai#7177](https://github.com/pydantic/pydantic-ai/issues/7177) The `innermost` ordering tier is overloaded, and members cannot order themselves within it**\n建议：WAIT_MAINTAINER | 分数：10\n价值：Issue identifies a real design flaw in capability ordering with a clear root cause and reproducible failure, but the proposed fix involves API design changes (new ordering tier, intra-tier ordering, public method) that require maintainer confirmation. The deterministic gate is HUMAN_REVIEW, and the issue is not assigned or approved.\n改动：Add a new ordering tier between normal and durability；Implement intra-tier ordering constraints；Add public has_wrap_model_request and is_durable markers\n验证：Create failing test with SpendLimits and InputGuardrail(parallel=True) in both list orders；Run targeted unit tests for capability ordering and composition；Run static checks and full test suite\n风险：API design changes may conflict with maintainer preferences；New tier could affect existing capability behavior；Public markers may need deprecation or compatibility considerations\n竞争：未发现相关 open PR\n下一步：先请求维护者分配/确认方案，获批后再开 PR。\n证据：复现信号 3，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[pydantic/pydantic-ai#7180](https://github.com/pydantic/pydantic-ai/issues/7180) `AgentSpec` schema generation silently publishes an empty capability in two distinct ways**\n建议：WAIT_MAINTAINER | 分数：9\n价值：Issue identifies two silent schema-generation defects in pydantic-ai's AgentSpec, with concrete code paths and downstream impact. However, the submission policy requires assignment and the gate is HUMAN_REVIEW, so maintainer confirmation is needed before implementation.\n改动：Modify _get_schema_target to avoid silent fallback on NameError；Modify filter_serializable_type or union handling to surface unrepresentable types；Add regression tests for both silent paths\n验证：Create minimal reproducer for each path and assert schema generation raises or includes fields；Run existing pydantic-ai test suite and static checks\n风险：Changing error behavior may break existing capabilities that rely on silent fallback；Need to align with maintainer design preferences for error handling\n竞争：未发现相关 open PR\n下一步：先请求维护者分配/确认方案，获批后再开 PR。\n证据：复现信号 0，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-06T05:40:59.097597Z",
+      "eventId": "c8b76a7c1c9f6c92a8d220834a993ed37e8344ca05ca2f6272aad499824478a5",
+      "idempotencyKey": "c8b76a7c1c9f6c92a8d220834a993ed37e8344ca05ca2f6272",
+      "kind": "review",
+      "runId": "scan-20260806T053553Z-56fd19e7468f",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "pydantic/pydantic-ai#7109",
+        "sgl-project/sglang#27937",
+        "usekaneo/kaneo#1484",
+        "vllm-project/vllm#50159",
+        "vllm-project/vllm#50719",
+        "BerriAI/litellm#35780",
+        "BerriAI/litellm#35786",
+        "DeusData/codebase-memory-mcp#1416",
+        "PrefectHQ/fastmcp#4744",
+        "PrefectHQ/fastmcp#4748",
+        "PrefectHQ/fastmcp#4749"
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[pydantic/pydantic-ai#7109](https://github.com/pydantic/pydantic-ai/issues/7109) Durable-exec leaf-toolset `id` error never mentions the capability `id` that would fix it**\n建议：WAIT_MAINTAINER\n价值：OWNERSHIP_CHANGED\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#27937](https://github.com/sgl-project/sglang/issues/27937) [Failure Tracker] PR Test (AMD)**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[usekaneo/kaneo#1484](https://github.com/usekaneo/kaneo/issues/1484) [Bug]: Remote MCP OAuth returns invalid_client when requests hit different Kaneo replicas**\n建议：WAIT_MAINTAINER\n价值：ISSUE_NOT_OPEN\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50159](https://github.com/vllm-project/vllm/issues/50159) [Bug]: Model Runner V2 + Gemma-4: memory profiler reports ~0.9 GiB more \"available KV\" than MRv1 → no runtime headroom → CUDA OOM under saturating load (no spec involved); with EAGLE it crashes earlier at cudagraph capture (stable-ABI aten::empty)**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#50719](https://github.com/vllm-project/vllm/issues/50719) [Bug][PD][Mooncake] Decode requests stuck in WAITING_FOR_REMOTE_KVS and fail with Timeout waiting for P side ready**\n建议：WAIT_MAINTAINER\n价值：OWNERSHIP_CHANGED\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#35780](https://github.com/BerriAI/litellm/issues/35780) [Bug]: Responses API sends metadata to a strict OpenAI-compatible upstream although the client does not pass metadata**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#35786](https://github.com/BerriAI/litellm/issues/35786) [Bug]: datadog_llm_observability callback: tool_calls and cache tokens sent in meta.metadata instead of their designated API fields (meta.output.messages[].tool_calls and span metrics)**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[DeusData/codebase-memory-mcp#1416](https://github.com/DeusData/codebase-memory-mcp/issues/1416) Windows: install/uninstall/doctor all fail with \"active CBM sessions and operations could not be stopped safely\"**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[PrefectHQ/fastmcp#4744](https://github.com/PrefectHQ/fastmcp/issues/4744) serialize_by_alias=False ignored for nested Pydantic models**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[PrefectHQ/fastmcp#4748](https://github.com/PrefectHQ/fastmcp/issues/4748) OAuth consent cookie is rejected behind Azure Functions**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[PrefectHQ/fastmcp#4749](https://github.com/PrefectHQ/fastmcp/issues/4749) Resource list do not match the actual resource**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-06T05:40:59.275283Z",
+      "eventId": "9b118ffb66209f3bd3d07b0339b228ba6b2df677ec23fa4b544701d972721429",
+      "idempotencyKey": "9b118ffb66209f3bd3d07b0339b228ba6b2df677ec23fa4b54",
+      "kind": "watch",
+      "runId": "watch-1785994440",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-06T03:47:42.527981Z",
+  "generatedAt": "2026-08-06T05:40:59.430449Z",
   "newEventCount": 0,
   "version": "notification_outbox_v1"
 }
