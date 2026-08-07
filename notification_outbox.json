@@ -356,6 +356,10 @@
       "seenAt": "2026-08-06T11:39:58.259121Z",
       "stateId": "9ab41b88227d5e8177cc0f6375a49e27724b6c166be2c57ce008c88c85269399"
     },
+    "review|mastra-ai/mastra#20836": {
+      "seenAt": "2026-08-07T00:23:48.496217Z",
+      "stateId": "44671159c8e1334718d61bbd5e9cbc05374ef07cd200095a3eeb35090e5378aa"
+    },
     "review|mem0ai/mem0#6783": {
       "legacy": true,
       "seenAt": "2026-08-05T17:52:51.969063Z"
@@ -1005,7 +1009,7 @@
       "seenAt": "2026-08-06T10:09:13.778625Z"
     }
   },
-  "digest": "820c240acf40082f0d69418216eefe13a166b5e1efd9619fd9e937bd47d7ca12",
+  "digest": "094814185da52462d93285d792de447af23d6ebf6be424506d61576d3abc66c0",
   "events": [
     {
       "attempts": 1,
@@ -13921,9 +13925,51 @@
       "runId": "scan-20260806T134813Z-20f2f24744c6",
       "sentAt": "2026-08-06T13:55:36.616872Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "mastra-ai/mastra#20836"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "0e36a2c3c438d0d00699522975697592c01b020f2852de3182e3e5ad4191d30c",
+          "key": "mastra-ai/mastra#20836",
+          "kind": "review",
+          "stateId": "44671159c8e1334718d61bbd5e9cbc05374ef07cd200095a3eeb35090e5378aa"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[mastra-ai/mastra#20836](https://github.com/mastra-ai/mastra/issues/20836) [BUG] Client-echoed history can overwrite canonical persisted messages**\n建议：WAIT_MAINTAINER | 分数：13\n价值：The issue describes a concrete bug in message history persistence with a clear root cause (incoming duplicate IDs win upsert), but the track requires an LLM algorithm contribution. The described mechanism is message deduplication and persistence, not a training objective, model mechanism, or numerical method. The algorithm_evidence is weak and the issue lacks a reference-vs-implementation test or numerical regression path. The candidate is a bug fix in an application framework, not an algorithm contribution.\n改动：MessageHistory.processInput/processOutputResult deduplication logic；Observational Memory processor handling of echoed inputs\n验证：Unit tests reproducing the overwrite scenario with output processor and client echo；Test for client-side tool result transition preserving server-authored content\n风险：Breaking legitimate client-side tool updates；Inconsistent behavior between standard and Observational Memory paths\n竞争：未发现相关 open PR\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 6，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-07T00:23:48.496217Z",
+      "eventId": "8ecf431db8b4cb9208c9b4421d5443833f09c5bfc6c1491b9ca24967164c7120",
+      "idempotencyKey": "8ecf431db8b4cb9208c9b4421d5443833f09c5bfc6c1491b9c",
+      "kind": "review",
+      "runId": "scan-20260807T001909Z-8acc1389e2d5",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-06T15:37:10.650301Z",
+  "generatedAt": "2026-08-07T00:23:48.818804Z",
   "newEventCount": 0,
   "version": "notification_outbox_v2"
 }
