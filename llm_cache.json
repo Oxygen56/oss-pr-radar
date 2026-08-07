@@ -998,6 +998,31 @@
     ],
     "why": "Issue describes a clear deadlock with root cause in fastsafetensors using WORLD group for PP-scoped draft loads, but lacks maintainer confirmation and has an existing PR (#50514) with failed CI that may already address the area."
   },
+  "1b3ab1dfad3f611f5e29f51bd2750310dfad5336a8e88a689e21a87f951d5d74": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Replace the close() loop in cbm_posix_child_exec with close_range() when available, with fallback to the existing loop."
+    ],
+    "risks": [
+      "close_range() may not be available on all target platforms; fallback must be correctly implemented.",
+      "Potential behavioral differences in error handling or descriptor closing semantics between close_range() and the loop."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Run the existing subprocess test suite with ulimit -Sn 524288 to confirm the previously failing test now passes.",
+      "Add a regression test that measures spawn latency under high RLIMIT_NOFILE to ensure the fix prevents performance regression."
+    ],
+    "unknowns": [
+      "Exact build system and platform support matrix for close_range() availability."
+    ],
+    "why": "The issue identifies a clear performance bug in subprocess spawning caused by an O(RLIMIT_NOFILE) close() loop, with a deterministic failing test and a concrete fix using close_range(). The proposed change is minimal, well-scoped, and directly addresses the root cause. No competing PR or related issue exists, and the maintainer has not expressed a conflicting preference."
+  },
   "1ba8ba55a525ba4ec5911bdf810a6cd058fe4231da4ad21d78f3a52af4ae6ebd": {
     "confidence": 0.7,
     "contradictions": [],
@@ -2390,6 +2415,34 @@
       "Maintainer's design preference for the fix (Option vs serde default) is not confirmed"
     ],
     "why": "Issue provides a clear root cause (missing `choices` key in metadata-only SSE frames) and a detailed reproducer with multiple cases. Existing PR #10942 is weak: it lacks regression tests and may not handle the mid-tool-call case correctly. A materially better PR with comprehensive tests and the suggested Option-based fix is plausible."
+  },
+  "364284e27aaa2dc9ffe3e76cda3966adb4d607ea867545fe15f90e273e6e02b1": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify list-crypto-quotes.ts to implement seed-first provider lookup for requested IDs",
+      "Update proto/OpenAPI/client contracts if narrowing behavior",
+      "Add Redis caching for gap results with proper key dimensions and error handling"
+    ],
+    "risks": [
+      "Potential maintainer design preference on contract narrowing vs. provider integration",
+      "Provider adapter dependency (#6304) may not be ready, requiring fallback implementation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add unit tests for empty, seed-only, gap-only, mixed, duplicate, over-cap, provider failure, and cache-reuse cases",
+      "Run existing market service tests and static checks"
+    ],
+    "unknowns": [
+      "Status of #6304 provider adapter and whether it is a prerequisite",
+      "Exact rate policy and Redis key schema expected by maintainers"
+    ],
+    "why": "Issue clearly identifies a user-visible bug: API accepts arbitrary IDs but silently filters them, caused by a regression in #1684. Acceptance criteria are concrete and testable, and no competing PR exists. The fix is actionable and aligns with the repo's focus."
   },
   "3735e38afffb908125e012d9a56ec4638673bd6daf07b0cdb8055c0e70d46dd5": {
     "confidence": 0.8,
@@ -7718,6 +7771,34 @@
       "Whether PR #7423 already addresses the root cause"
     ],
     "why": "Issue provides a detailed root cause and proposed fix, but the deterministic gate requires HUMAN_REVIEW and there is an existing PR (#7423) with semantic overlap that needs maintainer comparison. Also, potential duplicate issue #7490 and design confirmation are needed."
+  },
+  "b8c191877b9da8140d54a34bbf3e553d72e5c18951b014b3a0ce1907467ca860": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Bump nvidia-cutlass-dsl pin to >=4.6.2 in requirements/cuda.txt",
+      "Defensive initialization of n_block_first in flash_fwd_sm100.py"
+    ],
+    "risks": [
+      "DSL pin bump may affect other kernels or require compatibility testing",
+      "Kernel fix in vllm-flash-attn requires separate PR and coordination"
+    ],
+    "root_cause_clarity": "high",
+    "score": 13,
+    "test_plan": [
+      "Run the provided repro.py on SM100 with DSL 4.6.0 to confirm failure, then with 4.6.2 to confirm success",
+      "Add a regression test that compiles split-KV FA4 varlen path with seqlen >= 513"
+    ],
+    "unknowns": [
+      "Whether an existing PR already addresses this issue (open PR lookup timed out)",
+      "Whether maintainers have already assigned or are investigating (no maintainer activity signals)"
+    ],
+    "why": "Issue identifies a deterministic compile failure in FA4 SM100 split-KV kernels with a clear root cause and a minimal repro. However, the deterministic gate is HUMAN_REVIEW, and the open PR and related issue lookups timed out, so duplicate work cannot be excluded. The suggested fix (bump DSL pin) is a dependency change, not an algorithm change, and the kernel fix is in a separate repo (vllm-flash-attn), requiring maintainer coordination."
   },
   "b8fa56b900fcce5f52f773e3686fffd6e998e62cdf3b7abe28f53f985f90d25d": {
     "confidence": 0.85,
