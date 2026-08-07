@@ -552,6 +552,10 @@
       "legacy": true,
       "seenAt": "2026-08-06T06:53:57.041285Z"
     },
+    "review|vllm-project/vllm#49926": {
+      "seenAt": "2026-08-07T05:59:03.161785Z",
+      "stateId": "b20fd405cee1e9a7611274621db2d92bc116a39f03378fd5c8658c2656a9f1a7"
+    },
     "review|vllm-project/vllm#50159": {
       "legacy": true,
       "seenAt": "2026-08-04T20:04:33.042749Z"
@@ -1037,7 +1041,7 @@
       "seenAt": "2026-08-06T10:09:13.778625Z"
     }
   },
-  "digest": "f9781c8acd318d698201ff75243fc65eb91223805a810fa532566bb2985c4541",
+  "digest": "10c9cedf8cabcc4511504bda20bb98ebdb79fc7e35ff8947329b1d431acccfc8",
   "events": [
     {
       "attempts": 1,
@@ -14223,9 +14227,51 @@
       "runId": "scan-20260807T052930Z-138c8f8dcce6",
       "sentAt": "2026-08-07T05:34:23.298002Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "vllm-project/vllm#49926"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "109c898d2a3772e2bf33806f3a700bde1062644184275d075d857876f7d06554",
+          "key": "vllm-project/vllm#49926",
+          "kind": "review",
+          "stateId": "b20fd405cee1e9a7611274621db2d92bc116a39f03378fd5c8658c2656a9f1a7"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#49926](https://github.com/vllm-project/vllm/issues/49926) [Bug]: EngineDeadError NVFP4 marlin**\n建议：WAIT_MAINTAINER | 分数：13\n价值：The issue reports a deterministic null-pointer GPU fault in NVFP4 MoE path on GB10, with multiple independent reproductions and detailed device-level evidence. However, the root cause is not confirmed; comments suggest possible GDN kernel involvement and third-party kernel packages. The deterministic gate is HUMAN_REVIEW, and open PR/related issue lookups failed, so duplicate work cannot be excluded.\n改动：Investigate and fix null-pointer dereference in FP4-MoE or GDN kernel on sm_121；Add regression test for mixed prefill/decode batches with empty experts and fp8 KV cache\n验证：Reproduce with compute-sanitizer memcheck on a large GPU to identify faulting kernel；Run with kv_cache_dtype=auto to isolate fp8 KV path；Run in clean venv without third-party kernel packages to rule them out\n风险：Root cause may be in third-party kernels (humming-kernels, quack-kernels, tilelang, tokenspeed-mla)；Fault may be hardware-specific to GB10/sm_121, limiting generalizability\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 9，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-07T05:59:03.161785Z",
+      "eventId": "185a329fb04c7f05a5c2410003fb333ea1485071d87d6062e365cd970e433a21",
+      "idempotencyKey": "185a329fb04c7f05a5c2410003fb333ea1485071d87d6062e3",
+      "kind": "review",
+      "runId": "scan-20260807T055400Z-44e722a48eee",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-07T05:33:52.115680Z",
+  "generatedAt": "2026-08-07T05:59:03.471860Z",
   "newEventCount": 0,
   "version": "notification_outbox_v2"
 }

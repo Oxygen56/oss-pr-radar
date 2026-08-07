@@ -1493,6 +1493,39 @@
     ],
     "why": "Issue reports a user-visible bug with a plausible code path but lacks a confirmed root cause; related issue and open PR lookups timed out, so duplicate work cannot be excluded. Maintainer input is needed to confirm expected behavior and design."
   },
+  "2619ebf09251835a708859179a9069fd07fe15c46fd7eea765779bd9fd6c5735": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Comment by almogtavor rules out empty-expert theory, but original issue suspects it",
+      "flerbert12983's traceback points to GDN path, not Marlin, complicating root cause"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Investigate and fix null-pointer dereference in FP4-MoE or GDN kernel on sm_121",
+      "Add regression test for mixed prefill/decode batches with empty experts and fp8 KV cache"
+    ],
+    "risks": [
+      "Root cause may be in third-party kernels (humming-kernels, quack-kernels, tilelang, tokenspeed-mla)",
+      "Fault may be hardware-specific to GB10/sm_121, limiting generalizability"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 13,
+    "test_plan": [
+      "Reproduce with compute-sanitizer memcheck on a large GPU to identify faulting kernel",
+      "Run with kv_cache_dtype=auto to isolate fp8 KV path",
+      "Run in clean venv without third-party kernel packages to rule them out"
+    ],
+    "unknowns": [
+      "Whether fault occurs without third-party kernel packages",
+      "Whether fault occurs with kv_cache_dtype=auto",
+      "Whether an existing PR or issue already addresses this"
+    ],
+    "why": "The issue reports a deterministic null-pointer GPU fault in NVFP4 MoE path on GB10, with multiple independent reproductions and detailed device-level evidence. However, the root cause is not confirmed; comments suggest possible GDN kernel involvement and third-party kernel packages. The deterministic gate is HUMAN_REVIEW, and open PR/related issue lookups failed, so duplicate work cannot be excluded."
+  },
   "26cd03747d0f7a1a0b5e9674be5cd62362261a1afb174efaf1c89ee8e93146a8": {
     "confidence": 0.85,
     "contradictions": [],
@@ -3457,6 +3490,36 @@
     ],
     "why": "Issue clearly identifies a detached promise in Agent#executeOnFinish causing title loss on serverless runtimes, with a public repro and maintainer acknowledgment. However, a contributor has asked for design direction (await vs background hook) and no maintainer has confirmed the intended behavior, so implementation choice is unresolved."
   },
+  "52d78111c08f090705537e5d962c3063816ee8415d104e7d20f61a61684da72d": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims slow downloads on multiple devices, but contributor reports fast speeds with latest versions"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Dependency version bump for hf-xet",
+      "Potential CDN configuration or retry logic improvements"
+    ],
+    "risks": [
+      "Changing dependency minimum may break compatibility",
+      "CDN issues are external and not fixable in code"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Reproduce slow download with huggingface_hub 1.20.1 and hf-xet <1.5.2",
+      "Verify speed improvement after upgrading hf-xet to 1.5.2"
+    ],
+    "unknowns": [
+      "Exact hf-xet version used by reporter",
+      "Whether the issue persists after upgrading hf-xet"
+    ],
+    "why": "Issue reports slow downloads but lacks a clear root cause; maintainer and contributor comments suggest a dependency version fix (hf-xet 1.5.2) and transient CDN issues, not a code defect in huggingface_hub. No actionable code path is identified, and the deterministic gate is ALLOW_TO_WORK but the evidence points to a maintainer-driven fix."
+  },
   "53d950a5b046494851fa50c7ca77ecc413da27b51ed680746bb5cfc30906150f": {
     "confidence": 0.7,
     "contradictions": [],
@@ -3928,6 +3991,32 @@
       "Maintainer's intent on whether to accept a new PR given existing closed PR #7125"
     ],
     "why": "Issue clearly identifies a missing capability id hint in the generic leaf-toolset error branch, with a concrete repro and root cause. However, the deterministic gate requires HUMAN_REVIEW, and an existing PR (#7125) already attempts to address this but is closed with failed CI, indicating maintainer attention is needed."
+  },
+  "5bf31c1c511c32742999b2776c6aaeef68a89356618185ba743d5f6376321a0c": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue title says Qwen3.5 122b a10 but logs show qwen3_5.py and qwen3_next.py; model naming inconsistency."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Reproduce with latest vLLM; if persists, isolate failing kernel (e.g., fused_moe_kernel) and fix memory access or synchronization."
+    ],
+    "risks": [
+      "May be environment-specific (driver, CUDA, GPU) and not reproducible; fix may be in upstream Triton or PyTorch."
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Run Qwen3.5 122B on A10 with 2 workers using latest vLLM; if crash, capture CUDA memcheck or compute-sanitizer output to identify illegal access."
+    ],
+    "unknowns": [
+      "Whether issue persists on latest vLLM; open PR/related issue lookup results; exact GPU/driver versions."
+    ],
+    "why": "Issue reports a Triton illegal memory access in Qwen3.5 on A10 with 2 workers, but root cause is unclear; maintainer asked to try latest release, and open PR/related issue lookup timed out, so competition cannot be assessed."
   },
   "5bf45d76199469c67b52e66ba9d44af803092ff07126fc4c61c1607d260a1672": {
     "confidence": 0.85,
@@ -4835,6 +4924,38 @@
       "Whether maintainers have already started work or have design preferences"
     ],
     "why": "The issue reports a clear user-visible bug with a reproducible API behavior, but the root cause is not identified and the related issue audit and open PR lookup failed, leaving uncertainty about duplicates and existing work. The deterministic gate requires HUMAN_REVIEW."
+  },
+  "729cddf2ac7224f7195fd74fe2acd8d1325c21efe02d050156dd3d6a5445e03f": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Maintainer cannot reproduce on same version",
+      "User reports abnormal token counts but maintainer sees normal counts"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Investigate tokenizer loading on Windows CPU backend",
+      "Potential fix in tokenizer initialization or encoding handling"
+    ],
+    "risks": [
+      "Environmental issue may not be fixable in ollama",
+      "Duplicate PR may exist due to failed lookup"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with exact Windows GBK codepage and ollama 0.32.5",
+      "Compare tokenization counts with llama.cpp reference"
+    ],
+    "unknowns": [
+      "Exact root cause",
+      "Whether open PR already addresses this",
+      "Whether issue is reproducible on other Windows systems"
+    ],
+    "why": "Issue reports tokenizer misbehavior on Windows CPU but maintainer cannot reproduce; root cause unclear and likely environmental. No code path or algorithm mechanism identified; open PR and related issue lookup failed, so duplicates cannot be excluded."
   },
   "729fb5120d96ea7ed0fed61d1b2de361a41ccdff9040fcb8f3c36839b27e73d1": {
     "confidence": 0.7,
@@ -5981,6 +6102,37 @@
       "Exact fix details from maintainer; whether existing PR #50514 will be updated or superseded."
     ],
     "why": "Issue reports a clear deadlock in fastsafetensors ParallelLoader due to WORLD-group broadcast during PP-scoped draft loads, with a suggested fix. However, a maintainer is actively investigating and has implemented a fix, and an existing PR (#50514) is related but has failed CI. The deterministic gate requires HUMAN_REVIEW, and the submission policy conflicts with AI disclosure. Thus, wait for maintainer direction."
+  },
+  "8f4644df1c091e0c772b7c8497ca2329cec5b052aaaa95c49aecf58e2fd24cca": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue title mentions Qwen3.6:35b-3ba but body says Qwen3.6-35b-3ba and provider says qwen3.6:35b-a3a; model name inconsistency"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Tool syntax parsing/formatting in provider or runtime layer",
+      "Possibly configuration options for compact context and native tool calls"
+    ],
+    "risks": [
+      "Changing tool syntax may break other providers or existing user configurations",
+      "Existing PRs may already address the issue; duplicating work is wasteful"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Create a regression test using the provided .clinerules example with a mock Ollama/Qwen provider to verify tool call format is correctly parsed and executed",
+      "Run existing provider tests for Ollama and tool-call handling"
+    ],
+    "unknowns": [
+      "Exact code change that broke the syntax in 4.1.x",
+      "Whether maintainers intend to restore old behavior or provide new configuration",
+      "Whether any existing PR fully fixes the issue"
+    ],
+    "why": "Issue reports a regression in tool syntax handling for local Ollama/Qwen after Cline 4.1.x, but the root cause is not clearly identified. Existing PRs (#11486, #11937, #11341) overlap semantically but none directly reference the issue, and the gate requires HUMAN_REVIEW. The issue also requests documentation, which is not a code fix. Need maintainer confirmation on intended behavior and comparison with existing PRs."
   },
   "90133600ab2458083b494a4eddaf482c6b14af58add9ea08910d4995b0805743": {
     "confidence": 0.7,
@@ -7358,6 +7510,37 @@
       "Run the existing ag-ui test suite and static checks to ensure no regression in valid snapshot emission cases."
     ],
     "why": "The issue provides a precise root cause, a deterministic no-LLM repro, production impact metrics, and a concrete suggested fix. However, the deterministic gate requires HUMAN_REVIEW, and maintainer triage is needed to confirm design preferences (e.g., whether to use pending-updates check vs. tool-name filter, and whether to introduce StateDeltaEvent at the boundary) and to disambiguate potential overlap with issue #7491."
+  },
+  "bb536a2e30a50f411c88d1e8342aded54731436d9889f6b1e5458a12e7eeb5bd": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims v0.5.16 should contain fix for #25889, but contributor suggests merged PR #30393 still has gap for DSv4 draft-SWA backup"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix draft-SWA backup/restore logic in cache_controller.py and hybrid_pool_assembler.py for DeepSeekV4PagedHostPool",
+      "Add kv-canary regression test for hierarchical cache with DeepSeek-V4 and large prefix restore"
+    ],
+    "risks": [
+      "Patch may not fully address root cause if other translation paths are involved",
+      "Performance impact from additional backup/restore operations"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 12,
+    "test_plan": [
+      "Reproduce with provided command and workload, enable kv-canary=log, verify TAIL_K_SWA write_position violations disappear after patch",
+      "Run unit test for should_backup with DeepSeekV4PagedHostPool to ensure DRAFT_SWA is backed up per rank",
+      "Run multi-GPU integration test with hierarchical cache and DSPARK to ensure no NaN sampling crash"
+    ],
+    "unknowns": [
+      "Open PR list incomplete due to timeout; need to check for other competing PRs",
+      "Maintainer confirmation on whether DRAFT_SWA backup gap is the actual root cause"
+    ],
+    "why": "Issue reports a deterministic SWA KV position corruption in hierarchical cache for DeepSeek-V4, with strong evidence (kv-canary logs, deterministic across ranks, NaN crash). A related PR #30393 was merged but a contributor identifies a potential gap in draft-SWA backup for DeepSeekV4PagedHostPool, suggesting the fix may be incomplete. Open PR lookup timed out, so competition status is uncertain. Maintainer guidance is needed to confirm root cause and validate the proposed fix."
   },
   "bb7cb1b3a4491cb2543219d3126bd4c5fb586a186169bb803afbdb18594f29ef": {
     "confidence": 0.85,
