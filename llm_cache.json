@@ -1289,6 +1289,36 @@
     ],
     "why": "Issue is a real bug with clear root cause and workaround, but an existing PR #5742 directly addresses it and is technically complete, though it has failing CI. The deterministic gate is HUMAN_REVIEW, and maintainer confirmation is needed before starting a competing PR."
   },
+  "20c7f520726b094abb49b75fecfbb7aceeb0ca83b0a9197bd3b6c32056e72b58": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Identify where metadata is injected in the /v1/responses proxy path",
+      "Ensure internal metadata is not serialized into the public metadata field",
+      "Add regression test for strict upstream rejecting metadata"
+    ],
+    "risks": [
+      "Potential behavior change if metadata is used for routing/tracing",
+      "Duplicate implementation if an existing PR addresses this"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 14,
+    "test_plan": [
+      "Reproduce with a mock strict upstream that rejects metadata",
+      "Run existing proxy tests for /v1/responses",
+      "Add a test that verifies no metadata is sent when not provided by client"
+    ],
+    "unknowns": [
+      "Root cause location in the proxy code",
+      "Whether an open PR already exists (lookup timed out)",
+      "Maintainer preference on how to separate internal vs public metadata"
+    ],
+    "why": "Issue reports a concrete bug: internal metadata leaks into upstream Responses API calls, causing HTTP 400. The workaround is validated, but the root cause is not identified. The deterministic gate requires HUMAN_REVIEW, and open PR/related issue lookups timed out, so duplicate work cannot be excluded. Maintainer design confirmation is needed to avoid expanding API behavior."
+  },
   "20e8abb87731be9c91742fdc45cd82a12d01f8181643b15b13ddaf0aed1ea75f": {
     "confidence": 0.8,
     "contradictions": [],
@@ -1636,6 +1666,40 @@
       "Whether an existing PR or issue already addresses this"
     ],
     "why": "The issue reports a deterministic null-pointer GPU fault in NVFP4 MoE path on GB10, with multiple independent reproductions and detailed device-level evidence. However, the root cause is not confirmed; comments suggest possible GDN kernel involvement and third-party kernel packages. The deterministic gate is HUMAN_REVIEW, and open PR/related issue lookups failed, so duplicate work cannot be excluded."
+  },
+  "26463d29b7da8ffae14fccdc6b617a389bf70c3a05e6a1f69fb681e17d86f366": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The track is llm_algorithm but the issue is about auth credential resolution, not an LLM algorithm mechanism"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Normalize the requestContext user shape at the read site or writer in @mastra/server",
+      "Add a shared unwrap helper or canonical principal type",
+      "Update credential-resolver.ts in @mastra/code-sdk to handle the wrapper shape"
+    ],
+    "risks": [
+      "Changing the documented public slot may break other consumers",
+      "Potential duplicate issue #20688 may lead to conflicting fixes",
+      "Need to distinguish between shape normalization and other auth issues"
+    ],
+    "root_cause_clarity": "high",
+    "score": 13,
+    "test_plan": [
+      "Reproduce with better-auth provider and background dispatch",
+      "Add regression test comparing interactive vs background tenant credential resolution",
+      "Verify no auth deaths across background runs after fix"
+    ],
+    "unknowns": [
+      "Maintainer preference on fixing writer vs read site",
+      "Whether issue #20688 is truly duplicate and will be merged",
+      "Exact scope of the public slot change and its compatibility"
+    ],
+    "why": "The issue clearly identifies a root cause in tenant credential resolution reading the raw better-auth user shape, with a verified local workaround and a suggested fix direction. However, the deterministic gate is HUMAN_REVIEW, and the issue is labeled for maintainer triage (trio-tb). There is a potential duplicate issue #20688 with high semantic overlap, and the proposed fix touches a documented public slot, requiring design confirmation. The track is llm_algorithm, but the issue is about auth credential resolution, not an LLM algorithm mechanism; the algorithm evidence is misapplied. Actionability is high, but the gate and design uncertainty mandate WAIT_MAINTAINER."
   },
   "26cd03747d0f7a1a0b5e9674be5cd62362261a1afb174efaf1c89ee8e93146a8": {
     "confidence": 0.85,
@@ -5339,6 +5403,37 @@
     ],
     "why": "Issue clearly identifies a detached promise causing silent title loss on serverless runtimes, with a minimal repro. However, the deterministic gate requires HUMAN_REVIEW, and existing PRs (e.g., #16218) overlap semantically, requiring maintainer comparison before creating a new task."
   },
+  "6c8f10a04ab386a229a4c98323ae8fe36422aabb093efa84860c263e52f34c58": {
+    "confidence": 0.7,
+    "contradictions": [
+      "ParallelConfig accepts dcp==pcp while ModelConfig rejects it"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify ModelConfig.verify_with_parallel_config to account for PCP-induced KV duplication",
+      "Possibly adjust ParallelConfig validation to reject unsupported topologies"
+    ],
+    "risks": [
+      "Changing validation may allow configurations that are not actually supported at runtime",
+      "The suggested formula may not cover all edge cases (e.g., MLA models)",
+      "Maintainer may decide DCP-over-PCP is not intended, requiring a different fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Run the provided CPU-only reproduction script to confirm the failure",
+      "Add unit tests for DCP-over-PCP configurations with GQA/MQA models",
+      "Verify the suggested formula max_dcp_size = max(1, tp // kv) * pcp across all permitted DCP values"
+    ],
+    "unknowns": [
+      "Whether DCP-over-PCP is intended to be supported for GQA/MQA models",
+      "Whether an existing PR or issue already addresses this problem (lookup timed out)"
+    ],
+    "why": "The issue identifies a concrete inconsistency between ParallelConfig and ModelConfig validation for DCP-over-PCP topologies, with a clear root cause and a suggested fix. However, the open PR and related issue lookups timed out, so duplicate work cannot be excluded. The repository requires AI disclosure, which conflicts with automated public actions. The fix is algorithmic but requires maintainer confirmation on intended support."
+  },
   "6c90b161b9d1fd85994fbac7434b0b98d7f206b4efbd9e67456a3ffc0925a46d": {
     "confidence": 0.7,
     "contradictions": [],
@@ -7680,6 +7775,34 @@
     ],
     "why": "Issue clearly identifies a real bug with a minimal repro and root cause in messages.py, but an open PR (#7053) has semantic overlap and the deterministic gate requires human review. Need maintainer confirmation to avoid duplicate work."
   },
+  "a90efe340535e1de58e128adc432e9d91684e1dd540eb5ffe6bebf272a64cf7d": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue title suggests backend crash, but root cause is unsupported hardware"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add arch validation in _select_dsv4_attn_cls to raise clear error for unsupported FLASHMLA_SPARSE_DSV4 on SM12x"
+    ],
+    "risks": [
+      "May not be merged if maintainers prefer different approach",
+      "No functional improvement for SM12x users"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Run vllm serve with FLASHMLA_SPARSE_DSV4 on SM12x and verify clear error message instead of assertion crash"
+    ],
+    "unknowns": [
+      "Whether maintainers will accept fail-fast PR",
+      "Whether #50720 will be fixed soon"
+    ],
+    "why": "The issue reports a crash in FLASHMLA_SPARSE_DSV4 backend on SM12x, but the root cause is that FlashMLA-sparse kernels are unsupported on SM12x. The proposed fix is a fail-fast error message, not a functional backend. The issue is already being investigated by a contributor, and the user is satisfied with waiting. No competing implementation exists, but the work is not actionable as a new algorithm contribution."
+  },
   "aa9313a01d7976467910f3969bdb17e27ddfddd7246bf5bd278c74fb2d35abb0": {
     "confidence": 0.85,
     "contradictions": [],
@@ -8063,6 +8186,36 @@
       "Whether maintainers consider this a bug or user error; whether a PR is already in progress"
     ],
     "why": "Issue reports a CLI argument error for MiniMax-H3, but root cause is unclear; a comment suggests adding --model-type diffusion as a workaround, indicating possible missing documentation or validation. No maintainer confirmation or design decision."
+  },
+  "b4c865ee4f28e46fa5eb1375ba1416e0b94e298336cb0f94e5b180866b839cf9": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Recent comment suggests possible duplicates (#34331, #37496, #23887) but lookup failed to confirm"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Anthropic-route tool schema conversion for Kimi upstream",
+      "Possibly provider-specific schema validation handling"
+    ],
+    "risks": [
+      "May duplicate existing PR or issue; maintainer may have design preferences for provider-specific handling",
+      "Changing schema conversion could affect other models or routes"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 12,
+    "test_plan": [
+      "Add a regression test that sends a minimal Anthropic /v1/messages request with a tool containing input_schema to a Kimi model and asserts success",
+      "Run targeted unit tests for the gateway's tool schema conversion and provider routing"
+    ],
+    "unknowns": [
+      "Whether an open PR already addresses this issue",
+      "Whether maintainers have a preferred fix approach or are already investigating"
+    ],
+    "why": "Issue reports a reproducible 400 error on Anthropic-route tool calls for Kimi models, with bisection isolating input_schema presence as trigger. However, open PR and related issue lookups timed out, so duplicate work cannot be excluded. The deterministic gate is HUMAN_REVIEW, and maintainer design preference is unknown."
   },
   "b534ab026233c5b940f456df82a92c93cba891fa279634b4f42862993298494a": {
     "confidence": 0.8,
