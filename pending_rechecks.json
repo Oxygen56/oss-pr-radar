@@ -1,14 +1,44 @@
 {
-  "BerriAI/litellm#25386": {
-    "issueTitle": "max_end_user_budget_id does not persist budget_id to DB — budget reset never runs for auto-created end users",
-    "issueUpdated": "2026-08-05T09:56:24Z",
-    "issueUrl": "https://github.com/BerriAI/litellm/issues/25386",
+  "BerriAI/litellm#35711": {
+    "issueTitle": "[Bug]: `ollama/` streaming never reconstructs tool calls — tool call arrives as plain `delta.content` text with `finish_reason: \"stop\"`, while the non-streaming path reconstructs it correctly",
+    "issueUpdated": "2026-08-04T18:30:42Z",
+    "issueUrl": "https://github.com/BerriAI/litellm/issues/35711",
     "reasonCode": "POLICY_REVALIDATION_REQUIRED"
   },
-  "vllm-project/vllm#51200": {
-    "issueTitle": "[Bug]: `MiniMAXGemmaRMSNorm` unconditionally calls FlashInfer CUDA kernels, breaking MiniMax-M3 on every non-CUDA platform",
-    "issueUpdated": "2026-08-06T01:42:06Z",
-    "issueUrl": "https://github.com/vllm-project/vllm/issues/51200",
-    "reasonCode": "POLICY_REVALIDATION_REQUIRED"
+  "aaif-goose/goose#11001": {
+    "issueTitle": "[BUG] Goose working indicator overlaps with /command menu in desktop UI",
+    "issueUpdated": "2026-08-06T13:16:34Z",
+    "issueUrl": "https://github.com/aaif-goose/goose/issues/11001",
+    "reasonCode": "OWNERSHIP_CHANGED"
+  },
+  "frontman-ai/frontman#1347": {
+    "issueTitle": "Stop or pause executions on task switch and disconnect",
+    "issueUpdated": "2026-08-05T17:35:35Z",
+    "issueUrl": "https://github.com/frontman-ai/frontman/issues/1347",
+    "reasonCode": "EVIDENCE_INCOMPLETE"
+  },
+  "mastra-ai/mastra#20670": {
+    "issueTitle": "createInngestAgent resume() mis-targets nested tool suspensions, drops caller request context, and swallows send failures",
+    "issueUpdated": "2026-08-04T15:52:30Z",
+    "issueUrl": "https://github.com/mastra-ai/mastra/issues/20670",
+    "reasonCode": "EVIDENCE_INCOMPLETE"
+  },
+  "mastra-ai/mastra#20671": {
+    "issueTitle": "Oversized Inngest Realtime events are delivered truncated, permanently hanging durable agent streams",
+    "issueUpdated": "2026-08-04T15:53:36Z",
+    "issueUrl": "https://github.com/mastra-ai/mastra/issues/20671",
+    "reasonCode": "EVIDENCE_INCOMPLETE"
+  },
+  "mastra-ai/mastra#20673": {
+    "issueTitle": "Durable agents lose the request context after the first iteration: requestContextEntries is dropped from iteration state and never forwarded to the LLM step",
+    "issueUpdated": "2026-08-04T15:54:14Z",
+    "issueUrl": "https://github.com/mastra-ai/mastra/issues/20673",
+    "reasonCode": "EVIDENCE_INCOMPLETE"
+  },
+  "mastra-ai/mastra#20818": {
+    "issueTitle": "[BUG] excludeSpanTypes orphans descendant spans: tool calls never reach exporters",
+    "issueUpdated": "2026-08-06T17:44:00Z",
+    "issueUrl": "https://github.com/mastra-ai/mastra/issues/20818",
+    "reasonCode": "STRONG_PR_APPEARED"
   }
 }
