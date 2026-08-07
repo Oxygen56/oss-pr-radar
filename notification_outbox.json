@@ -268,6 +268,10 @@
       "legacy": true,
       "seenAt": "2026-08-05T18:00:54.410399Z"
     },
+    "review|aaif-goose/goose#11041": {
+      "seenAt": "2026-08-07T21:09:32.887835Z",
+      "stateId": "553113d5efbcb0751db50b60b08ee4e11a83046ac2e3b8c9dfbc70629df7fda0"
+    },
     "review|ai-dynamo/dynamo#12630": {
       "legacy": true,
       "seenAt": "2026-08-05T18:00:54.410399Z"
@@ -399,6 +403,10 @@
     "review|mastra-ai/mastra#20934": {
       "seenAt": "2026-08-07T16:17:33.543221Z",
       "stateId": "f735765fe5f77df5dc62b54e4940347b09957b740f6e740745e9f68be284cce9"
+    },
+    "review|mastra-ai/mastra#20963": {
+      "seenAt": "2026-08-07T21:09:32.887835Z",
+      "stateId": "63a61e771074d422024d867628e3f54d27ca0881070b9416c61b464a463846cc"
     },
     "review|mem0ai/mem0#6783": {
       "legacy": true,
@@ -711,6 +719,10 @@
     "review|vllm-project/vllm#51429": {
       "seenAt": "2026-08-07T18:10:51.015935Z",
       "stateId": "075d3391fe32ceb941517f9737ec7655d05a1333bdc1a2af9bfbae960f1844c0"
+    },
+    "review|vllm-project/vllm#51441": {
+      "seenAt": "2026-08-07T21:09:32.887835Z",
+      "stateId": "e6dbe724ae1fb3533ecdf727b059e49576b95535d76ba7c2eb09d1d09c7004d3"
     },
     "watch|BerriAI/litellm#25386": {
       "legacy": true,
@@ -1125,7 +1137,7 @@
       "seenAt": "2026-08-06T10:09:13.778625Z"
     }
   },
-  "digest": "92d76ec6928827fbebeb67347586bbf7feaaa76eb85be3ad629e404b607519d0",
+  "digest": "9ae1e3745f386cbebd03d611b4aa829e34f014cd9dbb20fe02886b980fdeb163",
   "events": [
     {
       "attempts": 1,
@@ -15013,9 +15025,87 @@
       "runId": "scan-20260807T180621Z-38337a1560b7",
       "sentAt": "2026-08-07T18:11:33.376889Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "aaif-goose/goose#11041",
+        "mastra-ai/mastra#20963",
+        "vllm-project/vllm#51441"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "42741ded60a6b7649df68d78a9b8067a166717672ef00a63f69fa71938b88361",
+          "key": "aaif-goose/goose#11041",
+          "kind": "review",
+          "stateId": "553113d5efbcb0751db50b60b08ee4e11a83046ac2e3b8c9dfbc70629df7fda0"
+        },
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "770cfafb251079f2350bbef7a7e2e44b628518d811a1b3aefb17e6a724a65a4f",
+          "key": "mastra-ai/mastra#20963",
+          "kind": "review",
+          "stateId": "63a61e771074d422024d867628e3f54d27ca0881070b9416c61b464a463846cc"
+        },
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "c3651c3a5f2c2e37f44302c489fe5c011746d5b4b0e863f7cf4cc5a07b5224a8",
+          "key": "vllm-project/vllm#51441",
+          "kind": "review",
+          "stateId": "e6dbe724ae1fb3533ecdf727b059e49576b95535d76ba7c2eb09d1d09c7004d3"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[aaif-goose/goose#11041](https://github.com/aaif-goose/goose/issues/11041) `InferenceMetadata` is never recorded for providers that don't report a `resolved_model`, so per-message model attribution is lost and the model-change disclosure never renders**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue clearly identifies a root cause (resolved_model gating) and proposes a concrete fix with a test plan. However, the deterministic gate is HUMAN_REVIEW and existing PRs (#10621, #10462) overlap semantically, requiring maintainer comparison before new work.\n改动：crates/goose/src/agents/agent.rs；ui/desktop/src/components/ProgressiveMessageList.tsx\n验证：Add regression test using CountingTextProvider to assert metadata.inference.requested_model on streamed and persisted messages.\n风险：Existing PRs may already address the issue; overlapping changes could cause merge conflicts.\n竞争：发现 PR #10621 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 6，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[mastra-ai/mastra#20963](https://github.com/mastra-ai/mastra/issues/20963) CloudflareDeployer: generated entry constructs Mastra + Hono server on every request, defeating per-instance caches**\n建议：WAIT_MAINTAINER | 分数：14\n价值：Issue identifies a clear performance bug with measured impact and a concrete fix, but maintainer triage is pending and design confirmation is needed for the suggested approach.\n改动：Modify Cloudflare deployer entry template to memoize Mastra/Hono construction；Possibly expose entry template override hook\n验证：Create a minimal reproduction with stored agents and measure per-request construction overhead；Add a regression test that verifies construction happens once per isolate\n风险：Changing entry template may affect lifecycle semantics or compatibility；Memoization could introduce subtle issues with env/context variability\n竞争：未发现相关 open PR\n下一步：先在 issue 下请求分配/确认方案，获批后再开 PR。\n证据：复现信号 2，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#51441](https://github.com/vllm-project/vllm/issues/51441) [Bug]: Hybrid sparse attention + Eagle results in full cache miss for certain prompt lengths**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue reports a reproducible hybrid sparse attention + Eagle prefix-cache miss for specific prompt lengths, with concrete commands and cache-hit data. However, the deterministic gate is HUMAN_REVIEW, open PR lookup timed out, and related-issue audit failed, so competition and maintainer context are incomplete.\n改动：Fix prefix-cache alignment for hybrid sparse attention with Eagle speculative decoding；Adjust block-size or prefix-match-unit handling for non-multiple prompt lengths\n验证：Reproduce with provided commands and prompt lengths; assert cache_hit_length > 0 for non-multiple lengths；Add regression test covering prompt lengths around block boundaries for DeepSeek-V4 and Kimi-K3\n风险：Fix may be model-specific and not generalize；Performance regression in prefix caching or speculative decoding\n竞争：open PR 检索不完整，需等待下轮重试后再判断碰撞\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 3，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-07T21:09:32.887835Z",
+      "eventId": "a73d40be7ea02a518e1cec93e43ee2eebe83c84ea69e648f03a9f636a8e2610f",
+      "idempotencyKey": "a73d40be7ea02a518e1cec93e43ee2eebe83c84ea69e648f03",
+      "kind": "review",
+      "runId": "scan-20260807T210411Z-3db35a04d01c",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-07T19:23:28.561819Z",
+  "generatedAt": "2026-08-07T21:09:33.180636Z",
   "newEventCount": 0,
   "version": "notification_outbox_v2"
 }
