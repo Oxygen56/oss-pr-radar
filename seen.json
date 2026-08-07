@@ -173,10 +173,10 @@
     "decision_contract_digest": "67d712a249b740b0516d2768493b9a74f0b664fc19bea1d73639db20bc3827b2"
   },
   "sgl-project/sglang#17050": {
-    "analyzed": "2026-08-07T18:06:21Z",
+    "analyzed": "2026-08-07T19:19:54Z",
     "status": "bot_or_stale_refresh",
     "title": "[Tracking] CI Test Failures and Fixes",
-    "issue_updated": "2026-08-07T17:57:42Z",
+    "issue_updated": "2026-08-07T18:46:09Z",
     "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
@@ -1670,12 +1670,12 @@
     "decision_contract_digest": "7fdc703e76f3b5d96601ef7486106ba23124c913c8b09b3c8cda22740b629824"
   },
   "vllm-project/vllm#50749": {
-    "analyzed": "2026-08-06T03:32:45Z",
+    "analyzed": "2026-08-07T19:19:54Z",
     "status": "someone_active",
     "title": "[Bug]: int8_per_token_head KV with prefix caching DISABLED corrupts the FIRST generated tokens (Gemma-4 hybrid, Triton, idle KV pool)",
-    "issue_updated": "2026-08-05T20:35:26Z",
-    "scanner_version": "oss_pr_radar_v27_ci_neutral_competition",
-    "decision_contract_digest": "67d712a249b740b0516d2768493b9a74f0b664fc19bea1d73639db20bc3827b2"
+    "issue_updated": "2026-08-07T19:05:25Z",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "vllm-project/vllm#50889": {
     "analyzed": "2026-08-04T09:03:41Z",
@@ -3123,12 +3123,12 @@
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "pydantic/pydantic-ai#6970": {
-    "analyzed": "2026-08-05T23:26:39Z",
-    "issue_updated": "2026-08-05T21:43:32Z",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "issue_updated": "2026-08-07T18:33:29Z",
     "status": "skip_prefilter",
     "title": "Support UI event streams end-to-end outside an HTTP request — `run_input` is required but unread by `VercelAIEventStream`",
-    "scanner_version": "oss_pr_radar_v27_ci_neutral_competition",
-    "decision_contract_digest": "67d712a249b740b0516d2768493b9a74f0b664fc19bea1d73639db20bc3827b2"
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "pydantic/pydantic-ai#6976": {
     "analyzed": "2026-08-07T13:43:21Z",
@@ -3306,16 +3306,9 @@
     "decision_contract_digest": "01ac04dff42df4bd8dffdae9e870b02bd2b7fa3992843138f8ac7116b8ebf739"
   },
   "langchain-ai/langgraph#8470": {
-    "analyzed": "2026-08-07T05:29:30Z",
-    "requeued_at": "2026-08-07T05:29:30Z",
-    "first_deferred_at": "2026-08-07T05:29:30Z",
-    "defer_count": 1,
-    "deferred_from_status": "no_bug_or_maintainer_actionability",
-    "score": null,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "no_bug_or_maintainer_actionability",
     "title": "Reading a nested subgraph's state hydrates every DeltaChannel empty",
-    "url": "https://github.com/langchain-ai/langgraph/issues/8470",
     "issue_updated": "2026-08-05T19:17:09Z",
     "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
@@ -3898,28 +3891,34 @@
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "ai-dynamo/dynamo#12630": {
-    "analyzed": "2026-08-05T17:56:51Z",
-    "notified": false,
-    "status": "queued_outbox",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "requeued_at": "2026-08-07T19:19:54Z",
+    "first_deferred_at": "2026-08-07T19:19:54Z",
+    "defer_count": 1,
+    "deferred_from_status": "queued_outbox",
     "score": 12,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
     "title": "[Bug] sglang chat processor streaming detokenizer emits U+FFFD and drops completed characters on multi-byte UTF-8 (CJK) at chunk boundaries",
     "url": "https://github.com/ai-dynamo/dynamo/issues/12630",
     "issue_updated": "2026-08-04T11:14:16Z",
-    "notification_digest": "74d5b4b3616322154bea1a6fc267b21ad6bff64ca2e57a810e7d19898fad4b0d",
-    "scanner_version": "oss_pr_radar_v27_ci_neutral_competition",
-    "decision_contract_digest": "67d712a249b740b0516d2768493b9a74f0b664fc19bea1d73639db20bc3827b2"
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "vllm-project/vllm#51016": {
-    "analyzed": "2026-08-05T07:56:14Z",
-    "notified": false,
-    "status": "queued_outbox",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "requeued_at": "2026-08-07T19:19:54Z",
+    "first_deferred_at": "2026-08-07T19:19:54Z",
+    "defer_count": 1,
+    "deferred_from_status": "queued_outbox",
     "score": 12,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
     "title": "[Bug]: extract_hidden_states fails with TP>1 when KV page size < hidden-state per-token cost",
     "url": "https://github.com/vllm-project/vllm/issues/51016",
     "issue_updated": "2026-08-04T11:17:44Z",
-    "notification_digest": "8f3d965923daf8a555090dde4bdf14cd49ad9558c3132884f748f9ec32a3cfe0",
-    "scanner_version": "oss_pr_radar_v27_ci_neutral_competition",
-    "decision_contract_digest": "67d712a249b740b0516d2768493b9a74f0b664fc19bea1d73639db20bc3827b2"
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "sgl-project/sglang#33393": {
     "analyzed": "2026-08-07T07:46:11Z",
@@ -4031,16 +4030,16 @@
     "decision_contract_digest": "5384e69debd57a129655cda34c4c26cdd7bbc3d1440a0eeba9dabd48ea3ef21b"
   },
   "mastra-ai/mastra#15734": {
-    "analyzed": "2026-08-07T17:12:33Z",
-    "issue_updated": "2026-08-07T16:20:27Z",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "issue_updated": "2026-08-07T18:20:09Z",
     "status": "skip_prefilter",
     "title": "Workflow suspend/resume breaks when the workflow is owned by a specialist agent",
     "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "mastra-ai/mastra#14091": {
-    "analyzed": "2026-08-07T17:12:33Z",
-    "issue_updated": "2026-08-07T16:20:24Z",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "issue_updated": "2026-08-07T18:20:07Z",
     "status": "skip_prefilter",
     "title": "[BUG]  @mastra/core upgrade from 1.6.0 to 1.10.0 breaks fetch in Cloudflare Workers Vite dev (SSR)",
     "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
@@ -4420,17 +4419,17 @@
     "decision_contract_digest": "95513e138e28e90bef38cf0da99cd53e98815885ef466493f6094f811414371e"
   },
   "mastra-ai/mastra#19228": {
-    "analyzed": "2026-08-07T17:12:33Z",
-    "requeued_at": "2026-08-07T17:12:33Z",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "requeued_at": "2026-08-07T19:19:54Z",
     "first_deferred_at": "2026-08-07T17:12:33Z",
-    "defer_count": 1,
+    "defer_count": 2,
     "deferred_from_status": "bot_or_stale_refresh",
     "score": null,
     "status": "inspection_budget_deferred",
     "reason": "inspection_budget_deferred",
     "title": "Parsing error while using models through Bedrock Mantle endpoint",
     "url": "https://github.com/mastra-ai/mastra/issues/19228",
-    "issue_updated": "2026-08-07T16:20:26Z",
+    "issue_updated": "2026-08-07T18:20:09Z",
     "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
@@ -4535,12 +4534,19 @@
     "decision_contract_digest": "5384e69debd57a129655cda34c4c26cdd7bbc3d1440a0eeba9dabd48ea3ef21b"
   },
   "deepset-ai/haystack#10894": {
-    "analyzed": "2026-08-05T17:56:51Z",
-    "status": "no_bug_or_maintainer_actionability",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "requeued_at": "2026-08-07T19:19:54Z",
+    "first_deferred_at": "2026-08-07T19:19:54Z",
+    "defer_count": 1,
+    "deferred_from_status": "no_bug_or_maintainer_actionability",
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
     "title": "Benchmark Haystack Pipeline",
+    "url": "https://github.com/deepset-ai/haystack/issues/10894",
     "issue_updated": "2026-08-04T11:05:41Z",
-    "scanner_version": "oss_pr_radar_v27_ci_neutral_competition",
-    "decision_contract_digest": "67d712a249b740b0516d2768493b9a74f0b664fc19bea1d73639db20bc3827b2"
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "OpenHands/OpenHands#16291": {
     "analyzed": "2026-08-04T19:48:38Z",
@@ -4559,12 +4565,19 @@
     "decision_contract_digest": "67d712a249b740b0516d2768493b9a74f0b664fc19bea1d73639db20bc3827b2"
   },
   "modelcontextprotocol/servers#4607": {
-    "analyzed": "2026-08-05T21:38:35Z",
-    "status": "no_bug_or_maintainer_actionability",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "requeued_at": "2026-08-07T19:19:54Z",
+    "first_deferred_at": "2026-08-07T19:19:54Z",
+    "defer_count": 1,
+    "deferred_from_status": "no_bug_or_maintainer_actionability",
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
     "title": "Proposal: add \"Game Development\" as a community server category",
+    "url": "https://github.com/modelcontextprotocol/servers/issues/4607",
     "issue_updated": "2026-08-04T11:05:37Z",
-    "scanner_version": "oss_pr_radar_v27_ci_neutral_competition",
-    "decision_contract_digest": "67d712a249b740b0516d2768493b9a74f0b664fc19bea1d73639db20bc3827b2"
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "modelcontextprotocol/inspector#1915": {
     "analyzed": "2026-08-07T00:19:09Z",
@@ -4662,20 +4675,20 @@
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "google/adk-python#6583": {
-    "analyzed": "2026-08-07T15:13:45Z",
-    "issue_updated": "2026-08-07T14:34:57Z",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "issue_updated": "2026-08-07T18:32:01Z",
     "status": "skip_prefilter",
     "title": "chat wrapper (run_llm_agent_as_node) extracts task-delegation FCs from partial=True progressive-SSE chunks and breaks — the FC event is never persisted, orphaning the synthesized task FR and permanently poisoning the session",
     "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "google/adk-python#6582": {
-    "analyzed": "2026-08-06T08:21:21Z",
-    "issue_updated": "2026-08-06T07:02:47Z",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "issue_updated": "2026-08-07T18:40:55Z",
     "status": "skip_prefilter",
     "title": "contents request-processor (_rearrange_events_for_latest_function_response) raises ValueError on an orphaned function response, permanently poisoning the session — raise happens before before_model_callback, so no user hook can intercept it",
-    "scanner_version": "oss_pr_radar_v27_ci_neutral_competition",
-    "decision_contract_digest": "67d712a249b740b0516d2768493b9a74f0b664fc19bea1d73639db20bc3827b2"
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "sgl-project/sglang#33385": {
     "analyzed": "2026-08-04T12:56:27Z",
@@ -4736,28 +4749,34 @@
     "decision_contract_digest": "67d712a249b740b0516d2768493b9a74f0b664fc19bea1d73639db20bc3827b2"
   },
   "promptfoo/promptfoo#10298": {
-    "analyzed": "2026-08-06T10:02:57Z",
-    "notified": false,
-    "status": "queued_outbox",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "requeued_at": "2026-08-07T19:19:54Z",
+    "first_deferred_at": "2026-08-07T19:19:54Z",
+    "defer_count": 1,
+    "deferred_from_status": "queued_outbox",
     "score": 11,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
     "title": "Azure OpenAI evaluator metrics fail with service principal authentication due to tenant mismatch",
     "url": "https://github.com/promptfoo/promptfoo/issues/10298",
     "issue_updated": "2026-08-04T11:35:37Z",
-    "notification_digest": "889253e48b4b5776d944189f1bac91114f35111353a4b97d6b064e9d35be94bc",
-    "scanner_version": "oss_pr_radar_v27_ci_neutral_competition",
-    "decision_contract_digest": "67d712a249b740b0516d2768493b9a74f0b664fc19bea1d73639db20bc3827b2"
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "cline/cline#12913": {
-    "analyzed": "2026-08-04T14:47:15Z",
-    "notified": false,
-    "status": "queued_outbox",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "requeued_at": "2026-08-07T19:19:54Z",
+    "first_deferred_at": "2026-08-07T19:19:54Z",
+    "defer_count": 1,
+    "deferred_from_status": "queued_outbox",
     "score": 10,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
     "title": "Bedrock prompt caching never engages: routing layer emits anthropic cache_control but @ai-sdk/amazon-bedrock only reads providerMetadata.bedrock.cachePoint (zero writers in binary)",
     "url": "https://github.com/cline/cline/issues/12913",
     "issue_updated": "2026-08-04T10:56:37Z",
-    "notification_digest": "9380cb52f309fcc98e0b54f6fc7cdbc07782ae6dd960e683c2a6d917e316cbbe",
-    "scanner_version": "oss_pr_radar_v25_path_aware_duplicate_guard",
-    "decision_contract_digest": "5384e69debd57a129655cda34c4c26cdd7bbc3d1440a0eeba9dabd48ea3ef21b"
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "modelcontextprotocol/inspector#1859": {
     "analyzed": "2026-08-06T15:32:31Z",
@@ -4776,14 +4795,10 @@
     "decision_contract_digest": "5384e69debd57a129655cda34c4c26cdd7bbc3d1440a0eeba9dabd48ea3ef21b"
   },
   "mastra-ai/mastra#20682": {
-    "analyzed": "2026-08-06T13:48:13Z",
-    "notified": false,
-    "status": "queued_outbox",
-    "score": 12,
+    "analyzed": "2026-08-07T19:19:54Z",
+    "issue_updated": "2026-08-07T18:39:22Z",
+    "status": "skip_prefilter",
     "title": "[BUG] Thread title is silently lost when generateTitle is used on serverless runtimes that freeze after the response (e.g. AWS Lambda)",
-    "url": "https://github.com/mastra-ai/mastra/issues/20682",
-    "issue_updated": "2026-08-05T12:27:40Z",
-    "notification_digest": "a37fa703e676446cecad47d6ae1e59c7ea16aba08eb8532e37c58032bc858465",
     "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
@@ -4842,16 +4857,19 @@
     "decision_contract_digest": "33f3c521c7b8ce27230f9780df8cde1275f14fdc86917b0a8488f57fb92394fe"
   },
   "mem0ai/mem0#6783": {
-    "analyzed": "2026-08-05T17:48:30Z",
-    "notified": false,
-    "status": "queued_outbox",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "requeued_at": "2026-08-07T19:19:54Z",
+    "first_deferred_at": "2026-08-07T19:19:54Z",
+    "defer_count": 1,
+    "deferred_from_status": "queued_outbox",
     "score": 15,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
     "title": "[Codex plugin] Exported MEM0_API_KEY is filtered before MCP startup in managed environments",
     "url": "https://github.com/mem0ai/mem0/issues/6783",
     "issue_updated": "2026-08-04T11:33:51Z",
-    "notification_digest": "362e4a40c4ae7ba083394ab243dce1bc55767a82cb1e88defbac236ec71086c0",
-    "scanner_version": "oss_pr_radar_v27_ci_neutral_competition",
-    "decision_contract_digest": "67d712a249b740b0516d2768493b9a74f0b664fc19bea1d73639db20bc3827b2"
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "pydantic/pydantic-ai#3857": {
     "analyzed": "2026-08-05T21:32:31Z",
@@ -5456,16 +5474,9 @@
     "decision_contract_digest": "5384e69debd57a129655cda34c4c26cdd7bbc3d1440a0eeba9dabd48ea3ef21b"
   },
   "modelcontextprotocol/inspector#1853": {
-    "analyzed": "2026-08-07T04:05:26Z",
-    "requeued_at": "2026-08-07T04:05:26Z",
-    "first_deferred_at": "2026-08-07T04:05:26Z",
-    "defer_count": 1,
-    "deferred_from_status": "frontend_interaction_issue",
-    "score": null,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "frontend_interaction_issue",
     "title": "Fix JSON parameter editor escaping while typing",
-    "url": "https://github.com/modelcontextprotocol/inspector/issues/1853",
     "issue_updated": "2026-08-05T21:01:41Z",
     "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
@@ -6529,12 +6540,12 @@
     "decision_contract_digest": "67d712a249b740b0516d2768493b9a74f0b664fc19bea1d73639db20bc3827b2"
   },
   "mastra-ai/mastra#20674": {
-    "analyzed": "2026-08-04T20:01:16Z",
-    "status": "someone_active",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "issue_updated": "2026-08-07T19:13:10Z",
+    "status": "skip_prefilter",
     "title": "[BUG] Observational Memory TokenCounter throws on 'output-error' and 'approval-responded' tool-invocation states",
-    "issue_updated": "2026-08-04T15:54:40Z",
-    "scanner_version": "oss_pr_radar_v25_path_aware_duplicate_guard",
-    "decision_contract_digest": "5384e69debd57a129655cda34c4c26cdd7bbc3d1440a0eeba9dabd48ea3ef21b"
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "OpenHands/OpenHands#15071": {
     "analyzed": "2026-08-04T20:01:16Z",
@@ -6545,16 +6556,19 @@
     "decision_contract_digest": "5384e69debd57a129655cda34c4c26cdd7bbc3d1440a0eeba9dabd48ea3ef21b"
   },
   "mastra-ai/mastra#20663": {
-    "analyzed": "2026-08-05T15:32:52Z",
-    "notified": false,
-    "status": "queued_outbox",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "requeued_at": "2026-08-07T19:19:54Z",
+    "first_deferred_at": "2026-08-07T19:19:54Z",
+    "defer_count": 1,
+    "deferred_from_status": "queued_outbox",
     "score": 15,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
     "title": "[BUG] `dataset.startExperiment` with a Memory-enabled agent target throws `AGENT_MEMORY_MISSING_RESOURCE_ID` — no way to supply `threadId`",
     "url": "https://github.com/mastra-ai/mastra/issues/20663",
     "issue_updated": "2026-08-04T15:51:39Z",
-    "notification_digest": "0178e57b27888e66464b1d47ba8517e209b51070afd1d5e8d971c5e7b1f73cd2",
-    "scanner_version": "oss_pr_radar_v27_ci_neutral_competition",
-    "decision_contract_digest": "67d712a249b740b0516d2768493b9a74f0b664fc19bea1d73639db20bc3827b2"
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "mastra-ai/mastra#20673": {
     "analyzed": "2026-08-07T12:00:52Z",
@@ -6591,13 +6605,13 @@
     "decision_contract_digest": "67d712a249b740b0516d2768493b9a74f0b664fc19bea1d73639db20bc3827b2"
   },
   "mastra-ai/mastra#20670": {
-    "analyzed": "2026-08-07T12:00:52Z",
+    "analyzed": "2026-08-07T19:19:54Z",
     "notified": false,
     "status": "queued_outbox",
     "score": 11,
     "title": "createInngestAgent resume() mis-targets nested tool suspensions, drops caller request context, and swallows send failures",
     "url": "https://github.com/mastra-ai/mastra/issues/20670",
-    "issue_updated": "2026-08-04T15:52:30Z",
+    "issue_updated": "2026-08-07T19:04:43Z",
     "notification_digest": "77af2b118c2fc20b30a0320c5a333c89b186b2300ba4f60436e4c2f5d2ebbf52",
     "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
@@ -8081,14 +8095,9 @@
     "decision_contract_digest": "5384e69debd57a129655cda34c4c26cdd7bbc3d1440a0eeba9dabd48ea3ef21b"
   },
   "OpenHands/OpenHands#16270": {
-    "analyzed": "2026-08-07T18:06:21Z",
-    "requeued_at": "2026-08-07T18:06:21Z",
-    "first_deferred_at": "2026-08-07T18:06:21Z",
-    "defer_count": 1,
-    "deferred_from_status": "queued_outbox",
-    "score": 12,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "rejected",
+    "reason": "not_open_or_pull_request",
     "title": "[Bug]: AttributeError: 'Server' object has no attribute 'list_tools' when browser tool is used (breaks chat with 500 error)",
     "url": "https://github.com/OpenHands/OpenHands/issues/16270",
     "issue_updated": "2026-08-04T18:54:18Z",
@@ -8478,10 +8487,10 @@
     "decision_contract_digest": "67d712a249b740b0516d2768493b9a74f0b664fc19bea1d73639db20bc3827b2"
   },
   "aaif-goose/goose#10943": {
-    "analyzed": "2026-08-07T13:43:21Z",
-    "status": "no_bug_or_maintainer_actionability",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "bot_or_stale_refresh",
     "title": "Extract context compaction into a standalone goose-compaction crate with trait-based model I/O",
-    "issue_updated": "2026-08-04T21:15:47Z",
+    "issue_updated": "2026-08-07T19:21:40Z",
     "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
@@ -8798,12 +8807,12 @@
     "decision_contract_digest": "67d712a249b740b0516d2768493b9a74f0b664fc19bea1d73639db20bc3827b2"
   },
   "stanfordnlp/dspy#9993": {
-    "analyzed": "2026-08-05T07:56:14Z",
+    "analyzed": "2026-08-07T19:19:54Z",
     "status": "someone_active",
     "title": "dspy.Audio auto-downloads from any http(s) string with no timeout and no SSRF guard",
-    "issue_updated": "2026-08-05T06:23:03Z",
-    "scanner_version": "oss_pr_radar_v27_ci_neutral_competition",
-    "decision_contract_digest": "67d712a249b740b0516d2768493b9a74f0b664fc19bea1d73639db20bc3827b2"
+    "issue_updated": "2026-08-07T18:26:12Z",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "ai-dynamo/dynamo#12671": {
     "analyzed": "2026-08-04T23:29:05Z",
@@ -9178,12 +9187,12 @@
     "decision_contract_digest": "67d712a249b740b0516d2768493b9a74f0b664fc19bea1d73639db20bc3827b2"
   },
   "vllm-project/vllm#50702": {
-    "analyzed": "2026-08-06T03:32:45Z",
+    "analyzed": "2026-08-07T19:19:54Z",
     "status": "someone_active",
     "title": "[Bug]: int8_per_token_head KV + prefix caching corrupts output when the KV pool is pinned at 100% (Gemma-4 hybrid, Triton)",
-    "issue_updated": "2026-08-05T20:35:33Z",
-    "scanner_version": "oss_pr_radar_v27_ci_neutral_competition",
-    "decision_contract_digest": "67d712a249b740b0516d2768493b9a74f0b664fc19bea1d73639db20bc3827b2"
+    "issue_updated": "2026-08-07T19:05:26Z",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "BerriAI/litellm#35766": {
     "analyzed": "2026-08-05T07:56:14Z",
@@ -11646,12 +11655,12 @@
     "decision_contract_digest": "67d712a249b740b0516d2768493b9a74f0b664fc19bea1d73639db20bc3827b2"
   },
   "mastra-ai/mastra#20604": {
-    "analyzed": "2026-08-05T10:21:28Z",
-    "status": "someone_active",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "issue_updated": "2026-08-07T19:13:23Z",
+    "status": "skip_prefilter",
     "title": "[BUG] listMessages include ignores resourceId scope",
-    "issue_updated": "2026-08-05T10:04:03Z",
-    "scanner_version": "oss_pr_radar_v27_ci_neutral_competition",
-    "decision_contract_digest": "67d712a249b740b0516d2768493b9a74f0b664fc19bea1d73639db20bc3827b2"
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "mastra-ai/mastra#20603": {
     "analyzed": "2026-08-05T19:20:19Z",
@@ -13450,10 +13459,10 @@
     "decision_contract_digest": "67d712a249b740b0516d2768493b9a74f0b664fc19bea1d73639db20bc3827b2"
   },
   "aaif-goose/goose#10966": {
-    "analyzed": "2026-08-07T05:54:00Z",
-    "requeued_at": "2026-08-07T05:54:00Z",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "requeued_at": "2026-08-07T19:19:54Z",
     "first_deferred_at": "2026-08-07T05:54:00Z",
-    "defer_count": 1,
+    "defer_count": 2,
     "deferred_from_status": "no_bug_or_maintainer_actionability",
     "score": null,
     "status": "inspection_budget_deferred",
@@ -13505,7 +13514,7 @@
     "decision_contract_digest": "67d712a249b740b0516d2768493b9a74f0b664fc19bea1d73639db20bc3827b2"
   },
   "promptfoo/promptfoo#10307": {
-    "analyzed": "2026-08-07T09:18:31Z",
+    "analyzed": "2026-08-07T19:19:54Z",
     "notified": false,
     "status": "queued_outbox",
     "score": 8,
@@ -13937,16 +13946,9 @@
     "decision_contract_digest": "67d712a249b740b0516d2768493b9a74f0b664fc19bea1d73639db20bc3827b2"
   },
   "vllm-project/vllm#51181": {
-    "analyzed": "2026-08-07T05:54:00Z",
-    "requeued_at": "2026-08-07T05:54:00Z",
-    "first_deferred_at": "2026-08-07T05:54:00Z",
-    "defer_count": 1,
-    "deferred_from_status": "hardware_unavailable",
-    "score": null,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "hardware_unavailable",
     "title": "[Bug]: DeepSeekV4 DSpark CUDA graph capture failure on H100",
-    "url": "https://github.com/vllm-project/vllm/issues/51181",
     "issue_updated": "2026-08-05T16:45:50Z",
     "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
@@ -14044,16 +14046,9 @@
     "decision_contract_digest": "67d712a249b740b0516d2768493b9a74f0b664fc19bea1d73639db20bc3827b2"
   },
   "aaif-goose/goose#10197": {
-    "analyzed": "2026-08-07T05:54:00Z",
-    "requeued_at": "2026-08-07T05:54:00Z",
-    "first_deferred_at": "2026-08-07T05:54:00Z",
-    "defer_count": 1,
-    "deferred_from_status": "no_bug_or_maintainer_actionability",
-    "score": null,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "no_bug_or_maintainer_actionability",
     "title": "Allow slash commands to directly invoke MCP tools and render MCP Apps",
-    "url": "https://github.com/aaif-goose/goose/issues/10197",
     "issue_updated": "2026-08-05T17:03:23Z",
     "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
@@ -14083,16 +14078,9 @@
     "decision_contract_digest": "67d712a249b740b0516d2768493b9a74f0b664fc19bea1d73639db20bc3827b2"
   },
   "aaif-goose/goose#10731": {
-    "analyzed": "2026-08-07T05:54:00Z",
-    "requeued_at": "2026-08-07T05:54:00Z",
-    "first_deferred_at": "2026-08-07T05:54:00Z",
-    "defer_count": 1,
-    "deferred_from_status": "no_bug_or_maintainer_actionability",
-    "score": null,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "no_bug_or_maintainer_actionability",
     "title": "Model role settings (fast/lead/planner) are not scoped to a provider and leak across providers",
-    "url": "https://github.com/aaif-goose/goose/issues/10731",
     "issue_updated": "2026-08-05T16:56:29Z",
     "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
@@ -14214,16 +14202,9 @@
     "decision_contract_digest": "67d712a249b740b0516d2768493b9a74f0b664fc19bea1d73639db20bc3827b2"
   },
   "pipecat-ai/pipecat#5225": {
-    "analyzed": "2026-08-07T05:54:00Z",
-    "requeued_at": "2026-08-07T05:54:00Z",
-    "first_deferred_at": "2026-08-07T05:54:00Z",
-    "defer_count": 1,
-    "deferred_from_status": "no_bug_or_maintainer_actionability",
-    "score": null,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "no_bug_or_maintainer_actionability",
     "title": "Incomplete-turn marker (○/◐) triggers an LLM run Gemini rejects with 400, and cancels its own re-prompt timeout",
-    "url": "https://github.com/pipecat-ai/pipecat/issues/5225",
     "issue_updated": "2026-08-05T15:57:34Z",
     "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
@@ -14245,16 +14226,9 @@
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "aaif-goose/goose#10494": {
-    "analyzed": "2026-08-07T05:54:00Z",
-    "requeued_at": "2026-08-07T05:54:00Z",
-    "first_deferred_at": "2026-08-07T05:54:00Z",
-    "defer_count": 1,
-    "deferred_from_status": "no_bug_or_maintainer_actionability",
-    "score": null,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "no_bug_or_maintainer_actionability",
     "title": "Users can too easily press wrong option in prompt field",
-    "url": "https://github.com/aaif-goose/goose/issues/10494",
     "issue_updated": "2026-08-05T17:31:21Z",
     "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
@@ -14975,16 +14949,9 @@
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "modelcontextprotocol/inspector#1929": {
-    "analyzed": "2026-08-07T04:05:26Z",
-    "requeued_at": "2026-08-07T04:05:26Z",
-    "first_deferred_at": "2026-08-07T04:05:26Z",
-    "defer_count": 1,
-    "deferred_from_status": "no_bug_or_maintainer_actionability",
-    "score": null,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "no_bug_or_maintainer_actionability",
     "title": "Track the 5 open v1 security PRs (board #11 issues-only cleanup)",
-    "url": "https://github.com/modelcontextprotocol/inspector/issues/1929",
     "issue_updated": "2026-08-05T21:11:49Z",
     "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
@@ -15174,10 +15141,10 @@
     "decision_contract_digest": "67d712a249b740b0516d2768493b9a74f0b664fc19bea1d73639db20bc3827b2"
   },
   "mastra-ai/mastra#20764": {
-    "analyzed": "2026-08-07T05:29:30Z",
-    "status": "off_topic",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "issue_updated": "2026-08-07T18:38:58Z",
+    "status": "skip_prefilter",
     "title": "Factory: rule-driven sessions ignore the project default model — fall back to hardcoded openai/gpt-5.5",
-    "issue_updated": "2026-08-06T15:37:40Z",
     "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
@@ -15396,24 +15363,17 @@
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "run-llama/llama_index#22596": {
-    "analyzed": "2026-08-05T19:59:16Z",
+    "analyzed": "2026-08-07T19:19:54Z",
     "status": "rfc_or_roadmap_without_maintainer_split",
     "title": "[Feature Request]: LLMRerank Async Support",
-    "issue_updated": "2026-08-05T19:56:19Z",
-    "scanner_version": "oss_pr_radar_v27_ci_neutral_competition",
-    "decision_contract_digest": "67d712a249b740b0516d2768493b9a74f0b664fc19bea1d73639db20bc3827b2"
+    "issue_updated": "2026-08-07T18:20:14Z",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "strands-agents/harness-sdk#3665": {
-    "analyzed": "2026-08-07T05:29:30Z",
-    "requeued_at": "2026-08-07T05:29:30Z",
-    "first_deferred_at": "2026-08-07T05:29:30Z",
-    "defer_count": 1,
-    "deferred_from_status": "no_bug_or_maintainer_actionability",
-    "score": null,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "no_bug_or_maintainer_actionability",
     "title": "[PARITY] Steering (interventions and plugins)",
-    "url": "https://github.com/strands-agents/harness-sdk/issues/3665",
     "issue_updated": "2026-08-05T19:56:12Z",
     "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
@@ -15761,16 +15721,9 @@
     "decision_contract_digest": "67d712a249b740b0516d2768493b9a74f0b664fc19bea1d73639db20bc3827b2"
   },
   "vllm-project/vllm#51197": {
-    "analyzed": "2026-08-07T07:46:11Z",
-    "requeued_at": "2026-08-07T07:46:11Z",
-    "first_deferred_at": "2026-08-07T05:29:30Z",
-    "defer_count": 2,
-    "deferred_from_status": "no_bug_or_maintainer_actionability",
-    "score": null,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "no_bug_or_maintainer_actionability",
     "title": "[Performance]: Qwen3.6-35B-A3B (Qwen3_5MoeForConditionalGeneration) BF16 GDN backbone isn't quantized — ~80% of per-step reads, caps decode",
-    "url": "https://github.com/vllm-project/vllm/issues/51197",
     "issue_updated": "2026-08-07T06:55:16Z",
     "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
@@ -15866,14 +15819,9 @@
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "pydantic/pydantic-ai#7187": {
-    "analyzed": "2026-08-07T04:05:26Z",
-    "requeued_at": "2026-08-07T04:05:26Z",
-    "first_deferred_at": "2026-08-07T04:05:26Z",
-    "defer_count": 1,
-    "deferred_from_status": "no_bug_or_maintainer_actionability",
-    "score": null,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "rejected",
+    "reason": "not_open_or_pull_request",
     "title": "Synthesized tool-availability messages can emit a duplicate tool call ID from client-authored history",
     "url": "https://github.com/pydantic/pydantic-ai/issues/7187",
     "issue_updated": "2026-08-05T21:00:50Z",
@@ -15889,14 +15837,9 @@
     "decision_contract_digest": "67d712a249b740b0516d2768493b9a74f0b664fc19bea1d73639db20bc3827b2"
   },
   "langflow-ai/langflow#14433": {
-    "analyzed": "2026-08-07T04:05:26Z",
-    "requeued_at": "2026-08-07T04:05:26Z",
-    "first_deferred_at": "2026-08-07T04:05:26Z",
-    "defer_count": 1,
-    "deferred_from_status": "no_bug_or_maintainer_actionability",
-    "score": null,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "rejected",
+    "reason": "not_open_or_pull_request",
     "title": "Guest Task Drop: TaskMarket integration for Langflow agent workflows",
     "url": "https://github.com/langflow-ai/langflow/issues/14433",
     "issue_updated": "2026-08-05T21:09:41Z",
@@ -15904,14 +15847,9 @@
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "crewAIInc/crewAI#6831": {
-    "analyzed": "2026-08-07T04:05:26Z",
-    "requeued_at": "2026-08-07T04:05:26Z",
-    "first_deferred_at": "2026-08-07T04:05:26Z",
-    "defer_count": 1,
-    "deferred_from_status": "no_bug_or_maintainer_actionability",
-    "score": null,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "rejected",
+    "reason": "not_open_or_pull_request",
     "title": "Guest Task Drop: TaskMarket integration for CrewAI agent delegation",
     "url": "https://github.com/crewAIInc/crewAI/issues/6831",
     "issue_updated": "2026-08-05T20:59:12Z",
@@ -15927,14 +15865,9 @@
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "langchain-ai/langgraph#8541": {
-    "analyzed": "2026-08-07T05:29:30Z",
-    "requeued_at": "2026-08-07T05:29:30Z",
-    "first_deferred_at": "2026-08-07T05:29:30Z",
-    "defer_count": 1,
-    "deferred_from_status": "no_bug_or_maintainer_actionability",
-    "score": null,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "rejected",
+    "reason": "not_open_or_pull_request",
     "title": "[Guest Task Drop] TaskMarket integration for LangGraph agents",
     "url": "https://github.com/langchain-ai/langgraph/issues/8541",
     "issue_updated": "2026-08-05T20:34:00Z",
@@ -16318,16 +16251,9 @@
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "cline/cline#11274": {
-    "analyzed": "2026-08-07T04:05:26Z",
-    "requeued_at": "2026-08-07T04:05:26Z",
-    "first_deferred_at": "2026-08-07T04:05:26Z",
-    "defer_count": 1,
-    "deferred_from_status": "no_bug_or_maintainer_actionability",
-    "score": null,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "no_bug_or_maintainer_actionability",
     "title": "replace_in_file appends a stray blank line at the end of every SEARCH/REPLACE block",
-    "url": "https://github.com/cline/cline/issues/11274",
     "issue_updated": "2026-08-05T21:42:50Z",
     "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
@@ -16341,16 +16267,9 @@
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "pydantic/pydantic-ai#7191": {
-    "analyzed": "2026-08-07T18:06:21Z",
-    "requeued_at": "2026-08-07T18:06:21Z",
-    "first_deferred_at": "2026-08-07T03:44:58Z",
-    "defer_count": 3,
-    "deferred_from_status": "no_bug_or_maintainer_actionability",
-    "score": null,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "no_bug_or_maintainer_actionability",
     "title": "Support deferred capability tools in realtime sessions where the provider allows mid-session tool updates",
-    "url": "https://github.com/pydantic/pydantic-ai/issues/7191",
     "issue_updated": "2026-08-05T22:14:53Z",
     "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
@@ -20984,7 +20903,7 @@
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "BerriAI/litellm#27767": {
-    "analyzed": "2026-08-06T13:48:13Z",
+    "analyzed": "2026-08-07T19:19:54Z",
     "notified": false,
     "status": "queued_outbox",
     "score": 11,
@@ -22576,11 +22495,11 @@
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "BerriAI/litellm#36094": {
-    "analyzed": "2026-08-07T17:12:33Z",
+    "analyzed": "2026-08-07T19:19:54Z",
     "status": "llm_score_low",
     "title": "[Bug]: azure/gpt-5.6-luna under-reports cost by 5x on main (Regression after v1.95.0)",
     "url": "https://github.com/BerriAI/litellm/issues/36094",
-    "issue_updated": "2026-08-07T16:23:10Z",
+    "issue_updated": "2026-08-07T19:00:48Z",
     "llm_decision": "WAIT_MAINTAINER",
     "llm_score": 5,
     "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
@@ -23713,10 +23632,10 @@
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "google/adk-python#3301": {
-    "analyzed": "2026-08-07T16:12:16Z",
+    "analyzed": "2026-08-07T19:19:54Z",
     "status": "someone_active",
     "title": "Configurable Context Builder for RemoteA2aAgent",
-    "issue_updated": "2026-08-06T21:04:32Z",
+    "issue_updated": "2026-08-07T18:44:51Z",
     "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
@@ -24115,8 +24034,8 @@
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "mastra-ai/mastra#20879": {
-    "analyzed": "2026-08-07T15:13:45Z",
-    "issue_updated": "2026-08-07T14:58:35Z",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "issue_updated": "2026-08-07T18:39:23Z",
     "status": "skip_prefilter",
     "title": "[BUG] bundler.externals: true default is silently dropped when any other bundler option is set",
     "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
@@ -24620,10 +24539,10 @@
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "pytorch/torchtitan#2936": {
-    "analyzed": "2026-08-07T05:54:00Z",
+    "analyzed": "2026-08-07T19:19:54Z",
     "status": "bot_or_stale_refresh",
     "title": "TODO Debt Report",
-    "issue_updated": "2026-08-07T05:33:28Z",
+    "issue_updated": "2026-08-07T18:47:13Z",
     "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
@@ -24724,16 +24643,9 @@
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "pydantic/pydantic-ai#7257": {
-    "analyzed": "2026-08-07T18:06:21Z",
-    "requeued_at": "2026-08-07T18:06:21Z",
-    "first_deferred_at": "2026-08-07T03:44:58Z",
-    "defer_count": 2,
-    "deferred_from_status": "inspection_budget_deferred",
-    "score": null,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "someone_active",
     "title": "Callback dispatch by function-kind (`is_async_callable`) mishandles a plain `def` returning a coroutine",
-    "url": "https://github.com/pydantic/pydantic-ai/issues/7257",
     "issue_updated": "2026-08-07T01:22:18Z",
     "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
@@ -24922,46 +24834,25 @@
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "anomalyco/opencode#40953": {
-    "analyzed": "2026-08-07T03:44:58Z",
-    "requeued_at": "2026-08-07T03:44:58Z",
-    "first_deferred_at": "2026-08-07T03:44:58Z",
-    "defer_count": 1,
-    "deferred_from_status": null,
-    "score": null,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "someone_active",
     "title": "feat(tui): expose stable prompt action commands to plugins",
-    "url": "https://github.com/anomalyco/opencode/issues/40953",
     "issue_updated": "2026-08-07T00:54:53Z",
     "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "agno-agi/agno#9435": {
-    "analyzed": "2026-08-07T03:44:58Z",
-    "requeued_at": "2026-08-07T03:44:58Z",
-    "first_deferred_at": "2026-08-07T03:44:58Z",
-    "defer_count": 1,
-    "deferred_from_status": null,
-    "score": null,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "no_bug_or_maintainer_actionability",
     "title": "Studio drafts rebase later edits onto a superseded version; publishing rolls the component back",
-    "url": "https://github.com/agno-agi/agno/issues/9435",
     "issue_updated": "2026-08-07T00:26:17Z",
     "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "agno-agi/agno#9433": {
-    "analyzed": "2026-08-07T03:44:58Z",
-    "requeued_at": "2026-08-07T03:44:58Z",
-    "first_deferred_at": "2026-08-07T03:44:58Z",
-    "defer_count": 1,
-    "deferred_from_status": null,
-    "score": null,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "no_bug_or_maintainer_actionability",
     "title": "Non-typed reconstruction failures still surface as 404 not-found",
-    "url": "https://github.com/agno-agi/agno/issues/9433",
     "issue_updated": "2026-08-07T00:26:15Z",
     "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
@@ -24982,11 +24873,11 @@
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "tsz-org/tsz#15632": {
-    "analyzed": "2026-08-07T03:44:58Z",
-    "requeued_at": "2026-08-07T03:44:58Z",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "requeued_at": "2026-08-07T19:19:54Z",
     "first_deferred_at": "2026-08-07T03:44:58Z",
-    "defer_count": 1,
-    "deferred_from_status": null,
+    "defer_count": 2,
+    "deferred_from_status": "inspection_budget_deferred",
     "score": null,
     "status": "inspection_budget_deferred",
     "reason": "inspection_budget_deferred",
@@ -25558,16 +25449,9 @@
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "vllm-project/vllm#49562": {
-    "analyzed": "2026-08-07T07:46:11Z",
-    "requeued_at": "2026-08-07T07:46:11Z",
-    "first_deferred_at": "2026-08-07T05:29:30Z",
-    "defer_count": 2,
-    "deferred_from_status": "inspection_budget_deferred",
-    "score": null,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "rfc_or_roadmap_without_maintainer_split",
     "title": "[Feature] Support `extract_hidden_states` on Model Runner V2",
-    "url": "https://github.com/vllm-project/vllm/issues/49562",
     "issue_updated": "2026-08-07T06:33:50Z",
     "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
@@ -26622,10 +26506,10 @@
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "deepseek-ai/DeepSeek-V3#1537": {
-    "analyzed": "2026-08-07T18:06:21Z",
+    "analyzed": "2026-08-07T19:19:54Z",
     "status": "no_bug_or_maintainer_actionability",
     "title": "用DeepSeek-V3设计\"可复现创作留痕\"框架 —— 一个AGI主线的落地实践",
-    "issue_updated": "2026-08-07T17:54:06Z",
+    "issue_updated": "2026-08-07T18:58:35Z",
     "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
@@ -28146,17 +28030,10 @@
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "microsoft/agent-framework#7568": {
-    "analyzed": "2026-08-07T13:43:21Z",
-    "requeued_at": "2026-08-07T13:43:21Z",
-    "first_deferred_at": "2026-08-07T13:43:21Z",
-    "defer_count": 1,
-    "deferred_from_status": null,
-    "score": null,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "no_bug_or_maintainer_actionability",
     "title": ".NET: [Feature]: Backend-neutral sandbox protocol for agent code execution, with a first-party Azure Container Apps Sandboxes backend",
-    "url": "https://github.com/microsoft/agent-framework/issues/7568",
-    "issue_updated": "2026-08-07T12:48:14Z",
+    "issue_updated": "2026-08-07T19:03:15Z",
     "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
@@ -28206,17 +28083,17 @@
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "agno-agi/agno#9447": {
-    "analyzed": "2026-08-07T13:43:21Z",
-    "requeued_at": "2026-08-07T13:43:21Z",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "requeued_at": "2026-08-07T19:19:54Z",
     "first_deferred_at": "2026-08-07T13:43:21Z",
-    "defer_count": 1,
-    "deferred_from_status": null,
+    "defer_count": 2,
+    "deferred_from_status": "inspection_budget_deferred",
     "score": null,
     "status": "inspection_budget_deferred",
     "reason": "inspection_budget_deferred",
     "title": "Team continue with a caller-supplied run_response trusts the object's status over the stored run",
     "url": "https://github.com/agno-agi/agno/issues/9447",
-    "issue_updated": "2026-08-07T13:27:37Z",
+    "issue_updated": "2026-08-07T19:06:11Z",
     "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
@@ -28486,8 +28363,8 @@
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "vercel/ai#18576": {
-    "analyzed": "2026-08-07T16:12:16Z",
-    "issue_updated": "2026-08-07T15:53:17Z",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "issue_updated": "2026-08-07T18:48:11Z",
     "status": "skip_prefilter",
     "title": "WorkflowAgent: `maxRetries` and `abortSignal` returned from `prepareCall` are silently ignored",
     "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
@@ -28906,17 +28783,10 @@
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "zeroclaw-labs/zeroclaw#9815": {
-    "analyzed": "2026-08-07T15:13:45Z",
-    "requeued_at": "2026-08-07T15:13:45Z",
-    "first_deferred_at": "2026-08-07T15:13:45Z",
-    "defer_count": 1,
-    "deferred_from_status": null,
-    "score": null,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "repository_not_accepting_code_contributions",
     "title": "security: forbidden_paths is unreachable for any path under allowed_roots or the workspace",
-    "url": "https://github.com/zeroclaw-labs/zeroclaw/issues/9815",
-    "issue_updated": "2026-08-07T15:03:08Z",
+    "issue_updated": "2026-08-07T19:09:07Z",
     "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
@@ -29445,11 +29315,11 @@
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "inference-sim/inference-sim#1527": {
-    "analyzed": "2026-08-07T16:12:16Z",
+    "analyzed": "2026-08-07T19:19:54Z",
     "status": "skip_repo_quality",
     "reason": "low_stars:23",
     "title": "Bug: GLM-5.2-FP8 (glm_moe_dsa) — head_dim ignored, MLA/compressed-KV, first_k_dense_replace, FP8 block-quant unmodeled",
-    "issue_updated": "2026-08-07T15:49:44Z",
+    "issue_updated": "2026-08-07T19:03:42Z",
     "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
@@ -29514,17 +29384,10 @@
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "BerriAI/litellm#36192": {
-    "analyzed": "2026-08-07T16:12:16Z",
-    "requeued_at": "2026-08-07T16:12:16Z",
-    "first_deferred_at": "2026-08-07T16:12:16Z",
-    "defer_count": 1,
-    "deferred_from_status": null,
-    "score": null,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "no_bug_or_maintainer_actionability",
     "title": "Azure GPT-5.6 terra/luna cost-map rows carry OpenAI's prices, not Azure's published meters",
-    "url": "https://github.com/BerriAI/litellm/issues/36192",
-    "issue_updated": "2026-08-07T15:26:37Z",
+    "issue_updated": "2026-08-07T19:03:51Z",
     "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
@@ -30160,10 +30023,10 @@
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "jikan-me/jikan#595": {
-    "analyzed": "2026-08-07T17:12:33Z",
+    "analyzed": "2026-08-07T19:19:54Z",
     "status": "incomplete_issue_template",
     "title": "🐛 Can't get any anime data",
-    "issue_updated": "2026-08-07T16:24:57Z",
+    "issue_updated": "2026-08-07T17:51:17Z",
     "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
@@ -30388,10 +30251,17 @@
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
   "vllm-project/vllm#51428": {
-    "analyzed": "2026-08-07T18:06:21Z",
-    "status": "rfc_or_roadmap_without_maintainer_split",
+    "analyzed": "2026-08-07T19:19:54Z",
+    "requeued_at": "2026-08-07T19:19:54Z",
+    "first_deferred_at": "2026-08-07T19:19:54Z",
+    "defer_count": 1,
+    "deferred_from_status": "rfc_or_roadmap_without_maintainer_split",
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
     "title": "[RFC]: Programmatic Session-Aware KV Cache Management",
-    "issue_updated": "2026-08-07T18:02:24Z",
+    "url": "https://github.com/vllm-project/vllm/issues/51428",
+    "issue_updated": "2026-08-07T18:14:59Z",
     "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   },
@@ -30482,6 +30352,581 @@
     "url": "https://github.com/anomalyco/opencode/issues/41120",
     "issue_updated": "2026-08-07T17:36:58Z",
     "notification_digest": "1616bc1a4a4175bbeabeaa291b5961ca495f9853fea3f37375494f718a1ef403",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "vercel/ai#18590": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "issue_updated": "2026-08-07T18:50:57Z",
+    "status": "skip_prefilter",
+    "title": "Tool errors are unserializable when a function declares output_schema (OpenAI Responses)",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "mastra-ai/mastra#15535": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "issue_updated": "2026-08-07T19:13:35Z",
+    "status": "skip_prefilter",
+    "title": "bug: onAbort callback receives empty steps and no partial text when stream is aborted mid-generation",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "mastra-ai/mastra#15569": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "issue_updated": "2026-08-07T19:13:33Z",
+    "status": "skip_prefilter",
+    "title": "Tool execution errors stored as successful results — lost on history reload",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "mastra-ai/mastra#20485": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "issue_updated": "2026-08-07T19:13:32Z",
+    "status": "skip_prefilter",
+    "title": "test(cli): env vars pull overwrite protection is only verified through fs mocks",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "mastra-ai/mastra#19887": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "issue_updated": "2026-08-07T19:13:30Z",
+    "status": "skip_prefilter",
+    "title": "[BUG] v2 agent persists user message to memory when generate() fails before any assistant output",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "mastra-ai/mastra#19240": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "issue_updated": "2026-08-07T19:13:28Z",
+    "status": "skip_prefilter",
+    "title": "[BUG] Output processors cannot clear final agent text",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "mastra-ai/mastra#15229": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "issue_updated": "2026-08-07T19:13:27Z",
+    "status": "skip_prefilter",
+    "title": "[BUG] `AgentConfig.tools` typing is unnecessarily wide",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "mastra-ai/mastra#18058": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "issue_updated": "2026-08-07T19:13:25Z",
+    "status": "skip_prefilter",
+    "title": "[BUG] Studio agent editor ignores `editor: { instructions: false }` — instructions block stays editable",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "mastra-ai/mastra#20556": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "issue_updated": "2026-08-07T19:13:22Z",
+    "status": "skip_prefilter",
+    "title": "[BUG] Stopping a GitHub signal provider doesn't cancel an in-flight poll",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "mastra-ai/mastra#20550": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "issue_updated": "2026-08-07T19:13:20Z",
+    "status": "skip_prefilter",
+    "title": "[BUG] startWorkers queries agent schedules when scheduler is disabled",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "mastra-ai/mastra#20509": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "issue_updated": "2026-08-07T19:13:19Z",
+    "status": "skip_prefilter",
+    "title": "[BUG] Memory.deleteThread leaves observational memory vectors behind",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "mastra-ai/mastra#20354": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "issue_updated": "2026-08-07T19:13:17Z",
+    "status": "skip_prefilter",
+    "title": "[BUG] @mastra/core@1.54.0: MCPServer construction throws under CommonJS — slugify default-import interop regression (rolldown __toESM)",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "mastra-ai/mastra#17646": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "issue_updated": "2026-08-07T19:13:15Z",
+    "status": "skip_prefilter",
+    "title": "[BUG] Windows fails to clone templates due to shell-quote escaping in create-mastra",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "mastra-ai/mastra#20562": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "issue_updated": "2026-08-07T19:13:13Z",
+    "status": "skip_prefilter",
+    "title": "[BUG] @mastra/ai-sdk v6 UI finish chunks drop finishReason",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "mastra-ai/mastra#20607": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "issue_updated": "2026-08-07T19:13:12Z",
+    "status": "skip_prefilter",
+    "title": "[BUG] Observational Memory TokenCounter throws on persisted approval-requested tool invocation",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "mastra-ai/mastra#19273": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "issue_updated": "2026-08-07T19:13:09Z",
+    "status": "skip_prefilter",
+    "title": "[BUG] OpenAI schema-compat leaks propertyNames (z.record), rejected by Structured Outputs strict mode",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "mastra-ai/mastra#19768": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "issue_updated": "2026-08-07T18:39:20Z",
+    "status": "skip_prefilter",
+    "title": "Docs/implementation mismatch: observation.blockAfter documented as forcing synchronous observation, but implementation only forces max activation ratio",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "mastra-ai/mastra#14619": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "issue_updated": "2026-08-07T18:39:18Z",
+    "status": "skip_prefilter",
+    "title": "buildCapabilities() gates SSO/session/user behind EE license, but PR #13614 intended only RBAC/ACL",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "mastra-ai/mastra#19740": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "issue_updated": "2026-08-07T18:39:17Z",
+    "status": "skip_prefilter",
+    "title": "[BUG] Observational Memory reuses ended turn on multi-step agent loops → \"Turn already ended\"",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "mastra-ai/mastra#20164": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "issue_updated": "2026-08-07T18:39:15Z",
+    "status": "skip_prefilter",
+    "title": "Workflow run.start() returns incomplete 'result' field while persisted data is correct",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "mastra-ai/mastra#15367": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "issue_updated": "2026-08-07T18:39:13Z",
+    "status": "skip_prefilter",
+    "title": "inputToMastraDBMessage throws for cross-thread messages when using resource-scoped observational memory",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "mastra-ai/mastra#20223": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "issue_updated": "2026-08-07T18:39:11Z",
+    "status": "skip_prefilter",
+    "title": "JWT auth blocks access to Studio Settings in local development",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "mastra-ai/mastra#19633": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "issue_updated": "2026-08-07T18:39:09Z",
+    "status": "skip_prefilter",
+    "title": "approveToolCall/declineToolCall accept a toolCallId but resume whatever tool call is currently suspended for the runId",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "mastra-ai/mastra#18849": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "issue_updated": "2026-08-07T18:39:07Z",
+    "status": "skip_prefilter",
+    "title": "[BUG] External dependency version resolved incorrectly when the package's exports does not expose ./package.json (e.g. execa 9)",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "mastra-ai/mastra#19380": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "issue_updated": "2026-08-07T18:39:06Z",
+    "status": "skip_prefilter",
+    "title": "[BUG] bundler.transpilePackages is silently ignored by mastra build (and mastra dev)",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "mastra-ai/mastra#20253": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "issue_updated": "2026-08-07T18:39:01Z",
+    "status": "skip_prefilter",
+    "title": "[BUG] PostgresStore listMessages does a serial COUNT(*) before the data query on every turn",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "mastra-ai/mastra#20277": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "issue_updated": "2026-08-07T18:39:00Z",
+    "status": "skip_prefilter",
+    "title": "[BUG] create-factory UI submits unregistered Linear intake config when saving GitHub selection",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "mastra-ai/mastra#19302": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "issue_updated": "2026-08-07T18:38:57Z",
+    "status": "skip_prefilter",
+    "title": "listSuspendedRuns() / sendToolApproval() storage discovery returns [] for createEventedAgent — queries workflowName \"agentic-loop\" but evented agents persist as \"durable-agentic-loop\"",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "mastra-ai/mastra#20196": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "issue_updated": "2026-08-07T18:38:55Z",
+    "status": "skip_prefilter",
+    "title": "bug(core): LocalSandbox overwrites custom seatbeltProfilePath in memory on mount/unmount",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "mastra-ai/mastra#19206": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "issue_updated": "2026-08-07T18:38:54Z",
+    "status": "skip_prefilter",
+    "title": "[BUG] @mastra/voice-google: .listen() (STT) fails on Node ≥ 22 — stale @google-cloud/speech@^6 pins gaxios 6.x which breaks ADC token fetch",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "anomalyco/opencode#41129": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "issue_updated": "2026-08-07T18:30:18Z",
+    "status": "skip_prefilter",
+    "title": "OpenCode does not show model response",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "anomalyco/opencode#41124": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "issue_updated": "2026-08-07T18:15:55Z",
+    "status": "skip_prefilter",
+    "title": "[EMERGENCY] Request to Delete Leaked Session Share Link",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "anomalyco/opencode#41126": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "issue_updated": "2026-08-07T18:11:14Z",
+    "status": "skip_prefilter",
+    "title": "[FEATURE]:Native Agent-Triggered Session Export",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "anomalyco/opencode#41125": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "issue_updated": "2026-08-07T18:09:56Z",
+    "status": "skip_prefilter",
+    "title": "OpenCode Go endpoint: no prompt caching on DeepSeek (cache_hit always 0 even on repeated identical prompts)",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "aidenballou/CongressTradeNotifier#149": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "skip_repo_quality",
+    "reason": "low_stars:0",
+    "title": "Scheduler watchdog: Daily Main Runner appears stale",
+    "issue_updated": "2026-08-07T19:18:55Z",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "novkostya/quince#715": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "skip_repo_quality",
+    "reason": "low_stars:1",
+    "title": "adding a storage blocks the response for a full reconcile, and holds the config lock while it does",
+    "issue_updated": "2026-08-07T19:17:53Z",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "plan-net-journey/bibi#44": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "skip_repo_quality",
+    "reason": "low_stars:0",
+    "title": "Ein Bus-Refetch der Lauf-Liste wirft den aufgeklappten Output weg — der Faltzustand lebt nur im DOM",
+    "issue_updated": "2026-08-07T19:17:38Z",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "plan-net-journey/bibi#43": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "skip_repo_quality",
+    "reason": "low_stars:0",
+    "title": "Die Lauf-Liste der Detail-Seite bekommt Slot-Zustandswechsel nicht — sie haengt am Journal-INSERT",
+    "issue_updated": "2026-08-07T19:17:37Z",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "plan-net-journey/bibi#72": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "skip_repo_quality",
+    "reason": "low_stars:0",
+    "title": "Die Git-Zeile im Header hat seit PLAN-36 keinen Auslöser mehr",
+    "issue_updated": "2026-08-07T19:17:28Z",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "plan-net-journey/bibi#71": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "skip_repo_quality",
+    "reason": "low_stars:0",
+    "title": "Der Header eines Knotens ohne Scheduler aktualisiert nie — alle vier feedstatus-Auslöser setzen eine Verbindung voraus",
+    "issue_updated": "2026-08-07T19:17:10Z",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "mattias800/prosper#2283": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "skip_repo_quality",
+    "reason": "low_stars:14",
+    "title": "Every pass rendering without a colour-0 base reads back a fully black surface — 4.6 GB a route, and possibly a lost render target rather than a slow one",
+    "issue_updated": "2026-08-07T19:17:04Z",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "plan-net-journey/bibi#70": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "skip_repo_quality",
+    "reason": "low_stars:0",
+    "title": "Der Verbindungspunkt zeigt grün, wenn gar kein Scheduler konfiguriert ist",
+    "issue_updated": "2026-08-07T19:16:52Z",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "plan-net-journey/bibi#69": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "skip_repo_quality",
+    "reason": "low_stars:0",
+    "title": "Maintenance ist von keinem Knoten aus schaltbar — der Knopf sperrt genau die Knoten, die eine Oberfläche haben",
+    "issue_updated": "2026-08-07T19:16:33Z",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "john-guerra/autoPhotoOrganizer#279": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "skip_repo_quality",
+    "reason": "low_stars:1",
+    "title": "A scoped request cannot preempt a running sweep — the latches refuse before the scheduler is consulted",
+    "issue_updated": "2026-08-07T19:13:39Z",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "kalonji-tools/oxitest#1962": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "skip_repo_quality",
+    "reason": "low_stars:6",
+    "title": "Flaky: valid_result_resets_deadline has a 40 ms margin and fails on slower runners",
+    "issue_updated": "2026-08-07T19:11:50Z",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "runtorque/torque#1364": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "skip_repo_quality",
+    "reason": "low_stars:34",
+    "title": "Any stream needing more than one review round strands its root: superseded code-bearing boundaries never receive merge evidence, and task_mark_covered writes coverage the Done gate never reads",
+    "issue_updated": "2026-08-07T19:09:39Z",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "vllm-project/vllm#31479": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "requeued_at": "2026-08-07T19:19:54Z",
+    "first_deferred_at": "2026-08-07T19:19:54Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "[Feature]: Enable LoRA support for tower and connector in more MM models",
+    "url": "https://github.com/vllm-project/vllm/issues/31479",
+    "issue_updated": "2026-08-07T19:02:51Z",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "ollama/ollama#16506": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "requeued_at": "2026-08-07T19:19:54Z",
+    "first_deferred_at": "2026-08-07T19:19:54Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "Gemma4:e2b crashes at start with error llama-server process has terminated: GGML_ASSERT(n_inputs < GGML_SCHED_MAX_SPLIT_INPUTS) failed",
+    "url": "https://github.com/ollama/ollama/issues/16506",
+    "issue_updated": "2026-08-07T19:08:48Z",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "ollama/ollama#17517": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "requeued_at": "2026-08-07T19:19:54Z",
+    "first_deferred_at": "2026-08-07T19:19:54Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "Qwen models loading issue in the new update",
+    "url": "https://github.com/ollama/ollama/issues/17517",
+    "issue_updated": "2026-08-07T19:17:02Z",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "mvanhorn/cli-printing-press#3552": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "requeued_at": "2026-08-07T19:19:54Z",
+    "first_deferred_at": "2026-08-07T19:19:54Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "generator: emitted JSON output HTML-escapes & < > (SetEscapeHTML not disabled)",
+    "url": "https://github.com/mvanhorn/cli-printing-press/issues/3552",
+    "issue_updated": "2026-08-07T18:53:31Z",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "vllm-project/vllm#49927": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "someone_active",
+    "title": "[Perf] #48137 costs ~10.6% spec-decode acceptance and #48660 shifts output distributions on DeepSeek-V4-Flash — isolated via #48660-only arm on a production 2-node deployment",
+    "issue_updated": "2026-08-07T19:02:15Z",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "huggingface/transformers#47801": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "security_disclosure_required",
+    "title": "CVE-2025-14920 affected versions",
+    "issue_updated": "2026-08-07T19:01:24Z",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "deepseek-ai/DeepSeek-V3#1542": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "algorithm_mechanism_evidence_low",
+    "title": "[BUG]Subject: Feedback on Gender Bias / Double Standards in Response Tone",
+    "issue_updated": "2026-08-07T19:19:46Z",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "mastra-ai/mastra#20600": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "skip_open_pr_strong",
+    "title": "[BUG] sendStreamResume() cannot resume a storage-persisted suspended run after restart",
+    "pr": "https://github.com/mastra-ai/mastra/pull/19444",
+    "pr_assessment": "已有活跃且直接关联 issue 的 PR #19444；CI 状态只作诊断，不能据此自动创建竞争 PR",
+    "issue_updated": "2026-08-07T19:04:57Z",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "mastra-ai/mastra#20570": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "skip_open_pr_strong",
+    "title": "[BUG] structuredOutput: result.object is stale after a successful `outputProcessor` retry",
+    "pr": "https://github.com/mastra-ai/mastra/pull/20584",
+    "pr_assessment": "已有活跃且直接关联 issue 的 PR #20584；CI 状态只作诊断，不能据此自动创建竞争 PR",
+    "issue_updated": "2026-08-07T19:04:25Z",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "agno-agi/agno#9458": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "incomplete_issue_template",
+    "title": "[Bug] ExcelReader materializes entire sheets before row chunking, causing high memory usage for large XLSX files",
+    "issue_updated": "2026-08-07T18:55:31Z",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "agno-agi/agno#9288": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "repository_not_accepting_code_contributions",
+    "title": "[Bug] continue_run / workflow executor HITL drops RunContext.user_id after confirmation",
+    "issue_updated": "2026-08-07T19:05:27Z",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "livekit/agents#6391": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "no_bug_or_maintainer_actionability",
+    "title": "xAI realtime: an interruption desyncs the local chat context, then every later item is dropped (unrecoverable)",
+    "issue_updated": "2026-08-07T18:26:32Z",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "OpenHands/OpenHands#16401": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "feature_without_maintainer_approval",
+    "title": "Support configurable sidebar links in Agent Canvas via JSON configuration",
+    "issue_updated": "2026-08-07T18:41:26Z",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "anomalyco/opencode#38853": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "someone_active",
+    "title": "[FEATURE]: Support subfolders for skills to better organize them",
+    "issue_updated": "2026-08-07T18:27:00Z",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "lidge-jun/opencodex#1236": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "off_topic_dynamic_repo",
+    "title": "[Bug][Windows] Visible console window pops up when the proxy starts/restarts from a headless parent (npm launcher spawn missing windowsHide)",
+    "issue_updated": "2026-08-07T19:12:05Z",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "open-gsd/gsd-pi#1629": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "off_topic_dynamic_repo",
+    "title": "Safety harness: false-positive \"unexpected file change\" on auto-generated files in .gsd/ or .gsd-state/ when GSD_STATE_DIR is set",
+    "issue_updated": "2026-08-07T17:21:40Z",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "BerriAI/litellm#23345": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "status": "llm_score_low",
+    "title": "[Bug]: Manually added field in `Model Info` is not persisted",
+    "url": "https://github.com/BerriAI/litellm/issues/23345",
+    "issue_updated": "2026-08-07T19:12:58Z",
+    "llm_decision": "WAIT_MAINTAINER",
+    "llm_score": 5,
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "ai-dynamo/dynamo#12843": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "notified": false,
+    "status": "queued_outbox",
+    "score": 13,
+    "title": "Kimi-K3 DSpark speculative decoding crashes at load: NoneType 'weight' in llm_base_proposer embedding sharing (vllm-runtime:1.4.0-kimi-k3-dev.1)",
+    "url": "https://github.com/ai-dynamo/dynamo/issues/12843",
+    "issue_updated": "2026-08-07T19:19:43Z",
+    "notification_digest": "f8fed50c66658bb418babcfa3fa4e0e0e032409d8b788fc79d6ad00d09d219f7",
+    "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
+    "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
+  },
+  "mastra-ai/mastra#20592": {
+    "analyzed": "2026-08-07T19:19:54Z",
+    "notified": false,
+    "status": "queued_outbox",
+    "score": 11,
+    "title": "[BUG] Session.abort() works wrong",
+    "url": "https://github.com/mastra-ai/mastra/issues/20592",
+    "issue_updated": "2026-08-07T19:01:42Z",
+    "notification_digest": "18a8f4b8e837dc553c6d0cf28192f15099d3c86f452feda6952cb4b6480893a2",
     "scanner_version": "oss_pr_radar_v29_pre_dispatch_hardening",
     "decision_contract_digest": "43222e6a0a428678b80255324a50fe5e21c93e72e7f6c3483e1b01ed727b187f"
   }
