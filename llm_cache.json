@@ -2888,6 +2888,33 @@
     ],
     "why": "The issue precisely identifies a dead code path in BaseInputTransport._audio_task_handler where the TimeoutError branch is empty, causing silent audio stalls. It provides a self-contained repro script and a concrete proposed fix (log once on stall and recovery) that addresses the original noise complaint. No competing PR exists."
   },
+  "44bc8c7a2bc2cb1fa71cc59ea656cc4dbf131934c2375f5a5fa973a25b505815": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Bump nvidia-cutlass-dsl pin to >=4.6.2 in requirements/cuda.txt",
+      "Defensively initialize n_block_first before dynamic branch in flash_fwd_sm100.py"
+    ],
+    "risks": [
+      "DSL version bump may affect other kernels",
+      "Defensive fix may alter codegen for non-split-KV path"
+    ],
+    "root_cause_clarity": "high",
+    "score": 13,
+    "test_plan": [
+      "Run provided repro.py on SM100 with DSL 4.6.0 to confirm failure, then with 4.6.2 to confirm pass",
+      "Add regression test for split-KV FA4 varlen path with seqlen>=513"
+    ],
+    "unknowns": [
+      "Open PR status unknown due to timeout; related issue audit failed",
+      "Maintainer approval or assignment not confirmed"
+    ],
+    "why": "Issue identifies a deterministic compile-time bug in FA4 SM100 split-KV kernel with a clear root cause and minimal repro. However, the deterministic gate is HUMAN_REVIEW, and open PR/related issue lookup failed, so we cannot rule out existing work. Maintainer confirmation is needed before starting."
+  },
   "44c3e7d595901f91ceb9f390dd1be72e32a5066270d227f341c99a5e270a1bca": {
     "confidence": 0.7,
     "contradictions": [
@@ -3885,6 +3912,39 @@
       "Whether the draft PR #50894 will be completed and merged"
     ],
     "why": "Issue reports a clear crash with root cause and repro, but the supplied deterministic gate says HUMAN_REVIEW and the related issue audit timed out. An existing draft PR (#50894) directly addresses the issue but is incomplete (draft, pre-run-check failure)."
+  },
+  "5642f05e6c9aaf635583758b5785782037a95198fc210dffcd00422436bf69b9": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims cache saves provider calls, but commenter shows full batch is sent to provider"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix index re-mapping in _combine_cached_embedding_response_with_api_result",
+      "Fix remaining_list propagation in _async_get_cache so provider receives only cache misses",
+      "Add regression tests for partial cache hits covering both index and provider sub-batch correctness"
+    ],
+    "risks": [
+      "Fix may be insufficient if remaining_list bug is not addressed",
+      "Potential interaction with other cache backends or async paths",
+      "Need to handle both pydantic Embedding and dict items via __setitem__"
+    ],
+    "root_cause_clarity": "high",
+    "score": 13,
+    "test_plan": [
+      "Run the provided unit repro and assert data[i].index == i",
+      "Run the commenter's CustomLLM repro and assert provider sub-request size equals number of misses",
+      "Add end-to-end test with Redis cache and mixed batch verifying indices 0..N-1"
+    ],
+    "unknowns": [
+      "Maintainer confirmation on the combined fix approach",
+      "Whether PR #29288 will be updated or superseded"
+    ],
+    "why": "The issue provides a precise root cause and a deterministic repro, but the supplied gate says HUMAN_REVIEW and the existing PR #29288 is stale and incomplete. A commenter found a second bug (remaining_list never reaches the provider) that changes the fix shape, so a new PR must address both. Maintainer confirmation is needed before starting."
   },
   "56a49d69d145fac5894e4e4b07d6be8c3cd401ccc11c30b1e833ad3744522948": {
     "confidence": 0.7,
@@ -6306,6 +6366,35 @@
       "Exact fix details from maintainer; whether existing PR #50514 will be updated or superseded."
     ],
     "why": "Issue reports a clear deadlock in fastsafetensors ParallelLoader due to WORLD-group broadcast during PP-scoped draft loads, with a suggested fix. However, a maintainer is actively investigating and has implemented a fix, and an existing PR (#50514) is related but has failed CI. The deterministic gate requires HUMAN_REVIEW, and the submission policy conflicts with AI disclosure. Thus, wait for maintainer direction."
+  },
+  "8eb22418c372fec773b2ab9633fe83c4f795012068179ff56d23d47d44d938f7": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Issue reports 0% hits on vLLM 0.26.0, but comments show hits=1056 on main with PR #46384, indicating the issue is resolved in newer versions."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "No new code changes; the fix is already merged in PR #46384. Potential follow-up: verify the fix on the reported platform (GB10/sm_121a) and add regression tests for hybrid prefix caching."
+    ],
+    "risks": [
+      "The merged PR may not fully cover all hybrid architectures or edge cases; verification on the specific platform is needed.",
+      "Potential numerical or performance regressions from the new caching mechanism."
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Run the reproduction scenario from the issue on a build containing PR #46384, with --prefix-match-unit 16 and --mamba-cache-mode align, and verify prefix cache hits are non-zero.",
+      "Add a regression test that checks prefix cache hits for hybrid models with shared prefixes shorter than the physical block size."
+    ],
+    "unknowns": [
+      "Whether the merged PR fully resolves the issue on the reported hardware (GB10/sm_121a) and with the exact model version.",
+      "Whether there are other open PRs or issues that overlap with this fix, due to lookup failures."
+    ],
+    "why": "The issue identifies a real algorithmic gap in prefix caching for hybrid SSM/Mamba models, with concrete reproduction metrics. However, a merged PR (#46384) already addresses the core limitation, and the issue's comments confirm the fix. The open PR assessment failed due to timeout, and the related issue audit also failed, leaving uncertainty about duplicate coverage. The deterministic gate requires HUMAN_REVIEW, and the submission policy conflicts with automatic disclosure."
   },
   "8f4644df1c091e0c772b7c8497ca2329cec5b052aaaa95c49aecf58e2fd24cca": {
     "confidence": 0.7,
@@ -8818,6 +8907,38 @@
     ],
     "why": "The issue reports a crash in vLLM's metrics logger when CPU offloading is enabled, with a clear stack trace pointing to a negative counter increment. A commenter provides a detailed reproducer and suggests it may be a duplicate of #36755. However, the open PR and related issue lookups timed out, so duplicate implementations cannot be ruled out. The deterministic gate requires HUMAN_REVIEW, and the repository's AI disclosure policy conflicts with automated action."
   },
+  "d5db1e3ff902d31b217b0739930132e3c6b835582f06ce8323eabb0925c5022a": {
+    "confidence": 0.8,
+    "contradictions": [
+      "None"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add divisibility assertion in deepspeed/sequence/layer.py sequence-sharding branches",
+      "Possibly add guard in new ulysses_sp.py path",
+      "Add regression test for non-divisible sequence length"
+    ],
+    "risks": [
+      "Adding assertion may break existing users who rely on truncation behavior",
+      "Legacy path may be deprecated; fix could be wasted effort if path is removed",
+      "Need to ensure assertion fires before any collective communication to avoid hangs"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Run provided reproduction script with 2 GPUs and sequence length not divisible by world size; expect clear assertion error instead of silent corruption",
+      "Add unit test comparing DistributedAttention output to single-device attention for divisible and non-divisible lengths",
+      "Test on both NCCL and gloo backends to ensure consistent error behavior"
+    ],
+    "unknowns": [
+      "Maintainer confirmation on whether deepspeed/sequence/layer.py is still supported or superseded by ulysses_sp.py"
+    ],
+    "why": "The issue identifies a clear bug in DistributedAttention where sequence length not divisible by world size silently corrupts output. Root cause is missing divisibility guard in sequence dimension, confirmed by contributor analysis. However, maintainer has not confirmed whether the old path is still supported, and the issue is a bug report without an explicit fix request. The candidate is actionable but requires maintainer direction on whether to patch the legacy path or focus on the new Ulysses implementation."
+  },
   "d6f5c17e0a453451c25fd087020d0c4c4c9d041e8b8ad9a434f049f228f87ef8": {
     "confidence": 0.8,
     "contradictions": [
@@ -8900,6 +9021,37 @@
       "Whether target-only fails is unknown"
     ],
     "why": "Issue reports incoherent output at high context for Gemma 4 31B, but root cause is unconfirmed. Maintainer requested controlled ablation experiments to isolate whether target-only or MTP path fails. Existing PR #40391 is open but stale and lacks strong semantic overlap. Actionability is blocked pending user-provided reproduction data and maintainer analysis."
+  },
+  "d7f3ef61dbd9936139ae1ddfc657e1ce6df11f23d2c1ebcdb3c9ea77b58563eb": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify flashinfer_backend.py to pass logits_soft_cap and window_left to plan()/begin_forward() instead of forward()",
+      "Add per-cap-value planning or assert uniform cap across layers",
+      "Possibly add a warning in FlashInfer forward() for ignored parameters"
+    ],
+    "risks": [
+      "Planning per cap value may increase memory or planning overhead if multiple cap values exist",
+      "Changing plan-time behavior could affect performance or compatibility with existing FlashInfer versions",
+      "The fix may need to handle models where cap varies per layer, requiring more complex planning logic"
+    ],
+    "root_cause_clarity": "high",
+    "score": 13,
+    "test_plan": [
+      "Run the provided minimal reproduction script to verify cosine similarity matches capped reference after fix",
+      "Add a regression test comparing flashinfer vs triton backend on a small capped model (e.g., gemma-2-2b) with fixed seed and tolerance",
+      "Test window_left on ragged path with the provided script"
+    ],
+    "unknowns": [
+      "Whether an open PR already addresses this issue (open PR lookup timed out)",
+      "Whether maintainers have already discussed or assigned this issue (no comments, no maintainer approval)",
+      "Exact FlashInfer API behavior across versions for plan() parameters"
+    ],
+    "why": "The issue provides a precise root cause: FlashInfer's logits_soft_cap is a compile-time parameter that must be passed to plan(), not forward(), and the SGLang backend passes it to forward(), silently dropping it. The issue includes a minimal reproduction with cosine similarity evidence and a model-level comparison. However, the deterministic gate is HUMAN_REVIEW, and the open PR and related issue lookups timed out, so we cannot rule out existing duplicate work. The fix is clear but requires maintainer confirmation on the intended design (e.g., planning per cap value)."
   },
   "d83cb699561986b97604b82baceae1d6070c1f219cf70192e1f4ef3f1102349a": {
     "confidence": 0.8,
@@ -9071,6 +9223,32 @@
       "Maintainer preference on backend vs parser fix"
     ],
     "why": "Issue reports a user-visible bug when switching moe-runner-backend to flashinfer_mxfp4, but root cause is unclear and may be related to tool-call parser rather than backend. Open PRs exist with potential fixes but are unmerged and unverified. Maintainer input needed to confirm scope and avoid duplicate work."
+  },
+  "dd692027ca1f932c8dcedf4cd33c9e5d0a18152b666c8f09dc26890d86d6f8ef": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify scripts/dev-with-automation.mjs, scripts/dev-static.mjs, and docker/entrypoint.sh to pass the key via environment variable instead of argv",
+      "Update scripts/static-server.mjs to read from process.env.SESSION_API_KEY with fallback to --session-api-key"
+    ],
+    "risks": [
+      "Potential breakage if other code relies on the argv argument; need to ensure backward compatibility or update all call sites",
+      "Environment variable may be visible in /proc/<pid>/environ to the same user, but that is acceptable as it is restricted to owner and root"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add a regression test that spawns static-server.mjs and verifies the key is not present in /proc/<pid>/cmdline but is present in the environment",
+      "Run existing tests for the affected scripts to ensure no breakage"
+    ],
+    "unknowns": [
+      "No maintainer confirmation or design preference, but the fix is minimal and aligns with existing env merging code"
+    ],
+    "why": "The issue clearly identifies a security bug where a session API key is exposed via process command line arguments, with specific file locations and a suggested fix. The fix is straightforward and testable, and no competing PR exists."
   },
   "de6fa0ca75c8567a85583f908e83570b57ca51708ac54f8240eb935a0d41a8d2": {
     "confidence": 0.8,

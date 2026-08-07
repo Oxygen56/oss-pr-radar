@@ -172,6 +172,10 @@
       "seenAt": "2026-08-06T13:55:08.577510Z",
       "stateId": "8ca00d0eca46e51cf447704fe18665de70758edc4a84c309f09b29928e92350b"
     },
+    "review|BerriAI/litellm#29284": {
+      "seenAt": "2026-08-07T10:59:17.454125Z",
+      "stateId": "ef6c0e47b3b14a4a01f368ee9b8ccb227cef46a35e255527ef195bb999c5a8ba"
+    },
     "review|BerriAI/litellm#35711": {
       "legacy": true,
       "seenAt": "2026-08-04T17:44:47.120424Z"
@@ -291,6 +295,10 @@
     "review|crewAIInc/crewAI#6788": {
       "legacy": true,
       "seenAt": "2026-08-04T12:24:35.084913Z"
+    },
+    "review|deepspeedai/DeepSpeed#7384": {
+      "seenAt": "2026-08-07T10:59:17.454125Z",
+      "stateId": "52dd686b3d5d4a457d34cca7ef88911e18d159899a6938c711b3df143056fe8e"
     },
     "review|fastmachinelearning/hls4ml#1515": {
       "legacy": true,
@@ -536,6 +544,10 @@
       "seenAt": "2026-08-06T11:39:58.259121Z",
       "stateId": "704bcec246a9b283240db4060343b60213dcfdd794f77e948ca44dc1308fd4f1"
     },
+    "review|sgl-project/sglang#33915": {
+      "seenAt": "2026-08-07T10:59:17.454125Z",
+      "stateId": "f0a68d64f2acea613d9458036bcc18ba5f5a869543af0d35f8cdf83791a707c6"
+    },
     "review|sgl-project/sglang#33943": {
       "seenAt": "2026-08-07T05:33:51.867072Z",
       "stateId": "768be00b004e0e85f04e1ccb675fc96c426c3cb51c55919efc884ee13a75ee47"
@@ -633,8 +645,12 @@
       "seenAt": "2026-08-06T03:47:42.121958Z"
     },
     "review|vllm-project/vllm#51250": {
-      "seenAt": "2026-08-06T12:27:01.088159Z",
-      "stateId": "a485e2ee5d53775be21c67e49acb6c1576b72dba55d674df54598418fd355340"
+      "seenAt": "2026-08-07T10:59:17.454125Z",
+      "stateId": "6f9ae091408cf3739d0aedc5a3372c14ee4ded329628ec2fc940a4e6e19a4728"
+    },
+    "review|vllm-project/vllm#51286": {
+      "seenAt": "2026-08-07T10:59:17.454125Z",
+      "stateId": "3996cdff4999deec0ee952e499e5c0a7c55d5c73bc53469d2654b703fd1d9437"
     },
     "watch|BerriAI/litellm#25386": {
       "legacy": true,
@@ -1049,7 +1065,7 @@
       "seenAt": "2026-08-06T10:09:13.778625Z"
     }
   },
-  "digest": "3aef168fecbc52a0a145520ad805156a24346b03204b63d48c5a1c693214fe90",
+  "digest": "9dc8859596fccccbcdaf4348b83d4fce3d571aac6353fa4919b30e7bbd99b530",
   "events": [
     {
       "attempts": 1,
@@ -14370,9 +14386,123 @@
       "runId": "scan-20260807T091831Z-e890863df846",
       "sentAt": "2026-08-07T09:23:48.655537Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "BerriAI/litellm#29284",
+        "deepspeedai/DeepSpeed#7384",
+        "sgl-project/sglang#33915",
+        "vllm-project/vllm#51250",
+        "vllm-project/vllm#51286"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "3c4c09ad25de76572a75ad0b0941883500368cb5b4549ff2166a3b26ae6a4cb9",
+          "key": "BerriAI/litellm#29284",
+          "kind": "review",
+          "stateId": "ef6c0e47b3b14a4a01f368ee9b8ccb227cef46a35e255527ef195bb999c5a8ba"
+        },
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "c7eefa68c23406ec036ab36f9845daa1b656d2ed78f08d261cb69f41e35cd451",
+          "key": "deepspeedai/DeepSpeed#7384",
+          "kind": "review",
+          "stateId": "52dd686b3d5d4a457d34cca7ef88911e18d159899a6938c711b3df143056fe8e"
+        },
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "236e2347e73af39db66bf037ab6cd2900b12442e3046738a408384c75e22d2a7",
+          "key": "sgl-project/sglang#33915",
+          "kind": "review",
+          "stateId": "f0a68d64f2acea613d9458036bcc18ba5f5a869543af0d35f8cdf83791a707c6"
+        },
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "485ce5d43810e6535a40dde10817af875585f3e57cc29a9ccf83258faad1c0e3",
+          "key": "vllm-project/vllm#51250",
+          "kind": "review",
+          "stateId": "6f9ae091408cf3739d0aedc5a3372c14ee4ded329628ec2fc940a4e6e19a4728"
+        },
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "2344f33dcc8831cf4c615280a5207ad229c78b10dfd5129206605c7aeeef0f70",
+          "key": "vllm-project/vllm#51286",
+          "kind": "review",
+          "stateId": "3996cdff4999deec0ee952e499e5c0a7c55d5c73bc53469d2654b703fd1d9437"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#29284](https://github.com/BerriAI/litellm/issues/29284) [Bug] Embedding cache merge corrupts `data[*].index` on partial cache hits**\n建议：WAIT_MAINTAINER | 分数：13\n价值：The issue provides a precise root cause and a deterministic repro, but the supplied gate says HUMAN_REVIEW and the existing PR #29288 is stale and incomplete. A commenter found a second bug (remaining_list never reaches the provider) that changes the fix shape, so a new PR must address both. Maintainer confirmation is needed before starting.\n改动：Fix index re-mapping in _combine_cached_embedding_response_with_api_result；Fix remaining_list propagation in _async_get_cache so provider receives only cache misses；Add regression tests for partial cache hits covering both index and provider sub-batch correctness\n验证：Run the provided unit repro and assert data[i].index == i；Run the commenter's CustomLLM repro and assert provider sub-request size equals number of misses；Add end-to-end test with Redis cache and mixed batch verifying indices 0..N-1\n风险：Fix may be insufficient if remaining_list bug is not addressed；Potential interaction with other cache backends or async paths；Need to handle both pydantic Embedding and dict items via __setitem__\n竞争：已有直接关联但证据不完整的 PR #29288：超过 30 天未更新；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 15，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[deepspeedai/DeepSpeed#7384](https://github.com/deepspeedai/DeepSpeed/issues/7384) [BUG] Ulysses DistributedAttention silently produces incorrect output when #GPUs does not divide global sequence length**\n建议：WAIT_MAINTAINER | 分数：11\n价值：The issue identifies a clear bug in DistributedAttention where sequence length not divisible by world size silently corrupts output. Root cause is missing divisibility guard in sequence dimension, confirmed by contributor analysis. However, maintainer has not confirmed whether the old path is still supported, and the issue is a bug report without an explicit fix request. The candidate is actionable but requires maintainer direction on whether to patch the legacy path or focus on the new Ulysses implementation.\n改动：Add divisibility assertion in deepspeed/sequence/layer.py sequence-sharding branches；Possibly add guard in new ulysses_sp.py path；Add regression test for non-divisible sequence length\n验证：Run provided reproduction script with 2 GPUs and sequence length not divisible by world size; expect clear assertion error instead of silent corruption；Add unit test comparing DistributedAttention output to single-device attention for divisible and non-divisible lengths；Test on both NCCL and gloo backends to ensure consistent error behavior\n风险：Adding assertion may break existing users who rely on truncation behavior；Legacy path may be deprecated; fix could be wasted effort if path is removed；Need to ensure assertion fires before any collective communication to avoid hangs\n竞争：未发现相关 open PR\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 5，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33915](https://github.com/sgl-project/sglang/issues/33915) [Bug] FlashInfer backend drops attn_logit_softcapping: the cap is passed to the deprecated forward() instead of plan(), so gemma-2 and grok-1 run uncapped**\n建议：WAIT_MAINTAINER | 分数：13\n价值：The issue provides a precise root cause: FlashInfer's logits_soft_cap is a compile-time parameter that must be passed to plan(), not forward(), and the SGLang backend passes it to forward(), silently dropping it. The issue includes a minimal reproduction with cosine similarity evidence and a model-level comparison. However, the deterministic gate is HUMAN_REVIEW, and the open PR and related issue lookups timed out, so we cannot rule out existing duplicate work. The fix is clear but requires maintainer confirmation on the intended design (e.g., planning per cap value).\n改动：Modify flashinfer_backend.py to pass logits_soft_cap and window_left to plan()/begin_forward() instead of forward()；Add per-cap-value planning or assert uniform cap across layers；Possibly add a warning in FlashInfer forward() for ignored parameters\n验证：Run the provided minimal reproduction script to verify cosine similarity matches capped reference after fix；Add a regression test comparing flashinfer vs triton backend on a small capped model (e.g., gemma-2-2b) with fixed seed and tolerance；Test window_left on ragged path with the provided script\n风险：Planning per cap value may increase memory or planning overhead if multiple cap values exist；Changing plan-time behavior could affect performance or compatibility with existing FlashInfer versions；The fix may need to handle models where cap varies per layer, requiring more complex planning logic\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 9，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#51250](https://github.com/vllm-project/vllm/issues/51250) [Bug]: Prefix caching is ineffective on Mamba-2/GDN hybrid (Qwen3_5MoeForConditionalGeneration)**\n建议：WAIT_MAINTAINER | 分数：12\n价值：The issue identifies a real algorithmic gap in prefix caching for hybrid SSM/Mamba models, with concrete reproduction metrics. However, a merged PR (#46384) already addresses the core limitation, and the issue's comments confirm the fix. The open PR assessment failed due to timeout, and the related issue audit also failed, leaving uncertainty about duplicate coverage. The deterministic gate requires HUMAN_REVIEW, and the submission policy conflicts with automatic disclosure.\n改动：No new code changes; the fix is already merged in PR #46384. Potential follow-up: verify the fix on the reported platform (GB10/sm_121a) and add regression tests for hybrid prefix caching.\n验证：Run the reproduction scenario from the issue on a build containing PR #46384, with --prefix-match-unit 16 and --mamba-cache-mode align, and verify prefix cache hits are non-zero.；Add a regression test that checks prefix cache hits for hybrid models with shared prefixes shorter than the physical block size.\n风险：The merged PR may not fully cover all hybrid architectures or edge cases; verification on the specific platform is needed.；Potential numerical or performance regressions from the new caching mechanism.\n竞争：open PR 检索不完整，需等待下轮重试后再判断碰撞\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 2，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#51286](https://github.com/vllm-project/vllm/issues/51286) [Bug]: FA4 SM100 split-KV kernels fail to compile with `TYPE_UNSTABLE_JOIN` (nvidia-cutlass-dsl 4.6.0 pin) — crashes Kimi-K3 startup during CuTeDSL warmup**\n建议：WAIT_MAINTAINER | 分数：13\n价值：Issue identifies a deterministic compile-time bug in FA4 SM100 split-KV kernel with a clear root cause and minimal repro. However, the deterministic gate is HUMAN_REVIEW, and open PR/related issue lookup failed, so we cannot rule out existing work. Maintainer confirmation is needed before starting.\n改动：Bump nvidia-cutlass-dsl pin to >=4.6.2 in requirements/cuda.txt；Defensively initialize n_block_first before dynamic branch in flash_fwd_sm100.py\n验证：Run provided repro.py on SM100 with DSL 4.6.0 to confirm failure, then with 4.6.2 to confirm pass；Add regression test for split-KV FA4 varlen path with seqlen>=513\n风险：DSL version bump may affect other kernels；Defensive fix may alter codegen for non-split-KV path\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 8，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-07T10:59:17.454125Z",
+      "eventId": "91ca3c59764a603bea7fa77573c34fbf811456dcf620212469a3882b72c00d6f",
+      "idempotencyKey": "91ca3c59764a603bea7fa77573c34fbf811456dcf620212469",
+      "kind": "review",
+      "runId": "scan-20260807T105457Z-c7ccde8ad7d5",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-07T09:23:07.969959Z",
+  "generatedAt": "2026-08-07T10:59:17.813441Z",
   "newEventCount": 0,
   "version": "notification_outbox_v2"
 }
