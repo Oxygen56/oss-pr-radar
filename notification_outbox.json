@@ -220,6 +220,10 @@
       "legacy": true,
       "seenAt": "2026-08-05T10:35:26.309426Z"
     },
+    "review|BerriAI/litellm#36176": {
+      "seenAt": "2026-08-07T23:02:42.696937Z",
+      "stateId": "092afbe65a2a5d116a60baf94d137fcb4001df41946f40f3ad6bfe781a3427bb"
+    },
     "review|BerriAI/litellm#36197": {
       "seenAt": "2026-08-07T16:17:33.543221Z",
       "stateId": "63ffd6a3ab2ec44b599dafc986f2c07aac911dcddb85fd46797f44935d39cb80"
@@ -728,6 +732,10 @@
       "seenAt": "2026-08-07T21:09:32.887835Z",
       "stateId": "e6dbe724ae1fb3533ecdf727b059e49576b95535d76ba7c2eb09d1d09c7004d3"
     },
+    "review|vllm-project/vllm#51456": {
+      "seenAt": "2026-08-07T23:02:42.696937Z",
+      "stateId": "4d9c07de1a076eb2548c296c18ba7236f847867d9d721303f18b6451f585ef20"
+    },
     "watch|BerriAI/litellm#25386": {
       "legacy": true,
       "seenAt": "2026-08-06T06:53:57.175601Z"
@@ -1141,7 +1149,7 @@
       "seenAt": "2026-08-06T10:09:13.778625Z"
     }
   },
-  "digest": "a4980196f4078bfd08a090661758dfd565f613d802a11223ca03472fca808523",
+  "digest": "8f3a7c97a854346ec68809cc50781e1b559d474fc90c87cc5160eaa372b4671c",
   "events": [
     {
       "attempts": 1,
@@ -15155,9 +15163,69 @@
       "runId": "scan-20260807T215855Z-26041d7e40d4",
       "sentAt": "2026-08-07T22:01:51.361967Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "BerriAI/litellm#36176",
+        "vllm-project/vllm#51456"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "ecc8ae52330f11baa97a6706266de95322ceb342366977bd6aba4c07070a5ca3",
+          "key": "BerriAI/litellm#36176",
+          "kind": "review",
+          "stateId": "092afbe65a2a5d116a60baf94d137fcb4001df41946f40f3ad6bfe781a3427bb"
+        },
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "0145326f22b63356dd6bd17b8da19cf22c121ffab51b516d76494d21b31bf887",
+          "key": "vllm-project/vllm#51456",
+          "kind": "review",
+          "stateId": "4d9c07de1a076eb2548c296c18ba7236f847867d9d721303f18b6451f585ef20"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#36176](https://github.com/BerriAI/litellm/issues/36176) [Bug]: Batch/Files upload loses model/deployment routing when forwarded to a second LiteLLM proxy**\n建议：WAIT_MAINTAINER | 分数：12\n价值：The issue provides a clear root cause: router.py::create_file_for_deployment fails to forward target_model_names/model to downstream acreate_file, breaking chained-proxy routing. However, the deterministic gate is HUMAN_REVIEW, and open PR/related issue lookups timed out, so duplicate work cannot be excluded. Maintainer design preference is unconfirmed.\n改动：router.py::create_file_for_deployment forwarding target_model_names/model via extra_body；possibly files_endpoints.py or managed_files.py adjustments\n验证：Create a minimal repro with two chained proxies and a file upload with target_model_names; assert the second proxy receives the routing metadata and routes correctly.；Add a regression test in the relevant test suite for router._acreate_file forwarding.\n风险：May conflict with existing open PR or maintainer design preferences.；Forwarding extra metadata could affect API behavior or compatibility.\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 7，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#51456](https://github.com/vllm-project/vllm/issues/51456) [Bug]: online FP8 (--quantization fp8) produces corrupted, non-EOS-terminating output on Qwen2.5-1.5B-Instruct**\n建议：WAIT_MAINTAINER | 分数：13\n价值：The issue reports a reproducible FP8 quantization bug with strong evidence of a numerical/algorithmic root cause (scaled_fp8_quant on fused weights), but the open PR and related issue lookups timed out, so duplicate work cannot be excluded. The maintainer has not confirmed the root cause or requested a fix, and the reporter cannot test newer versions. This requires maintainer triage and design confirmation before implementation.\n改动：Fix scaled_fp8_quant to apply per-shard scales for fused MergedColumnParallelLinear weights；Add regression test for dense SwiGLU models with online FP8 quantization\n验证：Reproduce with Qwen2.5-1.5B-Instruct and --quantization fp8, assert natural EOS rate and output coherence；Compare against unquantized baseline with fixed seed and temperature；Add unit test for per-shard scaling in fused linear layers\n风险：Root cause may be different from #41022; need maintainer confirmation；Fix may affect performance or numerical stability for other models\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 11，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-07T23:02:42.696937Z",
+      "eventId": "ecbd145cf0510441babc0621b7905fa9cadc21a0320256a6440b304d3c0ae6e1",
+      "idempotencyKey": "ecbd145cf0510441babc0621b7905fa9cadc21a0320256a644",
+      "kind": "review",
+      "runId": "scan-20260807T225846Z-5713621de40c",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-07T22:01:21.604237Z",
+  "generatedAt": "2026-08-07T23:02:42.980731Z",
   "newEventCount": 0,
   "version": "notification_outbox_v2"
 }

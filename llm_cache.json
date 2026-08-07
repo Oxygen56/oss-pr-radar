@@ -1001,6 +1001,33 @@
     ],
     "why": "Issue provides a detailed root cause and a working fix, but the deterministic gate is HUMAN_REVIEW and the related issue audit timed out. Existing PR #50882 is draft, lacks tests, and has failed CI, so a better PR is plausible, but maintainer confirmation is needed before starting."
   },
+  "1510442f9d3a6d44fd6abc59630a1ad668adfb49f11333214e37dce846dd1cb4": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "router.py::create_file_for_deployment forwarding target_model_names/model via extra_body",
+      "possibly files_endpoints.py or managed_files.py adjustments"
+    ],
+    "risks": [
+      "May conflict with existing open PR or maintainer design preferences.",
+      "Forwarding extra metadata could affect API behavior or compatibility."
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Create a minimal repro with two chained proxies and a file upload with target_model_names; assert the second proxy receives the routing metadata and routes correctly.",
+      "Add a regression test in the relevant test suite for router._acreate_file forwarding."
+    ],
+    "unknowns": [
+      "Open PR status (lookup timed out) - cannot confirm no competing implementation.",
+      "Maintainer approval or design preference not confirmed."
+    ],
+    "why": "The issue provides a clear root cause: router.py::create_file_for_deployment fails to forward target_model_names/model to downstream acreate_file, breaking chained-proxy routing. However, the deterministic gate is HUMAN_REVIEW, and open PR/related issue lookups timed out, so duplicate work cannot be excluded. Maintainer design preference is unconfirmed."
+  },
   "151e4c439d52cf76a40e18ae63deea7ffd3aa51650d05baf6c46646325d4485f": {
     "confidence": 0.8,
     "contradictions": [],
@@ -1575,6 +1602,30 @@
       "No explicit maintainer approval or help-wanted label, but the issue is clearly a bug and the fix is straightforward; absence of assignment is not blocking."
     ],
     "why": "Issue provides a clear, reproducible bug with a precise root cause: keychain lookup is attempted for all servers even without OAuth, and the AsyncEntry constructor throws outside the try/catch, causing a 500 in headless environments. This is a user-visible bug with high impact and a clear minimal fix path."
+  },
+  "21b5cce9181d0fc9bb69f2556f1f1508fd2aec79a380357b8c9726c6400437b7": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix in Buzz SDK-ts harness to pass permissionMode: 'bypassPermissions' or supply a canUseTool approver when launching Claude Code sessions."
+    ],
+    "risks": [
+      "Changing permission defaults may have security implications; need to ensure bypassPermissions is only applied when explicitly requested."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Create a regression test that launches a Claude Code session with --permission-mode bypassPermissions and verifies that a Bash tool call is allowed, not auto-denied."
+    ],
+    "unknowns": [
+      "Open PR status unknown due to timeout; maintainer confirmation of root cause and preferred fix is missing."
+    ],
+    "why": "Issue reports a concrete regression in Buzz's SDK-ts harness where permissionMode defaults to 'dontAsk', overriding the CLI flag and denying all tool calls. Multiple users confirm the symptom. However, the root cause is inferred from user analysis, not confirmed by maintainers, and the open PR/related issue lookup timed out, so duplicate work cannot be excluded. The deterministic gate is HUMAN_REVIEW, and the track is agent_ai_infra, not llm_algorithm, so the algorithm evidence requirement does not apply."
   },
   "22cec6b71fe5192a3d5124e1f2ed1d6aa47907424bf0acbe89de6d75c06604de": {
     "confidence": 0.7,
@@ -10591,6 +10642,35 @@
     ],
     "why": "Issue reports a deterministic SWA KV position corruption with kv-canary evidence and a plausible root cause in the hierarchical cache restore path. However, the open PR lookup timed out and the related issue audit failed, so duplicate/competing implementations cannot be ruled out. Recent comments suggest a merged PR (#30393) may address the issue but also point to a remaining sidecar_ok bug, indicating active maintainer investigation and a possible fix in progress. The deterministic gate is HUMAN_REVIEW, and the evidence is strong but not yet independently verified."
   },
+  "dd57689aea8d6235850a1618f05f96b046476573e1cf244947239c97d12fd5db": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Fix scaled_fp8_quant to apply per-shard scales for fused MergedColumnParallelLinear weights",
+      "Add regression test for dense SwiGLU models with online FP8 quantization"
+    ],
+    "risks": [
+      "Root cause may be different from #41022; need maintainer confirmation",
+      "Fix may affect performance or numerical stability for other models"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 13,
+    "test_plan": [
+      "Reproduce with Qwen2.5-1.5B-Instruct and --quantization fp8, assert natural EOS rate and output coherence",
+      "Compare against unquantized baseline with fixed seed and temperature",
+      "Add unit test for per-shard scaling in fused linear layers"
+    ],
+    "unknowns": [
+      "Whether a newer vLLM version fixes the issue",
+      "Whether #41022 is the same root cause",
+      "Whether maintainers have already started work on this"
+    ],
+    "why": "The issue reports a reproducible FP8 quantization bug with strong evidence of a numerical/algorithmic root cause (scaled_fp8_quant on fused weights), but the open PR and related issue lookups timed out, so duplicate work cannot be excluded. The maintainer has not confirmed the root cause or requested a fix, and the reporter cannot test newer versions. This requires maintainer triage and design confirmation before implementation."
+  },
   "dd692027ca1f932c8dcedf4cd33c9e5d0a18152b666c8f09dc26890d86d6f8ef": {
     "confidence": 0.85,
     "contradictions": [],
@@ -12025,6 +12105,37 @@
       "Whether loss is in generic ACP lifecycle or WeChat adapter"
     ],
     "why": "The issue is a real user-facing bug with clear repro evidence, but the deterministic gate requires HUMAN_REVIEW and the maintainer bot explicitly states a product decision is needed on cross-channel delivery policy. Existing PRs are closed/unmerged and do not settle the design. A new PR would be premature without maintainer direction."
+  },
+  "f6d48dec254e93b0da0e08b577d87965fbe363585b80177d2ade154381293bdf": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue reports error, but comments suggest workaround and merged PR may resolve it"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "CLI argument parsing for diffusion models",
+      "model-type detection for MiniMax-H3"
+    ],
+    "risks": [
+      "Merged PR #33365 may already fix the issue, making new work redundant",
+      "CLI behavior changes could affect other diffusion models"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with the provided docker command and verify the error",
+      "Run sglang serve with --model-type diffusion and confirm args are accepted",
+      "Add a regression test for MiniMax-H3 CLI argument parsing"
+    ],
+    "unknowns": [
+      "Whether PR #33365 fully resolves the issue",
+      "Whether maintainers intend to support the reported CLI usage without --model-type"
+    ],
+    "why": "Issue reports a CLI argument error for MiniMax-H3 in sglang serve, but comments indicate a workaround (adding --model-type diffusion) and a merged PR (#33365) that may already address the root cause. The open PR lookup timed out, so competition status is unknown. The issue is a user-facing bug with a clear repro, but the fix may already be merged or require maintainer confirmation on intended CLI behavior."
   },
   "f7cad12f924f80210d13dd60c3696419b55c0426c329d1515eaf4f4b10e3bd18": {
     "confidence": 0.8,
