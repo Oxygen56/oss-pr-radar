@@ -1493,6 +1493,32 @@
     ],
     "why": "Issue reports a user-visible bug with a plausible code path but lacks a confirmed root cause; related issue and open PR lookups timed out, so duplicate work cannot be excluded. Maintainer input is needed to confirm expected behavior and design."
   },
+  "26cd03747d0f7a1a0b5e9674be5cd62362261a1afb174efaf1c89ee8e93146a8": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify on_session_start_cursor.sh to return essential context (user/project/branch) immediately",
+      "Move memory count, timeline generation, auto-import, telemetry to background processes"
+    ],
+    "risks": [
+      "Potential behavior change if background tasks fail silently; need to ensure error handling for background jobs",
+      "May require coordination with Cursor's hook API constraints"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a failing test that simulates delayed Mem0 API response and verifies additional_context is returned before the delay",
+      "Run existing plugin integration tests and shell script linting"
+    ],
+    "unknowns": [
+      "No existing PR or maintainer feedback; need to confirm maintainer acceptance of backgrounding approach"
+    ],
+    "why": "Issue identifies a concrete race condition in Cursor's sessionStart hook, with official Cursor confirmation and a clear mitigation: return essential context immediately and defer non-critical work. This is a user-visible bug with a reproducible scenario and a minimal code path in the plugin scripts."
+  },
   "28c7c49a9828479e0220ccacac289be2e25052f52c0b68e822a8783ba2f90847": {
     "confidence": 0.85,
     "contradictions": [],
@@ -2579,6 +2605,30 @@
     ],
     "why": "Issue reports a systemic D-side stall in Mooncake remote KV transfer with clear logs and reproduction outline, but root cause is unconfirmed and an existing PR #50984 is weak (no tests, failing CI). Maintainer design confirmation is needed before starting a competing PR."
   },
+  "425201c50d1722eaa153369d747757895aad8de1c66148f5d7acbec17fbd92df": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix tenant credential resolution in @mastra/code-sdk to unwrap better-auth user shape, or normalize at writer in @mastra/server"
+    ],
+    "risks": [
+      "Changing public slot shape may break other consumers; need maintainer design confirmation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 15,
+    "test_plan": [
+      "Add regression test reproducing background Factory run with better-auth provider and valid stored credentials, asserting no 'Not logged in' error"
+    ],
+    "unknowns": [
+      "Whether issue #20688 is a duplicate and which fix approach maintainers prefer"
+    ],
+    "why": "Issue clearly identifies a bug in tenant credential resolution due to shape mismatch, with a verified workaround and suggested fix direction. However, the deterministic gate is HUMAN_REVIEW, and there is a potential duplicate issue #20688 with high semantic overlap, requiring maintainer triage to avoid duplicate work."
+  },
   "42cacd63189d813a89aa61fe6d1456cbb557a674ce16d03aeacc2b1a8506be6d": {
     "confidence": 0.7,
     "contradictions": [
@@ -3306,6 +3356,22 @@
       "Maintainer preference on implementation approach (e.g., windowed vs cumulative tps)"
     ],
     "why": "Issue provides a clear, reproducible bug with root cause traced to missing timing/tps tracking in the non-MLLM scheduler path. No competing PR or issue exists. The fix is localized and actionable."
+  },
+  "4fed907c6616aaa5b79ce811ecf447db8d1ae1d50d20f065e7eb6a23a1cdaa3f": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "decision": "REJECT",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [],
+    "risks": [],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "test_plan": [],
+    "unknowns": [],
+    "why": "The issue is a monitoring/telemetry bug in the non-MLLM text serving path, not an LLM algorithm defect. It lacks a concrete training objective, model mechanism, distributed-training invariant, quantization/numerical method, kernel algorithm, or evaluation methodology. The fix is adding timing/tps tracking to the scheduler and forwarding stats, which is ordinary API plumbing and observability work, explicitly excluded by the track criteria."
   },
   "500517cbf255fee567560bbf1062504efe750027d44678da28871a95e46ec410": {
     "confidence": 0.7,
@@ -5973,6 +6039,30 @@
     ],
     "why": "Issue provides a clear root cause and a verified fix for a user-visible bug, but the deterministic gate requires HUMAN_REVIEW and there are multiple open PRs with semantic overlap (e.g., #10344, #12562) that may already address the same code path. The issue itself offers to turn into a PR, but the presence of overlapping PRs and the need to compare implementations makes it premature to start new work without maintainer guidance."
   },
+  "910015a40ba9b28ae20473b0050ee4d75c6c84f2d8877f5491721de4405f2c76": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add rehydration fallback in dispatcher's #requireSession or #dispatchPendingStart to recreate sessions on registry miss."
+    ],
+    "risks": [
+      "Existing PR #20428 may already address the root cause; overlapping changes could cause merge conflicts or duplicate work."
+    ],
+    "root_cause_clarity": "high",
+    "score": 15,
+    "test_plan": [
+      "Write a regression test that enqueues pending starts, restarts the server, and verifies dispatch succeeds without manual GET."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a specific fix approach or have already assigned the issue to an existing PR."
+    ],
+    "why": "Issue clearly identifies a real bug with a concrete root cause and reproduction steps, but the deterministic gate requires HUMAN_REVIEW and existing PRs overlap semantically, requiring maintainer comparison before new work."
+  },
   "92796e4b67b22f85a0a2c6b2e876c0fc06f29c75524d782fde3faca6454e9fc8": {
     "confidence": 0.8,
     "contradictions": [],
@@ -7529,6 +7619,33 @@
     ],
     "why": "The issue is a bug report about runtime metrics undercounting RSS and dropped entity tags in gunicorn pre-fork scenarios. It includes a public repro and detailed analysis, but the track is llm_algorithm, which requires a concrete algorithm mechanism. The issue is about process management and metrics collection, not an LLM algorithm. The candidate's algorithm evidence is fabricated (matched terms like 'bootstrap', 'contamination', 'zero' are not present in the issue). The issue is actionable for a library bug fix, but it does not meet the llm_algorithm track requirements. The deterministic gate says ALLOW_TO_WORK, but the track mismatch and lack of algorithm evidence make it a maintainer decision."
   },
+  "c1cc22b223081a242f8b3ddfbf3d9264c802dbdcd2052af99d74af8fb2269a59": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "OtelBridge.createSpan() to use explicit non-recording OTel parent when traceId and parentSpanId are supplied but parent is absent",
+      "BraintrustExporter to pass parentSpanIds and map Mastra trace ID to rootSpanId"
+    ],
+    "risks": [
+      "Potential conflict with ongoing PR #20499 refactoring tracing model",
+      "Changes may affect other exporters or tracing behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add integration regression test for workflow suspend/resume with OtelBridge and BraintrustExporter, verifying trace continuity",
+      "Run existing unit tests for affected packages"
+    ],
+    "unknowns": [
+      "Maintainer preference on whether to base work on PR #20499 or proceed independently"
+    ],
+    "why": "The issue provides a detailed root cause analysis and a concrete suggested fix, but a related PR #20499 is actively refactoring the tracing model, and a contributor has asked whether to stack work on it. This requires maintainer direction before implementation to avoid conflicting changes."
+  },
   "c31f56ba0affaf935cc3daa11cb6d52389718f19b63c8feb6ccec90f65f1ab61": {
     "confidence": 0.7,
     "contradictions": [],
@@ -7638,6 +7755,34 @@
       "No maintainer confirmation on accepting the fix, but the issue is clear and the change is minimal."
     ],
     "why": "The issue identifies a clear dependency pin that breaks Python 3.14 installs in air-gapped environments, with a minimal fix (relaxing the upper bound) and verified API compatibility. This is a concrete, actionable bug fix with high user impact."
+  },
+  "c74a4eb85404456b99bf73d7b7a84eac965c9126bb21e851fd659687b1f0d428": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Gate decision HUMAN_REVIEW conflicts with PR_COMPETITION_OPPORTUNITY category."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "dspy/primitives/python_interpreter.py",
+      "dspy/primitives/runner.js"
+    ],
+    "risks": [
+      "Existing PR #9295 may already fix the issue; need to compare before starting new work.",
+      "Fixing id:null handling may introduce blocking behavior if no real response follows."
+    ],
+    "root_cause_clarity": "high",
+    "score": 13,
+    "test_plan": [
+      "Run the minimal repro (sys.exit/KeyboardInterrupt) to confirm desync; add regression test for id:null handling; test with Flex/RLM and GEPA to ensure no regression."
+    ],
+    "unknowns": [
+      "Whether existing PR #9295 or #10039 actually resolves the root cause; maintainer preference on approach."
+    ],
+    "why": "The issue provides a detailed root cause and a minimal deterministic repro for a real bug in the DSPy sandbox, but the supplied gate decision is HUMAN_REVIEW and there are open PRs with semantic overlap (e.g., #9295) that may already address the root cause. The track is llm_algorithm, yet the core fix is in the interpreter's JSON-RPC handling, not an algorithm mechanism; the evaluation_method evidence is weak. Actionability is high, but competition and maintainer review are needed."
   },
   "c78819723a9dfbb6c078d3c7378a50b3076acf74cd2788dd611a9b00e81cccde": {
     "confidence": 0.7,
@@ -8614,6 +8759,34 @@
     ],
     "why": "Issue reports a clear bug: Azure Functions adds Domain attribute to __Host- cookie, causing browser rejection and 403. Root cause is well understood and reproducible. However, the deterministic gate says HUMAN_REVIEW, and there is no maintainer approval or help-wanted signal. The fix may involve design choices about cookie handling and deployment compatibility, so maintainer input is needed."
   },
+  "df546373182f911b11af536b55625f6ad47c333f4827ef5bbe821c267a9b228c": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify DSPARK SWA index padding or FlashInfer decode dispatch in flash_mla_sm120.py",
+      "Add capability-aware fallback to Triton SM120 MLA implementation"
+    ],
+    "risks": [
+      "Potential performance regression from padding to topk=512",
+      "Fallback to Triton may have different numerical behavior or performance characteristics"
+    ],
+    "root_cause_clarity": "high",
+    "score": 13,
+    "test_plan": [
+      "Reproduce the crash with the provided reproduction script on SM120 with TP=2 and DSPARK",
+      "Run E2E generation with batch size 1 and verify no crash",
+      "Compare performance and numerical outputs between the two proposed fixes"
+    ],
+    "unknowns": [
+      "Whether PR #33407 already fixes this issue and its technical completeness",
+      "Maintainer preference between the two proposed fixes"
+    ],
+    "why": "The issue provides a detailed root-cause analysis of a FlashInfer SM120 decode dispatch failure for DSPARK draft with topk=192, and proposes two concrete fixes. However, the open PR assessment failed due to timeout, and an existing PR (#33407) with high semantic overlap was found, though its technical completeness is uncertain. The deterministic gate is HUMAN_REVIEW, and the related issue audit also failed. Thus, maintainer confirmation and duplicate review are needed before starting work."
+  },
   "e03a166acc822a28dafd0201f359f54bf36b7dc610b2205fc92d1497d90d2476": {
     "confidence": 0.8,
     "contradictions": [],
@@ -8669,6 +8842,37 @@
       "Exact scope of existing PR #12866 and whether it already addresses this issue partially"
     ],
     "why": "Issue clearly identifies a regression in the Next architecture where the LiteLLM provider uses the Responses API instead of Chat Completions, causing 404 on common gateways. Root cause is pinpointed to a protocol override in the provider spec. Existing PR #12866 overlaps semantically but does not directly address this issue, leaving room for a focused fix."
+  },
+  "e054f142196b831e8e442ffe96b61a6da4eb2b44510c39a5bf789330dfc855ed": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Investigate batch-invariance implementation for nondeterministic logprob computation",
+      "Fix root cause in sampling or attention kernel",
+      "Add regression test for batch-invariance determinism"
+    ],
+    "risks": [
+      "Root cause may be in external dependencies (e.g., torch) requiring upstream fix",
+      "Intermittent nature may complicate regression testing",
+      "Hardware-specific behavior may not generalize"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 13,
+    "test_plan": [
+      "Reproduce with provided workload and --max-num-seqs 64 vs 8",
+      "Run repeated identical workloads and compare logprobs exactly",
+      "Add unit test for batch-invariance determinism with concurrent sequences"
+    ],
+    "unknowns": [
+      "Root cause mechanism not identified",
+      "Open PR status unknown due to timeout",
+      "Related issue audit failed; duplicate may exist"
+    ],
+    "why": "The issue reports a reproducible nondeterminism in logprobs under VLLM_BATCH_INVARIANT=1 with concurrent workloads, but the root cause is unknown and the deterministic gate requires HUMAN_REVIEW. The evidence is strong for a bug but lacks a concrete algorithm mechanism or code path, and open PR/related issue lookups failed, so duplicate work cannot be excluded."
   },
   "e1434717d760518bad9804ecb7735aa8c452c17b29278f88b4b41f2f6a3ba16e": {
     "confidence": 0.8,
