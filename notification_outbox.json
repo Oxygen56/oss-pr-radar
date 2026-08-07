@@ -176,6 +176,10 @@
       "seenAt": "2026-08-07T10:59:17.454125Z",
       "stateId": "ef6c0e47b3b14a4a01f368ee9b8ccb227cef46a35e255527ef195bb999c5a8ba"
     },
+    "review|BerriAI/litellm#32769": {
+      "seenAt": "2026-08-07T16:17:33.543221Z",
+      "stateId": "d6c8b12a1ac79708b12771348749cbb01aa386a85bd82d5bf283035625818f36"
+    },
     "review|BerriAI/litellm#35711": {
       "legacy": true,
       "seenAt": "2026-08-04T17:44:47.120424Z"
@@ -215,6 +219,10 @@
     "review|BerriAI/litellm#35908": {
       "legacy": true,
       "seenAt": "2026-08-05T10:35:26.309426Z"
+    },
+    "review|BerriAI/litellm#36197": {
+      "seenAt": "2026-08-07T16:17:33.543221Z",
+      "stateId": "63ffd6a3ab2ec44b599dafc986f2c07aac911dcddb85fd46797f44935d39cb80"
     },
     "review|DeusData/codebase-memory-mcp#1339": {
       "legacy": true,
@@ -384,6 +392,10 @@
       "seenAt": "2026-08-07T05:33:51.867072Z",
       "stateId": "e1f187ee2953e397c42e57b8a43bc1f1644174ecf57a68cdfd898e9eea906bdb"
     },
+    "review|mastra-ai/mastra#20934": {
+      "seenAt": "2026-08-07T16:17:33.543221Z",
+      "stateId": "f735765fe5f77df5dc62b54e4940347b09957b740f6e740745e9f68be284cce9"
+    },
     "review|mem0ai/mem0#6783": {
       "legacy": true,
       "seenAt": "2026-08-05T17:52:51.969063Z"
@@ -415,6 +427,10 @@
     "review|microsoft/agent-framework#7570": {
       "seenAt": "2026-08-07T13:48:27.879165Z",
       "stateId": "0680abc1ef1124a66cccdd6c29c2b12aee529c5762c367364539db1e9e21ca82"
+    },
+    "review|modelcontextprotocol/csharp-sdk#1799": {
+      "seenAt": "2026-08-07T16:17:33.543221Z",
+      "stateId": "06dc5afbdcef6a94674b8ada9abd64c1c7fcb1deca317d35c16018d2c28d167d"
     },
     "review|modelcontextprotocol/servers#4545": {
       "legacy": true,
@@ -1097,7 +1113,7 @@
       "seenAt": "2026-08-06T10:09:13.778625Z"
     }
   },
-  "digest": "3e7c25ac640af20d262cbfde364b5f5db95fb842cbbe641b653ed72a06c035f3",
+  "digest": "c2bb09aae6d6985229aaac8b0c116f75584ecc47242333f226188e1b965b9f5d",
   "events": [
     {
       "attempts": 1,
@@ -14760,9 +14776,105 @@
       "runId": "scan-20260807T151345Z-67421721793c",
       "sentAt": "2026-08-07T15:18:50.650724Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "BerriAI/litellm#32769",
+        "BerriAI/litellm#36197",
+        "mastra-ai/mastra#20934",
+        "modelcontextprotocol/csharp-sdk#1799"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "d855691405ca48a858efe52b3bb7cfd1f3387423cf2345f715bfee478d4c46ac",
+          "key": "BerriAI/litellm#32769",
+          "kind": "review",
+          "stateId": "d6c8b12a1ac79708b12771348749cbb01aa386a85bd82d5bf283035625818f36"
+        },
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "fcf9860622d461ba4f37cd7b07982a244fca529e6cc754fd21d20656c0c6ccc0",
+          "key": "BerriAI/litellm#36197",
+          "kind": "review",
+          "stateId": "63ffd6a3ab2ec44b599dafc986f2c07aac911dcddb85fd46797f44935d39cb80"
+        },
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "65b2998d9102d1bf3dd88bc4486df213a576bb2a976b37f47ad24f97087d6fa8",
+          "key": "mastra-ai/mastra#20934",
+          "kind": "review",
+          "stateId": "f735765fe5f77df5dc62b54e4940347b09957b740f6e740745e9f68be284cce9"
+        },
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "29c3e8fdd44b72afff182f447b43e3b55b038ccaddde6aba3a44579b5fd292a8",
+          "key": "modelcontextprotocol/csharp-sdk#1799",
+          "kind": "review",
+          "stateId": "06dc5afbdcef6a94674b8ada9abd64c1c7fcb1deca317d35c16018d2c28d167d"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#32769](https://github.com/BerriAI/litellm/issues/32769) [Bug]: gemini-3.5-flash returns reasoning_tokens but reasoning_content=None (2.5-flash works)**\n建议：WAIT_MAINTAINER | 分数：11\n价值：The issue reports a user-visible bug with a plausible root cause (Gemini 3.5 API changes) and a concrete repro, but the fix requires design confirmation from maintainers (whether to map reasoning_effort to thinking_summaries or add Interactions API support). The deterministic gate is HUMAN_REVIEW, and open PR/related issue lookup failed, so duplicates cannot be excluded.\n改动：LiteLLM Gemini provider: map reasoning_effort to generationConfig.thinking_summaries for 3.x models；Possibly add Interactions API support for reasoning summaries\n验证：Add a regression test using the provided minimal repro with gemini-3.5-flash, asserting reasoning_content is not None when reasoning_effort is set；Run existing LiteLLM Gemini provider unit tests\n风险：Changing API behavior may affect other models or users; need maintainer approval；Interactions API support could be a large feature requiring design\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 3，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#36197](https://github.com/BerriAI/litellm/issues/36197) [Bug]: Responses API — reasoning items (incl. encrypted_content) are silently dropped for providers without a native ResponsesAPIConfig (anthropic, bedrock/converse, non-gpt databricks)**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue reports a concrete bug with clear root cause and reproduction, but open PR and related issue lookups timed out, so duplicate work cannot be excluded. Maintainer approval is absent, and the suggested fix involves design choices (capability-driven dispatch vs. minimal mapping) that need maintainer input.\n改动：Add Responses-to-Anthropic/Bedrock reasoning item translation in LiteLLM provider adapters；Possibly refactor provider dispatch to capability-based instead of model-name substring\n验证：Create a local HTTP server to capture upstream request bodies and assert reasoning items are preserved for anthropic and bedrock/converse providers；Add regression tests for databricks non-gpt model routing\n风险：Changing wire format may affect existing users; need to ensure backward compatibility；Capability-driven dispatch could introduce regressions if not carefully scoped\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 3，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[mastra-ai/mastra#20934](https://github.com/mastra-ai/mastra/issues/20934) Agent-as-tool hides nested tool approval details and surfaces the delegate call instead**\n建议：WAIT_MAINTAINER | 分数：15\n价值：Issue describes a high-impact consent/UI bug with a clear root cause in the streaming agent-as-tool seam, but the fix requires design confirmation on the nested approval envelope shape and naming. The triage bot explicitly flags open product/API questions and maintainer agreement, and the deterministic gate is HUMAN_REVIEW. No competing PR exists, but the design decision blocks a clean candidate.\n改动：packages/core/src/agent/agent.ts；packages/core/src/loop/workflows/agentic-execution/tool-call-step.ts；packages/core/src/loop/workflows/agentic-execution/AIV5Adapter.ts\n验证：Add regression tests for delegated requireApproval tool surfacing inner name/args in top-level approval event, covering live streaming and cold reload, approve and decline, and parallel same-tool delegations.\n风险：Changing approval payload shape may break existing clients; need backward-compatible envelope design.\n竞争：未发现相关 open PR\n下一步：先人工比较相关 issue 的根因、维护者归并方向和可提交代码路径；确认不是重复后再进入实现。\n证据：复现信号 4，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[modelcontextprotocol/csharp-sdk#1799](https://github.com/modelcontextprotocol/csharp-sdk/issues/1799) server/discover fallback fails when 400 body isn't JSON-RPC shaped (non-JSON-RPC error envelope)**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue describes a real fallback failure for non-JSON-RPC 400 bodies during server/discover, but the exact throw site is unconfirmed and an existing PR (#1791) overlaps semantically, requiring maintainer comparison before new work.\n改动：Add regression test for non-JSON-RPC 400 body in server/discover；Modify StreamableHttpClientSessionTransport or ConnectAsync fallback logic to handle non-JSON-RPC error envelopes\n验证：Create minimal repro using ModelContextProtocol.Core directly with a mock server returning the Azure AI Foundry error body；Run targeted unit tests for transport and client connection fallback\n风险：Existing PR #1791 may already fix the issue; duplicating work；Changing error classification may affect other error handling paths\n竞争：发现 PR #1791 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 10，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-07T16:17:33.543221Z",
+      "eventId": "703134494342f6dcd4eda8c3b141cc9dae21b27583fc04aa78c96139b34552c7",
+      "idempotencyKey": "703134494342f6dcd4eda8c3b141cc9dae21b27583fc04aa78",
+      "kind": "review",
+      "runId": "scan-20260807T161216Z-683c696570cf",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-07T15:18:16.904914Z",
+  "generatedAt": "2026-08-07T16:17:33.875481Z",
   "newEventCount": 0,
   "version": "notification_outbox_v2"
 }
