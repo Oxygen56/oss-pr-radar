@@ -2720,6 +2720,30 @@
     ],
     "why": "Issue reports a high-impact tool-call failure in server-filesystem after a schema rewrite, with strong evidence of client-side rejection of outputSchema/structuredContent. However, root cause is not fully confirmed: a maintainer fix is needed in the client or server, and the issue is primarily a bug report without a proposed code change. The workaround shim suggests a potential server-side fix, but design confirmation is required."
   },
+  "40ad962269698172e44078a70005acb7baa10cfa208866a52ca8b3254d9e9233": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/parser/streaming_parser.py",
+      "vllm/parser/delegating_parser.py"
+    ],
+    "risks": [
+      "Potential behavior change in parser output for edge cases; need to ensure no regression in tool-call extraction."
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Add a regression test using the provided repro script for both streaming and non-streaming paths, covering the 6-shape matrix."
+    ],
+    "unknowns": [
+      "Whether an existing PR already addresses this issue; maintainer preference on the proposed fix approach."
+    ],
+    "why": "Issue provides a precise root cause and a concrete fix for a user-visible bug in vLLM's Inkling parser, with a no-GPU repro. However, the deterministic gate requires HUMAN_REVIEW, and the open PR/related issue lookup failed, so we cannot rule out duplicate work. Maintainer design confirmation is also absent."
+  },
   "415d6dfd9ae2964cc77eccd9abb7b62ad99fe2dde9645d0fb78cda2a77be158e": {
     "confidence": 0.8,
     "contradictions": [
@@ -5497,6 +5521,38 @@
       "Maintainer preference on which alignment option to choose"
     ],
     "why": "Issue identifies a clear inconsistency in torch.inference_mode usage between warmup/autotune and real forward, causing inplace update failures for lazy buffers. However, open PR lookup timed out and related issue audit failed, so duplicate implementation cannot be excluded. Maintainer comment asks for design alignment, indicating need for maintainer decision."
+  },
+  "7c25fd8985de9c0ccd34b23f3137551c2d7f01dbee64cc0a86ea78dce32f10c3": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Warmup of fused_dsa_target_verify_metadata kernel at startup",
+      "Potential workaround for CUDA driver deadlock on concurrent module loads"
+    ],
+    "risks": [
+      "Root cause may be a driver bug requiring a different fix",
+      "Warmup may not address all lazy-load paths",
+      "Internal fork may not be representative of upstream main"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 12,
+    "test_plan": [
+      "Reproduce with the provided launch commands and a smoke test request",
+      "Verify that warmup prevents the hang on first request",
+      "Run with a single rank to isolate driver vs. multi-rank concurrency"
+    ],
+    "unknowns": [
+      "Open PR status unknown due to timeout",
+      "Related issue audit failed due to timeout",
+      "Exact Triton/torch versions not provided",
+      "Whether the issue is reproducible on upstream main is unknown"
+    ],
+    "why": "The issue describes a reproducible hang in a specific LLM serving configuration (DSA attention, EAGLE speculative decoding, PD-disaggregation) with a clear stack trace pointing to a lazy Triton kernel load inside cuModuleLoadData. However, the root cause is not definitively identified; it could be a missing warmup or a CUDA driver deadlock. The issue is from an internal fork, and the open PR and related issue lookups timed out, so duplicate work cannot be excluded. The track is llm_algorithm, but the proposed fix (warmup or driver workaround) is operational rather than a new algorithm, and the evidence does not clearly support a reference-vs-implementation test."
   },
   "7cf36c7ae9304d10b958e94f4b778117daa2faf0404775f56273cca084cc4420": {
     "confidence": 0.8,
@@ -9562,6 +9618,42 @@
       "Exact scope of changes needed in openai-protocol crate"
     ],
     "why": "Issue clearly identifies a version mismatch between Rust openai-protocol crate and Python protocol.py causing router rejection of custom tool types. However, existing PR #31184 is open but lacks tests and has CI failures, and maintainer approval is absent. The gate decision is HUMAN_REVIEW, so we must wait for maintainer input."
+  },
+  "e30ad5ccb4e67adb280977974292d32b856b7954156f17d89404ff2d8e04f382": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Reporter suggests distinct from #40742/#48749, but contributor's reproduction on H100 passed 6/6, contradicting easy reproducibility"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Investigate CUDA graph capture invalidation in distributed inference",
+      "Fix root cause in model runner or cudagraph capture path",
+      "Add regression test for fullgraph compile config with inductor graph partition"
+    ],
+    "risks": [
+      "Root cause may be external (PyTorch/Inductor) or hardware-specific",
+      "Flaky test may not reproduce reliably, delaying validation",
+      "Duplicate of existing issues #40742 or #48749"
+    ],
+    "root_cause_clarity": "low",
+    "score": 13,
+    "test_plan": [
+      "Reproduce on H200 with full pytest session and exact config",
+      "Run with CUDA_LAUNCH_BLOCKING=1 to capture antecedent error",
+      "Test with different compile_sizes and cudagraph modes",
+      "Add multi-GPU regression test if distributed state is implicated"
+    ],
+    "unknowns": [
+      "Actual root cause and antecedent CUDA error",
+      "Whether issue is duplicate of existing issues",
+      "Whether maintainers consider this a priority or have ongoing work",
+      "Open PR status due to lookup timeout"
+    ],
+    "why": "The issue reports a flaky CUDA graph capture failure in a distributed LLM inference path, but the root cause is unknown and the reporter explicitly asks for duplicate confirmation. A contributor attempted reproduction on H100 and failed, noting the CI uses H200 and full-session state may matter. No maintainer has confirmed or assigned, and open PR/related issue lookups timed out, so duplicate work cannot be excluded."
   },
   "e30ae255fd45e185886bd0b0bc62e442147a85485664ae51c8f0503f38e5ccfb": {
     "confidence": 0.7,

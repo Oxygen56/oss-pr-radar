@@ -648,9 +648,17 @@
       "seenAt": "2026-08-07T10:59:17.454125Z",
       "stateId": "6f9ae091408cf3739d0aedc5a3372c14ee4ded329628ec2fc940a4e6e19a4728"
     },
+    "review|vllm-project/vllm#51279": {
+      "seenAt": "2026-08-07T11:15:10.665450Z",
+      "stateId": "7ace681851a6ae7dfc2ddfc5d240b185c988239b3d2a428d71faf9668537864e"
+    },
     "review|vllm-project/vllm#51286": {
       "seenAt": "2026-08-07T10:59:17.454125Z",
       "stateId": "3996cdff4999deec0ee952e499e5c0a7c55d5c73bc53469d2654b703fd1d9437"
+    },
+    "review|vllm-project/vllm#51387": {
+      "seenAt": "2026-08-07T11:15:10.665450Z",
+      "stateId": "e8dc0af95a3ce76888592547fbff437bb21f35f78c71eb4660fff5f254ec4e45"
     },
     "watch|BerriAI/litellm#25386": {
       "legacy": true,
@@ -1065,7 +1073,7 @@
       "seenAt": "2026-08-06T10:09:13.778625Z"
     }
   },
-  "digest": "607547a6dd920d670665356f1c3c9c513a5960b34b26bb1010c4848ea39fe442",
+  "digest": "81932c47c7b2dba3810d737675f7138dca50d79d363ee4d4c78ed5280f9c8ec5",
   "events": [
     {
       "attempts": 1,
@@ -14503,9 +14511,69 @@
       "runId": "scan-20260807T105457Z-c7ccde8ad7d5",
       "sentAt": "2026-08-07T10:59:51.200426Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "vllm-project/vllm#51279",
+        "vllm-project/vllm#51387"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "72430b1c02d6e11869caddd4b2db7c8e3e7c320b46ebcc909e0c8bf6976b6159",
+          "key": "vllm-project/vllm#51279",
+          "kind": "review",
+          "stateId": "7ace681851a6ae7dfc2ddfc5d240b185c988239b3d2a428d71faf9668537864e"
+        },
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "4b8014d249d9317d776e756796d8e568541ae11a17d2514a83f5d0d9fc48f74e",
+          "key": "vllm-project/vllm#51387",
+          "kind": "review",
+          "stateId": "e8dc0af95a3ce76888592547fbff437bb21f35f78c71eb4660fff5f254ec4e45"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#51279](https://github.com/vllm-project/vllm/issues/51279) [CI Failure]: PyTorch Fullgraph test_custom_compile_config fails with cudaErrorStreamCaptureInvalidated**\n建议：WAIT_MAINTAINER | 分数：13\n价值：The issue reports a flaky CUDA graph capture failure in a distributed LLM inference path, but the root cause is unknown and the reporter explicitly asks for duplicate confirmation. A contributor attempted reproduction on H100 and failed, noting the CI uses H200 and full-session state may matter. No maintainer has confirmed or assigned, and open PR/related issue lookups timed out, so duplicate work cannot be excluded.\n改动：Investigate CUDA graph capture invalidation in distributed inference；Fix root cause in model runner or cudagraph capture path；Add regression test for fullgraph compile config with inductor graph partition\n验证：Reproduce on H200 with full pytest session and exact config；Run with CUDA_LAUNCH_BLOCKING=1 to capture antecedent error；Test with different compile_sizes and cudagraph modes；Add multi-GPU regression test if distributed state is implicated\n风险：Root cause may be external (PyTorch/Inductor) or hardware-specific；Flaky test may not reproduce reliably, delaying validation；Duplicate of existing issues #40742 or #48749\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 3，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#51387](https://github.com/vllm-project/vllm/issues/51387) [Bug]: Inkling: trailing <|end_message|> leaks into content on plain-text turns when tools are enabled (every post-tool-result synthesis turn)**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue provides a precise root cause and a concrete fix for a user-visible bug in vLLM's Inkling parser, with a no-GPU repro. However, the deterministic gate requires HUMAN_REVIEW, and the open PR/related issue lookup failed, so we cannot rule out duplicate work. Maintainer design confirmation is also absent.\n改动：vllm/parser/streaming_parser.py；vllm/parser/delegating_parser.py\n验证：Add a regression test using the provided repro script for both streaming and non-streaming paths, covering the 6-shape matrix.\n风险：Potential behavior change in parser output for edge cases; need to ensure no regression in tool-call extraction.\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 7，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-07T11:15:10.665450Z",
+      "eventId": "031214c61d03f3772e590944dfc8c075d52b6162808a0995cb7df4f9411eaf28",
+      "idempotencyKey": "031214c61d03f3772e590944dfc8c075d52b6162808a0995cb",
+      "kind": "review",
+      "runId": "scan-20260807T111138Z-aaf65be49ed6",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-07T10:59:17.813441Z",
+  "generatedAt": "2026-08-07T11:15:11.016198Z",
   "newEventCount": 0,
   "version": "notification_outbox_v2"
 }
