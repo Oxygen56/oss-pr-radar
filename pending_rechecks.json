@@ -1,44 +1,38 @@
 {
-  "BerriAI/litellm#35711": {
-    "issueTitle": "[Bug]: `ollama/` streaming never reconstructs tool calls — tool call arrives as plain `delta.content` text with `finish_reason: \"stop\"`, while the non-streaming path reconstructs it correctly",
-    "issueUpdated": "2026-08-04T18:30:42Z",
-    "issueUrl": "https://github.com/BerriAI/litellm/issues/35711",
-    "reasonCode": "POLICY_REVALIDATION_REQUIRED"
-  },
-  "aaif-goose/goose#11001": {
-    "issueTitle": "[BUG] Goose working indicator overlaps with /command menu in desktop UI",
-    "issueUpdated": "2026-08-06T13:16:34Z",
-    "issueUrl": "https://github.com/aaif-goose/goose/issues/11001",
+  "aaif-goose/goose#11004": {
+    "issueTitle": "Local inference silently drops ~27% of GGUF repos because weight filenames must start with the repo name",
+    "issueUpdated": "2026-08-06T13:16:08Z",
+    "issueUrl": "https://github.com/aaif-goose/goose/issues/11004",
     "reasonCode": "OWNERSHIP_CHANGED"
   },
-  "frontman-ai/frontman#1347": {
-    "issueTitle": "Stop or pause executions on task switch and disconnect",
-    "issueUpdated": "2026-08-05T17:35:35Z",
-    "issueUrl": "https://github.com/frontman-ai/frontman/issues/1347",
+  "cline/cline#12947": {
+    "issueTitle": "Reasoning Effort dropdown caps at \"xhigh\" - \"max\" missing from OPENAI_REASONING_EFFORT_OPTIONS though models.dev/DeepSeek advertise it",
+    "issueUpdated": "2026-08-05T03:10:22Z",
+    "issueUrl": "https://github.com/cline/cline/issues/12947",
+    "reasonCode": "POLICY_REVALIDATION_REQUIRED"
+  },
+  "microsoft/semantic-kernel#14265": {
+    "issueTitle": "Bug: VertexAIEmbeddingGenerator hardcodes :predict, unusable with gemini-embedding models that only serve :embedContent",
+    "issueUpdated": "2026-08-04T07:39:38Z",
+    "issueUrl": "https://github.com/microsoft/semantic-kernel/issues/14265",
     "reasonCode": "EVIDENCE_INCOMPLETE"
   },
-  "mastra-ai/mastra#20670": {
-    "issueTitle": "createInngestAgent resume() mis-targets nested tool suspensions, drops caller request context, and swallows send failures",
-    "issueUpdated": "2026-08-04T15:52:30Z",
-    "issueUrl": "https://github.com/mastra-ai/mastra/issues/20670",
+  "modelcontextprotocol/python-sdk#3256": {
+    "issueTitle": "OAuth client can never recover from an expired DCR client secret — even though the SDK's own server issues and enforces one",
+    "issueUpdated": "2026-08-05T10:54:09Z",
+    "issueUrl": "https://github.com/modelcontextprotocol/python-sdk/issues/3256",
     "reasonCode": "EVIDENCE_INCOMPLETE"
   },
-  "mastra-ai/mastra#20671": {
-    "issueTitle": "Oversized Inngest Realtime events are delivered truncated, permanently hanging durable agent streams",
-    "issueUpdated": "2026-08-04T15:53:36Z",
-    "issueUrl": "https://github.com/mastra-ai/mastra/issues/20671",
-    "reasonCode": "EVIDENCE_INCOMPLETE"
+  "vllm-project/vllm#46097": {
+    "issueTitle": "[Bug] MiniMax-M2.7 multi-node TP=4: NCCL collective deadlock (all ranks spin at SM~96%/mem=0%/~15W)",
+    "issueUpdated": "2026-08-05T23:19:13Z",
+    "issueUrl": "https://github.com/vllm-project/vllm/issues/46097",
+    "reasonCode": "POLICY_REVALIDATION_REQUIRED"
   },
-  "mastra-ai/mastra#20673": {
-    "issueTitle": "Durable agents lose the request context after the first iteration: requestContextEntries is dropped from iteration state and never forwarded to the LLM step",
-    "issueUpdated": "2026-08-04T15:54:14Z",
-    "issueUrl": "https://github.com/mastra-ai/mastra/issues/20673",
-    "reasonCode": "EVIDENCE_INCOMPLETE"
-  },
-  "mastra-ai/mastra#20818": {
-    "issueTitle": "[BUG] excludeSpanTypes orphans descendant spans: tool calls never reach exporters",
-    "issueUpdated": "2026-08-06T17:44:00Z",
-    "issueUrl": "https://github.com/mastra-ai/mastra/issues/20818",
-    "reasonCode": "STRONG_PR_APPEARED"
+  "vllm-project/vllm#51035": {
+    "issueTitle": "[Bug]: DeepSeek-V4 sparse-decode MLA kernel wedges in a spin loop with no timeout and no diagnostic (device-level capture on sm_103; surfaces 300 s later as an unrelated DeepGEMM assert)",
+    "issueUpdated": "2026-08-04T14:26:38Z",
+    "issueUrl": "https://github.com/vllm-project/vllm/issues/51035",
+    "reasonCode": "POLICY_REVALIDATION_REQUIRED"
   }
 }

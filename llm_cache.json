@@ -372,6 +372,40 @@
     ],
     "why": "The issue describes a real bug in PD disaggregation where the router reports healthy before the prefill worker is ready, causing benchmark failures. However, the root cause is not precisely identified, and the open PR and related issue lookups timed out, so duplicate work cannot be excluded. The deterministic gate requires HUMAN_REVIEW."
   },
+  "08db60d19da35ffb9576646e1f9e72a8eb3c4a3a41c9cfeda83448c4ca4ab2bc": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Comments report different root causes: one points to NCCL build, another to FlashInfer kernel livelock, and the issue hypothesizes TP-divergence"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Investigate and fix TP-divergence in MiniMax-M2 forward pass",
+      "Add collective-sequence logging or invariant checks around MoE all-reduce",
+      "Possibly pin or validate NCCL build"
+    ],
+    "risks": [
+      "Root cause may be external (NCCL build, FlashInfer) rather than vLLM code",
+      "Reproduction requires long-running multi-node setup, making tests expensive",
+      "Potential duplicate work with existing PRs or RFCs (e.g., #48720)"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 12,
+    "test_plan": [
+      "Reproduce with 4-node TP=4 and mixed-shape traffic; instrument per-rank collective sequence numbers",
+      "Add a regression test that detects collective desync via NCCL RAS counts or debug logs",
+      "Run A/B test with different NCCL builds to isolate build-dependent timing sensitivity"
+    ],
+    "unknowns": [
+      "Open PR status unknown due to timeout",
+      "Related issue audit failed; duplicate work cannot be ruled out",
+      "Exact root cause not confirmed; maintainer guidance needed"
+    ],
+    "why": "The issue reports a reproducible multi-node TP deadlock with strong evidence of NCCL collective desync, but the root cause is not definitively identified; multiple orthogonal causes (NCCL build, FlashInfer kernel livelock, TP-divergence) are discussed. The deterministic gate requires HUMAN_REVIEW, and open PR/related issue lookups failed, so duplicate work cannot be excluded."
+  },
   "09825a63c7595dbc0ab01b0f35ce09e3128060df67572bc7681e652c013b6039": {
     "confidence": 0.7,
     "contradictions": [],
@@ -700,6 +734,35 @@
       "Exact frontend component changes needed beyond URL update"
     ],
     "why": "Issue provides a precise root cause and a concrete fix (route split + frontend update). Existing PR #40029 is weak: no tests, minimal changes, and lacks regression coverage. A materially better PR with tests and complete frontend changes is plausible."
+  },
+  "1328a93f39a6838ef9271da0a0cc3979f3d9d710293a481a77abca82238d8c4c": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify resume() to target nested tool-call leaf in resume event steps",
+      "Add requestContext option to InngestAgentResumeOptions and merge with snapshot context",
+      "Await inngest.send and propagate errors to caller, cleaning up stream subscription and run-registry entry"
+    ],
+    "risks": [
+      "Potential API change to InngestAgentResumeOptions may require documentation updates",
+      "Behavior change in error handling could affect existing consumers relying on fire-and-forget"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create failing test reproducing nested suspension resume mis-targeting using minimal repro",
+      "Test that requestContext passed to resume() overrides snapshot context per key",
+      "Test that send failure rejects resume() and cleans up resources"
+    ],
+    "unknowns": [
+      "Exact internal workflow step naming and snapshot structure not fully detailed, but code references provide enough guidance"
+    ],
+    "why": "Issue describes three concrete correctness defects in createInngestAgent resume() with clear code references and observed behavior. No competing PR or issue found. Maintainer labeled for triage, indicating interest. Actionable fix with testable scenarios."
   },
   "13e7bc093eda0d8f5641120c95af6a91a69e561113b6f386a0812789f9fc4e99": {
     "confidence": 0.8,
@@ -1655,6 +1718,34 @@
       "Exact code structure and test conventions in the repository"
     ],
     "why": "Issue provides a precise root cause (getParentSpan skips only internal spans, not excluded ones), a minimal reproduction, and a suggested fix. Maintainer confirmed and reopened, indicating interest. No competing PR found."
+  },
+  "2be5a6ee11743c2e5ad55740484456adaa0dd04eaf11ddbc5549586a1f39acbb": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Forward requestContextEntries in map-to-llm-input mappings",
+      "Preserve requestContextEntries in iteration state updates and schemas",
+      "Add regression tests for durable agent request context propagation"
+    ],
+    "risks": [
+      "Potential API behavior changes if not carefully scoped",
+      "May require coordination with maintainer design preferences"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a minimal reproduction with a mock model emitting tool calls and a dynamic getModel resolver, forcing registry-miss rebuild, and assert resolver sees same context on all iterations",
+      "Run existing durable agent and Inngest integration tests"
+    ],
+    "unknowns": [
+      "Exact maintainer design preferences for fixing the issue"
+    ],
+    "why": "The issue precisely identifies a bug where request context is dropped after the first iteration in durable agents, with clear code paths and production impact. No competing PR or related issue exists, and the maintainer has acknowledged the report, making it actionable."
   },
   "2c3f1e7861212ab9543faa10e8ea644425aabc2d8c3ed0de62d3446d17078cb7": {
     "confidence": 0.7,
@@ -4758,6 +4849,40 @@
     ],
     "why": "Issue clearly identifies a concrete bug in error response format with a proposed fix, but the deterministic gate requires HUMAN_REVIEW and open PR/related issue lookups timed out, so duplicate work cannot be excluded."
   },
+  "763bf6fd2131e2b42f4faac6422e1ee5a67f6255e950532ca100f8a30e90d57a": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Reporter's per-position acceptance with probabilistic sampling is much higher (avg 54.3%) than with temperature=0 (9-25%), suggesting sampling method affects the collapse",
+      "Maintainer suggests random tokens break specdec, while reporter's data with probabilistic sampling shows better acceptance on same random inputs"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "DSpark speculative decoding kernel or sampling logic",
+      "benchmark methodology for specdec acceptance"
+    ],
+    "risks": [
+      "Root cause may be benchmark artifact, not a code bug",
+      "Hardware-specific kernel issue may not be reproducible on other platforms",
+      "Duplicate PR or issue may exist due to lookup timeout"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 13,
+    "test_plan": [
+      "Reproduce with MT-Bench or real prose prompts to compare acceptance rates",
+      "Run on GB200/GB300 to isolate DGX Spark kernel issue",
+      "Instrument draft model to log per-position conditional probabilities and compare with target model"
+    ],
+    "unknowns": [
+      "Whether the collapse reproduces on real workloads (MT-Bench)",
+      "Whether the issue is specific to DGX Spark kernels or affects other hardware",
+      "Whether an existing PR or issue already addresses this problem"
+    ],
+    "why": "The issue reports a plausible DSpark speculative decoding acceptance collapse after position 0 on DeepSeek-V4-Flash-0731, with detailed environment and ruled-out factors. However, a maintainer suspects the benchmark artifact (random tokens) and a member's data supports that random prompts degrade acceptance, while the reporter's own data shows higher acceptance with probabilistic sampling. The root cause is not yet confirmed; it could be a kernel issue on DGX Spark or a benchmark artifact. The deterministic gate is HUMAN_REVIEW, and open PR/related issue lookups timed out, so duplicate work cannot be excluded."
+  },
   "766f5f0639b16dea2cdbf861f135445e63655efbbfd3c22f6f25e3a0872ef35a": {
     "confidence": 0.8,
     "contradictions": [],
@@ -6998,6 +7123,35 @@
     ],
     "why": "The issue identifies a concrete, reproducible bug in the OAuth client flow: expired client secrets are never invalidated, causing permanent lockout. The root cause is clearly traced to missing checks in the client code, with a deterministic reproduction provided. No competing PR or issue exists, and the fix is well-scoped."
   },
+  "b91eb255b4a20a338286d1445bcf9696518206eb85ca8ee7fceba0bb9f837a20": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Tool error message handling",
+      "Tool filtering/visibility logic",
+      "Tool argument type validation"
+    ],
+    "risks": [
+      "Potential API behavior changes",
+      "Unclear scope without maintainer input"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Create a minimal reproduction with a disabled tool and verify it is not sent to the model",
+      "Test error message content for invalid tool arguments"
+    ],
+    "unknowns": [
+      "Exact code path causing disabled tools to be visible",
+      "Whether maintainers have a preferred design for tool error handling"
+    ],
+    "why": "Issue reports multiple tool-calling problems (error messages, disabled tools leaking, argument types) but lacks a concrete reproduction or root cause. The candidate metadata lacks algorithm evidence and the track is agent_ai_infra, not llm_algorithm. The deterministic gate is ALLOW_TO_WORK, but the issue is a bug report with no clear code path or validation plan, and maintainer design confirmation is absent."
+  },
   "b9bea567ff660854ce5fba7a19d344bc07ed2b50306eeef84de07e7e4aa91d88": {
     "confidence": 0.7,
     "contradictions": [],
@@ -8406,6 +8560,37 @@
     ],
     "why": "The issue precisely identifies a user-visible bug: oversized Inngest Realtime events are truncated, causing durable agent streams to hang indefinitely. Root cause is clearly traced to InngestPubSub's handling of oversized messages and the stream adapter's reliance on terminal events. The proposed fix (reduce live event payload, salvage truncated terminal events) is concrete and testable."
   },
+  "df2e1b0c53e546c0693e76a70bbed1d980a2af664f02ee8cf9557a36d8583f56": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Instrumentation or timeout in tcgen05.alloc spin loops",
+      "Potential source-level mitigation in FlashMLA or CUTLASS",
+      "Diagnostic improvements to surface stalled TMEM allocation"
+    ],
+    "risks": [
+      "Fix may require changes in ptxas or hardware behavior, not just source code",
+      "Intermittent nature makes regression testing time-consuming",
+      "Potential overlap with existing issue #49922 or other unreported fixes"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 13,
+    "test_plan": [
+      "Reproduce with burst/idle cycling harness on B300 hardware",
+      "Use cuda-gdb to capture live wedge and verify fix prevents stall",
+      "Run sustained serving benchmark to confirm no recurrence over hours"
+    ],
+    "unknowns": [
+      "Open PR status unknown due to timeout",
+      "Related issue audit failed due to timeout",
+      "Root cause not definitively established; phase mismatch vs. visibility vs. hardware state"
+    ],
+    "why": "The issue provides deep device-level evidence of a TMEM allocation spin loop in FlashMLA's sparse-decode MLA kernel, but explicitly disclaims root-cause determination and asks for maintainer guidance on owner and diagnostic path. The deterministic gate is HUMAN_REVIEW, and the open PR and related issue lookups timed out, so duplicate work cannot be excluded. Actionability is limited because the fix likely requires changes in ptxas-generated code or coordination with FlashMLA/CUTLASS maintainers."
+  },
   "df415d8405e9e398e78a2e1e0ac591cd9353fd22f263ec5549f4fe01c26291b5": {
     "confidence": 0.85,
     "contradictions": [],
@@ -9340,6 +9525,35 @@
       "Whether existing PR #14266 will be updated with tests"
     ],
     "why": "Issue clearly identifies a hardcoded :predict endpoint causing 400 errors for gemini-embedding-2 models. Existing PR #14266 addresses the same root cause but lacks regression tests, leaving room for a materially better PR with tests and minimal fix."
+  },
+  "f5c25ff48fd056b67de74406fe8893895face7baacb2a7c417a1deadcdbbcdab": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "dspy/primitives/python_interpreter.py",
+      "dspy/primitives/runner.js"
+    ],
+    "risks": [
+      "Fix may be in non-algorithm infrastructure, reducing relevance",
+      "Existing PRs may already address the issue, requiring careful comparison"
+    ],
+    "root_cause_clarity": "high",
+    "score": 13,
+    "test_plan": [
+      "Run the provided minimal repro to confirm the desync",
+      "Add regression test for SystemExit/KeyboardInterrupt in interpreter",
+      "Verify session sync after error handling"
+    ],
+    "unknowns": [
+      "Whether maintainers consider this an algorithm issue",
+      "Whether existing PRs fully fix the root cause"
+    ],
+    "why": "The issue provides a detailed root cause and deterministic repro for a sandbox desync bug, but the track is llm_algorithm and the core fix is in the Python interpreter/Deno runner, not an LLM algorithm. The supplied gate says HUMAN_REVIEW, and existing PRs overlap semantically, requiring maintainer comparison."
   },
   "f5f865e683b56e39b01086fcf2f4cc3f6254456ca732f57f723fc9a0a0fae0d3": {
     "confidence": 0.7,
