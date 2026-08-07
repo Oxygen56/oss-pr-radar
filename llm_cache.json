@@ -1580,6 +1580,36 @@
     ],
     "why": "Issue identifies a concrete race condition in Cursor's sessionStart hook, with official Cursor confirmation and a clear mitigation: return essential context immediately and defer non-critical work. This is a user-visible bug with a reproducible scenario and a minimal code path in the plugin scripts."
   },
+  "26ff7708f5b625ad856c3e9a337f274ae95f9a1050eca7f9a556ffd900616279": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify _get_schema_target to avoid silent fallback on NameError",
+      "Modify filter_serializable_type or union handling to surface dropped members",
+      "Add regression tests for both silent paths"
+    ],
+    "risks": [
+      "Changing fallback behavior may break existing capabilities that rely on silent fallback",
+      "Altering union handling may affect other schema generation paths"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "test_plan": [
+      "Create a minimal capability with TYPE_CHECKING-only __init__ param and assert schema generation raises or includes fields",
+      "Create a capability with unrepresentable field type and assert union member is not silently dropped",
+      "Run existing pydantic-ai test suite and downstream harness check"
+    ],
+    "unknowns": [
+      "No public minimal repro code provided",
+      "Maintainer design preferences or planned fixes unknown"
+    ],
+    "why": "Issue identifies two silent schema-generation bugs in pydantic-ai's AgentSpec with concrete root causes and downstream impact, but lacks a public minimal repro and maintainer confirmation; gate requires HUMAN_REVIEW."
+  },
   "28c7c49a9828479e0220ccacac289be2e25052f52c0b68e822a8783ba2f90847": {
     "confidence": 0.85,
     "contradictions": [],
@@ -2689,6 +2719,36 @@
       "Maintainer preference for server-side vs client-side fix"
     ],
     "why": "Issue reports a high-impact tool-call failure in server-filesystem after a schema rewrite, with strong evidence of client-side rejection of outputSchema/structuredContent. However, root cause is not fully confirmed: a maintainer fix is needed in the client or server, and the issue is primarily a bug report without a proposed code change. The workaround shim suggests a potential server-side fix, but design confirmation is required."
+  },
+  "415d6dfd9ae2964cc77eccd9abb7b62ad99fe2dde9645d0fb78cda2a77be158e": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Existing PR #7261 is closed but has CI failures; issue asks for maintainer direction"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add 'tool' to Role literal in _otel_messages.py",
+      "Modify messages_to_otel_messages to route ToolReturnPart to role 'tool' and handle ToolAvailabilityDeltaPart appropriately"
+    ],
+    "risks": [
+      "Potential ambiguity in handling ToolAvailabilityDeltaPart; may need separate treatment",
+      "Existing PR #7261 may be revived or superseded"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Run the provided minimal reproduction script and assert roles are 'tool' and not mid-conversation 'system'",
+      "Add unit tests for messages_to_otel_messages covering ToolReturnPart and ToolAvailabilityDeltaPart"
+    ],
+    "unknowns": [
+      "Maintainer preference on approach for ToolAvailabilityDeltaPart",
+      "Whether PR #7261 will be reopened or merged"
+    ],
+    "why": "Issue clearly identifies a concrete bug in OTel GenAI message role mapping with a minimal reproduction and root cause in code. However, the track is llm_algorithm and the issue is about telemetry semantics, not an algorithm. The existing PR #7261 is closed and has CI failures, and the issue explicitly requests maintainer direction on approach. The deterministic gate is HUMAN_REVIEW, so we must wait for maintainer confirmation."
   },
   "424899631d80208034e39c85ad19d3383780c6dbf4a291c55b94bf74b2a8b44c": {
     "confidence": 0.7,
@@ -4622,6 +4682,34 @@
       "Full related issue audit results (timeout)"
     ],
     "why": "Issue reports a clear crash with root cause and repro, but the deterministic gate requires HUMAN_REVIEW and the related issue audit timed out. Existing PR #50894 is a draft with partial coverage, so a new PR could compete but needs maintainer confirmation."
+  },
+  "68df18c426d78215e55e752daba02ffcd6dde82a7dbe86ce1ee2c4aa06a9724c": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify Bedrock provider to omit temperature for Claude models based on model family/version detection rather than an explicit list",
+      "Add regression tests for new Claude model IDs"
+    ],
+    "risks": [
+      "Potential behavior change for models that still support temperature; need to ensure backward compatibility",
+      "Maintainer may have design preferences for model detection logic"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a unit test that mocks Bedrock API and verifies temperature is not sent for a new Claude model ID not in the old list",
+      "Run existing provider tests to ensure no regressions"
+    ],
+    "unknowns": [
+      "Exact current implementation of the no-temperature list and how model IDs are parsed",
+      "Whether maintainers have already discussed a preferred solution"
+    ],
+    "why": "The issue clearly identifies a recurring bug: new Claude models fail because temperature is deprecated, and the fix requires a maintainable approach instead of per-model hardcoding. No open PR or issue addresses this, and the existing PRs are merged and only add specific models."
   },
   "696e02a999f1d011ae915149f892da85ad6d48baaeb77c7118e9f6f1d84d1d0e": {
     "confidence": 0.7,
@@ -8064,6 +8152,36 @@
     ],
     "why": "The issue provides a detailed root cause and concrete fix suggestions for a real bug in the Datadog callback, but the deterministic gate requires HUMAN_REVIEW and open PR/related issue lookups timed out, so we cannot rule out existing implementations or maintainer preferences."
   },
+  "c6e0bfcbe76cdbf0d161fec52f2060af40a14ebfa3a62b00a4baa04399e5518d": {
+    "confidence": 0.7,
+    "contradictions": [
+      "The issue title and body focus on L40S, but comments show the same failure on RTX 4060 Laptop (also sm_89), and one comment notes the same config works on SM120 despite the same shared memory limit, indicating architecture-specific codegen differences."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify sglang/srt/batch_invariant_ops/batch_invariant_ops.py to select a hardware-aware persistent matmul config (e.g., reduce num_stages or BLOCK_SIZE_N) or add a fallback/retry on OutOfResources, ensuring the deterministic inference path works on Ada GPUs without breaking other architectures."
+    ],
+    "risks": [
+      "Changing the kernel config may affect performance or numerical behavior on other architectures; the fix must preserve batch invariance and determinism.",
+      "A naive device-limit clamp could wrongly restrict configs that fit on newer architectures (e.g., SM120), as noted in the comments."
+    ],
+    "root_cause_clarity": "high",
+    "score": 13,
+    "test_plan": [
+      "Run the provided minimal repro script on an L40S or RTX 4060 Laptop with --enable-deterministic-inference and verify /health_generate becomes available.",
+      "Add a regression test that launches the persistent matmul kernel with the failing config on sm_89 and asserts no OutOfResources, or a unit test that validates config selection against device shared memory limits."
+    ],
+    "unknowns": [
+      "Whether there is an existing open PR addressing this issue (open PR lookup timed out).",
+      "Whether maintainers have already planned a fix or prefer a specific approach (e.g., config selection vs. fallback).",
+      "The exact performance impact of the proposed config changes on supported hardware."
+    ],
+    "why": "The issue provides a clear root cause: the fixed Triton persistent matmul config in batch_invariant_ops.py requests 106496 bytes of shared memory, exceeding the 101376-byte limit on Ada (sm_89) GPUs, causing OutOfResources at startup. Multiple independent reproductions and local mitigations (reducing num_stages or BLOCK_SIZE_N) confirm the diagnosis. However, the deterministic gate is HUMAN_REVIEW, and the open PR and related issue lookups timed out, so duplicate work cannot be excluded. The fix is a kernel configuration adjustment, which is a concrete algorithm/kernel change, but maintainer confirmation is needed due to the gate and lookup failures."
+  },
   "c6e92a17d895672a38cb6b666e7f77e55137af579bdbf873de9523201a42b353": {
     "confidence": 0.85,
     "contradictions": [],
@@ -9914,6 +10032,35 @@
       "Whether maintainer prefers system message approach over faster error surfacing"
     ],
     "why": "Issue provides a clear root cause: connection-refused is mapped to retryable NetworkError, and Ollama's generous retry budget causes ~2min delay. Maintainer confirms the behavior and discusses trade-offs, but no PR exists. A focused fix distinguishing permanent connection failures from transient network errors is actionable and testable."
+  },
+  "ef2a3aac9a0da78de7a841ebfdf4a9e060db943d6af01c8d2e8ab2bf83b9c506": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Add a regression test that reproduces the missing file path notification",
+      "Modify the canvas upload event handling to include the file path in the agent's context",
+      "Possibly update the Files tab to reflect uploaded files"
+    ],
+    "risks": [
+      "Potential design changes to the agent context or event system could have broader impact",
+      "The fix might require coordination between frontend and backend components"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Create a minimal reproduction in the cloud environment: upload a file via canvas, then query the agent's context to verify the file path is present",
+      "Run existing unit tests for the canvas upload and agent context modules"
+    ],
+    "unknowns": [
+      "Whether maintainers have already discussed or planned a fix",
+      "Exact code path where the file path is lost",
+      "Whether the expected behavior includes showing the file in the Files tab or only informing the agent"
+    ],
+    "why": "The issue describes a user-visible bug in the cloud canvas file upload flow: the agent is not informed of the uploaded file's path. The root cause is plausible (missing event or context propagation) but not confirmed. No maintainer assignment, design confirmation, or explicit help-wanted signal. The track is agent_ai_infra, not llm_algorithm, so the algorithm-specific requirement does not apply. The issue is actionable in principle, but the lack of maintainer signal and the need to confirm the intended behavior (e.g., whether the file should appear in Files tab) make it safer to wait for maintainer input."
   },
   "f051fc2b0529efd5a7799e65bae45196c9d09d8ef7eaac187dc388f7efc7d577": {
     "confidence": 0.6,
