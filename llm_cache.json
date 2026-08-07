@@ -3806,6 +3806,37 @@
     ],
     "why": "Issue clearly describes a version-skew bug during rolling updates: v1.4 frontend sends MsgPack to v1.2 workers that only accept JSON. Existing PR #12658 is a draft with no tests and failing CI, leaving room for a more complete fix with regression tests."
   },
+  "4b2bf95f7cd87f7b2ed8eee7edbf36b4d9b99edfd96ecbb04029cbfcd66540d6": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Maintainer comment suggests this is expected, while issue treats it as a bug"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Potential improvement in KV cache quantization handling or documentation",
+      "Possible regression test for small models with low-bit KV cache"
+    ],
+    "risks": [
+      "May be considered expected behavior, not a bug",
+      "No clear code path for a fix without maintainer direction"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with a specific small model and q4_0 KV cache, compare outputs with q8_0/f16",
+      "Add a regression test that checks output coherence for small models under low-bit KV cache"
+    ],
+    "unknowns": [
+      "Open PR status unknown due to timeout",
+      "Related issue audit failed",
+      "No explicit maintainer approval or design confirmation"
+    ],
+    "why": "Issue reports a user-visible bug with a plausible root cause (q4_0 KV cache quantization causing degenerate outputs on small models). However, the maintainer's comment suggests this is expected behavior, and the issue lacks a concrete code-level fix or a clear actionable change. The open PR and related issue lookups failed, so duplicate work cannot be excluded. The deterministic gate requires HUMAN_REVIEW."
+  },
   "4b3aee146f076609481d5cc61c8f1cb6b982b62e131e3d3336feba1ff85f5671": {
     "confidence": 0.7,
     "contradictions": [],
@@ -4931,6 +4962,34 @@
     ],
     "why": "Issue provides a detailed root cause and a working fix, but the deterministic gate requires HUMAN_REVIEW and the related issue audit timed out. Existing PR #50882 is weak (draft, no tests, failing CI), but a materially better PR is plausible. However, the lack of maintainer confirmation and the unresolved audit block actionability."
   },
+  "5f225779e17c986d138bc4d049860f192656ad81c161a597de915b541fa4c3f6": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify rag/svr/task_executor.py to avoid overwriting progress -1 with 1.0 when chunks are empty",
+      "Add regression test for parser failure with empty chunks"
+    ],
+    "risks": [
+      "Changing behavior may affect legitimately empty documents that should be marked successful",
+      "Potential impact on downstream document status handling"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "test_plan": [
+      "Reproduce with a chunker that calls callback(prog=-1) and returns []",
+      "Verify document progress remains -1 and status reflects failure",
+      "Run existing task_executor tests"
+    ],
+    "unknowns": [
+      "Maintainer preference on handling empty documents vs. errors"
+    ],
+    "why": "Issue clearly identifies a bug in task_executor.py where a parser failure (progress -1) is overwritten by success when no chunks are returned. The root cause is precise and a fix pattern exists from PR #14220. However, the issue explicitly requests a maintainer decision on desired behavior for legitimately empty documents vs. errors, and the deterministic gate is HUMAN_REVIEW, so work should wait for maintainer confirmation."
+  },
   "5f6db578cb2705ef667fbf10317f0504acece5256cad2ae1b5e59c0eb5ae92b3": {
     "confidence": 0.85,
     "contradictions": [],
@@ -5513,6 +5572,37 @@
       "Maintainer decision on scope split and PR approach"
     ],
     "why": "Issue reports a reproducible teardown bug with a plausible root cause (TMS paused-free) and a maintainer has outlined a multi-step plan, but the fix depends on upstream TMS changes and maintainer guidance on scope. Existing PR #1571 is draft and incomplete, leaving room for a better PR, but actionability is blocked by pending upstream and design confirmation."
+  },
+  "69d660d7e6e16cccfe43369ca281d7cafb99a02eb25aab6b3134df85e1bd6ecb": {
+    "confidence": 0.8,
+    "contradictions": [
+      "PR #33986 claims fix but was withdrawn due to corruption"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "FlashInfer kernel instantiation for topk=192",
+      "SGLang shim dispatch logic in flash_mla_sm120.py"
+    ],
+    "risks": [
+      "Intermittent corruption if padding is used",
+      "Kernel instantiation may require FlashInfer changes and coordination"
+    ],
+    "root_cause_clarity": "high",
+    "score": 13,
+    "test_plan": [
+      "Reproduce with provided command on SM120",
+      "Add regression test for topk=192 dispatch",
+      "Run long-duration correctness tests to catch intermittent corruption"
+    ],
+    "unknowns": [
+      "Maintainer confirmation on preferred fix path",
+      "Whether FlashInfer can instantiate topk=192 without side effects"
+    ],
+    "why": "Issue identifies a concrete kernel dispatch gap (topk=192 missing for decode-dsv4) with a clear root cause and reproduction, but the proposed padding workaround was withdrawn due to intermittent text corruption, and the remaining fix (FlashInfer instantiation) requires maintainer coordination. The related PR is closed and lacks tests, so no clean candidate exists."
   },
   "69dcae18e87df49d614201959505726ca056cb8a676b0b90830c7475b7a20647": {
     "confidence": 0.6,
