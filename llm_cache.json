@@ -670,6 +670,64 @@
     ],
     "why": "Issue reports a clear bug with root cause and minimal repro, but the deterministic gate requires HUMAN_REVIEW and the repository has an AI disclosure policy that blocks automated action. Existing PR #50955 is weak (failed CI) and may be a competition opportunity, but maintainer confirmation is needed."
   },
+  "11e07a0613c6c48288a2a775dcf259cd06be93aa039df21fcf6f6af2c9e362d6": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix session/set_mode to correctly update task-level mode after a planning turn",
+      "Add regression test for mode switching after planning turn"
+    ],
+    "risks": [
+      "Potential complexity in mode state management; fix might affect other mode transitions",
+      "Need to ensure compatibility with existing ACP protocol behavior"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "test_plan": [
+      "Run the provided reproduction script to confirm the bug",
+      "Add a unit/integration test that simulates a planning turn followed by set_mode(act) and verifies file write is allowed"
+    ],
+    "unknowns": [
+      "Exact code path responsible for mode state not being updated",
+      "Maintainer's preferred design for mode state handling"
+    ],
+    "why": "Issue provides a concrete, reproducible bug in the ACP session mode switching after a planning turn, with a clear expected vs actual behavior and a test script. The root cause is not identified but the behavior is well-defined, making it actionable for a developer to investigate and fix."
+  },
+  "12032044f592b55c6d045ccb5708a5aecf3e32d4f35cdc5f5dbdfff9ac462df5": {
+    "confidence": 0.7,
+    "contradictions": [
+      "The issue is labeled as a bug and has a clear root cause, but the track is llm_algorithm and the fix is not an algorithm change; this may be a mismatch."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify FlexibleArgumentParser in vllm/utils/argparse_utils.py to emit explicit negated flags (e.g., --no-<key>) for false boolean YAML values when supported, or otherwise handle tri-state defaults correctly.",
+      "Add regression tests for YAML config parsing with falsey booleans for affected flags."
+    ],
+    "risks": [
+      "Changing config parsing may affect existing behavior for store_true flags where absence is the default; need to ensure backward compatibility.",
+      "Negated flag forms may not exist for all boolean flags; need to handle unsupported cases gracefully."
+    ],
+    "root_cause_clarity": "high",
+    "score": 13,
+    "test_plan": [
+      "Create a minimal YAML config with enable-flashinfer-autotune: false and run vllm serve --config; assert the effective config shows enable_flashinfer_autotune=False.",
+      "Add unit tests for argparse_utils to verify false boolean values are not dropped and produce correct argv.",
+      "Test with --disable-hybrid-kv-cache-manager: false to ensure no regression."
+    ],
+    "unknowns": [
+      "Whether there is an existing open PR addressing this issue (open PR lookup timed out).",
+      "Whether maintainers have acknowledged or plan to fix this (no maintainer activity signals)."
+    ],
+    "why": "The issue identifies a concrete bug in YAML config parsing where falsey boolean values are silently dropped, causing flags like --enable-flashinfer-autotune to be ignored. The root cause is clearly located in argparse_utils.py. However, the supplied gate decision is HUMAN_REVIEW, and the open PR and related issue lookups timed out, so we cannot rule out existing duplicate work. The track is llm_algorithm, but the fix is primarily a CLI/config parsing bug, not a core algorithm change; still, it affects kernel autotune behavior and has a clear reproduction path."
+  },
   "123c7bbb6d209d7f7b8137403f4b78a784cfb751bc2d584508cee315d4847a4c": {
     "confidence": 0.85,
     "contradictions": [],
@@ -6530,6 +6588,31 @@
     ],
     "why": "The issue reports a clear assertion failure in the DeepSeek V4 model with FP8 quantization, but lacks a minimal reproducible example and environment details. The open PR and related issue lookups timed out, so duplicate work cannot be excluded. The gate decision is HUMAN_REVIEW, and the candidate is not yet actionable without maintainer confirmation."
   },
+  "8d10825601a3a6e692937bdebfb1c402ac25105bfc430409a33d78cb22a9df04": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Improve transformResponse error handling to gracefully handle non-OpenAI responses",
+      "Add regression test for HTTP 500 responses with non-OpenAI body"
+    ],
+    "risks": [
+      "Potential change in error handling behavior might affect existing tests or users relying on current error messages"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce with the provided curl command and assert promptfoo does not crash",
+      "Add a unit test mocking a 500 response with a non-OpenAI body and verify a clear error message"
+    ],
+    "unknowns": [
+      "Exact code location of transformResponse and whether maintainers have a preferred error handling pattern"
+    ],
+    "why": "The issue clearly identifies a failing CI integration due to an external endpoint returning HTTP 500, and promptfoo's error handling incorrectly assumes an OpenAI-style payload, causing a null dereference. This is a concrete bug with a reproducible curl command and a clear code path (transformResponse). No competing PR or issue exists, and the fix is actionable: improve error handling for non-OpenAI responses."
+  },
   "8de24e9cd4380f38ab3035a84d8d3a14faa714b0c6be8d60048aec77da22cfdf": {
     "confidence": 0.85,
     "contradictions": [],
@@ -6585,6 +6668,38 @@
       "Exact fix details from maintainer; whether existing PR #50514 will be updated or superseded."
     ],
     "why": "Issue reports a clear deadlock in fastsafetensors ParallelLoader due to WORLD-group broadcast during PP-scoped draft loads, with a suggested fix. However, a maintainer is actively investigating and has implemented a fix, and an existing PR (#50514) is related but has failed CI. The deterministic gate requires HUMAN_REVIEW, and the submission policy conflicts with AI disclosure. Thus, wait for maintainer direction."
+  },
+  "8ea410e4a767d2ad0d879cc3cf96eb2e8886d162333a5fbe5bfafb03409a66f1": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix trajectory merging in gpu_worker.py and diffusion_generator.py to preserve per-sample trajectories",
+      "Initialize component_residency_manager in PipelineExecutor.__init__ or guard access",
+      "Apply latent_ids and packing to caller-provided latents in LatentPreparationStage.forward"
+    ],
+    "risks": [
+      "Changing merge behavior to return None when only some trajectories present may break existing expectations",
+      "Fixing Bug 3 may alter the contract for provided latents; maintainer confirmation needed",
+      "Tests not yet executed under real sglang install; CI may reveal environment issues"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Add unit tests for each bug in python/sglang/multimodal_gen/test/unit/",
+      "Run tests under real sglang install with Python >=3.12 and compatible transformers",
+      "Verify with K>1 rollout on a FlowMatch model that log_probs differ per sample and grad_norm is non-zero"
+    ],
+    "unknowns": [
+      "Maintainer's intended semantics for Bug 1 and Bug 3",
+      "Whether PR #22183 is considered the canonical fix or if a new PR is welcome",
+      "Whether the proposed branches are ready for PR submission"
+    ],
+    "why": "Issue reports three concrete bugs in the diffusion multi-output rollout path, with detailed code references and a clear root cause for each. However, the deterministic gate is HUMAN_REVIEW, and the issue explicitly asks for maintainer confirmation on intended semantics for Bug 1 and Bug 3. The existing PR #22183 is weak (no tests, stale) but not clearly superseded. Maintainer input is needed to confirm design intent before implementation."
   },
   "8eb22418c372fec773b2ab9633fe83c4f795012068179ff56d23d47d44d938f7": {
     "confidence": 0.9,
@@ -8488,6 +8603,31 @@
     ],
     "why": "The issue provides a detailed root cause and concrete fix suggestions for a real bug in the Datadog callback, but the deterministic gate requires HUMAN_REVIEW and open PR/related issue lookups timed out, so we cannot rule out existing implementations or maintainer preferences."
   },
+  "c5e289015b57fa3fe1c82622c83efab13347e927e6564498eba70be9660f566f": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify setToolRequestHandlers() to respect constructor-provided listChanged value",
+      "Add regression test for constructor listChanged: false"
+    ],
+    "risks": [
+      "Potential behavior change for users relying on current override; need to ensure backward compatibility or document change"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce with provided minimal example and assert initialize response contains listChanged: false",
+      "Run existing SDK test suite"
+    ],
+    "unknowns": [
+      "Maintainer preference on whether to change behavior or document only"
+    ],
+    "why": "Issue identifies a clear bug where constructor-provided capabilities.tools.listChanged is silently overridden by setToolRequestHandlers(). Root cause is pinpointed to mergeCapabilities spread order. No competing PR or issue found. Actionable fix is to preserve explicit constructor value."
+  },
   "c6e0bfcbe76cdbf0d161fec52f2060af40a14ebfa3a62b00a4baa04399e5518d": {
     "confidence": 0.7,
     "contradictions": [
@@ -9536,6 +9676,40 @@
       "Maintainer preference on backend vs parser fix"
     ],
     "why": "Issue reports a user-visible bug when switching moe-runner-backend to flashinfer_mxfp4, but root cause is unclear and may be related to tool-call parser rather than backend. Open PRs exist with potential fixes but are unmerged and unverified. Maintainer input needed to confirm scope and avoid duplicate work."
+  },
+  "dd39aea937620ad80f38fed518aae887cc4263805aeefbdc23983d057ceb8e84": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Comment by Leoyzen initially suggests DRAFT_SWA backup issue, then corrects to sidecar_ok bug; maintainer response indicates active discussion"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix hierarchical cache backup/restore logic for DeepSeek-V4 SWA pools",
+      "Correct sidecar_ok handling in _page_backup for pure-MLA models",
+      "Add regression test for large prefix-cache restore with hierarchical cache and SWA models"
+    ],
+    "risks": [
+      "Root cause may be more complex than the sidecar_ok hypothesis",
+      "Fix may interact with other cache paths (e.g., Mooncake, DSPARK)",
+      "Testing requires specific hardware and model, limiting reproducibility"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 12,
+    "test_plan": [
+      "Reproduce with DeepSeek-V4-Flash, TP=8, hierarchical cache, kv-canary=log, and high prefix reuse workload",
+      "Verify kv-canary violations disappear after fix",
+      "Run multi-rank regression test with synthetic workload to ensure no NaN sampling crash"
+    ],
+    "unknowns": [
+      "Whether #30393 fully fixes the issue or if the sidecar_ok bug remains",
+      "Whether there are other open PRs addressing this issue (open PR lookup timed out)",
+      "Exact code path and fix location in current main branch"
+    ],
+    "why": "Issue reports a deterministic SWA KV position corruption with kv-canary evidence and a plausible root cause in the hierarchical cache restore path. However, the open PR lookup timed out and the related issue audit failed, so duplicate/competing implementations cannot be ruled out. Recent comments suggest a merged PR (#30393) may address the issue but also point to a remaining sidecar_ok bug, indicating active maintainer investigation and a possible fix in progress. The deterministic gate is HUMAN_REVIEW, and the evidence is strong but not yet independently verified."
   },
   "dd692027ca1f932c8dcedf4cd33c9e5d0a18152b666c8f09dc26890d86d6f8ef": {
     "confidence": 0.85,

@@ -560,6 +560,10 @@
       "seenAt": "2026-08-07T05:33:51.867072Z",
       "stateId": "768be00b004e0e85f04e1ccb675fc96c426c3cb51c55919efc884ee13a75ee47"
     },
+    "review|sgl-project/sglang#34000": {
+      "seenAt": "2026-08-07T15:18:16.578799Z",
+      "stateId": "998d694cd648d39ff120f54a5f81eaa8387793da05d88d68ac77557459b40372"
+    },
     "review|stanfordnlp/dspy#10165": {
       "seenAt": "2026-08-07T05:33:51.867072Z",
       "stateId": "c23b3bf34fd57b90c3a4e1d331384c08c9a3bd0a10be649f6d2a319ad54ea0ae"
@@ -675,6 +679,10 @@
     "review|vllm-project/vllm#51387": {
       "seenAt": "2026-08-07T11:15:10.665450Z",
       "stateId": "e8dc0af95a3ce76888592547fbff437bb21f35f78c71eb4660fff5f254ec4e45"
+    },
+    "review|vllm-project/vllm#51401": {
+      "seenAt": "2026-08-07T15:18:16.578799Z",
+      "stateId": "ea3f99487b83d1915597944a20c0a4a53831672632c2cb569f384b1107f1c0d3"
     },
     "watch|BerriAI/litellm#25386": {
       "legacy": true,
@@ -1089,7 +1097,7 @@
       "seenAt": "2026-08-06T10:09:13.778625Z"
     }
   },
-  "digest": "1b51e32c790121a8ec3df9c2076b2e8cc3f0a1aa2313e5819b1c0099979d6de8",
+  "digest": "e5323c8b7d7f36f541f66614e2ddf7404bdbd6e239d6e143e28d80d5c837ab22",
   "events": [
     {
       "attempts": 1,
@@ -14689,9 +14697,69 @@
       "runId": "scan-20260807T134321Z-160b59ce91f5",
       "sentAt": "2026-08-07T13:49:12.383037Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "sgl-project/sglang#34000",
+        "vllm-project/vllm#51401"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "db9ebe6ae59844b62a6f5ceb4bd84b105884ecd55d9ffbd9c814c2f9fc3e95d6",
+          "key": "sgl-project/sglang#34000",
+          "kind": "review",
+          "stateId": "998d694cd648d39ff120f54a5f81eaa8387793da05d88d68ac77557459b40372"
+        },
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "8b93f0740cb4f135df2521a3feeb6aca206165fd8880925e526ae60552e13ab0",
+          "key": "vllm-project/vllm#51401",
+          "kind": "review",
+          "stateId": "ea3f99487b83d1915597944a20c0a4a53831672632c2cb569f384b1107f1c0d3"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#34000](https://github.com/sgl-project/sglang/issues/34000) [Bug] Multi-output diffusion rollout: per-sample trajectories collapse to output 0, grouped forward AttributeError, provided latents skip packing**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue reports three concrete bugs in the diffusion multi-output rollout path, with detailed code references and a clear root cause for each. However, the deterministic gate is HUMAN_REVIEW, and the issue explicitly asks for maintainer confirmation on intended semantics for Bug 1 and Bug 3. The existing PR #22183 is weak (no tests, stale) but not clearly superseded. Maintainer input is needed to confirm design intent before implementation.\n改动：Fix trajectory merging in gpu_worker.py and diffusion_generator.py to preserve per-sample trajectories；Initialize component_residency_manager in PipelineExecutor.__init__ or guard access；Apply latent_ids and packing to caller-provided latents in LatentPreparationStage.forward\n验证：Add unit tests for each bug in python/sglang/multimodal_gen/test/unit/；Run tests under real sglang install with Python >=3.12 and compatible transformers；Verify with K>1 rollout on a FlowMatch model that log_probs differ per sample and grad_norm is non-zero\n风险：Changing merge behavior to return None when only some trajectories present may break existing expectations；Fixing Bug 3 may alter the contract for provided latents; maintainer confirmation needed；Tests not yet executed under real sglang install; CI may reveal environment issues\n竞争：已有直接关联但证据不完整的 PR #22183：缺少测试文件; 超过 30 天未更新；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 12，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#51401](https://github.com/vllm-project/vllm/issues/51401) [Bug]: VLLM silently ignores falsey yaml configuration options**\n建议：WAIT_MAINTAINER | 分数：13\n价值：The issue identifies a concrete bug in YAML config parsing where falsey boolean values are silently dropped, causing flags like --enable-flashinfer-autotune to be ignored. The root cause is clearly located in argparse_utils.py. However, the supplied gate decision is HUMAN_REVIEW, and the open PR and related issue lookups timed out, so we cannot rule out existing duplicate work. The track is llm_algorithm, but the fix is primarily a CLI/config parsing bug, not a core algorithm change; still, it affects kernel autotune behavior and has a clear reproduction path.\n改动：Modify FlexibleArgumentParser in vllm/utils/argparse_utils.py to emit explicit negated flags (e.g., --no-<key>) for false boolean YAML values when supported, or otherwise handle tri-state defaults correctly.；Add regression tests for YAML config parsing with falsey booleans for affected flags.\n验证：Create a minimal YAML config with enable-flashinfer-autotune: false and run vllm serve --config; assert the effective config shows enable_flashinfer_autotune=False.；Add unit tests for argparse_utils to verify false boolean values are not dropped and produce correct argv.；Test with --disable-hybrid-kv-cache-manager: false to ensure no regression.\n风险：Changing config parsing may affect existing behavior for store_true flags where absence is the default; need to ensure backward compatibility.；Negated flag forms may not exist for all boolean flags; need to handle unsupported cases gracefully.\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 3，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-07T15:18:16.578799Z",
+      "eventId": "cb715f65a919d1ca17417268f15918e026a87d151456dc7c8096f3b44df24259",
+      "idempotencyKey": "cb715f65a919d1ca17417268f15918e026a87d151456dc7c80",
+      "kind": "review",
+      "runId": "scan-20260807T151345Z-67421721793c",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-07T13:48:28.237207Z",
+  "generatedAt": "2026-08-07T15:18:16.904914Z",
   "newEventCount": 0,
   "version": "notification_outbox_v2"
 }
