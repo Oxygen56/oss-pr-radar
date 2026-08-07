@@ -1466,6 +1466,34 @@
     ],
     "why": "Issue reports a high-impact Windows bug with multiple commands failing, but root cause is unclear: one reporter sees activation error, another sees daemon timeout, and Windows-level file access denials suggest OS-level issues. Maintainer has acknowledged and routed as high-priority, but no design confirmation or active investigation. A PR could be premature without maintainer direction on the intended fix."
   },
+  "25b7a62df91252a7394533d19d7d6b6d5385473c68db7e95b3088f9ea90cacd0": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Add validation in download_item to check content-type against magic bytes for image types",
+      "Possibly extend validation to audio/document/video types",
+      "Reuse or lift image_media_type_from_bytes for sniffing"
+    ],
+    "risks": [
+      "May break existing behavior for valid but unrecognized media types",
+      "Design decisions on scope (audio/video/document) need maintainer input"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create failing tests for honest HTML with .png URL, spoofed image/png header with HTML bytes, application/octet-stream with genuine image, redirects, and unfamiliar image MIME",
+      "Run targeted unit tests for pydantic_ai models"
+    ],
+    "unknowns": [
+      "Maintainer preference on whether to extend validation beyond images",
+      "Whether the closed PR #7162 will be reopened or superseded"
+    ],
+    "why": "Issue clearly identifies a security-relevant bug in a shared download path with a verified repro and concrete fix direction. However, the existing PR #7162 is closed and the repository requires assignment, so maintainer confirmation is needed before starting new work."
+  },
   "25e07f8d71cf1262698d4add8de8c6dcf8d12432d8f0832ff2a72b1383d794cc": {
     "confidence": 0.7,
     "contradictions": [],
@@ -1778,6 +1806,36 @@
     ],
     "why": "Issue provides a precise root cause (getParentSpan skips only internal spans, not excluded ones), a minimal reproduction, and a suggested fix. Maintainer confirmed and reopened, indicating interest. No competing PR found."
   },
+  "2bd27863d39fa51332d0dac529218d24971ac99bb7012d10abf057dd4fb06ae0": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add non-empty api_key validation in get_model_config_by_id or task_handler._bind_embedding_model",
+      "Fall back to resolve_model_config when api_key is empty",
+      "Add regression test for queued tasks with stale tenant_embd_id"
+    ],
+    "risks": [
+      "Changing fallback behavior may affect other callers of get_model_config_by_id",
+      "Potential need to handle other credential fields (e.g., base_url) beyond api_key"
+    ],
+    "root_cause_clarity": "high",
+    "score": 15,
+    "test_plan": [
+      "Reproduce by setting up OpenAI-compatible embedding model, queue a task, update model config, then execute task and assert no Missing credentials error",
+      "Unit test for get_model_config_by_id with empty api_key to ensure fallback or descriptive error"
+    ],
+    "unknowns": [
+      "Maintainer design preference for fallback vs error",
+      "Whether related issue #17103 or other PRs already address this scenario",
+      "Exact code path and test infrastructure details"
+    ],
+    "why": "Issue clearly identifies a stale tenant_embd_id causing empty api_key in queued tasks, with a concrete repro and suggested fix. However, the deterministic gate requires HUMAN_REVIEW, and the related issue audit timed out, leaving unknowns about maintainer design preferences and potential duplicate work."
+  },
   "2be5a6ee11743c2e5ad55740484456adaa0dd04eaf11ddbc5549586a1f39acbb": {
     "confidence": 0.85,
     "contradictions": [],
@@ -1917,6 +1975,32 @@
       "Maintainer preference on error format change"
     ],
     "why": "Issue clearly identifies a non-streaming error response format mismatch with OpenAI standard and pinpoints the root cause in create_error_response. Existing PR #33534 directly addresses this but has failed CI checks and lacks complete evidence, leaving room for a materially better PR with robust tests and CI passing."
+  },
+  "2f7c2d58fca81dca69ab95dcae132d6c0b42b1955ef0bff9677335ccf15d07ee": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Refactor RemoteSandboxService read paths (search_sandboxes, get_sandbox_by_session_api_key, batch_get_sandboxes, pause_old_sandboxes/_get_user_running_sandboxes) to use an isolated read session and remove _release_db_transaction calls",
+      "Inject async_sessionmaker into RemoteSandboxService for production-grade isolated read sessions"
+    ],
+    "risks": [
+      "Potential behavior change if isolated read session does not see uncommitted writes from the shared session, affecting read consistency",
+      "Use of private SQLAlchemy API in prototype may need careful replacement with injected sessionmaker"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add regression tests mirroring TestSharedSessionAtomicityDuringDelete for each converted read path, using a real SQLite session and asserting sibling writes are not committed",
+      "Migrate existing mocked db_session.execute tests to real-session fixtures"
+    ],
+    "unknowns": [
+      "No explicit maintainer confirmation on the proposed design, but the issue is well-scoped and follows an existing fix pattern"
+    ],
+    "why": "Issue identifies a concrete atomicity bug in RemoteSandboxService read paths that commit the shared request session, with a clear root cause and a scoped fix pattern already proven for get_sandbox. The proposed change is actionable and testable with a real-session regression test."
   },
   "311cb65cbedfcf0eae16f1edc34a66184b89cd9da96df8cf72e3c2e021714bac": {
     "confidence": 0.7,
@@ -5900,6 +5984,38 @@
     ],
     "why": "Issue clearly identifies a real bug with a verified repro and a precise two-statement fix, but it is explicitly gated on #6886 which awaits a maintainer design decision on the return channel for usage under durable execution. The fix must be coordinated across three paths and must not silently fail under Temporal. Existing PRs overlap semantically but none directly address this issue, so a new PR could be valuable, but the design dependency and need for maintainer confirmation make it premature to start."
   },
+  "89c2c47063fac8e1d3469fa0963a9fc7206d6765cdc1e27e4bb3d9949c27666d": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add a new ordering tier between normal and durability",
+      "Implement ordering among members of a tier",
+      "Add public has_wrap_model_request property",
+      "Add public way to identify durable-execution capability"
+    ],
+    "risks": [
+      "Potential API changes may require maintainer design approval",
+      "New tier could affect existing capability ordering semantics",
+      "Adding public properties may have backward compatibility implications"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "test_plan": [
+      "Create a failing test reproducing the SpendLimits under-count with InputGuardrail(parallel=True) in both list orders",
+      "Add tests for new tier and intra-tier ordering",
+      "Add tests for has_wrap_model_request and durable capability detection"
+    ],
+    "unknowns": [
+      "Maintainer design preferences for the proposed fixes",
+      "Whether the repository requires assignment before PR submission"
+    ],
+    "why": "The issue identifies a real design flaw in capability ordering: the 'innermost' tier is overloaded, causing incorrect behavior for non-durability capabilities like SpendLimits. It provides a clear root cause, reproduction, and proposed fixes. However, the gate decision is HUMAN_REVIEW, and the submission policy requires assignment, so work should not start without maintainer confirmation."
+  },
   "89e69bc597fa05e2c74fd4f26ee520b06b92f712485acffff3ddc5ef5f259120": {
     "confidence": 0.85,
     "contradictions": [
@@ -7006,6 +7122,38 @@
       "Exact block size used in original reproduction"
     ],
     "why": "Issue reports prefix caching ineffective for Mamba-2/GDN hybrid due to missing recurrent state caching. Maintainer comment suggests PR #46384 (merged) may address it, but open PR lookup timed out and related issue audit failed. Need to verify if merged PR resolves the issue and confirm current behavior on main."
+  },
+  "ace03fdb250be96d342a892e3a6fb5707832aefc64c843d4f9c222d1fdfea839": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Open PR #6324 has semantic overlap but is about realtime speech-to-speech, not usage accrual; likely false positive."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify common_tools/image_generation.py, common_tools/x_search.py, and capabilities/image_generation.py to accrue nested agent usage into ctx.usage, including the two-statement increment (incr + requests bump).",
+      "Add regression tests for token and request limits across all three local tool paths."
+    ],
+    "risks": [
+      "Fix may be silently discarded under Temporal if not coordinated with #6886 design decision.",
+      "Changing _DirectImageGenerationTool signature may break callers or require API adjustments.",
+      "Partial fix (only incr without requests bump) would leave request_limit uncharged."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Use the issue's verified repro with FunctionModels billing 5/1 outer and 1000/500 subagent to assert RunUsage reflects subagent spend.",
+      "Add a test with total_tokens_limit=100 expecting UsageLimitExceeded when subagent spends ~1512 tokens.",
+      "Run existing test suite for pydantic-ai and static checks."
+    ],
+    "unknowns": [
+      "Maintainer design decision on #6886 return channel for durable execution.",
+      "Whether existing PR #6324 or others already address the root cause; manual comparison needed.",
+      "Exact maintainer preference for API changes in _DirectImageGenerationTool."
+    ],
+    "why": "Issue clearly identifies a user-visible bug with a verified repro and precise root cause: local capability-contributed tools drop nested agent usage from RunUsage/UsageLimits. However, the issue itself states the fix is likely gated on #6886, which awaits a maintainer design decision on a return channel for durable execution. The supplied gate_decision is HUMAN_REVIEW, and the open PR assessment flags semantic overlap requiring manual comparison. These blocking unknowns and the need for design confirmation mandate WAIT_MAINTAINER."
   },
   "ae5841585ce6e1f648a203913ce6a20911d34f6c9f855023e8553450f23109a4": {
     "confidence": 0.8,
@@ -9856,6 +10004,37 @@
       "Whether maintainers prefer the proposed fix over existing PR #20285"
     ],
     "why": "Issue provides a clear root cause and actionable fix direction, but the deterministic gate requires HUMAN_REVIEW and existing PR #20285 has semantic overlap with the same code paths, needing maintainer comparison before new work starts."
+  },
+  "f15625f58c013565f264861383e67bae02ad723c0b1bbe95cc85a5bde65fffd9": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Add after_durable_model_request hook to AbstractCapability",
+      "Invoke hook in BaseDurabilityCapability and engine-specific durable units",
+      "Update _agent_graph.model_request for non-durable path"
+    ],
+    "risks": [
+      "Potential performance overhead if hook is invoked on every model request",
+      "API design may conflict with maintainer preferences or ongoing work on durable primitives (#6696, #5477)",
+      "Need to ensure hook is correctly invoked in all engine paths and does not break existing capabilities"
+    ],
+    "root_cause_clarity": "high",
+    "score": 13,
+    "test_plan": [
+      "Create a failing test using the public repro from pydantic-ai-harness#531 that verifies exactly-once side effect under Temporal replay",
+      "Add unit tests for each engine (Temporal, DBOS, Prefect) to ensure hook is invoked inside durable unit",
+      "Run existing test suite for pydantic-ai and pydantic-ai-harness"
+    ],
+    "unknowns": [
+      "Maintainer design preference for the proposed hook vs. alternative approaches",
+      "Whether the issue has been acknowledged or assigned by maintainers",
+      "Exact implementation details for each engine's durable unit invocation points"
+    ],
+    "why": "The issue identifies a real architectural gap: capability hooks that touch external state run outside durable units, causing duplicate side effects on replay. The proposal is technically sound and references concrete code paths and precedents. However, the deterministic gate requires HUMAN_REVIEW, and the issue explicitly requests design confirmation from maintainers. The proposed API change needs maintainer approval before implementation."
   },
   "f45c6fcbaca825d50f87627a5719ad5bdca321bbc991bf8e57a1910f6c4a2729": {
     "confidence": 0.7,
