@@ -408,6 +408,14 @@
       "legacy": true,
       "seenAt": "2026-08-03T23:34:32.235680Z"
     },
+    "review|microsoft/agent-framework#7569": {
+      "seenAt": "2026-08-07T13:48:27.879165Z",
+      "stateId": "e533453995c239190616c53b6008cbeabd85509743d259032526d989c7d59deb"
+    },
+    "review|microsoft/agent-framework#7570": {
+      "seenAt": "2026-08-07T13:48:27.879165Z",
+      "stateId": "0680abc1ef1124a66cccdd6c29c2b12aee529c5762c367364539db1e9e21ca82"
+    },
     "review|modelcontextprotocol/servers#4545": {
       "legacy": true,
       "seenAt": "2026-08-05T13:53:11.860565Z"
@@ -560,9 +568,17 @@
       "legacy": true,
       "seenAt": "2026-08-06T08:26:19.057085Z"
     },
+    "review|vercel/ai#18576": {
+      "seenAt": "2026-08-07T13:48:27.879165Z",
+      "stateId": "bc6c1a386e3172ca0ea888b6503577bf0084c5b5401c994f7b14de4a302a9ca9"
+    },
     "review|vllm-project/vllm#34948": {
       "legacy": true,
       "seenAt": "2026-08-06T10:09:13.598229Z"
+    },
+    "review|vllm-project/vllm#35288": {
+      "seenAt": "2026-08-07T13:48:27.879165Z",
+      "stateId": "f4d44917003803406e759a76f19600c42cdc0cf762505c480583700525a8a1dc"
     },
     "review|vllm-project/vllm#38515": {
       "legacy": true,
@@ -1073,7 +1089,7 @@
       "seenAt": "2026-08-06T10:09:13.778625Z"
     }
   },
-  "digest": "76d3be8d1d812e3c726aebf7fc2595c5e296a1131b806afea4fbf77142c03c22",
+  "digest": "ce8e158c6378dbd0dcd94967bba32c6ace37e09a7bbbc141e4ad1e76ce1c1717",
   "events": [
     {
       "attempts": 1,
@@ -14574,9 +14590,105 @@
       "runId": "scan-20260807T111138Z-aaf65be49ed6",
       "sentAt": "2026-08-07T11:15:53.322844Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "microsoft/agent-framework#7569",
+        "microsoft/agent-framework#7570",
+        "vercel/ai#18576",
+        "vllm-project/vllm#35288"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "7c9b38d6d31015b85216045ce66f029af579b4da7f2db082725ce01a5742ac4a",
+          "key": "microsoft/agent-framework#7569",
+          "kind": "review",
+          "stateId": "e533453995c239190616c53b6008cbeabd85509743d259032526d989c7d59deb"
+        },
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "852307a374ae06f6300191bb7bc80b3a5c7f2fca9ba321243ec33700aacf0542",
+          "key": "microsoft/agent-framework#7570",
+          "kind": "review",
+          "stateId": "0680abc1ef1124a66cccdd6c29c2b12aee529c5762c367364539db1e9e21ca82"
+        },
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "1dd98c40445d541bba442f4257a32cfe15c60e05888989d2163013e1744086ed",
+          "key": "vercel/ai#18576",
+          "kind": "review",
+          "stateId": "bc6c1a386e3172ca0ea888b6503577bf0084c5b5401c994f7b14de4a302a9ca9"
+        },
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "a5e270c77fc91fb7c5dc281f959d7828d728ffb935bb1236b68d44864ac053aa",
+          "key": "vllm-project/vllm#35288",
+          "kind": "review",
+          "stateId": "f4d44917003803406e759a76f19600c42cdc0cf762505c480583700525a8a1dc"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[microsoft/agent-framework#7569](https://github.com/microsoft/agent-framework/issues/7569) Python: [Bug]: AG-UI approval resume executes only the first of several approved calls in one batch — the rest are silently dropped**\n建议：WAIT_MAINTAINER | 分数：15\n价值：Issue clearly describes a user-visible bug with a concrete reproduction and root cause analysis, but the deterministic gate requires HUMAN_REVIEW and the issue requests design confirmation. The suggested fix is plausible but needs maintainer input to avoid unintended API changes.\n改动：Modify approval-response consumer in agent-framework-ag-ui to iterate all responses, not just the first；Add regression test for multiple gated approvals\n验证：Run the provided failing test test_repro_7569_multi_gated_approval.py；Add a test that approves two gated calls in one batch and asserts two executions and two results\n风险：Potential behavior change in approval handling that may affect existing flows；Need to ensure never-require sibling case remains unchanged\n竞争：仅发现未直接关联、无代码路径或强机制重合的 PR #7546；保留为搜索上下文，不阻止实现\n下一步：先在 issue 下请求分配/确认方案，获批后再开 PR。\n证据：复现信号 7，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[microsoft/agent-framework#7570](https://github.com/microsoft/agent-framework/issues/7570) Python: [Bug]: APPROVAL_RESUME_NOT_FOUND leaves the interrupt in the thread snapshot, so the unanswerable approval card is re-offered on every connect**\n建议：WAIT_MAINTAINER | 分数：15\n价值：Issue describes a clear bug with exact location and a reproduced failing test, but the deterministic gate requires HUMAN_REVIEW and design confirmation is needed before implementation.\n改动：Modify _agent_run.py to clear snapshot interrupts for APPROVAL_RESUME_NOT_FOUND；Add regression test for NOT_FOUND clearing snapshot interrupt\n验证：Run the provided failing test test_approval_resume_not_found_clears_snapshot_interrupt；Add a test that verifies snapshot interrupt is cleared after NOT_FOUND resume\n风险：Potential behavior change for clients relying on the interrupt being present；Need to confirm maintainer preference on clearing snapshot for NOT_FOUND\n竞争：未发现相关 open PR\n下一步：先在 issue 下请求分配/确认方案，获批后再开 PR。\n证据：复现信号 4，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vercel/ai#18576](https://github.com/vercel/ai/issues/18576) WorkflowAgent: `maxRetries` and `abortSignal` returned from `prepareCall` are silently ignored**\n建议：WAIT_MAINTAINER | 分数：10\n价值：Issue provides a precise bug report with a minimal reproduction and clear root cause: WorkflowAgent.stream() omits maxRetries and abortSignal when applying prepareCall results. However, the deterministic gate requires HUMAN_REVIEW, and open PR/related issue lookups timed out, so duplicate work cannot be excluded. Maintainer design preference on whether to apply the settings or Omit them from the type is unresolved.\n改动：packages/workflow/src/workflow-agent.ts: apply prepared.maxRetries and merge prepared.abortSignal into effective signal, or Omit unsupported keys from PrepareCallResult and PrepareStepResult\n验证：Add the provided Vitest tests to packages/workflow/workflow-agent.test.ts; run targeted tests and tsc --noEmit\n风险：Changing behavior may affect existing users relying on the current silent ignore; Omit approach is a breaking type change\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 3，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#35288](https://github.com/vllm-project/vllm/issues/35288) [Bug]: MTP speculative decoding produces corrupted output at concurrency >= 4 (V1 engine)**\n建议：WAIT_MAINTAINER | 分数：13\n价值：The issue reports a reproducible MTP speculative decoding corruption at concurrency >= 4, with strong evidence of a mixed-batch indexing bug. However, the deterministic gate requires HUMAN_REVIEW, and open PR/related issue lookups failed, so duplicate work cannot be excluded. The root cause is not precisely identified, and maintainer confirmation is needed before implementation.\n改动：Fix MTP speculative decoding state update in gpu_model_runner.py；Correct hidden state pickup for mixed prefill/decode batches；Add regression test for concurrency >= 4 with MTP\n验证：Reproduce with provided script at concurrency 4 and num_speculative_tokens=2；Test with num_speculative_tokens=1 to isolate multi-token logic；Run with --disable-async-output-proc to check async race；Vary max_num_batched_tokens to confirm mixed-batch trigger；Add unit test for tensor indexing in _update_states_after_model_execute\n风险：May be a duplicate of existing PR or issue；Root cause could be in upstream dependencies；Fix may require deep understanding of V1 speculative decoding internals\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 11，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-07T13:48:27.879165Z",
+      "eventId": "8687776fc3d9be769a802ef4b25d64c08dc4e518695c8b11a1ab911b236bbeed",
+      "idempotencyKey": "8687776fc3d9be769a802ef4b25d64c08dc4e518695c8b11a1",
+      "kind": "review",
+      "runId": "scan-20260807T134321Z-160b59ce91f5",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-07T12:04:13.981584Z",
+  "generatedAt": "2026-08-07T13:48:28.237207Z",
   "newEventCount": 0,
   "version": "notification_outbox_v2"
 }

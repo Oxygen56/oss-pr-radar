@@ -2272,6 +2272,33 @@
     ],
     "why": "Issue reports a clear bug with root cause pointers and a minimal repro, but maintainer has labeled it for triage and requested a minimal reproduction, indicating design confirmation is needed. No existing PR directly addresses this issue, but related PRs are in flight."
   },
+  "33b6b19714cea20e39bb9f6e91dfdc4fd26b13342913fc2c666ffec518e6031d": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify approval-response consumer in agent-framework-ag-ui to iterate all responses, not just the first",
+      "Add regression test for multiple gated approvals"
+    ],
+    "risks": [
+      "Potential behavior change in approval handling that may affect existing flows",
+      "Need to ensure never-require sibling case remains unchanged"
+    ],
+    "root_cause_clarity": "high",
+    "score": 15,
+    "test_plan": [
+      "Run the provided failing test test_repro_7569_multi_gated_approval.py",
+      "Add a test that approves two gated calls in one batch and asserts two executions and two results"
+    ],
+    "unknowns": [
+      "Maintainer preference on fix approach and scope"
+    ],
+    "why": "Issue clearly describes a user-visible bug with a concrete reproduction and root cause analysis, but the deterministic gate requires HUMAN_REVIEW and the issue requests design confirmation. The suggested fix is plausible but needs maintainer input to avoid unintended API changes."
+  },
   "34bb800971bbab733ff321d7b7e92dae085a3bf01d65015c28d93fc4befa4bc2": {
     "confidence": 0.7,
     "contradictions": [],
@@ -2772,6 +2799,31 @@
       "Maintainer preference for server-side vs client-side fix"
     ],
     "why": "Issue reports a high-impact tool-call failure in server-filesystem after a schema rewrite, with strong evidence of client-side rejection of outputSchema/structuredContent. However, root cause is not fully confirmed: a maintainer fix is needed in the client or server, and the issue is primarily a bug report without a proposed code change. The workaround shim suggests a potential server-side fix, but design confirmation is required."
+  },
+  "3ea0da8cc5b01d48dd205902299d649bbf0d19f0853667b0c70a91349c113350": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/workflow/src/workflow-agent.ts: apply prepared.maxRetries and merge prepared.abortSignal into effective signal, or Omit unsupported keys from PrepareCallResult and PrepareStepResult"
+    ],
+    "risks": [
+      "Changing behavior may affect existing users relying on the current silent ignore; Omit approach is a breaking type change"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add the provided Vitest tests to packages/workflow/workflow-agent.test.ts; run targeted tests and tsc --noEmit"
+    ],
+    "unknowns": [
+      "Whether an open PR already addresses this issue (open PR lookup timed out)",
+      "Maintainer preference between applying settings vs. Omit from type"
+    ],
+    "why": "Issue provides a precise bug report with a minimal reproduction and clear root cause: WorkflowAgent.stream() omits maxRetries and abortSignal when applying prepareCall results. However, the deterministic gate requires HUMAN_REVIEW, and open PR/related issue lookups timed out, so duplicate work cannot be excluded. Maintainer design preference on whether to apply the settings or Omit them from the type is unresolved."
   },
   "40ad962269698172e44078a70005acb7baa10cfa208866a52ca8b3254d9e9233": {
     "confidence": 0.7,
@@ -4481,6 +4533,33 @@
     ],
     "why": "Issue provides strong evidence of a real bug: MRv2 reports more available KV memory than runtime can back, causing OOM under load; root cause is likely CUDA graph capture headroom accounting, but not fully confirmed. Existing draft PR #49233 attempts a fix but is incomplete and has failed CI. Maintainer direction is unclear; issue needs maintainer confirmation before work starts."
   },
+  "60879f8856489f6d1a08256972d0304e1e9fac92ce7cfc68ac22543406dfe682": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify _agent_run.py to clear snapshot interrupts for APPROVAL_RESUME_NOT_FOUND",
+      "Add regression test for NOT_FOUND clearing snapshot interrupt"
+    ],
+    "risks": [
+      "Potential behavior change for clients relying on the interrupt being present",
+      "Need to confirm maintainer preference on clearing snapshot for NOT_FOUND"
+    ],
+    "root_cause_clarity": "high",
+    "score": 15,
+    "test_plan": [
+      "Run the provided failing test test_approval_resume_not_found_clears_snapshot_interrupt",
+      "Add a test that verifies snapshot interrupt is cleared after NOT_FOUND resume"
+    ],
+    "unknowns": [
+      "Maintainer design preference on clearing snapshot for NOT_FOUND"
+    ],
+    "why": "Issue describes a clear bug with exact location and a reproduced failing test, but the deterministic gate requires HUMAN_REVIEW and design confirmation is needed before implementation."
+  },
   "615cb814a1e7a188854b34263a5802040c3808520065673c46ed52394f2937d0": {
     "confidence": 0.7,
     "contradictions": [],
@@ -4592,6 +4671,37 @@
       "Maintainer interest in accepting a new PR"
     ],
     "why": "Issue reports a clear user-facing bug in profiling.numerical() for multi-input models, with a reproducible traceback. Existing PR #1439 overlaps in code path and semantics but is incomplete and not directly linked, leaving room for a better PR."
+  },
+  "635020ac901084eaeb870a245e21bbb730628c9b79bf5ee7a11be59acff4b119": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims Cloud-specific, but Dosu comment indicates same bug for self-hosted"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify api/controllers/mcp/mcp.py to avoid sessionmaker().begin() and use explicit session management",
+      "Add regression test for MCP tool invocation with internal commits"
+    ],
+    "risks": [
+      "Changing session management may affect other MCP endpoints or introduce new transaction bugs",
+      "Cloud-specific fix may require deployment coordination with Dify Cloud team"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Reproduce the error with the provided n8n MCP client steps",
+      "Add a unit test that calls an MCP tool and verifies no closed-transaction error",
+      "Run existing MCP controller tests and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers have already planned a fix for the MCP path",
+      "Exact code path in Dify Cloud that differs from self-hosted"
+    ],
+    "why": "Issue reports a reproducible MCP error with a clear root cause (SQLAlchemy session transaction conflict) and a known fix pattern from merged PRs. However, the issue is Cloud-specific and the fix likely requires maintainer coordination; the candidate is a bug fix with local scope, not a new algorithm. The deterministic gate allows private work but the lack of maintainer approval and the need for design confirmation on the MCP controller fix make it premature to start."
   },
   "64589d857c8cea3d36c0cea4d7fa2d30fd6b9a954f96aeb8ec35a6a3e9cea16f": {
     "confidence": 0.7,
@@ -8712,6 +8822,36 @@
     ],
     "why": "Issue provides detailed, reproducible evidence of a performance cliff due to default CUDA graph batch size, with clear mechanism and controls. However, the candidate explicitly asks for maintainer input on preferred fix direction, and the deterministic gate requires HUMAN_REVIEW. Open PR and related issue lookups failed, so duplicate work cannot be excluded."
   },
+  "cec561be84e4d4f602ad550b7ab0c9a022b9977e520875b14c8e2f145fe005a6": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/core/src/workflows/workflow.ts",
+      "packages/core/src/workflows/storage.ts",
+      "storage adapters"
+    ],
+    "risks": [
+      "Storage adapter API changes may break existing implementations",
+      "Multi-instance atomicity requires careful design to avoid performance or compatibility issues"
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Run the public repro (panliji/mastra-concurrent-resume-repro) to confirm duplicate execution",
+      "Add a regression test with concurrent resume calls asserting single downstream execution",
+      "Test storage-backed atomic claim with InMemoryStore and a real adapter"
+    ],
+    "unknowns": [
+      "Maintainer preference on storage-backed CAS vs single-process mitigation",
+      "Exact WorkflowsStorage contract changes needed"
+    ],
+    "why": "Issue clearly identifies a race condition in workflow resume with public repro and production evidence, but the deterministic gate requires HUMAN_REVIEW and the maintainer has not confirmed the storage-backed CAS design direction. Existing PR #20512 is closed and insufficient, so a new PR is plausible but needs design confirmation."
+  },
   "cf1eb4e8c323079c2eca94153aa33c81eb9c117a08c0419799fd44913b562d16": {
     "confidence": 0.8,
     "contradictions": [],
@@ -8827,6 +8967,42 @@
       "Maintainer preference on whether input_tokens should become total or remain remainder"
     ],
     "why": "Issue clearly identifies a real bug in native Anthropic provider token accounting with a concrete reproduction and suggested fix. However, an open PR #6770 already addresses the same code path and semantics, and a duplicate issue #6768 exists. The deterministic gate requires HUMAN_REVIEW, and the existing PR may already cover the fix, so starting new work without maintainer confirmation risks duplication."
+  },
+  "d2f0f43ac554b864a88479cf019f2bdec194278a8629e65f470a6a943efa35a9": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Comment suggests mixed-batch indexing issue, but original issue points to CUDA illegal memory access in state update"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix MTP speculative decoding state update in gpu_model_runner.py",
+      "Correct hidden state pickup for mixed prefill/decode batches",
+      "Add regression test for concurrency >= 4 with MTP"
+    ],
+    "risks": [
+      "May be a duplicate of existing PR or issue",
+      "Root cause could be in upstream dependencies",
+      "Fix may require deep understanding of V1 speculative decoding internals"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 13,
+    "test_plan": [
+      "Reproduce with provided script at concurrency 4 and num_speculative_tokens=2",
+      "Test with num_speculative_tokens=1 to isolate multi-token logic",
+      "Run with --disable-async-output-proc to check async race",
+      "Vary max_num_batched_tokens to confirm mixed-batch trigger",
+      "Add unit test for tensor indexing in _update_states_after_model_execute"
+    ],
+    "unknowns": [
+      "Open PR status and related issue audit results",
+      "Maintainer confirmation on root cause direction",
+      "Exact code path causing the corruption"
+    ],
+    "why": "The issue reports a reproducible MTP speculative decoding corruption at concurrency >= 4, with strong evidence of a mixed-batch indexing bug. However, the deterministic gate requires HUMAN_REVIEW, and open PR/related issue lookups failed, so duplicate work cannot be excluded. The root cause is not precisely identified, and maintainer confirmation is needed before implementation."
   },
   "d324d8b18978ac7766d9b9b48a46dfcb2fabf4fc0d5a63b8935e7387cd222ca3": {
     "confidence": 0.75,
@@ -10649,6 +10825,34 @@
       "Existing PR #16105 has failed CI, unclear if it can be improved"
     ],
     "why": "The issue is a clear UI bug, but a maintainer explicitly requested a mockup before code, and an existing PR (#16105) has failed CI. The candidate lacks root cause analysis and design confirmation, making it premature to start work."
+  },
+  "f64e781df445ffc0fe388c653f4d2a94263b5d0e1b7c103261b579f848c1427d": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify _node_template_supports_tool_mode in connect.py to drop output-side fallback",
+      "Modify describe_component in mcp/registry.py similarly",
+      "Optionally serialize add_tool_output into component index for exact runtime rule"
+    ],
+    "risks": [
+      "Potential regression for components relying on add_tool_output (e.g., RunFlow) if not serialized",
+      "Behavior change may affect existing flows that depend on the buggy behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add regression test using the provided repro script for ChatInput",
+      "Add unit tests for _node_template_supports_tool_mode with output-only tool_mode and input tool_mode cases",
+      "Add test for describe_component not advertising component_as_tool for ChatInput"
+    ],
+    "unknowns": [
+      "Maintainer design preference on serializing add_tool_output; whether to prioritize conservative fix or exact runtime rule"
+    ],
+    "why": "The issue precisely identifies a logic bug in tool-mode detection: output-level tool_mode is misinterpreted as capability, causing _enable_tool_mode to never refuse and rewrite nodes with impossible outputs. It provides a concrete repro and a suggested fix direction, with clear runtime authority (_handle_tool_mode). No competing PR addresses this exact bug; PR #14456 fixes a related but distinct issue."
   },
   "f653ec6d3be35a9d693773c9a54c0c573c9ed31a5eb264ad38ba6fbedbd949fb": {
     "confidence": 0.8,
