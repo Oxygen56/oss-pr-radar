@@ -99,6 +99,13 @@ def test_lifecycle_title_keeps_timestamp_and_value_prefix():
     assert len(result) <= 59
 
 
+def test_validation_pending_title_remains_visibly_valuable():
+    result = MODULE.lifecycle_title(
+        "VALIDATION_PENDING", "08-09 05:25", "repo/project#42", "Runtime correctness"
+    )
+    assert result.startswith("[有价值·待验证] 08-09 05:25 repo/project#42")
+
+
 def test_no_go_title_is_visibly_marked_before_archive():
     result = MODULE.lifecycle_title(
         "AUDIT_NO_GO", "08-04 18:47", "repo/project#42", "Duplicate work"
@@ -1362,7 +1369,7 @@ def test_controller_defers_blocked_local_fix_with_incomplete_validation(tmp_path
     assert result["ingested"] == [
         {
             "key": "a/b#1",
-            "stage": "AUDIT_NO_GO",
+            "stage": "VALIDATION_PENDING",
             "reason": "SUBMIT_READY_EVIDENCE_INCOMPLETE",
         }
     ]
@@ -1382,9 +1389,11 @@ def test_controller_defers_blocked_local_fix_with_incomplete_validation(tmp_path
         store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")[
             "stage"
         ]
-        == "AUDIT_NO_GO"
+        == "VALIDATION_PENDING"
     )
-    assert store.task_result_candidates() == []
+    assert store.task_result_candidates()[0]["stage"] == "VALIDATION_PENDING"
+    repeated = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    assert repeated["ingested"] == []
 
 
 def test_controller_defers_unvalidated_publishable_fix_without_agent_failure(tmp_path):
@@ -1403,7 +1412,7 @@ def test_controller_defers_unvalidated_publishable_fix_without_agent_failure(tmp
     assert result["ingested"] == [
         {
             "key": "a/b#1",
-            "stage": "AUDIT_NO_GO",
+            "stage": "VALIDATION_PENDING",
             "reason": "SUBMIT_READY_EVIDENCE_INCOMPLETE",
         }
     ]
@@ -1427,9 +1436,31 @@ def test_controller_defers_unvalidated_publishable_fix_without_agent_failure(tmp
         store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")[
             "stage"
         ]
-        == "AUDIT_NO_GO"
+        == "VALIDATION_PENDING"
     )
-    assert store.task_result_candidates() == []
+    assert store.task_result_candidates()[0]["stage"] == "VALIDATION_PENDING"
+    repeated = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    assert repeated["ingested"] == []
+
+    completed = json.loads(result_path.read_text(encoding="utf-8"))
+    for field in (
+        "regression_test_verified",
+        "relevant_tests_green",
+        "independent_review_passed",
+    ):
+        completed["quality"][field] = True
+    result_path.write_text(json.dumps(completed), encoding="utf-8")
+
+    advanced = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert advanced["ingested"] == [{"key": "a/b#1", "stage": "FIX_READY"}]
+    assert len(advanced["publicationRequests"]) == 1
+    assert (
+        store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")[
+            "stage"
+        ]
+        == "FIX_READY"
+    )
 
 
 def test_privileged_controller_runs_granted_publication_queue(monkeypatch, tmp_path):

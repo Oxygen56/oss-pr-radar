@@ -392,6 +392,41 @@ def test_title_state_advances_from_go_to_fix_ready(tmp_path):
     assert store.title_candidates() == []
 
 
+def test_validation_pending_is_non_terminal_and_not_archivable(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(
+        intent(
+            autoSubmitAuthorized=True,
+            publicSubmissionAllowed=True,
+            authorizationSource="signed_live_revalidation_required",
+            publicationMode="active",
+        )
+    )
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+        title_time="08-09 05:25",
+    )
+
+    store.record_stage(
+        "a/b#1",
+        "VALIDATION_PENDING",
+        evidence={"missing": ["relevant_tests_green"]},
+    )
+
+    candidate = store.title_candidates()[0]
+    assert candidate["titleState"] == "VALIDATION_PENDING"
+    assert store.cleanup_candidates() == []
+    context = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+    assert context["stage"] == "VALIDATION_PENDING"
+    assert context["intentStatus"] == "COMPLETED"
+    assert context["autoSubmitAuthorized"] is True
+
+
 def test_post_publication_no_go_audit_does_not_downgrade_lifecycle(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(intent())

@@ -23,6 +23,7 @@ STAGES = (
     "DISPATCHED",
     "AUDIT_PASS",
     "AUDIT_NO_GO",
+    "VALIDATION_PENDING",
     "FIX_READY",
     "PR_OPEN",
     "CI_GREEN",
@@ -1002,6 +1003,7 @@ class RadarLedger:
                               WHERE p.opportunity_key=o.key
                                 AND p.status IN ('PENDING','GRANTED')
                             ) THEN 'PUBLICATION_REQUEST'
+                            WHEN o.stage='VALIDATION_PENDING' THEN 'VALIDATION_PENDING'
                             WHEN o.stage='FIX_READY' THEN 'FIX_READY'
                             ELSE 'GO'
                           END AS desired_state
@@ -1131,6 +1133,7 @@ class RadarLedger:
                     (now, key),
                 )
             elif stage in {
+                "VALIDATION_PENDING",
                 "FIX_READY",
                 "PR_OPEN",
                 "CI_GREEN",
@@ -1142,7 +1145,7 @@ class RadarLedger:
                     "UPDATE intents SET status='COMPLETED',updated_at=? WHERE opportunity_key=?",
                     (now, key),
                 )
-            if stage in {"QUALIFIED", "FIX_READY", "AUDIT_NO_GO"}:
+            if stage in {"QUALIFIED", "VALIDATION_PENDING", "FIX_READY", "AUDIT_NO_GO"}:
                 connection.execute(
                     """INSERT INTO outcomes(opportunity_key,selected_at,submit_ready_at,
                        failure_class,quality_json,updated_at)
@@ -1678,7 +1681,7 @@ class RadarLedger:
                        i.status='DISPATCHED'
                        OR o.stage IN ('PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED')
                        OR (
-                         o.stage='FIX_READY'
+                         o.stage IN ('VALIDATION_PENDING','FIX_READY')
                          AND NOT EXISTS (
                            SELECT 1 FROM publication_requests p
                            WHERE p.opportunity_key=o.key
@@ -2594,7 +2597,7 @@ class RadarLedger:
         with self.connect() as connection:
             row = connection.execute(
                 """SELECT 1 FROM events WHERE opportunity_key=? AND dedupe_key=?
-                   AND event_type IN ('FIX_READY','TASK_RESULT_INGESTED') LIMIT 1""",
+                   AND event_type='TASK_RESULT_INGESTED' LIMIT 1""",
                 (key, digest),
             ).fetchone()
         return row is not None

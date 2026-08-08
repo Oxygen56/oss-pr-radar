@@ -52,6 +52,7 @@ ORPHAN_ABANDON_MIN_AGE_MINUTES = 70
 TITLE_PREFIXES = {
     "GO": "[有价值·GO]",
     "AUDIT_NO_GO": "[无价值]",
+    "VALIDATION_PENDING": "[有价值·待验证]",
     "FIX_READY": "[有价值·本地修复就绪]",
     "PUBLICATION_REQUEST": "[有价值·存在发布请求]",
     "PR_OPEN": "[有价值·PR已开]",
@@ -1498,9 +1499,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
         try:
             raw = result_path.read_bytes()
             initial_digest = hashlib.sha256(raw).hexdigest()
-            if candidate["stage"] in {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED"} and (
-                store.task_result_digest_seen(candidate["key"], initial_digest)
-            ):
+            if store.task_result_digest_seen(candidate["key"], initial_digest):
                 continue
             value = json.loads(raw)
             if not isinstance(value, dict):
@@ -1578,14 +1577,16 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                         )
                         store.record_stage(
                             candidate["key"],
-                            "AUDIT_NO_GO",
+                            "VALIDATION_PENDING",
                             evidence={
                                 "reason": "SUBMIT_READY_EVIDENCE_INCOMPLETE",
                                 "missing": missing,
                                 "resultDigest": digest,
                             },
-                            reason="SUBMIT_READY_EVIDENCE_INCOMPLETE",
                             dedupe_key=digest,
+                        )
+                        store.record_task_result_ingested(
+                            candidate["key"], digest=digest, stage="VALIDATION_PENDING"
                         )
                         validation_deferred.append(
                             {
@@ -1597,7 +1598,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                         ingested.append(
                             {
                                 "key": candidate["key"],
-                                "stage": "AUDIT_NO_GO",
+                                "stage": "VALIDATION_PENDING",
                                 "reason": "SUBMIT_READY_EVIDENCE_INCOMPLETE",
                             }
                         )
@@ -1636,6 +1637,9 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                         }
                     )
                     ingested.append({"key": candidate["key"], "stage": stage})
+                store.record_task_result_ingested(
+                    candidate["key"], digest=digest, stage="FIX_READY"
+                )
                 followup = store.active_pr_followup(candidate["key"])
                 if followup and followup.get("wake_digest"):
                     store.record_followup_result(
