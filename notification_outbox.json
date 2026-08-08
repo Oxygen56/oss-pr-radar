@@ -257,8 +257,12 @@
       "stateId": "f8c5953c706a198e36f5f2dd49e5224e02ced614f2fdb0f9b46fd184fa680d04"
     },
     "review|NousResearch/hermes-agent#80989": {
-      "seenAt": "2026-08-07T22:01:21.213361Z",
-      "stateId": "4159d8aced47b23b14a10b42813d22e86ef0f93e0be715761aec1a4961cce2af"
+      "seenAt": "2026-08-08T08:43:35.116338Z",
+      "stateId": "65df251abb67ccd5fc60ff84a8da78bba5526af4bc989e5c969d802547754bc7"
+    },
+    "review|OpenHands/OpenHands#16374": {
+      "seenAt": "2026-08-08T08:43:35.116338Z",
+      "stateId": "21bcd2cc061ce9a0741534aff9eaf3c2c3bd2ab5270abe6623dc1dcf2a92eeda"
     },
     "review|PrefectHQ/fastmcp#4744": {
       "legacy": true,
@@ -364,6 +368,10 @@
       "seenAt": "2026-08-08T04:35:34.137173Z",
       "stateId": "e69e68c4795e72e0552cc1e9d3ac760af06a1e1855371c68fb934b66115bf072"
     },
+    "review|huggingface/trl#6683": {
+      "seenAt": "2026-08-08T08:43:35.116338Z",
+      "stateId": "44bbe7ff67f48581c4f599c64ad782cf12edf9ff5725a4fa75428b296af26d58"
+    },
     "review|infiniflow/ragflow#17941": {
       "seenAt": "2026-08-06T11:39:58.259121Z",
       "stateId": "a42cac1d87667f6a3e8882da1fea011ba78b8832afcc5f071882714444fc5da7"
@@ -383,6 +391,10 @@
     "review|langgenius/dify#40007": {
       "legacy": true,
       "seenAt": "2026-08-06T01:37:26.433605Z"
+    },
+    "review|langgenius/dify#40178": {
+      "seenAt": "2026-08-08T08:43:35.116338Z",
+      "stateId": "ea673a5a0acfa6a201554fa81cee4b4b439d0499b90ec283db526edffce0fd6d"
     },
     "review|maka-agent/maka-agent#2074": {
       "legacy": true,
@@ -633,8 +645,8 @@
       "stateId": "768be00b004e0e85f04e1ccb675fc96c426c3cb51c55919efc884ee13a75ee47"
     },
     "review|sgl-project/sglang#33985": {
-      "seenAt": "2026-08-07T23:54:57.181757Z",
-      "stateId": "f9eae653030330be25ecd4b73369c603483ca048477c5f02f52c58504f33915a"
+      "seenAt": "2026-08-08T08:43:35.116338Z",
+      "stateId": "f05bbf3a515c98dbdbde9728255524996fec2801ff0017d4a3be332fdac6eaff"
     },
     "review|sgl-project/sglang#34000": {
       "seenAt": "2026-08-08T07:04:18.489442Z",
@@ -1189,7 +1201,7 @@
       "seenAt": "2026-08-06T10:09:13.778625Z"
     }
   },
-  "digest": "42e22289137460f78c890a2196899862da4c57a9e627ad606fb95b70254c9ea9",
+  "digest": "f88b8ef9ec6d4f2dee276ba058c0fbf9a66191b354deb27af8693880277fc82b",
   "events": [
     {
       "attempts": 1,
@@ -15680,9 +15692,123 @@
       "runId": "scan-20260808T071944Z-c9d912b35f0f",
       "sentAt": "2026-08-08T07:22:12.112579Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "NousResearch/hermes-agent#80989",
+        "OpenHands/OpenHands#16374",
+        "huggingface/trl#6683",
+        "langgenius/dify#40178",
+        "sgl-project/sglang#33985"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "2da2d114b0f9052e75d23d80f3d9e659687d2bdce1fb68b9dc9d46e9d5432c84",
+          "key": "NousResearch/hermes-agent#80989",
+          "kind": "review",
+          "stateId": "65df251abb67ccd5fc60ff84a8da78bba5526af4bc989e5c969d802547754bc7"
+        },
+        {
+          "category": "NEW_CLEAN_CANDIDATE",
+          "digest": "5528e87ccf0dae0fbb4daaba669119cd9452d5046039bb06fe85178964593c9b",
+          "key": "OpenHands/OpenHands#16374",
+          "kind": "review",
+          "stateId": "21bcd2cc061ce9a0741534aff9eaf3c2c3bd2ab5270abe6623dc1dcf2a92eeda"
+        },
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "bae173c42d8d408bb9001bcc68b8b2205e2721838ef6a0fa9e627377a01391d5",
+          "key": "huggingface/trl#6683",
+          "kind": "review",
+          "stateId": "44bbe7ff67f48581c4f599c64ad782cf12edf9ff5725a4fa75428b296af26d58"
+        },
+        {
+          "category": "NEW_CLEAN_CANDIDATE",
+          "digest": "315f1b92caaa81760622c54bac3fe5bed65ff0246fab7fae3e548c1ed4a045f0",
+          "key": "langgenius/dify#40178",
+          "kind": "review",
+          "stateId": "ea673a5a0acfa6a201554fa81cee4b4b439d0499b90ec283db526edffce0fd6d"
+        },
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "32e17669cbacbdf9161632e178622d9e0f7c78185f5a344d7c4ca497b4b682ed",
+          "key": "sgl-project/sglang#33985",
+          "kind": "review",
+          "stateId": "f05bbf3a515c98dbdbde9728255524996fec2801ff0017d4a3be332fdac6eaff"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[NousResearch/hermes-agent#80989](https://github.com/NousResearch/hermes-agent/issues/80989) [Bug]: v0.20.0: terminal/clarify tool results wrapped in content-block structure, sometimes returning wrong file content**\n建议：WAIT_MAINTAINER | 分数：12\n价值：The issue describes a tool-result wrapping and wrong-content substitution bug in an agent framework, but the root cause is unconfirmed and the report is intermittent without a deterministic repro. The supplied algorithm evidence (PEFT, distributed training) is not supported by the issue content, which is about tool-result serialization and cross-contamination. The deterministic gate is HUMAN_REVIEW, and open PR/related issue lookups failed, so duplicate work cannot be excluded.\n改动：Tool-result envelope with callId/sessionId identity checks；Unwrapping of SDK content-block structures at tool boundary；Fix for Telegram adapter tool-message serialization\n验证：Deterministic regression test that cross-swaps two tool results and asserts rejection；Reproduce wrapping via Telegram adapter with a fresh session and fixed config；Unit test for content-block unwrapping in tool-result path\n风险：Root cause may be in multiple layers (adapter, executor, context assembly), requiring maintainer guidance；Intermittent nature may make regression tests flaky without a reliable repro；Potential duplicate work if existing PRs address this issue\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 18，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[OpenHands/OpenHands#16374](https://github.com/OpenHands/OpenHands/issues/16374) RemoteSandboxService: extend dedicated read-session fix to remaining read paths (follow-up to #14769, finding #1)**\n建议：NEW_CLEAN_CANDIDATE | 分数：11\n价值：Issue identifies a concrete atomicity bug in RemoteSandboxService read paths that commit the shared request-scoped session, risking premature commits of sibling writes. The fix pattern is already proven in get_sandbox, and the issue provides a clear scope list, productionization guidance, and a regression test approach. No competing PR exists.\n改动：RemoteSandboxService read paths (search_sandboxes, get_sandbox_by_session_api_key, batch_get_sandboxes, pause_old_sandboxes/_get_user_running_sandboxes) to use isolated read session；Inject async_sessionmaker into RemoteSandboxService；Migrate unit tests to real SQLAlchemy session fixture\n验证：Add regression tests mirroring TestSharedSessionAtomicityDuringDelete for each read path: seed uncommitted sibling write, invoke read, assert from separate connection that sibling write not committed；Run existing unit tests for RemoteSandboxService with real-session fixture\n风险：Using private AsyncEngine._retrieve_proxy_for_target in prototype may be fragile; production injection of async_sessionmaker reduces risk；Changing read paths may affect performance or error handling if not carefully isolated\n竞争：仅发现未直接关联、无代码路径或强机制重合的 PR #16420；保留为搜索上下文，不阻止实现\n下一步：仅完成本地复现、修复、测试和私有提交包；由用户自行决定公开提交。\n证据：复现信号 0，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[huggingface/trl#6683](https://github.com/huggingface/trl/issues/6683) examples/scripts/openenv/opencode.py is broken against current OpenEnv@main - every rollout scores \"unscorable\"**\n建议：WAIT_MAINTAINER | 分数：14\n价值：Issue identifies a concrete API break in OpenEnv causing silent unscorable rollouts, with a minimal two-line fix. However, an existing PR #6672 by a maintainer already addresses the same code path, and the issue explicitly requests maintainer confirmation before sending a PR. The deterministic gate is HUMAN_REVIEW, and the PR's technical completeness and overlap require maintainer assessment.\n改动：Update examples/scripts/openenv/opencode.py to use proxy_trace_path(config) and proxy_log_path(config) functions instead of removed constants.\n验证：Run the example end-to-end with a small model and fixed seed to verify rollouts are scored and rewards are non-trivial.；Add a regression test that checks the example imports and calls the correct OpenEnv API symbols.\n风险：Existing PR #6672 may already fix the issue; duplicating work or conflicting changes.；The fix depends on OpenEnv API stability; future changes could break again.\n竞争：发现 PR #6672 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 9，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[langgenius/dify#40178](https://github.com/langgenius/dify/issues/40178) Agent V2 silently drops all uploaded attachments when the selected model does not advertise vision support.**\n建议：NEW_CLEAN_CANDIDATE | 分数：12\n价值：Issue identifies a clear bug in Agent V2 where non-image attachments are dropped for non-vision models due to a faulty condition in chat-conversation.tsx. The proposed fix is minimal and well-scoped, with a concrete reproduction path and expected behavior. No competing PR or related issue found, and the repository does not require assignment.\n改动：Modify web/features/agent-v2/agent-detail/configure/components/preview/chat-conversation.tsx to include files regardless of vision support；Remove unused vision-model lookup from the component\n验证：Create a failing test that uploads a DOCX/PDF/TXT file with a non-vision model and asserts the chat request includes the files field；Run targeted unit tests for the agent-v2 preview component and static checks\n风险：Potential unintended behavior change if vision capability is also used for other file types; need to ensure image upload behavior remains intact\n竞争：未发现相关 open PR\n下一步：仅完成本地复现、修复、测试和私有提交包；由用户自行决定公开提交。\n证据：复现信号 5，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#33985](https://github.com/sgl-project/sglang/issues/33985) [Bug] DSpark speculative decoding cannot start on SM120: decode-dsv4 has no topk=192 instantiation, so verify falls through to the prefill kernel's num_tokens > 64 assert**\n建议：WAIT_MAINTAINER | 分数：13\n价值：Issue identifies a concrete kernel dispatch gap (topk=192 missing for decode-dsv4) with a clear root cause and reproduction, but the proposed padding workaround was withdrawn due to intermittent text corruption, and the remaining fix (FlashInfer instantiation) requires maintainer coordination. The related PR is closed and lacks tests, so no clean candidate exists.\n改动：FlashInfer kernel instantiation for topk=192；SGLang shim dispatch logic in flash_mla_sm120.py\n验证：Reproduce with provided command on SM120；Add regression test for topk=192 dispatch；Run long-duration correctness tests to catch intermittent corruption\n风险：Intermittent corruption if padding is used；Kernel instantiation may require FlashInfer changes and coordination\n竞争：发现关键词相关 PR，但未确认直接覆盖：#33986；需人工核对\n下一步：已有 PR 但强度不足；先看维护者规则和 issue 讨论，必要时先请求确认方案或分配。\n证据：复现信号 3，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-08T08:43:35.116338Z",
+      "eventId": "ba8e2f5041168c8b89231514adff2c5c51f83173a29b9579d056b2c36a2431cd",
+      "idempotencyKey": "ba8e2f5041168c8b89231514adff2c5c51f83173a29b9579d0",
+      "kind": "review",
+      "runId": "scan-20260808T083933Z-2e3a11227834",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-08T07:21:46.965744Z",
+  "generatedAt": "2026-08-08T08:43:35.484459Z",
   "newEventCount": 0,
   "version": "notification_outbox_v2"
 }
