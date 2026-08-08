@@ -967,9 +967,7 @@ def _published_followup_store(
     return store, worktree, head_sha, pr_url
 
 
-def test_pr_followup_reserve_refreshes_context_and_uses_canonical_prompt(
-    monkeypatch, tmp_path
-):
+def test_pr_followup_reserve_refreshes_context_and_uses_canonical_prompt(monkeypatch, tmp_path):
     store, worktree, _head_sha, pr_url = _published_followup_store(tmp_path)
     candidate = store.pr_followup_candidates()[0]
     prepared = []
@@ -1039,12 +1037,8 @@ def test_prepare_pr_followup_aligns_worktree_to_exact_live_head(monkeypatch, tmp
 def test_controller_ingests_followup_fix_as_update_to_exact_existing_pr(tmp_path):
     store, worktree, previous_head, pr_url = _published_followup_store(tmp_path)
     candidate = store.pr_followup_candidates()[0]
-    store.reserve_pr_followup(
-        thread_id="thread-1", wake_digest=candidate["wakeDigest"]
-    )
-    store.commit_pr_followup(
-        thread_id="thread-1", wake_digest=candidate["wakeDigest"]
-    )
+    store.reserve_pr_followup(thread_id="thread-1", wake_digest=candidate["wakeDigest"])
+    store.commit_pr_followup(thread_id="thread-1", wake_digest=candidate["wakeDigest"])
     context_path = MODULE.write_task_context(
         store,
         issue_url="https://github.com/a/b/issues/1",

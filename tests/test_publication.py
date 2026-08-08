@@ -181,7 +181,9 @@ def test_followup_publication_is_bound_to_existing_pr_and_previous_head(tmp_path
         branch=first["branch"],
         evidence={"publication": first["request"]["publication"]},
     )
-    store.consume_publication_permit(permit["permit_id"], "https://github.com/example/project/pull/8")
+    store.consume_publication_permit(
+        permit["permit_id"], "https://github.com/example/project/pull/8"
+    )
     worktree = tmp_path / "worktree"
     (worktree / "file.txt").write_text("fixed again\n", encoding="utf-8")
     git("add", "file.txt", cwd=worktree)

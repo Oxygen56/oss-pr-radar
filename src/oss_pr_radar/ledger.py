@@ -1906,9 +1906,7 @@ class RadarLedger:
                 now=now,
             )
 
-    def rearm_pr_followup_after_publication_drift(
-        self, request_id: str, *, reason: str
-    ) -> None:
+    def rearm_pr_followup_after_publication_drift(self, request_id: str, *, reason: str) -> None:
         if reason not in PR_UPDATE_REARM_REASONS:
             raise ValueError("unsupported PR update rearm reason")
         now = iso_z(datetime.now(UTC))
@@ -2239,8 +2237,7 @@ class RadarLedger:
                    ) WHERE latest_rank=1 ORDER BY updated_at"""
             ).fetchall()
         return [
-            {key: value for key, value in dict(row).items() if key != "latest_rank"}
-            for row in rows
+            {key: value for key, value in dict(row).items() if key != "latest_rank"} for row in rows
         ]
 
     def import_pr_followups(self, state: dict[str, Any]) -> dict[str, int]:

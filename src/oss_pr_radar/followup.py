@@ -258,9 +258,7 @@ def collect_followup(
             if str(check.get("status") or "").lower() == "completed"
             and str(check.get("conclusion") or "").lower() in FAILURE_CONCLUSIONS
         ]
-        changed_files = {
-            str(item.get("filename") or "") for item in files if item.get("filename")
-        }
+        changed_files = {str(item.get("filename") or "") for item in files if item.get("filename")}
         previous_evidence = previous_item.get("evidence") or {}
         if review_threads is None:
             unresolved_review_threads = previous_evidence.get("unresolvedReviewThreads") or []

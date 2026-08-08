@@ -305,7 +305,9 @@ def audit_publication_request(
             evidence,
             issue=evidence.issue | {"assignees": []},
             pull_relations=tuple(
-                relation for relation in evidence.pull_relations if relation.get("url") != existing_url
+                relation
+                for relation in evidence.pull_relations
+                if relation.get("url") != existing_url
             ),
         )
     elif publication_kind != "PR_CREATE":

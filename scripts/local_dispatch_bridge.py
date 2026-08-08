@@ -1459,9 +1459,7 @@ def pr_followup_reserve(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def pr_followup_commit(args: argparse.Namespace) -> dict[str, Any]:
-    ledger(args.ledger).commit_pr_followup(
-        thread_id=args.thread_id, wake_digest=args.wake_digest
-    )
+    ledger(args.ledger).commit_pr_followup(thread_id=args.thread_id, wake_digest=args.wake_digest)
     return {"ok": True, "threadId": args.thread_id, "wakeDigest": args.wake_digest}
 
 
@@ -1505,7 +1503,8 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
             context_followup = context.get("prFollowup")
             if candidate["stage"] in {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED"} and (
                 isinstance(context_followup, dict)
-                and value.get("followupDigest") not in {
+                and value.get("followupDigest")
+                not in {
                     None,
                     context_followup.get("wakeDigest"),
                 }

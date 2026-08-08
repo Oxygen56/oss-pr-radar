@@ -936,18 +936,17 @@ def test_pr_followup_is_bound_to_existing_task_and_sent_once(tmp_path):
     candidate = store.pr_followup_candidates()[0]
     assert imported == {"matched": 1, "inserted": 1, "updated": 0}
     assert candidate["threadId"] == "thread-1"
-    assert store.task_context(
-        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
-    )["prFollowup"]["headSha"] == "b" * 40
-
-    store.reserve_pr_followup(
-        thread_id="thread-1", wake_digest=candidate["wakeDigest"]
+    assert (
+        store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")[
+            "prFollowup"
+        ]["headSha"]
+        == "b" * 40
     )
+
+    store.reserve_pr_followup(thread_id="thread-1", wake_digest=candidate["wakeDigest"])
     assert store.pr_followup_candidates() == []
     assert store.unresolved_pr_followups()
-    store.commit_pr_followup(
-        thread_id="thread-1", wake_digest=candidate["wakeDigest"]
-    )
+    store.commit_pr_followup(thread_id="thread-1", wake_digest=candidate["wakeDigest"])
     assert store.unresolved_pr_followups() == []
 
     store.import_pr_followups(state)
@@ -993,9 +992,12 @@ def test_pr_followup_is_bound_to_existing_task_and_sent_once(tmp_path):
             (update["request_id"],),
         ).fetchone()
     assert expired["status"] == "EXPIRED"
-    assert store.task_context(
-        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
-    )["stage"] == "PR_OPEN"
+    assert (
+        store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")[
+            "stage"
+        ]
+        == "PR_OPEN"
+    )
     assert store.active_pr_followup("a/b#1") is None
     store.import_pr_followups(state)
     rearmed = store.pr_followup_candidates()[0]

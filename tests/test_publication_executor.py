@@ -182,9 +182,7 @@ def test_create_pr_replays_consumed_success_without_remote_lookup(monkeypatch, t
     assert store.succeeded == []
 
 
-def test_create_pr_update_reuses_exact_existing_pr_without_creating_another(
-    monkeypatch, tmp_path
-):
+def test_create_pr_update_reuses_exact_existing_pr_without_creating_another(monkeypatch, tmp_path):
     args = pr_args(tmp_path)
     store = ActiveStore()
     configure_permit(monkeypatch, args)
@@ -272,7 +270,9 @@ def test_push_allows_only_fast_forward_update_of_exact_existing_pr(monkeypatch, 
     def fake_run(command, **_kwargs):
         calls.append(command)
         if command[:4] == ["git", "remote", "get-url", args.remote]:
-            return subprocess.CompletedProcess(command, 0, "git@github.com:Oxygen56/project.git\n", "")
+            return subprocess.CompletedProcess(
+                command, 0, "git@github.com:Oxygen56/project.git\n", ""
+            )
         return subprocess.CompletedProcess(command, 0, "", "")
 
     monkeypatch.setattr(MODULE, "run", fake_run)
@@ -329,7 +329,9 @@ def test_push_rearms_original_task_when_existing_pr_head_drifted(monkeypatch, tm
 
     def fake_run(command, **_kwargs):
         if command[:4] == ["git", "remote", "get-url", args.remote]:
-            return subprocess.CompletedProcess(command, 0, "git@github.com:Oxygen56/project.git\n", "")
+            return subprocess.CompletedProcess(
+                command, 0, "git@github.com:Oxygen56/project.git\n", ""
+            )
         return subprocess.CompletedProcess(command, 0, "", "")
 
     monkeypatch.setattr(MODULE, "run", fake_run)
