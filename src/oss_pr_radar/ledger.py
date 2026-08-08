@@ -32,6 +32,7 @@ STAGES = (
 )
 TERMINAL_STAGES = {"AUDIT_NO_GO", "MERGED", "CLOSED"}
 PUBLISHED_STAGES = {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED", "MERGED", "CLOSED"}
+PR_UPDATE_REARM_REASONS = {"EXISTING_PR_HEAD_DRIFT", "NON_FAST_FORWARD_PR_UPDATE"}
 PR_URL_RE = re.compile(r"^https://github\.com/[^/]+/[^/]+/pull/\d+$")
 
 
@@ -216,6 +217,22 @@ class RadarLedger:
                     "leased_without_active_intent",
                     {"from": "LEASED", "to": "AUDIT_PASS"},
                     now,
+                )
+            drifted_updates = connection.execute(
+                """SELECT r.request_id,r.opportunity_key,r.request_json,r.reason
+                   FROM publication_requests r
+                   JOIN opportunities o ON o.key=r.opportunity_key
+                   WHERE r.status='BLOCKED' AND o.stage='FIX_READY'
+                     AND r.reason IN ('EXISTING_PR_HEAD_DRIFT','NON_FAST_FORWARD_PR_UPDATE')"""
+            ).fetchall()
+            for row in drifted_updates:
+                self._rearm_followup_for_publication_drift(
+                    connection,
+                    request_id=row["request_id"],
+                    key=row["opportunity_key"],
+                    request_json=row["request_json"],
+                    reason=row["reason"],
+                    now=now,
                 )
 
     @staticmethod
@@ -1861,7 +1878,8 @@ class RadarLedger:
         now = iso_z(datetime.now(UTC))
         with self.transaction() as connection:
             row = connection.execute(
-                "SELECT opportunity_key FROM publication_requests WHERE request_id=?",
+                """SELECT opportunity_key,request_json
+                   FROM publication_requests WHERE request_id=?""",
                 (request_id,),
             ).fetchone()
             if row is None:
@@ -1879,6 +1897,94 @@ class RadarLedger:
                 {"requestId": request_id, "reason": reason},
                 now,
             )
+            self._rearm_followup_for_publication_drift(
+                connection,
+                request_id=request_id,
+                key=row["opportunity_key"],
+                request_json=row["request_json"],
+                reason=reason,
+                now=now,
+            )
+
+    def rearm_pr_followup_after_publication_drift(
+        self, request_id: str, *, reason: str
+    ) -> None:
+        if reason not in PR_UPDATE_REARM_REASONS:
+            raise ValueError("unsupported PR update rearm reason")
+        now = iso_z(datetime.now(UTC))
+        with self.transaction() as connection:
+            row = connection.execute(
+                """SELECT opportunity_key,request_json FROM publication_requests
+                   WHERE request_id=?""",
+                (request_id,),
+            ).fetchone()
+            if row is None:
+                raise LedgerError("publication request not found")
+            connection.execute(
+                """UPDATE publication_requests SET status='BLOCKED',reason=?,updated_at=?
+                   WHERE request_id=?""",
+                (reason, now, request_id),
+            )
+            self._event(
+                connection,
+                row["opportunity_key"],
+                "PUBLICATION_BLOCKED",
+                f"{request_id}:{reason}",
+                {"requestId": request_id, "reason": reason},
+                now,
+            )
+            if not self._rearm_followup_for_publication_drift(
+                connection,
+                request_id=request_id,
+                key=row["opportunity_key"],
+                request_json=row["request_json"],
+                reason=reason,
+                now=now,
+            ):
+                raise LedgerError("publication request is not an existing PR update")
+
+    def _rearm_followup_for_publication_drift(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        request_id: str,
+        key: str,
+        request_json: str,
+        reason: str,
+        now: str,
+    ) -> bool:
+        if reason not in PR_UPDATE_REARM_REASONS:
+            return False
+        try:
+            request = json.loads(request_json)
+        except json.JSONDecodeError:
+            return False
+        if request.get("publicationKind") != "PR_UPDATE":
+            return False
+        connection.execute(
+            """UPDATE publication_permits SET status='EXPIRED',updated_at=?
+               WHERE request_id=? AND status='ACTIVE'""",
+            (now, request_id),
+        )
+        connection.execute(
+            """UPDATE opportunities SET stage='PR_OPEN',terminal_reason=NULL,updated_at=?
+               WHERE key=? AND stage='FIX_READY'""",
+            (now, key),
+        )
+        connection.execute(
+            """UPDATE pr_followups SET followup_required=0,updated_at=?
+               WHERE opportunity_key=?""",
+            (now, key),
+        )
+        self._event(
+            connection,
+            key,
+            "PR_FOLLOWUP_REARM_REQUIRED",
+            request_id,
+            {"requestId": request_id, "reason": reason},
+            now,
+        )
+        return True
 
     def retry_blocked_publication_request(
         self, request_id: str, *, expected_reason: str
@@ -2182,7 +2288,8 @@ class RadarLedger:
                     or previous["task_action_digest"] != task_digest
                 ):
                     wake_digest = sha256_text(
-                        f"{key}|{pr_url}|{head_sha}|{task_digest}|{checked_at}"
+                        f"{key}|{pr_url}|{head_sha}|{task_digest}|{checked_at}|"
+                        f"{str(previous['wake_digest'] or '') if previous else ''}"
                     )
                 elif required and previous is not None:
                     wake_digest = previous["wake_digest"]

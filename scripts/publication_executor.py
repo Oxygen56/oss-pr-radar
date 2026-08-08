@@ -281,6 +281,9 @@ def push(args: argparse.Namespace, store: RadarLedger) -> dict[str, Any]:
         ):
             result = {"ok": False, "reason": "EXISTING_PR_HEAD_DRIFT", "remoteSha": current}
             store.complete_publication_effect(effect["effect_id"], status="FAILED", result=result)
+            store.rearm_pr_followup_after_publication_drift(
+                str(permit["request_id"]), reason="EXISTING_PR_HEAD_DRIFT"
+            )
             raise RuntimeError("existing PR head changed before branch update")
         run(
             ["git", "fetch", "--quiet", args.remote, f"refs/heads/{args.branch}"],
@@ -294,6 +297,9 @@ def push(args: argparse.Namespace, store: RadarLedger) -> dict[str, Any]:
         if ancestry.returncode != 0:
             result = {"ok": False, "reason": "NON_FAST_FORWARD_PR_UPDATE"}
             store.complete_publication_effect(effect["effect_id"], status="FAILED", result=result)
+            store.rearm_pr_followup_after_publication_drift(
+                str(permit["request_id"]), reason="NON_FAST_FORWARD_PR_UPDATE"
+            )
             raise RuntimeError("PR update is not a fast-forward of the current remote head")
     elif current:
         result = {"ok": False, "reason": "REMOTE_BRANCH_CONFLICT", "remoteSha": current}
@@ -385,11 +391,26 @@ def create_pr(args: argparse.Namespace, store: RadarLedger) -> dict[str, Any]:
         store.complete_publication_effect(effect["effect_id"], status="FAILED", result=result)
         raise RuntimeError("the branch already has a closed or merged PR")
     if publication_request.get("publicationKind") == "PR_UPDATE" and (
-        not found or found.get("url") != publication_request.get("existingPrUrl")
+        not found
+        or found.get("url") != publication_request.get("existingPrUrl")
+        or found.get("headRefOid") != args.commit_sha
     ):
-        result = {"ok": False, "reason": "EXISTING_PR_NOT_FOUND", "pr": found}
-        store.complete_publication_effect(effect["effect_id"], status="FAILED", result=result)
-        raise RuntimeError("the exact existing PR is unavailable for update")
+        try:
+            found = wait_for_existing_pr(args.repo, args.head_owner, args.branch)
+        except RuntimeError as exc:
+            result = {
+                "ok": False,
+                "reason": "PR_UPDATE_RECONCILIATION_REQUIRED",
+                "detail": str(exc)[:300],
+            }
+            store.complete_publication_effect(
+                effect["effect_id"], status="RECONCILE_REQUIRED", result=result
+            )
+            raise
+        if found.get("url") != publication_request.get("existingPrUrl"):
+            result = {"ok": False, "reason": "EXISTING_PR_NOT_FOUND", "pr": found}
+            store.complete_publication_effect(effect["effect_id"], status="FAILED", result=result)
+            raise RuntimeError("the exact existing PR is unavailable for update")
     if found and found.get("headRefOid") != args.commit_sha:
         result = {"ok": False, "reason": "EXISTING_PR_HEAD_MISMATCH", "pr": found}
         store.complete_publication_effect(effect["effect_id"], status="FAILED", result=result)

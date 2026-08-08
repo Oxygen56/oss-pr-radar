@@ -880,7 +880,14 @@ def test_commit_without_lease_is_rejected(tmp_path):
 
 def test_pr_followup_is_bound_to_existing_task_and_sent_once(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
-    store.enqueue(intent())
+    store.enqueue(
+        intent(
+            autoSubmitAuthorized=True,
+            publicSubmissionAllowed=True,
+            authorizationSource="signed_live_revalidation_required",
+            publicationMode="canary",
+        )
+    )
     store.claim("intent-1", "controller")
     store.commit_dispatch(
         "intent-1",
@@ -950,3 +957,46 @@ def test_pr_followup_is_bound_to_existing_task_and_sent_once(tmp_path):
     state["items"][0]["checkedAt"] = iso_z(datetime.now(UTC) + timedelta(minutes=1))
     store.import_pr_followups(state)
     assert store.pr_followup_candidates() == []
+
+    previous_wake = candidate["wakeDigest"]
+    store.record_stage("a/b#1", "FIX_READY", evidence={field: True for field in QUALITY_FIELDS})
+    update = store.create_publication_request(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        commit_sha="d" * 40,
+        branch="fix/1-runtime",
+        worktree_path="/tmp/worktree",
+        evidence_digest="update-evidence",
+        evidence_path="/tmp/worktree/.oss-pr-radar/result.json",
+        publication={
+            "headOwner": "Oxygen56",
+            "baseBranch": "main",
+            "title": "fix: runtime",
+            "bodyPath": "/tmp/worktree/.oss-pr-radar/pr-body.md",
+        },
+    )
+    assert update["request"]["publicationKind"] == "PR_UPDATE"
+    permit = store.grant_publication_request(
+        update["request_id"],
+        issue_url="https://github.com/a/b/issues/1",
+        commit_sha="d" * 40,
+        branch="fix/1-runtime",
+        evidence={"verified": True},
+    )
+    assert permit["status"] == "ACTIVE"
+
+    store.block_publication_request(update["request_id"], "EXISTING_PR_HEAD_DRIFT")
+
+    with store.connect() as connection:
+        expired = connection.execute(
+            "SELECT status FROM publication_permits WHERE request_id=?",
+            (update["request_id"],),
+        ).fetchone()
+    assert expired["status"] == "EXPIRED"
+    assert store.task_context(
+        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
+    )["stage"] == "PR_OPEN"
+    assert store.active_pr_followup("a/b#1") is None
+    store.import_pr_followups(state)
+    rearmed = store.pr_followup_candidates()[0]
+    assert rearmed["wakeDigest"] != previous_wake

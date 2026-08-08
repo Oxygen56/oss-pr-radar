@@ -41,6 +41,7 @@ class ActiveStore:
     def __init__(self):
         self.completed = []
         self.succeeded = []
+        self.rearmed = []
 
     def publication_effect(self, **_kwargs):
         return {
@@ -55,6 +56,9 @@ class ActiveStore:
 
     def succeed_pull_request_effect(self, **kwargs):
         self.succeeded.append(kwargs)
+
+    def rearm_pr_followup_after_publication_drift(self, request_id, *, reason):
+        self.rearmed.append((request_id, reason))
 
 
 def pr_args(tmp_path: Path) -> SimpleNamespace:
@@ -283,6 +287,58 @@ def test_push_allows_only_fast_forward_update_of_exact_existing_pr(monkeypatch, 
         args.remote,
         f"{args.commit_sha}:refs/heads/{args.branch}",
     ] in calls
+
+
+def test_push_rearms_original_task_when_existing_pr_head_drifted(monkeypatch, tmp_path):
+    args = pr_args(tmp_path)
+    args.remote = "radar-fork"
+    args.commit_sha = "c" * 40
+    permitted_previous = "a" * 40
+    live_previous = "b" * 40
+    store = ActiveStore()
+    monkeypatch.setattr(
+        MODULE,
+        "ensure_permit",
+        lambda *_args, **_kwargs: {"status": "ACTIVE", "request_id": "request-1"},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "permit_publication",
+        lambda _permit: {"headOwner": args.head_owner},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "permit_request",
+        lambda *_args: {
+            "publicationKind": "PR_UPDATE",
+            "existingPrUrl": "https://github.com/example/project/pull/2",
+            "previousCommitSha": permitted_previous,
+        },
+    )
+    monkeypatch.setattr(MODULE, "recheck_new_effect", lambda *_args: None)
+    monkeypatch.setattr(MODULE, "remote_head", lambda *_args: live_previous)
+    monkeypatch.setattr(
+        MODULE,
+        "existing_pr",
+        lambda *_args: {
+            "url": "https://github.com/example/project/pull/2",
+            "state": "OPEN",
+            "headRefOid": live_previous,
+        },
+    )
+
+    def fake_run(command, **_kwargs):
+        if command[:4] == ["git", "remote", "get-url", args.remote]:
+            return subprocess.CompletedProcess(command, 0, "git@github.com:Oxygen56/project.git\n", "")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(MODULE, "run", fake_run)
+
+    with pytest.raises(RuntimeError, match="head changed"):
+        MODULE.push(args, store)
+
+    assert store.rearmed == [("request-1", "EXISTING_PR_HEAD_DRIFT")]
+    assert store.completed[0][1] == "FAILED"
 
 
 def test_create_pr_rejects_tool_identity_in_public_branch(tmp_path):
