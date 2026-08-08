@@ -111,6 +111,28 @@ def prepared_request(tmp_path):
     return store, request, evidence_path
 
 
+def test_blocked_publication_can_be_reingested_after_evidence_is_corrected(tmp_path):
+    store, request, _evidence_path = prepared_request(tmp_path)
+    store.block_publication_request(request["request_id"], "BASE_BRANCH_MISMATCH")
+
+    candidates = store.task_result_candidates()
+
+    assert [candidate["key"] for candidate in candidates] == ["example/project#7"]
+
+
+def test_blocked_publication_retry_requires_the_observed_reason(tmp_path):
+    store, request, _evidence_path = prepared_request(tmp_path)
+    store.block_publication_request(request["request_id"], "STRONG_EXISTING_PR")
+
+    retried = store.retry_blocked_publication_request(
+        request["request_id"], expected_reason="STRONG_EXISTING_PR"
+    )
+
+    assert retried["status"] == "PENDING"
+    assert store.publication_request(request["request_id"])["status"] == "PENDING"
+    assert store.task_result_candidates() == []
+
+
 class Client:
     def issue(self, repo, number):
         return {

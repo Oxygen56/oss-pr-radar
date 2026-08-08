@@ -146,3 +146,27 @@ def test_development_sidebar_connection_is_an_exact_relation():
 
     assert result[0].exact_link is True
     assert result[0].relation == "STRONG_EXACT_DUPLICATE"
+
+
+def test_cross_repo_followup_reference_does_not_claim_upstream_coverage():
+    result = assess_relations(
+        repo="a/b",
+        issue_number=7,
+        issue_title="Web search returns unbounded page content",
+        pull_requests=[
+            {
+                "number": 9,
+                "body": (
+                    "This limits an E2E test. The upstream fix is tracked in a/b#7; "
+                    "this PR does not change the upstream component."
+                ),
+                "title": "Bound the E2E test iteration count",
+                "state": "open",
+                "updated_at": "2099-01-01T00:00:00Z",
+                "_repo": "downstream/e2e",
+            }
+        ],
+    )
+
+    assert result[0].exact_link is False
+    assert result[0].relation == "REFERENCE_ONLY"

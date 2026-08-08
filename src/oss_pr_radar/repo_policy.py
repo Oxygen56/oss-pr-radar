@@ -52,6 +52,8 @@ AI_DISCLOSURE_RE = re.compile(
     r"(?:automated|coding|ai)\s+agents?.{0,160}"
     r"(?:add|include|specify|state).{0,80}(?:tool name|from\s+<tool name>)|"
     r"(?:^|\n)\s*AGENT:\s*.{0,240}\bAI\s*/\s*LLM\s+agents?\s*:|"
+    r"(?:contribution policy for ai agents|if you are an ai agent).{0,1200}"
+    r"(?:must disclose|disclosure\.txt|html comment)|"
     r"(?:new\s+)?branches?\s+(?:should|must|are required to)\s+use\s+"
     r"(?:the\s+)?[`'\"]?codex/",
     re.I | re.S,
@@ -91,6 +93,8 @@ ASSIGNMENT_RE = re.compile(
     r"(?:kindly\s+)?ask\b.{0,60}\bbefore\s+contribut|"
     r"\b(?:ask|check|confirm)\s+(?:with\s+)?(?:the\s+)?maintainers?\b"
     r".{0,80}\bbefore\s+(?:contribut|implement|start)|"
+    r"\bclarif(?:y|ied)\s+(?:the\s+)?scope\s+with\s+(?:the\s+)?maintainers?\b"
+    r".{0,120}\bbefore\b.{0,100}\b(?:invest|implement|start)|"
     r"(?:do not|don['’]?t|must not).{0,160}"
     r"(?:begin|start|implement|open\s+(?:a\s+)?(?:pull request|pr)).{0,180}"
     r"(?:until|unless).{0,100}(?:issue\s+)?(?:has\s+)?(?:reached\s+)?"
@@ -138,6 +142,9 @@ NONSTANDARD_AGREEMENT_RE = re.compile(
     r"(?:perpetual|irrevocable).{0,180}(?:transferable|sublicen[sc]able|re-?license)"
     r".{0,220}(?:commercial|proprietary|any terms)",
     re.I | re.S,
+)
+AI_AGENT_SCOPE_RE = re.compile(
+    r"(?:contribution policy for ai agents|if you are an ai agent)", re.I
 )
 
 
@@ -230,15 +237,25 @@ def select_policy_entries(tree: list[dict[str, Any]], limit: int = 24) -> list[d
     )[:limit]
 
 
+def _global_submission_blocked(text: str) -> bool:
+    for pattern in (NO_UNSOLICITED_RE, ISSUES_ONLY_RE):
+        for match in pattern.finditer(text):
+            prefix = text[max(0, match.start() - 600) : match.start()]
+            if not AI_AGENT_SCOPE_RE.search(prefix):
+                return True
+    return False
+
+
 def classify_policy_text(text: str) -> PolicyTextClassification:
+    normalized = text.replace("**", "").replace("__", "")
     return PolicyTextClassification(
-        ai_disclosure=bool(AI_DISCLOSURE_RE.search(text)),
-        ai_prohibited=bool(AI_PROHIBITION_RE.search(text)),
-        assignment_required=bool(ASSIGNMENT_RE.search(text)),
-        unsolicited_pr_blocked=bool(NO_UNSOLICITED_RE.search(text) or ISSUES_ONLY_RE.search(text)),
-        cla=bool(CLA_RE.search(text)),
-        dco=bool(DCO_RE.search(text)),
-        nonstandard_agreement=bool(NONSTANDARD_AGREEMENT_RE.search(text)),
+        ai_disclosure=bool(AI_DISCLOSURE_RE.search(normalized)),
+        ai_prohibited=bool(AI_PROHIBITION_RE.search(normalized)),
+        assignment_required=bool(ASSIGNMENT_RE.search(normalized)),
+        unsolicited_pr_blocked=_global_submission_blocked(normalized),
+        cla=bool(CLA_RE.search(normalized)),
+        dco=bool(DCO_RE.search(normalized)),
+        nonstandard_agreement=bool(NONSTANDARD_AGREEMENT_RE.search(normalized)),
     )
 
 

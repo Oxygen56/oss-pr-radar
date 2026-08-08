@@ -1654,6 +1654,14 @@ def publication_check(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def retry_blocked_publication(args: argparse.Namespace) -> dict[str, Any]:
+    result = ledger(args.ledger).retry_blocked_publication_request(
+        args.request_id,
+        expected_reason=args.expected_reason,
+    )
+    return {"ok": True, **result}
+
+
 def cleanup_list(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
     candidates = store.cleanup_candidates()
@@ -2010,6 +2018,9 @@ def main() -> int:
     subparsers.add_parser("context-sync")
     subparsers.add_parser("ingest-results")
     subparsers.add_parser("publication-run")
+    publication_retry_parser = subparsers.add_parser("publication-retry")
+    publication_retry_parser.add_argument("--request-id", required=True)
+    publication_retry_parser.add_argument("--expected-reason", required=True)
     cleanup_commit_parser = subparsers.add_parser("cleanup-commit")
     cleanup_commit_parser.add_argument("--thread-id", required=True)
     cleanup_commit_parser.add_argument("--cleanup-nonce", required=True)
@@ -2078,6 +2089,8 @@ def main() -> int:
         result = ingest_task_results(args)
     elif args.operation == "publication-run":
         result = run_publication_queue(args)
+    elif args.operation == "publication-retry":
+        result = retry_blocked_publication(args)
     elif args.operation == "cleanup-commit":
         result = cleanup_commit(args)
     elif args.operation == "title-list":

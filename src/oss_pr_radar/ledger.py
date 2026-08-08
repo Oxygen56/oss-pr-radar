@@ -1466,6 +1466,7 @@ class RadarLedger:
                          AND NOT EXISTS (
                            SELECT 1 FROM publication_requests p
                            WHERE p.opportunity_key=o.key
+                             AND p.status IN ('PENDING','GRANTED','CONSUMED')
                          )
                        )
                      )
@@ -1661,6 +1662,36 @@ class RadarLedger:
                 {"requestId": request_id, "reason": reason},
                 now,
             )
+
+    def retry_blocked_publication_request(
+        self, request_id: str, *, expected_reason: str
+    ) -> dict[str, Any]:
+        now = iso_z(datetime.now(UTC))
+        with self.transaction() as connection:
+            row = connection.execute(
+                "SELECT opportunity_key,status,reason FROM publication_requests WHERE request_id=?",
+                (request_id,),
+            ).fetchone()
+            if row is None:
+                raise LedgerError("publication request not found")
+            if row["status"] != "BLOCKED":
+                raise LedgerError("publication request is not blocked")
+            if row["reason"] != expected_reason:
+                raise LedgerError("publication block reason changed")
+            connection.execute(
+                """UPDATE publication_requests SET status='PENDING',reason=NULL,updated_at=?
+                   WHERE request_id=?""",
+                (now, request_id),
+            )
+            self._event(
+                connection,
+                row["opportunity_key"],
+                "PUBLICATION_RETRY_REQUESTED",
+                f"{request_id}:{expected_reason}:{now}",
+                {"requestId": request_id, "previousReason": expected_reason},
+                now,
+            )
+        return {"requestId": request_id, "status": "PENDING"}
 
     def grant_publication_request(
         self,

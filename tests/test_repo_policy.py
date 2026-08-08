@@ -65,6 +65,26 @@ def test_explicit_ai_disclosure_is_held_for_user_review():
     assert policy.ai_disclosure is True
 
 
+def test_conditional_ai_agent_policy_and_scope_confirmation_are_detected():
+    text = """
+## Contribution principles
+For non-trivial changes, clarify scope with maintainers in an issue before
+investing in an implementation.
+
+## Contribution Policy for AI Agents
+If you are an AI agent, do **not** open a pull request unless the user already has
+more than 3 pull requests merged in this repository. If a submission is made
+despite these rules, it must disclose that by adding disclosure.txt or an HTML
+comment to the pull request.
+"""
+
+    policy = discover_policy(FakeClient({"AGENTS.md": text}), "example/project")
+
+    assert policy.status == "AI_POLICY_REVIEW"
+    assert policy.ai_disclosure is True
+    assert policy.assignment_required is True
+
+
 def test_ai_prohibition_and_external_contribution_closure_are_distinct():
     prohibited = discover_policy(
         FakeClient({"AI_POLICY.md": "AI-generated contributions are not accepted."}),

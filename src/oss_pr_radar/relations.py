@@ -82,26 +82,28 @@ def assess_relations(
 ) -> list[PullRelation]:
     relations: list[PullRelation] = []
     now = datetime.now(UTC)
-    exact_patterns = (
-        re.compile(
-            rf"\b(?:fixe[sd]?|close[sd]?|resolve[sd]?|address(?:e[sd])?|refs?|references?)"
-            rf"\s*:?[ ]*#{issue_number}\b",
-            re.I,
-        ),
-        re.compile(rf"\b{re.escape(repo)}#{issue_number}\b", re.I),
-        re.compile(rf"https://github\.com/{re.escape(repo)}/issues/{issue_number}\b", re.I),
+    issue_targets = (
+        rf"(?:#{issue_number}\b|"
+        rf"{re.escape(repo)}#{issue_number}\b|"
+        rf"https://github\.com/{re.escape(repo)}/issues/{issue_number}\b)"
     )
+    coverage_pattern = re.compile(
+        rf"\b(?:fixe[sd]?|close[sd]?|resolve[sd]?|address(?:e[sd])?)"
+        rf"\s*:?[ ]*{issue_targets}",
+        re.I,
+    )
+    reference_pattern = re.compile(issue_targets, re.I)
     for pr in pull_requests:
         body = str(pr.get("body") or "")
         title = str(pr.get("title") or "")
         timeline_event = str(pr.get("_timeline_event") or "").casefold()
         # A cross-reference can be created in either direction. In particular,
         # an issue that cites an older PR as background causes GitHub to emit a
-        # cross-reference from that PR. Only an explicit PR-body reference or a
-        # Development-sidebar connection is strong enough to prove coverage.
-        exact = timeline_event == "connected" or any(
-            pattern.search(body) for pattern in exact_patterns
-        )
+        # cross-reference from that PR. Only a PR-body coverage verb or a
+        # Development-sidebar connection is strong enough to prove coverage;
+        # a bare issue reference can describe an upstream follow-up instead.
+        exact = timeline_event == "connected" or bool(coverage_pattern.search(body))
+        reference_only = not exact and bool(reference_pattern.search(body))
         overlap = _overlap(issue_title, title)
         files = pr.get("files") or []
         has_tests = any(
@@ -147,6 +149,8 @@ def assess_relations(
             relation = "WEAK_OR_PARTIAL_EXACT"
         elif exact:
             relation = "HISTORICAL_CLOSED_EXACT"
+        elif reference_only:
+            relation = "REFERENCE_ONLY"
         elif state == "OPEN" and overlap >= 0.45:
             relation = "SEMANTIC_OVERLAP"
         else:
