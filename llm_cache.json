@@ -6300,6 +6300,30 @@
     ],
     "why": "Issue reports a clear user-facing bug in profiling.numerical() for multi-input models, with a reproducible traceback. Existing PR #1439 overlaps in code path and semantics but is incomplete and not directly linked, leaving room for a better PR."
   },
+  "63066a869fd521c8a1fa094bd4938c1a2d6de66ebfa21f1299cee12c57a6c9ad": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Backport of #4659 to release/3.x, specifically fixing the audience construction in fastmcp_slim/fastmcp/server/auth/oauth_proxy/proxy.py"
+    ],
+    "risks": [
+      "Potential merge conflicts or unintended behavior changes if the backport is not clean; need to ensure the fix is consistent with 3.x branch stability."
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Use the provided MRE to create a failing test that asserts the expected audience equals the advertised token_endpoint, then run the test against the patched code."
+    ],
+    "unknowns": [
+      "Whether maintainers will accept the backport PR and cut a patch release; no explicit maintainer approval or assignment is present."
+    ],
+    "why": "The issue clearly identifies a bug in the 3.x branch where the expected audience for private_key_jwt has a doubled slash, causing all such clients to be rejected. A backport PR (#4783) already exists and is technically complete, but was auto-closed due to a missing issue link. The deterministic gate requires HUMAN_REVIEW, and the existing PR needs maintainer action to reopen/merge. This is not a new candidate but a duplicate of an existing PR that requires maintainer intervention."
+  },
   "635020ac901084eaeb870a245e21bbb730628c9b79bf5ee7a11be59acff4b119": {
     "confidence": 0.7,
     "contradictions": [
@@ -7275,6 +7299,39 @@
       "Exact desired behavior for session recovery is not specified"
     ],
     "why": "Issue provides a precise root-cause analysis with code references and a clear reproduction path. The bug is in the ACP session lifecycle: session/new swallows provider construction errors, leaving the session in an inconsistent state that cannot recover. This is a high-impact correctness bug in the agent infrastructure, and the fix is well-scoped."
+  },
+  "6ec08c602d2cb0d75e7095ac0c4114b15a653e3c3c71e933e838600f25137e65": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Maintainer could not reproduce on non-Metal platforms, while reporter claims reproduction on macOS"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Investigate Metal-specific KV cache quantization implementation",
+      "Potentially fix q4_0 KV cache quantization for small models on Metal",
+      "Add regression test for KV cache quantization correctness"
+    ],
+    "risks": [
+      "May be a model-specific issue not fixable in code",
+      "Requires access to macOS/Metal hardware for testing",
+      "Potential scope creep if per-model KV cache settings are needed"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Reproduce on macOS with Metal using VibeThinker-3B and MiniCPM-1B with q4_0 KV cache",
+      "Compare output quality across q4_0, q5_0, q8_0, f16",
+      "Add unit test for KV cache quantization numerical accuracy"
+    ],
+    "unknowns": [
+      "Exact root cause in code (Metal-specific kernel or quantization algorithm)",
+      "Whether maintainers consider this a bug worth fixing or a user configuration issue"
+    ],
+    "why": "The issue reports a user-visible bug with q4_0 KV cache causing degenerate output, but the root cause is not definitively established. A maintainer could not reproduce on non-Metal platforms, suggesting a possible Metal-specific issue. The proposed fix is an environment-level workaround, not a code change. The candidate lacks a concrete algorithm or implementation path, and the track is agent_ai_infra, not llm_algorithm. The only related PR is about per-modelfile overrides, not a fix for the quantization bug. Therefore, more maintainer input or a clear code-level root cause is needed before work can start."
   },
   "6ecbed38eadb820a3b69e356d1bcee463324ce6beb8d2bab1d140143e3163656": {
     "confidence": 0.8,
