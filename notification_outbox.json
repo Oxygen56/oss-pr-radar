@@ -380,6 +380,10 @@
       "seenAt": "2026-08-08T09:25:11.972744Z",
       "stateId": "2344eff89de7890cd774abd815c9b5469b8820b1ee764b8e20b695e809ea05c1"
     },
+    "review|huggingface/trl#6685": {
+      "seenAt": "2026-08-08T13:19:41.790360Z",
+      "stateId": "f0d8de00792fe478a0f54045626c8bf68e699c96c5289c328ceb99052f44924c"
+    },
     "review|infiniflow/ragflow#17941": {
       "seenAt": "2026-08-06T11:39:58.259121Z",
       "stateId": "a42cac1d87667f6a3e8882da1fea011ba78b8832afcc5f071882714444fc5da7"
@@ -463,6 +467,10 @@
     "review|mastra-ai/mastra#20963": {
       "seenAt": "2026-08-07T21:09:32.887835Z",
       "stateId": "63a61e771074d422024d867628e3f54d27ca0881070b9416c61b464a463846cc"
+    },
+    "review|mem0ai/mem0#4956": {
+      "seenAt": "2026-08-08T13:19:41.790360Z",
+      "stateId": "2c675a358b9127625e5a462458bc5069091206b8040ca5c326caf578544b4f81"
     },
     "review|mem0ai/mem0#6783": {
       "legacy": true,
@@ -1233,7 +1241,7 @@
       "seenAt": "2026-08-06T10:09:13.778625Z"
     }
   },
-  "digest": "ece4cbbdedcf7a62aa7d24ec054a87801264044114b9ad01652c7ee2fbc8aa14",
+  "digest": "84c3af93f9461b9bd9e47c1ce3757c776c40c91d28681f8026616e397e649ed6",
   "events": [
     {
       "attempts": 1,
@@ -16363,9 +16371,69 @@
       "runId": "scan-20260808T114751Z-407aebba9f47",
       "sentAt": "2026-08-08T11:52:19.280794Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "huggingface/trl#6685",
+        "mem0ai/mem0#4956"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "87a4db75387e86521b32b68157ddffaaea389741023231b89bd7b4481acc0ccf",
+          "key": "huggingface/trl#6685",
+          "kind": "review",
+          "stateId": "f0d8de00792fe478a0f54045626c8bf68e699c96c5289c328ceb99052f44924c"
+        },
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "74f29102b200ccb99f9c61b481bea3ecb2a1ed70f56bc77b0026c756b09db5ab",
+          "key": "mem0ai/mem0#4956",
+          "kind": "review",
+          "stateId": "2c675a358b9127625e5a462458bc5069091206b8040ca5c326caf578544b4f81"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[huggingface/trl#6685](https://github.com/huggingface/trl/issues/6685) SFTTrainer's default chunked_nll path fails on models whose output has no past_key_values**\n建议：WAIT_MAINTAINER | 分数：10\n价值：Issue clearly identifies a bug in SFTTrainer's chunked_nll path for models without past_key_values/attentions, with a minimal fix and reproduction. However, the supplied gate decision is HUMAN_REVIEW, and existing PRs (e.g., #6514, #6571) overlap in the same file and chunked_nll semantics, requiring maintainer comparison to avoid duplicate work.\n改动：Modify trl/trainer/sft_trainer.py _chunked_ce_forward to use getattr for optional outputs.past_key_values and outputs.attentions\n验证：Run the provided Mamba reproduction script to confirm the fix; add a regression test with a model lacking past_key_values/attentions to ensure training completes and loss decreases.\n风险：Potential interaction with existing PRs modifying the same code path; need to ensure no regression for models that do provide these fields.\n竞争：发现 PR #6514 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 5，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[mem0ai/mem0#4956](https://github.com/mem0ai/mem0/issues/4956) ADD-only extraction in v3 may surface stale/contradictory facts for time-sensitive attributes**\n建议：WAIT_MAINTAINER | 分数：10\n价值：Issue clearly identifies a stale-fact retrieval bug in mem0 v3 ADD-only extraction, with concrete reproduction and community confirmation. However, multiple closed PRs already attempt fixes (e.g., #4969 soft-supersede, #4965 restore CRUD), and maintainer direction is unclear. The deterministic gate requires HUMAN_REVIEW, and the AI disclosure conflict blocks automated action.\n改动：Implement write-time supersession or read-time recency weighting in retrieval scoring；Add metadata flags like is_active or valid_to for superseded facts\n验证：Create regression test with two contradictory facts and query to ensure newest fact is returned；Run existing test suite for scoring and memory operations\n风险：May conflict with existing PRs or maintainer design preferences；Changing retrieval behavior could affect other use cases\n竞争：发现关键词相关 PR，但未确认直接覆盖：#5240；需人工核对\n下一步：已有 PR 但强度不足；先看维护者规则和 issue 讨论，必要时先请求确认方案或分配。\n证据：复现信号 0，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-08T13:19:41.790360Z",
+      "eventId": "b080046c825b2c16e83a0317666d366ff6dbb3e77132b32b3c38f657c83bd836",
+      "idempotencyKey": "b080046c825b2c16e83a0317666d366ff6dbb3e77132b32b3c",
+      "kind": "review",
+      "runId": "scan-20260808T131645Z-a2aa7f7a6328",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-08T11:51:46.527794Z",
+  "generatedAt": "2026-08-08T13:19:42.803574Z",
   "newEventCount": 0,
   "version": "notification_outbox_v2"
 }
