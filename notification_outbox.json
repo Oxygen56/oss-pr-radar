@@ -513,8 +513,8 @@
       "stateId": "0680abc1ef1124a66cccdd6c29c2b12aee529c5762c367364539db1e9e21ca82"
     },
     "review|modelcontextprotocol/csharp-sdk#1799": {
-      "seenAt": "2026-08-07T16:17:33.543221Z",
-      "stateId": "06dc5afbdcef6a94674b8ada9abd64c1c7fcb1deca317d35c16018d2c28d167d"
+      "seenAt": "2026-08-08T15:51:49.528043Z",
+      "stateId": "084c5b7442ceb53bb345ab46a068106e482396ccc77c2e85d15d0ffb21126bc5"
     },
     "review|modelcontextprotocol/servers#4545": {
       "legacy": true,
@@ -1253,7 +1253,7 @@
       "seenAt": "2026-08-06T10:09:13.778625Z"
     }
   },
-  "digest": "79dbf4d5803df5dd2c75fe162337cf0541f602276b55ab6a408ade8118711357",
+  "digest": "7d6b6a0770b6b986998832612051ad362bc18656ea35ae117c482dbd30753435",
   "events": [
     {
       "attempts": 1,
@@ -16572,9 +16572,51 @@
       "runId": "scan-20260808T145251Z-82a78a8d7515",
       "sentAt": "2026-08-08T14:56:55.953756Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "modelcontextprotocol/csharp-sdk#1799"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "f3d6123999f0f2fe6c3ee82ae0f8c152b24d8871297e914f3a5752545fc0ce1e",
+          "key": "modelcontextprotocol/csharp-sdk#1799",
+          "kind": "review",
+          "stateId": "084c5b7442ceb53bb345ab46a068106e482396ccc77c2e85d15d0ffb21126bc5"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[modelcontextprotocol/csharp-sdk#1799](https://github.com/modelcontextprotocol/csharp-sdk/issues/1799) server/discover fallback fails when 400 body isn't JSON-RPC shaped (non-JSON-RPC error envelope)**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue describes a real fallback failure for non-JSON-RPC 400 bodies, but root cause is not pinpointed and existing PR #1791 likely overlaps. Maintainer review needed to avoid duplicate work.\n改动：Modify StreamableHttpClientSessionTransport or ConnectAsync to handle non-JSON-RPC 400 bodies as fallback-triggering errors\n验证：Add regression test with mocked HTTP 400 returning non-JSON-RPC JSON body, assert fallback to initialize\n风险：Existing PR #1791 may already fix this; overlapping changes could cause merge conflicts\n竞争：发现 PR #1791 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 10，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-08T15:51:49.528043Z",
+      "eventId": "29d24c00991a5be8efd566843fe7ff4f3e2367d25a5b2936a7737fad40a590ae",
+      "idempotencyKey": "29d24c00991a5be8efd566843fe7ff4f3e2367d25a5b2936a7",
+      "kind": "review",
+      "runId": "scan-20260808T154959Z-3f6e1336fa6b",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-08T14:56:27.651673Z",
+  "generatedAt": "2026-08-08T15:51:49.890240Z",
   "newEventCount": 0,
   "version": "notification_outbox_v2"
 }

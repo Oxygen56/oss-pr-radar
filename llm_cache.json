@@ -13392,6 +13392,29 @@
     ],
     "why": "Issue provides a clear root cause: connection-refused is mapped to retryable NetworkError, and Ollama's generous retry budget causes ~2min delay. Maintainer confirms the behavior and discusses trade-offs, but no PR exists. A focused fix distinguishing permanent connection failures from transient network errors is actionable and testable."
   },
+  "ef1188aea5cf13d9e35f91a21cbf33c213840ab48c10192b00b3dc1df3b3a641": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify StreamableHttpClientSessionTransport or ConnectAsync to handle non-JSON-RPC 400 bodies as fallback-triggering errors"
+    ],
+    "risks": [
+      "Existing PR #1791 may already fix this; overlapping changes could cause merge conflicts"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 12,
+    "test_plan": [
+      "Add regression test with mocked HTTP 400 returning non-JSON-RPC JSON body, assert fallback to initialize"
+    ],
+    "unknowns": [
+      "Exact throw site and whether PR #1791 fully addresses this case"
+    ],
+    "why": "Issue describes a real fallback failure for non-JSON-RPC 400 bodies, but root cause is not pinpointed and existing PR #1791 likely overlaps. Maintainer review needed to avoid duplicate work."
+  },
   "ef2a3aac9a0da78de7a841ebfdf4a9e060db943d6af01c8d2e8ab2bf83b9c506": {
     "confidence": 0.6,
     "contradictions": [],
