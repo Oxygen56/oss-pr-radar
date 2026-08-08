@@ -328,6 +328,10 @@
       "seenAt": "2026-08-07T18:10:51.015935Z",
       "stateId": "dbea5e4ac6d508e7928c5bd9e02b5a3f50754cebb7d817122a5cb9e3ef4ae3ec"
     },
+    "review|anomalyco/opencode#41306": {
+      "seenAt": "2026-08-08T17:59:15.864383Z",
+      "stateId": "65ea435133524a4669d965d0299ed5b27414cd4f639914ad250dd54ab33137c1"
+    },
     "review|areal-project/AReaL#1565": {
       "legacy": true,
       "seenAt": "2026-08-05T19:24:11.033036Z"
@@ -521,8 +525,8 @@
       "stateId": "9f22e19425b94763b8419685a9bd6dd9f1f3dc9292ddc22271dba775795a39fb"
     },
     "review|microsoft/agent-framework#7570": {
-      "seenAt": "2026-08-07T13:48:27.879165Z",
-      "stateId": "0680abc1ef1124a66cccdd6c29c2b12aee529c5762c367364539db1e9e21ca82"
+      "seenAt": "2026-08-08T17:59:15.864383Z",
+      "stateId": "ba484273ecee85a73b3588e11bf9f850a0f632d48df728f6bbc7ea8a6ac969d9"
     },
     "review|modelcontextprotocol/csharp-sdk#1799": {
       "seenAt": "2026-08-08T15:51:49.528043Z",
@@ -1265,7 +1269,7 @@
       "seenAt": "2026-08-06T10:09:13.778625Z"
     }
   },
-  "digest": "be4ff2a161115867772fe998fa96fc2f3bea12a191f8e2abd6eb63482eb1b8c8",
+  "digest": "74e88532e1e964b1e6e1cc7b24801f396ada1802eb4a6d3671aeb8cf08889ec1",
   "events": [
     {
       "attempts": 1,
@@ -16791,9 +16795,69 @@
       "runId": "scan-20260808T174941Z-49104278ee57",
       "sentAt": "2026-08-08T17:52:07.142439Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "anomalyco/opencode#41306",
+        "microsoft/agent-framework#7570"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "362977b306234b9a87a65beee509856505d6ef4960f7ec4fc03606e58e4de557",
+          "key": "anomalyco/opencode#41306",
+          "kind": "review",
+          "stateId": "65ea435133524a4669d965d0299ed5b27414cd4f639914ad250dd54ab33137c1"
+        },
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "ee11908a86c3f5472f956d7f84e9ad0901f15fc55ae33e89913d77fd2ba6237a",
+          "key": "microsoft/agent-framework#7570",
+          "kind": "review",
+          "stateId": "ba484273ecee85a73b3588e11bf9f850a0f632d48df728f6bbc7ea8a6ac969d9"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[anomalyco/opencode#41306](https://github.com/anomalyco/opencode/issues/41306) [Bug] deepseek-v4-flash still broken on Console Go after #41211: gateway forwards model name with a leading space (verified 2026-08-09)**\n建议：WAIT_MAINTAINER | 分数：11\n价值：The issue provides strong evidence of a server-side forwarding bug (leading space in model name) with reproducible steps and cross-client verification. However, the deterministic gate requires HUMAN_REVIEW, and the open PR and related issue lookups timed out, so duplicate work cannot be excluded. The root cause is plausible but not yet confirmed by maintainers.\n改动：Fix model-name forwarding in the Console Go gateway to trim leading spaces before upstream request.\n验证：Add a regression test that sends a request with model 'deepseek-v4-flash' to the gateway and asserts the upstream request contains the exact model name without leading space.\n风险：Potential duplicate fix if an existing PR addresses the same issue; maintainer design preferences may affect the fix approach.\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 4，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[microsoft/agent-framework#7570](https://github.com/microsoft/agent-framework/issues/7570) Python: [Bug]: APPROVAL_RESUME_NOT_FOUND leaves the interrupt in the thread snapshot, so the unanswerable approval card is re-offered on every connect**\n建议：WAIT_MAINTAINER | 分数：15\n价值：Issue describes a clear bug with exact location and a reproduced failing test, but the deterministic gate requires HUMAN_REVIEW and design confirmation is needed before implementation.\n改动：Modify _agent_run.py to clear snapshot interrupts for APPROVAL_RESUME_NOT_FOUND；Add regression test for NOT_FOUND clearing snapshot interrupt\n验证：Run the provided failing test test_approval_resume_not_found_clears_snapshot_interrupt；Add a test that verifies snapshot interrupt is cleared after NOT_FOUND resume\n风险：Potential behavior change for clients relying on the interrupt being present；Need to confirm maintainer preference on clearing snapshot for NOT_FOUND\n竞争：未发现相关 open PR\n下一步：先在 issue 下请求分配/确认方案，获批后再开 PR。\n证据：复现信号 4，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-08T17:59:15.864383Z",
+      "eventId": "b88c66570528a3bdc11c04968eb7d01920f7e81e0fa69a5f0b227202accf1f9b",
+      "idempotencyKey": "b88c66570528a3bdc11c04968eb7d01920f7e81e0fa69a5f0b",
+      "kind": "review",
+      "runId": "scan-20260808T175703Z-69b40d000dab",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-08T17:51:39.851478Z",
+  "generatedAt": "2026-08-08T17:59:16.214833Z",
   "newEventCount": 0,
   "version": "notification_outbox_v2"
 }
