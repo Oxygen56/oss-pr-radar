@@ -2640,7 +2640,7 @@ class RadarLedger:
                 (pr_url, now, permit_id),
             )
             connection.execute(
-                """UPDATE publication_requests SET status='CONSUMED',updated_at=?
+                """UPDATE publication_requests SET status='CONSUMED',reason=NULL,updated_at=?
                    WHERE request_id=?""",
                 (now, permit["request_id"]),
             )
@@ -2704,7 +2704,7 @@ class RadarLedger:
                 (pr_url, now, permit_id),
             )
             connection.execute(
-                """UPDATE publication_requests SET status='CONSUMED',updated_at=?
+                """UPDATE publication_requests SET status='CONSUMED',reason=NULL,updated_at=?
                    WHERE request_id=?""",
                 (now, permit["request_id"]),
             )

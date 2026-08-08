@@ -1082,3 +1082,13 @@ def test_post_push_confirmation_recovers_legacy_head_drift_failure(tmp_path):
         request_digest="confirmation-request",
     )
     assert effect["status"] == "RECONCILE_REQUIRED"
+
+    store.succeed_pull_request_effect(
+        effect_id=effect["effect_id"],
+        permit_id=permit_id,
+        pr_url="https://github.com/a/b/pull/9",
+        result={"ok": True, "prUrl": "https://github.com/a/b/pull/9"},
+    )
+    consumed = store.publication_request(request_id)
+    assert consumed["status"] == "CONSUMED"
+    assert consumed["reason"] is None
