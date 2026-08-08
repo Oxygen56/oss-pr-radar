@@ -4375,6 +4375,30 @@
     ],
     "why": "Issue reports multiple tool-calling problems (error messages, disabled tools leaking, MCP error handling) but lacks a concrete reproduction and root cause. The candidate's expected changes are vague and the risk notes mention maintainer design preference, indicating design confirmation is needed."
   },
+  "4cb1b74a0c417bc74a0ed2b314ddfbc209567bdf812b6f292c1fa047a074bfa7": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify maybe_download_model() in python/sglang/multimodal_gen/runtime/utils/hf_diffusers_utils.py to validate that a local snapshot contains required component files (e.g., model_index.json plus expected subfolders) before returning it, or fall back to remote download when incomplete."
+    ],
+    "risks": [
+      "Changing cache validation may affect performance for legitimate cache hits; need to ensure minimal overhead and no breaking of existing offline usage."
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Add a regression test that first runs maybe_download_model_index() to create a metadata-only cache entry, then calls maybe_download_model() with local_files_only=True and asserts that it does not return the stub path and instead downloads the full model."
+    ],
+    "unknowns": [
+      "Whether an existing open PR already addresses this issue (open PR lookup timed out).",
+      "Maintainer preference on the fix approach (e.g., whether to change cache validation or add a separate check)."
+    ],
+    "why": "The issue identifies a concrete bug in the cache-first fast path of maybe_download_model() in hf_diffusers_utils.py, with a clear root cause (metadata-only snapshot treated as complete) and a public reproduction. However, the deterministic gate requires HUMAN_REVIEW, and the open PR and related issue lookups timed out, so duplicate work cannot be excluded. Maintainer design preference is also unconfirmed."
+  },
   "4d7883194b5d9b6c505daef55aa11f0eef27e7175f23992759144a5e5df51ab2": {
     "confidence": 0.7,
     "contradictions": [],
@@ -11194,6 +11218,34 @@
     ],
     "why": "Issue reports a CLI argument parsing error for MiniMax-H3, but a comment suggests a workaround (adding --model-type diffusion). The root cause is likely missing model-type detection or default, but no maintainer confirmation or design preference is available. Open PR and related issue lookups failed, so duplicate work cannot be excluded."
   },
+  "d13641da6e8c0502fa7b871d695f17af0f145dc4d3e6659e928e72c153bb4f6b": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify repairOrphanedInputItems or add a new normalization pass in src/adapters/openai-responses.ts to reorder function_call_output to immediately follow its matching function_call, possibly gated by a provider predicate."
+    ],
+    "risks": [
+      "Reordering may change model-visible semantics for providers that tolerate interleaving, requiring a provider-specific gate.",
+      "The developer message may carry context that the model needs positioned before the tool output; moving it could affect behavior."
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "test_plan": [
+      "Add a unit test that constructs a Responses history with function_call, developer message, function_call_output and verifies the output is reordered correctly.",
+      "Add an integration test against a mock DeepSeek endpoint to confirm the 400 is resolved.",
+      "Run existing adapter tests to ensure no regression for providers that tolerate interleaving."
+    ],
+    "unknowns": [
+      "Exact wire-level request body from a failing turn (maintainer requested).",
+      "Whether the fix should be gated by provider predicate or applied universally."
+    ],
+    "why": "The issue is a well-evidenced provider compatibility bug with a clear root cause (interleaved developer message between function_call and function_call_output) and a proposed fix (ordering normalization in the adapter). However, the maintainer has explicitly stated they will pick it up and requested additional wire-level evidence, indicating active maintainer involvement and a need for design confirmation on blast radius and semantic impact. This is not a clean new candidate for external work."
+  },
   "d1e4c1f40649172f728aafd3439cb993ef0c841076f8a72f9b1010210d1b5151": {
     "confidence": 0.7,
     "contradictions": [
@@ -11385,6 +11437,34 @@
       "Whether PR #6811 will be updated with tests"
     ],
     "why": "Issue clearly identifies a root cause: importlib.metadata.version('mem0ai') fails without installed distribution, breaking source-tree imports and pytest. Existing PR #6811 directly addresses this but lacks regression tests, leaving room for a materially better PR with tests and robust fallback."
+  },
+  "d3fd2440a660b5cc7a01e8fe71ce0ff3611d6c4ac5c79f5c9022015680329bb4": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "MCP HTTP transport layer to capture and replay Mcp-Session-Id header",
+      "Add per-server session state management"
+    ],
+    "risks": [
+      "Potential API behavior changes if session handling is broadened",
+      "Unknown existing PR or design preferences"
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Create a failing test using a mock MCP server that requires session ID",
+      "Run existing MCP client unit tests and integration tests"
+    ],
+    "unknowns": [
+      "Open PR status (lookup timed out)",
+      "Related issue status (lookup timed out)",
+      "Maintainer design preferences on session lifecycle"
+    ],
+    "why": "The issue clearly describes a bug in MCP client session ID handling with a concrete reproduction and proposed fix. However, the deterministic gate requires HUMAN_REVIEW, and the open PR and related issue lookups timed out, so duplicate work cannot be excluded. Maintainer approval is absent, and design confirmation is needed for the session lifecycle behavior."
   },
   "d41963711d07b75e1ed2c72b232f87019498a392781e481eee0dbe38985a3cb2": {
     "confidence": 0.8,
