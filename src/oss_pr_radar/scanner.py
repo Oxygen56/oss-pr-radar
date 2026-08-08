@@ -27,6 +27,7 @@ from urllib.parse import quote
 
 from .claims import detect_claims
 from .contracts import CANDIDATE_SCHEMA, SCAN_SCHEMA, contract_digest
+from .evidence import assess_hardware_requirements
 from .llm import DeepSeekEvaluator
 from .messages import add_chinese_explanations
 from .policy import SCANNER_DECISION_REVISION, decision_contract_digest
@@ -688,13 +689,6 @@ UNTRUSTED_TRIAGE_INSTRUCTION_RE = re.compile(
     r"secret|config(?:uration)?)\b)",
     re.I | re.S,
 )
-UNAVAILABLE_HARDWARE_RE = re.compile(
-    r"\b(rocm|gfx9\d+|mi(?:250|300|325|350)x?|xpu|gaudi|habana|tpu|"
-    r"ascend|cann|apple metal|mps|b200|b300|gb10|gb200|gb300|h100|h200|"
-    r"sm121|dgx[ -]spark)\b",
-    re.I,
-)
-AVAILABLE_HARDWARE_RE = re.compile(r"\b(rtx\s*)?(4090|5090)|\b(a100|v100)\b", re.I)
 KERNEL_RE = re.compile(
     r"\b(kernel|rmsnorm|layernorm|triton|cuda|flashinfer|flash attention|"
     r"fp8|mxfp4|quantization|numerical|argmax|batch invariant)\b",
@@ -1530,32 +1524,7 @@ def should_skip_seen(
 
 def requires_unavailable_hardware(title: str, labels_text: str, body: str) -> bool:
     """Skip only issues whose unavailable hardware is part of the actual scope."""
-
-    scoped = f"{title}\n{labels_text}"
-    has_scoped_hardware = bool(UNAVAILABLE_HARDWARE_RE.search(scoped))
-    has_body_hardware = bool(UNAVAILABLE_HARDWARE_RE.search(body))
-    if not has_scoped_hardware and not has_body_hardware:
-        return False
-    if re.search(
-        r"\bnot\s+(?:rocm|cuda|hardware|gpu|backend)[- ]specific\b|"
-        r"\b(?:reproduced|observed)\s+(?:across|on)\s+(?:both|multiple)\s+"
-        r"(?:backends?|platforms?|gpu vendors?)\b",
-        body[:5000],
-        re.I,
-    ):
-        return False
-    if AVAILABLE_HARDWARE_RE.search(f"{scoped}\n{body}"):
-        return False
-    if has_scoped_hardware:
-        return True
-    requirement = re.compile(
-        rf"(?:requires?|exclusively|specific to|only reproduc(?:e|es|ed|ible) on|"
-        rf"reproduc(?:e|es|ed|ible) only on)"
-        rf".{{0,50}}{UNAVAILABLE_HARDWARE_RE.pattern}|"
-        rf"{UNAVAILABLE_HARDWARE_RE.pattern}.{{0,35}}(?:only|required|specific)",
-        re.I | re.S,
-    )
-    return bool(requirement.search(body[:3000]))
+    return not assess_hardware_requirements(title, labels_text, body)["compatible"]
 
 
 def is_desktop_peripheral_issue(title: str, labels_text: str, body: str) -> bool:

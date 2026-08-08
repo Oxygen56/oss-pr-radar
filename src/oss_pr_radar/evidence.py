@@ -18,9 +18,41 @@ HARDWARE_PATTERNS = {
     "b100": re.compile(r"\bB100\b", re.I),
     "b200": re.compile(r"\bB200\b", re.I),
     "b300": re.compile(r"\bB300\b", re.I),
+    "gb10": re.compile(r"\bGB10\b", re.I),
+    "gb200": re.compile(r"\bGB200\b", re.I),
+    "gb300": re.compile(r"\bGB300\b", re.I),
+    "sm121": re.compile(r"\bSM121\b", re.I),
+    "dgx_spark": re.compile(r"\bDGX[ -]Spark\b", re.I),
     "multi_node": re.compile(r"\bmulti[- ]node\b|\bRDMA\b|\bInfiniBand\b", re.I),
-    "rocm": re.compile(r"\bROCm\b|\bMI(?:250|300|325)\b", re.I),
+    "rocm": re.compile(r"\bROCm\b|\bGFX9\d+\b|\bMI(?:250|300|325|350)X?\b", re.I),
+    "xpu": re.compile(r"\bXPU\b", re.I),
+    "gaudi": re.compile(r"\bGaudi\b|\bHabana\b", re.I),
+    "tpu": re.compile(r"\bTPU\b", re.I),
+    "ascend": re.compile(r"\bAscend\b|\bCANN\b", re.I),
+    "apple_metal": re.compile(r"\bApple Metal\b|\bMPS\b", re.I),
 }
+DEFAULT_HARDWARE_INVENTORY = frozenset({"4090", "5090", "a100", "v100"})
+HARDWARE_SCOPE_EXEMPTION_RE = re.compile(
+    r"\bnot\s+(?:rocm|cuda|hardware|gpu|backend)[- ]specific\b|"
+    r"\b(?:reproduced|observed)\s+(?:across|on)\s+(?:both|multiple)\s+"
+    r"(?:backends?|platforms?|gpu vendors?)\b",
+    re.I,
+)
+HARDWARE_REQUIREMENT_RE = re.compile(
+    r"\b(?:requires?|required|must|minimum|at least|exclusively|specific(?:ally)? to|"
+    r"only reproduc(?:e|es|ed|ible) on|reproduc(?:e|es|ed|ible) only on)\b",
+    re.I,
+)
+HARDWARE_SENSITIVE_VALIDATION_RE = re.compile(
+    r"\b(?:benchmark|throughput|latency|bandwidth|ttft|tokens?/s|ops?|iops|"
+    r"gb/s|mb/s|performance|profil(?:e|ing)|nfsiostat|mountstats|"
+    r"fragment(?:ed|ation)|kernel)\b",
+    re.I,
+)
+HARDWARE_ENVIRONMENT_SECTION_RE = re.compile(
+    r"(?ims)^#{1,6}\s*(?:environment|hardware|system(?: information| info)?|"
+    r"reproduction environment)\s*$\n(.*?)(?=^#{1,6}\s|\Z)"
+)
 
 
 @dataclass(frozen=True)
@@ -43,12 +75,42 @@ class EvidenceBundle:
         return asdict(self)
 
 
-def _hardware(text: str, inventory: set[str]) -> dict[str, Any]:
-    required = sorted(name for name, pattern in HARDWARE_PATTERNS.items() if pattern.search(text))
-    unavailable = sorted(name for name in required if name not in inventory)
+def assess_hardware_requirements(
+    title: str,
+    labels: str,
+    body: str,
+    inventory: set[str] | None = None,
+) -> dict[str, Any]:
+    """Distinguish required hardware from incidental environment mentions."""
+
+    configured_inventory = DEFAULT_HARDWARE_INVENTORY if inventory is None else inventory
+    available = {item.casefold() for item in configured_inventory}
+    scoped = f"{title}\n{labels}"
+    non_specific = bool(HARDWARE_SCOPE_EXEMPTION_RE.search(body[:5000]))
+    environment = "\n".join(HARDWARE_ENVIRONMENT_SECTION_RE.findall(body[:12000]))
+    hardware_sensitive = bool(HARDWARE_SENSITIVE_VALIDATION_RE.search(f"{title}\n{body[:8000]}"))
+    mentioned: set[str] = set()
+    required: set[str] = set()
+
+    for name, pattern in HARDWARE_PATTERNS.items():
+        if pattern.search(f"{scoped}\n{body}"):
+            mentioned.add(name)
+        if pattern.search(scoped) and not non_specific:
+            required.add(name)
+        for match in pattern.finditer(body[:12000]):
+            context = body[max(0, match.start() - 90) : min(len(body), match.end() + 90)]
+            if HARDWARE_REQUIREMENT_RE.search(context):
+                required.add(name)
+                break
+        if hardware_sensitive and environment and pattern.search(environment) and not non_specific:
+            required.add(name)
+
+    required_list = sorted(required)
+    unavailable = sorted(name for name in required_list if name not in available)
     return {
-        "required": required,
-        "inventory": sorted(inventory),
+        "mentioned": sorted(mentioned),
+        "required": required_list,
+        "inventory": sorted(available),
         "compatible": not unavailable,
         "unavailable": unavailable,
     }
@@ -126,11 +188,19 @@ def collect_evidence(
         issue=issue,
     )
     approvals = detect_maintainer_approval(comments)
-    text = "\n".join(
-        [str(issue.get("title") or ""), str(issue.get("body") or "")]
-        + [str(item.get("body") or "") for item in comments]
+    labels = ", ".join(
+        str(item.get("name") or "") if isinstance(item, dict) else str(item)
+        for item in issue.get("labels") or []
     )
-    hardware = _hardware(text, hardware_inventory or {"4090", "5090", "a100", "v100"})
+    body = "\n".join(
+        [str(issue.get("body") or "")] + [str(item.get("body") or "") for item in comments]
+    )
+    hardware = assess_hardware_requirements(
+        str(issue.get("title") or ""),
+        labels,
+        body,
+        hardware_inventory,
+    )
     payload = {
         "repo": repo,
         "issueNumber": issue_number,

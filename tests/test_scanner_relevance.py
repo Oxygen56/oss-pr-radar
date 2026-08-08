@@ -51,6 +51,76 @@ def test_explicit_unavailable_hardware_requirement_is_preserved():
     )
 
 
+def test_performance_reproduction_environment_requires_available_hardware():
+    assert requires_unavailable_hardware(
+        "[BUG]: KVBM disk to device onboarding fragments NIXL descriptors",
+        "bug, backend::vllm, kvbm",
+        """
+### Steps to Reproduce
+
+Serve a model with KVBM on NFS, force a disk read, and compare READ throughput.
+
+### Environment
+
+2x B200, TP=2, NVFP4 model, NIXL POSIX backend, NFSv4.2.
+
+### Actual Behavior
+
+The onboard reaches only 240 MB/s and requires profiling with nfsiostat.
+""",
+    )
+
+
+def test_performance_environment_hardware_filter_runs_before_candidate_scoring(tmp_path):
+    radar = Radar(
+        datetime(2026, 8, 9, tzinfo=UTC),
+        2,
+        tmp_path / "seen.json",
+        "chat",
+        dry_run=True,
+        notify=False,
+    )
+    base = {
+        "repo": "ai-dynamo/dynamo",
+        "num": 12750,
+        "title": "[BUG]: KVBM disk to device onboarding fragments NIXL descriptors",
+        "url": "https://github.com/ai-dynamo/dynamo/issues/12750",
+    }
+    issue = {
+        "state": "open",
+        "title": base["title"],
+        "body": """
+### Describe the Bug
+
+Disk reads emit one descriptor per layer and throughput is ten times lower than writes.
+
+### Steps to Reproduce
+
+Serve a model with KVBM on NFS, force a disk read, and compare READ throughput.
+
+### Environment
+
+2x B200, TP=2, NVFP4 model, NIXL POSIX backend, NFSv4.2.
+
+### Expected Behavior
+
+One descriptor per block and line-rate throughput.
+
+### Actual Behavior
+
+The onboard reaches only 240 MB/s; nfsiostat shows fragmented requests.
+""",
+        "labels": [{"name": "bug"}, {"name": "backend::vllm"}],
+        "assignees": [],
+        "user": {"login": "reporter"},
+    }
+
+    candidate, reason = radar.score_issue(base, issue, [])
+
+    assert candidate is None
+    assert reason == "hardware_unavailable"
+
+
 def test_security_label_is_filtered_before_candidate_scoring(tmp_path):
     radar = Radar(
         datetime(2026, 8, 4, tzinfo=UTC),
