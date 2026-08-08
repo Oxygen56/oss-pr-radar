@@ -12,8 +12,8 @@ from .contracts import contract_digest, validate_report
 from .policy import SCANNER_DECISION_REVISION, decision_contract_digest
 from .util import canonical_json, iso_z, parse_time, sha256_json, sha256_text
 
-QUEUE_VERSION = "dispatch_intents_v5"
-INTENT_VERSION = "dispatch_intent_v5"
+QUEUE_VERSION = "dispatch_intents_v6"
+INTENT_VERSION = "dispatch_intent_v6"
 LEGACY_QUEUE_CONTRACTS = {
     "dispatch_intents_v4": {
         "intentVersion": "dispatch_intent_v4",
@@ -22,7 +22,15 @@ LEGACY_QUEUE_CONTRACTS = {
             "67d712a249b740b0516d2768493b9a74f0b664fc19bea1d73639db20bc3827b2"
         ),
         "contractDigest": ("bb474c033eab57bb01cd4a6bc377966ba8e80c3fd6ea97c5065d161763301ecc"),
-    }
+    },
+    "dispatch_intents_v5": {
+        "intentVersion": "dispatch_intent_v5",
+        "scannerVersion": "oss_pr_radar_v31_cross_repo_duplicate_gate",
+        "decisionContractDigest": (
+            "84e6679669c6896f2aa42250f2e60aac4fd537a02f822eb95c8fc4498acbdb2b"
+        ),
+        "contractDigest": ("1259820e1344ef496d0aa936ae10c40b939621e8d09ce78e64b07f9f65396238"),
+    },
 }
 SKILL = "[$gh-issue-pr](/Users/oxygen/.codex/skills/gh-issue-pr/SKILL.md)"
 ACTIONABLE_DECISIONS = {"NEW_CLEAN_CANDIDATE", "PR_COMPETITION_OPPORTUNITY"}
@@ -156,6 +164,7 @@ def build_queue(
         issue_url = str(candidate["url"])
         decision_basis = {
             "key": key,
+            "issueUpdatedAt": candidate.get("issue_updated"),
             "track": candidate.get("track"),
             "category": candidate.get("category"),
             "gateDecision": candidate.get("gate_decision"),
@@ -179,6 +188,7 @@ def build_queue(
             "repo": candidate["repo"],
             "issueNumber": candidate["num"],
             "issueUrl": issue_url,
+            "issueUpdatedAt": candidate["issue_updated"],
             "title": candidate["title"],
             "track": candidate.get("track"),
             "category": candidate["category"],
@@ -262,6 +272,13 @@ def verify_queue(
         signer.verify(item)
         if item.get("version") != expected["intentVersion"]:
             raise SignatureError("unsupported dispatch intent")
+        if version == QUEUE_VERSION:
+            try:
+                parse_time(str(item["issueUpdatedAt"]))
+            except (KeyError, TypeError, ValueError) as exc:
+                raise SignatureError("dispatch intent issue update watermark is invalid") from exc
+            if not item.get("policyDigest"):
+                raise SignatureError("dispatch intent policy watermark is invalid")
         if item.get("scannerVersion") != expected["scannerVersion"]:
             raise SignatureError("stale intent scanner revision")
         if item.get("decisionContractDigest") != expected["decisionContractDigest"]:

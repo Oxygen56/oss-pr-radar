@@ -311,6 +311,7 @@ def sync_queue(path: Path = LEDGER_PATH) -> dict[str, Any]:
     queue = fetch_cloud_queue()
     intents = verify_queue(queue, DispatchSigner(signing_key()))
     store = ledger(path)
+    stale_terminal = store.reconcile_terminal_intents()
     superseded = store.reconcile_pending(
         {str(item["intentId"]) for item in intents if item.get("intentId")}
     )
@@ -321,6 +322,7 @@ def sync_queue(path: Path = LEDGER_PATH) -> dict[str, Any]:
         "verified": len(intents),
         "inserted": inserted,
         "superseded": len(superseded),
+        "staleTerminalRejected": len(stale_terminal),
     }
 
 

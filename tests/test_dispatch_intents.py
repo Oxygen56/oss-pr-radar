@@ -32,6 +32,8 @@ def candidate(**updates):
         "num": 42,
         "url": "https://github.com/example/project/issues/42",
         "title": "Runtime bug",
+        "issue_updated": "2026-08-04T00:00:00Z",
+        "policy_digest": "policy-digest",
         "track": "agent_ai_infra",
         "category": "NEW_CLEAN_CANDIDATE",
         "score": 9,
@@ -65,6 +67,7 @@ def test_builds_signed_promptless_envelope():
     intent = result["intents"][0]
     assert "prompt" not in intent
     assert intent["sourceSha"] == "abc123"
+    assert intent["issueUpdatedAt"] == "2026-08-04T00:00:00Z"
     assert intent["scannerVersion"] == SCANNER_DECISION_REVISION
     assert intent["decisionContractDigest"] == decision_contract_digest()
     assert len(intent["promptDigest"]) == 64
@@ -256,7 +259,31 @@ def test_tampering_and_expiry_fail_closed():
     assert verify_queue(fresh, DispatchSigner(KEY), now=NOW + timedelta(hours=3)) == []
 
 
-def test_signed_v4_queue_remains_readable_during_v5_deployment():
+def test_v6_intent_requires_issue_update_watermark():
+    signer = DispatchSigner(KEY)
+    queue = MODULE.build(report(candidate()), signing_key=KEY, now=NOW)
+    broken = dict(queue["intents"][0])
+    broken.pop("issueUpdatedAt")
+    queue["intents"] = [signer.seal(broken)]
+    queue = signer.seal(queue)
+
+    with pytest.raises(SignatureError, match="issue update watermark"):
+        verify_queue(queue, signer, now=NOW)
+
+
+def test_v6_intent_requires_policy_watermark():
+    signer = DispatchSigner(KEY)
+    queue = MODULE.build(report(candidate()), signing_key=KEY, now=NOW)
+    broken = dict(queue["intents"][0])
+    broken["policyDigest"] = ""
+    queue["intents"] = [signer.seal(broken)]
+    queue = signer.seal(queue)
+
+    with pytest.raises(SignatureError, match="policy watermark"):
+        verify_queue(queue, signer, now=NOW)
+
+
+def test_signed_v4_queue_remains_readable_during_v6_deployment():
     signer = DispatchSigner(KEY)
     legacy = LEGACY_QUEUE_CONTRACTS["dispatch_intents_v4"]
     issue_url = "https://github.com/example/project/issues/42"
@@ -280,6 +307,40 @@ def test_signed_v4_queue_remains_readable_during_v5_deployment():
     queue = signer.seal(
         {
             "version": "dispatch_intents_v4",
+            "scannerVersion": legacy["scannerVersion"],
+            "decisionContractDigest": legacy["decisionContractDigest"],
+            "contractDigest": legacy["contractDigest"],
+            "intents": [intent],
+        }
+    )
+
+    assert verify_queue(queue, signer, now=NOW) == [intent]
+
+
+def test_signed_v5_queue_remains_readable_during_v6_deployment():
+    signer = DispatchSigner(KEY)
+    legacy = LEGACY_QUEUE_CONTRACTS["dispatch_intents_v5"]
+    issue_url = "https://github.com/example/project/issues/42"
+    intent = signer.seal(
+        {
+            "version": legacy["intentVersion"],
+            "intentId": "legacy-intent-v5",
+            "key": "example/project#42",
+            "repo": "example/project",
+            "issueNumber": 42,
+            "issueUrl": issue_url,
+            "scannerVersion": legacy["scannerVersion"],
+            "decisionContractDigest": legacy["decisionContractDigest"],
+            "contractDigest": legacy["contractDigest"],
+            "promptDigest": sha256_text(canonical_prompt(issue_url)),
+            "issuedAt": iso_z(NOW),
+            "expiresAt": iso_z(NOW + timedelta(hours=2)),
+            "status": "PENDING",
+        }
+    )
+    queue = signer.seal(
+        {
+            "version": "dispatch_intents_v5",
             "scannerVersion": legacy["scannerVersion"],
             "decisionContractDigest": legacy["decisionContractDigest"],
             "contractDigest": legacy["contractDigest"],

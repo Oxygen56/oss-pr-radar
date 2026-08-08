@@ -202,11 +202,101 @@ class RadarLedger:
                     now,
                 )
 
+    @staticmethod
+    def _no_go_watermark(connection: sqlite3.Connection, key: str) -> dict[str, str | None] | None:
+        terminal = connection.execute(
+            """SELECT o.stage,MAX(e.created_at) AS terminal_at
+               FROM opportunities o
+               LEFT JOIN events e
+                 ON e.opportunity_key=o.key AND e.event_type='AUDIT_NO_GO'
+               WHERE o.key=?
+               GROUP BY o.key,o.stage""",
+            (key,),
+        ).fetchone()
+        if not terminal or terminal["stage"] != "AUDIT_NO_GO" or not terminal["terminal_at"]:
+            return None
+        audit = connection.execute(
+            """SELECT json_extract(
+                     payload_json,'$.liveAudit.evidence.issue.updated_at'
+                   ) AS issue_updated_at
+               FROM events
+               WHERE opportunity_key=? AND event_type='AUDIT_PASS'
+                 AND created_at<=?
+                 AND json_extract(
+                   payload_json,'$.liveAudit.evidence.issue.updated_at'
+                 ) IS NOT NULL
+               ORDER BY created_at DESC LIMIT 1""",
+            (key, terminal["terminal_at"]),
+        ).fetchone()
+        dispatched_intent = connection.execute(
+            """SELECT json_extract(payload_json,'$.policyDigest') AS policy_digest
+               FROM intents
+               WHERE opportunity_key=? AND issued_at<=?
+               ORDER BY issued_at DESC LIMIT 1""",
+            (key, terminal["terminal_at"]),
+        ).fetchone()
+        return {
+            "terminalAt": str(terminal["terminal_at"]),
+            "terminalIssueUpdatedAt": (
+                str(audit["issue_updated_at"]) if audit and audit["issue_updated_at"] else None
+            ),
+            "terminalPolicyDigest": (
+                str(dispatched_intent["policy_digest"])
+                if dispatched_intent and dispatched_intent["policy_digest"]
+                else None
+            ),
+        }
+
+    @staticmethod
+    def _intent_is_stale(
+        intent: dict[str, Any], *, issued_at: str, watermark: dict[str, str | None] | None
+    ) -> bool:
+        if not watermark:
+            return False
+        terminal_at = str(watermark["terminalAt"])
+        terminal_issue_updated = watermark.get("terminalIssueUpdatedAt")
+        terminal_policy_digest = watermark.get("terminalPolicyDigest")
+        issue_updated = intent.get("issueUpdatedAt")
+        issue_unchanged = bool(
+            terminal_issue_updated
+            and issue_updated
+            and parse_time(str(issue_updated)) <= parse_time(str(terminal_issue_updated))
+        )
+        policy_unchanged = bool(
+            not terminal_policy_digest
+            or not intent.get("policyDigest")
+            or intent.get("policyDigest") == terminal_policy_digest
+        )
+        return (issue_unchanged and policy_unchanged) or parse_time(issued_at) <= parse_time(
+            terminal_at
+        )
+
     def enqueue(self, intent: dict[str, Any]) -> bool:
         now = iso_z(datetime.now(UTC))
         key = str(intent["key"])
         payload = canonical_json(intent)
         with self.transaction() as connection:
+            watermark = self._no_go_watermark(connection, key)
+            if self._intent_is_stale(
+                intent,
+                issued_at=str(intent["issuedAt"]),
+                watermark=watermark,
+            ):
+                assert watermark is not None
+                self._event(
+                    connection,
+                    key,
+                    "STALE_INTENT_IGNORED",
+                    str(intent["intentId"]),
+                    {
+                        "intentId": intent["intentId"],
+                        "issuedAt": intent["issuedAt"],
+                        "issueUpdatedAt": intent.get("issueUpdatedAt"),
+                        **watermark,
+                    },
+                    now,
+                )
+                return False
             existing = connection.execute(
                 """SELECT status,expires_at,lease_until FROM intents
                    WHERE intent_id=?""",
@@ -266,6 +356,14 @@ class RadarLedger:
                      issue_url=excluded.issue_url,title=excluded.title,
                      updated_at=excluded.updated_at,snapshot_id=excluded.snapshot_id,
                      decision_digest=excluded.decision_digest,
+                     stage=CASE
+                       WHEN opportunities.stage='AUDIT_NO_GO' THEN 'QUALIFIED'
+                       ELSE opportunities.stage
+                     END,
+                     terminal_reason=CASE
+                       WHEN opportunities.stage='AUDIT_NO_GO' THEN NULL
+                       ELSE opportunities.terminal_reason
+                     END,
                      metadata_json=excluded.metadata_json""",
                 (
                     key,
@@ -307,6 +405,49 @@ class RadarLedger:
                 )
             self._event(connection, key, "QUALIFIED", intent["intentId"], intent, now)
         return True
+
+    def reconcile_terminal_intents(self) -> list[str]:
+        """Reject active intents superseded by a later no-go decision."""
+        now = iso_z(datetime.now(UTC))
+        rejected: list[str] = []
+        with self.transaction() as connection:
+            rows = connection.execute(
+                """SELECT i.intent_id,i.opportunity_key,i.issued_at,i.payload_json
+                   FROM intents i
+                   JOIN opportunities o ON o.key=i.opportunity_key
+                   WHERE o.stage='AUDIT_NO_GO'
+                     AND i.status IN ('PENDING','LEASED','CREATING','DISPATCHED')"""
+            ).fetchall()
+            for row in rows:
+                intent = json.loads(row["payload_json"])
+                watermark = self._no_go_watermark(connection, str(row["opportunity_key"]))
+                if not self._intent_is_stale(
+                    intent,
+                    issued_at=str(row["issued_at"]),
+                    watermark=watermark,
+                ):
+                    continue
+                assert watermark is not None
+                connection.execute(
+                    """UPDATE intents SET status='REJECTED',lease_owner=NULL,
+                       lease_until=NULL,updated_at=? WHERE intent_id=?""",
+                    (now, row["intent_id"]),
+                )
+                self._event(
+                    connection,
+                    str(row["opportunity_key"]),
+                    "STALE_INTENT_REJECTED",
+                    str(row["intent_id"]),
+                    {
+                        "intentId": row["intent_id"],
+                        "issuedAt": row["issued_at"],
+                        "issueUpdatedAt": intent.get("issueUpdatedAt"),
+                        **watermark,
+                    },
+                    now,
+                )
+                rejected.append(str(row["intent_id"]))
+        return rejected
 
     def reconcile_pending(self, active_intent_ids: set[str]) -> list[str]:
         """Supersede local, uncommitted work that the latest signed queue withdrew."""

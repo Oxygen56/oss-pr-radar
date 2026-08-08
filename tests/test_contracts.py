@@ -9,6 +9,8 @@ def candidate(**updates):
         "num": 1,
         "url": "https://github.com/a/b/issues/1",
         "title": "Bug",
+        "issue_updated": "2026-08-04T00:00:00Z",
+        "policy_digest": "policy-digest",
         "track": "agent_ai_infra",
         "category": "WAIT_MAINTAINER",
         "gate_decision": "HUMAN_REVIEW",
@@ -34,6 +36,20 @@ def test_auto_spawn_requires_actionable_review():
                 "candidate_details": [candidate(auto_spawn=True, gate_decision="ALLOW_TO_WORK")],
             }
         )
+
+
+def test_candidate_requires_issue_update_watermark():
+    value = candidate()
+    del value["issue_updated"]
+    with pytest.raises(ContractError, match="issue_updated"):
+        validate_report({"scan_ok": True, "candidate_details": [value]})
+
+
+def test_candidate_requires_policy_watermark():
+    value = candidate()
+    del value["policy_digest"]
+    with pytest.raises(ContractError, match="policy_digest"):
+        validate_report({"scan_ok": True, "candidate_details": [value]})
 
 
 def test_failed_scan_is_rejected():

@@ -16,6 +16,8 @@ def intent(**updates):
         "repo": "a/b",
         "issueNumber": 1,
         "issueUrl": "https://github.com/a/b/issues/1",
+        "issueUpdatedAt": iso_z(now),
+        "policyDigest": "policy-digest",
         "title": "Bug",
         "mode": "canary",
         "score": 9,
@@ -473,7 +475,13 @@ def test_archived_prior_thread_does_not_hide_later_no_go_thread(tmp_path):
     first_cleanup = store.cleanup_candidates()[0]
     store.commit_cleanup(thread_id="thread-1", nonce=first_cleanup["cleanupNonce"])
 
-    store.enqueue(intent(intentId="intent-2", decisionDigest="decision-2"))
+    store.enqueue(
+        intent(
+            intentId="intent-2",
+            decisionDigest="decision-2",
+            issueUpdatedAt=iso_z(datetime.now(UTC) + timedelta(minutes=1)),
+        )
+    )
     store.claim("intent-2", "worker")
     store.commit_dispatch(
         "intent-2",
@@ -517,7 +525,13 @@ def test_archived_thread_is_not_retitle_candidate_when_issue_is_released_again(t
     first_cleanup = store.cleanup_candidates()[0]
     store.commit_cleanup(thread_id="thread-1", nonce=first_cleanup["cleanupNonce"])
 
-    store.enqueue(intent(intentId="intent-2", decisionDigest="decision-2"))
+    store.enqueue(
+        intent(
+            intentId="intent-2",
+            decisionDigest="decision-2",
+            issueUpdatedAt=iso_z(datetime.now(UTC) + timedelta(minutes=1)),
+        )
+    )
     store.claim("intent-2", "worker")
 
     assert store.title_candidates() == []
@@ -576,7 +590,136 @@ def test_same_no_go_decision_is_not_requeued_until_evidence_changes(tmp_path):
     store.record_stage("a/b#1", "AUDIT_NO_GO", reason="MAINTAINER_APPROVAL_REQUIRED")
 
     assert store.enqueue(intent(intentId="intent-2")) is False
-    assert store.enqueue(intent(intentId="intent-3", decisionDigest="new-decision")) is True
+    assert (
+        store.enqueue(
+            intent(
+                intentId="intent-3",
+                decisionDigest="new-decision",
+                issueUpdatedAt=iso_z(datetime.now(UTC) + timedelta(minutes=1)),
+            )
+        )
+        is True
+    )
+    with store.connect() as connection:
+        stage = connection.execute("SELECT stage FROM opportunities WHERE key='a/b#1'").fetchone()[
+            "stage"
+        ]
+    assert stage == "QUALIFIED"
+
+
+def test_same_issue_snapshot_is_not_requeued_after_no_go(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    first = intent()
+    store.enqueue(first)
+    store.claim("intent-1", "worker")
+    store.record_stage(
+        "a/b#1",
+        "AUDIT_PASS",
+        evidence={"liveAudit": {"evidence": {"issue": {"updated_at": first["issueUpdatedAt"]}}}},
+    )
+    store.record_stage("a/b#1", "AUDIT_NO_GO", reason="NOT_ACTIONABLE")
+
+    assert (
+        store.enqueue(
+            intent(
+                intentId="intent-2",
+                decisionDigest="changed",
+                issueUpdatedAt=first["issueUpdatedAt"],
+            )
+        )
+        is False
+    )
+    assert store.pending() == []
+
+
+def test_changed_issue_snapshot_can_reopen_no_go(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    first = intent()
+    store.enqueue(first)
+    store.claim("intent-1", "worker")
+    store.record_stage(
+        "a/b#1",
+        "AUDIT_PASS",
+        evidence={"liveAudit": {"evidence": {"issue": {"updated_at": first["issueUpdatedAt"]}}}},
+    )
+    store.record_stage("a/b#1", "AUDIT_NO_GO", reason="NOT_ACTIONABLE")
+
+    assert store.enqueue(
+        intent(
+            intentId="intent-2",
+            decisionDigest="changed",
+            issueUpdatedAt=iso_z(datetime.now(UTC) + timedelta(minutes=1)),
+        )
+    )
+    with store.connect() as connection:
+        stage = connection.execute("SELECT stage FROM opportunities WHERE key='a/b#1'").fetchone()[
+            "stage"
+        ]
+    assert stage == "QUALIFIED"
+
+
+def test_changed_policy_can_reopen_no_go_without_issue_update(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    first = intent()
+    store.enqueue(first)
+    store.claim("intent-1", "worker")
+    store.record_stage(
+        "a/b#1",
+        "AUDIT_PASS",
+        evidence={"liveAudit": {"evidence": {"issue": {"updated_at": first["issueUpdatedAt"]}}}},
+    )
+    store.record_stage("a/b#1", "AUDIT_NO_GO", reason="POLICY_BLOCKED")
+
+    assert store.enqueue(
+        intent(
+            intentId="intent-2",
+            decisionDigest="changed",
+            issueUpdatedAt=first["issueUpdatedAt"],
+            policyDigest="changed-policy-digest",
+        )
+    )
+
+
+def test_intent_issued_before_no_go_cannot_revive_terminal_opportunity(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    stale = intent(intentId="intent-stale", decisionDigest="changed")
+    store.enqueue(intent())
+    store.record_stage("a/b#1", "AUDIT_NO_GO", reason="NOT_ACTIONABLE")
+
+    assert store.enqueue(stale) is False
+    assert store.pending() == []
+    with store.connect() as connection:
+        event = connection.execute(
+            """SELECT payload_json FROM events
+               WHERE event_type='STALE_INTENT_IGNORED'"""
+        ).fetchone()
+    assert json.loads(event["payload_json"])["intentId"] == "intent-stale"
+
+
+def test_terminal_reconciliation_rejects_active_stale_intent(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    stale = intent(intentId="intent-stale", decisionDigest="changed")
+    store.enqueue(intent())
+    store.record_stage("a/b#1", "AUDIT_NO_GO", reason="NOT_ACTIONABLE")
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO intents
+               (intent_id,opportunity_key,intent_digest,status,issued_at,expires_at,
+                payload_json,updated_at)
+               VALUES (?,?,?,'PENDING',?,?,?,?)""",
+            (
+                stale["intentId"],
+                stale["key"],
+                stale["decisionDigest"],
+                stale["issuedAt"],
+                stale["expiresAt"],
+                json.dumps(stale),
+                stale["issuedAt"],
+            ),
+        )
+
+    assert store.reconcile_terminal_intents() == ["intent-stale"]
+    assert store.pending() == []
 
 
 def test_orphan_dispatch_can_reconcile_an_expired_async_handoff(tmp_path):

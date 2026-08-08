@@ -10,7 +10,7 @@ from .util import sha256_json
 SCAN_SCHEMA = "oss-pr-radar.scan.v2"
 CANDIDATE_SCHEMA = "oss-pr-radar.candidate.v3"
 EVIDENCE_SCHEMA = "oss-pr-radar.evidence.v1"
-CONTRACT_REVISION = "trust-core-v5-llm-algorithm-track"
+CONTRACT_REVISION = "trust-core-v6-external-state-watermark"
 
 CONTRACT_MANIFEST = {
     "scanSchema": SCAN_SCHEMA,
@@ -65,7 +65,16 @@ def _require(condition: bool, message: str) -> None:
 
 def validate_candidate(candidate: dict[str, Any]) -> None:
     _require(isinstance(candidate, dict), "candidate must be an object")
-    for key in ("repo", "num", "url", "title", "category", "gate_decision"):
+    for key in (
+        "repo",
+        "num",
+        "url",
+        "title",
+        "issue_updated",
+        "policy_digest",
+        "category",
+        "gate_decision",
+    ):
         _require(candidate.get(key) not in (None, ""), f"candidate.{key} is required")
     _require(isinstance(candidate["num"], int), "candidate.num must be an integer")
     _require(
