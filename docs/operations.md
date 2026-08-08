@@ -74,13 +74,17 @@ receiving their own worktrees.
   threshold produces a deduplicated Feishu dispatch alert. Plain `PENDING`
   backlog is queue state, not a dispatch failure.
 - Before reserving asynchronous task creation, the local bridge refreshes the
-  source index and materializes only the current remote default-branch snapshot.
-  This keeps partial clones bandwidth-efficient while ensuring Codex worktree
-  initialization does not time out while lazily downloading thousands of blobs.
+  source index, materializes only the current remote default-branch snapshot,
+  and prepares a deterministic isolated worktree under
+  `~/Documents/github/.oss-pr-radar/worktrees/`. The Codex task itself starts in
+  the single `github` project and consumes a per-issue bootstrap context from
+  `.oss-pr-radar/task-contexts/`. This keeps UI ownership stable while preserving
+  repository isolation and avoiding lazy partial-clone timeouts.
 - Before queue sync, `orphan-list` reconciles asynchronous worktree creations
   whose real task ID appeared after the controller's initial lookup. Only one
-  unbound task matching creation start time, canonical prompt, repository
-  origin, and Codex worktree can be committed; ambiguity fails closed. A bound
+  unbound task matching creation start time, canonical prompt, exact GitHub
+  project root, and prepared worktree can be committed; legacy repository-project
+  worktrees remain supported. Ambiguity fails closed. A bound
   `clientThreadId` remains visible in alerts and is never silently reclaimed.
 - `context-sync` writes a Git-ignored task context and repairs legacy contexts
   by attaching a fresh controller-side live audit. `ingest-results` validates
@@ -148,7 +152,7 @@ competition opportunity.
 The single-thread desktop heartbeat runs health with fallback repair, asynchronous
 task reconciliation, queue sync,
 real dispatch-failure alerts, PR lifecycle refresh, live
-claim/revalidation, write-ahead creation, exact-project worktree creation, task
+claim/revalidation, write-ahead creation, single-project task creation, isolated worktree preparation, task
 receipt verification, workspace context sync, result ingestion, publication
 advancement, one-shot recovery, title synchronization, and `AUDIT_NO_GO`
 cleanup in that order. Valid pending intents are ordinary queue state and must

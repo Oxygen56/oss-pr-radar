@@ -1999,7 +1999,7 @@ class RadarLedger:
     def cleanup_candidates(self) -> list[dict[str, Any]]:
         with self.connect() as connection:
             rows = connection.execute(
-                """SELECT o.key,o.stage,o.updated_at,i.thread_id
+                """SELECT o.key,o.stage,o.updated_at,o.issue_url,i.thread_id,i.worktree_path
                    FROM opportunities o JOIN intents i ON i.opportunity_key=o.key
                    WHERE o.stage='AUDIT_NO_GO' AND i.thread_id IS NOT NULL
                      AND i.title_synced_state='AUDIT_NO_GO'
@@ -2014,7 +2014,9 @@ class RadarLedger:
         return [
             {
                 "key": row["key"],
+                "issueUrl": row["issue_url"],
                 "threadId": row["thread_id"],
+                "worktreePath": row["worktree_path"],
                 "stage": row["stage"],
                 "cleanupNonce": sha256_text(
                     f"{row['key']}|{row['thread_id']}|{row['stage']}|{row['updated_at']}"

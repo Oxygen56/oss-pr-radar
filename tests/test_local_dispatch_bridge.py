@@ -33,9 +33,9 @@ def run_git(path: Path, *args: str) -> str:
     return completed.stdout.strip()
 
 
-def registered_store(tmp_path: Path) -> tuple[RadarLedger, Path]:
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
+def registered_store(tmp_path: Path, worktree: Path | None = None) -> tuple[RadarLedger, Path]:
+    worktree = worktree or tmp_path / "worktree"
+    worktree.mkdir(parents=True)
     run_git(worktree, "init")
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     now = datetime.now(UTC)
@@ -239,6 +239,156 @@ def test_workspace_task_context_is_private_and_git_ignored(tmp_path):
     assert store.task_context_candidates()[0]["threadId"] == "thread-1"
 
 
+def test_managed_workspace_context_is_mirrored_for_github_project_bootstrap(monkeypatch, tmp_path):
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, _ = registered_store(tmp_path, worktree=worktree)
+
+    path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+
+    local = json.loads(path.read_text(encoding="utf-8"))
+    bootstrap_path = MODULE.shared_context_path("https://github.com/a/b/issues/1")
+    bootstrap = json.loads(bootstrap_path.read_text(encoding="utf-8"))
+    assert local == bootstrap
+    assert local["workspaceMode"] == "github_project_managed_worktree"
+    assert local["taskProjectRoot"] == str(project_root.resolve())
+    assert local["bootstrapContextPath"] == str(bootstrap_path)
+    assert local["worktreePath"] == str(worktree.resolve())
+
+
+def test_prepare_managed_worktree_is_isolated_under_github_project(monkeypatch, tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    run_git(source, "init")
+    run_git(source, "config", "user.name", "Test Contributor")
+    run_git(source, "config", "user.email", "test@example.com")
+    (source / "runtime.py").write_text("VALUE = 1\n", encoding="utf-8")
+    run_git(source, "add", "runtime.py")
+    run_git(source, "commit", "-m", "baseline")
+    run_git(source, "update-ref", "refs/remotes/origin/main", "HEAD")
+    run_git(source, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+
+    worktree = MODULE.prepare_managed_worktree(
+        source,
+        intent_id="intent-1",
+        repo="a/b",
+    )
+
+    assert MODULE._is_managed_worktree(worktree) is True
+    assert (worktree / "runtime.py").read_text(encoding="utf-8") == "VALUE = 1\n"
+    assert MODULE._worktree_belongs_to_source(worktree, source) is True
+    assert run_git(worktree, "status", "--porcelain") == ""
+
+
+def test_commit_receipt_binds_github_project_thread_to_managed_worktree(monkeypatch, tmp_path):
+    project_root = tmp_path / "github"
+    source = tmp_path / "source"
+    source.mkdir()
+    run_git(source, "init")
+    run_git(source, "config", "user.name", "Test Contributor")
+    run_git(source, "config", "user.email", "test@example.com")
+    (source / "runtime.py").write_text("VALUE = 1\n", encoding="utf-8")
+    run_git(source, "add", "runtime.py")
+    run_git(source, "commit", "-m", "baseline")
+    run_git(source, "update-ref", "refs/remotes/origin/main", "HEAD")
+    run_git(source, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    worktree = MODULE.prepare_managed_worktree(
+        source,
+        intent_id="intent-1",
+        repo="a/b",
+    )
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    now = datetime.now(UTC)
+    store.enqueue(
+        {
+            "intentId": "intent-1",
+            "key": "a/b#1",
+            "repo": "a/b",
+            "issueNumber": 1,
+            "issueUrl": "https://github.com/a/b/issues/1",
+            "title": "Runtime bug",
+            "mode": "canary",
+            "score": 9,
+            "snapshotId": "snapshot",
+            "decisionDigest": "decision",
+            "issuedAt": iso_z(now),
+            "expiresAt": iso_z(now + timedelta(hours=1)),
+            "autoSubmitAuthorized": True,
+            "publicSubmissionAllowed": True,
+            "authorizationSource": "signed_live_revalidation_required",
+            "publicationMode": "canary",
+        }
+    )
+    store.claim("intent-1", "controller")
+    store.record_audit_snapshot(
+        "a/b#1",
+        evidence={
+            "authorization": {"status": "ALLOW"},
+            "evidenceDigest": "live-evidence",
+            "liveAudit": {
+                "capturedAt": iso_z(now),
+                "evidence": {"digest": "live-evidence", "issue": {"state": "open"}},
+            },
+        },
+        dedupe_key="live-evidence",
+    )
+    title_time = "08-08 16:20"
+    title = MODULE.lifecycle_title("GO", title_time, "a/b#1", "Runtime bug")
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            """CREATE TABLE threads (
+                id TEXT, cwd TEXT, title TEXT, first_user_message TEXT,
+                git_origin_url TEXT, archived INTEGER
+            )"""
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?,?,?,?)",
+            (
+                "thread-1",
+                str(project_root),
+                title,
+                MODULE.issue_prompt("https://github.com/a/b/issues/1"),
+                None,
+                0,
+            ),
+        )
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+
+    result = MODULE.commit_receipt(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            intent_id="intent-1",
+            owner="controller",
+            thread_id="thread-1",
+            project_id="github-project",
+            cwd=str(project_root),
+            worktree=str(worktree),
+            source_repo=str(source),
+            title_time=title_time,
+        )
+    )
+
+    assert result["workspaceMode"] == "github_project_managed_worktree"
+    context = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )
+    assert context is not None
+    assert context["worktreePath"] == str(worktree)
+    assert MODULE.shared_context_path("https://github.com/a/b/issues/1").exists()
+
+
 def test_private_task_dispatch_is_not_limited_by_publication_canary(monkeypatch, tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     now = datetime.now(UTC)
@@ -368,6 +518,58 @@ def test_prepare_failure_releases_claim(monkeypatch, tmp_path):
         )
 
     assert store.pending()[0]["ledgerStatus"] == "PENDING"
+
+
+def test_prepare_claim_returns_single_project_root_and_isolated_worktree(monkeypatch, tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    now = datetime.now(UTC)
+    store.enqueue(
+        {
+            "intentId": "intent-1",
+            "key": "a/b#1",
+            "repo": "a/b",
+            "issueNumber": 1,
+            "issueUrl": "https://github.com/a/b/issues/1",
+            "title": "Runtime bug",
+            "mode": "canary",
+            "score": 9,
+            "snapshotId": "snapshot",
+            "decisionDigest": "decision",
+            "issuedAt": iso_z(now),
+            "expiresAt": iso_z(now + timedelta(hours=1)),
+        }
+    )
+    evidence = SimpleNamespace(
+        digest="evidence",
+        as_dict=lambda: {"digest": "evidence", "complete": True},
+    )
+    verdict = SimpleNamespace(
+        status="ALLOW",
+        reason_code="ALLOW",
+        as_dict=lambda: {"status": "ALLOW", "reasonCode": "ALLOW"},
+    )
+    project_root = tmp_path / "github"
+    source = tmp_path / "source"
+    worktree = project_root / ".oss-pr-radar" / "worktrees" / "task" / "b"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    monkeypatch.setattr(MODULE, "_audit_intent", lambda _intent: (evidence, verdict))
+    monkeypatch.setattr(MODULE, "source_repo", lambda _repo: source)
+    monkeypatch.setattr(MODULE, "prepare_managed_worktree", lambda *_args, **_kwargs: worktree)
+
+    result = MODULE.claim_intent(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            intent_id="intent-1",
+            owner="controller",
+            lease_minutes=15,
+            prepare=True,
+        )
+    )
+
+    assert result["sourceRepoPath"] == str(source)
+    assert result["taskProjectPath"] == str(project_root.resolve())
+    assert result["worktreePath"] == str(worktree)
 
 
 def test_claim_release_returns_unstarted_lease_to_pending(monkeypatch, tmp_path):
@@ -546,6 +748,105 @@ def test_retry_dispatch_accepts_worktree_removed_by_archival(monkeypatch, tmp_pa
 
     assert result["retried"]["intentId"] == "intent-1"
     assert store.pending()[0]["ledgerStatus"] == "PENDING"
+
+
+def test_recovery_accepts_github_project_thread_with_managed_worktree(monkeypatch, tmp_path):
+    project_root = tmp_path / "github"
+    worktree = project_root / ".oss-pr-radar" / "worktrees" / "task" / "b"
+    worktree.mkdir(parents=True)
+    run_git(worktree, "init")
+    run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            """CREATE TABLE threads (
+                id TEXT, archived INTEGER, title TEXT, first_user_message TEXT,
+                cwd TEXT, git_origin_url TEXT, updated_at INTEGER
+            )"""
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?,?,?,?,?)",
+            (
+                "thread-1",
+                0,
+                "task",
+                MODULE.issue_prompt("https://github.com/a/b/issues/1"),
+                str(project_root),
+                None,
+                1,
+            ),
+        )
+
+    class Store:
+        def recovery_candidates(self, **_kwargs):
+            return [
+                {
+                    "key": "a/b#1",
+                    "issueUrl": "https://github.com/a/b/issues/1",
+                    "threadId": "thread-1",
+                    "worktreePath": str(worktree),
+                }
+            ]
+
+        def unresolved_recoveries(self):
+            return []
+
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+
+    result = MODULE.recovery_list(
+        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3", min_age_minutes=90)
+    )
+
+    assert result["blocked"] == []
+    assert result["recoverable"][0]["threadId"] == "thread-1"
+
+
+def test_cleanup_commit_removes_managed_bootstrap_context(monkeypatch, tmp_path):
+    project_root = tmp_path / "github"
+    worktree = project_root / ".oss-pr-radar" / "worktrees" / "task" / "b"
+    worktree.mkdir(parents=True)
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    bootstrap = MODULE.shared_context_path("https://github.com/a/b/issues/1")
+    bootstrap.parent.mkdir(parents=True)
+    bootstrap.write_text("{}\n", encoding="utf-8")
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute("CREATE TABLE threads (id TEXT, archived INTEGER)")
+        connection.execute("INSERT INTO threads VALUES (?,?)", ("thread-1", 1))
+
+    class Store:
+        committed = False
+
+        def cleanup_candidates(self):
+            return [
+                {
+                    "key": "a/b#1",
+                    "issueUrl": "https://github.com/a/b/issues/1",
+                    "threadId": "thread-1",
+                    "worktreePath": str(worktree),
+                    "cleanupNonce": "nonce",
+                }
+            ]
+
+        def commit_cleanup(self, **_kwargs):
+            self.committed = True
+
+    store = Store()
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+
+    MODULE.cleanup_commit(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            thread_id="thread-1",
+            cleanup_nonce="nonce",
+        )
+    )
+
+    assert store.committed is True
+    assert not bootstrap.exists()
 
 
 def test_controller_ingests_workspace_no_go_without_child_ledger_access(tmp_path):
@@ -944,6 +1245,68 @@ def test_orphan_list_recovers_unique_async_worktree_task(monkeypatch, tmp_path):
     assert result["blocked"] == []
     assert result["candidates"][0]["threadId"] == "thread-1"
     assert result["candidates"][0]["desiredTitle"].startswith("[有价值·GO]")
+
+
+def test_orphan_list_recovers_thread_created_in_github_project(monkeypatch, tmp_path):
+    now = datetime.now(UTC)
+    project_root = tmp_path / "github"
+    project_root.mkdir()
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            """CREATE TABLE threads (
+                id TEXT, cwd TEXT, title TEXT, first_user_message TEXT,
+                git_origin_url TEXT, archived INTEGER, created_at INTEGER,
+                created_at_ms INTEGER
+            )"""
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?,?,?,?,?,?)",
+            (
+                "thread-1",
+                str(project_root),
+                "automatic title",
+                MODULE.issue_prompt("https://github.com/a/b/issues/1"),
+                None,
+                0,
+                int(now.timestamp()),
+                int(now.timestamp() * 1000),
+            ),
+        )
+
+    class Store:
+        def orphaned_handoffs(self):
+            return [
+                {
+                    "key": "a/b#1",
+                    "issueUrl": "https://github.com/a/b/issues/1",
+                    "title": "Runtime bug",
+                    "intentId": "intent-1",
+                    "intentStatus": "CREATING",
+                    "leaseOwner": "controller",
+                    "leaseStartedAt": iso_z(now - timedelta(minutes=1)),
+                    "leaseUntil": iso_z(now + timedelta(minutes=29)),
+                    "expiresAt": iso_z(now + timedelta(hours=1)),
+                    "repo": "a/b",
+                    "creationStartedAt": iso_z(now - timedelta(minutes=1)),
+                    "clientThreadId": "client-1",
+                }
+            ]
+
+        def bound_thread_ids(self):
+            return set()
+
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+
+    result = MODULE.orphan_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    candidate = result["candidates"][0]
+    assert candidate["threadId"] == "thread-1"
+    assert candidate["workspaceMode"] == "github_project_managed_worktree"
+    assert candidate["cwd"] == str(project_root)
+    assert candidate["worktreePath"] == str(MODULE.managed_worktree_path("intent-1", "a/b"))
 
 
 def test_orphan_list_does_not_report_expired_lease_as_active(monkeypatch, tmp_path):

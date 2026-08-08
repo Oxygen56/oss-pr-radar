@@ -186,9 +186,11 @@ python scripts/check_workflow_health.py --notify --repair
 ```
 
 The hourly Codex heartbeat reuses one controller task, calls `sync`, claims each pending intent through a
-fresh live audit, creates only the authorized worktree task in the exact source
-repository project, verifies its timestamped lifecycle title, prompt, repository
-origin, and worktree identity, then commits a receipt. It retries an obviously
+fresh live audit, and creates every issue task in the single configured GitHub
+project. Source code still lives in an isolated controller-owned Git worktree
+under that project, so UI ownership and repository isolation are independent.
+The controller verifies the timestamped lifecycle title, prompt, project root,
+repository origin, and worktree identity before committing a receipt. It retries an obviously
 empty task at most once through a write-ahead recovery receipt. It archives a
 task only after that task records `AUDIT_NO_GO` and its title has first been
 synchronized to the visible `[无价值]` lifecycle prefix. If asynchronous
@@ -197,7 +199,9 @@ unique prompt/origin/worktree match before the next lifecycle action. The
 creation request remains in durable `CREATING` state until that match is
 committed or the desktop API explicitly rejects the request before returning
 an external ID. Child tasks report only through the Git-ignored
-`.oss-pr-radar/` directory; the controller ingests outcomes and executes the
+`.oss-pr-radar/` directory. A per-issue bootstrap context in the GitHub project
+routes the task into its exact worktree without changing the canonical two-line
+prompt. The controller ingests outcomes and executes the
 permit-bound publication path.
 The legacy Done-Gate hourly wrapper invokes `scripts/run_scanner.py`, so local
 traces and GitHub Actions share this repository's scanner and decision revision

@@ -68,6 +68,48 @@ PR_STAGE_PRIORITY = {
 issue_prompt = canonical_prompt
 
 
+def managed_worktree_root() -> Path:
+    return (GITHUB_ROOT / TASK_PRIVATE_DIR / "worktrees").resolve()
+
+
+def shared_context_root() -> Path:
+    return (GITHUB_ROOT / TASK_PRIVATE_DIR / "task-contexts").resolve()
+
+
+def managed_worktree_path(intent_id: str, repo: str) -> Path:
+    safe_intent = re.sub(r"[^A-Za-z0-9._-]+", "-", intent_id).strip("-._")[:48]
+    if not safe_intent:
+        raise RuntimeError("intent id cannot form a managed worktree path")
+    suffix = hashlib.sha256(intent_id.encode("utf-8")).hexdigest()[:10]
+    repository = re.sub(r"[^A-Za-z0-9._-]+", "-", repo.rsplit("/", 1)[-1]).strip("-._")
+    if not repository:
+        raise RuntimeError("repository cannot form a managed worktree path")
+    return managed_worktree_root() / f"{safe_intent}-{suffix}" / repository
+
+
+def shared_context_path(issue_url: str) -> Path:
+    match = ISSUE_URL.match(issue_url)
+    if not match:
+        raise RuntimeError("invalid issue URL")
+    repo, number = match.groups()
+    owner, repository = repo.split("/", 1)
+    safe = "--".join(
+        re.sub(r"[^A-Za-z0-9._-]+", "-", value).strip("-._")
+        for value in (owner, repository, number)
+    )
+    return shared_context_root() / f"{safe}.json"
+
+
+def _is_within(path: Path, root: Path) -> bool:
+    resolved = path.resolve()
+    resolved_root = root.resolve()
+    return resolved != resolved_root and resolved_root in resolved.parents
+
+
+def _is_managed_worktree(path: Path) -> bool:
+    return _is_within(path, managed_worktree_root())
+
+
 def command(
     args: list[str],
     cwd: Path | None = None,
@@ -211,6 +253,45 @@ def source_repo(repo: str) -> Path:
     resolved = destination.resolve()
     prewarm_source_repo(resolved)
     return resolved
+
+
+def _worktree_belongs_to_source(worktree: Path, source: Path) -> bool:
+    try:
+        return git_path(
+            "rev-parse", "--path-format=absolute", "--git-common-dir", cwd=worktree
+        ) == git_path("rev-parse", "--path-format=absolute", "--git-dir", cwd=source)
+    except (OSError, RuntimeError, subprocess.SubprocessError):
+        return False
+
+
+def prepare_managed_worktree(source: Path, *, intent_id: str, repo: str) -> Path:
+    """Create an isolated source checkout inside the broad GitHub project."""
+
+    worktree = managed_worktree_path(intent_id, repo)
+    default_ref = command(
+        ["git", "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"],
+        cwd=source,
+        timeout=15,
+    )
+    if worktree.exists():
+        if not _worktree_belongs_to_source(worktree, source):
+            raise RuntimeError("managed worktree does not belong to source repository")
+        if command(["git", "status", "--porcelain"], cwd=worktree):
+            raise RuntimeError("managed worktree is not clean before dispatch")
+        command(["git", "switch", "--detach", default_ref], cwd=worktree, timeout=180)
+    else:
+        worktree.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            command(
+                ["git", "worktree", "add", "--detach", str(worktree), default_ref],
+                cwd=source,
+                timeout=600,
+            )
+        except Exception:
+            shutil.rmtree(worktree.parent, ignore_errors=True)
+            raise
+    _exclude_private_task_dir(worktree)
+    return worktree.resolve()
 
 
 def fetch_cloud_queue() -> dict[str, Any]:
@@ -527,7 +608,11 @@ def claim_intent(args: argparse.Namespace) -> dict[str, Any]:
     if args.prepare:
         try:
             path = source_repo(str(intent["repo"]))
-            command(["codex", "app", str(path)], timeout=30)
+            worktree = prepare_managed_worktree(
+                path,
+                intent_id=str(intent["intentId"]),
+                repo=str(intent["repo"]),
+            )
         except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
             store.release_claim(
                 intent["intentId"],
@@ -537,6 +622,8 @@ def claim_intent(args: argparse.Namespace) -> dict[str, Any]:
             raise
         title_time = datetime.now().astimezone().strftime("%m-%d %H:%M")
         result["sourceRepoPath"] = str(path)
+        result["taskProjectPath"] = str(GITHUB_ROOT.resolve())
+        result["worktreePath"] = str(worktree)
         result["titleTime"] = title_time
         result["desiredTitle"] = lifecycle_title("GO", title_time, intent["key"], intent["title"])
     return result
@@ -598,10 +685,14 @@ def write_task_context(store: RadarLedger, *, issue_url: str, thread_id: str, cw
     private_dir = cwd / TASK_PRIVATE_DIR
     private_dir.mkdir(parents=True, exist_ok=True)
     os.chmod(private_dir, 0o700)
+    managed = _is_managed_worktree(cwd)
+    project_root = GITHUB_ROOT.resolve() if managed else cwd.resolve()
     payload = {
         "schemaVersion": TASK_CONTEXT_SCHEMA,
         **context,
         "resultPath": str((private_dir / "result.json").resolve()),
+        "taskProjectRoot": str(project_root),
+        "workspaceMode": "github_project_managed_worktree" if managed else "codex_worktree",
         "controllerOwnsLifecycle": True,
         "controllerOwnsPublication": True,
         "controllerOwnsCommit": True,
@@ -625,7 +716,13 @@ def write_task_context(store: RadarLedger, *, issue_url: str, thread_id: str, cw
         }
     )
     path = private_dir / "task-context.json"
+    bootstrap_path = None
+    if managed:
+        bootstrap_path = shared_context_path(issue_url)
+        payload["bootstrapContextPath"] = str(bootstrap_path)
     _atomic_json(path, payload)
+    if bootstrap_path is not None:
+        _atomic_json(bootstrap_path, payload)
     return path
 
 
@@ -694,13 +791,17 @@ def commit_receipt(args: argparse.Namespace) -> dict[str, Any]:
     if not intent:
         raise RuntimeError("intent is not pending")
     source = Path(args.source_repo).resolve()
-    cwd = Path(args.cwd).resolve()
-    if cwd == source or WORKTREE_ROOT.resolve() not in cwd.parents:
-        raise RuntimeError("thread cwd is not a Codex worktree")
-    if git_path("rev-parse", "--path-format=absolute", "--git-common-dir", cwd=cwd) != git_path(
-        "rev-parse", "--path-format=absolute", "--git-dir", cwd=source
-    ):
+    thread_cwd = Path(args.cwd).resolve()
+    worktree = Path(getattr(args, "worktree", None) or args.cwd).resolve()
+    if worktree == source or not _worktree_belongs_to_source(worktree, source):
         raise RuntimeError("worktree does not belong to source repository")
+    managed = _is_managed_worktree(worktree)
+    if managed:
+        expected = managed_worktree_path(str(intent["intentId"]), str(intent["repo"]))
+        if worktree != expected or thread_cwd != GITHUB_ROOT.resolve():
+            raise RuntimeError("managed task project or worktree mismatch")
+    elif thread_cwd != worktree or not _is_within(worktree, WORKTREE_ROOT):
+        raise RuntimeError("thread cwd is not a Codex worktree")
     connection = sqlite3.connect(THREAD_DB)
     connection.row_factory = sqlite3.Row
     try:
@@ -713,32 +814,36 @@ def commit_receipt(args: argparse.Namespace) -> dict[str, Any]:
     expected_title = lifecycle_title("GO", args.title_time, intent["key"], intent["title"])
     if row is None or int(row["archived"] or 0) != 0:
         raise RuntimeError("thread is missing or archived")
-    if Path(row["cwd"]).resolve() != cwd:
+    if Path(row["cwd"]).resolve() != thread_cwd:
         raise RuntimeError("thread cwd mismatch")
     if row["title"] != expected_title:
         raise RuntimeError("thread title mismatch")
     if canonical_prompt(row["first_user_message"] or "") != issue_prompt(intent["issueUrl"]):
         raise RuntimeError("thread prompt mismatch")
-    if normalize_origin(row["git_origin_url"] or "") != str(intent["repo"]).casefold():
+    if (
+        not managed
+        and normalize_origin(row["git_origin_url"] or "") != str(intent["repo"]).casefold()
+    ):
         raise RuntimeError("thread origin mismatch")
     store.commit_dispatch(
         intent["intentId"],
         owner=args.owner,
         thread_id=args.thread_id,
         project_id=args.project_id,
-        worktree_path=str(cwd),
+        worktree_path=str(worktree),
         title_time=args.title_time,
     )
     context_path = write_task_context(
         store,
         issue_url=intent["issueUrl"],
         thread_id=args.thread_id,
-        cwd=cwd,
+        cwd=worktree,
     )
     return {
         "ok": True,
         "key": intent["key"],
         "threadId": args.thread_id,
+        "workspaceMode": "github_project_managed_worktree" if managed else "codex_worktree",
         "taskContextPath": str(context_path),
     }
 
@@ -746,6 +851,13 @@ def commit_receipt(args: argparse.Namespace) -> dict[str, Any]:
 def retry_dispatch(args: argparse.Namespace) -> dict[str, Any]:
     if not re.fullmatch(r"[A-Z][A-Z0-9_]{2,80}", args.reason):
         raise RuntimeError("retry reason must be machine-readable")
+    store = ledger(args.ledger)
+    dispatches = {
+        item["threadId"]: item for item in store.task_context_candidates() if item.get("threadId")
+    }
+    dispatch = dispatches.get(args.thread_id)
+    if dispatch is None:
+        raise RuntimeError("retry task context is unavailable")
     connection = sqlite3.connect(THREAD_DB)
     connection.row_factory = sqlite3.Row
     try:
@@ -756,17 +868,25 @@ def retry_dispatch(args: argparse.Namespace) -> dict[str, Any]:
         connection.close()
     if row is None or int(row["archived"] or 0) != 1:
         raise RuntimeError("retry requires the old task to be archived first")
-    cwd = Path(row["cwd"]).resolve()
-    if WORKTREE_ROOT.resolve() not in cwd.parents:
+    thread_cwd = Path(row["cwd"]).resolve()
+    worktree = Path(dispatch["worktreePath"]).resolve()
+    managed = _is_managed_worktree(worktree)
+    if managed:
+        if thread_cwd != GITHUB_ROOT.resolve():
+            raise RuntimeError("retry task project root mismatch")
+    elif thread_cwd != worktree or not _is_within(worktree, WORKTREE_ROOT):
         raise RuntimeError("retry task cwd is not a Codex worktree")
-    if cwd.exists():
-        if (cwd / TASK_PRIVATE_DIR / "result.json").exists():
+    if worktree.exists():
+        if (worktree / TASK_PRIVATE_DIR / "result.json").exists():
             raise RuntimeError("retry refused because the task already produced a result")
-        if command(["git", "status", "--porcelain"], cwd=cwd):
+        if command(["git", "status", "--porcelain"], cwd=worktree):
             raise RuntimeError("retry refused because the task worktree is not clean")
     elif int(row["archived"] or 0) != 1:
         raise RuntimeError("retry task worktree is missing before archival")
-    value = ledger(args.ledger).reset_dispatch_for_retry(
+    if managed:
+        shared_context_path(dispatch["issueUrl"]).unlink(missing_ok=True)
+        (worktree / TASK_PRIVATE_DIR / "task-context.json").unlink(missing_ok=True)
+    value = store.reset_dispatch_for_retry(
         thread_id=args.thread_id,
         reason=args.reason,
     )
@@ -804,6 +924,7 @@ def orphan_list(args: argparse.Namespace) -> dict[str, Any]:
         int(getattr(args, "min_age_minutes", ORPHAN_ABANDON_MIN_AGE_MINUTES)),
     )
     worktree_root = WORKTREE_ROOT.resolve()
+    task_project_root = GITHUB_ROOT.resolve()
     for handoff in handoffs:
         creation_started_at = handoff.get("creationStartedAt")
         started = parse_time(str(creation_started_at or handoff["leaseStartedAt"])).timestamp() - 60
@@ -824,10 +945,14 @@ def orphan_list(args: argparse.Namespace) -> dict[str, Any]:
                 handoff["issueUrl"]
             ):
                 continue
-            if normalize_origin(row["git_origin_url"] or "") != str(handoff["repo"]).casefold():
-                continue
-            cwd = Path(row["cwd"]).resolve()
-            if cwd == worktree_root or worktree_root not in cwd.parents:
+            thread_cwd = Path(row["cwd"]).resolve()
+            legacy = (
+                normalize_origin(row["git_origin_url"] or "") == str(handoff["repo"]).casefold()
+                and thread_cwd != worktree_root
+                and worktree_root in thread_cwd.parents
+            )
+            managed = thread_cwd == task_project_root
+            if not legacy and not managed:
                 continue
             matches.append(row)
         if not matches:
@@ -876,12 +1001,21 @@ def orphan_list(args: argparse.Namespace) -> dict[str, Any]:
             )
             continue
         row = matches[0]
+        thread_cwd = Path(row["cwd"]).resolve()
+        managed = thread_cwd == task_project_root
+        worktree = (
+            managed_worktree_path(str(handoff["intentId"]), str(handoff["repo"]))
+            if managed
+            else thread_cwd
+        )
         created = _thread_created_at(row)
         title_time = datetime.fromtimestamp(created).astimezone().strftime("%m-%d %H:%M")
         nonce = sha256_json(
             {
                 "intentId": handoff["intentId"],
                 "threadId": row["id"],
+                "threadCwd": str(thread_cwd),
+                "worktreePath": str(worktree),
                 "leaseStartedAt": handoff["leaseStartedAt"],
                 "operation": "orphan-dispatch-reconcile-v1",
             }
@@ -891,6 +1025,10 @@ def orphan_list(args: argparse.Namespace) -> dict[str, Any]:
             | {
                 "threadId": row["id"],
                 "cwd": row["cwd"],
+                "worktreePath": str(worktree),
+                "workspaceMode": (
+                    "github_project_managed_worktree" if managed else "codex_worktree"
+                ),
                 "currentTitle": row["title"],
                 "titleTime": title_time,
                 "desiredTitle": lifecycle_title("GO", title_time, handoff["key"], handoff["title"]),
@@ -916,24 +1054,31 @@ def orphan_commit(args: argparse.Namespace) -> dict[str, Any]:
     if candidate["desiredTitle"] != args.desired_title:
         raise RuntimeError("orphan desired title mismatch")
     source = Path(args.source_repo).resolve()
-    cwd = Path(candidate["cwd"]).resolve()
+    thread_cwd = Path(candidate["cwd"]).resolve()
+    cwd = Path(candidate["worktreePath"]).resolve()
     if (
         normalize_origin(command(["git", "remote", "get-url", "origin"], cwd=source))
         != str(candidate["repo"]).casefold()
     ):
         raise RuntimeError("source repository origin mismatch")
-    if git_path("rev-parse", "--path-format=absolute", "--git-common-dir", cwd=cwd) != git_path(
-        "rev-parse", "--path-format=absolute", "--git-dir", cwd=source
-    ):
+    if not _worktree_belongs_to_source(cwd, source):
         raise RuntimeError("orphan worktree does not belong to source repository")
+    if candidate["workspaceMode"] == "github_project_managed_worktree":
+        if thread_cwd != GITHUB_ROOT.resolve() or not _is_managed_worktree(cwd):
+            raise RuntimeError("orphan managed task project mismatch")
     connection = sqlite3.connect(THREAD_DB)
     try:
         row = connection.execute(
-            "SELECT title,archived FROM threads WHERE id=?", (args.thread_id,)
+            "SELECT title,archived,cwd FROM threads WHERE id=?", (args.thread_id,)
         ).fetchone()
     finally:
         connection.close()
-    if row is None or int(row[1] or 0) != 0 or row[0] != args.desired_title:
+    if (
+        row is None
+        or int(row[1] or 0) != 0
+        or row[0] != args.desired_title
+        or Path(row[2]).resolve() != thread_cwd
+    ):
         raise RuntimeError("orphan thread title was not applied")
     store = ledger(args.ledger)
     store.commit_orphan_dispatch(
@@ -1518,6 +1663,10 @@ def cleanup_list(args: argparse.Namespace) -> dict[str, Any]:
                     thread_id=candidate["threadId"],
                     nonce=candidate["cleanupNonce"],
                 )
+                if candidate.get("worktreePath") and _is_managed_worktree(
+                    Path(candidate["worktreePath"])
+                ):
+                    shared_context_path(candidate["issueUrl"]).unlink(missing_ok=True)
                 continue
             pending.append(candidate | {"title": row["title"]})
     finally:
@@ -1526,6 +1675,11 @@ def cleanup_list(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def cleanup_commit(args: argparse.Namespace) -> dict[str, Any]:
+    store = ledger(args.ledger)
+    candidates = {item["threadId"]: item for item in store.cleanup_candidates()}
+    candidate = candidates.get(args.thread_id)
+    if candidate is None or candidate["cleanupNonce"] != args.cleanup_nonce:
+        raise RuntimeError("cleanup authorization is stale or invalid")
     connection = sqlite3.connect(THREAD_DB)
     try:
         row = connection.execute(
@@ -1535,10 +1689,12 @@ def cleanup_commit(args: argparse.Namespace) -> dict[str, Any]:
         connection.close()
     if row is None or int(row[0] or 0) != 1:
         raise RuntimeError("thread is not archived")
-    ledger(args.ledger).commit_cleanup(
+    store.commit_cleanup(
         thread_id=args.thread_id,
         nonce=args.cleanup_nonce,
     )
+    if candidate.get("worktreePath") and _is_managed_worktree(Path(candidate["worktreePath"])):
+        shared_context_path(candidate["issueUrl"]).unlink(missing_ok=True)
     return {"ok": True, "threadId": args.thread_id}
 
 
@@ -1655,10 +1811,28 @@ def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
             ):
                 blocked.append(candidate | {"reason": "thread_prompt_mismatch"})
                 continue
-            if (
-                normalize_origin(row["git_origin_url"] or "")
-                != candidate["key"].rsplit("#", 1)[0].casefold()
-            ):
+            expected_repo = candidate["key"].rsplit("#", 1)[0].casefold()
+            worktree = Path(candidate["worktreePath"]).resolve()
+            thread_cwd = Path(row["cwd"]).resolve()
+            managed = _is_managed_worktree(worktree)
+            if managed:
+                valid_origin = False
+                try:
+                    valid_origin = (
+                        normalize_origin(
+                            command(["git", "remote", "get-url", "origin"], cwd=worktree)
+                        )
+                        == expected_repo
+                    )
+                except (OSError, RuntimeError, subprocess.SubprocessError):
+                    pass
+                valid_workspace = thread_cwd == GITHUB_ROOT.resolve() and valid_origin
+            else:
+                valid_workspace = (
+                    thread_cwd == worktree
+                    and normalize_origin(row["git_origin_url"] or "") == expected_repo
+                )
+            if not valid_workspace:
                 blocked.append(candidate | {"reason": "thread_origin_mismatch"})
                 continue
             recoverable.append(
@@ -1766,6 +1940,7 @@ def main() -> int:
     commit.add_argument("--thread-id", required=True)
     commit.add_argument("--project-id", required=True)
     commit.add_argument("--cwd", required=True)
+    commit.add_argument("--worktree")
     commit.add_argument("--source-repo", required=True)
     commit.add_argument("--title-time", required=True)
     retry_dispatch_parser = subparsers.add_parser("retry-dispatch")
