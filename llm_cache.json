@@ -7760,6 +7760,38 @@
     ],
     "why": "Issue clearly identifies a hardcoded :predict endpoint causing 400 errors for gemini-embedding-2 models. Existing PR #14266 addresses the same root cause but lacks regression tests, leaving room for a materially better PR with tests and minimal fix."
   },
+  "840f049b1af16ab1fa4991aef344f33ec427b5b1aea0d59a178b2fa50e231455": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue assumes clientMessageId makes retries idempotent; collaborator shows shared path ignores it"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "client retry logic in useChatSend",
+      "shared runtime cache-warming error codes",
+      "Retry-After header propagation",
+      "server-side clientMessageId admission/deduplication"
+    ],
+    "risks": [
+      "Broadening retries without server-side dedup could cause duplicate turns",
+      "Changing error codes may break existing clients"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "test_plan": [
+      "E2E: shared create → first send, assert no user-visible 503s",
+      "Regression: submit same clientMessageId twice, assert one persisted turn and one model dispatch"
+    ],
+    "unknowns": [
+      "Maintainer preference on server-side dedup design",
+      "Whether existing shared route tests cover idempotency"
+    ],
+    "why": "The issue describes a concrete user-visible bug with a clear repro and expected behavior, but the recent collaborator comment reveals a critical gap: the shared-tier path does not honor clientMessageId, so the proposed idempotent retry is not currently safe. This requires design confirmation on server-side deduplication before implementation. The issue is actionable but not cleanly startable without maintainer input."
+  },
   "8442a888bb75d59bc58efc532b1a74c5589c9c22d125733590947071935bc8ed": {
     "confidence": 0.7,
     "contradictions": [],

@@ -372,6 +372,10 @@
       "seenAt": "2026-08-08T04:35:34.137173Z",
       "stateId": "0502b71942c9e0efd36fd0eba2176b679dc320ee1cde0986b8dd4594cffeac66"
     },
+    "review|elizaOS/eliza#18045": {
+      "seenAt": "2026-08-08T18:17:49.416367Z",
+      "stateId": "33650d9933c6b381aadefaca0ac070cc1514018a546ca02acd738851ec5a8263"
+    },
     "review|fastmachinelearning/hls4ml#1515": {
       "legacy": true,
       "seenAt": "2026-08-04T14:54:39.838052Z"
@@ -729,8 +733,8 @@
       "seenAt": "2026-08-06T10:09:13.598229Z"
     },
     "review|vllm-project/vllm#35288": {
-      "seenAt": "2026-08-07T13:48:27.879165Z",
-      "stateId": "f4d44917003803406e759a76f19600c42cdc0cf762505c480583700525a8a1dc"
+      "seenAt": "2026-08-08T18:17:49.416367Z",
+      "stateId": "fa50d0663d20205adc72de3f1a4c7186e13863445a022e8e79024190906eabed"
     },
     "review|vllm-project/vllm#38515": {
       "legacy": true,
@@ -821,8 +825,8 @@
       "stateId": "7ace681851a6ae7dfc2ddfc5d240b185c988239b3d2a428d71faf9668537864e"
     },
     "review|vllm-project/vllm#51286": {
-      "seenAt": "2026-08-07T10:59:17.454125Z",
-      "stateId": "3996cdff4999deec0ee952e499e5c0a7c55d5c73bc53469d2654b703fd1d9437"
+      "seenAt": "2026-08-08T18:17:49.416367Z",
+      "stateId": "5b47177d398af6129e73a8f9c76288ff6b34f88aa6e74027bd34e7a8dc0bed26"
     },
     "review|vllm-project/vllm#51340": {
       "seenAt": "2026-08-07T17:17:06.692815Z",
@@ -1007,6 +1011,14 @@
     "watch|kyegomez/swarms#1664": {
       "legacy": true,
       "seenAt": "2026-08-03T21:54:14.829777Z"
+    },
+    "watch|langflow-ai/langflow#14470": {
+      "seenAt": "2026-08-08T18:17:49.786209Z",
+      "stateId": "9f11e6038a8c226f5e1561bcd6f7fdc8ed9096825923142474efee8db87e3e11"
+    },
+    "watch|langflow-ai/langflow#14471": {
+      "seenAt": "2026-08-08T18:17:49.786209Z",
+      "stateId": "526c992126f320dd00ec1ea241838e67e7168a13a313e678fdb8ecebcd5ce40d"
     },
     "watch|langgenius/dify#39954": {
       "legacy": true,
@@ -1269,7 +1281,7 @@
       "seenAt": "2026-08-06T10:09:13.778625Z"
     }
   },
-  "digest": "90f1fb4b2490a6588eefff4a8ee0627606b4951be38513cb7bbed425a13218b6",
+  "digest": "f1223c94b23c565e74281b3a2f7fc6edcd175bbe2ffd430517f104e59e9d8f03",
   "events": [
     {
       "attempts": 1,
@@ -16858,9 +16870,147 @@
       "runId": "scan-20260808T175703Z-69b40d000dab",
       "sentAt": "2026-08-08T17:59:44.579705Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "elizaOS/eliza#18045",
+        "vllm-project/vllm#35288",
+        "vllm-project/vllm#51286"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "52eefbdf11bdf14d90cff0706d5f2978dc0a186fec8d7b85ce704df2f0de7d9d",
+          "key": "elizaOS/eliza#18045",
+          "kind": "review",
+          "stateId": "33650d9933c6b381aadefaca0ac070cc1514018a546ca02acd738851ec5a8263"
+        },
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "22a3ec51d3ca227c9b55c7acd23bbf862416800c696c6c5aa1acd486bafa13b7",
+          "key": "vllm-project/vllm#35288",
+          "kind": "review",
+          "stateId": "fa50d0663d20205adc72de3f1a4c7186e13863445a022e8e79024190906eabed"
+        },
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "5871866b66ab2f6b82b1cb25873ec84a1bd8b577a4985c46aa915926c2cd1b1d",
+          "key": "vllm-project/vllm#51286",
+          "kind": "review",
+          "stateId": "5b47177d398af6129e73a8f9c76288ff6b34f88aa6e74027bd34e7a8dc0bed26"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[elizaOS/eliza#18045](https://github.com/elizaOS/eliza/issues/18045) [staging][QA] First shared-agent chat exposes cache-warming 503s before terminal response**\n建议：WAIT_MAINTAINER | 分数：11\n价值：The issue describes a concrete user-visible bug with a clear repro and expected behavior, but the recent collaborator comment reveals a critical gap: the shared-tier path does not honor clientMessageId, so the proposed idempotent retry is not currently safe. This requires design confirmation on server-side deduplication before implementation. The issue is actionable but not cleanly startable without maintainer input.\n改动：client retry logic in useChatSend；shared runtime cache-warming error codes；Retry-After header propagation；server-side clientMessageId admission/deduplication\n验证：E2E: shared create → first send, assert no user-visible 503s；Regression: submit same clientMessageId twice, assert one persisted turn and one model dispatch\n风险：Broadening retries without server-side dedup could cause duplicate turns；Changing error codes may break existing clients\n竞争：未发现相关 open PR\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 6，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#35288](https://github.com/vllm-project/vllm/issues/35288) [Bug]: MTP speculative decoding produces corrupted output at concurrency >= 4 (V1 engine)**\n建议：WAIT_MAINTAINER | 分数：13\n价值：The issue reports a reproducible MTP speculative decoding corruption at concurrency >= 4, with strong evidence of a mixed-batch indexing bug. However, the deterministic gate requires HUMAN_REVIEW, and open PR/related issue lookups failed, so duplicate work cannot be excluded. The root cause is not precisely identified, and maintainer confirmation is needed before implementation.\n改动：Fix MTP speculative decoding state update in gpu_model_runner.py；Correct hidden state pickup for mixed prefill/decode batches；Add regression test for concurrency >= 4 with MTP\n验证：Reproduce with provided script at concurrency 4 and num_speculative_tokens=2；Test with num_speculative_tokens=1 to isolate multi-token logic；Run with --disable-async-output-proc to check async race；Vary max_num_batched_tokens to confirm mixed-batch trigger；Add unit test for tensor indexing in _update_states_after_model_execute\n风险：May be a duplicate of existing PR or issue；Root cause could be in upstream dependencies；Fix may require deep understanding of V1 speculative decoding internals\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 11，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#51286](https://github.com/vllm-project/vllm/issues/51286) [Bug]: FA4 SM100 split-KV kernels fail to compile with `TYPE_UNSTABLE_JOIN` (nvidia-cutlass-dsl 4.6.0 pin) — crashes Kimi-K3 startup during CuTeDSL warmup**\n建议：WAIT_MAINTAINER | 分数：13\n价值：Issue identifies a deterministic compile failure in FA4 SM100 split-KV kernels with a clear root cause and a minimal repro. However, the deterministic gate is HUMAN_REVIEW, and the open PR and related issue lookups timed out, so duplicate work cannot be excluded. The suggested fix (bump DSL pin) is a dependency change, not an algorithm change, and the kernel fix is in a separate repo (vllm-flash-attn), requiring maintainer coordination.\n改动：Bump nvidia-cutlass-dsl pin to >=4.6.2 in requirements/cuda.txt；Defensive initialization of n_block_first in flash_fwd_sm100.py\n验证：Run the provided repro.py on SM100 with DSL 4.6.0 to confirm failure, then with 4.6.2 to confirm success；Add a regression test that compiles split-KV FA4 varlen path with seqlen >= 513\n风险：DSL pin bump may affect other kernels or require compatibility testing；Kernel fix in vllm-flash-attn requires separate PR and coordination\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 8，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-08T18:17:49.416367Z",
+      "eventId": "7d3b6fdad31d83644816fe106da5a5fd2728b34c25b8ea76bf82547f70179b2e",
+      "idempotencyKey": "7d3b6fdad31d83644816fe106da5a5fd2728b34c25b8ea76bf",
+      "kind": "review",
+      "runId": "scan-20260808T181551Z-4ebf9195e929",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "langflow-ai/langflow#14470",
+        "langflow-ai/langflow#14471"
+      ],
+      "candidateStates": [
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "3675b9f8e3a83b3eb7fb905fc970028c7125f32d592890afca95395e5076f792",
+          "key": "langflow-ai/langflow#14470",
+          "kind": "watch",
+          "stateId": "9f11e6038a8c226f5e1561bcd6f7fdc8ed9096825923142474efee8db87e3e11"
+        },
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "2cbb1bc1c5f1a54f3cb568cc806d84b547906f6fba56134fef8856b5ff0029a7",
+          "key": "langflow-ai/langflow#14471",
+          "kind": "watch",
+          "stateId": "526c992126f320dd00ec1ea241838e67e7168a13a313e678fdb8ecebcd5ce40d"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[langflow-ai/langflow#14470](https://github.com/langflow-ai/langflow/pull/14470) fix: bound web search result content**\n建议：PR_FOLLOWUP\n价值：CI 检查失败\n验证：查看正式 review、失败检查或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[langflow-ai/langflow#14471](https://github.com/langflow-ai/langflow/pull/14471) fix(lfx): align tool mode capability detection with runtime**\n建议：PR_FOLLOWUP\n价值：CI 检查失败\n验证：查看正式 review、失败检查或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-08T18:17:49.786209Z",
+      "eventId": "c727aa95c73ecf9a671d4fc8f17200f7fb8e35a30fcb6f463289f67878b8fa04",
+      "idempotencyKey": "c727aa95c73ecf9a671d4fc8f17200f7fb8e35a30fcb6f4632",
+      "kind": "watch",
+      "runId": "pr-followup-1786212900",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-08T17:59:16.214833Z",
-  "newEventCount": 0,
+  "generatedAt": "2026-08-08T18:17:49.786209Z",
+  "newEventCount": 1,
   "version": "notification_outbox_v2"
 }
