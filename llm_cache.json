@@ -217,6 +217,34 @@
     ],
     "why": "The issue provides a clear root cause: workflow watch events spread prior step results into start/result payloads, causing duplicate state and OOM on Cloudflare Workers. Existing PR #20661 is open but has failing CI and lacks comprehensive tests, leaving room for a materially better PR with focused watch-payload tests and a minimal fix."
   },
+  "06df565d02dfed67b5b190a75650e95bf6714b7b4cadcddf9a607828a28f5cdb": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue suggests index remapping is sufficient; comment shows provider receives full batch, so merge logic is fundamentally broken."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "litellm/caching/caching_handler.py",
+      "litellm/utils.py"
+    ],
+    "risks": [
+      "Fixing only index remapping leaves the provider-call waste and merge invariant broken.",
+      "Changing kwargs propagation may affect other caching paths."
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Run the issue's unit repro and the commenter's CustomLLM repro on current main; verify both fail. After fix, assert data[*].index equals position and provider receives only cache misses."
+    ],
+    "unknowns": [
+      "Maintainer's preferred fix scope and whether the deeper bug is acknowledged."
+    ],
+    "why": "Issue provides a precise root cause and a deterministic repro, but a recent comment reveals a second, deeper bug (remaining_list never reaches the provider) that invalidates the proposed fix's sufficiency. Existing PR #29288 is stale and incomplete. Maintainer confirmation is needed to align on the correct fix scope."
+  },
   "071cc772b86525081c574dcfcbf9b29e5079373611d8519630e5c4705b121ab6": {
     "confidence": 0.85,
     "contradictions": [],
@@ -1255,6 +1283,35 @@
       "Status of PR #50955 and whether it will be merged or needs competition"
     ],
     "why": "Issue provides a clear root cause and minimal reproduction for a user-visible bug in Qwen parser routing. However, an existing PR #50955 directly references this issue but has failing CI and incomplete evidence, and the deterministic gate requires HUMAN_REVIEW. Maintainer design preference is unconfirmed, so work should wait for maintainer guidance."
+  },
+  "18ee1c2743e208f4c0beb3b6c8c52ae9be3acc5db0ccbed7248c9f81be7489a2": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Update live-cloud-provision-smoke.ts to accept the shared-runtime 200 contract and handle shared-tier pairing as a negative assertion",
+      "Add fail-closed staging origin guard and reject production overrides",
+      "Add deterministic regression tests for tier selection and provision-response normalization"
+    ],
+    "risks": [
+      "Potential maintainer preference for retiring the script instead of repairing it",
+      "Risk of accidentally deleting pre-existing staging agents if create is not fresh-verified"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Run existing focused tests for tier selection and provision normalization",
+      "Add a regression test that mocks the shared provision response and asserts the smoke script proceeds correctly",
+      "Add a test that verifies the staging origin guard rejects non-staging URLs"
+    ],
+    "unknowns": [
+      "Maintainer preference on whether to repair or retire the script"
+    ],
+    "why": "The issue identifies a deterministic contract mismatch in the live cloud provisioning smoke script: it expects a 202 with jobId while the shared tier returns 200 with no job, and pairing always fails on shared tier. The proposed fix is concrete: align the script with the shared-runtime contract, add fail-closed staging guards, and add regression tests. No competing PR exists, and the maintainer has not yet responded, but the issue is actionable and well-evidenced."
   },
   "1a529736c5274daa720ebf934fbade8a20e08166bed3ceb0958eae778b531109": {
     "confidence": 0.8,
@@ -6247,6 +6304,32 @@
       "Whether maintainers prefer a different default retention value or a more comprehensive fix (e.g., offloading glob to thread pool) before merging."
     ],
     "why": "Issue provides a clear root cause (synchronous glob on event loop, unbounded directory) with profiling evidence and a concrete, minimal fix (enable retention via env var). No competing PR or issue found. The fix is actionable and testable."
+  },
+  "64422d1cae521529ca82d68f348875dbb4f0450393cd30cf3db2667d46a7b876": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify Router cache initialization to apply cache_kwargs regardless of Redis presence",
+      "Add regression test for disk cache via Router"
+    ],
+    "risks": [
+      "Potential behavior change for existing local cache users if cache_kwargs type is not 'local'",
+      "Need to ensure backward compatibility with Redis cache path"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce with provided script and assert litellm.cache.cache is DiskCache",
+      "Run existing router and cache unit tests"
+    ],
+    "unknowns": [
+      "Maintainer preference on cache configuration design"
+    ],
+    "why": "Issue provides a clear, reproducible bug with exact code path (router.py L454-487) and expected behavior. No competing PR addresses this. The fix is localized and testable."
   },
   "64589d857c8cea3d36c0cea4d7fa2d30fd6b9a954f96aeb8ec35a6a3e9cea16f": {
     "confidence": 0.7,

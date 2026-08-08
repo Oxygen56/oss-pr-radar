@@ -173,8 +173,8 @@
       "stateId": "b891e42c6d03824ca2a1c320b0da327d4212f76f9c4a734c9fc9385348006259"
     },
     "review|BerriAI/litellm#29284": {
-      "seenAt": "2026-08-07T10:59:17.454125Z",
-      "stateId": "ef6c0e47b3b14a4a01f368ee9b8ccb227cef46a35e255527ef195bb999c5a8ba"
+      "seenAt": "2026-08-08T22:15:51.084453Z",
+      "stateId": "80a1767c8cb16dcf6c71ffd57cff5a67ad157dc442bff8f6b20d22bfb96c7045"
     },
     "review|BerriAI/litellm#32769": {
       "seenAt": "2026-08-08T16:59:59.708851Z",
@@ -1037,12 +1037,12 @@
       "seenAt": "2026-08-03T21:54:14.829777Z"
     },
     "watch|langflow-ai/langflow#14470": {
-      "seenAt": "2026-08-08T20:51:29.127967Z",
-      "stateId": "cddd88f2b82b323909941ef787ed02c446eb85068d69698527659b3229ff7ba3"
+      "seenAt": "2026-08-08T22:15:51.407334Z",
+      "stateId": "f2b1db7be5ded7ac322dc8d64a68b12e52c6b4a0112a4408967481dd8120ad5c"
     },
     "watch|langflow-ai/langflow#14471": {
-      "seenAt": "2026-08-08T20:51:29.127967Z",
-      "stateId": "1f39e20f50378833c14f7398ecf1a06ff3150853d3746a627d01c9019f58017a"
+      "seenAt": "2026-08-08T22:15:51.407334Z",
+      "stateId": "f391ba63bfbd895a131318361787e8faa87d68be42b0fc4f7e42b4a861438ea8"
     },
     "watch|langgenius/dify#39954": {
       "legacy": true,
@@ -1309,7 +1309,7 @@
       "seenAt": "2026-08-06T10:09:13.778625Z"
     }
   },
-  "digest": "30d85dbeadab7d8ab8dffce78a30861e9b836febc93bca6c21ce240578b73e4f",
+  "digest": "dcdc2c42a6598fae7f67f09e40ac00069bd886ea5d660a5f9ec83d82b209c67d",
   "events": [
     {
       "attempts": 1,
@@ -17816,9 +17816,111 @@
       "runId": "scan-20260808T205330Z-7311f462c2ca",
       "sentAt": "2026-08-08T20:55:06.105133Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "BerriAI/litellm#29284"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "e3f1330ec5c9af9c1c1753ec33aa278b434fb1b66b35fd37a3c247fb34c7c312",
+          "key": "BerriAI/litellm#29284",
+          "kind": "review",
+          "stateId": "80a1767c8cb16dcf6c71ffd57cff5a67ad157dc442bff8f6b20d22bfb96c7045"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#29284](https://github.com/BerriAI/litellm/issues/29284) [Bug] Embedding cache merge corrupts `data[*].index` on partial cache hits**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue provides a precise root cause and a deterministic repro, but a recent comment reveals a second, deeper bug (remaining_list never reaches the provider) that invalidates the proposed fix's sufficiency. Existing PR #29288 is stale and incomplete. Maintainer confirmation is needed to align on the correct fix scope.\n改动：litellm/caching/caching_handler.py；litellm/utils.py\n验证：Run the issue's unit repro and the commenter's CustomLLM repro on current main; verify both fail. After fix, assert data[*].index equals position and provider receives only cache misses.\n风险：Fixing only index remapping leaves the provider-call waste and merge invariant broken.；Changing kwargs propagation may affect other caching paths.\n竞争：已有直接关联但证据不完整的 PR #29288：超过 30 天未更新；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：先复现 issue，再逐项对比已有 PR 的缺口；只有能提供更小改动、更强测试或更完整边界覆盖时才开 PR。\n证据：复现信号 15，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-08T22:15:51.084453Z",
+      "eventId": "b20d887d06660a7cb8ed7e0a68c37beefbad13b190a322af330e53cfcec7ffaa",
+      "idempotencyKey": "b20d887d06660a7cb8ed7e0a68c37beefbad13b190a322af33",
+      "kind": "review",
+      "runId": "scan-20260808T221430Z-65bbe116815c",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "langflow-ai/langflow#14470",
+        "langflow-ai/langflow#14471"
+      ],
+      "candidateStates": [
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "ca8b25810f851f305c0316eed7701bf2b8aa940f856934cccdc00eb94aa2da56",
+          "key": "langflow-ai/langflow#14470",
+          "kind": "watch",
+          "stateId": "f2b1db7be5ded7ac322dc8d64a68b12e52c6b4a0112a4408967481dd8120ad5c"
+        },
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "181b866b20e13eeffb39ea0e8dce3085a9575e0871f464c1c1fada667f13ceee",
+          "key": "langflow-ai/langflow#14471",
+          "kind": "watch",
+          "stateId": "f391ba63bfbd895a131318361787e8faa87d68be42b0fc4f7e42b4a861438ea8"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[langflow-ai/langflow#14470](https://github.com/langflow-ai/langflow/pull/14470) fix: bound web search result content**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突；存在未解决审查线程\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[langflow-ai/langflow#14471](https://github.com/langflow-ai/langflow/pull/14471) fix(lfx): align tool mode capability detection with runtime**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-08T22:15:51.407334Z",
+      "eventId": "b3594f405ba554c0d997cf8eba29e34c5df05b463bee41154c778aa349824a62",
+      "idempotencyKey": "b3594f405ba554c0d997cf8eba29e34c5df05b463bee41154c",
+      "kind": "watch",
+      "runId": "pr-followup-1786227225",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-08T21:51:15.006415Z",
-  "newEventCount": 0,
+  "generatedAt": "2026-08-08T22:15:51.407334Z",
+  "newEventCount": 1,
   "version": "notification_outbox_v2"
 }
