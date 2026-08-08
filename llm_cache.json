@@ -2678,6 +2678,28 @@
     ],
     "why": "The issue precisely identifies a bug where request context is dropped after the first iteration in durable agents, with clear code paths and production impact. No competing PR or related issue exists, and the maintainer has acknowledged the report, making it actionable."
   },
+  "2bfba248e427a2d1de55d2eed5a1d70558cef95db0da39471165bc88b4f53b3a": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "decision": "REJECT",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "ServiceM8 write response handler to handle non-JSON 2xx responses and parse x-record-uuid header"
+    ],
+    "risks": [
+      "Potential API behavior change if not carefully scoped"
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "test_plan": [
+      "Reproduce with curl against ServiceM8 create endpoint; verify successful:true and record_uuid in response"
+    ],
+    "unknowns": [],
+    "why": "The issue is a user-facing bug report with a clear root cause and suggested fix, but it is labeled 'support' and the track is agent_ai_infra, not llm_algorithm. The required track demands concrete algorithmic or training methodology, which is absent. The work is ordinary API plumbing and bug fixing, not a novel algorithm contribution."
+  },
   "2bfd1482ae064dcd15848148cec8b9a61fe57007abbe9f4ebad651d44c3de242": {
     "confidence": 0.7,
     "contradictions": [],
@@ -7911,6 +7933,34 @@
       "Whether the issue is reproducible on upstream main is unknown"
     ],
     "why": "The issue describes a reproducible hang in a specific LLM serving configuration (DSA attention, EAGLE speculative decoding, PD-disaggregation) with a clear stack trace pointing to a lazy Triton kernel load inside cuModuleLoadData. However, the root cause is not definitively identified; it could be a missing warmup or a CUDA driver deadlock. The issue is from an internal fork, and the open PR and related issue lookups timed out, so duplicate work cannot be excluded. The track is llm_algorithm, but the proposed fix (warmup or driver workaround) is operational rather than a new algorithm, and the evidence does not clearly support a reference-vs-implementation test."
+  },
+  "7c967bbcc8d422006b105d81f40f4372b24f9ac72ab59de2e1b9d36c186b370c": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Fix internal MCP URL derivation in mcp_oauth_store.py or meta.json generation",
+      "Make internal MCP connection failures non-fatal in _ensure_agent_ready"
+    ],
+    "risks": [
+      "Changing URL derivation may affect other deployments",
+      "Making failures non-fatal could hide real MCP issues"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with rootless Podman and empty mcp_config; add regression test for 405/SSL failure",
+      "Run existing MCP and agent-server unit tests"
+    ],
+    "unknowns": [
+      "Exact root cause in URL derivation",
+      "Maintainer preference on error handling",
+      "Whether a fix is already in progress"
+    ],
+    "why": "The issue reports a reproducible bug in the internal MCP self-connection path, but the root cause is not precisely identified and the fix requires design decisions about URL derivation and error handling. No maintainer confirmation or open PR exists, and the repository requires AI disclosure, blocking automated public action."
   },
   "7cf36c7ae9304d10b958e94f4b778117daa2faf0404775f56273cca084cc4420": {
     "confidence": 0.8,
