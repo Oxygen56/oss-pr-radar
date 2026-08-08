@@ -3390,6 +3390,36 @@
     ],
     "why": "Issue clearly describes a user-visible bug during rolling upgrades due to codec mismatch between v1.4 frontend and v1.2 workers. Existing PR #12658 addresses the issue but lacks regression tests and has a large change surface, leaving room for a more focused, well-tested fix."
   },
+  "3aa18d1f932dd845459094cae49ad29f02181841efe4c6747ac0f82dc1f8333a": {
+    "confidence": 0.75,
+    "contradictions": [
+      "Initial report claimed version 2.10.2; later comment corrected to 2.11.0 after upgrade.",
+      "Initial report suggested task_plan.md presence as trigger; later comment showed it depends on hook configuration."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify repairOrphanedInputItems in src/adapters/openai-responses.ts to reorder function_call_output items to be contiguous with their matching function_call, possibly gated by a provider predicate."
+    ],
+    "risks": [
+      "Reordering may change message semantics for providers that tolerate interleaving; needs provider-specific gating.",
+      "Moving developer messages could affect model behavior; must be validated with controlled experiments."
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "test_plan": [
+      "Add a unit test with a synthetic input containing function_call, developer message, function_call_output and assert the output order is normalized.",
+      "Add an integration test against a mock DeepSeek endpoint that returns 400 on interleaved pairs and verify the fix avoids the error."
+    ],
+    "unknowns": [
+      "Exact provider predicate to gate the normalization.",
+      "Whether the developer message content must remain positioned before the tool output for model reasoning."
+    ],
+    "why": "The issue is a provider-compatibility bug in the openai-responses adapter: interleaved developer messages between function_call and function_call_output cause DeepSeek to return 400. The maintainer has confirmed the mechanism and proposed a fix (ordering normalization in repairOrphanedInputItems), but explicitly requested design confirmation on blast radius and semantic impact before patching. The track is llm_algorithm, yet the fix is adapter plumbing, not an algorithm change; however, the issue is actionable and well-evidenced. Since the maintainer is actively engaged and has not yet approved the design, WAIT_MAINTAINER is appropriate."
+  },
   "3aa8d70a010c163f7fff72fb8c84d7202a0544c2cab8073c05fbdf267484f0fc": {
     "confidence": 0.7,
     "contradictions": [
@@ -5961,6 +5991,31 @@
       "Exact code path in Dify Cloud that differs from self-hosted"
     ],
     "why": "Issue reports a reproducible MCP error with a clear root cause (SQLAlchemy session transaction conflict) and a known fix pattern from merged PRs. However, the issue is Cloud-specific and the fix likely requires maintainer coordination; the candidate is a bug fix with local scope, not a new algorithm. The deterministic gate allows private work but the lack of maintainer approval and the need for design confirmation on the MCP controller fix make it premature to start."
+  },
+  "63d0ea285346a6354120831ba3f9efdfe72116cd8eea544a069239f515173ce4": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Set OH_BASH_EVENTS_RETENTION_SECONDS in launchers (dev-safe.mjs, docker/entrypoint.sh) with default 2 days, overridable via env var."
+    ],
+    "risks": [
+      "Changing default retention may delete user data unexpectedly; ensure default is documented and overridable.",
+      "The fix only mitigates the symptom; the underlying glob-on-event-loop issue remains for long retention windows."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a test that sets OH_BASH_EVENTS_RETENTION_SECONDS and verifies the retention cleanup loop starts and purges old files.",
+      "Add a regression test that simulates many files and asserts search_bash_events does not block the event loop (e.g., using a mock or timing)."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a different default retention value or a more comprehensive fix (e.g., offloading glob to thread pool) before merging."
+    ],
+    "why": "Issue provides a clear root cause (synchronous glob on event loop, unbounded directory) with profiling evidence and a concrete, minimal fix (enable retention via env var). No competing PR or issue found. The fix is actionable and testable."
   },
   "64589d857c8cea3d36c0cea4d7fa2d30fd6b9a954f96aeb8ec35a6a3e9cea16f": {
     "confidence": 0.7,
@@ -14527,6 +14582,37 @@
       "Maintainer preference on the fix approach"
     ],
     "why": "Issue clearly identifies a real bug with a minimal repro and root cause in messages.py, but an open PR (#7053) has semantic overlap and may already address the same code paths. The deterministic gate requires HUMAN_REVIEW, and the overlap must be manually compared before creating a new task."
+  },
+  "feb1951522419742c1fcf71a6b9913989534043e31232f089d1dad1c197c2f76": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Identify where metadata is injected in Responses API path",
+      "Prevent internal metadata from being serialized to upstream",
+      "Add regression test for strict OpenAI-compatible upstream"
+    ],
+    "risks": [
+      "May overlap with PR #36268 or other open PRs",
+      "Behavior change could affect legitimate metadata forwarding"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with provided config and call without metadata",
+      "Assert upstream request lacks metadata field",
+      "Run existing responses API tests"
+    ],
+    "unknowns": [
+      "Exact code path introducing metadata",
+      "Maintainer preference on fix approach",
+      "Whether PR #36268 already addresses this issue"
+    ],
+    "why": "Issue reports a real bug but root cause is unconfirmed; maintainer confirmation needed to avoid conflicting with existing PRs."
   },
   "ff96a113bae9bfad3d62142f9a88b24fee8a4eb645a50a6ea08b836f733534c2": {
     "confidence": 0.9,
