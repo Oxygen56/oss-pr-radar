@@ -169,8 +169,8 @@
       "seenAt": "2026-08-05T17:52:51.969063Z"
     },
     "review|BerriAI/litellm#27767": {
-      "seenAt": "2026-08-06T13:55:08.577510Z",
-      "stateId": "8ca00d0eca46e51cf447704fe18665de70758edc4a84c309f09b29928e92350b"
+      "seenAt": "2026-08-08T20:51:28.750832Z",
+      "stateId": "b891e42c6d03824ca2a1c320b0da327d4212f76f9c4a734c9fc9385348006259"
     },
     "review|BerriAI/litellm#29284": {
       "seenAt": "2026-08-07T10:59:17.454125Z",
@@ -1037,12 +1037,12 @@
       "seenAt": "2026-08-03T21:54:14.829777Z"
     },
     "watch|langflow-ai/langflow#14470": {
-      "seenAt": "2026-08-08T20:23:47.974915Z",
-      "stateId": "9c9c64dd6544596f4b01b399b0b694327504ae2f03196bed2afab839d3e6314b"
+      "seenAt": "2026-08-08T20:51:29.127967Z",
+      "stateId": "cddd88f2b82b323909941ef787ed02c446eb85068d69698527659b3229ff7ba3"
     },
     "watch|langflow-ai/langflow#14471": {
-      "seenAt": "2026-08-08T20:23:47.974915Z",
-      "stateId": "dbbd56a803ccb9394c2bd5aa4dab0fea8e11cf2a814a1e124e6252f4389a3ef1"
+      "seenAt": "2026-08-08T20:51:29.127967Z",
+      "stateId": "1f39e20f50378833c14f7398ecf1a06ff3150853d3746a627d01c9019f58017a"
     },
     "watch|langgenius/dify#39954": {
       "legacy": true,
@@ -1309,7 +1309,7 @@
       "seenAt": "2026-08-06T10:09:13.778625Z"
     }
   },
-  "digest": "78c2d1ab144036016c6b6788466cdedbda14646a21a2f77223ea9e1f26579bb4",
+  "digest": "5e8e9a23565e88d7436700900c0de1f42e54a7f9082b2722a0d9ba0f29d43d0f",
   "events": [
     {
       "attempts": 1,
@@ -17663,9 +17663,111 @@
       "runId": "pr-followup-1786220471",
       "sentAt": "2026-08-08T20:24:20.811219Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "BerriAI/litellm#27767"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "f53a20f705d8e4e9fe87a057579bc3bf5d83016d127d206e04e134c4798974b8",
+          "key": "BerriAI/litellm#27767",
+          "kind": "review",
+          "stateId": "b891e42c6d03824ca2a1c320b0da327d4212f76f9c4a734c9fc9385348006259"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#27767](https://github.com/BerriAI/litellm/issues/27767) [Bug]: litellm.BadRequestError when using llm_as_a_judge guardrail with self-hosted vllm model**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue is a real bug with clear root cause: llm_as_a_judge guardrail bypasses proxy router and calls litellm.acompletion directly, failing for proxy-registered models. However, the deterministic gate requires HUMAN_REVIEW, and existing PR #33624 has semantic overlap in litellm/main.py, requiring maintainer comparison before new work.\n改动：Modify guardrail registry to pass llm_router to initialize_guardrail；Update LLMAsAJudgeGuardrail to accept and store llm_router；Use llm_router.acompletion in _run_judge when available\n验证：Add regression test reproducing guardrail failure with a proxy-registered vllm model；Run existing guardrail and proxy tests\n风险：Potential behavior change for directly-addressable models if router fallback not handled；Existing PR #33624 may already address similar path; need to compare\n竞争：发现 PR #36240 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 2，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-08T20:51:28.750832Z",
+      "eventId": "9058c20d3b8a1c088695bc1fcf3d22520baa48e07c157c8e0408ca489a2b8183",
+      "idempotencyKey": "9058c20d3b8a1c088695bc1fcf3d22520baa48e07c157c8e04",
+      "kind": "review",
+      "runId": "scan-20260808T204950Z-1b309080dfe9",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "langflow-ai/langflow#14470",
+        "langflow-ai/langflow#14471"
+      ],
+      "candidateStates": [
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "d4449179ce3b982ae1bb25fe5e4c45a14c682189b483a5b9b54aee8b94a72a45",
+          "key": "langflow-ai/langflow#14470",
+          "kind": "watch",
+          "stateId": "cddd88f2b82b323909941ef787ed02c446eb85068d69698527659b3229ff7ba3"
+        },
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "f24fe1e6215ed04f5c5eb8c450476dc94019b5fa923997abc94ae28a1cbb17b6",
+          "key": "langflow-ai/langflow#14471",
+          "kind": "watch",
+          "stateId": "1f39e20f50378833c14f7398ecf1a06ff3150853d3746a627d01c9019f58017a"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[langflow-ai/langflow#14470](https://github.com/langflow-ai/langflow/pull/14470) fix: bound web search result content**\n建议：PR_FOLLOWUP\n价值：CI 检查失败；存在未解决审查线程\n验证：查看正式 review、失败检查或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[langflow-ai/langflow#14471](https://github.com/langflow-ai/langflow/pull/14471) fix(lfx): align tool mode capability detection with runtime**\n建议：PR_FOLLOWUP\n价值：CI 检查失败\n验证：查看正式 review、失败检查或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-08T20:51:29.127967Z",
+      "eventId": "222a96fe83ef79f83ade52005356d47a71c05807bf9e85b69d4b7eda2343e47e",
+      "idempotencyKey": "222a96fe83ef79f83ade52005356d47a71c05807bf9e85b69d",
+      "kind": "watch",
+      "runId": "pr-followup-1786222149",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-08T20:23:47.974915Z",
+  "generatedAt": "2026-08-08T20:51:29.127967Z",
   "newEventCount": 1,
   "version": "notification_outbox_v2"
 }

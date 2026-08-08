@@ -8993,6 +8993,35 @@
     ],
     "why": "Issue provides a clear root cause and a verified fix for a user-visible bug, but the deterministic gate requires HUMAN_REVIEW and there are multiple open PRs with semantic overlap (e.g., #10344, #12562) that may already address the same code path. The issue itself offers to turn into a PR, but the presence of overlapping PRs and the need to compare implementations makes it premature to start new work without maintainer guidance."
   },
+  "902967f116862e672a1a4ddb2bbd1e4cdf904d5e530c1d504e0818593c26f48d": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify guardrail registry to pass llm_router to initialize_guardrail",
+      "Update LLMAsAJudgeGuardrail to accept and store llm_router",
+      "Use llm_router.acompletion in _run_judge when available"
+    ],
+    "risks": [
+      "Potential behavior change for directly-addressable models if router fallback not handled",
+      "Existing PR #33624 may already address similar path; need to compare"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "test_plan": [
+      "Add regression test reproducing guardrail failure with a proxy-registered vllm model",
+      "Run existing guardrail and proxy tests"
+    ],
+    "unknowns": [
+      "Whether maintainers have design preference for guardrail routing",
+      "Exact overlap with PR #33624 and whether it fixes this issue"
+    ],
+    "why": "Issue is a real bug with clear root cause: llm_as_a_judge guardrail bypasses proxy router and calls litellm.acompletion directly, failing for proxy-registered models. However, the deterministic gate requires HUMAN_REVIEW, and existing PR #33624 has semantic overlap in litellm/main.py, requiring maintainer comparison before new work."
+  },
   "910015a40ba9b28ae20473b0050ee4d75c6c84f2d8877f5491721de4405f2c76": {
     "confidence": 0.7,
     "contradictions": [],
