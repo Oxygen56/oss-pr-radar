@@ -1,4 +1,4 @@
-"""Classify whether open pull requests already cover an issue."""
+"""Classify whether pull requests already cover an issue."""
 
 from __future__ import annotations
 
@@ -88,12 +88,18 @@ def assess_relations(
             rf"\s*:?[ ]*#{issue_number}\b",
             re.I,
         ),
+        re.compile(rf"\b{re.escape(repo)}#{issue_number}\b", re.I),
         re.compile(rf"https://github\.com/{re.escape(repo)}/issues/{issue_number}\b", re.I),
     )
     for pr in pull_requests:
         body = str(pr.get("body") or "")
         title = str(pr.get("title") or "")
-        exact = bool(pr.get("_linked_from_timeline")) or any(
+        timeline_event = str(pr.get("_timeline_event") or "").casefold()
+        # A cross-reference can be created in either direction. In particular,
+        # an issue that cites an older PR as background causes GitHub to emit a
+        # cross-reference from that PR. Only an explicit PR-body reference or a
+        # Development-sidebar connection is strong enough to prove coverage.
+        exact = timeline_event == "connected" or any(
             pattern.search(body) for pattern in exact_patterns
         )
         overlap = _overlap(issue_title, title)

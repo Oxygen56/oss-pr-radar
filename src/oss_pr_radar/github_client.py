@@ -141,6 +141,7 @@ class GitHubClient:
                 source_number = int(match.group(2))
                 found[f"{source_repo.casefold()}#{source_number}"] = source | {
                     "_linked_from_timeline": True,
+                    "_timeline_event": str(event.get("event") or ""),
                     "_repo": source_repo,
                 }
         for query in queries:

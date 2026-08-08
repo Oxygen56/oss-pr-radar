@@ -102,3 +102,47 @@ def test_exact_closed_unmerged_pr_is_historical_not_active():
         ],
     )
     assert result[0].relation == "HISTORICAL_CLOSED_EXACT"
+
+
+def test_reverse_cross_reference_to_older_merged_pr_does_not_claim_coverage():
+    result = assess_relations(
+        repo="a/b",
+        issue_number=7,
+        issue_title="Opus model rejects temperature",
+        pull_requests=[
+            {
+                "number": 9,
+                "body": "Adds Sonnet support and strips sampling parameters for Sonnet.",
+                "title": "Add Sonnet model support",
+                "state": "closed",
+                "merged_at": "2026-07-01T00:00:00Z",
+                "_linked_from_timeline": True,
+                "_timeline_event": "cross-referenced",
+            }
+        ],
+    )
+
+    assert result[0].exact_link is False
+    assert result[0].relation == "UNRELATED"
+
+
+def test_development_sidebar_connection_is_an_exact_relation():
+    result = assess_relations(
+        repo="a/b",
+        issue_number=7,
+        issue_title="Streaming bug",
+        pull_requests=[
+            {
+                "number": 9,
+                "body": "Implements the requested change.",
+                "title": "Fix streaming bug",
+                "state": "open",
+                "updated_at": "2099-01-01T00:00:00Z",
+                "_linked_from_timeline": True,
+                "_timeline_event": "connected",
+            }
+        ],
+    )
+
+    assert result[0].exact_link is True
+    assert result[0].relation == "STRONG_EXACT_DUPLICATE"

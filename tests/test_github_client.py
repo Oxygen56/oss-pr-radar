@@ -28,6 +28,7 @@ def test_related_prs_keep_cross_repository_timeline_identity(monkeypatch):
             "number": 4342,
             "html_url": "https://github.com/OpenHands/software-agent-sdk/pull/4342",
             "_linked_from_timeline": True,
+            "_timeline_event": "cross-referenced",
             "_repo": "OpenHands/software-agent-sdk",
         }
     ]
