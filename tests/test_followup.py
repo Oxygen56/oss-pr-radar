@@ -103,12 +103,16 @@ def test_transient_unknown_mergeability_does_not_repeat_failure_notification():
         def check_runs(self, repo, ref):
             return [
                 {
+                    "id": 1,
                     "name": "tests",
                     "status": "completed",
                     "conclusion": "failure",
                     "details_url": "https://example.test/checks/1",
                 }
             ]
+
+        def check_annotations(self, repo, check_run_id):
+            return [{"path": "src/runtime.py", "message": "failed"}]
 
     client = FailingClient()
     state, first = collect_followup(client, author="Oxygen56", now=datetime(2026, 8, 4, tzinfo=UTC))
@@ -247,7 +251,7 @@ def test_failed_check_only_wakes_task_when_evidence_matches_changed_file():
     assert rerun_state["items"][0]["taskActionDigest"] != item["taskActionDigest"]
 
 
-def test_unrelated_test_failure_notifies_without_waking_task():
+def test_unrelated_test_failure_is_retained_without_notification_or_task_wake():
     class CheckClient(Client):
         def pull_reviews(self, repo, number):
             return []
@@ -270,7 +274,8 @@ def test_unrelated_test_failure_notifies_without_waking_task():
         CheckClient(), author="Oxygen56", now=datetime(2026, 8, 4, tzinfo=UTC)
     )
 
-    assert report["candidate_details"]
+    assert report["candidate_details"] == []
+    assert state["items"][0]["actions"] == ["CI 检查失败"]
     assert state["items"][0]["taskFollowupRequired"] is False
     assert state["items"][0]["taskActions"] == []
 
@@ -279,6 +284,20 @@ def test_unresolved_review_bot_thread_on_changed_file_wakes_original_task():
     class ReviewThreadClient(Client):
         def pull_reviews(self, repo, number):
             return []
+
+        def check_runs(self, repo, ref):
+            return [
+                {
+                    "id": 13,
+                    "name": "Playwright Shard 47/70",
+                    "status": "completed",
+                    "conclusion": "failure",
+                    "details_url": "https://example.test/checks/13",
+                }
+            ]
+
+        def check_annotations(self, repo, check_run_id):
+            return [{"path": "tests/unrelated.spec.ts", "message": "failed"}]
 
         def pull_review_threads(self, repo, number):
             return [
@@ -307,8 +326,10 @@ def test_unresolved_review_bot_thread_on_changed_file_wakes_original_task():
     item = state["items"][0]
     assert item["taskFollowupRequired"] is True
     assert item["taskActions"] == ["存在未解决审查线程"]
+    assert item["actions"] == ["CI 检查失败", "存在未解决审查线程"]
     assert item["evidence"]["unresolvedReviewThreads"][0]["reviewer"] == "review-bot"
     assert report["candidate_details"][0]["why"] == "存在未解决审查线程"
+    assert report["candidate_details"][0]["evidence_digest"] == item["taskActionDigest"]
 
     class NewHeadClient(ReviewThreadClient):
         def pull_request(self, repo, number):

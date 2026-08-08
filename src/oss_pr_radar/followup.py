@@ -389,9 +389,16 @@ def collect_followup(
             existing_version != FOLLOWUP_VERSION
             and bool(previous_item)
             and previous_item.get("headSha") == head
-            and previous_item.get("actions") == actions
+            and (
+                previous_item.get("taskActions") == task_actions
+                or ("taskActions" not in previous_item and previous_item.get("actions") == actions)
+            )
         )
-        if actions and previous_item.get("actionDigest") != digest and not migration_only_change:
+        if (
+            task_actions
+            and previous_item.get("taskActionDigest") != task_digest
+            and not migration_only_change
+        ):
             updates.append(state_item | {"evidence": evidence})
     state = {
         "version": FOLLOWUP_VERSION,
@@ -413,9 +420,9 @@ def collect_followup(
                 "score": None,
                 "auto_spawn": False,
                 "notify": True,
-                "why": "；".join(item["actions"]),
-                "test_path": "查看正式 review、失败检查或冲突详情后处理",
-                "evidence_digest": item["actionDigest"],
+                "why": "；".join(item["taskActions"]),
+                "test_path": "查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+                "evidence_digest": item["taskActionDigest"],
             }
             for item in updates
         ],
