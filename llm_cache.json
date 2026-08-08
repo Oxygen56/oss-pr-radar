@@ -2636,6 +2636,34 @@
     "unknowns": [],
     "why": "The issue is a straightforward API request normalization bug in serving_responses.py, not an LLM algorithm defect. The proposed fix is a simple list-handling change with no algorithmic mechanism, training objective, or numerical validation. It falls under ordinary API plumbing, which is explicitly out of scope for track=llm_algorithm."
   },
+  "317f2ed026a065326dcdb26607a1ec8f44522b1d07cf0358823146d8916cc7f9": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify _node_template_supports_tool_mode in src/lfx/src/lfx/graph/flow_builder/connect.py",
+      "Modify describe_component in src/lfx/src/lfx/mcp/registry.py",
+      "Possibly serialize add_tool_output into component index"
+    ],
+    "risks": [
+      "Changing behavior may break flows that relied on the buggy acceptance; need to ensure error handling is graceful",
+      "Serializing add_tool_output may require index regeneration and could affect other consumers"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add regression test using the provided repro script to assert _enable_tool_mode raises ValueError for ChatInput",
+      "Add test that describe_component does not advertise component_as_tool for components without tool_mode inputs",
+      "Run existing unit tests for connect.py and registry.py"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the conservative fix (drop fallback) or the more complete fix (serialize add_tool_output) first; but this is a design choice that can be decided during implementation."
+    ],
+    "why": "The issue precisely identifies a logic error in tool-mode detection: output-level tool_mode is misinterpreted as capability, causing _enable_tool_mode to never refuse and produce impossible outputs. It provides a concrete repro and a clear suggested fix (drop output-side fallback, optionally serialize add_tool_output). This is a well-scoped, actionable bug in the agent/inference path."
+  },
   "32150a03a57d47438635e97b5147769aabe46dc5d47fe6392eea7a3ac2dab65e": {
     "confidence": 0.85,
     "contradictions": [],
@@ -5067,6 +5095,36 @@
     ],
     "why": "Issue reports a user-visible bug with q4_0 KV cache causing garbage output, but maintainer comments indicate it may be model-specific and not reproducible on other platforms. No code change proposed; likely a configuration or model suitability issue. Open PR and related issue lookups failed, so duplicate work cannot be excluded."
   },
+  "5ab857fcfe5b35fe95cdce7aeab523908ce5a5d0e849b2467b7f9130cf81baa0": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Investigate Ref2VA packed sequence/reference-conditioning path",
+      "Fix timestep, reference token, or position handling",
+      "Add regression test for Ref2VA generation"
+    ],
+    "risks": [
+      "Root cause may be in upstream model code or hardware-specific",
+      "Floating-point vs algorithmic bug distinction requires careful baseline"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 12,
+    "test_plan": [
+      "Run provided repro on 2x L40S BF16 and compare output lap_var to FL2VA baseline",
+      "Add unit test for Ref2VA conditioning with fixed seed and synthetic inputs",
+      "Verify numerical equivalence of timestep/position embeddings against reference implementation"
+    ],
+    "unknowns": [
+      "Open PR status unknown due to timeout",
+      "Related issue audit incomplete",
+      "Maintainer confirmation or assignment not present"
+    ],
+    "why": "The issue reports a reproducible Ref2VA-specific snow/noise bug with detailed diagnostics and a minimal repro, but the root cause is not identified and the deterministic gate requires HUMAN_REVIEW. Open PR and related issue lookups timed out, so duplicate work cannot be excluded."
+  },
   "5abf5544b263f836e09fc9a31e6d57ef047f8e875f704bbd5f300695bcb5c990": {
     "confidence": 0.7,
     "contradictions": [],
@@ -5786,6 +5844,33 @@
       "Maintainer preference on whether to fix the stacking bug directly or rely on per-request isolation from issue #26751."
     ],
     "why": "Issue provides a clear root cause (torch.stack on variable-size crops) and a reproducible test, but the deterministic gate requires HUMAN_REVIEW. An existing PR #33458 directly addresses the issue but has failing CI checks, and a commenter has proposed a focused fix. Maintainer direction is not confirmed."
+  },
+  "6860618c55fdef4936fd65d3ee34d56591b4a6332b6f26781999989ccad3631f": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/config/vllm.py: add weight offloading to unsupported features for V2 runner",
+      "possibly vllm/v1/worker/gpu/model_runner.py: wire offloader installation for feature parity"
+    ],
+    "risks": [
+      "PR #51397 has CI failures that need attribution",
+      "Feature parity option requires validation on V2 runner with UVA views and prefetch hooks"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Add end-to-end test for cpu_offload_gb with V2 runner default selection, verifying fallback to V1 and offload log line",
+      "Run existing PR #51397 tests and CI checks to assess viability"
+    ],
+    "unknowns": [
+      "Whether PR #51397's CI failures are technical or non-technical; maintainer interest in merging that PR"
+    ],
+    "why": "The issue clearly identifies a silent no-op of cpu_offload_gb in V2 model runner with root cause and empirical evidence. However, an existing PR (#51397) directly addresses the fail-safe option and is technically complete but closed with CI failures. The gate requires HUMAN_REVIEW, and the PR competition assessment indicates human review is needed to determine if the PR is acceptable or if a new PR is warranted."
   },
   "686af751a2fb10cbd8a14214142943ef75894b33383ac25d553df0a68b6cb3d0": {
     "confidence": 0.8,
@@ -12739,6 +12824,41 @@
       "Whether existing PR #7604 can be improved or will be merged soon"
     ],
     "why": "Issue provides a clear root cause (system Chrome exits on --remote-debugging-port=0, and ensureChromiumExecutable() ignores PUPPETEER_EXECUTABLE_PATH) and a workaround. Existing PR #7604 is weak: it has failing CI and lacks full evidence, so a materially better PR with complete tests and root-cause coverage is plausible."
+  },
+  "ee123742ef232e04254bb85d3865753457038926474e6b7bba835f621027ebfc": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue mentions Qwen3.6:35b-3ba but provider says qwen3.6:35b-a3a",
+      "Comment says issue affects all Ollama models, not just Qwen"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Tool syntax handling in provider/runtime layer",
+      "Configuration UI for compact/native tool toggles",
+      "Documentation for XML tool syntax"
+    ],
+    "risks": [
+      "May be configuration or documentation issue, not code bug",
+      "Existing PRs may already address root cause",
+      "Behavior change could affect other providers"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with Ollama + Qwen3.6 using provided .clinerules",
+      "Verify tool call format before/after fix",
+      "Run existing provider tests"
+    ],
+    "unknowns": [
+      "Exact code change needed",
+      "Maintainer design preference",
+      "Whether existing PRs fully fix the issue"
+    ],
+    "why": "Issue reports tool syntax breakage with local Ollama/Qwen after 4.1.x, but root cause is unclear and may be configuration or provider-specific. Existing PRs overlap semantically but none directly fix the reported regression. Gate requires human review."
   },
   "ee4b471f90d2b7e5c3a168569f37791438aa8acaaaf91fbad1c436c6198377c5": {
     "confidence": 0.85,

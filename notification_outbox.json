@@ -301,8 +301,8 @@
       "stateId": "04a4e17cec6cd578133d76c85a26b84ab64158a64e83e794e627e0fa149209ea"
     },
     "review|aaif-goose/goose#11047": {
-      "seenAt": "2026-08-08T07:21:46.766873Z",
-      "stateId": "554f87eb1bfa13e488b76ded6792edd2b56852f8f95934d44a50bed435a882d9"
+      "seenAt": "2026-08-08T10:57:26.866484Z",
+      "stateId": "247cdcf1268bcd66cfc9751945e1e39855240fedf4653c7a20289f540d853b39"
     },
     "review|ai-dynamo/dynamo#12630": {
       "legacy": true,
@@ -657,8 +657,12 @@
       "stateId": "f05bbf3a515c98dbdbde9728255524996fec2801ff0017d4a3be332fdac6eaff"
     },
     "review|sgl-project/sglang#34000": {
-      "seenAt": "2026-08-08T07:04:18.489442Z",
-      "stateId": "e04a57b79966a4aa733dc004807a7ab6269e9d212b216d68f5cea520c83dce18"
+      "seenAt": "2026-08-08T10:57:26.866484Z",
+      "stateId": "96295b0ce982149e9a398fcb277d909ff1701b982d6da46615b7ca0d8fb79a61"
+    },
+    "review|sgl-project/sglang#34110": {
+      "seenAt": "2026-08-08T10:57:26.866484Z",
+      "stateId": "77843da726db9e1f9c22ea3dd67f22edfe65e227d5e2062a15ffe5ea233c9d8f"
     },
     "review|stanfordnlp/dspy#10165": {
       "seenAt": "2026-08-07T05:33:51.867072Z",
@@ -779,6 +783,10 @@
     "review|vllm-project/vllm#51387": {
       "seenAt": "2026-08-07T11:15:10.665450Z",
       "stateId": "e8dc0af95a3ce76888592547fbff437bb21f35f78c71eb4660fff5f254ec4e45"
+    },
+    "review|vllm-project/vllm#51396": {
+      "seenAt": "2026-08-08T10:57:26.866484Z",
+      "stateId": "e69b4d3aa7f043ade1ab2c73535f012ae7283c390c28a6a1efb914439c740420"
     },
     "review|vllm-project/vllm#51401": {
       "seenAt": "2026-08-07T15:18:16.578799Z",
@@ -1213,7 +1221,7 @@
       "seenAt": "2026-08-06T10:09:13.778625Z"
     }
   },
-  "digest": "2d8b5a79bbf654925698f6119170f16e70bd2f361ba6ceb7ab7fcc3c2f4d253b",
+  "digest": "08506413aa924eb5d8a6381143c08f36d193afe6c1d351bdd2d480ef76f23f62",
   "events": [
     {
       "attempts": 1,
@@ -16109,9 +16117,105 @@
       "runId": "scan-20260808T095752Z-c2faf7b90624",
       "sentAt": "2026-08-08T10:02:26.336039Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "aaif-goose/goose#11047",
+        "sgl-project/sglang#34000",
+        "sgl-project/sglang#34110",
+        "vllm-project/vllm#51396"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "b9b4ad2c8f09a9cbd30e15059559708daf514331a406b515f620594f8d9f2d31",
+          "key": "aaif-goose/goose#11047",
+          "kind": "review",
+          "stateId": "247cdcf1268bcd66cfc9751945e1e39855240fedf4653c7a20289f540d853b39"
+        },
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "3b1740d3b8dd13c6d7e6f97d25062b14d9d55289635bd0020fadb5248b49eeb7",
+          "key": "sgl-project/sglang#34000",
+          "kind": "review",
+          "stateId": "96295b0ce982149e9a398fcb277d909ff1701b982d6da46615b7ca0d8fb79a61"
+        },
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "b983a44d6ccfbb37c28c879f4a6fb8d11f698f0a8ceacecaf51b1eed42b464e9",
+          "key": "sgl-project/sglang#34110",
+          "kind": "review",
+          "stateId": "77843da726db9e1f9c22ea3dd67f22edfe65e227d5e2062a15ffe5ea233c9d8f"
+        },
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "38ee948268b2ed98cef41c84669ec8a76c1e32b48ce9be64a7027f63a269db73",
+          "key": "vllm-project/vllm#51396",
+          "kind": "review",
+          "stateId": "e69b4d3aa7f043ade1ab2c73535f012ae7283c390c28a6a1efb914439c740420"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[aaif-goose/goose#11047](https://github.com/aaif-goose/goose/issues/11047) ACP: a failed/unreachable-provider turn is reported as a successful session/prompt (stopReason: end_turn, no JSON-RPC error)**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue describes a clear ACP contract failure where unreachable provider turns return end_turn without JSON-RPC error. Root cause likely in retry/backoff or ACP session handling, but not pinpointed. Potential duplicate #10751 and no maintainer confirmation. Gate requires HUMAN_REVIEW.\n改动：Add regression test for unreachable provider over ACP；Modify ACP session/prompt response to include error stopReason or structured error\n验证：Reproduce with GOOSE_PROVIDER=ollama and no daemon, assert JSON-RPC error or distinct stopReason；Run existing ACP integration tests\n风险：Changing stopReason may break existing clients；Potential duplicate issue #10751 needs triage\n竞争：仅发现未直接关联、无代码路径或强机制重合的 PR #11018；保留为搜索上下文，不阻止实现\n下一步：先人工比较相关 issue 的根因、维护者归并方向和可提交代码路径；确认不是重复后再进入实现。\n证据：复现信号 4，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#34000](https://github.com/sgl-project/sglang/issues/34000) [Bug] Multi-output diffusion rollout: per-sample trajectories collapse to output 0, grouped forward AttributeError, provided latents skip packing**\n建议：WAIT_MAINTAINER | 分数：12\n价值：The issue reports three concrete bugs in the diffusion multi-output rollout path, with detailed code-level root causes and a clear numerical corruption mechanism (Bug 1) that silently breaks GRPO training. The reporter has prepared fixes with regression tests and explicitly requests maintainer confirmation on intended semantics. Maintainer Rockdu has acknowledged and is checking, indicating active investigation. The deterministic gate is HUMAN_REVIEW, and the open PR #22183 is weak (no tests, stale), but the maintainer's response suggests a wait for their review rather than immediate competition.\n改动：Fix trajectory merging in gpu_worker.py to concatenate rollout_trajectory_data along batch dim；Fix per-sample trajectory slicing in diffusion_generator.py；Initialize component_residency_manager in PipelineExecutor.__init__ or guard in begin_component_residency_request；Apply latent_ids preparation and packing to caller-provided latents in latent_preparation.py\n验证：Unit tests for each bug using stubs extracted from main and fix branches, as the reporter did；Integration test with num_outputs_per_prompt>1 and rollout=True to verify distinct trajectories per output；Regression test for grouped forward path to ensure no AttributeError；Test provided latents with packed model config to verify latent_ids and packing applied\n风险：Bug 1 fix changes behavior when only some outputs have trajectories (returns None instead of broadcasting), which may need maintainer approval；Tests are unvalidated under real sglang install; CI may be needed；Potential interaction with PR #22183 or other in-flight changes\n竞争：已有直接关联但证据不完整的 PR #22183：缺少测试文件; 超过 30 天未更新；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 12，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#34110](https://github.com/sgl-project/sglang/issues/34110) [Bug] MiniMax-H3 Ref2VA consistently produces snow/noise on SGLang 0.5.17 with L40S offload**\n建议：WAIT_MAINTAINER | 分数：12\n价值：The issue reports a reproducible Ref2VA-specific snow/noise bug with detailed diagnostics and a minimal repro, but the root cause is not identified and the deterministic gate requires HUMAN_REVIEW. Open PR and related issue lookups timed out, so duplicate work cannot be excluded.\n改动：Investigate Ref2VA packed sequence/reference-conditioning path；Fix timestep, reference token, or position handling；Add regression test for Ref2VA generation\n验证：Run provided repro on 2x L40S BF16 and compare output lap_var to FL2VA baseline；Add unit test for Ref2VA conditioning with fixed seed and synthetic inputs；Verify numerical equivalence of timestep/position embeddings against reference implementation\n风险：Root cause may be in upstream model code or hardware-specific；Floating-point vs algorithmic bug distinction requires careful baseline\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 9，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#51396](https://github.com/vllm-project/vllm/issues/51396) [Bug]: cpu_offload_gb silently no-ops on Model Runner V2 — offloader never installed, model loads fully on-GPU with no warning**\n建议：WAIT_MAINTAINER | 分数：12\n价值：The issue clearly identifies a silent no-op of cpu_offload_gb in V2 model runner with root cause and empirical evidence. However, an existing PR (#51397) directly addresses the fail-safe option and is technically complete but closed with CI failures. The gate requires HUMAN_REVIEW, and the PR competition assessment indicates human review is needed to determine if the PR is acceptable or if a new PR is warranted.\n改动：vllm/config/vllm.py: add weight offloading to unsupported features for V2 runner；possibly vllm/v1/worker/gpu/model_runner.py: wire offloader installation for feature parity\n验证：Add end-to-end test for cpu_offload_gb with V2 runner default selection, verifying fallback to V1 and offload log line；Run existing PR #51397 tests and CI checks to assess viability\n风险：PR #51397 has CI failures that need attribution；Feature parity option requires validation on V2 runner with UVA views and prefetch hooks\n竞争：发现关键词相关 PR，但未确认直接覆盖：#51397；需人工核对\n下一步：已有 PR 但强度不足；先看维护者规则和 issue 讨论，必要时先请求确认方案或分配。\n证据：复现信号 1，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-08T10:57:26.866484Z",
+      "eventId": "89104bdbe6cbe912646d3a0769d25ac39bcbf922eb33797d728f40607ab12e56",
+      "idempotencyKey": "89104bdbe6cbe912646d3a0769d25ac39bcbf922eb33797d72",
+      "kind": "review",
+      "runId": "scan-20260808T105425Z-993c50e6efda",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-08T10:01:53.958751Z",
+  "generatedAt": "2026-08-08T10:57:27.424695Z",
   "newEventCount": 0,
   "version": "notification_outbox_v2"
 }
