@@ -484,6 +484,47 @@ def test_scanner_migration_does_not_reopen_unrelated_terminal_rejections():
     assert "frontend_interaction_issue" not in SCANNER_MIGRATION_RECHECK_STATUSES
 
 
+def test_unselected_active_migrations_are_declassified_until_revalidated(monkeypatch, tmp_path):
+    seen = {}
+    for index in range(scanner.MAX_SCANNER_MIGRATION_RECHECKS + 3):
+        seen[f"example/project#{index}"] = {
+            "status": "queued_outbox",
+            "title": f"Runtime issue {index}",
+            "url": f"https://github.com/example/project/issues/{index}",
+            "issue_updated": f"2026-08-{index + 1:02d}T00:00:00Z",
+            "scanner_version": "older",
+        }
+    seen_path = tmp_path / "seen.json"
+    seen_path.write_text(json.dumps(seen), encoding="utf-8")
+    radar = Radar(
+        datetime(2026, 8, 20, tzinfo=UTC),
+        2,
+        seen_path,
+        "",
+        dry_run=True,
+        notify=False,
+    )
+    monkeypatch.setattr(radar, "add_repo_issues", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(radar, "add_search", lambda *_args, **_kwargs: None)
+
+    radar.collect_items()
+
+    pending = {
+        key: value
+        for key, value in radar.seen.items()
+        if value.get("status") == "policy_migration_pending"
+    }
+    assert len(pending) == 3
+    assert all(value["deferred_from_status"] == "queued_outbox" for value in pending.values())
+    assert all(
+        value["reason"] == "policy_migration_requires_revalidation" for value in pending.values()
+    )
+    selected = select_seen_rechecks(radar.seen)
+    assert [key for key, _value in selected] == sorted(
+        pending, key=lambda key: pending[key]["first_deferred_at"]
+    )
+
+
 def test_deferred_rechecks_have_capacity_in_addition_to_fresh_issues():
     bases = [
         {"repo": f"recheck/{index}", "num": index, "_explicit_recheck": True} for index in range(4)

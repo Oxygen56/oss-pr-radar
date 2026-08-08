@@ -68,6 +68,7 @@ SEEN_RECHECK_STATUSES = frozenset(
         "status_update",
         "inspection_budget_deferred",
         "candidate_overflow",
+        "policy_migration_pending",
     }
 )
 SCANNER_MIGRATION_RECHECK_STATUSES = frozenset(
@@ -1858,6 +1859,23 @@ class Radar:
                 )
             )
         migration_rechecks = migration_rechecks[:MAX_SCANNER_MIGRATION_RECHECKS]
+        selected_migration_keys = {key for key, _ in migration_rechecks}
+        for key, previous in migration_pool:
+            if key in selected_migration_keys or previous.get("status") not in {
+                "queued_outbox",
+                "notified",
+            }:
+                continue
+            self.seen[key] = previous | {
+                "status": "policy_migration_pending",
+                "reason": "policy_migration_requires_revalidation",
+                "deferred_from_status": previous.get("deferred_from_status")
+                or previous.get("status"),
+                "first_deferred_at": previous.get("first_deferred_at")
+                or previous.get("issue_updated")
+                or self.analyzed,
+                "requeued_at": self.analyzed,
+            }
         self.deferred_rechecks_migration_selected = len(migration_rechecks)
         self.forced_recheck_keys.update(key for key, _ in migration_rechecks)
         rechecks.extend(migration_rechecks)
