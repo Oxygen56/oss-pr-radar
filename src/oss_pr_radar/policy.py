@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 POLICY_VERSION = "submit_ready_quality_v1"
-SCANNER_DECISION_REVISION = "oss_pr_radar_v30_security_and_readiness_gates"
+SCANNER_DECISION_REVISION = "oss_pr_radar_v31_cross_repo_duplicate_gate"
 DISPATCH_DECISION_REVISION = "signed_intent_v9_transactional_creation"
 DECISION_CONTRACT_SCHEMA = 5
 DECISION_CONTRACT_MANIFEST = {
