@@ -626,6 +626,16 @@ def claim_intent(args: argparse.Namespace) -> dict[str, Any]:
         result["worktreePath"] = str(worktree)
         result["titleTime"] = title_time
         result["desiredTitle"] = lifecycle_title("GO", title_time, intent["key"], intent["title"])
+        task_project_id = getattr(args, "task_project_id", None)
+        if task_project_id:
+            result["createThreadRequest"] = {
+                "prompt": result["prompt"],
+                "target": {
+                    "type": "project",
+                    "projectId": task_project_id,
+                    "environment": {"type": "local"},
+                },
+            }
     return result
 
 
@@ -1930,6 +1940,7 @@ def main() -> int:
     claim.add_argument("--owner", required=True)
     claim.add_argument("--lease-minutes", type=int, default=15)
     claim.add_argument("--prepare", action="store_true")
+    claim.add_argument("--task-project-id")
     claim_release = subparsers.add_parser("claim-release")
     claim_release.add_argument("--intent-id", required=True)
     claim_release.add_argument("--owner", required=True)

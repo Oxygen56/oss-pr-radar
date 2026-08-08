@@ -564,12 +564,25 @@ def test_prepare_claim_returns_single_project_root_and_isolated_worktree(monkeyp
             owner="controller",
             lease_minutes=15,
             prepare=True,
+            task_project_id="github-project",
         )
     )
 
     assert result["sourceRepoPath"] == str(source)
     assert result["taskProjectPath"] == str(project_root.resolve())
     assert result["worktreePath"] == str(worktree)
+    assert result["createThreadRequest"] == {
+        "prompt": (
+            "[$gh-issue-pr](/Users/oxygen/.codex/skills/gh-issue-pr/SKILL.md)\n"
+            "https://github.com/a/b/issues/1"
+        ),
+        "target": {
+            "type": "project",
+            "projectId": "github-project",
+            "environment": {"type": "local"},
+        },
+    }
+    assert "projectId" not in result["createThreadRequest"]
 
 
 def test_claim_release_returns_unstarted_lease_to_pending(monkeypatch, tmp_path):
