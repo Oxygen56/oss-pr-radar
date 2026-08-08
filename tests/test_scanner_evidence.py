@@ -439,6 +439,51 @@ def test_dispatch_decision_change_rechecks_queued_candidate(monkeypatch, tmp_pat
     assert "example/project#11" in radar.forced_recheck_keys
 
 
+def test_migration_rechecks_prioritize_actionable_queue_over_newer_rejections(
+    monkeypatch, tmp_path
+):
+    seen = {
+        "example/project#11": {
+            "status": "queued_outbox",
+            "title": "Provider settings are overwritten",
+            "url": "https://github.com/example/project/issues/11",
+            "issue_updated": "2026-08-01T00:00:00Z",
+            "scanner_version": "older",
+        }
+    }
+    for index in range(12):
+        seen[f"example/hardware#{index}"] = {
+            "status": "hardware_unavailable",
+            "title": f"Hardware issue {index}",
+            "url": f"https://github.com/example/hardware/issues/{index}",
+            "issue_updated": f"2026-08-08T{index:02d}:00:00Z",
+            "scanner_version": "older",
+        }
+    seen_path = tmp_path / "seen.json"
+    seen_path.write_text(json.dumps(seen), encoding="utf-8")
+    radar = Radar(
+        datetime(2026, 8, 9, tzinfo=UTC),
+        2,
+        seen_path,
+        "",
+        dry_run=True,
+        notify=False,
+    )
+    monkeypatch.setattr(radar, "add_repo_issues", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(radar, "add_search", lambda *_args, **_kwargs: None)
+
+    items = radar.collect_items()
+
+    assert "example/project#11" in items
+    assert "example/project#11" in radar.forced_recheck_keys
+    assert len(radar.forced_recheck_keys) == scanner.MAX_SCANNER_MIGRATION_RECHECKS
+
+
+def test_scanner_migration_does_not_reopen_unrelated_terminal_rejections():
+    assert "no_bug_or_maintainer_actionability" not in SCANNER_MIGRATION_RECHECK_STATUSES
+    assert "frontend_interaction_issue" not in SCANNER_MIGRATION_RECHECK_STATUSES
+
+
 def test_deferred_rechecks_have_capacity_in_addition_to_fresh_issues():
     bases = [
         {"repo": f"recheck/{index}", "num": index, "_explicit_recheck": True} for index in range(4)

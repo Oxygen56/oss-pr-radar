@@ -1434,6 +1434,171 @@ def test_controller_commits_validated_child_patch_and_requests_publication(tmp_p
     )
 
 
+def test_controller_creates_two_parent_commit_for_conflicted_pr_followup(tmp_path):
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    run_git(worktree, "init")
+    run_git(worktree, "config", "user.name", "Test Contributor")
+    run_git(worktree, "config", "user.email", "test@example.com")
+    source = worktree / "runtime.py"
+    source.write_text("value = 'original'\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "-m", "chore: baseline")
+    run_git(worktree, "branch", "-M", "main")
+    run_git(worktree, "switch", "-c", "fix/1-runtime")
+    source.write_text("value = 'pull-request'\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "-m", "fix: preserve runtime")
+    previous_head = run_git(worktree, "rev-parse", "HEAD")
+    run_git(worktree, "switch", "main")
+    source.write_text("value = 'upstream'\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "-m", "refactor: update runtime")
+    base_sha = run_git(worktree, "rev-parse", "HEAD")
+    run_git(worktree, "switch", "fix/1-runtime")
+
+    result_path = tmp_path / "result.json"
+    value = {
+        "handoffMode": "controller_merge_required",
+        "commitSha": None,
+        "branch": "fix/1-runtime",
+        "commitMessage": "merge: refresh runtime branch",
+        "changedFiles": ["runtime.py"],
+        "mergeBaseSha": base_sha,
+        "resolutionSourceCommit": previous_head,
+        "publication": {"baseBranch": "main"},
+    }
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    finalized, _raw = MODULE._finalize_controller_commit(
+        candidate={"worktreePath": str(worktree)},
+        context={
+            "prFollowup": {
+                "headSha": previous_head,
+                "evidence": {
+                    "mergeConflict": True,
+                    "baseRefName": "main",
+                    "baseSha": base_sha,
+                },
+            }
+        },
+        value=value,
+        result_path=result_path,
+    )
+
+    assert finalized["handoffMode"] == "controller_merge_complete"
+    assert finalized["mergeResolutionFiles"] == ["runtime.py"]
+    assert run_git(worktree, "rev-list", "--parents", "-n", "1", "HEAD").split()[1:] == [
+        previous_head,
+        base_sha,
+    ]
+    assert source.read_text(encoding="utf-8") == "value = 'pull-request'\n"
+    assert run_git(worktree, "status", "--porcelain") == ""
+
+
+def test_controller_merge_rejects_incomplete_conflict_file_set(tmp_path):
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    run_git(worktree, "init")
+    run_git(worktree, "config", "user.name", "Test Contributor")
+    run_git(worktree, "config", "user.email", "test@example.com")
+    for name in ("one.py", "two.py"):
+        (worktree / name).write_text("value = 'original'\n", encoding="utf-8")
+    run_git(worktree, "add", "one.py", "two.py")
+    run_git(worktree, "commit", "-m", "chore: baseline")
+    run_git(worktree, "branch", "-M", "main")
+    run_git(worktree, "switch", "-c", "fix/1-runtime")
+    for name in ("one.py", "two.py"):
+        (worktree / name).write_text("value = 'pull-request'\n", encoding="utf-8")
+    run_git(worktree, "add", "one.py", "two.py")
+    run_git(worktree, "commit", "-m", "fix: runtime")
+    previous_head = run_git(worktree, "rev-parse", "HEAD")
+    run_git(worktree, "switch", "main")
+    for name in ("one.py", "two.py"):
+        (worktree / name).write_text("value = 'upstream'\n", encoding="utf-8")
+    run_git(worktree, "add", "one.py", "two.py")
+    run_git(worktree, "commit", "-m", "refactor: runtime")
+    base_sha = run_git(worktree, "rev-parse", "HEAD")
+    run_git(worktree, "switch", "fix/1-runtime")
+    value = {
+        "handoffMode": "controller_merge_required",
+        "branch": "fix/1-runtime",
+        "commitMessage": "merge: refresh runtime branch",
+        "changedFiles": ["one.py"],
+        "mergeBaseSha": base_sha,
+        "resolutionSourceCommit": previous_head,
+    }
+    result_path = tmp_path / "result.json"
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="conflict set mismatch"):
+        MODULE._finalize_controller_commit(
+            candidate={"worktreePath": str(worktree)},
+            context={
+                "prFollowup": {
+                    "headSha": previous_head,
+                    "evidence": {"mergeConflict": True, "baseSha": base_sha},
+                }
+            },
+            value=value,
+            result_path=result_path,
+        )
+
+    assert run_git(worktree, "rev-parse", "HEAD") == previous_head
+    assert run_git(worktree, "status", "--porcelain") == ""
+
+
+def test_controller_merge_preserves_child_prepared_resolution(tmp_path):
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    run_git(worktree, "init")
+    run_git(worktree, "config", "user.name", "Test Contributor")
+    run_git(worktree, "config", "user.email", "test@example.com")
+    source = worktree / "runtime.py"
+    source.write_text("value = 'original'\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "-m", "chore: baseline")
+    run_git(worktree, "branch", "-M", "main")
+    run_git(worktree, "switch", "-c", "fix/1-runtime")
+    source.write_text("value = 'pull-request'\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "-m", "fix: runtime")
+    previous_head = run_git(worktree, "rev-parse", "HEAD")
+    run_git(worktree, "switch", "main")
+    source.write_text("value = 'upstream'\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "-m", "refactor: runtime")
+    base_sha = run_git(worktree, "rev-parse", "HEAD")
+    run_git(worktree, "switch", "fix/1-runtime")
+    source.write_text("value = 'combined-resolution'\n", encoding="utf-8")
+    value = {
+        "handoffMode": "controller_merge_required",
+        "branch": "fix/1-runtime",
+        "commitMessage": "merge: refresh runtime branch",
+        "changedFiles": ["runtime.py"],
+        "mergeBaseSha": base_sha,
+    }
+    result_path = tmp_path / "result.json"
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+
+    MODULE._finalize_controller_commit(
+        candidate={"worktreePath": str(worktree)},
+        context={
+            "prFollowup": {
+                "headSha": previous_head,
+                "evidence": {"mergeConflict": True, "baseSha": base_sha},
+            }
+        },
+        value=value,
+        result_path=result_path,
+    )
+
+    assert source.read_text(encoding="utf-8") == "value = 'combined-resolution'\n"
+    assert run_git(worktree, "rev-list", "--parents", "-n", "1", "HEAD").split()[1:] == [
+        previous_head,
+        base_sha,
+    ]
+
+
 def test_controller_keeps_ai_disclosure_fix_local_and_signs_dco(tmp_path):
     store, worktree, result_path = _controller_commit_result(
         tmp_path,

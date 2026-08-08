@@ -1544,6 +1544,7 @@ class RadarLedger:
                     "requiredWakeDigestField": "followupDigest",
                     "allowedStages": ["FIX_READY", "PR_OPEN"],
                     "noLocalActionStage": "PR_OPEN",
+                    "mergeConflictHandoffMode": "controller_merge_required",
                 },
             }
         return {

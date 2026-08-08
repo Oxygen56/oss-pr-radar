@@ -217,6 +217,30 @@ def _changed_files_since(worktree: Path, previous_commit: str) -> list[str]:
     return sorted(line for line in value.splitlines() if line)
 
 
+def _changed_files_for_pr_update(
+    worktree: Path, previous_commit: str, evidence_file: dict[str, Any]
+) -> list[str]:
+    if evidence_file.get("handoffMode") != "controller_merge_complete":
+        return _changed_files_since(worktree, previous_commit)
+    merge_base = str(evidence_file.get("mergeBaseSha") or "")
+    resolution_files = evidence_file.get("mergeResolutionFiles")
+    changed_files = evidence_file.get("changedFiles")
+    if (
+        not re.fullmatch(r"[0-9a-f]{40}", merge_base)
+        or not isinstance(resolution_files, list)
+        or not resolution_files
+        or resolution_files != changed_files
+        or any(not isinstance(path, str) or not path for path in resolution_files)
+    ):
+        raise PublicationError("merge publication evidence is incomplete")
+    values = command(["git", "rev-list", "--parents", "-n", "1", "HEAD"], cwd=worktree).split()
+    if len(values) != 3 or values[1:] != [previous_commit, merge_base]:
+        raise PublicationError("merge publication parent binding failed")
+    command(["git", "merge-base", "--is-ancestor", previous_commit, "HEAD"], cwd=worktree)
+    command(["git", "merge-base", "--is-ancestor", merge_base, "HEAD"], cwd=worktree)
+    return sorted(resolution_files)
+
+
 def _dco_valid(worktree: Path, repo: str, default_branch: str) -> bool:
     remote = _upstream_remote(worktree, repo)
     base = command(["git", "merge-base", "HEAD", f"{remote}/{default_branch}"], cwd=worktree)
@@ -328,6 +352,26 @@ def audit_publication_request(
                 request_id,
                 {"existingPrUrl": existing_url, "expectedCommitSha": expected_head},
             )
+        if evidence_file.get("handoffMode") == "controller_merge_complete":
+            live_base_sha = str((existing_pr.get("base") or {}).get("sha") or "")
+            if not live_base_sha:
+                return PublicationAudit(
+                    "DEFER",
+                    "EXISTING_PR_BASE_UNAVAILABLE",
+                    request_id,
+                    {"existingPrUrl": existing_url},
+                )
+            if live_base_sha != evidence_file.get("mergeBaseSha"):
+                return PublicationAudit(
+                    "BLOCK",
+                    "EXISTING_PR_BASE_DRIFT",
+                    request_id,
+                    {
+                        "existingPrUrl": existing_url,
+                        "expectedBaseSha": evidence_file.get("mergeBaseSha"),
+                        "observedBaseSha": live_base_sha,
+                    },
+                )
         expected_actor = os.environ.get("RADAR_GITHUB_ACTOR", "Oxygen56").casefold()
         assignees = evidence.issue.get("assignees") or []
         assignee_logins = {
@@ -390,7 +434,7 @@ def audit_publication_request(
         return PublicationAudit("BLOCK", "FORK_OWNER_MISMATCH", request_id, live)
     try:
         changed_files = (
-            _changed_files_since(worktree, str(request["previousCommitSha"]))
+            _changed_files_for_pr_update(worktree, str(request["previousCommitSha"]), evidence_file)
             if publication_kind == "PR_UPDATE"
             else _changed_files(worktree, repo, default_branch)
         )

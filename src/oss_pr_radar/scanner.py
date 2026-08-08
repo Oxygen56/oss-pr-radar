@@ -72,12 +72,15 @@ SEEN_RECHECK_STATUSES = frozenset(
 )
 SCANNER_MIGRATION_RECHECK_STATUSES = frozenset(
     {
-        "frontend_interaction_issue",
         "hardware_unavailable",
-        "no_bug_or_maintainer_actionability",
         "notified",
         "queued_outbox",
     }
+)
+SCANNER_MIGRATION_RECHECK_PRIORITY = (
+    "queued_outbox",
+    "notified",
+    "hardware_unavailable",
 )
 MAX_ISSUES_PER_REPO_PER_SCAN = 4
 EXCLUDED_REPOS = {"openai/codex"}
@@ -1834,21 +1837,27 @@ class Radar:
         recheck_keys = {key for key, _ in rechecks}
         self.forced_recheck_keys.update(recheck_keys)
         current_decision_digest = decision_contract_digest()
-        migration_rechecks = sorted(
-            (
-                (key, value)
-                for key, value in self.seen.items()
-                if key not in recheck_keys
-                and isinstance(value, dict)
-                and (
-                    value.get("scanner_version") != SCANNER_VERSION
-                    or value.get("decision_contract_digest") != current_decision_digest
+        migration_pool = [
+            (key, value)
+            for key, value in self.seen.items()
+            if key not in recheck_keys
+            and isinstance(value, dict)
+            and (
+                value.get("scanner_version") != SCANNER_VERSION
+                or value.get("decision_contract_digest") != current_decision_digest
+            )
+            and value.get("status") in SCANNER_MIGRATION_RECHECK_STATUSES
+        ]
+        migration_rechecks = []
+        for status in SCANNER_MIGRATION_RECHECK_PRIORITY:
+            migration_rechecks.extend(
+                sorted(
+                    (pair for pair in migration_pool if pair[1].get("status") == status),
+                    key=lambda pair: str(pair[1].get("issue_updated") or ""),
+                    reverse=True,
                 )
-                and value.get("status") in SCANNER_MIGRATION_RECHECK_STATUSES
-            ),
-            key=lambda pair: str(pair[1].get("issue_updated") or ""),
-            reverse=True,
-        )[:MAX_SCANNER_MIGRATION_RECHECKS]
+            )
+        migration_rechecks = migration_rechecks[:MAX_SCANNER_MIGRATION_RECHECKS]
         self.deferred_rechecks_migration_selected = len(migration_rechecks)
         self.forced_recheck_keys.update(key for key, _ in migration_rechecks)
         rechecks.extend(migration_rechecks)

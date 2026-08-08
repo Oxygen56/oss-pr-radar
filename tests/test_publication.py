@@ -360,6 +360,130 @@ def test_broker_allows_fast_forward_update_of_its_exact_existing_pr(monkeypatch,
     assert post_push.status == "ALLOW"
 
 
+def test_merge_update_files_are_bound_to_exact_two_parent_commit(tmp_path):
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    git("init", cwd=worktree)
+    git("config", "user.name", "Tester", cwd=worktree)
+    git("config", "user.email", "tester@example.com", cwd=worktree)
+    source = worktree / "runtime.py"
+    source.write_text("value = 'original'\n", encoding="utf-8")
+    git("add", "runtime.py", cwd=worktree)
+    git("commit", "-m", "chore: baseline", cwd=worktree)
+    git("branch", "-M", "main", cwd=worktree)
+    git("switch", "-c", "fix/runtime", cwd=worktree)
+    source.write_text("value = 'pull-request'\n", encoding="utf-8")
+    git("add", "runtime.py", cwd=worktree)
+    git("commit", "-m", "fix: runtime", cwd=worktree)
+    previous_head = git("rev-parse", "HEAD", cwd=worktree)
+    git("switch", "main", cwd=worktree)
+    source.write_text("value = 'upstream'\n", encoding="utf-8")
+    git("add", "runtime.py", cwd=worktree)
+    git("commit", "-m", "refactor: runtime", cwd=worktree)
+    base_sha = git("rev-parse", "HEAD", cwd=worktree)
+    git("switch", "fix/runtime", cwd=worktree)
+    subprocess.run(
+        ["git", "merge", "--no-commit", "--no-ff", base_sha],
+        cwd=worktree,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    source.write_text("value = 'pull-request'\n", encoding="utf-8")
+    git("add", "runtime.py", cwd=worktree)
+    git("commit", "-m", "merge: refresh runtime branch", cwd=worktree)
+    evidence = {
+        "handoffMode": "controller_merge_complete",
+        "mergeBaseSha": base_sha,
+        "mergeResolutionFiles": ["runtime.py"],
+        "changedFiles": ["runtime.py"],
+    }
+
+    assert publication._changed_files_for_pr_update(worktree, previous_head, evidence) == [
+        "runtime.py"
+    ]
+    with pytest.raises(publication.PublicationError, match="parent binding"):
+        publication._changed_files_for_pr_update(
+            worktree,
+            previous_head,
+            evidence | {"mergeBaseSha": "a" * 40},
+        )
+
+
+def test_merge_update_blocks_when_live_pr_base_has_advanced(tmp_path):
+    store, request, evidence_path = prepared_request(tmp_path)
+    first = store.publication_request(request["request_id"])
+    permit = store.grant_publication_request(
+        request["request_id"],
+        issue_url=first["request"]["issueUrl"],
+        commit_sha=first["commit_sha"],
+        branch=first["branch"],
+        evidence={"publication": first["request"]["publication"]},
+    )
+    pr_url = "https://github.com/example/project/pull/8"
+    store.consume_publication_permit(permit["permit_id"], pr_url)
+    worktree = tmp_path / "worktree"
+    previous_head = first["commit_sha"]
+    git("switch", "-c", "upstream-base", cwd=worktree)
+    (worktree / "file.txt").write_text("upstream\n", encoding="utf-8")
+    git("add", "file.txt", cwd=worktree)
+    git("commit", "-m", "refactor: update file", cwd=worktree)
+    base_sha = git("rev-parse", "HEAD", cwd=worktree)
+    git("switch", first["branch"], cwd=worktree)
+    git("merge", "--no-ff", base_sha, "-m", "merge: refresh branch", cwd=worktree)
+    current = git("rev-parse", "HEAD", cwd=worktree)
+    quality = {field: True for field in QUALITY_FIELDS}
+    store.record_stage("example/project#7", "FIX_READY", evidence=quality)
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    evidence.update(
+        {
+            "commitSha": current,
+            "handoffMode": "controller_merge_complete",
+            "mergeBaseSha": base_sha,
+            "mergeResolutionFiles": ["file.txt"],
+        }
+    )
+    evidence_path.write_text(json.dumps(evidence, sort_keys=True), encoding="utf-8")
+    update = request_publication(
+        store,
+        issue_url="https://github.com/example/project/issues/7",
+        thread_id="thread-1",
+        worktree=worktree,
+        evidence_path=evidence_path,
+    )
+
+    class AdvancedBaseClient(Client):
+        def related_open_prs(self, repo, number, **kwargs):
+            return [{"number": 8, "_repo": repo}]
+
+        def pull_request(self, repo, number):
+            return {
+                "number": 8,
+                "state": "open",
+                "html_url": pr_url,
+                "head": {
+                    "sha": previous_head,
+                    "ref": first["branch"],
+                    "repo": {"owner": {"login": "Oxygen56"}},
+                },
+                "base": {"sha": "a" * 40},
+            }
+
+        def pull_files(self, repo, number):
+            return [{"filename": "file.txt"}]
+
+        def pull_reviews(self, repo, number):
+            return []
+
+        def check_runs(self, repo, ref):
+            return []
+
+    result = broker_publication_request(store, update["request_id"], client=AdvancedBaseClient())
+
+    assert result["granted"] is False
+    assert result["audit"]["reason"] == "EXISTING_PR_BASE_DRIFT"
+
+
 def test_evidence_digest_drift_blocks_publication(monkeypatch, tmp_path):
     store, request, evidence_path = prepared_request(tmp_path)
     evidence_path.write_text("{}", encoding="utf-8")

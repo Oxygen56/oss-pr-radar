@@ -1227,6 +1227,163 @@ def _switch_controller_branch(worktree: Path, branch: str) -> None:
     command(["git", "switch", branch], cwd=worktree)
 
 
+def _commit_args(
+    *, context: dict[str, Any], value: dict[str, Any], commit_message: str
+) -> list[str]:
+    args = ["git", "commit", "-m", commit_message]
+    policy = _policy_from_context(context)
+    if policy.get("dco") is True or value.get("dcoRequired") is True:
+        return ["git", "commit", "--signoff", "-m", commit_message]
+    return args
+
+
+def _require_git_identity(worktree: Path, context: dict[str, Any], value: dict[str, Any]) -> None:
+    policy = _policy_from_context(context)
+    if policy.get("dco") is not True and value.get("dcoRequired") is not True:
+        return
+    name = command(["git", "config", "user.name"], cwd=worktree)
+    email = command(["git", "config", "user.email"], cwd=worktree)
+    if not name or not email:
+        raise RuntimeError("DCO sign-off requires configured Git identity")
+
+
+def _merge_parents(worktree: Path, revision: str = "HEAD") -> list[str]:
+    values = command(["git", "rev-list", "--parents", "-n", "1", revision], cwd=worktree).split()
+    if not values:
+        raise RuntimeError("controller merge commit is unavailable")
+    return values[1:]
+
+
+def _restore_tree_paths(worktree: Path, tree: str, paths: list[str]) -> None:
+    for path in paths:
+        present = _optional_command(["git", "cat-file", "-e", f"{tree}:{path}"], cwd=worktree)
+        if present is not None:
+            command(["git", "checkout", tree, "--", path], cwd=worktree)
+        else:
+            command(["git", "rm", "-f", "--ignore-unmatch", "--", path], cwd=worktree)
+
+
+def _finalize_controller_merge(
+    *,
+    candidate: dict[str, Any],
+    context: dict[str, Any],
+    value: dict[str, Any],
+    result_path: Path,
+) -> tuple[dict[str, Any], bytes]:
+    worktree = Path(candidate["worktreePath"]).resolve()
+    changed_files = _validated_changed_files(value.get("changedFiles"))
+    branch = str(value.get("branch") or "").strip()
+    commit_message = str(value.get("commitMessage") or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{2,119}", branch):
+        raise RuntimeError("controller merge requires a safe branch name")
+    if not public_branch_is_safe(branch):
+        raise RuntimeError("controller branch name exposes an AI tool")
+    if not commit_message or "\n" in commit_message or len(commit_message) > 120:
+        raise RuntimeError("controller merge requires one concise commitMessage")
+    if not public_text_is_safe(commit_message, ""):
+        raise RuntimeError("controller merge message contains an AI-assistance disclosure")
+
+    followup = context.get("prFollowup")
+    evidence = followup.get("evidence") if isinstance(followup, dict) else None
+    expected_head = str(followup.get("headSha") or "") if isinstance(followup, dict) else ""
+    expected_base = str(evidence.get("baseSha") or "") if isinstance(evidence, dict) else ""
+    if (
+        not isinstance(evidence, dict)
+        or evidence.get("mergeConflict") is not True
+        or not re.fullmatch(r"[0-9a-f]{40}", expected_head)
+        or not re.fullmatch(r"[0-9a-f]{40}", expected_base)
+    ):
+        raise RuntimeError("controller merge requires a signed PR conflict snapshot")
+    if value.get("mergeBaseSha") != expected_base:
+        raise RuntimeError("controller merge base does not match the signed snapshot")
+
+    actual = _local_changed_files(worktree)
+    current_head = command(["git", "rev-parse", "HEAD"], cwd=worktree)
+    current_branch = _optional_command(["git", "symbolic-ref", "--short", "HEAD"], cwd=worktree)
+    if current_branch != branch:
+        if actual:
+            raise RuntimeError("controller merge branch drifted with local changes")
+        _switch_controller_branch(worktree, branch)
+        current_head = command(["git", "rev-parse", "HEAD"], cwd=worktree)
+
+    # Recover idempotently if the merge commit was written before result.json.
+    if current_head != expected_head:
+        if actual or _merge_parents(worktree) != [expected_head, expected_base]:
+            raise RuntimeError("controller merge head does not match the signed PR snapshot")
+        if command(["git", "show", "-s", "--format=%s", "HEAD"], cwd=worktree) != commit_message:
+            raise RuntimeError("controller merge recovery commit message mismatch")
+    else:
+        if actual:
+            if actual != changed_files:
+                raise RuntimeError(
+                    "controller merge changedFiles mismatch: "
+                    f"expected={changed_files!r} actual={actual!r}"
+                )
+            command(["git", "add", "--", *changed_files], cwd=worktree)
+            resolution_tree = command(["git", "write-tree"], cwd=worktree)
+            command(["git", "reset", "--hard", expected_head], cwd=worktree)
+        else:
+            resolution_source = str(value.get("resolutionSourceCommit") or "")
+            if resolution_source != expected_head:
+                raise RuntimeError(
+                    "clean controller merge handoff requires resolutionSourceCommit at PR head"
+                )
+            resolution_tree = expected_head
+
+        completed = subprocess.run(
+            ["git", "merge", "--no-commit", "--no-ff", expected_base],
+            cwd=worktree,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        unmerged = sorted(
+            line
+            for line in command(
+                ["git", "diff", "--name-only", "--diff-filter=U"], cwd=worktree
+            ).splitlines()
+            if line
+        )
+        if completed.returncode not in {0, 1} or unmerged != changed_files:
+            _optional_command(["git", "merge", "--abort"], cwd=worktree)
+            raise RuntimeError(
+                "controller merge conflict set mismatch: "
+                f"expected={changed_files!r} actual={unmerged!r}"
+            )
+        _restore_tree_paths(worktree, resolution_tree, changed_files)
+        remaining = command(["git", "diff", "--name-only", "--diff-filter=U"], cwd=worktree)
+        if remaining:
+            _optional_command(["git", "merge", "--abort"], cwd=worktree)
+            raise RuntimeError("controller merge left unresolved files")
+        _require_git_identity(worktree, context, value)
+        command(
+            _commit_args(context=context, value=value, commit_message=commit_message), cwd=worktree
+        )
+
+    if _merge_parents(worktree) != [expected_head, expected_base]:
+        raise RuntimeError("controller merge commit parent binding failed")
+    if command(["git", "status", "--porcelain"], cwd=worktree):
+        raise RuntimeError("controller merge did not leave a clean worktree")
+
+    finalized = dict(value)
+    finalized["commitSha"] = command(["git", "rev-parse", "HEAD"], cwd=worktree)
+    finalized["branch"] = command(["git", "symbolic-ref", "--short", "HEAD"], cwd=worktree)
+    finalized["changedFiles"] = changed_files
+    finalized["mergeResolutionFiles"] = changed_files
+    finalized["previousCommitSha"] = expected_head
+    finalized["mergeBaseSha"] = expected_base
+    finalized["handoffMode"] = "controller_merge_complete"
+    default_branch = _prepared_default_branch(worktree)
+    publication = finalized.get("publication")
+    if default_branch and isinstance(publication, dict):
+        finalized_publication = dict(publication)
+        finalized_publication["baseBranch"] = default_branch
+        finalized["publication"] = finalized_publication
+    _atomic_json(result_path, finalized)
+    return finalized, result_path.read_bytes()
+
+
 def _policy_from_context(context: dict[str, Any]) -> dict[str, Any]:
     live_audit = context.get("liveAudit")
     evidence = live_audit.get("evidence") if isinstance(live_audit, dict) else None
@@ -1257,6 +1414,13 @@ def _finalize_controller_commit(
     value: dict[str, Any],
     result_path: Path,
 ) -> tuple[dict[str, Any], bytes]:
+    if value.get("handoffMode") == "controller_merge_required":
+        return _finalize_controller_merge(
+            candidate=candidate,
+            context=context,
+            value=value,
+            result_path=result_path,
+        )
     if value.get("handoffMode") != "controller_commit_required":
         return value, result_path.read_bytes()
 
@@ -1282,15 +1446,10 @@ def _finalize_controller_commit(
             )
         _switch_controller_branch(worktree, branch)
         command(["git", "add", "--", *changed_files], cwd=worktree)
-        commit_args = ["git", "commit", "-m", commit_message]
-        policy = _policy_from_context(context)
-        if policy.get("dco") is True or value.get("dcoRequired") is True:
-            name = command(["git", "config", "user.name"], cwd=worktree)
-            email = command(["git", "config", "user.email"], cwd=worktree)
-            if not name or not email:
-                raise RuntimeError("DCO sign-off requires configured Git identity")
-            commit_args.insert(2, "--signoff")
-        command(commit_args, cwd=worktree)
+        _require_git_identity(worktree, context, value)
+        command(
+            _commit_args(context=context, value=value, commit_message=commit_message), cwd=worktree
+        )
     else:
         # Recover idempotently if the process stopped after the commit but before
         # rewriting result.json.
