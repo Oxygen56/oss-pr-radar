@@ -1409,11 +1409,29 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                             result_digest=digest,
                             missing=missing,
                         )
+                        store.record_stage(
+                            candidate["key"],
+                            "AUDIT_NO_GO",
+                            evidence={
+                                "reason": "SUBMIT_READY_EVIDENCE_INCOMPLETE",
+                                "missing": missing,
+                                "resultDigest": digest,
+                            },
+                            reason="SUBMIT_READY_EVIDENCE_INCOMPLETE",
+                            dedupe_key=digest,
+                        )
                         validation_deferred.append(
                             {
                                 "key": candidate["key"],
                                 "reason": "SUBMIT_READY_EVIDENCE_INCOMPLETE",
                                 "missing": missing,
+                            }
+                        )
+                        ingested.append(
+                            {
+                                "key": candidate["key"],
+                                "stage": "AUDIT_NO_GO",
+                                "reason": "SUBMIT_READY_EVIDENCE_INCOMPLETE",
                             }
                         )
                         continue

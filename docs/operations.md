@@ -126,9 +126,10 @@ receiving their own worktrees.
 - Install or refresh the local completion collector with
   `python scripts/install_local_publication_agent.py`. Its stdout and stderr are
   stored under `~/Library/Logs/oss-pr-radar/`; an idle cycle is silent. A
-  publishable fix with incomplete SubmitReady evidence is reported as
-  `validationDeferred`, keeps its lifecycle stage unchanged, and does not make
-  the agent unhealthy. A policy-blocked fix may settle as local `FIX_READY`
+  publishable fix with incomplete SubmitReady evidence is reported once as
+  `validationDeferred`, settles as `AUDIT_NO_GO`, and enters the normal title
+  and cleanup queues instead of remaining permanently dispatched. A
+  policy-blocked fix may settle as local `FIX_READY`
   only when the technical evidence is complete and `policy_verified` is the
   sole missing field; it never creates a publication request. The hourly
   controller repeats ingestion and publication as a fallback.

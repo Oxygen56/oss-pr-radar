@@ -1030,7 +1030,13 @@ def test_controller_defers_blocked_local_fix_with_incomplete_validation(tmp_path
         }
     ]
     assert result["publicationRequests"] == []
-    assert result["ingested"] == []
+    assert result["ingested"] == [
+        {
+            "key": "a/b#1",
+            "stage": "AUDIT_NO_GO",
+            "reason": "SUBMIT_READY_EVIDENCE_INCOMPLETE",
+        }
+    ]
     with store.connect() as connection:
         event = connection.execute(
             """SELECT payload_json FROM events
@@ -1047,8 +1053,9 @@ def test_controller_defers_blocked_local_fix_with_incomplete_validation(tmp_path
         store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")[
             "stage"
         ]
-        == "DISPATCHED"
+        == "AUDIT_NO_GO"
     )
+    assert store.task_result_candidates() == []
 
 
 def test_controller_defers_unvalidated_publishable_fix_without_agent_failure(tmp_path):
@@ -1064,7 +1071,13 @@ def test_controller_defers_unvalidated_publishable_fix_without_agent_failure(tmp
     result = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
 
     assert result["ok"] is True
-    assert result["ingested"] == []
+    assert result["ingested"] == [
+        {
+            "key": "a/b#1",
+            "stage": "AUDIT_NO_GO",
+            "reason": "SUBMIT_READY_EVIDENCE_INCOMPLETE",
+        }
+    ]
     assert result["publicationRequests"] == []
     assert result["validationDeferred"] == [
         {
@@ -1085,8 +1098,9 @@ def test_controller_defers_unvalidated_publishable_fix_without_agent_failure(tmp
         store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")[
             "stage"
         ]
-        == "DISPATCHED"
+        == "AUDIT_NO_GO"
     )
+    assert store.task_result_candidates() == []
 
 
 def test_privileged_controller_runs_granted_publication_queue(monkeypatch, tmp_path):
