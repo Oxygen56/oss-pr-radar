@@ -6594,6 +6594,34 @@
     ],
     "why": "Issue clearly identifies a concrete bug in error response format with a proposed fix, but the deterministic gate requires HUMAN_REVIEW and open PR/related issue lookups timed out, so duplicate work cannot be excluded."
   },
+  "75fe853124018b0e842d52d9ba9df42f41a9a1cb3a0585088cf014f11ab0ccf5": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Fix error propagation in session/new to surface auth failures",
+      "Make session provider recovery possible after re-authentication",
+      "Improve error messages for provider not set"
+    ],
+    "risks": [
+      "Changing error handling may affect existing ACP clients expecting current behavior",
+      "Potential scope creep if fixing session recovery requires broader state management changes"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Add a regression test that simulates auth failure during session creation and verifies the error message mentions authentication",
+      "Test that retrying set_config_option after re-authentication succeeds on the same session"
+    ],
+    "unknowns": [
+      "Maintainer design preferences for error handling and session recovery",
+      "Whether assignment is required before contributing"
+    ],
+    "why": "Issue provides a detailed root cause and reproduction for a misleading error and unrecoverable session state in the ACP provider path. However, the deterministic gate is HUMAN_REVIEW and the submission policy requires assignment, so work should not start without maintainer confirmation."
+  },
   "763bf6fd2131e2b42f4faac6422e1ee5a67f6255e950532ca100f8a30e90d57a": {
     "confidence": 0.7,
     "contradictions": [
@@ -7179,6 +7207,34 @@
       "Whether PR #25387's CI failures are due to the changes or unrelated flakiness."
     ],
     "why": "Issue clearly describes a real bug with root cause and reproduction, but a related PR #25387 exists with overlapping changes and CI failures, and the deterministic gate requires human review. The PR is closed and lacks tests, so a better PR may be possible, but maintainer confirmation is needed."
+  },
+  "827f1ee28e5e928b93426437b4ac29e5cc72dc250ae029f42c574ef741417ee3": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify McpServerSession.handleIncomingRequest to add switchIfEmpty that emits an error JSONRPCResponse when the handler's Mono completes empty.",
+      "Apply equivalent fix in McpStatelessAsyncServer's request handling path.",
+      "Add regression tests that register a handler returning Mono.empty() and assert a JSON-RPC error response is sent."
+    ],
+    "risks": [
+      "Changing behavior for empty Mono may affect existing handlers that rely on no response (though that is non-conformant).",
+      "Need to ensure the error code choice (INTERNAL_ERROR vs dedicated) aligns with maintainer preferences."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a unit test in mcp-core that registers a McpRequestHandler returning Mono.empty() and verifies that a JSONRPCResponse with an error code (e.g., INTERNAL_ERROR) is sent via the transport.",
+      "Add a similar test for McpStatelessAsyncServer.",
+      "Run existing mcp-core test suite to ensure no regressions."
+    ],
+    "unknowns": [
+      "Maintainer preference on error code for empty completion is not specified; but this is not blocking as the issue suggests INTERNAL_ERROR or dedicated code."
+    ],
+    "why": "The issue precisely identifies a protocol-conformance bug in McpServerSession and McpStatelessAsyncServer where an empty Mono from a request handler results in no JSON-RPC response, violating the one-response-per-request contract. The root cause is clearly traced to the use of map/flatMap without handling empty completion. The suggested fix (switchIfEmpty to emit an error response) is concrete and minimal. No competing PR directly addresses this issue; existing PRs are keyword-overlap only and lack semantic overlap. The issue includes a clear reproduction path and is actionable."
   },
   "828e109fdf97aec886e7722552491eccd4887a27bd5a4252598c4d0926f70f0d": {
     "confidence": 0.6,
