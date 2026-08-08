@@ -244,6 +244,10 @@
       "seenAt": "2026-08-08T18:46:48.265149Z",
       "stateId": "6c33f15cadcc92c65d81d3bd4ce8d99dd261af506c6442aa652c9507a31d21c9"
     },
+    "review|BerriAI/litellm#36310": {
+      "seenAt": "2026-08-08T22:29:38.177101Z",
+      "stateId": "40fca4536e214f5149e801e0c27475deb371597cc03185b393132e43f167020d"
+    },
     "review|DeusData/codebase-memory-mcp#1339": {
       "legacy": true,
       "seenAt": "2026-08-05T21:41:10.562886Z"
@@ -383,6 +387,10 @@
     "review|elizaOS/eliza#18045": {
       "seenAt": "2026-08-08T19:00:11.678918Z",
       "stateId": "b875de95e0c63d878fa5fa2e0298f2ad1fe7aa191c6c76ecda8d316021aae15e"
+    },
+    "review|elizaOS/eliza#18061": {
+      "seenAt": "2026-08-08T22:29:38.177101Z",
+      "stateId": "ed8e69eada5afc78b2f183fc8da97fdea81d8016c55d82bd863316e6013f6041"
     },
     "review|fastmachinelearning/hls4ml#1515": {
       "legacy": true,
@@ -1309,7 +1317,7 @@
       "seenAt": "2026-08-06T10:09:13.778625Z"
     }
   },
-  "digest": "dd14723711261be5a19815964d6c9aeccbe3ce7dabd1c2ef75373751aa20eb85",
+  "digest": "19681c3fec360a6361c75edebbd3157585b72abfe7d618a0c06e5b59fbaa3675",
   "events": [
     {
       "attempts": 1,
@@ -17924,9 +17932,69 @@
       "runId": "pr-followup-1786227225",
       "sentAt": "2026-08-08T22:16:17.922610Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "BerriAI/litellm#36310",
+        "elizaOS/eliza#18061"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "dc98f5f427ccc860797ed702676d55b3d2b34f66070b37fb43bc9250168c9f18",
+          "key": "BerriAI/litellm#36310",
+          "kind": "review",
+          "stateId": "40fca4536e214f5149e801e0c27475deb371597cc03185b393132e43f167020d"
+        },
+        {
+          "category": "NEW_CLEAN_CANDIDATE",
+          "digest": "915d608a47286fc6ddd288b3894a7d7eb0c1229db1be506ce7cb54b8f3a34e55",
+          "key": "elizaOS/eliza#18061",
+          "kind": "review",
+          "stateId": "ed8e69eada5afc78b2f183fc8da97fdea81d8016c55d82bd863316e6013f6041"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#36310](https://github.com/BerriAI/litellm/issues/36310) Admin UI lets you save routing_groups config the runtime hard-rejects (model in two groups), silently breaking ALL groups**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue clearly identifies a runtime validation gap causing silent group failure, but existing PR #36115 overlaps semantically and requires maintainer review to avoid duplicate work.\n改动：Add cross-group validation in Admin UI save path；Modify Router._init_routing_groups to skip conflicting groups instead of aborting all\n验证：Reproduce with provided config and assert groups load despite overlap；Add UI test for rejecting overlapping routing_groups\n风险：Existing PR may already address root cause; need comparison；Changing runtime behavior may affect existing users relying on strict validation\n竞争：发现 PR #36115 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 5，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[elizaOS/eliza#18061](https://github.com/elizaOS/eliza/issues/18061) test(cloud): live provisioning smoke cannot pass on the shared-tier contract**\n建议：NEW_CLEAN_CANDIDATE | 分数：11\n价值：The issue identifies a deterministic contract mismatch in the live provisioning smoke script: it expects HTTP 202 with a jobId while the shared tier returns HTTP 200 with no job, and pairing always fails with 503. The fix is well-scoped: update the script to handle the shared contract, add a fail-closed staging guard, and add regression tests. No competing PR exists, and the maintainer has not yet responded, but the technical path is clear and actionable.\n改动：Update live-cloud-provision-smoke.ts to accept the shared-tier provision response (200, source: shared_runtime) and handle pairing as a negative assertion or remove it.；Add a hard-coded staging origin guard to prevent production mutation.；Add deterministic regression tests for tier selection and provision-response normalization.\n验证：Run the existing focused tests for tier selection and provision normalization to confirm they pass.；Add a regression test that simulates the shared-tier provision response and asserts the smoke script proceeds correctly.；Run the smoke script against a staging environment with a disposable credential to verify end-to-end behavior.\n风险：The fix may require coordination with the cloud team to ensure the staging environment is available and safe for testing.；Changing the smoke script's contract could affect other tooling that depends on its current behavior.\n竞争：未发现相关 open PR\n下一步：仅完成本地复现、修复、测试和私有提交包；由用户自行决定公开提交。\n证据：复现信号 3，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-08T22:29:38.177101Z",
+      "eventId": "5eebd65249ba6a591eab27bf274de311cd5091f8aca904b6d2f646279dac70eb",
+      "idempotencyKey": "5eebd65249ba6a591eab27bf274de311cd5091f8aca904b6d2",
+      "kind": "review",
+      "runId": "scan-20260808T222804Z-cc7321b8c9f6",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-08T22:15:51.407334Z",
-  "newEventCount": 1,
+  "generatedAt": "2026-08-08T22:29:38.523824Z",
+  "newEventCount": 0,
   "version": "notification_outbox_v2"
 }

@@ -2309,6 +2309,35 @@
     ],
     "why": "The issue is a usage/support question about MCP availability in Zed remote projects. The only comment suggests the user may have installed on the wrong machine, indicating a configuration misunderstanding rather than a code defect. No concrete code path or reproducible bug is identified, and the track is agent_ai_infra, not llm_algorithm. The candidate lacks actionable technical detail and is not a credible code contribution."
   },
+  "28c79fd55bc98cd01a8a90cb9e9e8f1623022973fa9ab985385dd2d22accec62": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify task_channel.ex to handle switch/disconnect as lifecycle events",
+      "Update tasks.ex to terminate/pause executions and resolve tools with client_disconnected",
+      "Adjust tool_executor.ex to cascade cancellation and prevent late results"
+    ],
+    "risks": [
+      "Potential design preference on default terminate vs pause; need maintainer confirmation",
+      "Risk of breaking existing behavior if not carefully scoped"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Integration tests for switch/disconnect during LLM streaming, dispatch, and tool execution",
+      "Race tests for late tool result during cleanup",
+      "Reconnect tests ensuring no dispatch before MCP reinitialization",
+      "Multi-task test verifying only abandoned task is affected"
+    ],
+    "unknowns": [
+      "Maintainer approval or design confirmation not present; but not blocking as issue is detailed and no competing PR"
+    ],
+    "why": "Issue describes a concrete production bug with clear lifecycle semantics, acceptance criteria, and targeted code paths. No competing PR or issue found. The proposed behavior is actionable and testable."
+  },
   "28c7c49a9828479e0220ccacac289be2e25052f52c0b68e822a8783ba2f90847": {
     "confidence": 0.85,
     "contradictions": [],
@@ -14109,6 +14138,32 @@
     ],
     "why": "The issue reports a server-side forwarding bug with strong reproduction evidence, but the root cause is not identified in the codebase and the fix path is unclear. The bot flags a possible duplicate (#41300), and maintainer confirmation is needed to avoid duplicate work."
   },
+  "ecb60a44128a4030400f7438d46593b0d6b7f049bb72015525690b6f5e0360ff": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Add cross-group validation in Admin UI save path",
+      "Modify Router._init_routing_groups to skip conflicting groups instead of aborting all"
+    ],
+    "risks": [
+      "Existing PR may already address root cause; need comparison",
+      "Changing runtime behavior may affect existing users relying on strict validation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Reproduce with provided config and assert groups load despite overlap",
+      "Add UI test for rejecting overlapping routing_groups"
+    ],
+    "unknowns": [
+      "Whether PR #36115 fully resolves the issue and maintainer preference on approach"
+    ],
+    "why": "Issue clearly identifies a runtime validation gap causing silent group failure, but existing PR #36115 overlaps semantically and requires maintainer review to avoid duplicate work."
+  },
   "ede4abec7806a1c7bcceef5153e6068762f7a13dcb9fa50d624e6c46e02de705": {
     "confidence": 0.85,
     "contradictions": [],
@@ -15026,6 +15081,35 @@
       "Whether per-agent routing (#683) is in scope"
     ],
     "why": "Issue describes a real session-breaking bug, but maintainer comment indicates the serializer fix is already in place and the remaining root cause is a capability-default policy decision for unknown models. User comments confirm a workaround exists via per-model input config. No open PR or related issue, but design confirmation is required before implementation."
+  },
+  "fa305ff418acef9c18d32e0df855b28371a6048a99bbfff1a0c4886a02f66414": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Update live-cloud-provision-smoke.ts to accept the shared-tier provision response (200, source: shared_runtime) and handle pairing as a negative assertion or remove it.",
+      "Add a hard-coded staging origin guard to prevent production mutation.",
+      "Add deterministic regression tests for tier selection and provision-response normalization."
+    ],
+    "risks": [
+      "The fix may require coordination with the cloud team to ensure the staging environment is available and safe for testing.",
+      "Changing the smoke script's contract could affect other tooling that depends on its current behavior."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Run the existing focused tests for tier selection and provision normalization to confirm they pass.",
+      "Add a regression test that simulates the shared-tier provision response and asserts the smoke script proceeds correctly.",
+      "Run the smoke script against a staging environment with a disposable credential to verify end-to-end behavior."
+    ],
+    "unknowns": [
+      "Maintainer preference on whether to repair or retire the script is not yet confirmed."
+    ],
+    "why": "The issue identifies a deterministic contract mismatch in the live provisioning smoke script: it expects HTTP 202 with a jobId while the shared tier returns HTTP 200 with no job, and pairing always fails with 503. The fix is well-scoped: update the script to handle the shared contract, add a fail-closed staging guard, and add regression tests. No competing PR exists, and the maintainer has not yet responded, but the technical path is clear and actionable."
   },
   "fc218c9da843331f587869de20b0af67bc06830cca7f3949c8640984bba7cacf": {
     "confidence": 0.85,
