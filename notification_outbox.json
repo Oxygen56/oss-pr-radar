@@ -297,8 +297,8 @@
       "stateId": "a2e1a7143a639885e42e821897c0265047d577e8379de2508c745e44c80dbc81"
     },
     "review|PrefectHQ/fastmcp#4789": {
-      "seenAt": "2026-08-08T16:59:59.708851Z",
-      "stateId": "7f5f9a6c385da071da1528426216f5e890d5224473adca9a29ed6be7c32180f7"
+      "seenAt": "2026-08-08T19:00:11.678918Z",
+      "stateId": "bea72a38330c64018f29d742d5b1e8a43103d232948988fb313dc9056e04fb19"
     },
     "review|aaif-goose/goose#10751": {
       "legacy": true,
@@ -377,8 +377,8 @@
       "stateId": "0502b71942c9e0efd36fd0eba2176b679dc320ee1cde0986b8dd4594cffeac66"
     },
     "review|elizaOS/eliza#18045": {
-      "seenAt": "2026-08-08T18:17:49.416367Z",
-      "stateId": "33650d9933c6b381aadefaca0ac070cc1514018a546ca02acd738851ec5a8263"
+      "seenAt": "2026-08-08T19:00:11.678918Z",
+      "stateId": "b875de95e0c63d878fa5fa2e0298f2ad1fe7aa191c6c76ecda8d316021aae15e"
     },
     "review|fastmachinelearning/hls4ml#1515": {
       "legacy": true,
@@ -1285,7 +1285,7 @@
       "seenAt": "2026-08-06T10:09:13.778625Z"
     }
   },
-  "digest": "a44baa3d89a2f6dc21ea21102773c4c3f02b76e5c1bd85a02964b6c1400cc7ed",
+  "digest": "4e2e8f95ef2052411021c8247d81664e609bbcb515d0ebedfef01c0dd2429e73",
   "events": [
     {
       "attempts": 1,
@@ -17126,9 +17126,69 @@
       "runId": "pr-followup-1786214645",
       "sentAt": "2026-08-08T18:47:20.579087Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "PrefectHQ/fastmcp#4789",
+        "elizaOS/eliza#18045"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "6869ba7988289c2c2597971e22ca9b087091d03e0267180bf5b10cdd5f6478ca",
+          "key": "PrefectHQ/fastmcp#4789",
+          "kind": "review",
+          "stateId": "bea72a38330c64018f29d742d5b1e8a43103d232948988fb313dc9056e04fb19"
+        },
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "e8aedaab4a8ebc2ba480bf0224433ce7bd79ed58169344d7816bf39207532edd",
+          "key": "elizaOS/eliza#18045",
+          "kind": "review",
+          "stateId": "b875de95e0c63d878fa5fa2e0298f2ad1fe7aa191c6c76ecda8d316021aae15e"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[PrefectHQ/fastmcp#4789](https://github.com/PrefectHQ/fastmcp/issues/4789) release/3.x: CIMD private_key_jwt clients always rejected — expected aud has a doubled slash (fixed on main in #4659, unreleased on 3.x)**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue identifies a clear bug with root cause and MRE, but an existing PR (#4783) directly backports the fix and was auto-closed only for lack of linked issue. The issue asks to reopen/merge that PR, so work is not cleanly actionable without maintainer action.\n改动：Backport #4659 to release/3.x in fastmcp_slim/fastmcp/server/auth/oauth_proxy/proxy.py\n验证：Run the provided MRE to reproduce the audience mismatch, then verify the fix makes advertised token_endpoint equal expected aud.\n风险：Maintainer may prefer a different fix or release process; need confirmation before proceeding.\n竞争：发现关键词相关 PR，但未确认直接覆盖：#4783；需人工核对\n下一步：已有 PR 但强度不足；先看维护者规则和 issue 讨论，必要时先请求确认方案或分配。\n证据：复现信号 2，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[elizaOS/eliza#18045](https://github.com/elizaOS/eliza/issues/18045) [staging][QA] First shared-agent chat exposes cache-warming 503s before terminal response**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue describes a real user-visible bug with a concrete repro and expected behavior, but the proposed fix (client-side bounded retry) is undermined by a collaborator's finding that the shared-tier path does not honor clientMessageId, so idempotency is not guaranteed. This requires design confirmation on server-side deduplication or a narrower retry scope before implementation.\n改动：client retry logic in useChatSend；shared-runtime stream/rest adapters to propagate clientMessageId；server-side admission/deduplication for shared tier\n验证：E2E: shared create → first send, assert no user-visible 503s；Regression: submit same clientMessageId twice, assert one persisted turn and one model dispatch\n风险：Retrying without idempotency may duplicate user turns or billing；Broadening retry to arbitrary 5xx could mask real failures\n竞争：未发现相关 open PR\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 6，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-08T19:00:11.678918Z",
+      "eventId": "a3280ed6c9fd11654274eecbb846f2d949bdf5dac8fb1f93a9afa2eeaf5c8b3b",
+      "idempotencyKey": "a3280ed6c9fd11654274eecbb846f2d949bdf5dac8fb1f93a9",
+      "kind": "review",
+      "runId": "scan-20260808T185753Z-df3ec26dcb6b",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-08T18:46:48.749406Z",
-  "newEventCount": 1,
+  "generatedAt": "2026-08-08T19:00:12.062909Z",
+  "newEventCount": 0,
   "version": "notification_outbox_v2"
 }
