@@ -168,13 +168,44 @@ def _upstream_remote(worktree: Path, repo: str) -> str:
     raise PublicationError("worktree has no remote for the upstream repository")
 
 
-def _changed_files(worktree: Path, repo: str, default_branch: str) -> list[str]:
+def _refresh_upstream_branch(worktree: Path, repo: str, default_branch: str) -> str:
     remote = _upstream_remote(worktree, repo)
-    command(
-        ["git", "fetch", "--quiet", remote, default_branch],
+    ref = f"refs/heads/{default_branch}"
+    raw = command(
+        ["git", "ls-remote", "--exit-code", "--heads", remote, ref],
         cwd=worktree,
-        timeout=300,
+        timeout=60,
     )
+    fields = raw.split()
+    if len(fields) != 2 or fields[1] != ref or not re.fullmatch(r"[0-9a-fA-F]{40,64}", fields[0]):
+        raise PublicationError("upstream default branch returned an invalid commit")
+    live_sha = fields[0].casefold()
+    tracking_ref = f"refs/remotes/{remote}/{default_branch}"
+    try:
+        local_sha = command(["git", "rev-parse", "--verify", tracking_ref], cwd=worktree)
+    except PublicationError:
+        local_sha = ""
+    if local_sha.casefold() != live_sha:
+        command(
+            [
+                "git",
+                "fetch",
+                "--quiet",
+                "--no-tags",
+                remote,
+                f"+{ref}:{tracking_ref}",
+            ],
+            cwd=worktree,
+            timeout=180,
+        )
+        refreshed_sha = command(["git", "rev-parse", "--verify", tracking_ref], cwd=worktree)
+        if refreshed_sha.casefold() != live_sha:
+            raise PublicationError("upstream default branch changed during refresh")
+    return remote
+
+
+def _changed_files(worktree: Path, repo: str, default_branch: str) -> list[str]:
+    remote = _refresh_upstream_branch(worktree, repo, default_branch)
     base = command(["git", "merge-base", "HEAD", f"{remote}/{default_branch}"], cwd=worktree)
     value = command(["git", "diff", "--name-only", f"{base}..HEAD"], cwd=worktree)
     return sorted(line for line in value.splitlines() if line)

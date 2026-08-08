@@ -111,6 +111,67 @@ def prepared_request(tmp_path):
     return store, request, evidence_path
 
 
+def test_up_to_date_upstream_branch_skips_fetch(monkeypatch, tmp_path):
+    calls = []
+    sha = "a" * 40
+
+    def command(args, *, cwd, timeout=120):
+        calls.append((args, cwd, timeout))
+        if args == ["git", "remote"]:
+            return "origin"
+        if args[:3] == ["git", "remote", "get-url"]:
+            return "https://github.com/example/project.git"
+        if args[:3] == ["git", "ls-remote", "--exit-code"]:
+            return f"{sha}\trefs/heads/main"
+        if args[:3] == ["git", "rev-parse", "--verify"]:
+            return sha
+        raise AssertionError(args)
+
+    monkeypatch.setattr(publication, "command", command)
+
+    remote = publication._refresh_upstream_branch(tmp_path, "example/project", "main")
+
+    assert remote == "origin"
+    assert not any(args[:2] == ["git", "fetch"] for args, _cwd, _timeout in calls)
+
+
+def test_changed_upstream_branch_fetches_exact_tracking_ref(monkeypatch, tmp_path):
+    calls = []
+    old_sha = "a" * 40
+    live_sha = "b" * 40
+    fetched = False
+
+    def command(args, *, cwd, timeout=120):
+        nonlocal fetched
+        calls.append((args, cwd, timeout))
+        if args == ["git", "remote"]:
+            return "origin"
+        if args[:3] == ["git", "remote", "get-url"]:
+            return "https://github.com/example/project.git"
+        if args[:3] == ["git", "ls-remote", "--exit-code"]:
+            return f"{live_sha}\trefs/heads/main"
+        if args[:2] == ["git", "fetch"]:
+            fetched = True
+            return ""
+        if args[:3] == ["git", "rev-parse", "--verify"]:
+            return live_sha if fetched else old_sha
+        raise AssertionError(args)
+
+    monkeypatch.setattr(publication, "command", command)
+
+    publication._refresh_upstream_branch(tmp_path, "example/project", "main")
+
+    fetch = next(args for args, _cwd, _timeout in calls if args[:2] == ["git", "fetch"])
+    assert fetch == [
+        "git",
+        "fetch",
+        "--quiet",
+        "--no-tags",
+        "origin",
+        "+refs/heads/main:refs/remotes/origin/main",
+    ]
+
+
 def test_blocked_publication_can_be_reingested_after_evidence_is_corrected(tmp_path):
     store, request, _evidence_path = prepared_request(tmp_path)
     store.block_publication_request(request["request_id"], "BASE_BRANCH_MISMATCH")
