@@ -2623,6 +2623,36 @@
     ],
     "why": "Issue reports a user-visible bug with a plausible code path but lacks a confirmed root cause; open PR and related issue lookups timed out, so duplicate work cannot be excluded. Maintainer design confirmation is needed before implementation."
   },
+  "2dcce8d6a0c9a61b631a497605ac494c1223924d8dc07c5121f5345f57d091c6": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify hook detection to normalize command+args and match basename rtk/rtk.exe followed by hook <agent>",
+      "Update rtk init -g to prefer exec form on Windows",
+      "Add config/env escape hatch for warning"
+    ],
+    "risks": [
+      "Potential false positives if normalization is too broad",
+      "Changing init output may break existing user expectations",
+      "Escape hatch adds config surface"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a test that registers hook in exec form and verifies detection recognizes it",
+      "Add a test that init -g outputs exec form on Windows",
+      "Run existing hook-related unit tests and integration tests on Windows"
+    ],
+    "unknowns": [
+      "No explicit maintainer approval or design confirmation, but issue is clear and actionable"
+    ],
+    "why": "Issue provides concrete measurements and a clear root cause: hook detection only matches command string, not args, and init recommends shell-wrapped form. This is a user-visible performance bug with a suggested fix. No competing PR or issue found."
+  },
   "2e341483c57b34162f0f84021c68c966a5d873501621da6ff435952d2aff70bd": {
     "confidence": 0.7,
     "contradictions": [],
@@ -5170,6 +5200,40 @@
     ],
     "why": "Issue reports a user-visible bug but lacks a clear root cause; the bot comment identifies two likely causes already fixed by merged PRs #39424 and #39587, so the issue may be resolved in a future release. No open PR competition exists, but the candidate is not actionable without confirmation that the bug persists after applying those fixes."
   },
+  "5754c8a955d38adc9f5830ca287790d00d79c773f451748793d5e1272b02fd63": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Maintainer comment says PR #6582 is the current candidate, but recent counter-evidence shows the sanitizer fix is insufficient",
+      "The issue suggests the fix should be in the agent library, but the maintainer is now investigating a mutation boundary"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Identify the mutation boundary where empty tool_calls is introduced after sanitization",
+      "Instrument the failing request path to distinguish sanitizer bypass from later mutation",
+      "Potentially update the agent library or WebUI persistence layer"
+    ],
+    "risks": [
+      "Changing the sanitizer could affect other API paths",
+      "The fix may need to be coordinated with upstream agent library changes"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Reproduce the long tool-loop/context-compaction scenario with DeepSeek V4 Flash",
+      "Add regression tests for empty tool_calls in the agent library's pre-API sanitizer",
+      "Verify non-empty tool_calls arrays are preserved unchanged"
+    ],
+    "unknowns": [
+      "Which exact send path still sends empty tool_calls after sanitization",
+      "Whether PR #6582 will be updated or superseded",
+      "The outcome of the maintainer's investigation into the mutation boundary"
+    ],
+    "why": "The issue is a real bug with clear user impact, but the maintainer has explicitly linked PR #6582 as the current candidate and requested further investigation. Recent counter-evidence shows the sanitizer fix does not cover all send paths, so the root cause is not fully identified. The maintainer is actively investigating and has not invited a second implementation."
+  },
   "578f9687d69535676d3127f46c044fa6c3f566b6c642291ef3667284300bdf51": {
     "confidence": 0.7,
     "contradictions": [],
@@ -5228,6 +5292,31 @@
       "Status of PR #50908 and whether its failing CI is resolved."
     ],
     "why": "The issue provides a clear root cause (AOT cache key ignores limit_mm_per_prompt/multimodal_config) and a reproducible crash, but the deterministic gate requires HUMAN_REVIEW and an existing PR (#50908) already attempts a fix with failing CI. Maintainer direction is needed to avoid duplicate or conflicting work."
+  },
+  "5835357fafa438b6672dc8786248a76d079acc0ab8495c1414126704fa235397": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Fix Azure OpenAI provider's token acquisition to use the configured tenant consistently for evaluator calls",
+      "Add early validation or clearer error message for tenant mismatch"
+    ],
+    "risks": [
+      "Potential change in auth behavior could affect other Azure OpenAI users; need to ensure backward compatibility"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a failing test using the provided sample config and mock Azure AD responses to reproduce tenant mismatch",
+      "Run existing Azure OpenAI provider tests and add regression test for service principal auth with mismatched tenant"
+    ],
+    "unknowns": [
+      "Exact code path for evaluator metric auth is not specified; maintainer design preference unknown"
+    ],
+    "why": "Issue reports a concrete authentication failure in Azure OpenAI evaluator metrics with service principal auth, providing a minimal repro and config. Root cause is likely tenant mismatch in token acquisition for evaluator calls, which is a clear bug in the provider's auth flow. No competing PR or issue found, and the fix is actionable."
   },
   "58356bcdb5df86afeda59072ba7af64504a2b3284113c981b958ded282db84fd": {
     "confidence": 0.85,
@@ -14112,6 +14201,38 @@
       "Whether PR #6635 already fixes this issue"
     ],
     "why": "Issue reports a deterministic py311-only migration data-loss bug with a clear repro, but root cause (which package alters pickling) is not bisected. Existing PR #6635 overlaps semantically but does not reference this issue and may not address the unpickler. Gate requires HUMAN_REVIEW, and maintainer design preference on hardening vs. data preservation is unresolved."
+  },
+  "f41fce619dd13be3f3fad732b73f52a5f7671a4c51f7fbf53f351c77f23f26d9": {
+    "confidence": 0.8,
+    "contradictions": [
+      "PR #4969 claims soft-supersede fix but is closed; issue comments suggest it is still tracked"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "scoring/retrieval recency weighting",
+      "write-time supersession metadata",
+      "read-time is_active filtering"
+    ],
+    "risks": [
+      "Duplicate existing PRs",
+      "Changing API behavior without maintainer approval",
+      "Performance impact of additional metadata filtering"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "test_plan": [
+      "Add regression test with two contradictory facts and query expecting newest fact",
+      "Run existing test suite for scoring and memory retrieval"
+    ],
+    "unknowns": [
+      "Maintainer's preferred design direction",
+      "Whether any open PR is actively being worked on"
+    ],
+    "why": "Issue clearly describes a stale-fact retrieval bug in mem0 v3 ADD-only extraction, with concrete scenario and community reproduction. However, multiple closed PRs (#5240, #4969, #4965) already attempt fixes, and the deterministic gate requires HUMAN_REVIEW. No open PR or maintainer direction confirmed, so starting new work risks duplication."
   },
   "f45c6fcbaca825d50f87627a5719ad5bdca321bbc991bf8e57a1910f6c4a2729": {
     "confidence": 0.7,

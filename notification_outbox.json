@@ -505,8 +505,8 @@
       "stateId": "34af9174b03c514f2651b3a02bab2df835e1b5e614648b0527f64d5b1c16aa76"
     },
     "review|mem0ai/mem0#4956": {
-      "seenAt": "2026-08-08T13:19:41.790360Z",
-      "stateId": "2c675a358b9127625e5a462458bc5069091206b8040ca5c326caf578544b4f81"
+      "seenAt": "2026-08-08T20:06:54.384930Z",
+      "stateId": "1b838ec64f3de9988375a4dd24a22d437780d63b11d9aa2b101ae6b0f4c2f903"
     },
     "review|mem0ai/mem0#6783": {
       "legacy": true,
@@ -969,8 +969,8 @@
       "seenAt": "2026-08-06T03:47:42.357283Z"
     },
     "watch|camel-ai/camel#4103": {
-      "seenAt": "2026-08-08T19:50:16.117574Z",
-      "stateId": "58a3508bc4e30a1abc1f19b53e36db6a63515e06140d8a0748f36a1beac687a9"
+      "legacy": true,
+      "seenAt": "2026-08-03T21:54:14.829777Z"
     },
     "watch|can1357/oh-my-pi#7597": {
       "legacy": true,
@@ -1305,7 +1305,7 @@
       "seenAt": "2026-08-06T10:09:13.778625Z"
     }
   },
-  "digest": "681cde74988cc87b43b7a9d62560cd2cbbf88a72f2b2e7db81d39b3d7caa56d5",
+  "digest": "684193b0d4548c13dd90ed39fd5b1938de66060e934feb41c4f57e2315077d25",
   "events": [
     {
       "attempts": 1,
@@ -17452,9 +17452,51 @@
       "runId": "pr-followup-1786218406",
       "sentAt": "2026-08-08T19:50:57.479693Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "mem0ai/mem0#4956"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "85d629bf490fe272ceef3a00755d9f054dda4d2eb7df0728c1015edb30975ee7",
+          "key": "mem0ai/mem0#4956",
+          "kind": "review",
+          "stateId": "1b838ec64f3de9988375a4dd24a22d437780d63b11d9aa2b101ae6b0f4c2f903"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[mem0ai/mem0#4956](https://github.com/mem0ai/mem0/issues/4956) ADD-only extraction in v3 may surface stale/contradictory facts for time-sensitive attributes**\n建议：WAIT_MAINTAINER | 分数：10\n价值：Issue clearly describes a stale-fact retrieval bug in mem0 v3 ADD-only extraction, with concrete scenario and community reproduction. However, multiple closed PRs (#5240, #4969, #4965) already attempt fixes, and the deterministic gate requires HUMAN_REVIEW. No open PR or maintainer direction confirmed, so starting new work risks duplication.\n改动：scoring/retrieval recency weighting；write-time supersession metadata；read-time is_active filtering\n验证：Add regression test with two contradictory facts and query expecting newest fact；Run existing test suite for scoring and memory retrieval\n风险：Duplicate existing PRs；Changing API behavior without maintainer approval；Performance impact of additional metadata filtering\n竞争：发现关键词相关 PR，但未确认直接覆盖：#5240；需人工核对\n下一步：已有 PR 但强度不足；先看维护者规则和 issue 讨论，必要时先请求确认方案或分配。\n证据：复现信号 0，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-08T20:06:54.384930Z",
+      "eventId": "5e7b4532e7163b904892145d1f1d1d871d76a6944058610870a85a27f077c860",
+      "idempotencyKey": "5e7b4532e7163b904892145d1f1d1d871d76a6944058610870",
+      "kind": "review",
+      "runId": "scan-20260808T200510Z-b9f224d8cbd9",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-08T19:50:16.117574Z",
-  "newEventCount": 1,
+  "generatedAt": "2026-08-08T20:06:54.795701Z",
+  "newEventCount": 0,
   "version": "notification_outbox_v2"
 }
