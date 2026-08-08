@@ -293,8 +293,8 @@
       "seenAt": "2026-08-06T05:40:59.097597Z"
     },
     "review|PrefectHQ/fastmcp#4788": {
-      "seenAt": "2026-08-08T16:59:59.708851Z",
-      "stateId": "a2e1a7143a639885e42e821897c0265047d577e8379de2508c745e44c80dbc81"
+      "seenAt": "2026-08-08T19:04:18.878180Z",
+      "stateId": "4e44f0fa8344e034ab6c317e432779c0cd31d6c10ebf93cbf98bed730879cad7"
     },
     "review|PrefectHQ/fastmcp#4789": {
       "seenAt": "2026-08-08T19:00:11.678918Z",
@@ -539,6 +539,10 @@
     "review|modelcontextprotocol/csharp-sdk#1799": {
       "seenAt": "2026-08-08T15:51:49.528043Z",
       "stateId": "084c5b7442ceb53bb345ab46a068106e482396ccc77c2e85d15d0ffb21126bc5"
+    },
+    "review|modelcontextprotocol/java-sdk#1081": {
+      "seenAt": "2026-08-08T19:04:18.878180Z",
+      "stateId": "96d84b41c50b003df95d15bcae7cf02b4541b391d2116606735aa9f2c5877444"
     },
     "review|modelcontextprotocol/servers#4545": {
       "legacy": true,
@@ -1285,7 +1289,7 @@
       "seenAt": "2026-08-06T10:09:13.778625Z"
     }
   },
-  "digest": "faac04833064e440b0d85d21b3a298ccd09b27655e250ba0963398b5bad915e7",
+  "digest": "3009f884f63c675273e858d994ca9751f18f3e34971d6998a75e7bfdf0b80e73",
   "events": [
     {
       "attempts": 1,
@@ -17189,9 +17193,69 @@
       "runId": "scan-20260808T185753Z-df3ec26dcb6b",
       "sentAt": "2026-08-08T19:00:39.103942Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "PrefectHQ/fastmcp#4788",
+        "modelcontextprotocol/java-sdk#1081"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "f3cb834894650e30c8b328d5c75eb4c19a48b3995492a22ff845a20499139792",
+          "key": "PrefectHQ/fastmcp#4788",
+          "kind": "review",
+          "stateId": "4e44f0fa8344e034ab6c317e432779c0cd31d6c10ebf93cbf98bed730879cad7"
+        },
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "d1ddb0e1eefc35516e02c8f821cd24034c674707872bf12fa0f988f0e95aefd6",
+          "key": "modelcontextprotocol/java-sdk#1081",
+          "kind": "review",
+          "stateId": "96d84b41c50b003df95d15bcae7cf02b4541b391d2116606735aa9f2c5877444"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[PrefectHQ/fastmcp#4788](https://github.com/PrefectHQ/fastmcp/issues/4788) Server-level mcp.enable() / mcp.disable() do not emit tools/list_changed notifications in FastMCP 3.4.6**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue reports a concrete bug: server-level enable/disable do not emit ToolListChangedNotification, causing stale tool lists in connected clients. The code path is identified and a minimal fix is plausible, but the deterministic gate requires HUMAN_REVIEW and the issue lacks maintainer confirmation or design guidance.\n改动：Add notification emission in server-level enable/disable in fastmcp/server/providers/base.py；Possibly add tests for server-level visibility change notifications\n验证：Create a failing test that connects a client, calls mcp.disable(), and asserts a ToolListChangedNotification is received；Run existing FastMCP test suite for server providers\n风险：May need to align with maintainer design preferences on notification behavior；Potential side effects on other components (resources, prompts) if notification logic is broadened\n竞争：未发现相关 open PR\n下一步：先请求维护者分配/确认方案，获批后再开 PR。\n证据：复现信号 7，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[modelcontextprotocol/java-sdk#1081](https://github.com/modelcontextprotocol/java-sdk/issues/1081) McpServerSession never sends a response when a request handler's Mono completes empty — violates JSON-RPC 2.0's one-response-per-request contract**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue clearly identifies a protocol-conformance bug in McpServerSession and McpStatelessAsyncServer where empty Mono completions cause no response, violating JSON-RPC 2.0. Root cause is well-documented with code references and a suggested fix. However, the repository requires assignment and AI disclosure, and the deterministic gate is HUMAN_REVIEW, so work should not start without maintainer confirmation.\n改动：Add switchIfEmpty or equivalent in McpServerSession.handleIncomingRequest and McpStatelessAsyncServer's request handling to emit an error response on empty completion.；Add regression tests for empty Mono completion from request handlers.\n验证：Create a unit test that registers a handler returning Mono.empty() and verifies a JSON-RPC error response is sent.；Run existing test suite for mcp-core to ensure no regressions.\n风险：Potential behavior change for handlers that intentionally return empty Mono; need to confirm error code choice (INTERNAL_ERROR vs dedicated code).；Maintainer may have design preferences on error semantics.\n竞争：仅发现未直接关联、无代码路径或强机制重合的 PR #1054；保留为搜索上下文，不阻止实现\n下一步：先等待维护者分配/确认方案；即使获批，公开 PR 的 AI 复核/披露确认仍必须由用户本人处理。\n证据：复现信号 5，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-08T19:04:18.878180Z",
+      "eventId": "1bc155bf71a81cfcae37b06a0825bb9d883d58458b9a44ce747a316008d6df16",
+      "idempotencyKey": "1bc155bf71a81cfcae37b06a0825bb9d883d58458b9a44ce74",
+      "kind": "review",
+      "runId": "scan-20260808T190308Z-1447751263d2",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-08T19:00:12.062909Z",
+  "generatedAt": "2026-08-08T19:04:19.243728Z",
   "newEventCount": 0,
   "version": "notification_outbox_v2"
 }
