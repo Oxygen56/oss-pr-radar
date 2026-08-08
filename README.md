@@ -182,7 +182,7 @@ python scripts/install_local_publication_agent.py
 python scripts/local_dispatch_bridge.py metrics --days 30
 
 # Independent GitHub Actions schedule check (manual/fallback freshness is separate)
-python scripts/check_workflow_health.py --notify --repair
+python scripts/check_workflow_health.py --max-effective-age-minutes 65 --notify --repair
 ```
 
 The hourly Codex heartbeat reuses one controller task, calls `sync`, claims each pending intent through a

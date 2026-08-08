@@ -118,7 +118,7 @@ def effective_scan_freshness(
     workflow_runs: list[dict],
     *,
     now: datetime | None = None,
-    max_age: timedelta = timedelta(minutes=75),
+    max_age: timedelta = timedelta(minutes=65),
     active_grace: timedelta = timedelta(minutes=50),
 ) -> dict:
     """Treat a recent fallback run as healthy and avoid duplicate repairs."""
@@ -187,7 +187,7 @@ def main() -> int:
     parser.add_argument("--repair", action="store_true")
     parser.add_argument("--dry-run-repair", action="store_true")
     parser.add_argument("--ref", default="main")
-    parser.add_argument("--max-effective-age-minutes", type=int, default=75)
+    parser.add_argument("--max-effective-age-minutes", type=int, default=65)
     args = parser.parse_args()
     workflow_runs = runs(args.repo)
     result = health(workflow_runs)

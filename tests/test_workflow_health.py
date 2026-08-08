@@ -126,6 +126,25 @@ def test_recent_manual_success_keeps_effective_scan_fresh():
     assert result["recentSuccess"] is True
 
 
+def test_default_freshness_expires_before_the_desktop_repair_window():
+    result = MODULE.effective_scan_freshness(
+        [
+            {
+                "event": "schedule",
+                "status": "completed",
+                "conclusion": "success",
+                "created_at": (NOW - timedelta(minutes=72)).isoformat(),
+                "updated_at": (NOW - timedelta(minutes=66)).isoformat(),
+                "html_url": "https://github.com/a/b/actions/runs/repair-window",
+            }
+        ],
+        now=NOW,
+    )
+
+    assert result["fresh"] is False
+    assert result["maxAgeMinutes"] == 65
+
+
 def test_recent_active_run_suppresses_duplicate_repair():
     result = MODULE.effective_scan_freshness(
         [

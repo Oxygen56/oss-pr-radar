@@ -25,4 +25,8 @@ jobs:
         with:
           python-version: "3.12"
       - name: Check natural schedule freshness
-        run: python scripts/check_workflow_health.py --notify --repair
+        run: >-
+          python scripts/check_workflow_health.py
+          --max-effective-age-minutes 65
+          --notify
+          --repair
