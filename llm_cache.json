@@ -4589,6 +4589,38 @@
     ],
     "why": "Issue reports a severe hang but lacks deterministic reproducer and root cause; open PR and related issue lookups timed out, so duplicate work cannot be excluded. Maintainer has not confirmed design or assignment."
   },
+  "50506238a6691436c07af23e9b6ef6014d2bdc3584f494d837ec2ed66e7b6747": {
+    "confidence": 0.8,
+    "contradictions": [
+      "PR #6635 title mentions root_agent type mismatch, not migration unpickler; semantic overlap may be coincidental"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "src/google/adk/sessions/migration/migrate_from_sqlalchemy_pickle.py",
+      "tests/unittests/sessions/migration/test_migration.py"
+    ],
+    "risks": [
+      "Allowing builtins.getattr may weaken security hardening from #5634",
+      "Root cause not bisected; fix may be incomplete if dependency changes"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 11,
+    "test_plan": [
+      "Run the failing test on py311 with all extras to confirm failure",
+      "Add a regression test that asserts nested EventActions survive migration on py311",
+      "Run full tox matrix to ensure no regression on other Python versions"
+    ],
+    "unknowns": [
+      "Exact package causing getattr in pickle on py311",
+      "Whether maintainers prefer hardening vs. compatibility",
+      "Whether PR #6635 actually fixes this issue"
+    ],
+    "why": "Issue reports a deterministic py311-only migration data-loss bug with a clear repro and test failure, but the root cause (which dependency introduces getattr in pickles) is not bisected. An open PR #6635 overlaps semantically but does not reference this issue and may not address the migration unpickler. Gate requires HUMAN_REVIEW, so no autonomous action."
+  },
   "509321caa5e4851d799328957ef2fd9f358d913bd1752e98eb3d91e3387cca18": {
     "confidence": 0.7,
     "contradictions": [],
@@ -5490,6 +5522,29 @@
     ],
     "why": "Issue clearly identifies a bug in task_executor.py where a parser failure (progress -1) is overwritten by success when no chunks are returned. The root cause is precise and a fix pattern exists from PR #14220. However, the issue explicitly requests a maintainer decision on desired behavior for legitimately empty documents vs. errors, and the deterministic gate is HUMAN_REVIEW, so work should wait for maintainer confirmation."
   },
+  "5f3c9f75fdcc6173cbe44d467671bbc9e118226481b3bdf8d184ab2764be1a80": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify Bedrock provider to omit temperature for Claude models that do not support it, likely by detecting model version or using a more general rule instead of an explicit list."
+    ],
+    "risks": [
+      "Changing behavior for all Claude models might affect existing users who rely on temperature; need to ensure backward compatibility or proper version detection."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add a unit test that invokes the Bedrock provider with a new Claude model ID (e.g., claude-opus-5) and asserts that temperature is not included in the API request."
+    ],
+    "unknowns": [
+      "Exact code location and current implementation details of the temperature exclusion list; maintainer preference on approach."
+    ],
+    "why": "Issue clearly identifies a recurring bug: new Claude models fail because temperature is deprecated and the code has a hardcoded exclusion list. The desired behavior is a forward-compatible fix. No open PR or issue addresses this, and the issue provides a concrete reproduction and prior related PRs."
+  },
   "5f6db578cb2705ef667fbf10317f0504acece5256cad2ae1b5e59c0eb5ae92b3": {
     "confidence": 0.85,
     "contradictions": [],
@@ -5865,6 +5920,29 @@
       "Whether the proposed fix scope aligns with maintainer design preferences"
     ],
     "why": "Issue provides a detailed root-cause analysis and clear reproduction steps, but the deterministic gate requires HUMAN_REVIEW. Existing PR #1458 overlaps semantically and may already address part of the issue, but lacks regression tests and has requested changes. Maintainer design confirmation is needed before starting new work."
+  },
+  "6646d622b98b27dbbbc920212fe5a4a9ef1119ee0ae232525eae00314a5c1aa0": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Backport #4659 to release/3.x: fix audience construction in OAuthProxy to use advertised token_endpoint"
+    ],
+    "risks": [
+      "Potential maintainer preference for a different fix approach; need to ensure no unintended API behavior changes."
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Use the provided MRE to reproduce the audience mismatch on v3.4.6, then verify the fix makes the assertion pass."
+    ],
+    "unknowns": [
+      "Whether maintainers will merge the existing PR #4783 or require additional changes."
+    ],
+    "why": "Issue clearly identifies a high-impact bug with a concrete root cause and MRE, but the fix is already implemented in PR #4783 (backport of #4659) which is closed pending maintainer action. The deterministic gate requires HUMAN_REVIEW, and the existing PR appears technically complete, so the appropriate action is to wait for maintainer review/merge rather than start new work."
   },
   "6650a5ba72c0534e93cbed48bad755d7c6660780bfd3f55b86ea94bff7ecc80f": {
     "confidence": 0.7,
@@ -7829,6 +7907,36 @@
     ],
     "why": "Issue reports a watchdog timeout with a complex reproduction command but no root cause analysis. Related issue and open PR lookups timed out, so duplicate work cannot be excluded. Maintainer input is needed to confirm priority and design direction."
   },
+  "876796a1a618c1db1ce49b697c874572c5d839c54c7896344c6245c7e1cab21c": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Generate ProviderModelsMap as an interface",
+      "Re-export ProviderModelsMap from @mastra/core/llm",
+      "Add compile-time regression test for augmentation",
+      "Update documentation example"
+    ],
+    "risks": [
+      "Changing type alias to interface may affect existing type inference or compatibility",
+      "Re-exporting may introduce circular dependencies or API surface changes"
+    ],
+    "root_cause_clarity": "high",
+    "score": 14,
+    "test_plan": [
+      "Create a minimal TS project with the provided augmentation and run tsc --noEmit to verify types",
+      "Add a type-level test in the package to ensure augmentation updates derived types"
+    ],
+    "unknowns": [
+      "Maintainer design preference on type generation approach",
+      "Whether the suggested fix aligns with internal architecture"
+    ],
+    "why": "The issue clearly identifies a type augmentation bug with a concrete reproduction and suggested fix, but the deterministic gate requires HUMAN_REVIEW and maintainer confirmation is pending. The fix is straightforward but touches generated types and public API, so design confirmation is needed."
+  },
   "8932a0a8548495b6a967987e3db8c6c73aa627f309cec85450c95a6d74f12b98": {
     "confidence": 0.8,
     "contradictions": [
@@ -8796,6 +8904,40 @@
       "Maintainer preference on whether to filter dropdown per model or just add 'max' globally"
     ],
     "why": "Issue provides precise root cause: UI and CLI whitelists omit 'max' while SDK already supports it. Proposed fix is minimal and well-scoped, with clear evidence from models.dev and API docs. No competing PR or related issue found."
+  },
+  "9bab2ec14b5e397dcb60f3fd2a001510b02b77f2ce7c30b1c6e35fe8fbad8d7a": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims `glm-5.2[1m]` is documented by Z.AI, but a comment suggests it is a Claude Code convention not sent to the API"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Investigate Z.AI provider model name handling in LiteLLM",
+      "Add support for `[1m]` suffix or update documentation to clarify it is not valid for proxy usage",
+      "Add regression test for Z.AI Coding Plan model variants"
+    ],
+    "risks": [
+      "Provider may reject the `[1m]` suffix, making a code fix impossible",
+      "Changing model name parsing could affect other providers",
+      "Documentation-only fix may not satisfy users expecting functionality"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Reproduce the issue using the provided config and curl commands",
+      "Add a unit test for Z.AI model name parsing with `[1m]` suffix",
+      "Run integration test against Z.AI Coding Plan endpoint if credentials available"
+    ],
+    "unknowns": [
+      "Whether the Z.AI API actually accepts `glm-5.2[1m]` or only `glm-5.2`",
+      "Whether there is an existing open PR addressing this issue (lookup timed out)",
+      "Maintainer preference on whether to support the suffix or document it as invalid"
+    ],
+    "why": "The issue reports a user-facing bug where the Z.AI Coding Plan model variant `glm-5.2[1m]` fails with 'Unknown Model' through LiteLLM Proxy. The root cause is unclear: it could be a provider-side rejection, a LiteLLM model name parsing issue, or a documentation mismatch. The issue includes reproduction steps and multiple user confirmations, but the deterministic gate requires HUMAN_REVIEW and open PR lookup failed, so we cannot rule out existing work. The track is agent_ai_infra, not llm_algorithm, so algorithm evidence is not required. The candidate is actionable but needs maintainer confirmation on the intended fix (e.g., support the suffix or document it as invalid)."
   },
   "9c1fb3e2991987f1a7f8345147e1298e9b6a8bed38e5f16a7327e38b76aa0708": {
     "confidence": 0.85,
@@ -10535,6 +10677,29 @@
       "Maintainer confirmation on the expected fix approach is missing"
     ],
     "why": "The issue describes a concrete streaming bug in LiteLLM's Anthropic adapter where tool_use is lost during SSE conversion. It provides a clear reproduction and expected behavior, but the root cause is not identified and the track is llm_algorithm, which requires a concrete algorithmic mechanism. The supplied evidence lacks a specific training objective, model mechanism, or numerical method; it is an SDK integration bug. The open PR and related issue lookups failed, so duplicate work cannot be excluded. The gate decision is HUMAN_REVIEW, and the candidate's own category is WAIT_MAINTAINER."
+  },
+  "c2fcf3bf95dac9d2110426b14865c7f107c95a55fde99275b4247f7735287613": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Add ToolListChangedNotification emission in server-level enable/disable paths in fastmcp/server/providers/base.py"
+    ],
+    "risks": [
+      "May alter server behavior in ways maintainers do not want; need to confirm notification semantics and compatibility with existing clients."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 11,
+    "test_plan": [
+      "Create a failing test that connects a client, calls mcp.disable(), and asserts the client receives a ToolListChangedNotification."
+    ],
+    "unknowns": [
+      "Maintainer design preference on whether server-level enable/disable should emit notifications; whether this is a known limitation or intended behavior."
+    ],
+    "why": "Issue reports a plausible bug: server-level enable/disable does not emit ToolListChangedNotification, unlike session-level APIs. However, the deterministic gate requires HUMAN_REVIEW, and there is no maintainer confirmation or root-cause signal. The issue is actionable but needs maintainer design confirmation before implementation."
   },
   "c301810d47b79c21e5efba86a467a5fcdc47ceae3e488cb41b3111a430365572": {
     "confidence": 0.7,
