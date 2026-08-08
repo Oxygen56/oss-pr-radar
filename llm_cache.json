@@ -585,6 +585,33 @@
     ],
     "why": "Issue reports a concrete, reproducible bug in session.abort() with three distinct symptoms, all pointing to a single ordering/durability problem: abort is observable before the terminal state is committed. The provided minimal reproduction and detailed analysis by a contributor give a clear root cause and a proposed fix pattern (persist terminal transitions before publishing completion). This is a high-value, actionable bug fix in the agent runtime path."
   },
+  "0d385b09d9fff8e674fab9a786d17239e3d1d9995f453b01a12bf7652e30d614": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Guard the embedding-sharing dimension check in llm_base_proposer.py against None draft_embed",
+      "Add regression test for draft models without embed_tokens in speculative decoding"
+    ],
+    "risks": [
+      "The fix may need to handle other missing attributes in the same path",
+      "Potential interaction with the third reported blocker (mask_hidden buffer) could require additional changes"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce with the provided command on GB200 or a smaller TP setup",
+      "Add a unit test that mocks a draft model without embed_tokens and verifies no AttributeError",
+      "Run existing vLLM spec_decode tests to ensure no regression"
+    ],
+    "unknowns": [
+      "Exact vLLM version and code state may differ from the issue's snapshot, but the logic is likely unchanged"
+    ],
+    "why": "Issue provides a precise root cause: a NoneType dereference in vLLM's llm_base_proposer.py when sharing embeddings with a draft model lacking embed_tokens. The code path is clearly identified, and the fix is a straightforward guard. This is a concrete algorithmic bug in the speculative decoding path, with a clear reproduction command and environment."
+  },
   "0d3cf5b72905e6c4fea8f0d17a8f99262852bd9f7adab0beb171652588ee0eaa": {
     "confidence": 0.8,
     "contradictions": [
@@ -13968,6 +13995,36 @@
       "Maintainer preference on fix approach"
     ],
     "why": "Issue reports a clear bug: nested Pydantic models in dicts ignore serialize_by_alias=False. The root cause is likely in FastMCP's serialization path, but not yet confirmed. No open PR or related issue found, and no maintainer input. The gate decision is HUMAN_REVIEW, so we must wait for maintainer guidance."
+  },
+  "ec9f83ed4bdeb5e8eef46a9e2a7e580cb4a6c448e892d97006784fb336a77bc3": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Bot comment suggests duplicate #41300, but issue claims #41211 was closed without fix"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix model-name forwarding in the Console Go gateway to avoid leading space",
+      "Add regression test for model name forwarding"
+    ],
+    "risks": [
+      "Duplicate of #41300 may already have a fix in progress",
+      "Fix may require changes to shared gateway code affecting other models"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with the provided Python snippet against a test endpoint",
+      "Add a unit test that verifies the forwarded model name has no leading space"
+    ],
+    "unknowns": [
+      "Whether maintainers have already started a fix",
+      "Exact code path in the gateway that prepends the space"
+    ],
+    "why": "The issue reports a server-side forwarding bug with strong reproduction evidence, but the root cause is not identified in the codebase and the fix path is unclear. The bot flags a possible duplicate (#41300), and maintainer confirmation is needed to avoid duplicate work."
   },
   "ede4abec7806a1c7bcceef5153e6068762f7a13dcb9fa50d624e6c46e02de705": {
     "confidence": 0.85,
