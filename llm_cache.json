@@ -5583,6 +5583,37 @@
     ],
     "why": "Issue clearly identifies a shallow update in get_config causing recursive override failure, with a concrete repro. Existing PR #33525 addresses the same root cause but lacks tests and has CI failures, leaving room for a stronger PR with regression tests and a minimal fix."
   },
+  "62388b41d2dc80d7f79b9ee063b1570cd6d45c9cd6738f7822e22b9d94f5a8ca": {
+    "confidence": 0.7,
+    "contradictions": [
+      "The issue reports intermittent nondeterminism, but the second reproduction shows consistent divergence in two lifetimes"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix nondeterministic logprob computation in the sampling or attention path",
+      "Ensure batch invariance under concurrent workloads"
+    ],
+    "risks": [
+      "Root cause may be a floating-point or scheduling race that is hard to fix deterministically",
+      "The fix may affect performance or other features"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 13,
+    "test_plan": [
+      "Reproduce with the provided workload and environment",
+      "Run with VLLM_USE_FLASHINFER_SAMPLER=0 to confirm A/B difference",
+      "Add a regression test that repeats a byte-identical concurrent workload and checks logprob equality within tolerance"
+    ],
+    "unknowns": [
+      "Open PR status and related issue status are unknown due to timeouts",
+      "The exact mechanism causing the nondeterminism is not identified"
+    ],
+    "why": "The issue reports a reproducible nondeterminism in vLLM's batch-invariance feature, with detailed controls and a confirmed reproduction by a second user. However, the root cause is not identified, and the deterministic gate requires HUMAN_REVIEW. The open PR and related issue lookups timed out, so duplicate work cannot be excluded. The candidate is algorithmically relevant but needs maintainer investigation and design confirmation."
+  },
   "6295e4b0468a9076c9fc548c72b67c09ecac4dbf522e7dfd20394ae5f24d85f6": {
     "confidence": 0.85,
     "contradictions": [],
