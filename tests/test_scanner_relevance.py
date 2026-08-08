@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 
+import oss_pr_radar.scanner as scanner_module
 from oss_pr_radar.scanner import (
     BUG_ACTIONABILITY_RE,
     Radar,
@@ -216,3 +217,33 @@ def test_single_shared_scenario_slug_is_not_a_duplicate_issue(tmp_path):
         "The setup score is above the expected geometric premise before assertions run.",
     )
     assert result["status"] == "none"
+
+
+def test_related_issue_inventory_uses_one_bounded_recent_page(monkeypatch, tmp_path):
+    radar = Radar(
+        datetime(2026, 8, 4, tzinfo=UTC),
+        2,
+        tmp_path / "seen.json",
+        "chat",
+        dry_run=True,
+        notify=False,
+    )
+    calls = []
+
+    def fake_page(args, **_kwargs):
+        calls.append(args)
+        return [], None
+
+    monkeypatch.setattr(scanner_module, "gh_list_page", fake_page)
+
+    result = radar.assess_related_issues(
+        "example/project",
+        17,
+        "Streaming tool result is lost",
+        "The final tool result disappears before the agent resumes.",
+    )
+
+    assert result["status"] == "none"
+    assert len(calls) == 1
+    assert "repos/example/project/issues" in calls[0]
+    assert "--paginate" not in calls[0]

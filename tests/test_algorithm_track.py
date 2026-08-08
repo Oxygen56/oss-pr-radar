@@ -42,6 +42,20 @@ def test_dynamic_algorithm_issue_is_detected():
     )
 
 
+def test_plain_zero_and_code_comparison_do_not_fake_algorithm_evidence():
+    evidence = llm_algorithm_evidence(
+        "BerriAI/litellm",
+        "reasoning_tokens is always zero because thinking_tokens == 0 in usage.py. "
+        "Steps to reproduce and a regression test are included.",
+        public_repro_signals=2,
+        root_cause_signal=True,
+    )
+
+    assert "distributed_training" not in evidence["mechanisms"]
+    assert evidence["formula_signal"] is False
+    assert evidence["qualified"] is False
+
+
 def test_algorithm_repository_configuration_bug_is_rejected(tmp_path):
     base = {
         "repo": "huggingface/transformers",

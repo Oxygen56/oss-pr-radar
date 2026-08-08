@@ -52,6 +52,25 @@ def test_cross_repo_timeline_pr_is_included_when_it_explicitly_fixes_issue(monke
     assert hits[0]["_linked_from_issue"] is True
 
 
+def test_open_pr_inventory_uses_one_bounded_recent_page(monkeypatch, tmp_path):
+    instance = radar(tmp_path)
+    calls = []
+
+    monkeypatch.setattr(scanner_module, "gh_paginated", lambda *_args, **_kwargs: ([], None))
+
+    def fake_page(args, **_kwargs):
+        calls.append(args)
+        return [], None
+
+    monkeypatch.setattr(scanner_module, "gh_list_page", fake_page)
+    monkeypatch.setattr(scanner_module, "gh", lambda *_args, **_kwargs: ({"items": []}, None))
+
+    assert instance.open_pr_hits("upstream/project", 7, "Request context is lost") == []
+    assert len(calls) == 1
+    assert "repos/upstream/project/pulls" in calls[0]
+    assert "--paginate" not in calls[0]
+
+
 def test_cross_repo_timeline_pr_details_are_loaded_from_its_own_repo(monkeypatch, tmp_path):
     instance = radar(tmp_path)
     requested = []

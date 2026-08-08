@@ -1,5 +1,6 @@
 import copy
 import json
+import subprocess
 from datetime import UTC, datetime
 
 from oss_pr_radar import scanner
@@ -30,6 +31,92 @@ def test_paginated_gh_flattens_every_page(monkeypatch):
     assert rows == [{"id": 1}, {"id": 2}]
     assert captured["args"][-2:] == ["--paginate", "--slurp"]
     assert captured["timeout"] == 41
+
+
+def test_gh_honors_full_timeout_without_proxy(monkeypatch):
+    captured = {}
+    for name in (
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    def fake_run(args, **kwargs):
+        captured["args"] = args
+        captured["timeout"] = kwargs["timeout"]
+        return subprocess.CompletedProcess(args, 0, stdout="[]", stderr="")
+
+    monkeypatch.setattr(scanner.subprocess, "run", fake_run)
+
+    data, error = scanner.gh(["api", "repos/a/b/pulls"], timeout=37)
+
+    assert error is None
+    assert data == []
+    assert captured["timeout"] == 37
+
+
+def test_single_page_collection_does_not_enable_pagination(monkeypatch):
+    captured = {}
+
+    def fake_gh(args, timeout=18):
+        captured["args"] = args
+        captured["timeout"] = timeout
+        return [{"id": 1}], None
+
+    monkeypatch.setattr(scanner, "gh", fake_gh)
+    rows, error = scanner.gh_list_page(["api", "repos/a/b/pulls", "-f", "per_page=100"], timeout=29)
+
+    assert error is None
+    assert rows == [{"id": 1}]
+    assert "--paginate" not in captured["args"]
+    assert captured["timeout"] == 29
+
+
+def test_missing_issue_is_terminal_but_transient_fetch_failure_requeues(monkeypatch, tmp_path):
+    def run_with_error(error):
+        instance = Radar(
+            datetime.now(UTC),
+            2,
+            tmp_path / f"seen-{len(error)}.json",
+            "",
+            dry_run=True,
+            notify=False,
+        )
+        monkeypatch.setattr(instance, "repo_quality", lambda *_args: (True, "ok"))
+
+        def missing_issue(*_args):
+            instance._last_issue_lookup_error = error
+            return None
+
+        monkeypatch.setattr(instance, "issue", missing_issue)
+        key = "example/project#17"
+        instance.shortlist(
+            {
+                key: {
+                    "repo": "example/project",
+                    "num": 17,
+                    "title": "Tool result is lost",
+                    "url": "https://github.com/example/project/issues/17",
+                    "updated": "2026-08-05T00:00:00Z",
+                    "labels": ["bug"],
+                    "assignees": [],
+                    "_explicit_recheck": True,
+                }
+            }
+        )
+        return instance, key
+
+    missing, key = run_with_error("gh: Not Found (HTTP 404)")
+    transient, transient_key = run_with_error("timeout")
+
+    assert missing.issue_outcomes[key]["reason"] == "issue_not_found"
+    assert missing.seen[key]["status"] == "issue_not_found"
+    assert transient.issue_outcomes[transient_key]["reason"] == "issue_fetch_failed"
+    assert transient.seen[transient_key]["status"] == "status_update"
 
 
 def test_optional_discovery_retries_rate_limit(monkeypatch, tmp_path):

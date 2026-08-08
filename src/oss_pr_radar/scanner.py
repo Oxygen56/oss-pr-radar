@@ -610,7 +610,7 @@ LLM_ALGORITHM_SIGNAL_PATTERNS = {
         re.I,
     ),
     "distributed_training": re.compile(
-        r"\b(?:FSDP2?|DeepSpeed|ZeRO[- ]?[123]?|tensor parallel(?:ism)?|"
+        r"\b(?:FSDP2?|DeepSpeed|(?-i:ZeRO)[- ]?[123]?|tensor parallel(?:ism)?|"
         r"pipeline parallel(?:ism)?|context parallel(?:ism)?|sequence parallel(?:ism)?|"
         r"expert parallel(?:ism)?|data parallel(?:ism)?|distributed checkpoint(?:ing)?|"
         r"all[- ]reduce|reduce[- ]scatter|all[- ]gather|process group|shard(?:ed|ing)?)\b",
@@ -638,8 +638,7 @@ LLM_ALGORITHM_SIGNAL_PATTERNS = {
 }
 LLM_ALGORITHM_FORMULA_RE = re.compile(
     r"(?:\\(?:frac|sum|mathbb|mathcal|operatorname)|\$[^$]{3,}\$|"
-    r"\b(?:loss|reward|advantage|logprob|ratio|gradient)\s*[=:]|"
-    r"[A-Za-z][A-Za-z0-9_]*\s*(?:<=|>=|==|\+|-|\*|/)\s*[A-Za-z0-9_(])",
+    r"\b(?:loss|reward|advantage|logprob|ratio|gradient)\s*[=:])",
     re.I,
 )
 LLM_ALGORITHM_EXPERIMENT_RE = re.compile(
@@ -1360,8 +1359,9 @@ def gh(args: list[str], timeout: int = 18) -> tuple[Any | None, str | None]:
             "all_proxy",
         )
     )
+    direct_timeout = float(timeout) if not proxy_configured else min(float(timeout), 10.0)
     try:
-        proc = invoke(direct_env, min(float(timeout), 10.0))
+        proc = invoke(direct_env, direct_timeout)
     except subprocess.TimeoutExpired:
         if not proxy_configured:
             return None, "timeout"
@@ -1424,6 +1424,24 @@ def gh_paginated(
             if isinstance(item, dict):
                 flattened.append(item)
     return flattened, None
+
+
+def gh_list_page(
+    args: list[str], timeout: int = 30
+) -> tuple[list[dict[str, Any]] | None, str | None]:
+    """Read one explicitly bounded REST page.
+
+    Duplicate audits combine this recent page with exact timeline/body links and
+    targeted search. Fetching every open issue or PR in a large repository can
+    consume the whole scan budget without adding useful evidence.
+    """
+
+    data, error = gh(args, timeout=timeout)
+    if error:
+        return None, error
+    if not isinstance(data, list):
+        return None, "invalid_list_response"
+    return [item for item in data if isinstance(item, dict)], None
 
 
 def load_json(path: Path, default: Any) -> Any:
@@ -1643,6 +1661,7 @@ class Radar:
         self.rejection_summary: dict[str, int] = {}
         self.rejection_examples: dict[str, list[dict[str, Any]]] = {}
         self._last_comments_lookup_error: str | None = None
+        self._last_issue_lookup_error: str | None = None
         self.queried_repos: set[str] = set()
         self.matched_repos: set[str] = set()
         self.qualified_repo_names: set[str] = set()
@@ -2075,7 +2094,13 @@ class Radar:
 
     def issue(self, repo: str, num: int) -> dict[str, Any] | None:
         data, err = gh(["api", f"repos/{repo}/issues/{num}"], timeout=15)
-        return data if isinstance(data, dict) and not err else None
+        self._last_issue_lookup_error = err
+        if err:
+            return None
+        if not isinstance(data, dict):
+            self._last_issue_lookup_error = "invalid_issue_response"
+            return None
+        return data
 
     def assess_related_issues(
         self,
@@ -2085,7 +2110,7 @@ class Radar:
         issue_context: str,
     ) -> dict[str, Any]:
         if repo not in self.related_issue_cache:
-            data, err = gh_paginated(
+            data, err = gh_list_page(
                 [
                     "api",
                     "-X",
@@ -2449,7 +2474,7 @@ class Radar:
                     "_issue_body_link_relation": relation,
                 }
 
-        data, list_error = gh_paginated(
+        data, list_error = gh_list_page(
             [
                 "api",
                 "-X",
@@ -3510,7 +3535,29 @@ class Radar:
             self.inspected_repo_names.add(str(base["repo"]))
             issue = self.issue(base["repo"], base["num"])
             if not issue:
-                reject("issue_fetch_failed", base)
+                issue_error = self._last_issue_lookup_error or "invalid_issue_response"
+                issue_missing = bool(
+                    re.search(r"\b(?:HTTP 404|HTTP 410|Not Found|Gone)\b", issue_error, re.I)
+                )
+                reason = "issue_not_found" if issue_missing else "issue_fetch_failed"
+                reject(reason, base)
+                self.seen[key] = {
+                    "analyzed": self.analyzed,
+                    "status": reason if issue_missing else "status_update",
+                    "reason": reason,
+                    "title": base.get("title") or key,
+                    "url": base.get("url")
+                    or f"https://github.com/{base['repo']}/issues/{base['num']}",
+                    "issue_updated": base.get("updated") or base.get("issue_updated") or "",
+                    **(
+                        {}
+                        if issue_missing
+                        else {
+                            "requeue_reason": "critical_evidence_fetch_failure",
+                            "requeued_at": self.analyzed,
+                        }
+                    ),
+                }
                 continue
             if issue.get("state") != "open" or issue.get("pull_request"):
                 reject("not_open_or_pull_request", base)
