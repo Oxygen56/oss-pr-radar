@@ -246,6 +246,8 @@ def collect_followup(
             errors.append(f"{key}:{error}")
             continue
         head = str((pull.get("head") or {}).get("sha") or "")
+        base_ref_name = str((pull.get("base") or {}).get("ref") or "")
+        base_sha = str((pull.get("base") or {}).get("sha") or "")
         maintainer_changes = [
             review
             for review in _latest_reviews_by_author(reviews)
@@ -345,6 +347,8 @@ def collect_followup(
         )
         evidence = {
             "headSha": head,
+            "baseRefName": base_ref_name,
+            "baseSha": base_sha,
             "mergeConflict": merge_conflict,
             "requestedChanges": requested_changes,
             "failingChecks": failing_check_evidence,
@@ -354,6 +358,8 @@ def collect_followup(
         }
         action_evidence = {
             "mergeConflictHead": head if merge_conflict else None,
+            "mergeConflictBaseRefName": base_ref_name if merge_conflict else None,
+            "mergeConflictBaseSha": base_sha if merge_conflict else None,
             "requestedChanges": requested_changes,
             "failingChecks": failing_check_evidence,
             "unresolvedReviewThreads": unresolved_review_threads,
@@ -361,6 +367,8 @@ def collect_followup(
         digest = sha256_json(action_evidence)
         task_evidence = {
             "mergeConflictHead": head if merge_conflict else None,
+            "mergeConflictBaseRefName": base_ref_name if merge_conflict else None,
+            "mergeConflictBaseSha": base_sha if merge_conflict else None,
             "requestedChanges": requested_changes,
             "actionableChecks": actionable_check_evidence,
             "unresolvedReviewThreads": unresolved_review_threads,
@@ -373,6 +381,8 @@ def collect_followup(
             "url": pull.get("html_url"),
             "title": pull.get("title"),
             "headSha": head,
+            "baseRefName": base_ref_name,
+            "baseSha": base_sha,
             "actionDigest": digest,
             "actions": actions,
             "taskActions": task_actions,

@@ -1433,6 +1433,29 @@ def _prepare_pr_followup(candidate: dict[str, Any]) -> None:
     if not public_branch_is_safe(branch):
         raise RuntimeError("PR follow-up branch is unsafe")
     remote = _upstream_remote(worktree, repo)
+    evidence = candidate.get("evidence") or {}
+    if evidence.get("mergeConflict") is True:
+        base_ref_name = str(evidence.get("baseRefName") or "")
+        base_sha = str(evidence.get("baseSha") or "")
+        if not base_ref_name or not re.fullmatch(r"[0-9a-f]{40}", base_sha):
+            raise RuntimeError("PR follow-up merge conflict lacks base snapshot")
+        command(["git", "check-ref-format", "--branch", base_ref_name], cwd=worktree)
+        base_tracking_ref = f"refs/remotes/{remote}/{base_ref_name}"
+        command(
+            [
+                "git",
+                "fetch",
+                "--quiet",
+                "--no-tags",
+                remote,
+                f"+refs/heads/{base_ref_name}:{base_tracking_ref}",
+            ],
+            cwd=worktree,
+            timeout=300,
+        )
+        fetched_base = command(["git", "rev-parse", base_tracking_ref], cwd=worktree)
+        if fetched_base != base_sha:
+            raise RuntimeError("PR base changed while preparing follow-up")
     command(
         ["git", "fetch", "--quiet", "--no-tags", remote, f"pull/{number}/head"],
         cwd=worktree,

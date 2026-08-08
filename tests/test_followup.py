@@ -19,6 +19,7 @@ class Client:
             "title": "Fix runtime",
             "html_url": "https://github.com/a/b/pull/9",
             "head": {"sha": "head"},
+            "base": {"ref": "main", "sha": "base"},
             "mergeable_state": "clean",
             "draft": False,
         }
@@ -158,6 +159,37 @@ def test_transient_unknown_mergeability_preserves_known_conflict():
     assert repeated["candidate_details"] == []
     assert repeated_state["items"][0]["mergeConflict"] is True
     assert repeated_state["items"][0]["actions"] == ["分支存在合并冲突"]
+    assert repeated_state["items"][0]["evidence"]["baseRefName"] == "main"
+    assert repeated_state["items"][0]["evidence"]["baseSha"] == "base"
+
+
+def test_new_base_head_rearms_an_existing_merge_conflict():
+    class ConflictedClient(Client):
+        base_sha = "base-1"
+
+        def pull_request(self, repo, number):
+            pull = super().pull_request(repo, number)
+            pull["mergeable_state"] = "dirty"
+            pull["base"] = {"ref": "main", "sha": self.base_sha}
+            return pull
+
+        def pull_reviews(self, repo, number):
+            return []
+
+    client = ConflictedClient()
+    state, first = collect_followup(client, author="Oxygen56", now=datetime(2026, 8, 4, tzinfo=UTC))
+    assert first["candidate_details"]
+
+    client.base_sha = "base-2"
+    updated, repeated = collect_followup(
+        client,
+        author="Oxygen56",
+        existing=state,
+        now=datetime(2026, 8, 4, 1, tzinfo=UTC),
+    )
+
+    assert repeated["candidate_details"]
+    assert updated["items"][0]["taskActionDigest"] != state["items"][0]["taskActionDigest"]
 
 
 def test_state_schema_migration_does_not_repeat_unchanged_action():

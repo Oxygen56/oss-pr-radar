@@ -1207,6 +1207,7 @@ def test_prepare_pr_followup_aligns_worktree_to_exact_live_head(monkeypatch, tmp
     baseline = run_git(worktree, "rev-parse", "HEAD")
     run_git(remote.parent, "init", "--bare", str(remote))
     run_git(worktree, "remote", "add", "origin", str(remote))
+    run_git(worktree, "push", "origin", f"{baseline}:refs/heads/main")
     run_git(worktree, "switch", "-c", "fix/1-runtime")
     source.write_text("value = 2\n", encoding="utf-8")
     run_git(worktree, "add", "runtime.py")
@@ -1214,6 +1215,13 @@ def test_prepare_pr_followup_aligns_worktree_to_exact_live_head(monkeypatch, tmp
     live_head = run_git(worktree, "rev-parse", "HEAD")
     run_git(worktree, "push", "origin", "HEAD:refs/heads/fix/1-runtime")
     run_git(remote, "update-ref", "refs/pull/9/head", live_head)
+    run_git(worktree, "switch", "--detach", baseline)
+    (worktree / "base.py").write_text("base = 2\n", encoding="utf-8")
+    run_git(worktree, "add", "base.py")
+    run_git(worktree, "commit", "-m", "chore: advance base")
+    live_base = run_git(worktree, "rev-parse", "HEAD")
+    run_git(worktree, "push", "origin", f"{live_base}:refs/heads/main")
+    run_git(worktree, "update-ref", "refs/remotes/origin/main", baseline)
     run_git(worktree, "switch", "--detach", baseline)
     run_git(worktree, "branch", "-f", "fix/1-runtime", baseline)
     monkeypatch.setattr(MODULE, "_upstream_remote", lambda *_args: "origin")
@@ -1224,12 +1232,36 @@ def test_prepare_pr_followup_aligns_worktree_to_exact_live_head(monkeypatch, tmp
             "worktreePath": str(worktree),
             "branch": "fix/1-runtime",
             "headSha": live_head,
+            "evidence": {
+                "mergeConflict": True,
+                "baseRefName": "main",
+                "baseSha": live_base,
+            },
         }
     )
 
     assert run_git(worktree, "rev-parse", "HEAD") == live_head
     assert run_git(worktree, "branch", "--show-current") == "fix/1-runtime"
+    assert run_git(worktree, "rev-parse", "refs/remotes/origin/main") == live_base
     assert run_git(worktree, "status", "--porcelain") == ""
+
+
+def test_prepare_conflicted_pr_followup_requires_signed_base_snapshot(monkeypatch, tmp_path):
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    run_git(worktree, "init")
+    monkeypatch.setattr(MODULE, "_upstream_remote", lambda *_args: "origin")
+
+    with pytest.raises(RuntimeError, match="lacks base snapshot"):
+        MODULE._prepare_pr_followup(
+            {
+                "prUrl": "https://github.com/a/b/pull/9",
+                "worktreePath": str(worktree),
+                "branch": "fix/1-runtime",
+                "headSha": "a" * 40,
+                "evidence": {"mergeConflict": True},
+            }
+        )
 
 
 def test_controller_ingests_followup_fix_as_update_to_exact_existing_pr(tmp_path):
