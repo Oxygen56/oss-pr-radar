@@ -781,8 +781,8 @@
       "stateId": "075d3391fe32ceb941517f9737ec7655d05a1333bdc1a2af9bfbae960f1844c0"
     },
     "review|vllm-project/vllm#51441": {
-      "seenAt": "2026-08-07T21:09:32.887835Z",
-      "stateId": "e6dbe724ae1fb3533ecdf727b059e49576b95535d76ba7c2eb09d1d09c7004d3"
+      "seenAt": "2026-08-08T09:08:06.034798Z",
+      "stateId": "a67af975ddd4a0dae000b172a0588c6d24507d239313635d3a96b04a39bcb1d5"
     },
     "review|vllm-project/vllm#51456": {
       "seenAt": "2026-08-08T08:58:05.680743Z",
@@ -1205,7 +1205,7 @@
       "seenAt": "2026-08-06T10:09:13.778625Z"
     }
   },
-  "digest": "c74b23b0221a760ab5ffd385a9a6ce36e2a078d6f3eda5556e1d7bd233d043b0",
+  "digest": "2f83c54a1a8fd03d73e4cc6352f5857ed61720310e9f822ea4e87d8671a495d8",
   "events": [
     {
       "attempts": 1,
@@ -15912,9 +15912,51 @@
       "runId": "scan-20260808T085420Z-8acb3b6c6154",
       "sentAt": "2026-08-08T08:58:34.898764Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "vllm-project/vllm#51441"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "62ef79915934872f718e624c40c7435ce56f55864d7c12999e66b3e17bc1db2d",
+          "key": "vllm-project/vllm#51441",
+          "kind": "review",
+          "stateId": "a67af975ddd4a0dae000b172a0588c6d24507d239313635d3a96b04a39bcb1d5"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#51441](https://github.com/vllm-project/vllm/issues/51441) [Bug]: Hybrid sparse attention + Eagle results in full cache miss for certain prompt lengths**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue reports a reproducible hybrid sparse attention + Eagle prefix-cache miss for specific prompt lengths, with concrete commands and cache-hit data. However, the deterministic gate is HUMAN_REVIEW, open PR lookup timed out, and related-issue audit failed, so competition and maintainer context are incomplete.\n改动：Fix prefix-cache alignment for hybrid sparse attention with Eagle speculative decoding；Adjust block-size or prefix-match-unit handling for non-multiple prompt lengths\n验证：Reproduce with provided commands and prompt lengths; assert cache_hit_length > 0 for non-multiple lengths；Add regression test covering prompt lengths around block boundaries for DeepSeek-V4 and Kimi-K3\n风险：Fix may be model-specific and not generalize；Performance regression in prefix caching or speculative decoding\n竞争：open PR 检索不完整，需等待下轮重试后再判断碰撞\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 3，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-08T09:08:06.034798Z",
+      "eventId": "0a1fb41dac83e08262279325e07481a6b74ba951aed0cb74e8acf08bb854c7b5",
+      "idempotencyKey": "0a1fb41dac83e08262279325e07481a6b74ba951aed0cb74e8",
+      "kind": "review",
+      "runId": "scan-20260808T090536Z-02784362fda2",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-08T08:58:06.040541Z",
+  "generatedAt": "2026-08-08T09:08:06.373837Z",
   "newEventCount": 0,
   "version": "notification_outbox_v2"
 }
