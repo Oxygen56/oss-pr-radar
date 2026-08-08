@@ -73,6 +73,10 @@ receiving their own worktrees.
   label. Only a stale lease or an asynchronous creation stuck beyond the
   threshold produces a deduplicated Feishu dispatch alert. Plain `PENDING`
   backlog is queue state, not a dispatch failure.
+- Before reserving asynchronous task creation, the local bridge refreshes the
+  source index and materializes only the current remote default-branch snapshot.
+  This keeps partial clones bandwidth-efficient while ensuring Codex worktree
+  initialization does not time out while lazily downloading thousands of blobs.
 - Before queue sync, `orphan-list` reconciles asynchronous worktree creations
   whose real task ID appeared after the controller's initial lookup. Only one
   unbound task matching creation start time, canonical prompt, repository

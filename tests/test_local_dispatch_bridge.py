@@ -407,6 +407,7 @@ def test_claim_release_returns_unstarted_lease_to_pending(monkeypatch, tmp_path)
 
 def test_new_repo_clone_is_shallow_and_atomic(monkeypatch, tmp_path):
     commands = []
+    prewarmed = []
 
     def fake_command(args, cwd=None, timeout=300, stdin=None):
         commands.append((args, cwd, timeout, stdin))
@@ -417,6 +418,7 @@ def test_new_repo_clone_is_shallow_and_atomic(monkeypatch, tmp_path):
 
     monkeypatch.setattr(MODULE, "GITHUB_ROOT", tmp_path)
     monkeypatch.setattr(MODULE, "command", fake_command)
+    monkeypatch.setattr(MODULE, "prewarm_source_repo", prewarmed.append)
 
     path = MODULE.source_repo("example/large-repo")
 
@@ -427,7 +429,78 @@ def test_new_repo_clone_is_shallow_and_atomic(monkeypatch, tmp_path):
     assert "--no-tags" in clone
     assert commands[0][2] == 180
     assert path == (tmp_path / "large-repo").resolve()
+    assert prewarmed == [path]
     assert not list(tmp_path.glob(".large-repo.radar-clone-*"))
+
+
+def test_existing_repo_fetches_and_prewarms_default_snapshot(monkeypatch, tmp_path):
+    repo = tmp_path / "large-repo"
+    repo.mkdir()
+    (repo / ".git").mkdir()
+    commands = []
+    prewarmed = []
+
+    def fake_command(args, cwd=None, timeout=300, stdin=None):
+        commands.append((args, cwd, timeout, stdin))
+        if args == ["git", "remote", "get-url", "origin"]:
+            return "https://github.com/example/large-repo.git"
+        return ""
+
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", tmp_path)
+    monkeypatch.setattr(MODULE, "command", fake_command)
+    monkeypatch.setattr(MODULE, "prewarm_source_repo", prewarmed.append)
+
+    path = MODULE.source_repo("example/large-repo")
+
+    assert commands[1][0] == [
+        "git",
+        "fetch",
+        "--prune",
+        "--no-tags",
+        "--filter=blob:none",
+        "origin",
+    ]
+    assert prewarmed == [path]
+
+
+def test_prewarm_source_repo_refreshes_index_and_hydrates_only_default_snapshot(
+    monkeypatch, tmp_path
+):
+    commands = []
+    quiet_commands = []
+
+    def fake_command(args, cwd=None, timeout=300, stdin=None):
+        commands.append((args, cwd, timeout, stdin))
+        if args[:3] == ["git", "symbolic-ref", "--quiet"]:
+            return "refs/remotes/origin/main"
+        return ""
+
+    def fake_quiet_command(args, *, cwd, timeout=300):
+        quiet_commands.append((args, cwd, timeout))
+
+    monkeypatch.setattr(MODULE, "command", fake_command)
+    monkeypatch.setattr(MODULE, "quiet_command", fake_quiet_command)
+
+    MODULE.prewarm_source_repo(tmp_path)
+
+    assert commands[0][0] == [
+        "git",
+        "status",
+        "--porcelain=v1",
+        "--untracked-files=no",
+    ]
+    assert quiet_commands == [
+        (
+            [
+                "git",
+                "archive",
+                "--format=tar",
+                "refs/remotes/origin/main",
+            ],
+            tmp_path,
+            600,
+        )
+    ]
 
 
 def test_retry_dispatch_requires_archived_clean_resultless_task(monkeypatch, tmp_path):

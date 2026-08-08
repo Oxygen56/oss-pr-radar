@@ -131,6 +131,40 @@ def canonical_prompt(value: str) -> str:
     return (match.group(1) if match else value).strip()
 
 
+def quiet_command(args: list[str], *, cwd: Path, timeout: int = 300) -> None:
+    completed = subprocess.run(
+        args,
+        cwd=cwd,
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=timeout,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError((completed.stderr or "command failed")[:800])
+
+
+def prewarm_source_repo(path: Path) -> None:
+    """Make the default-branch snapshot locally checkout-ready for Codex."""
+
+    command(
+        ["git", "status", "--porcelain=v1", "--untracked-files=no"],
+        cwd=path,
+        timeout=60,
+    )
+    default_ref = command(
+        ["git", "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"],
+        cwd=path,
+        timeout=15,
+    )
+    quiet_command(
+        ["git", "archive", "--format=tar", default_ref],
+        cwd=path,
+        timeout=600,
+    )
+
+
 def source_repo(repo: str) -> Path:
     GITHUB_ROOT.mkdir(parents=True, exist_ok=True)
     for path in GITHUB_ROOT.iterdir():
@@ -146,7 +180,9 @@ def source_repo(repo: str) -> Path:
                 cwd=path,
                 timeout=180,
             )
-            return path.resolve()
+            resolved = path.resolve()
+            prewarm_source_repo(resolved)
+            return resolved
     destination = GITHUB_ROOT / repo.rsplit("/", 1)[1]
     if destination.exists():
         destination = GITHUB_ROOT / repo.replace("/", "--")
@@ -172,7 +208,9 @@ def source_repo(repo: str) -> Path:
     except Exception:
         shutil.rmtree(clone_target, ignore_errors=True)
         raise
-    return destination.resolve()
+    resolved = destination.resolve()
+    prewarm_source_repo(resolved)
+    return resolved
 
 
 def fetch_cloud_queue() -> dict[str, Any]:
