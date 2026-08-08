@@ -54,6 +54,14 @@ AI_DISCLOSURE_RE = re.compile(
     r"(?:^|\n)\s*AGENT:\s*.{0,240}\bAI\s*/\s*LLM\s+agents?\s*:|"
     r"(?:contribution policy for ai agents|if you are an ai agent).{0,1200}"
     r"(?:must disclose|disclosure\.txt|html comment)|"
+    r"\bcontribution provenance\b.{0,1200}(?:"
+    r"\bai assistance\b.{0,320}\bmodel(?:\(s\)|s)?\s+used\b|"
+    r"\bmodel(?:\(s\)|s)?\s+used\b.{0,320}\bagent tooling\b)|"
+    r"\bevery\s+ai[- ]assisted contributions?\b.{0,240}"
+    r"\b(?:records?|must|required)\b.{0,180}"
+    r"\b(?:provider|model(?: identifier)?|provenance)\b|"
+    r"\bpull request body\b.{0,160}\b(?:must|required)\b.{0,160}"
+    r"\b(?:contribution provenance|ai assistance|provider/model)\b|"
     r"(?:new\s+)?branches?\s+(?:should|must|are required to)\s+use\s+"
     r"(?:the\s+)?[`'\"]?codex/",
     re.I | re.S,

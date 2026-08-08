@@ -1603,6 +1603,8 @@ def effective_window_hours(
 
 def repo_rules(repo: str) -> str:
     lower = repo.lower()
+    if lower == "elizaos/eliza":
+        return "ai_disclosure_conflict"
     if lower in {"langchain-ai/langgraph", "pydantic/pydantic-ai"}:
         return "needs_assignment"
     return "normal"

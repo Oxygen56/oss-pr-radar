@@ -65,6 +65,41 @@ def test_explicit_ai_disclosure_is_held_for_user_review():
     assert policy.ai_disclosure is True
 
 
+def test_required_contribution_provenance_template_is_ai_disclosure_policy():
+    text = """
+# Contribution provenance
+
+Declare the actual assistance used for implementation and review. Use exact
+provider/model-id values. Human-only work must say so explicitly.
+
+- AI assistance: `yes` / `no - human-only contribution`
+- Model(s) used: `provider/model-id` / `None - human-only contribution`
+- Agent tooling: `client-name` / `None - human-only contribution`
+- Provenance status: `self-reported`
+"""
+
+    policy = discover_policy(
+        FakeClient({".github/pull_request_template.md": text}),
+        "example/project",
+    )
+
+    assert policy.status == "AI_POLICY_REVIEW"
+    assert policy.ai_disclosure is True
+    assert submission_policy_from_text(text) == "ai_disclosure_conflict"
+
+
+def test_required_ai_assisted_contribution_provenance_is_detected():
+    text = """
+## Contribution Provenance
+
+Every AI-assisted contribution records the exact provider and model identifier.
+The pull request body must preserve and complete the Contribution provenance
+block from the repository template.
+"""
+
+    assert submission_policy_from_text(text) == "ai_disclosure_conflict"
+
+
 def test_conditional_ai_agent_policy_and_scope_confirmation_are_detected():
     text = """
 ## Contribution principles

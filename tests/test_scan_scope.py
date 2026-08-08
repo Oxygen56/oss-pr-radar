@@ -9,6 +9,7 @@ from oss_pr_radar.scanner import (
     LLM_EVALUATION_REPOS,
     LLM_MODELING_PEFT_REPOS,
     LLM_POST_TRAINING_REPOS,
+    repo_rules,
 )
 
 
@@ -40,3 +41,7 @@ def test_fixed_scope_covers_mature_agent_ecosystem_domains():
     assert {"huggingface/peft", "huggingface/transformers"} <= LLM_MODELING_PEFT_REPOS
     assert {"NVIDIA/Megatron-LM", "pytorch/torchtitan"} <= LLM_DISTRIBUTED_TRAINING_REPOS
     assert {"EleutherAI/lm-evaluation-harness", "huggingface/lighteval"} <= (LLM_EVALUATION_REPOS)
+
+
+def test_eliza_publication_requires_ai_disclosure():
+    assert repo_rules("elizaOS/eliza") == "ai_disclosure_conflict"
