@@ -209,8 +209,11 @@ def prewarm_source_repo(path: Path) -> None:
 
 def source_repo(repo: str) -> Path:
     GITHUB_ROOT.mkdir(parents=True, exist_ok=True)
-    for path in GITHUB_ROOT.iterdir():
-        if not path.is_dir() or not (path / ".git").exists():
+    for path in sorted(GITHUB_ROOT.iterdir()):
+        # A .git file marks a linked worktree. Using one as the reusable source
+        # makes the reported source path disagree with the repository that owns
+        # any newly-created worktree, and can also touch an unrelated task.
+        if not path.is_dir() or not (path / ".git").is_dir():
             continue
         try:
             origin = command(["git", "remote", "get-url", "origin"], cwd=path, timeout=15)
@@ -259,7 +262,7 @@ def _worktree_belongs_to_source(worktree: Path, source: Path) -> bool:
     try:
         return git_path(
             "rev-parse", "--path-format=absolute", "--git-common-dir", cwd=worktree
-        ) == git_path("rev-parse", "--path-format=absolute", "--git-dir", cwd=source)
+        ) == git_path("rev-parse", "--path-format=absolute", "--git-common-dir", cwd=source)
     except (OSError, RuntimeError, subprocess.SubprocessError):
         return False
 
@@ -290,6 +293,16 @@ def prepare_managed_worktree(source: Path, *, intent_id: str, repo: str) -> Path
         except Exception:
             shutil.rmtree(worktree.parent, ignore_errors=True)
             raise
+    if not _worktree_belongs_to_source(worktree, source):
+        try:
+            quiet_command(
+                ["git", "worktree", "remove", "--force", str(worktree)],
+                cwd=source,
+                timeout=60,
+            )
+        except RuntimeError:
+            shutil.rmtree(worktree.parent, ignore_errors=True)
+        raise RuntimeError("managed worktree does not belong to source repository")
     _exclude_private_task_dir(worktree)
     return worktree.resolve()
 

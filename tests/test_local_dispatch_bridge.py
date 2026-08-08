@@ -289,6 +289,21 @@ def test_prepare_managed_worktree_is_isolated_under_github_project(monkeypatch, 
     assert run_git(worktree, "status", "--porcelain") == ""
 
 
+def test_worktree_membership_uses_common_repository_for_linked_source(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    run_git(source, "init")
+    run_git(source, "config", "user.name", "Test Contributor")
+    run_git(source, "config", "user.email", "test@example.com")
+    (source / "runtime.py").write_text("VALUE = 1\n", encoding="utf-8")
+    run_git(source, "add", "runtime.py")
+    run_git(source, "commit", "-m", "baseline")
+    linked = tmp_path / "linked"
+    run_git(source, "worktree", "add", "--detach", str(linked), "HEAD")
+
+    assert MODULE._worktree_belongs_to_source(source, linked) is True
+
+
 def test_commit_receipt_binds_github_project_thread_to_managed_worktree(monkeypatch, tmp_path):
     project_root = tmp_path / "github"
     source = tmp_path / "source"
@@ -746,6 +761,32 @@ def test_existing_repo_fetches_and_prewarms_default_snapshot(monkeypatch, tmp_pa
         "origin",
     ]
     assert prewarmed == [path]
+
+
+def test_existing_repo_ignores_linked_worktree_candidates(monkeypatch, tmp_path):
+    linked = tmp_path / "a-linked"
+    linked.mkdir()
+    (linked / ".git").write_text("gitdir: /tmp/common/worktrees/a-linked\n")
+    repo = tmp_path / "b-main"
+    repo.mkdir()
+    (repo / ".git").mkdir()
+    commands = []
+
+    def fake_command(args, cwd=None, timeout=300, stdin=None):
+        commands.append((args, cwd, timeout, stdin))
+        if args == ["git", "remote", "get-url", "origin"]:
+            assert cwd == repo
+            return "https://github.com/example/large-repo.git"
+        return ""
+
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", tmp_path)
+    monkeypatch.setattr(MODULE, "command", fake_command)
+    monkeypatch.setattr(MODULE, "prewarm_source_repo", lambda _path: None)
+
+    path = MODULE.source_repo("example/large-repo")
+
+    assert path == repo.resolve()
+    assert all(cwd != linked for _args, cwd, _timeout, _stdin in commands)
 
 
 def test_prewarm_source_repo_refreshes_index_and_hydrates_only_default_snapshot(
