@@ -876,3 +876,77 @@ def test_commit_without_lease_is_rejected(tmp_path):
             project_id="github",
             worktree_path="/tmp/worktree",
         )
+
+
+def test_pr_followup_is_bound_to_existing_task_and_sent_once(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "controller")
+    store.commit_dispatch(
+        "intent-1",
+        owner="controller",
+        thread_id="thread-1",
+        project_id="github",
+        worktree_path="/tmp/worktree",
+    )
+    store.record_stage("a/b#1", "PR_OPEN", evidence={"prUrl": "https://github.com/a/b/pull/9"})
+    now = iso_z(datetime.now(UTC))
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO publication_requests
+               (request_id,opportunity_key,thread_id,commit_sha,branch,worktree_path,
+                evidence_digest,status,request_json,created_at,updated_at)
+               VALUES ('request-1','a/b#1','thread-1',?,'fix/1-runtime','/tmp/worktree',
+                       'evidence','CONSUMED','{}',?,?)""",
+            ("a" * 40, now, now),
+        )
+        connection.execute(
+            """INSERT INTO publication_permits
+               (permit_id,request_id,issue_url,commit_sha,branch,status,expires_at,pr_url,
+                evidence_json,created_at,updated_at)
+               VALUES ('permit-1','request-1','https://github.com/a/b/issues/1',?,
+                       'fix/1-runtime','CONSUMED',?,'https://github.com/a/b/pull/9','{}',?,?)""",
+            ("a" * 40, iso_z(datetime.now(UTC) + timedelta(hours=1)), now, now),
+        )
+    state = {
+        "version": "pr_followup_v3",
+        "generatedAt": now,
+        "items": [
+            {
+                "url": "https://github.com/a/b/pull/9",
+                "headSha": "b" * 40,
+                "actionDigest": "action",
+                "taskActionDigest": "task-action",
+                "taskFollowupRequired": True,
+                "taskActions": ["当前分支检查失败"],
+                "evidence": {"actionableCheckNames": ["Ruff"]},
+                "checkedAt": now,
+            }
+        ],
+    }
+
+    imported = store.import_pr_followups(state)
+    candidate = store.pr_followup_candidates()[0]
+    assert imported == {"matched": 1, "inserted": 1, "updated": 0}
+    assert candidate["threadId"] == "thread-1"
+    assert store.task_context(
+        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
+    )["prFollowup"]["headSha"] == "b" * 40
+
+    store.reserve_pr_followup(
+        thread_id="thread-1", wake_digest=candidate["wakeDigest"]
+    )
+    assert store.pr_followup_candidates() == []
+    assert store.unresolved_pr_followups()
+    store.commit_pr_followup(
+        thread_id="thread-1", wake_digest=candidate["wakeDigest"]
+    )
+    assert store.unresolved_pr_followups() == []
+
+    store.import_pr_followups(state)
+    assert store.pr_followup_candidates() == []
+
+    state["items"][0]["headSha"] = "c" * 40
+    state["items"][0]["checkedAt"] = iso_z(datetime.now(UTC) + timedelta(minutes=1))
+    store.import_pr_followups(state)
+    assert store.pr_followup_candidates() == []

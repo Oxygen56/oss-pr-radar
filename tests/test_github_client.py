@@ -32,3 +32,21 @@ def test_related_prs_keep_cross_repository_timeline_identity(monkeypatch):
             "_repo": "OpenHands/software-agent-sdk",
         }
     ]
+
+
+def test_pull_review_threads_uses_graphql_and_returns_nodes():
+    calls = []
+
+    def runner(args, timeout):
+        calls.append((args, timeout))
+        return '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"isResolved":false}]}}}}}'
+
+    client = GitHubClient(runner=runner)
+
+    result = client.pull_review_threads("a/b", 9)
+
+    assert result == [{"isResolved": False}]
+    assert calls[0][0][:3] == ["gh", "api", "graphql"]
+    assert "owner=a" in calls[0][0]
+    assert "name=b" in calls[0][0]
+    assert "number=9" in calls[0][0]

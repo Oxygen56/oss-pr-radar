@@ -7,7 +7,7 @@ import json
 import os
 import re
 import subprocess
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +19,7 @@ from .metrics import assess_submit_ready
 from .util import sha256_text
 
 ISSUE_URL = re.compile(r"^https://github\.com/([^/]+/[^/]+)/issues/(\d+)$")
+PR_URL = re.compile(r"^https://github\.com/([^/]+/[^/]+)/pull/(\d+)$")
 PUBLIC_AI_DISCLOSURE_RE = re.compile(
     r"\b(?:generated|written|created|assisted)\s+by\s+(?:ai|codex|chatgpt|llm)\b|"
     r"\b(?:ai|codex|chatgpt|llm)[- ]assisted\b|\bai disclosure\b",
@@ -179,6 +180,12 @@ def _changed_files(worktree: Path, repo: str, default_branch: str) -> list[str]:
     return sorted(line for line in value.splitlines() if line)
 
 
+def _changed_files_since(worktree: Path, previous_commit: str) -> list[str]:
+    command(["git", "merge-base", "--is-ancestor", previous_commit, "HEAD"], cwd=worktree)
+    value = command(["git", "diff", "--name-only", f"{previous_commit}..HEAD"], cwd=worktree)
+    return sorted(line for line in value.splitlines() if line)
+
+
 def _dco_valid(worktree: Path, repo: str, default_branch: str) -> bool:
     remote = _upstream_remote(worktree, repo)
     base = command(["git", "merge-base", "HEAD", f"{remote}/{default_branch}"], cwd=worktree)
@@ -253,17 +260,72 @@ def audit_publication_request(
         current_actor=os.environ.get("RADAR_GITHUB_ACTOR", "Oxygen56"),
         hardware_inventory={"4090", "5090", "a100", "v100"},
     )
+    publication_kind = str(request.get("publicationKind") or "PR_CREATE")
+    existing_pr: dict[str, Any] | None = None
+    authorization_evidence = evidence
+    if publication_kind == "PR_UPDATE":
+        existing_url = str(request.get("existingPrUrl") or "")
+        previous_commit = str(request.get("previousCommitSha") or "")
+        pr_match = PR_URL.fullmatch(existing_url)
+        if not pr_match or pr_match.group(1).casefold() != repo.casefold() or not previous_commit:
+            return PublicationAudit("BLOCK", "PR_UPDATE_BINDING_INVALID", request_id, {})
+        try:
+            existing_pr = github.pull_request(repo, int(pr_match.group(2)))
+        except GitHubError as exc:
+            return PublicationAudit(
+                "DEFER", "EXISTING_PR_UNAVAILABLE", request_id, {"error": str(exc)[:200]}
+            )
+        head = existing_pr.get("head") or {}
+        head_owner = str(((head.get("repo") or {}).get("owner") or {}).get("login") or "")
+        if (
+            str(existing_pr.get("state") or "").casefold() != "open"
+            or str(existing_pr.get("html_url") or "") != existing_url
+            or str(head.get("sha") or "") != previous_commit
+            or str(head.get("ref") or "") != request.get("branch")
+            or head_owner.casefold() != publication["headOwner"].casefold()
+        ):
+            return PublicationAudit(
+                "BLOCK",
+                "EXISTING_PR_HEAD_DRIFT",
+                request_id,
+                {"existingPrUrl": existing_url, "previousCommitSha": previous_commit},
+            )
+        expected_actor = os.environ.get("RADAR_GITHUB_ACTOR", "Oxygen56").casefold()
+        assignees = evidence.issue.get("assignees") or []
+        assignee_logins = {
+            str(item.get("login") or "").casefold()
+            for item in assignees
+            if isinstance(item, dict) and item.get("login")
+        }
+        if assignee_logins and assignee_logins != {expected_actor}:
+            return PublicationAudit(
+                "BLOCK", "ISSUE_ASSIGNED_TO_ANOTHER_CONTRIBUTOR", request_id, {}
+            )
+        authorization_evidence = replace(
+            evidence,
+            issue=evidence.issue | {"assignees": []},
+            pull_relations=tuple(
+                relation for relation in evidence.pull_relations if relation.get("url") != existing_url
+            ),
+        )
+    elif publication_kind != "PR_CREATE":
+        return PublicationAudit("BLOCK", "PUBLICATION_KIND_INVALID", request_id, {})
+
     candidate = {
         "category": intent.get("category"),
         "gate_decision": intent.get("scanGate"),
         "auto_spawn": intent.get("autoSpawn") is True,
         "llm_review": intent.get("llmReview") or {},
+        "track": intent.get("track"),
+        "algorithm_evidence": intent.get("algorithmEvidence"),
     }
-    verdict = authorize(candidate, evidence)
+    verdict = authorize(candidate, authorization_evidence)
     live = {
         "authorization": verdict.as_dict(),
         "evidence": evidence.as_dict(),
         "publication": publication,
+        "publicationKind": publication_kind,
+        "existingPr": existing_pr,
     }
     if not evidence.complete:
         return PublicationAudit("DEFER", "LIVE_EVIDENCE_INCOMPLETE", request_id, live)
@@ -287,7 +349,11 @@ def audit_publication_request(
     if publication["headOwner"].casefold() != expected_actor.casefold():
         return PublicationAudit("BLOCK", "FORK_OWNER_MISMATCH", request_id, live)
     try:
-        changed_files = _changed_files(worktree, repo, default_branch)
+        changed_files = (
+            _changed_files_since(worktree, str(request["previousCommitSha"]))
+            if publication_kind == "PR_UPDATE"
+            else _changed_files(worktree, repo, default_branch)
+        )
     except PublicationError as exc:
         return PublicationAudit(
             "DEFER", "DIFF_REVALIDATION_FAILED", request_id, live | {"error": str(exc)[:200]}

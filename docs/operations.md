@@ -3,7 +3,7 @@
 ## Schedules
 
 - `radar.yml`: every hour at minute 17 in `Asia/Shanghai`.
-- Local Codex heartbeat dispatcher: every hour at minute 45, reusing one
+- Local Codex heartbeat dispatcher: every hour at minute 30, reusing one
   controller task after the GitHub scan's delay budget.
 - Local completion collector: every 20 seconds, ingesting only existing
   workspace results and advancing existing publication requests without an LLM.
@@ -115,6 +115,18 @@ receiving their own worktrees.
   Lifecycle watch messages are emitted only for actionable human or PR follow-up.
   Task-created messages are sent locally, one per committed thread, with a
   provider UUID and Ledger receipt.
+- Open-PR follow-up separates notification evidence from task-actionable
+  evidence. Cancelled jobs, aggregate status checks, and failures unrelated to
+  the PR's changed files may notify but do not wake a Codex task. A maintainer
+  change request, still-current maintainer or review-bot thread, merge conflict,
+  or branch-attributable failed check creates a
+  durable wake digest. The controller prepares the exact live PR head, refreshes
+  the private task context, sends the canonical prompt to the original task,
+  and commits the wake receipt only after that send succeeds.
+- A validated follow-up patch creates a `PR_UPDATE` publication request bound to
+  the exact existing PR URL, public branch, and previous remote head. The
+  executor permits only a fast-forward push and verifies that the same open PR
+  now points to the permitted commit; it never opens a second PR.
 - A publication side effect records `ATTEMPTED` before execution. Ambiguous
   results become `RECONCILE_REQUIRED` and are never blindly retried. Recovery
   only reads the exact remote branch or pull request bound to the original
@@ -155,7 +167,8 @@ competition opportunity.
 
 The single-thread desktop heartbeat runs health with fallback repair, asynchronous
 task reconciliation, queue sync,
-real dispatch-failure alerts, PR lifecycle refresh, live
+real dispatch-failure alerts, PR lifecycle refresh, actionable existing-PR task
+follow-up, live
 claim/revalidation, write-ahead creation, single-project task creation, isolated worktree preparation, task
 receipt verification, workspace context sync, result ingestion, publication
 advancement, one-shot recovery, title synchronization, and `AUDIT_NO_GO`

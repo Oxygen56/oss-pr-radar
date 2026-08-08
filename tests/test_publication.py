@@ -171,6 +171,107 @@ def test_broker_grants_commit_bound_permit(monkeypatch, tmp_path):
     )
 
 
+def test_followup_publication_is_bound_to_existing_pr_and_previous_head(tmp_path):
+    store, request, evidence_path = prepared_request(tmp_path)
+    first = store.publication_request(request["request_id"])
+    permit = store.grant_publication_request(
+        request["request_id"],
+        issue_url=first["request"]["issueUrl"],
+        commit_sha=first["commit_sha"],
+        branch=first["branch"],
+        evidence={"publication": first["request"]["publication"]},
+    )
+    store.consume_publication_permit(permit["permit_id"], "https://github.com/example/project/pull/8")
+    worktree = tmp_path / "worktree"
+    (worktree / "file.txt").write_text("fixed again\n", encoding="utf-8")
+    git("add", "file.txt", cwd=worktree)
+    git("commit", "-m", "Refine streaming fix", cwd=worktree)
+    current = git("rev-parse", "HEAD", cwd=worktree)
+    quality = {field: True for field in QUALITY_FIELDS}
+    store.record_stage("example/project#7", "FIX_READY", evidence=quality)
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    evidence["commitSha"] = current
+    evidence_path.write_text(json.dumps(evidence, sort_keys=True), encoding="utf-8")
+
+    update = request_publication(
+        store,
+        issue_url="https://github.com/example/project/issues/7",
+        thread_id="thread-1",
+        worktree=worktree,
+        evidence_path=evidence_path,
+    )
+
+    payload = update["request"]
+    assert payload["publicationKind"] == "PR_UPDATE"
+    assert payload["existingPrUrl"] == "https://github.com/example/project/pull/8"
+    assert payload["previousCommitSha"] == first["commit_sha"]
+
+
+def test_broker_allows_fast_forward_update_of_its_exact_existing_pr(monkeypatch, tmp_path):
+    store, request, evidence_path = prepared_request(tmp_path)
+    first = store.publication_request(request["request_id"])
+    permit = store.grant_publication_request(
+        request["request_id"],
+        issue_url=first["request"]["issueUrl"],
+        commit_sha=first["commit_sha"],
+        branch=first["branch"],
+        evidence={"publication": first["request"]["publication"]},
+    )
+    pr_url = "https://github.com/example/project/pull/8"
+    store.consume_publication_permit(permit["permit_id"], pr_url)
+    worktree = tmp_path / "worktree"
+    (worktree / "file.txt").write_text("fixed again\n", encoding="utf-8")
+    git("add", "file.txt", cwd=worktree)
+    git("commit", "-m", "Refine streaming fix", cwd=worktree)
+    current = git("rev-parse", "HEAD", cwd=worktree)
+    quality = {field: True for field in QUALITY_FIELDS}
+    store.record_stage("example/project#7", "FIX_READY", evidence=quality)
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    evidence["commitSha"] = current
+    evidence_path.write_text(json.dumps(evidence, sort_keys=True), encoding="utf-8")
+    update = request_publication(
+        store,
+        issue_url="https://github.com/example/project/issues/7",
+        thread_id="thread-1",
+        worktree=worktree,
+        evidence_path=evidence_path,
+    )
+
+    class UpdateClient(Client):
+        def related_open_prs(self, repo, number, **kwargs):
+            return [{"number": 8, "_repo": repo}]
+
+        def pull_request(self, repo, number):
+            return {
+                "number": 8,
+                "state": "open",
+                "html_url": pr_url,
+                "title": "Fix streaming tool arguments",
+                "body": "Fixes #7",
+                "updated_at": "2026-08-09T00:00:00Z",
+                "head": {
+                    "sha": first["commit_sha"],
+                    "ref": first["branch"],
+                    "repo": {"owner": {"login": "Oxygen56"}},
+                },
+            }
+
+        def pull_files(self, repo, number):
+            return [{"filename": "file.txt"}]
+
+        def pull_reviews(self, repo, number):
+            return []
+
+        def check_runs(self, repo, ref):
+            return []
+
+    monkeypatch.setattr(publication, "_changed_files_since", lambda *args: ["file.txt"])
+    result = broker_publication_request(store, update["request_id"], client=UpdateClient())
+
+    assert result["granted"] is True
+    assert result["audit"]["evidence"]["publicationKind"] == "PR_UPDATE"
+
+
 def test_evidence_digest_drift_blocks_publication(monkeypatch, tmp_path):
     store, request, evidence_path = prepared_request(tmp_path)
     evidence_path.write_text("{}", encoding="utf-8")

@@ -39,6 +39,11 @@ discovery quality.
   in the same transaction.
 - Maintainer/policy watch, existing-PR follow-up, Feishu outbox delivery, state
   integrity checks, and natural-schedule health alerts.
+- Existing Radar PRs return to their original Codex task only for maintainer
+  change requests, still-current maintainer or review-bot threads, merge
+  conflicts, or failures attributable to files changed by that PR. The
+  controller refreshes the exact live PR head before the task runs, then
+  fast-forwards the same public branch and reuses the same PR.
 - Parallel watch/PR-follow-up jobs, bounded parallel policy-file reads,
   SHA-bound repository-policy caching, one shared recursive policy classifier
   for scan/live gates, and a dedicated cross-run recheck budget that never uses
@@ -172,6 +177,13 @@ python scripts/local_dispatch_bridge.py dispatch-notifications --notify
 python scripts/local_dispatch_bridge.py context-sync
 python scripts/local_dispatch_bridge.py ingest-results
 
+# Inspect and transactionally reserve actionable follow-up for existing PR tasks
+python scripts/local_dispatch_bridge.py pr-followup-list
+python scripts/local_dispatch_bridge.py pr-followup-reserve \
+  --thread-id THREAD_ID --wake-digest WAKE_DIGEST
+python scripts/local_dispatch_bridge.py pr-followup-commit \
+  --thread-id THREAD_ID --wake-digest WAKE_DIGEST
+
 # Advance independently revalidated publication requests
 python scripts/local_dispatch_bridge.py publication-run
 
@@ -202,7 +214,11 @@ an external ID. Child tasks report only through the Git-ignored
 `.oss-pr-radar/` directory. A per-issue bootstrap context in the GitHub project
 routes the task into its exact worktree without changing the canonical two-line
 prompt. The controller ingests outcomes and executes the
-permit-bound publication path.
+permit-bound publication path. Actionable unresolved review, conflict, or
+branch-owned CI evidence wakes the original task with the same canonical two-line prompt; the
+controller first aligns its worktree to the exact live PR head. A subsequent
+validated patch is published only as a fast-forward update to that exact open
+PR, never as a competing replacement PR.
 The legacy Done-Gate hourly wrapper invokes `scripts/run_scanner.py`, so local
 traces and GitHub Actions share this repository's scanner and decision revision
 instead of maintaining a second copy of discovery rules.

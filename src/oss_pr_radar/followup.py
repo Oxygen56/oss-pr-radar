@@ -10,7 +10,7 @@ from typing import Any
 from .github_client import GitHubClient, GitHubError
 from .util import iso_z, sha256_json
 
-FOLLOWUP_VERSION = "pr_followup_v2"
+FOLLOWUP_VERSION = "pr_followup_v3"
 MAINTAINER_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
 FAILURE_CONCLUSIONS = {
     "failure",
@@ -19,6 +19,85 @@ FAILURE_CONCLUSIONS = {
     "action_required",
     "startup_failure",
 }
+TASK_FAILURE_CONCLUSIONS = {"failure", "action_required", "startup_failure"}
+AGGREGATE_CHECK_NAMES = {
+    "ci success",
+    "all checks passed",
+    "required checks",
+    "build success",
+}
+
+
+def _annotation_evidence(value: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "path": value.get("path"),
+        "startLine": value.get("start_line"),
+        "endLine": value.get("end_line"),
+        "level": value.get("annotation_level"),
+        "message": str(value.get("message") or "")[:400],
+    }
+
+
+def _check_is_task_actionable(check: dict[str, Any], changed_files: set[str]) -> bool:
+    conclusion = str(check.get("conclusion") or "").casefold()
+    name = str(check.get("name") or "").strip().casefold()
+    if conclusion not in TASK_FAILURE_CONCLUSIONS or name in AGGREGATE_CHECK_NAMES:
+        return False
+    annotations = check.get("_annotations") or []
+    if any(str(item.get("path") or "") in changed_files for item in annotations):
+        return True
+    output = check.get("output") or {}
+    summary = "\n".join(
+        str(output.get(field) or "") for field in ("title", "summary", "text")
+    ).casefold()
+    return any(path.casefold() in summary for path in changed_files if path)
+
+
+def _actionable_review_threads(
+    threads: list[dict[str, Any]], *, author: str, changed_files: set[str]
+) -> list[dict[str, Any]]:
+    actionable: list[dict[str, Any]] = []
+    for thread in threads:
+        if thread.get("isResolved") is True or thread.get("isOutdated") is True:
+            continue
+        comments = (thread.get("comments") or {}).get("nodes") or []
+        comments = [item for item in comments if isinstance(item, dict)]
+        if not comments:
+            continue
+        latest = max(
+            comments,
+            key=lambda item: (str(item.get("createdAt") or ""), str(item.get("url") or "")),
+        )
+        actor = latest.get("author") or {}
+        login = str(actor.get("login") or "")
+        association = str(latest.get("authorAssociation") or "").upper()
+        author_type = str(actor.get("__typename") or "")
+        path = str(thread.get("path") or "")
+        if login.casefold() == author.casefold():
+            continue
+        trusted_reviewer = association in MAINTAINER_ASSOCIATIONS
+        review_bot = author_type == "Bot" and path in changed_files
+        if not trusted_reviewer and not review_bot:
+            continue
+        actionable.append(
+            {
+                "path": path,
+                "reviewer": login,
+                "association": association,
+                "authorType": author_type,
+                "createdAt": latest.get("createdAt"),
+                "url": latest.get("url"),
+                "summary": " ".join(str(latest.get("body") or "").split())[:400],
+            }
+        )
+    return sorted(
+        actionable,
+        key=lambda item: (
+            str(item["path"]),
+            str(item["reviewer"]),
+            str(item["createdAt"] or ""),
+        ),
+    )
 
 
 def _latest_reviews_by_author(reviews: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -75,19 +154,64 @@ def collect_followup(
 
     def fetch(
         hit: dict[str, Any],
-    ) -> tuple[str, int, dict[str, Any], list[dict[str, Any]], list[dict[str, Any]], str | None]:
+    ) -> tuple[
+        str,
+        int,
+        dict[str, Any],
+        list[dict[str, Any]],
+        list[dict[str, Any]],
+        list[dict[str, Any]],
+        list[dict[str, Any]] | None,
+        str | None,
+        str | None,
+    ]:
         repo = _repo_from_url(str(hit.get("repository_url") or ""))
         number = int(hit.get("number") or 0)
         if not repo or not number:
-            return repo, number, {}, [], [], "invalid_pull_reference"
+            return repo, number, {}, [], [], [], [], "invalid_pull_reference", None
         try:
             pull = client.pull_request(repo, number)
             reviews = client.pull_reviews(repo, number)
+            files = client.pull_files(repo, number)
+            review_threads: list[dict[str, Any]] | None
+            review_thread_error = None
+            try:
+                review_threads = client.pull_review_threads(repo, number)
+            except GitHubError as exc:
+                review_threads = None
+                review_thread_error = str(exc)[:160]
             head = str((pull.get("head") or {}).get("sha") or "")
             checks = client.check_runs(repo, head) if head else []
-            return repo, number, pull, reviews, checks, None
+            annotation_budget = 8
+            for check in checks:
+                conclusion = str(check.get("conclusion") or "").casefold()
+                name = str(check.get("name") or "").strip().casefold()
+                check_id = int(check.get("id") or 0)
+                if (
+                    conclusion in TASK_FAILURE_CONCLUSIONS
+                    and name not in AGGREGATE_CHECK_NAMES
+                    and check_id
+                    and annotation_budget > 0
+                ):
+                    annotation_budget -= 1
+                    try:
+                        check["_annotations"] = client.check_annotations(repo, check_id)
+                    except GitHubError as exc:
+                        check["_annotations"] = []
+                        check["_annotation_error"] = str(exc)[:160]
+            return (
+                repo,
+                number,
+                pull,
+                reviews,
+                checks,
+                files,
+                review_threads,
+                None,
+                review_thread_error,
+            )
         except GitHubError as exc:
-            return repo, number, {}, [], [], str(exc)[:160]
+            return repo, number, {}, [], [], [], [], str(exc)[:160], None
 
     try:
         hits = client.open_pull_requests_by_author(author)[:limit]
@@ -113,7 +237,7 @@ def collect_followup(
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
         fetched = list(executor.map(fetch, hits))
 
-    for repo, number, pull, reviews, checks, error in fetched:
+    for repo, number, pull, reviews, checks, files, review_threads, error, thread_error in fetched:
         if not repo or not number:
             continue
         key = f"{repo}#{number}"
@@ -133,6 +257,20 @@ def collect_followup(
             for check in checks
             if str(check.get("status") or "").lower() == "completed"
             and str(check.get("conclusion") or "").lower() in FAILURE_CONCLUSIONS
+        ]
+        changed_files = {
+            str(item.get("filename") or "") for item in files if item.get("filename")
+        }
+        previous_evidence = previous_item.get("evidence") or {}
+        if review_threads is None:
+            unresolved_review_threads = previous_evidence.get("unresolvedReviewThreads") or []
+            errors.append(f"{key}:review_threads:{thread_error or 'unavailable'}")
+        else:
+            unresolved_review_threads = _actionable_review_threads(
+                review_threads, author=author, changed_files=changed_files
+            )
+        actionable_checks = [
+            check for check in failing_checks if _check_is_task_actionable(check, changed_files)
         ]
         mergeable_state = str(pull.get("mergeable_state") or "").lower()
         previous_conflict = previous_item.get("mergeConflict")
@@ -159,6 +297,10 @@ def collect_followup(
                     "name": item.get("name"),
                     "conclusion": item.get("conclusion"),
                     "url": item.get("details_url"),
+                    "annotations": [
+                        _annotation_evidence(annotation)
+                        for annotation in (item.get("_annotations") or [])[:20]
+                    ],
                 }
                 for item in failing_checks
             ),
@@ -175,13 +317,57 @@ def collect_followup(
             actions.append("CI 检查失败")
         if merge_conflict:
             actions.append("分支存在合并冲突")
+        if unresolved_review_threads:
+            actions.append("存在未解决审查线程")
+        task_actions: list[str] = []
+        if maintainer_changes:
+            task_actions.append("正式 review 要求修改")
+        if actionable_checks:
+            task_actions.append("当前分支检查失败")
+        if merge_conflict:
+            task_actions.append("分支存在合并冲突")
+        if unresolved_review_threads:
+            task_actions.append("存在未解决审查线程")
+        actionable_check_names = sorted(
+            str(item.get("name") or "") for item in actionable_checks if item.get("name")
+        )
+        actionable_check_evidence = sorted(
+            (
+                {
+                    "name": item.get("name"),
+                    "url": item.get("details_url"),
+                    "annotations": [
+                        _annotation_evidence(annotation)
+                        for annotation in (item.get("_annotations") or [])[:20]
+                    ],
+                }
+                for item in actionable_checks
+            ),
+            key=lambda item: (str(item["name"] or ""), str(item["url"] or "")),
+        )
         evidence = {
             "headSha": head,
             "mergeConflict": merge_conflict,
             "requestedChanges": requested_changes,
             "failingChecks": failing_check_evidence,
+            "changedFiles": sorted(changed_files),
+            "actionableCheckNames": actionable_check_names,
+            "unresolvedReviewThreads": unresolved_review_threads,
         }
-        digest = sha256_json(evidence)
+        action_evidence = {
+            "mergeConflictHead": head if merge_conflict else None,
+            "requestedChanges": requested_changes,
+            "failingChecks": failing_check_evidence,
+            "unresolvedReviewThreads": unresolved_review_threads,
+        }
+        digest = sha256_json(action_evidence)
+        task_evidence = {
+            "mergeConflictHead": head if merge_conflict else None,
+            "requestedChanges": requested_changes,
+            "actionableChecks": actionable_check_evidence,
+            "unresolvedReviewThreads": unresolved_review_threads,
+        }
+        task_digest = sha256_json(task_evidence)
         state_item = {
             "key": key,
             "repo": repo,
@@ -191,6 +377,10 @@ def collect_followup(
             "headSha": head,
             "actionDigest": digest,
             "actions": actions,
+            "taskActions": task_actions,
+            "taskActionDigest": task_digest,
+            "taskFollowupRequired": bool(task_actions),
+            "evidence": evidence,
             "mergeableState": mergeable_state,
             "mergeConflict": merge_conflict,
             "draft": bool(pull.get("draft")),

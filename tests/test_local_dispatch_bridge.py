@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import shutil
@@ -902,6 +903,202 @@ def test_controller_ingests_workspace_no_go_without_child_ledger_access(tmp_path
     assert task is not None
     assert task["stage"] == "AUDIT_NO_GO"
     assert task["autoSubmitAuthorized"] is False
+
+
+def _published_followup_store(
+    tmp_path: Path,
+) -> tuple[RadarLedger, Path, str, str]:
+    store, worktree = registered_store(tmp_path)
+    run_git(worktree, "config", "user.name", "Test Contributor")
+    run_git(worktree, "config", "user.email", "test@example.com")
+    source = worktree / "runtime.py"
+    source.write_text("value = 1\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "-m", "chore: baseline")
+    run_git(worktree, "branch", "-M", "main")
+    run_git(worktree, "switch", "-c", "fix/1-runtime")
+    run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
+    run_git(worktree, "update-ref", "refs/remotes/origin/main", "HEAD")
+    run_git(
+        worktree,
+        "symbolic-ref",
+        "refs/remotes/origin/HEAD",
+        "refs/remotes/origin/main",
+    )
+    head_sha = run_git(worktree, "rev-parse", "HEAD")
+    pr_url = "https://github.com/a/b/pull/9"
+    now = iso_z(datetime.now(UTC))
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO publication_requests
+               (request_id,opportunity_key,thread_id,commit_sha,branch,worktree_path,
+                evidence_digest,status,request_json,created_at,updated_at)
+               VALUES ('request-1','a/b#1','thread-1',?,'fix/1-runtime',?,
+                       'evidence','CONSUMED','{}',?,?)""",
+            (head_sha, str(worktree), now, now),
+        )
+        connection.execute(
+            """INSERT INTO publication_permits
+               (permit_id,request_id,issue_url,commit_sha,branch,status,expires_at,pr_url,
+                evidence_json,created_at,updated_at)
+               VALUES ('permit-1','request-1','https://github.com/a/b/issues/1',?,
+                       'fix/1-runtime','CONSUMED',?,?, '{}',?,?)""",
+            (head_sha, iso_z(datetime.now(UTC) + timedelta(hours=1)), pr_url, now, now),
+        )
+    store.record_stage("a/b#1", "PR_OPEN", evidence={"prUrl": pr_url})
+    store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": now,
+            "items": [
+                {
+                    "url": pr_url,
+                    "headSha": head_sha,
+                    "actionDigest": "action",
+                    "taskActionDigest": "task-action",
+                    "taskFollowupRequired": True,
+                    "taskActions": ["当前分支检查失败"],
+                    "evidence": {"actionableCheckNames": ["Ruff"]},
+                    "checkedAt": now,
+                }
+            ],
+        }
+    )
+    return store, worktree, head_sha, pr_url
+
+
+def test_pr_followup_reserve_refreshes_context_and_uses_canonical_prompt(
+    monkeypatch, tmp_path
+):
+    store, worktree, _head_sha, pr_url = _published_followup_store(tmp_path)
+    candidate = store.pr_followup_candidates()[0]
+    prepared = []
+    monkeypatch.setattr(MODULE, "_prepare_pr_followup", lambda value: prepared.append(value))
+
+    result = MODULE.pr_followup_reserve(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            thread_id="thread-1",
+            wake_digest=candidate["wakeDigest"],
+        )
+    )
+
+    assert prepared == [candidate]
+    assert result["prUrl"] == pr_url
+    assert result["prompt"] == MODULE.issue_prompt("https://github.com/a/b/issues/1")
+    assert result["prompt"].splitlines() == [
+        "[$gh-issue-pr](/Users/oxygen/.codex/skills/gh-issue-pr/SKILL.md)",
+        "https://github.com/a/b/issues/1",
+    ]
+    context = json.loads(Path(result["contextPath"]).read_text(encoding="utf-8"))
+    assert context["prFollowup"]["wakeDigest"] == candidate["wakeDigest"]
+    assert context["publicationReceipt"]["prUrl"] == pr_url
+    assert store.pr_followup_candidates() == []
+    assert store.unresolved_pr_followups()
+
+
+def test_prepare_pr_followup_aligns_worktree_to_exact_live_head(monkeypatch, tmp_path):
+    worktree = tmp_path / "worktree"
+    remote = tmp_path / "remote.git"
+    worktree.mkdir()
+    run_git(worktree, "init")
+    run_git(worktree, "config", "user.name", "Test Contributor")
+    run_git(worktree, "config", "user.email", "test@example.com")
+    source = worktree / "runtime.py"
+    source.write_text("value = 1\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "-m", "chore: baseline")
+    baseline = run_git(worktree, "rev-parse", "HEAD")
+    run_git(remote.parent, "init", "--bare", str(remote))
+    run_git(worktree, "remote", "add", "origin", str(remote))
+    run_git(worktree, "switch", "-c", "fix/1-runtime")
+    source.write_text("value = 2\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "-m", "fix: runtime")
+    live_head = run_git(worktree, "rev-parse", "HEAD")
+    run_git(worktree, "push", "origin", "HEAD:refs/heads/fix/1-runtime")
+    run_git(remote, "update-ref", "refs/pull/9/head", live_head)
+    run_git(worktree, "switch", "--detach", baseline)
+    run_git(worktree, "branch", "-f", "fix/1-runtime", baseline)
+    monkeypatch.setattr(MODULE, "_upstream_remote", lambda *_args: "origin")
+
+    MODULE._prepare_pr_followup(
+        {
+            "prUrl": "https://github.com/a/b/pull/9",
+            "worktreePath": str(worktree),
+            "branch": "fix/1-runtime",
+            "headSha": live_head,
+        }
+    )
+
+    assert run_git(worktree, "rev-parse", "HEAD") == live_head
+    assert run_git(worktree, "branch", "--show-current") == "fix/1-runtime"
+    assert run_git(worktree, "status", "--porcelain") == ""
+
+
+def test_controller_ingests_followup_fix_as_update_to_exact_existing_pr(tmp_path):
+    store, worktree, previous_head, pr_url = _published_followup_store(tmp_path)
+    candidate = store.pr_followup_candidates()[0]
+    store.reserve_pr_followup(
+        thread_id="thread-1", wake_digest=candidate["wakeDigest"]
+    )
+    store.commit_pr_followup(
+        thread_id="thread-1", wake_digest=candidate["wakeDigest"]
+    )
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    context = json.loads(context_path.read_text(encoding="utf-8"))
+    (worktree / "runtime.py").write_text("value = 2\n", encoding="utf-8")
+    body_path = worktree / ".oss-pr-radar" / "pr-body.md"
+    body_path.write_text("Fixes #1\n\nCorrect the runtime boundary.\n", encoding="utf-8")
+    result_path = Path(context["resultPath"])
+    result_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": "radar-task-result-v1",
+                "contextDigest": context["contextDigest"],
+                "followupDigest": candidate["wakeDigest"],
+                "key": "a/b#1",
+                "issueUrl": "https://github.com/a/b/issues/1",
+                "threadId": "thread-1",
+                "worktreePath": str(worktree.resolve()),
+                "stage": "FIX_READY",
+                "handoffMode": "controller_commit_required",
+                "commitSha": None,
+                "branch": "fix/1-runtime",
+                "commitMessage": "fix: preserve runtime boundary",
+                "changedFiles": ["runtime.py"],
+                "tests": [{"command": "pytest tests/runtime", "exitCode": 0}],
+                "quality": {field: True for field in QUALITY_FIELDS},
+                "publication": {
+                    "headOwner": "Oxygen56",
+                    "baseBranch": "main",
+                    "title": "fix: preserve runtime boundary",
+                    "bodyFile": str(body_path.resolve()),
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert result["ok"] is True
+    assert result["ingested"] == [{"key": "a/b#1", "stage": "FIX_READY"}]
+    assert len(result["publicationRequests"]) == 1
+    request = store.publication_work_items()[0]["request"]
+    assert request["publicationKind"] == "PR_UPDATE"
+    assert request["existingPrUrl"] == pr_url
+    assert request["previousCommitSha"] == previous_head
+    assert request["commitSha"] == run_git(worktree, "rev-parse", "HEAD")
+    assert request["commitSha"] != previous_head
+    assert store.task_result_digest_seen(
+        "a/b#1", hashlib.sha256(result_path.read_bytes()).hexdigest()
+    )
 
 
 def _controller_commit_result(

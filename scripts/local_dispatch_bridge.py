@@ -303,6 +303,18 @@ def fetch_cloud_queue() -> dict[str, Any]:
     return value
 
 
+def fetch_cloud_pr_followup() -> dict[str, Any]:
+    raw = command(["git", "show", "FETCH_HEAD:pr_followup.json"], cwd=ROOT)
+    value = json.loads(raw)
+    if not isinstance(value, dict):
+        raise RuntimeError("invalid cloud PR follow-up state")
+    digest = str(value.get("digest") or "")
+    expected = sha256_json({key: item for key, item in value.items() if key != "digest"})
+    if not digest or digest != expected:
+        raise RuntimeError("cloud PR follow-up state digest mismatch")
+    return value
+
+
 def ledger(path: Path = LEDGER_PATH) -> RadarLedger:
     return RadarLedger(path)
 
@@ -316,13 +328,23 @@ def sync_queue(path: Path = LEDGER_PATH) -> dict[str, Any]:
         {str(item["intentId"]) for item in intents if item.get("intentId")}
     )
     inserted = sum(store.enqueue(item) for item in intents)
+    followup_import: dict[str, Any]
+    try:
+        followup = fetch_cloud_pr_followup()
+        if followup.get("version") == "pr_followup_v3":
+            followup_import = {"status": "imported"} | store.import_pr_followups(followup)
+        else:
+            followup_import = {"status": "awaiting_v3", "version": followup.get("version")}
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
+        followup_import = {"status": "error", "error": str(exc)[:240]}
     return {
-        "ok": True,
+        "ok": followup_import.get("status") != "error",
         "mode": queue.get("mode"),
         "verified": len(intents),
         "inserted": inserted,
         "superseded": len(superseded),
         "staleTerminalRejected": len(stale_terminal),
+        "prFollowup": followup_import,
     }
 
 
@@ -1359,6 +1381,90 @@ def sync_task_contexts(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def pr_followup_list(args: argparse.Namespace) -> dict[str, Any]:
+    store = ledger(args.ledger)
+    return {
+        "ok": not store.unresolved_pr_followups(),
+        "candidates": store.pr_followup_candidates(),
+        "unresolved": store.unresolved_pr_followups(),
+    }
+
+
+def _upstream_remote(worktree: Path, repo: str) -> str:
+    for remote in command(["git", "remote"], cwd=worktree).splitlines():
+        current = command(["git", "remote", "get-url", remote], cwd=worktree)
+        if normalize_origin(current) == repo.casefold():
+            return remote
+    raise RuntimeError("managed worktree has no upstream remote")
+
+
+def _prepare_pr_followup(candidate: dict[str, Any]) -> None:
+    worktree = Path(candidate["worktreePath"]).resolve()
+    match = re.fullmatch(r"https://github\.com/([^/]+/[^/]+)/pull/(\d+)", candidate["prUrl"])
+    if not match:
+        raise RuntimeError("invalid PR follow-up URL")
+    repo, number = match.groups()
+    if command(["git", "status", "--porcelain"], cwd=worktree):
+        raise RuntimeError("PR follow-up worktree is not clean")
+    branch = str(candidate.get("branch") or "")
+    if not public_branch_is_safe(branch):
+        raise RuntimeError("PR follow-up branch is unsafe")
+    remote = _upstream_remote(worktree, repo)
+    command(
+        ["git", "fetch", "--quiet", "--no-tags", remote, f"pull/{number}/head"],
+        cwd=worktree,
+        timeout=300,
+    )
+    fetched = command(["git", "rev-parse", "FETCH_HEAD"], cwd=worktree)
+    if fetched != candidate["headSha"]:
+        raise RuntimeError("PR head changed while preparing follow-up")
+    current = command(["git", "rev-parse", "HEAD"], cwd=worktree)
+    if current != fetched:
+        command(["git", "switch", "--detach", fetched], cwd=worktree)
+        command(["git", "branch", "-f", branch, fetched], cwd=worktree)
+        command(["git", "switch", branch], cwd=worktree)
+
+
+def pr_followup_reserve(args: argparse.Namespace) -> dict[str, Any]:
+    store = ledger(args.ledger)
+    candidate = next(
+        (
+            item
+            for item in store.pr_followup_candidates()
+            if item["threadId"] == args.thread_id and item["wakeDigest"] == args.wake_digest
+        ),
+        None,
+    )
+    if candidate is None:
+        raise RuntimeError("PR follow-up authorization is stale or invalid")
+    _prepare_pr_followup(candidate)
+    context_path = write_task_context(
+        store,
+        issue_url=candidate["issueUrl"],
+        thread_id=candidate["threadId"],
+        cwd=Path(candidate["worktreePath"]),
+    )
+    reserved = store.reserve_pr_followup(
+        thread_id=candidate["threadId"], wake_digest=candidate["wakeDigest"]
+    )
+    return {
+        "ok": True,
+        "key": reserved["key"],
+        "threadId": reserved["threadId"],
+        "prUrl": reserved["prUrl"],
+        "wakeDigest": reserved["wakeDigest"],
+        "contextPath": str(context_path),
+        "prompt": issue_prompt(reserved["issueUrl"]),
+    }
+
+
+def pr_followup_commit(args: argparse.Namespace) -> dict[str, Any]:
+    ledger(args.ledger).commit_pr_followup(
+        thread_id=args.thread_id, wake_digest=args.wake_digest
+    )
+    return {"ok": True, "threadId": args.thread_id, "wakeDigest": args.wake_digest}
+
+
 def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
     ingested: list[dict[str, Any]] = []
@@ -1371,6 +1477,11 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
             continue
         try:
             raw = result_path.read_bytes()
+            initial_digest = hashlib.sha256(raw).hexdigest()
+            if candidate["stage"] in {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED"} and (
+                store.task_result_digest_seen(candidate["key"], initial_digest)
+            ):
+                continue
             value = json.loads(raw)
             if not isinstance(value, dict):
                 raise RuntimeError("task result must be an object")
@@ -1391,7 +1502,18 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 if value.get(key) != expected_value:
                     raise RuntimeError(f"task result mismatch: {key}")
             stage = str(value.get("stage") or "")
+            context_followup = context.get("prFollowup")
+            if candidate["stage"] in {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED"} and (
+                isinstance(context_followup, dict)
+                and value.get("followupDigest") not in {
+                    None,
+                    context_followup.get("wakeDigest"),
+                }
+            ):
+                raise RuntimeError("task result PR follow-up digest mismatch")
             if stage == "AUDIT_NO_GO":
+                if candidate["stage"] in {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED"}:
+                    raise RuntimeError("an open PR follow-up cannot become AUDIT_NO_GO")
                 digest = hashlib.sha256(raw).hexdigest()
                 reason = str(value.get("reason") or "").strip()
                 if not reason or not re.fullmatch(r"[A-Z][A-Z0-9_]{2,80}", reason):
@@ -1493,6 +1615,31 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                         }
                     )
                     ingested.append({"key": candidate["key"], "stage": stage})
+                followup = store.active_pr_followup(candidate["key"])
+                if followup and followup.get("wake_digest"):
+                    store.record_followup_result(
+                        candidate["key"],
+                        wake_digest=str(followup["wake_digest"]),
+                        result_digest=digest,
+                        stage=stage,
+                    )
+            elif stage == "PR_OPEN":
+                if candidate["stage"] not in {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED"}:
+                    raise RuntimeError("PR_OPEN result is only valid for an existing PR follow-up")
+                evidence = value.get("evidence")
+                if not isinstance(evidence, dict):
+                    raise RuntimeError("PR_OPEN follow-up result requires evidence")
+                digest = hashlib.sha256(raw).hexdigest()
+                store.record_task_result_ingested(candidate["key"], digest=digest, stage=stage)
+                followup = store.active_pr_followup(candidate["key"])
+                if followup and followup.get("wake_digest"):
+                    store.record_followup_result(
+                        candidate["key"],
+                        wake_digest=str(followup["wake_digest"]),
+                        result_digest=digest,
+                        stage=stage,
+                    )
+                ingested.append({"key": candidate["key"], "stage": stage})
             else:
                 raise RuntimeError("unsupported task result stage")
         except (OSError, ValueError, RuntimeError) as exc:
@@ -2058,6 +2205,13 @@ def main() -> int:
     publication_check_parser.add_argument("--branch", required=True)
     subparsers.add_parser("cleanup-list")
     subparsers.add_parser("context-sync")
+    subparsers.add_parser("pr-followup-list")
+    pr_followup_reserve_parser = subparsers.add_parser("pr-followup-reserve")
+    pr_followup_reserve_parser.add_argument("--thread-id", required=True)
+    pr_followup_reserve_parser.add_argument("--wake-digest", required=True)
+    pr_followup_commit_parser = subparsers.add_parser("pr-followup-commit")
+    pr_followup_commit_parser.add_argument("--thread-id", required=True)
+    pr_followup_commit_parser.add_argument("--wake-digest", required=True)
     subparsers.add_parser("ingest-results")
     subparsers.add_parser("publication-run")
     publication_retry_parser = subparsers.add_parser("publication-retry")
@@ -2127,6 +2281,12 @@ def main() -> int:
         result = cleanup_list(args)
     elif args.operation == "context-sync":
         result = sync_task_contexts(args)
+    elif args.operation == "pr-followup-list":
+        result = pr_followup_list(args)
+    elif args.operation == "pr-followup-reserve":
+        result = pr_followup_reserve(args)
+    elif args.operation == "pr-followup-commit":
+        result = pr_followup_commit(args)
     elif args.operation == "ingest-results":
         result = ingest_task_results(args)
     elif args.operation == "publication-run":

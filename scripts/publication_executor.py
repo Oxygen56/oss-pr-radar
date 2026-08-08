@@ -174,6 +174,13 @@ def permit_publication(permit: dict[str, Any]) -> dict[str, str]:
     return {key: str(publication[key]) for key in required}
 
 
+def permit_request(store: RadarLedger, permit: dict[str, Any]) -> dict[str, Any]:
+    row = store.publication_request(str(permit["request_id"]))
+    if row is None or not isinstance(row.get("request"), dict):
+        raise RuntimeError("publication permit request is unavailable")
+    return row["request"]
+
+
 def begin_effect(
     store: RadarLedger,
     permit_id: str,
@@ -226,6 +233,7 @@ def push(args: argparse.Namespace, store: RadarLedger) -> dict[str, Any]:
         live_recheck=False,
     )
     publication = permit_publication(permit)
+    publication_request = permit_request(store, permit)
     if args.head_owner.casefold() != publication["headOwner"].casefold():
         raise RuntimeError("push owner does not match the publication permit")
     expected_fork = f"{publication['headOwner']}/{upstream_repo.rsplit('/', 1)[1]}".casefold()
@@ -237,6 +245,9 @@ def push(args: argparse.Namespace, store: RadarLedger) -> dict[str, Any]:
         "commitSha": args.commit_sha,
         "branch": args.branch,
         "remote": expected_fork,
+        "publicationKind": publication_request.get("publicationKind"),
+        "existingPrUrl": publication_request.get("existingPrUrl"),
+        "previousCommitSha": publication_request.get("previousCommitSha"),
     }
     effect = None
     state = None
@@ -257,7 +268,34 @@ def push(args: argparse.Namespace, store: RadarLedger) -> dict[str, Any]:
         return result
     if state == "reconcile_only":
         raise RuntimeError("previous push attempt is not visible on the exact remote branch")
-    if current:
+    if current and publication_request.get("publicationKind") == "PR_UPDATE":
+        previous_commit = str(publication_request.get("previousCommitSha") or "")
+        found = existing_pr(upstream_repo, args.head_owner, args.branch)
+        if (
+            not previous_commit
+            or current != previous_commit
+            or not found
+            or found.get("url") != publication_request.get("existingPrUrl")
+            or str(found.get("state") or "").upper() != "OPEN"
+            or found.get("headRefOid") != current
+        ):
+            result = {"ok": False, "reason": "EXISTING_PR_HEAD_DRIFT", "remoteSha": current}
+            store.complete_publication_effect(effect["effect_id"], status="FAILED", result=result)
+            raise RuntimeError("existing PR head changed before branch update")
+        run(
+            ["git", "fetch", "--quiet", args.remote, f"refs/heads/{args.branch}"],
+            cwd=worktree,
+            timeout=300,
+        )
+        ancestry = run(
+            ["git", "merge-base", "--is-ancestor", current, args.commit_sha],
+            cwd=worktree,
+        )
+        if ancestry.returncode != 0:
+            result = {"ok": False, "reason": "NON_FAST_FORWARD_PR_UPDATE"}
+            store.complete_publication_effect(effect["effect_id"], status="FAILED", result=result)
+            raise RuntimeError("PR update is not a fast-forward of the current remote head")
+    elif current:
         result = {"ok": False, "reason": "REMOTE_BRANCH_CONFLICT", "remoteSha": current}
         store.complete_publication_effect(effect["effect_id"], status="FAILED", result=result)
         raise RuntimeError("remote branch already points to a different commit")
@@ -304,6 +342,7 @@ def create_pr(args: argparse.Namespace, store: RadarLedger) -> dict[str, Any]:
         live_recheck=False,
     )
     publication = permit_publication(permit)
+    publication_request = permit_request(store, permit)
     if args.head_owner.casefold() != publication["headOwner"].casefold():
         raise RuntimeError("PR owner does not match the publication permit")
     if args.base != publication["baseBranch"]:
@@ -323,6 +362,8 @@ def create_pr(args: argparse.Namespace, store: RadarLedger) -> dict[str, Any]:
         "base": args.base,
         "title": args.title,
         "bodyDigest": sha256_json({"body": body}),
+        "publicationKind": publication_request.get("publicationKind"),
+        "existingPrUrl": publication_request.get("existingPrUrl"),
     }
     effect = None
     state = None
@@ -343,6 +384,12 @@ def create_pr(args: argparse.Namespace, store: RadarLedger) -> dict[str, Any]:
         result = {"ok": False, "reason": "BRANCH_HAS_CLOSED_OR_MERGED_PR", "pr": found}
         store.complete_publication_effect(effect["effect_id"], status="FAILED", result=result)
         raise RuntimeError("the branch already has a closed or merged PR")
+    if publication_request.get("publicationKind") == "PR_UPDATE" and (
+        not found or found.get("url") != publication_request.get("existingPrUrl")
+    ):
+        result = {"ok": False, "reason": "EXISTING_PR_NOT_FOUND", "pr": found}
+        store.complete_publication_effect(effect["effect_id"], status="FAILED", result=result)
+        raise RuntimeError("the exact existing PR is unavailable for update")
     if found and found.get("headRefOid") != args.commit_sha:
         result = {"ok": False, "reason": "EXISTING_PR_HEAD_MISMATCH", "pr": found}
         store.complete_publication_effect(effect["effect_id"], status="FAILED", result=result)

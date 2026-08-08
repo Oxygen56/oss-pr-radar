@@ -177,6 +177,41 @@ class GitHubClient:
         )
         return [item for item in value if isinstance(item, dict)]
 
+    def pull_review_threads(self, repo: str, number: int) -> list[dict[str, Any]]:
+        owner, name = repo.split("/", 1)
+        query = """query($owner:String!,$name:String!,$number:Int!){
+          repository(owner:$owner,name:$name){pullRequest(number:$number){
+            reviewThreads(first:100){nodes{
+              isResolved isOutdated path
+              comments(first:100){nodes{
+                author{login __typename} authorAssociation body url createdAt
+              }}
+            }}
+          }}
+        }"""
+        args = [
+            "gh",
+            "api",
+            "graphql",
+            "-f",
+            f"query={query}",
+            "-F",
+            f"owner={owner}",
+            "-F",
+            f"name={name}",
+            "-F",
+            f"number={number}",
+        ]
+        raw = self.runner(args, self.timeout)
+        try:
+            value = json.loads(raw)
+            nodes = value["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"]
+        except (json.JSONDecodeError, KeyError, TypeError) as exc:
+            raise GitHubError("GitHub review threads response is invalid") from exc
+        if not isinstance(nodes, list):
+            raise GitHubError("GitHub review threads response is incomplete")
+        return [item for item in nodes if isinstance(item, dict)]
+
     def open_pull_requests_by_author(self, author: str) -> list[dict[str, Any]]:
         value = self.api(
             "search/issues",
@@ -197,6 +232,15 @@ class GitHubClient:
             accept="application/vnd.github+json",
         )
         return [item for item in value.get("check_runs", []) if isinstance(item, dict)]
+
+    def check_annotations(self, repo: str, check_run_id: int) -> list[dict[str, Any]]:
+        value = self.api(
+            f"repos/{repo}/check-runs/{check_run_id}/annotations",
+            params={"per_page": 100},
+            paginate=True,
+            accept="application/vnd.github+json",
+        )
+        return [item for item in value if isinstance(item, dict)]
 
     def repository_tree(self, repo: str, ref: str) -> list[dict[str, Any]]:
         value = self.api(f"repos/{repo}/git/trees/{quote(ref, safe='')}", params={"recursive": 1})

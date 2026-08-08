@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import secrets
 import sqlite3
 from contextlib import contextmanager
@@ -31,6 +32,7 @@ STAGES = (
 )
 TERMINAL_STAGES = {"AUDIT_NO_GO", "MERGED", "CLOSED"}
 PUBLISHED_STAGES = {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED", "MERGED", "CLOSED"}
+PR_URL_RE = re.compile(r"^https://github\.com/[^/]+/[^/]+/pull/\d+$")
 
 
 class LedgerError(RuntimeError):
@@ -163,6 +165,20 @@ class RadarLedger:
                     updated_at TEXT NOT NULL,
                     UNIQUE(permit_id, action, request_digest),
                     FOREIGN KEY(permit_id) REFERENCES publication_permits(permit_id)
+                );
+                CREATE TABLE IF NOT EXISTS pr_followups (
+                    opportunity_key TEXT PRIMARY KEY,
+                    pr_url TEXT NOT NULL,
+                    head_sha TEXT NOT NULL,
+                    action_digest TEXT NOT NULL,
+                    task_action_digest TEXT NOT NULL,
+                    wake_digest TEXT,
+                    actions_json TEXT NOT NULL,
+                    evidence_json TEXT NOT NULL,
+                    followup_required INTEGER NOT NULL,
+                    checked_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(opportunity_key) REFERENCES opportunities(key)
                 );
                 """
             )
@@ -1388,6 +1404,15 @@ class RadarLedger:
                 if row is not None
                 else None
             )
+            followup_row = (
+                connection.execute(
+                    """SELECT * FROM pr_followups
+                       WHERE opportunity_key=? AND followup_required=1""",
+                    (row["key"],),
+                ).fetchone()
+                if row is not None
+                else None
+            )
         if row is None:
             return None
         payload = json.loads(row["payload_json"])
@@ -1409,6 +1434,23 @@ class RadarLedger:
                 "requestedAt": publication_row["requested_at"],
                 "updatedAt": publication_row["permit_updated_at"]
                 or publication_row["request_updated_at"],
+            }
+        pr_followup = None
+        if followup_row is not None:
+            pr_followup = {
+                "prUrl": followup_row["pr_url"],
+                "headSha": followup_row["head_sha"],
+                "actionDigest": followup_row["action_digest"],
+                "taskActionDigest": followup_row["task_action_digest"],
+                "wakeDigest": followup_row["wake_digest"],
+                "actions": json.loads(followup_row["actions_json"]),
+                "evidence": json.loads(followup_row["evidence_json"]),
+                "checkedAt": followup_row["checked_at"],
+                "resultContract": {
+                    "requiredWakeDigestField": "followupDigest",
+                    "allowedStages": ["FIX_READY", "PR_OPEN"],
+                    "noLocalActionStage": "PR_OPEN",
+                },
             }
         return {
             "key": row["key"],
@@ -1435,6 +1477,7 @@ class RadarLedger:
             "liveAudit": audit_payload.get("liveAudit"),
             "liveAuditRecordedAt": audit_row["created_at"] if audit_row else None,
             "publicationReceipt": publication_receipt,
+            "prFollowup": pr_followup,
         }
 
     def task_context_candidates(self) -> list[dict[str, Any]]:
@@ -1602,6 +1645,7 @@ class RadarLedger:
                    WHERE i.thread_id IS NOT NULL AND i.worktree_path IS NOT NULL
                      AND (
                        i.status='DISPATCHED'
+                       OR o.stage IN ('PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED')
                        OR (
                          o.stage='FIX_READY'
                          AND NOT EXISTS (
@@ -1700,6 +1744,29 @@ class RadarLedger:
                 (row["key"],),
             ).fetchone()
             quality = json.loads(outcome["quality_json"]) if outcome else {}
+            previous_publication = connection.execute(
+                """SELECT p.pr_url,r.commit_sha,r.branch
+                   FROM publication_requests r
+                   JOIN publication_permits p ON p.request_id=r.request_id
+                   WHERE r.opportunity_key=? AND p.status='CONSUMED'
+                     AND p.pr_url IS NOT NULL
+                   ORDER BY p.updated_at DESC LIMIT 1""",
+                (row["key"],),
+            ).fetchone()
+            followup = connection.execute(
+                """SELECT head_sha,wake_digest FROM pr_followups
+                   WHERE opportunity_key=? AND followup_required=1""",
+                (row["key"],),
+            ).fetchone()
+            if previous_publication and previous_publication["branch"] != branch:
+                raise LedgerError("PR update must preserve the published branch")
+            previous_commit_sha = (
+                str(followup["head_sha"])
+                if previous_publication and followup and followup["head_sha"]
+                else str(previous_publication["commit_sha"])
+                if previous_publication
+                else None
+            )
             request = {
                 "requestId": request_id,
                 "opportunityKey": row["key"],
@@ -1714,7 +1781,16 @@ class RadarLedger:
                 "publication": publication,
                 "quality": quality,
                 "intent": payload,
+                "publicationKind": "PR_UPDATE" if previous_publication else "PR_CREATE",
             }
+            if previous_publication:
+                request.update(
+                    {
+                        "existingPrUrl": previous_publication["pr_url"],
+                        "previousCommitSha": previous_commit_sha,
+                        "followupWakeDigest": followup["wake_digest"] if followup else None,
+                    }
+                )
             existing = connection.execute(
                 "SELECT * FROM publication_requests WHERE request_id=?",
                 (request_id,),
@@ -2037,15 +2113,283 @@ class RadarLedger:
     def tracked_pull_requests(self) -> list[dict[str, Any]]:
         with self.connect() as connection:
             rows = connection.execute(
-                """SELECT o.key,o.stage,p.pr_url,p.permit_id,p.updated_at
-                   FROM opportunities o
+                """SELECT * FROM (
+                     SELECT o.key,o.repo,o.issue_url,o.stage,p.pr_url,p.permit_id,
+                            p.updated_at,r.commit_sha,r.branch,i.thread_id,i.worktree_path,
+                            ROW_NUMBER() OVER (
+                              PARTITION BY p.pr_url ORDER BY p.updated_at DESC
+                            ) AS latest_rank
+                     FROM opportunities o
+                     JOIN intents i ON i.intent_id=(
+                       SELECT i2.intent_id FROM intents i2
+                       WHERE i2.opportunity_key=o.key
+                         AND i2.thread_id IS NOT NULL AND i2.worktree_path IS NOT NULL
+                       ORDER BY i2.updated_at DESC,i2.intent_id DESC LIMIT 1
+                     )
+                     JOIN publication_requests r ON r.opportunity_key=o.key
+                     JOIN publication_permits p ON p.request_id=r.request_id
+                     WHERE p.status='CONSUMED' AND p.pr_url IS NOT NULL
+                       AND o.stage NOT IN ('MERGED','CLOSED')
+                   ) WHERE latest_rank=1 ORDER BY updated_at"""
+            ).fetchall()
+        return [
+            {key: value for key, value in dict(row).items() if key != "latest_rank"}
+            for row in rows
+        ]
+
+    def import_pr_followups(self, state: dict[str, Any]) -> dict[str, int]:
+        if state.get("version") != "pr_followup_v3" or not isinstance(state.get("items"), list):
+            raise LedgerError("unsupported PR follow-up state")
+        now = iso_z(datetime.now(UTC))
+        inserted = 0
+        updated = 0
+        matched = 0
+        with self.transaction() as connection:
+            tracked = {
+                str(row["pr_url"]): str(row["opportunity_key"])
+                for row in connection.execute(
+                    """SELECT DISTINCT p.pr_url,r.opportunity_key
+                       FROM publication_requests r
+                       JOIN publication_permits p ON p.request_id=r.request_id
+                       WHERE p.status='CONSUMED' AND p.pr_url IS NOT NULL"""
+                ).fetchall()
+            }
+            for item in state["items"]:
+                if not isinstance(item, dict):
+                    continue
+                pr_url = str(item.get("url") or "")
+                key = tracked.get(pr_url)
+                if not key or not PR_URL_RE.fullmatch(pr_url):
+                    continue
+                matched += 1
+                head_sha = str(item.get("headSha") or "")
+                action_digest = str(item.get("actionDigest") or "")
+                task_digest = str(item.get("taskActionDigest") or "")
+                checked_at = str(item.get("checkedAt") or state.get("generatedAt") or now)
+                if not head_sha or not action_digest or not task_digest:
+                    raise LedgerError("PR follow-up item is incomplete")
+                actions = item.get("taskActions") or []
+                evidence = item.get("evidence") or {}
+                if not isinstance(actions, list) or not isinstance(evidence, dict):
+                    raise LedgerError("PR follow-up evidence is invalid")
+                required = item.get("taskFollowupRequired") is True
+                previous = connection.execute(
+                    "SELECT * FROM pr_followups WHERE opportunity_key=?", (key,)
+                ).fetchone()
+                if required and (
+                    previous is None
+                    or not bool(previous["followup_required"])
+                    or previous["task_action_digest"] != task_digest
+                ):
+                    wake_digest = sha256_text(
+                        f"{key}|{pr_url}|{head_sha}|{task_digest}|{checked_at}"
+                    )
+                elif required and previous is not None:
+                    wake_digest = previous["wake_digest"]
+                else:
+                    wake_digest = None
+                connection.execute(
+                    """INSERT INTO pr_followups
+                       (opportunity_key,pr_url,head_sha,action_digest,task_action_digest,
+                        wake_digest,actions_json,evidence_json,followup_required,checked_at,
+                        updated_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                       ON CONFLICT(opportunity_key) DO UPDATE SET
+                         pr_url=excluded.pr_url,head_sha=excluded.head_sha,
+                         action_digest=excluded.action_digest,
+                         task_action_digest=excluded.task_action_digest,
+                         wake_digest=excluded.wake_digest,actions_json=excluded.actions_json,
+                         evidence_json=excluded.evidence_json,
+                         followup_required=excluded.followup_required,
+                         checked_at=excluded.checked_at,updated_at=excluded.updated_at""",
+                    (
+                        key,
+                        pr_url,
+                        head_sha,
+                        action_digest,
+                        task_digest,
+                        wake_digest,
+                        canonical_json(actions),
+                        canonical_json(evidence),
+                        int(required),
+                        checked_at,
+                        now,
+                    ),
+                )
+                inserted += int(previous is None)
+                updated += int(previous is not None)
+        return {"matched": matched, "inserted": inserted, "updated": updated}
+
+    def pr_followup_candidates(self) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT f.*,o.key,o.issue_url,o.stage,i.thread_id,i.worktree_path,
+                          r.branch
+                   FROM pr_followups f
+                   JOIN opportunities o ON o.key=f.opportunity_key
+                   JOIN intents i ON i.intent_id=(
+                     SELECT i2.intent_id FROM intents i2
+                     WHERE i2.opportunity_key=o.key
+                       AND i2.thread_id IS NOT NULL AND i2.worktree_path IS NOT NULL
+                     ORDER BY i2.updated_at DESC,i2.intent_id DESC LIMIT 1
+                   )
                    JOIN publication_requests r ON r.opportunity_key=o.key
                    JOIN publication_permits p ON p.request_id=r.request_id
-                   WHERE p.status='CONSUMED' AND p.pr_url IS NOT NULL
-                     AND o.stage NOT IN ('MERGED','CLOSED')
-                   ORDER BY p.updated_at"""
+                   WHERE f.followup_required=1 AND f.wake_digest IS NOT NULL
+                     AND o.stage IN ('PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED')
+                     AND i.thread_id IS NOT NULL AND i.worktree_path IS NOT NULL
+                     AND p.status='CONSUMED' AND p.pr_url=f.pr_url
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events e WHERE e.opportunity_key=o.key
+                         AND e.event_type='PR_FOLLOWUP_RESERVED'
+                         AND e.dedupe_key=f.wake_digest
+                     )
+                   ORDER BY f.checked_at,r.updated_at DESC"""
             ).fetchall()
-        return [dict(row) for row in rows]
+        unique: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            key = str(row["key"])
+            unique.setdefault(
+                key,
+                {
+                    "key": key,
+                    "issueUrl": row["issue_url"],
+                    "prUrl": row["pr_url"],
+                    "headSha": row["head_sha"],
+                    "wakeDigest": row["wake_digest"],
+                    "actions": json.loads(row["actions_json"]),
+                    "evidence": json.loads(row["evidence_json"]),
+                    "checkedAt": row["checked_at"],
+                    "threadId": row["thread_id"],
+                    "worktreePath": row["worktree_path"],
+                    "branch": row["branch"],
+                },
+            )
+        return list(unique.values())
+
+    def reserve_pr_followup(self, *, thread_id: str, wake_digest: str) -> dict[str, Any]:
+        candidate = next(
+            (
+                item
+                for item in self.pr_followup_candidates()
+                if item["threadId"] == thread_id and item["wakeDigest"] == wake_digest
+            ),
+            None,
+        )
+        if candidate is None:
+            raise LedgerError("PR follow-up authorization is stale or invalid")
+        with self.transaction() as connection:
+            self._event(
+                connection,
+                candidate["key"],
+                "PR_FOLLOWUP_RESERVED",
+                wake_digest,
+                {"threadId": thread_id, "prUrl": candidate["prUrl"]},
+                iso_z(datetime.now(UTC)),
+            )
+        return candidate
+
+    def commit_pr_followup(self, *, thread_id: str, wake_digest: str) -> None:
+        now = iso_z(datetime.now(UTC))
+        with self.transaction() as connection:
+            row = connection.execute(
+                """SELECT o.key,f.pr_url FROM opportunities o
+                   JOIN intents i ON i.opportunity_key=o.key
+                   JOIN pr_followups f ON f.opportunity_key=o.key
+                   JOIN events r ON r.opportunity_key=o.key
+                     AND r.event_type='PR_FOLLOWUP_RESERVED'
+                     AND r.dedupe_key=f.wake_digest
+                   WHERE i.thread_id=? AND f.wake_digest=?
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events s WHERE s.opportunity_key=o.key
+                         AND s.event_type='PR_FOLLOWUP_SENT'
+                         AND s.dedupe_key=f.wake_digest
+                     )""",
+                (thread_id, wake_digest),
+            ).fetchone()
+            if row is None:
+                raise LedgerError("PR follow-up reservation is missing or already committed")
+            self._event(
+                connection,
+                row["key"],
+                "PR_FOLLOWUP_SENT",
+                wake_digest,
+                {"threadId": thread_id, "prUrl": row["pr_url"]},
+                now,
+            )
+
+    def unresolved_pr_followups(self) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT o.key,f.pr_url,f.wake_digest,r.payload_json,r.created_at
+                   FROM opportunities o
+                   JOIN pr_followups f ON f.opportunity_key=o.key
+                   JOIN events r ON r.opportunity_key=o.key
+                     AND r.event_type='PR_FOLLOWUP_RESERVED'
+                     AND r.dedupe_key=f.wake_digest
+                   WHERE NOT EXISTS (
+                     SELECT 1 FROM events s WHERE s.opportunity_key=o.key
+                       AND s.event_type='PR_FOLLOWUP_SENT'
+                       AND s.dedupe_key=f.wake_digest
+                   ) ORDER BY r.created_at"""
+            ).fetchall()
+        return [
+            {
+                "key": row["key"],
+                "thread_id": json.loads(row["payload_json"]).get("threadId"),
+                "pr_url": row["pr_url"],
+                "wake_digest": row["wake_digest"],
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
+
+    def active_pr_followup(self, key: str) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                """SELECT * FROM pr_followups
+                   WHERE opportunity_key=? AND followup_required=1""",
+                (key,),
+            ).fetchone()
+        if row is None:
+            return None
+        return dict(row) | {
+            "actions": json.loads(row["actions_json"]),
+            "evidence": json.loads(row["evidence_json"]),
+        }
+
+    def task_result_digest_seen(self, key: str, digest: str) -> bool:
+        with self.connect() as connection:
+            row = connection.execute(
+                """SELECT 1 FROM events WHERE opportunity_key=? AND dedupe_key=?
+                   AND event_type IN ('FIX_READY','TASK_RESULT_INGESTED') LIMIT 1""",
+                (key, digest),
+            ).fetchone()
+        return row is not None
+
+    def record_followup_result(
+        self, key: str, *, wake_digest: str, result_digest: str, stage: str
+    ) -> None:
+        with self.transaction() as connection:
+            self._event(
+                connection,
+                key,
+                "PR_FOLLOWUP_RESULT_INGESTED",
+                wake_digest,
+                {"resultDigest": result_digest, "stage": stage},
+                iso_z(datetime.now(UTC)),
+            )
+
+    def record_task_result_ingested(self, key: str, *, digest: str, stage: str) -> None:
+        with self.transaction() as connection:
+            self._event(
+                connection,
+                key,
+                "TASK_RESULT_INGESTED",
+                digest,
+                {"stage": stage},
+                iso_z(datetime.now(UTC)),
+            )
 
     def complete_publication_effect(
         self, effect_id: str, *, status: str, result: dict[str, Any]
