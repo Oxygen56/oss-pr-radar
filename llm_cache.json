@@ -1369,6 +1369,34 @@
     ],
     "why": "Issue provides detailed root cause and reproduction, but existing PR #1458 overlaps semantically and requires maintainer review to avoid duplicate work. Deterministic gate says HUMAN_REVIEW."
   },
+  "1bcf6e892c063190d2ab121baac92b50822ff51ec1d26e8cab82470ac2ebef94": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Add regression test for cancellation during grammar-constrained overlap",
+      "Fix cancellation path in scheduler or grammar backend to prevent token emission after abort"
+    ],
+    "risks": [
+      "Potential race condition in cancellation handling",
+      "May require changes to grammar backend (xgrammar) or scheduler logic"
+    ],
+    "root_cause_clarity": "low",
+    "score": 6,
+    "test_plan": [
+      "Run provided reproducer script with specified parameters and assert no visible text after cancellation",
+      "Add unit test for cancellation timing with grammar constraints"
+    ],
+    "unknowns": [
+      "Root cause not identified",
+      "Maintainer awareness or approval not confirmed",
+      "Whether the bug is specific to certain grammar backends or overlap configurations"
+    ],
+    "why": "The issue reports a reproducible bug in grammar-constrained request cancellation with overlap, but lacks root cause analysis and maintainer confirmation. The track is agent_ai_infra, not llm_algorithm, so the algorithm evidence gate is not applicable. The candidate is actionable but requires maintainer input to confirm priority and design direction."
+  },
   "1cd4685b3e7aa1b7a8303d1283ef65a854a8263628728a78cf43b1c7658d0199": {
     "confidence": 0.85,
     "contradictions": [],
@@ -1878,6 +1906,35 @@
       "Whether the fix should be in URL derivation or error handling"
     ],
     "why": "Issue reports a reproducible, high-impact bug in the internal MCP self-connection path that blocks all conversations in rootless Podman. The traceback and multiple related issues point to a concrete code path (mcp_oauth_store.py, local_conversation.py) and a clear root cause: incorrect URL derivation for the internal MCP endpoint. No competing PR exists, and the fix is actionable with a minimal reproduction."
+  },
+  "25066b07d1f7cda452b8737faa42d21033e07bc2bfd836691b46bd198f4530fe": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify backend/open_webui/utils/middleware.py to rename reused tool-call IDs before dedup, scoped to already-answered calls",
+      "Add regression test for multi-round tool-call ID reuse"
+    ],
+    "risks": [
+      "Renaming IDs may affect provider-side validation or downstream logic",
+      "Scoping to answered calls may miss edge cases where IDs are reused before results are processed"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "test_plan": [
+      "Reproduce with moonshotai/kimi-k3 via OpenRouter using 5-6 parallel calls per round",
+      "Verify that stored output pairs each round's results with its calls",
+      "Run existing middleware tests and add a unit test simulating ID reuse"
+    ],
+    "unknowns": [
+      "Maintainer confirmation on the proposed fix direction",
+      "Whether the fix has been tested against a live multi-round session"
+    ],
+    "why": "The issue provides a detailed root cause in middleware.py, a concrete reproduction, and a proposed 13-line fix. However, the fix has not been tested against a live multi-round session, and the maintainer has not confirmed the design direction. The related issue #24758 is closed but may indicate prior maintainer preferences. The candidate is actionable but requires maintainer confirmation before implementation."
   },
   "2566e652e6fa8090066e3ad581d828156b7194fe38a86774a4165517c47e9746": {
     "confidence": 0.85,
@@ -5939,6 +5996,35 @@
     ],
     "why": "The issue reports a reproducible nondeterminism in vLLM's batch-invariance feature, with detailed controls and a confirmed reproduction by a second user. However, the root cause is not identified, and the deterministic gate requires HUMAN_REVIEW. The open PR and related issue lookups timed out, so duplicate work cannot be excluded. The candidate is algorithmically relevant but needs maintainer investigation and design confirmation."
   },
+  "62648c0f05b0582e3c4d5bb8592366d89170f78a8e128425e1ad7a1c47edcae3": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify abort_request HTTP handler to await or verify abort completion",
+      "Fix create_abort_task to handle GenerateReqInput without is_single attribute",
+      "Add error handling to return appropriate HTTP status on abort failure"
+    ],
+    "risks": [
+      "Changing the HTTP response semantics might break existing clients expecting 200 on enqueue",
+      "The fix might require changes in multiple layers (HTTP handler, tokenizer manager, scheduler) increasing scope"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce the issue using the provided curl commands and model",
+      "Add a regression test that sends an abort request and asserts the request is actually aborted",
+      "Run existing unit tests for the abort endpoint and tokenizer manager"
+    ],
+    "unknowns": [
+      "Exact code version and whether the bug persists in latest version (checklist item unchecked)",
+      "Maintainer preference on whether to change HTTP status codes or just fix the attribute error"
+    ],
+    "why": "The issue describes a concrete bug with a clear root cause: the HTTP handler returns 200 before the async abort task dereferences a non-existent attribute on GenerateReqInput, causing a false success. The reproduction steps are detailed and include logs. No competing PR or issue exists, and the fix is straightforward: either validate the request object or handle the attribute error, and ensure the abort endpoint reports actual success/failure."
+  },
   "6295e4b0468a9076c9fc548c72b67c09ecac4dbf522e7dfd20394ae5f24d85f6": {
     "confidence": 0.85,
     "contradictions": [],
@@ -6882,6 +6968,35 @@
       "Whether maintainers prefer serializing add_tool_output before changing helpers; no maintainer confirmation present"
     ],
     "why": "The issue precisely identifies a logic bug in tool-mode detection: output-level tool_mode is misinterpreted as capability, causing _enable_tool_mode to never refuse and produce impossible outputs. It provides a concrete repro and a clear suggested fix (drop output-side fallback, serialize add_tool_output). No competing PR addresses this; existing PRs are unrelated or only keyword-overlap."
+  },
+  "6d95875e7a42a68b4b749d4df17d12ff5ae59c83c4f87a6b5ea8b5177d1b0cbd": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Investigate Ref2VA-specific packed sequence/reference-conditioning path",
+      "Potential fix in timestep, reference token, or position handling"
+    ],
+    "risks": [
+      "Root cause may be in model code not SGLang runtime",
+      "Hardware-specific issue may not reproduce on other setups"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "test_plan": [
+      "Reproduce with provided minimal repro on 2x L40S BF16",
+      "Compare Ref2VA vs FL2VA intermediate tensors (t_emb, adaln_std, vae_decode z) to isolate divergence",
+      "Add regression test for Ref2VA generation quality"
+    ],
+    "unknowns": [
+      "Maintainer confirmation of bug and assignment",
+      "Exact code path causing the issue",
+      "Whether the issue is in SGLang's diffusion runtime or model implementation"
+    ],
+    "why": "The issue reports a reproducible Ref2VA-specific snow/noise bug with detailed diagnostics and a minimal repro, but the root cause is not identified and the issue is not assigned or confirmed by maintainers. The track requires a concrete algorithm mechanism; while the report mentions FSDP/offload and numerical diagnostics, the actual defect could be in the diffusion pipeline's reference-conditioning path, which is not clearly an LLM algorithm mechanism. The evidence is strong for a bug report but insufficient to start implementation without maintainer triage."
   },
   "6e4e928d2e4fd9e9de18046f6aebf2f691d4e1c4c226ea2c1b13a87a080add39": {
     "confidence": 0.7,
@@ -10831,6 +10946,32 @@
       "Root cause not identified"
     ],
     "why": "Issue reports a severe hang in dsv4/DSPARK at long context with TP=8, but lacks deterministic reproducer and root cause. Open PR and related issue lookups timed out, so duplicate work cannot be excluded. Maintainer input needed for design and bisection guidance."
+  },
+  "bdbb3e86ab975b8c28880afb175193ef8c314715f635a79aff1646adf06117bf": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify _get_v2_model_runner_unsupported_features to include weight offloading",
+      "Add regression test for cpu_offload_gb with V2 runner"
+    ],
+    "risks": [
+      "Potential maintainer preference for feature parity over fail-safe",
+      "CI failures in existing PR may indicate environment issues"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "test_plan": [
+      "Run vllm serve with cpu-offload-gb on a V2-default model and assert fallback warning and offload log",
+      "Add unit test for unsupported features detection"
+    ],
+    "unknowns": [
+      "Maintainer stance on minimal fix vs full feature parity"
+    ],
+    "why": "Issue clearly identifies a silent no-op bug in V2 model runner with root cause and empirical evidence. Existing PR #51397 is closed and has CI failures, leaving room for a better PR that implements the minimal fail-safe fix and adds regression tests."
   },
   "bdca79e5d089de966f0c4c807d06695f01d484411e5f4906de7e33a4f73544a5": {
     "confidence": 0.85,
