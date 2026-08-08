@@ -100,6 +100,12 @@ class GitHubClient:
             raise GitHubError("repository metadata is invalid")
         return value
 
+    def branch(self, repo: str, branch: str) -> dict[str, Any]:
+        value = self.api(f"repos/{repo}/branches/{quote(branch, safe='')}")
+        if not isinstance(value, dict) or not isinstance(value.get("commit"), dict):
+            raise GitHubError("repository branch is invalid")
+        return value
+
     def related_open_prs(
         self,
         repo: str,

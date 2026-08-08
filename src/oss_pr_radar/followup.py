@@ -171,6 +171,20 @@ def collect_followup(
             return repo, number, {}, [], [], [], [], "invalid_pull_reference", None
         try:
             pull = client.pull_request(repo, number)
+            base = pull.get("base") or {}
+            base_repo = str(((base.get("repo") or {}).get("full_name") or repo))
+            base_ref_name = str(base.get("ref") or "")
+            if not base_ref_name:
+                raise GitHubError("pull request base branch is missing")
+            live_base = client.branch(base_repo, base_ref_name)
+            live_base_sha = str((live_base.get("commit") or {}).get("sha") or "")
+            if not live_base_sha:
+                raise GitHubError("pull request live base head is missing")
+            pull["_live_base"] = {
+                "ref": base_ref_name,
+                "repo": base_repo,
+                "sha": live_base_sha,
+            }
             reviews = client.pull_reviews(repo, number)
             files = client.pull_files(repo, number)
             review_threads: list[dict[str, Any]] | None
@@ -246,8 +260,8 @@ def collect_followup(
             errors.append(f"{key}:{error}")
             continue
         head = str((pull.get("head") or {}).get("sha") or "")
-        base_ref_name = str((pull.get("base") or {}).get("ref") or "")
-        base_sha = str((pull.get("base") or {}).get("sha") or "")
+        base_ref_name = str((pull.get("_live_base") or {}).get("ref") or "")
+        base_sha = str((pull.get("_live_base") or {}).get("sha") or "")
         maintainer_changes = [
             review
             for review in _latest_reviews_by_author(reviews)

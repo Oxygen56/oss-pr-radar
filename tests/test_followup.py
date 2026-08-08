@@ -24,6 +24,9 @@ class Client:
             "draft": False,
         }
 
+    def branch(self, repo, branch):
+        return {"name": branch, "commit": {"sha": getattr(self, "base_sha", "base")}}
+
     def pull_reviews(self, repo, number):
         return [
             {

@@ -50,3 +50,19 @@ def test_pull_review_threads_uses_graphql_and_returns_nodes():
     assert "owner=a" in calls[0][0]
     assert "name=b" in calls[0][0]
     assert "number=9" in calls[0][0]
+
+
+def test_branch_reads_the_live_branch_head(monkeypatch):
+    calls = []
+    client = GitHubClient()
+
+    def api(endpoint, **_kwargs):
+        calls.append(endpoint)
+        return {"name": "release/next", "commit": {"sha": "a" * 40}}
+
+    monkeypatch.setattr(client, "api", api)
+
+    result = client.branch("a/b", "release/next")
+
+    assert result["commit"]["sha"] == "a" * 40
+    assert calls == ["repos/a/b/branches/release%2Fnext"]
