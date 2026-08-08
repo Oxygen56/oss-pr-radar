@@ -1907,6 +1907,35 @@
     ],
     "why": "Issue reports a reproducible, high-impact bug in the internal MCP self-connection path that blocks all conversations in rootless Podman. The traceback and multiple related issues point to a concrete code path (mcp_oauth_store.py, local_conversation.py) and a clear root cause: incorrect URL derivation for the internal MCP endpoint. No competing PR exists, and the fix is actionable with a minimal reproduction."
   },
+  "237e9f274c2857a4d2aedc29925a6101ceeebcf3669781e16f37ee5e3971aba0": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "MessageHistory.processInput/processOutputResult",
+      "Observational Memory processor",
+      "Potential new authority-resolution helper"
+    ],
+    "risks": [
+      "API design changes may break existing client workflows",
+      "Complexity of merging deltas while preserving server-authored content"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "test_plan": [
+      "Add regression tests for stale echo overwrite, client-side tool result merge, and revision downgrade prevention",
+      "Run existing message-history and observational-memory test suites"
+    ],
+    "unknowns": [
+      "Maintainer design preference on delta vs full-message merge",
+      "Whether a PR is already in progress by maintainer or contributor"
+    ],
+    "why": "Issue provides a clear root cause (upsert overwrite via client echo) and a concrete fix direction, but the proposed solution involves API design changes (delta transitions, revision checks) that need maintainer confirmation. No maintainer has approved or commented, and the contributor's offer to PR is pending. The issue is actionable but requires design confirmation before implementation."
+  },
   "25066b07d1f7cda452b8737faa42d21033e07bc2bfd836691b46bd198f4530fe": {
     "confidence": 0.7,
     "contradictions": [],
@@ -13151,6 +13180,41 @@
     ],
     "why": "Issue reports a watchdog timeout in sglang with a complex configuration, but lacks a minimal reproducer and root cause analysis. The deterministic gate requires HUMAN_REVIEW, and open PR/related issue lookups timed out, so duplicate work cannot be excluded. Actionability is low without maintainer guidance or a clear code path."
   },
+  "dfdb94ccf5f65a592a7d2b730d923af9c8a424d83c9363ad574ccff4be718ed0": {
+    "confidence": 0.75,
+    "contradictions": [
+      "Issue claims all three bugs are present on main, but the author's verification used stubs and an older install; no real test run was performed"
+    ],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix rollout_trajectory_data merging in gpu_worker.py to concatenate per-output trajectories instead of keeping only the first",
+      "Fix per-sample trajectory slicing in diffusion_generator.py to use the correct output index",
+      "Initialize component_residency_manager in PipelineExecutor.__init__ or guard its use in begin_component_residency_request",
+      "Apply latent_ids preparation and packing to caller-provided latents in LatentPreparationStage.forward"
+    ],
+    "risks": [
+      "Bug 1 fix changes behavior when only some outputs have trajectories; maintainer may prefer preserving the old behavior",
+      "Tests are unvalidated under a real sglang install; CI may reveal environment-specific issues",
+      "Potential overlap with PR #22183 if it is updated to cover the trajectory merge"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add unit tests for each bug using stubs extracted from main, verifying trajectory shapes and values before/after fix",
+      "Run a small GRPO-style training loop with num_outputs_per_prompt>1 and assert that per-sample log_probs differ and gradients are non-zero",
+      "Test grouped forward path to ensure no AttributeError on first call",
+      "Test provided latents with a packed model config to verify latent_ids and packing are applied"
+    ],
+    "unknowns": [
+      "Maintainer confirmation on intended semantics for Bug 1 and Bug 3 is pending",
+      "Whether PR #22183 will be updated to address the trajectory merge bug"
+    ],
+    "why": "The issue identifies three concrete, independent bugs in the diffusion multi-output rollout path, with clear root causes and code-level evidence. Bug 1 is a silent numerical corruption that collapses per-sample trajectories, directly affecting GRPO training. The existing PR #22183 is weak (no tests, stale, incomplete coverage) and does not address the trajectory merge bug, leaving room for a materially better PR."
+  },
   "e03a166acc822a28dafd0201f359f54bf36b7dc610b2205fc92d1497d90d2476": {
     "confidence": 0.8,
     "contradictions": [],
@@ -14634,6 +14698,35 @@
       "Whether maintainers intend to support the reported CLI usage without --model-type"
     ],
     "why": "Issue reports a CLI argument error for MiniMax-H3 in sglang serve, but comments indicate a workaround (adding --model-type diffusion) and a merged PR (#33365) that may already address the root cause. The open PR lookup timed out, so competition status is unknown. The issue is a user-facing bug with a clear repro, but the fix may already be merged or require maintainer confirmation on intended CLI behavior."
+  },
+  "f75d87c7b36897fce4b17953c9afaf8627e0e3c82cd1be1203b55fb2b2522ef1": {
+    "confidence": 0.8,
+    "contradictions": [
+      "PR #25387 is closed but issue comments suggest dev was done but not merged, indicating possible confusion about status."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "open_pr_assessment"
+    ],
+    "expected_changes": [
+      "litellm/proxy/auth/auth_checks.py",
+      "litellm/proxy/utils.py",
+      "add regression tests for budget_id persistence and reset"
+    ],
+    "risks": [
+      "Existing PR #25387 may be revived, causing duplication; maintainer may have design preferences for backfill strategy; CI failures in existing PR need investigation."
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Reproduce issue by setting max_end_user_budget_id, creating end user, and verifying budget_id is NULL in DB; then run budget reset job and confirm spend is not reset. Add unit/integration tests covering auto-creation and backfill paths."
+    ],
+    "unknowns": [
+      "Whether maintainers plan to merge or revise PR #25387; whether backfill is acceptable or requires migration; exact CI failure causes."
+    ],
+    "why": "Issue clearly identifies a bug where max_end_user_budget_id is not persisted to DB, causing budget reset to fail. However, an existing PR (#25387) directly addresses this issue but is closed with missing tests and CI failures, requiring maintainer review to determine if it can be revived or if a new PR is needed."
   },
   "f7cad12f924f80210d13dd60c3696419b55c0426c329d1515eaf4f4b10e3bd18": {
     "confidence": 0.8,
