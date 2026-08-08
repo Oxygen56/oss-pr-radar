@@ -2226,6 +2226,34 @@
     ],
     "why": "The issue identifies a concrete bug: AgentSkillsContext lacks tracingContext, causing inconsistent span propagation between direct and served entry points. The proposed fix (adding tracingContext) is minimal and matches existing ToolExecutionContext pattern. No competing PR or issue found, and maintainer has labeled it for triage, indicating interest."
   },
+  "2ac54972f8f7a33492bce2863b84a5b6ac53801210785ca7dd8935689c9a73ac": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify _local_approval_content_ids_to_remove in agent_framework_ag_ui/_agent_run.py to correctly match multiple approval responses to distinct tool-call occurrences",
+      "Add regression test for two gated approvals in one batch"
+    ],
+    "risks": [
+      "Potential impact on existing approval resume behavior for single and mixed batches",
+      "Need to ensure never-require sibling case remains unchanged"
+    ],
+    "root_cause_clarity": "high",
+    "score": 15,
+    "test_plan": [
+      "Run the provided failing test test_repro_7569_multi_gated_approval.py::test_two_gated_approvals_both_execute",
+      "Add test asserting two TOOL_CALL_RESULT events and two tool messages in snapshot"
+    ],
+    "unknowns": [
+      "Maintainer preference on fix approach",
+      "Whether maintainer is actively investigating or has design constraints"
+    ],
+    "why": "Issue reports a clear, reproducible bug in AG-UI approval resume where only the first of multiple gated calls executes. Root cause is identified in _local_approval_content_ids_to_remove occurrence-matching. However, the deterministic gate requires HUMAN_REVIEW, and the issue lacks maintainer approval or design confirmation. Existing PR #7546 is not directly related, so no competition. Actionable fix is plausible but requires maintainer direction."
+  },
   "2aff874b834f495c7a007eca6558cfbf89933744f31c556db7af0de08e516c48": {
     "confidence": 0.85,
     "contradictions": [
@@ -4953,6 +4981,30 @@
       "Whether the draft PR #50894 will be completed and merged"
     ],
     "why": "Issue reports a clear crash with root cause and repro, but the supplied deterministic gate says HUMAN_REVIEW and the related issue audit timed out. An existing draft PR (#50894) directly addresses the issue but is incomplete (draft, pre-run-check failure)."
+  },
+  "560cc6c87bcf3b485568f819f8ad4aa1c30cb837941a1d175cb4dee9eaab593e": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix model-name forwarding in the gateway path for /zen/go/v1"
+    ],
+    "risks": [
+      "May duplicate an existing PR or fix already in progress"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Add a regression test that sends model='deepseek-v4-flash' and asserts the upstream request has no leading space"
+    ],
+    "unknowns": [
+      "Whether an open PR already addresses this issue; maintainer's preferred fix approach"
+    ],
+    "why": "The issue reports a reproducible server-side bug (leading space in model name) with strong evidence, but the deterministic gate requires HUMAN_REVIEW and open PR/related issue lookups failed, so duplicate work cannot be excluded."
   },
   "5642f05e6c9aaf635583758b5785782037a95198fc210dffcd00422436bf69b9": {
     "confidence": 0.7,

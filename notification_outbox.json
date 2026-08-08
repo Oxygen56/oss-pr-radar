@@ -517,8 +517,8 @@
       "seenAt": "2026-08-03T23:34:32.235680Z"
     },
     "review|microsoft/agent-framework#7569": {
-      "seenAt": "2026-08-07T13:48:27.879165Z",
-      "stateId": "e533453995c239190616c53b6008cbeabd85509743d259032526d989c7d59deb"
+      "seenAt": "2026-08-08T17:51:39.497887Z",
+      "stateId": "9f22e19425b94763b8419685a9bd6dd9f1f3dc9292ddc22271dba775795a39fb"
     },
     "review|microsoft/agent-framework#7570": {
       "seenAt": "2026-08-07T13:48:27.879165Z",
@@ -1265,7 +1265,7 @@
       "seenAt": "2026-08-06T10:09:13.778625Z"
     }
   },
-  "digest": "75fdc19865f74bdfac5199df974e2574a91e5c5bbf9633ad9499368d9b45fe8d",
+  "digest": "b73e96d048416fee80843bd9bc97f02901c270597e251eadbad5990ce2c5695d",
   "events": [
     {
       "attempts": 1,
@@ -16746,9 +16746,51 @@
       "runId": "scan-20260808T165614Z-0f817e8a1d57",
       "sentAt": "2026-08-08T17:00:36.535243Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "microsoft/agent-framework#7569"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "3d31194a0f0cfc81d0cce6e6916c2a50921e05f23e342da1e79c64b14a193dc0",
+          "key": "microsoft/agent-framework#7569",
+          "kind": "review",
+          "stateId": "9f22e19425b94763b8419685a9bd6dd9f1f3dc9292ddc22271dba775795a39fb"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[microsoft/agent-framework#7569](https://github.com/microsoft/agent-framework/issues/7569) Python: [Bug]: AG-UI approval resume executes only the first of several approved calls in one batch — the rest are silently dropped**\n建议：WAIT_MAINTAINER | 分数：15\n价值：Issue reports a clear, reproducible bug in AG-UI approval resume where only the first of multiple gated calls executes. Root cause is identified in _local_approval_content_ids_to_remove occurrence-matching. However, the deterministic gate requires HUMAN_REVIEW, and the issue lacks maintainer approval or design confirmation. Existing PR #7546 is not directly related, so no competition. Actionable fix is plausible but requires maintainer direction.\n改动：Modify _local_approval_content_ids_to_remove in agent_framework_ag_ui/_agent_run.py to correctly match multiple approval responses to distinct tool-call occurrences；Add regression test for two gated approvals in one batch\n验证：Run the provided failing test test_repro_7569_multi_gated_approval.py::test_two_gated_approvals_both_execute；Add test asserting two TOOL_CALL_RESULT events and two tool messages in snapshot\n风险：Potential impact on existing approval resume behavior for single and mixed batches；Need to ensure never-require sibling case remains unchanged\n竞争：仅发现未直接关联、无代码路径或强机制重合的 PR #7546；保留为搜索上下文，不阻止实现\n下一步：先在 issue 下请求分配/确认方案，获批后再开 PR。\n证据：复现信号 7，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-08T17:51:39.497887Z",
+      "eventId": "bcf46322d94f5827ac1adf7e64c88f2ad66fe00b15036d4ec30cef7cff47d507",
+      "idempotencyKey": "bcf46322d94f5827ac1adf7e64c88f2ad66fe00b15036d4ec3",
+      "kind": "review",
+      "runId": "scan-20260808T174941Z-49104278ee57",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-08T17:00:00.090884Z",
+  "generatedAt": "2026-08-08T17:51:39.851478Z",
   "newEventCount": 0,
   "version": "notification_outbox_v2"
 }
