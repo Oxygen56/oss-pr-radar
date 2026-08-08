@@ -289,8 +289,8 @@
       "seenAt": "2026-08-05T18:00:54.410399Z"
     },
     "review|aaif-goose/goose#11041": {
-      "seenAt": "2026-08-07T21:09:32.887835Z",
-      "stateId": "553113d5efbcb0751db50b60b08ee4e11a83046ac2e3b8c9dfbc70629df7fda0"
+      "seenAt": "2026-08-08T08:58:05.680743Z",
+      "stateId": "04a4e17cec6cd578133d76c85a26b84ab64158a64e83e794e627e0fa149209ea"
     },
     "review|aaif-goose/goose#11047": {
       "seenAt": "2026-08-08T07:21:46.766873Z",
@@ -301,8 +301,8 @@
       "seenAt": "2026-08-05T18:00:54.410399Z"
     },
     "review|ai-dynamo/dynamo#12864": {
-      "seenAt": "2026-08-08T02:29:36.815696Z",
-      "stateId": "6180f9cc9d88b6644c6fe25f8c687716bcc7a9bba90aa1b504f55699ef99af46"
+      "seenAt": "2026-08-08T08:58:05.680743Z",
+      "stateId": "ec5d459ff0c502a4e861325556cca31a03f6aad1ac666071be1c602289bcd53a"
     },
     "review|anomalyco/opencode#41120": {
       "seenAt": "2026-08-07T18:10:51.015935Z",
@@ -785,8 +785,12 @@
       "stateId": "e6dbe724ae1fb3533ecdf727b059e49576b95535d76ba7c2eb09d1d09c7004d3"
     },
     "review|vllm-project/vllm#51456": {
-      "seenAt": "2026-08-07T23:02:42.696937Z",
-      "stateId": "4d9c07de1a076eb2548c296c18ba7236f847867d9d721303f18b6451f585ef20"
+      "seenAt": "2026-08-08T08:58:05.680743Z",
+      "stateId": "96db9fc0bee9f41e8043fe288ab608d095c5146cf32a38c79b68e0d0103e0555"
+    },
+    "review|vllm-project/vllm#51465": {
+      "seenAt": "2026-08-08T08:58:05.680743Z",
+      "stateId": "681e12a62bb4890c6476a06a61931d1dfcc22acf9b3a22e961c3667e368956f6"
     },
     "watch|BerriAI/litellm#25386": {
       "legacy": true,
@@ -1201,7 +1205,7 @@
       "seenAt": "2026-08-06T10:09:13.778625Z"
     }
   },
-  "digest": "517e4d6b2568d930fdc007062a231f48f6d2011e3f20fdedcb3838def8e48166",
+  "digest": "1f9084acdf1132ba4cb00dcec7fa87e683ce8abbcb7db97a6ef8bbb00c10ac8f",
   "events": [
     {
       "attempts": 1,
@@ -15809,9 +15813,105 @@
       "runId": "scan-20260808T083933Z-2e3a11227834",
       "sentAt": "2026-08-08T08:44:04.317172Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "aaif-goose/goose#11041",
+        "ai-dynamo/dynamo#12864",
+        "vllm-project/vllm#51456",
+        "vllm-project/vllm#51465"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "039f408da531f6a1f2b05f294c641a50f5862e09ac9a51a46b5f6ee665217337",
+          "key": "aaif-goose/goose#11041",
+          "kind": "review",
+          "stateId": "04a4e17cec6cd578133d76c85a26b84ab64158a64e83e794e627e0fa149209ea"
+        },
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "b995ec4f8ef5e3031554d0287780614397425fb78b5c05af82334356f8c336f1",
+          "key": "ai-dynamo/dynamo#12864",
+          "kind": "review",
+          "stateId": "ec5d459ff0c502a4e861325556cca31a03f6aad1ac666071be1c602289bcd53a"
+        },
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "2ec746284b6546d99a0fc30dfafc296bbe89a3a17103c750e680b218d03a959c",
+          "key": "vllm-project/vllm#51456",
+          "kind": "review",
+          "stateId": "96db9fc0bee9f41e8043fe288ab608d095c5146cf32a38c79b68e0d0103e0555"
+        },
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "914f3b44372a5b5d20062746966feec83cda442eb76363b8ff77a32057eb7c4b",
+          "key": "vllm-project/vllm#51465",
+          "kind": "review",
+          "stateId": "681e12a62bb4890c6476a06a61931d1dfcc22acf9b3a22e961c3667e368956f6"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[aaif-goose/goose#11041](https://github.com/aaif-goose/goose/issues/11041) `InferenceMetadata` is never recorded for providers that don't report a `resolved_model`, so per-message model attribution is lost and the model-change disclosure never renders**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue provides a precise root cause and a concrete fix, but the deterministic gate requires HUMAN_REVIEW and existing PRs overlap semantically, so maintainer review is needed before starting work.\n改动：crates/goose/src/agents/agent.rs；ui/desktop/src/components/ProgressiveMessageList.tsx\n验证：Add regression test using CountingTextProvider to assert inference metadata is recorded for non-Databricks providers.\n风险：Existing PRs may already address the issue; need to compare implementation boundaries.\n竞争：发现 PR #10621 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 6，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[ai-dynamo/dynamo#12864](https://github.com/ai-dynamo/dynamo/issues/12864) [BUG]: Disaggregated prefill routing is not load-balanced — some prefill workers queue deeply while others stay idle**\n建议：WAIT_MAINTAINER | 分数：10\n价值：Issue describes a clear load-balancing bug in disaggregated prefill routing with concrete repro and root-cause analysis in comments. However, the deterministic gate requires HUMAN_REVIEW, and there are overlapping issues (#9474, #11586) and open PRs (#12138, #11646) that may address related routing behavior. Maintainer design confirmation is needed before starting implementation.\n改动：Prefill router booking mechanism；EPP prefill worker selection logic；Active block tracking for prefill workers\n验证：Reproduce imbalance with provided metrics snapshot；Add integration test simulating mixed prompt sizes and verify balanced queue depths；Unit test for selection logit with active token tracking\n风险：Potential overlap with existing PRs or issues；Changing routing behavior may affect latency or throughput；Need to ensure compatibility with native router path\n竞争：仅发现未直接关联、无代码路径或强机制重合的 PR #11646；保留为搜索上下文，不阻止实现\n下一步：先人工比较相关 issue 的根因、维护者归并方向和可提交代码路径；确认不是重复后再进入实现。\n证据：复现信号 4，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#51456](https://github.com/vllm-project/vllm/issues/51456) [Bug]: online FP8 (--quantization fp8) produces corrupted, non-EOS-terminating output on Qwen2.5-1.5B-Instruct**\n建议：WAIT_MAINTAINER | 分数：13\n价值：The issue reports a reproducible FP8 quantization bug with clear symptoms and a plausible root cause (scaled_fp8_quant on fused weights), but the maintainer comment indicates it may not reproduce on latest vLLM, and the open PR/related issue lookup failed. The candidate is algorithmically relevant but requires maintainer confirmation and duplicate check.\n改动：Fix scaled_fp8_quant application to fused MergedColumnParallelLinear weights；Add regression test for dense SwiGLU models with online FP8\n验证：Run the provided repro on latest vLLM (v0.26.0) to confirm persistence；Create a minimal unit test comparing FP8 vs BF16 outputs for Qwen2.5-1.5B with fixed seed and tolerance\n风险：Root cause may be different from suspected; fix may affect performance or other models\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 11，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#51465](https://github.com/vllm-project/vllm/issues/51465) [Bug]: Kimi K3 usage.prompt_tokens over-counts trailing channel-open stub (+3)**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue describes a concrete bug with a clear root cause and proposed fix, but open PR lookup timed out and an existing PR (51343) with semantic overlap was found, requiring maintainer confirmation to avoid duplicate work.\n改动：Add optional generation_prefix_len field to renderer/engine request/output；Plumb through serving to adjust usage.prompt_tokens\n验证：Reproduce with provided curl command and assert prompt_tokens equals expected minus stub；Add unit test for renderer opt-in and serving adjustment\n风险：Potential overlap with existing PR 51343；Behavior change for other models if field is misconfigured\n竞争：open PR 检索不完整，需等待下轮重试后再判断碰撞\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 3，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-08T08:58:05.680743Z",
+      "eventId": "f111df5b7aefccfd4ea06c7cbfaf8d030fd08046d3707930ac487c8fd8ba4845",
+      "idempotencyKey": "f111df5b7aefccfd4ea06c7cbfaf8d030fd08046d3707930ac",
+      "kind": "review",
+      "runId": "scan-20260808T085420Z-8acb3b6c6154",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-08T08:43:35.484459Z",
+  "generatedAt": "2026-08-08T08:58:06.040541Z",
   "newEventCount": 0,
   "version": "notification_outbox_v2"
 }

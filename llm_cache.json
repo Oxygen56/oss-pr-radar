@@ -5549,6 +5549,34 @@
     ],
     "why": "The issue is a user configuration problem, not a LiteLLM bug. A commenter identified that VS Code appends '/models' to the configured URL, so the user should set the base URL instead. No code change in LiteLLM is needed. The deterministic gate is HUMAN_REVIEW, and open PR/related issue lookups failed, so we cannot rule out duplicates. Maintainer confirmation is required before any action."
   },
+  "64e98591ac66df5d217bde2f6194dfab76df6611e41ba5a02eca8f708f266a96": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add optional generation_prefix_len field to renderer/engine request/output",
+      "Plumb through serving to adjust usage.prompt_tokens"
+    ],
+    "risks": [
+      "Potential overlap with existing PR 51343",
+      "Behavior change for other models if field is misconfigured"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Reproduce with provided curl command and assert prompt_tokens equals expected minus stub",
+      "Add unit test for renderer opt-in and serving adjustment"
+    ],
+    "unknowns": [
+      "Whether PR 51343 fully addresses the issue",
+      "Maintainer preference on design approach"
+    ],
+    "why": "Issue describes a concrete bug with a clear root cause and proposed fix, but open PR lookup timed out and an existing PR (51343) with semantic overlap was found, requiring maintainer confirmation to avoid duplicate work."
+  },
   "65df70baa60bb014fa5d15be411e3b5a5cab4e541a456a00eaf51e692ebef185": {
     "confidence": 0.7,
     "contradictions": [
@@ -6542,6 +6570,34 @@
       "Whether an existing PR or issue already addresses this problem"
     ],
     "why": "The issue reports a plausible DSpark speculative decoding acceptance collapse after position 0 on DeepSeek-V4-Flash-0731, with detailed environment and ruled-out factors. However, a maintainer suspects the benchmark artifact (random tokens) and a member's data supports that random prompts degrade acceptance, while the reporter's own data shows higher acceptance with probabilistic sampling. The root cause is not yet confirmed; it could be a kernel issue on DGX Spark or a benchmark artifact. The deterministic gate is HUMAN_REVIEW, and open PR/related issue lookups timed out, so duplicate work cannot be excluded."
+  },
+  "76679596ff97dbe1f5dc68a46effa910232e59b6edc5cee05ef90d8df52d2f7b": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Maintainer reports no reproduction on latest version, conflicting with reporter's experience on 0.19.1"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix scaled_fp8_quant application to fused MergedColumnParallelLinear weights",
+      "Add regression test for dense SwiGLU models with online FP8"
+    ],
+    "risks": [
+      "Root cause may be different from suspected; fix may affect performance or other models"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 13,
+    "test_plan": [
+      "Run the provided repro on latest vLLM (v0.26.0) to confirm persistence",
+      "Create a minimal unit test comparing FP8 vs BF16 outputs for Qwen2.5-1.5B with fixed seed and tolerance"
+    ],
+    "unknowns": [
+      "Whether the bug persists on latest vLLM; whether an existing PR already addresses it"
+    ],
+    "why": "The issue reports a reproducible FP8 quantization bug with clear symptoms and a plausible root cause (scaled_fp8_quant on fused weights), but the maintainer comment indicates it may not reproduce on latest vLLM, and the open PR/related issue lookup failed. The candidate is algorithmically relevant but requires maintainer confirmation and duplicate check."
   },
   "766f5f0639b16dea2cdbf861f135445e63655efbbfd3c22f6f25e3a0872ef35a": {
     "confidence": 0.8,
@@ -8573,6 +8629,36 @@
     ],
     "why": "Issue reports three concrete correctness defects in createInngestAgent resume() with clear code paths and expected behavior. No competing PR or issue found. Maintainer labeled for triage, indicating interest. The proposed changes are actionable and testable."
   },
+  "a2a0a797b0c66403c697818514176d1f490fa980a895cc2a523295fd626eb5d0": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue title mentions Qwen3.6:35b-3ba but body says Qwen3.6-35b-3ba and provider says qwen3.6:35b-a3a"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Tool syntax handling in provider/runtime layer",
+      "Documentation for native XML tool syntax"
+    ],
+    "risks": [
+      "Potential duplicate issue #12570",
+      "Existing PRs may already address the root cause; need comparison"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Reproduce the tool syntax failure with a minimal agentic task using Ollama and Qwen3.6",
+      "Add regression test for tool call format parsing"
+    ],
+    "unknowns": [
+      "Exact code change that broke the syntax",
+      "Whether maintainers have a preferred fix direction"
+    ],
+    "why": "Issue reports a regression in tool syntax handling for local Ollama/Qwen3.6 after Cline 4.1.x, but the root cause is not clearly identified. Existing PRs (e.g., #11486, #11937) have semantic overlap but none directly reference this issue, and the issue's primary request is documentation (.clinerules example), which is not a code fix. The deterministic gate is HUMAN_REVIEW, and maintainer design confirmation is needed."
+  },
   "a33052b432b4ecd0968f20f7dfb84a59a82888cbb772ab10066cf8dd46d3bbb2": {
     "confidence": 0.6,
     "contradictions": [
@@ -9235,6 +9321,33 @@
       "Whether issue #37628 is truly duplicate and if it covers the tool description issue"
     ],
     "why": "Issue clearly identifies two bugs in dify-agent model.py: empty system prompts and empty tool descriptions causing Bedrock ValidationException. However, existing PR #39704 already covers the system prompt filtering, and the tool description fix is not covered. The gate decision is HUMAN_REVIEW, and there is potential duplicate issue #37628. Need maintainer confirmation on preferred approach and whether to proceed with a new PR for the tool description fix."
+  },
+  "b53cec48187df810efd3b560ef507cc400c9836de5c992a6cffcb014950636d4": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Guard in llm_base_proposer.py to skip draft_embed.weight access when draft_embed is None",
+      "Possibly adjust embedding-sharing logic to fall through to target weight sharing"
+    ],
+    "risks": [
+      "The fix may mask a deeper issue if the draft model truly requires its own embedding; need to confirm intended DSpark support path",
+      "Potential interaction with the third reported blocker (missing mask_hidden buffer) could affect end-to-end validation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce with the provided command on GB200 with TP16 and DSpark config; verify engine loads without AttributeError",
+      "Add a unit test for llm_base_proposer embedding-sharing with a draft model lacking embed_tokens, asserting no crash and correct weight sharing",
+      "Run existing spec_decode tests to ensure no regression"
+    ],
+    "unknowns": [
+      "Whether maintainers have already started a fix or have a preferred approach; the issue asks for confirmation of intended support path"
+    ],
+    "why": "The issue identifies a deterministic crash in the DSpark speculative decoding path caused by a NoneType dereference in the embedding-sharing logic of llm_base_proposer.py. The root cause is clearly explained with code snippets and a reproducible command. The fix is a small, well-scoped guard to skip the dimension check when the draft embedding is absent. This is a concrete algorithm-path bug in a vLLM runtime, with a clear reference-vs-implementation test (spec on vs off). No competing PR addresses this issue."
   },
   "b5cd2e181fc5bc44aa623875ac9e034f10b37017dc90ee2e9a83401815051729": {
     "confidence": 0.8,
@@ -9974,6 +10087,31 @@
       "Maintainer design preferences for binary content stripping in traces"
     ],
     "why": "Issue clearly identifies a real bug with a minimal repro and root cause in messages.py, but an open PR (#7053) has semantic overlap and the deterministic gate requires human review. Need maintainer confirmation on design and PR comparison before starting work."
+  },
+  "c3615545397d7030d00234d19dfbe432992f6ee9db7917b720965fbb594f8085": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "crates/goose/src/agents/agent.rs",
+      "ui/desktop/src/components/ProgressiveMessageList.tsx"
+    ],
+    "risks": [
+      "Existing PRs may already address the issue; need to compare implementation boundaries."
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Add regression test using CountingTextProvider to assert inference metadata is recorded for non-Databricks providers."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer collapsing InferenceMetadata to non-Option; whether existing PRs already fix this issue."
+    ],
+    "why": "Issue provides a precise root cause and a concrete fix, but the deterministic gate requires HUMAN_REVIEW and existing PRs overlap semantically, so maintainer review is needed before starting work."
   },
   "c3b6ae8e1ac189a7ffd4504aef23a93de3815a18b4ebfbcb705ee150ebead6e6": {
     "confidence": 0.85,
@@ -11411,6 +11549,38 @@
       "No maintainer confirmation or design preference, but the fix is minimal and aligns with existing env merging code"
     ],
     "why": "The issue clearly identifies a security bug where a session API key is exposed via process command line arguments, with specific file locations and a suggested fix. The fix is straightforward and testable, and no competing PR exists."
+  },
+  "de458e1b82831b70f40bf74227d09a62c9482f7f9ce4818d8dcd4843c78c17be": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Prefill router booking mechanism",
+      "EPP prefill worker selection logic",
+      "Active block tracking for prefill workers"
+    ],
+    "risks": [
+      "Potential overlap with existing PRs or issues",
+      "Changing routing behavior may affect latency or throughput",
+      "Need to ensure compatibility with native router path"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "test_plan": [
+      "Reproduce imbalance with provided metrics snapshot",
+      "Add integration test simulating mixed prompt sizes and verify balanced queue depths",
+      "Unit test for selection logit with active token tracking"
+    ],
+    "unknowns": [
+      "Maintainer preference on design approach",
+      "Whether existing PRs (#12138, #11646) will be merged and cover this issue",
+      "Exact expected behavior for load balancing metrics"
+    ],
+    "why": "Issue describes a clear load-balancing bug in disaggregated prefill routing with concrete repro and root-cause analysis in comments. However, the deterministic gate requires HUMAN_REVIEW, and there are overlapping issues (#9474, #11586) and open PRs (#12138, #11646) that may address related routing behavior. Maintainer design confirmation is needed before starting implementation."
   },
   "de61db1b3d0d30440eac0335a1fe42160351a2267dd1e84a98e59429a9911e95": {
     "confidence": 0.95,
