@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from oss_pr_radar.ledger import RadarLedger
+from oss_pr_radar.ledger import LedgerError, RadarLedger
 from oss_pr_radar.metrics import QUALITY_FIELDS
 from oss_pr_radar.util import iso_z
 
@@ -572,6 +572,7 @@ def test_prepare_claim_returns_single_project_root_and_isolated_worktree(monkeyp
     assert result["sourceRepoPath"] == str(source)
     assert result["taskProjectPath"] == str(project_root.resolve())
     assert result["worktreePath"] == str(worktree)
+    assert result["leaseOwner"] == "controller"
     assert result["createThreadRequest"] == {
         "prompt": (
             "[$gh-issue-pr](/Users/oxygen/.codex/skills/gh-issue-pr/SKILL.md)\n"
@@ -584,6 +585,74 @@ def test_prepare_claim_returns_single_project_root_and_isolated_worktree(monkeyp
         },
     }
     assert "projectId" not in result["createThreadRequest"]
+
+
+def test_creation_start_infers_active_lease_owner(monkeypatch, tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    now = datetime.now(UTC)
+    store.enqueue(
+        {
+            "intentId": "intent-1",
+            "key": "a/b#1",
+            "repo": "a/b",
+            "issueNumber": 1,
+            "issueUrl": "https://github.com/a/b/issues/1",
+            "title": "Runtime bug",
+            "mode": "canary",
+            "score": 9,
+            "snapshotId": "snapshot",
+            "decisionDigest": "decision",
+            "issuedAt": iso_z(now),
+            "expiresAt": iso_z(now + timedelta(hours=1)),
+        }
+    )
+    assert store.claim("intent-1", "controller") is not None
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+
+    result = MODULE.creation_start(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            intent_id="intent-1",
+            owner=None,
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["intentId"] == "intent-1"
+    assert result["creationToken"]
+    assert store.current_lease_owner("intent-1") == "controller"
+
+
+def test_creation_start_does_not_override_explicit_wrong_owner(monkeypatch, tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    now = datetime.now(UTC)
+    store.enqueue(
+        {
+            "intentId": "intent-1",
+            "key": "a/b#1",
+            "repo": "a/b",
+            "issueNumber": 1,
+            "issueUrl": "https://github.com/a/b/issues/1",
+            "title": "Runtime bug",
+            "mode": "canary",
+            "score": 9,
+            "snapshotId": "snapshot",
+            "decisionDigest": "decision",
+            "issuedAt": iso_z(now),
+            "expiresAt": iso_z(now + timedelta(hours=1)),
+        }
+    )
+    assert store.claim("intent-1", "controller") is not None
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+
+    with pytest.raises(LedgerError, match="not leased by this owner"):
+        MODULE.creation_start(
+            SimpleNamespace(
+                ledger=tmp_path / "ledger.sqlite3",
+                intent_id="intent-1",
+                owner="mistyped-controller",
+            )
+        )
 
 
 def test_claim_release_returns_unstarted_lease_to_pending(monkeypatch, tmp_path):
@@ -612,7 +681,7 @@ def test_claim_release_returns_unstarted_lease_to_pending(monkeypatch, tmp_path)
         SimpleNamespace(
             ledger=tmp_path / "ledger.sqlite3",
             intent_id="intent-1",
-            owner="controller",
+            owner=None,
             reason="CONTROLLER_DID_NOT_START_CREATION",
         )
     )

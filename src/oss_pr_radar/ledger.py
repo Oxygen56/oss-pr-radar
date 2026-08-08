@@ -611,6 +611,20 @@ class RadarLedger:
             )
             return True
 
+    def current_lease_owner(self, intent_id: str) -> str:
+        """Return the controller that currently owns an active dispatch transaction."""
+
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT status,lease_owner FROM intents WHERE intent_id=?",
+                (intent_id,),
+            ).fetchone()
+        if row is None:
+            raise LedgerError("intent not found")
+        if row["status"] not in {"LEASED", "CREATING"} or not row["lease_owner"]:
+            raise LedgerError("intent has no active lease owner")
+        return str(row["lease_owner"])
+
     def reserve_creation(self, intent_id: str, *, owner: str) -> dict[str, Any]:
         """Write-ahead a task creation before invoking the desktop side effect."""
 

@@ -625,6 +625,7 @@ def claim_intent(args: argparse.Namespace) -> dict[str, Any]:
         "authorized": True,
         "claimed": True,
         "intentId": intent["intentId"],
+        "leaseOwner": args.owner,
         "key": intent["key"],
         "prompt": issue_prompt(intent["issueUrl"]),
         "decision": verdict.as_dict(),
@@ -663,10 +664,15 @@ def claim_intent(args: argparse.Namespace) -> dict[str, Any]:
     return result
 
 
+def _active_owner(store: RadarLedger, args: argparse.Namespace) -> str:
+    return getattr(args, "owner", None) or store.current_lease_owner(args.intent_id)
+
+
 def release_claim(args: argparse.Namespace) -> dict[str, Any]:
-    released = ledger(args.ledger).release_claim(
+    store = ledger(args.ledger)
+    released = store.release_claim(
         args.intent_id,
-        owner=args.owner,
+        owner=_active_owner(store, args),
         reason=args.reason,
     )
     if not released:
@@ -761,14 +767,16 @@ def write_task_context(store: RadarLedger, *, issue_url: str, thread_id: str, cw
 
 
 def creation_start(args: argparse.Namespace) -> dict[str, Any]:
-    result = ledger(args.ledger).reserve_creation(args.intent_id, owner=args.owner)
+    store = ledger(args.ledger)
+    result = store.reserve_creation(args.intent_id, owner=_active_owner(store, args))
     return {"ok": True} | result
 
 
 def creation_bind(args: argparse.Namespace) -> dict[str, Any]:
-    result = ledger(args.ledger).bind_creation_client(
+    store = ledger(args.ledger)
+    result = store.bind_creation_client(
         args.intent_id,
-        owner=args.owner,
+        owner=_active_owner(store, args),
         creation_token=args.creation_token,
         client_thread_id=args.client_thread_id,
     )
@@ -776,9 +784,10 @@ def creation_bind(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def creation_cancel(args: argparse.Namespace) -> dict[str, Any]:
-    ledger(args.ledger).cancel_creation(
+    store = ledger(args.ledger)
+    store.cancel_creation(
         args.intent_id,
-        owner=args.owner,
+        owner=_active_owner(store, args),
         creation_token=args.creation_token,
         reason=args.reason,
     )
@@ -804,7 +813,7 @@ def creation_abandon(args: argparse.Namespace) -> dict[str, Any]:
         raise RuntimeError("stored creation authorization is unavailable")
     store.abandon_creation(
         args.intent_id,
-        owner=args.owner,
+        owner=_active_owner(store, args),
         creation_token=handoff["creationToken"],
         client_thread_id=args.client_thread_id,
         reason=args.reason,
@@ -861,7 +870,7 @@ def commit_receipt(args: argparse.Namespace) -> dict[str, Any]:
         raise RuntimeError("thread origin mismatch")
     store.commit_dispatch(
         intent["intentId"],
-        owner=args.owner,
+        owner=_active_owner(store, args),
         thread_id=args.thread_id,
         project_id=args.project_id,
         worktree_path=str(worktree),
@@ -2159,11 +2168,11 @@ def main() -> int:
     claim.add_argument("--task-project-id")
     claim_release = subparsers.add_parser("claim-release")
     claim_release.add_argument("--intent-id", required=True)
-    claim_release.add_argument("--owner", required=True)
+    claim_release.add_argument("--owner")
     claim_release.add_argument("--reason", required=True)
     commit = subparsers.add_parser("commit")
     commit.add_argument("--intent-id", required=True)
-    commit.add_argument("--owner", required=True)
+    commit.add_argument("--owner")
     commit.add_argument("--thread-id", required=True)
     commit.add_argument("--project-id", required=True)
     commit.add_argument("--cwd", required=True)
@@ -2175,20 +2184,20 @@ def main() -> int:
     retry_dispatch_parser.add_argument("--reason", required=True)
     creation_start_parser = subparsers.add_parser("creation-start")
     creation_start_parser.add_argument("--intent-id", required=True)
-    creation_start_parser.add_argument("--owner", required=True)
+    creation_start_parser.add_argument("--owner")
     creation_bind_parser = subparsers.add_parser("creation-bind")
     creation_bind_parser.add_argument("--intent-id", required=True)
-    creation_bind_parser.add_argument("--owner", required=True)
+    creation_bind_parser.add_argument("--owner")
     creation_bind_parser.add_argument("--creation-token", required=True)
     creation_bind_parser.add_argument("--client-thread-id", required=True)
     creation_cancel_parser = subparsers.add_parser("creation-cancel")
     creation_cancel_parser.add_argument("--intent-id", required=True)
-    creation_cancel_parser.add_argument("--owner", required=True)
+    creation_cancel_parser.add_argument("--owner")
     creation_cancel_parser.add_argument("--creation-token", required=True)
     creation_cancel_parser.add_argument("--reason", required=True)
     creation_abandon_parser = subparsers.add_parser("creation-abandon")
     creation_abandon_parser.add_argument("--intent-id", required=True)
-    creation_abandon_parser.add_argument("--owner", required=True)
+    creation_abandon_parser.add_argument("--owner")
     creation_abandon_parser.add_argument("--client-thread-id", required=True)
     creation_abandon_parser.add_argument("--abandon-nonce", required=True)
     creation_abandon_parser.add_argument("--reason", required=True)
