@@ -1521,6 +1521,31 @@
     ],
     "why": "Issue is a real bug with clear root cause and workaround, but an existing PR #5742 directly addresses it and is technically complete, though it has failing CI. The deterministic gate is HUMAN_REVIEW, and maintainer confirmation is needed before starting a competing PR."
   },
+  "1fc76a6c53ea82bdc1d8ac28bb79a4c40e46e6b5257bb2813d3e2dc9041e4ae2": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "litellm/proxy/response_polling/background_streaming.py",
+      "litellm/proxy/common_request_processing.py"
+    ],
+    "risks": [
+      "Changing request=None may affect other background task behaviors; need to ensure disconnect handling is only disabled for background polling."
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Add regression test reproducing background:true with polling_via_cache=all and client disconnect before first chunk, asserting output is populated and status completed."
+    ],
+    "unknowns": [
+      "Whether an existing open PR already addresses this issue; maintainer preference on the proposed fix approach."
+    ],
+    "why": "Issue identifies a clear regression from PR #31499 with a proposed fix and reproduction steps, but open PR lookup timed out and related issue audit failed, so duplicate/competing work cannot be excluded. Maintainer approval or design confirmation is absent, and the fix touches core request processing paths."
+  },
   "20c7f520726b094abb49b75fecfbb7aceeb0ca83b0a9197bd3b6c32056e72b58": {
     "confidence": 0.6,
     "contradictions": [],

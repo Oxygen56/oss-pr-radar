@@ -236,6 +236,10 @@
       "seenAt": "2026-08-08T07:04:18.489442Z",
       "stateId": "2526ce0195ae240a20a6c70b5947af22c0a116c43dee05b75ce9e2d43dc0543b"
     },
+    "review|BerriAI/litellm#36275": {
+      "seenAt": "2026-08-08T09:25:11.972744Z",
+      "stateId": "bc22a18e4e356b0ec108ad09374d15bfead6ae70cac6e460f42aaadbe6c1a5a0"
+    },
     "review|DeusData/codebase-memory-mcp#1339": {
       "legacy": true,
       "seenAt": "2026-08-05T21:41:10.562886Z"
@@ -369,8 +373,8 @@
       "stateId": "e69e68c4795e72e0552cc1e9d3ac760af06a1e1855371c68fb934b66115bf072"
     },
     "review|huggingface/trl#6683": {
-      "seenAt": "2026-08-08T08:43:35.116338Z",
-      "stateId": "44bbe7ff67f48581c4f599c64ad782cf12edf9ff5725a4fa75428b296af26d58"
+      "seenAt": "2026-08-08T09:25:11.972744Z",
+      "stateId": "2344eff89de7890cd774abd815c9b5469b8820b1ee764b8e20b695e809ea05c1"
     },
     "review|infiniflow/ragflow#17941": {
       "seenAt": "2026-08-06T11:39:58.259121Z",
@@ -1205,7 +1209,7 @@
       "seenAt": "2026-08-06T10:09:13.778625Z"
     }
   },
-  "digest": "59e55810f99b0bd625903049fc340ac009d858f765728fb736f6f727fb51d2db",
+  "digest": "1b8eb69ae0d6722982e2461c173f12e5302307ecd07d8a326c674a69234e4afb",
   "events": [
     {
       "attempts": 1,
@@ -15957,9 +15961,69 @@
       "runId": "scan-20260808T090536Z-02784362fda2",
       "sentAt": "2026-08-08T09:08:34.510804Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "BerriAI/litellm#36275",
+        "huggingface/trl#6683"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "3627adfb6a5d5c7e7736b0ef4014e313d525dd04c4085275fa5099c4e129d6c8",
+          "key": "BerriAI/litellm#36275",
+          "kind": "review",
+          "stateId": "bc22a18e4e356b0ec108ad09374d15bfead6ae70cac6e460f42aaadbe6c1a5a0"
+        },
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "ebc5633819f2fb60f3f8d3d5575747db283f05b289227bd6a77c880fe9d06389",
+          "key": "huggingface/trl#6683",
+          "kind": "review",
+          "stateId": "2344eff89de7890cd774abd815c9b5469b8820b1ee764b8e20b695e809ea05c1"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#36275](https://github.com/BerriAI/litellm/issues/36275) [Bug]: /v1/responses with background:true returns completed but empty output when using polling_via_cache**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue identifies a clear regression from PR #31499 with a proposed fix and reproduction steps, but open PR lookup timed out and related issue audit failed, so duplicate/competing work cannot be excluded. Maintainer approval or design confirmation is absent, and the fix touches core request processing paths.\n改动：litellm/proxy/response_polling/background_streaming.py；litellm/proxy/common_request_processing.py\n验证：Add regression test reproducing background:true with polling_via_cache=all and client disconnect before first chunk, asserting output is populated and status completed.\n风险：Changing request=None may affect other background task behaviors; need to ensure disconnect handling is only disabled for background polling.\n竞争：open PR 检索不完整，需等待下轮重试后再判断碰撞\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 9，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[huggingface/trl#6683](https://github.com/huggingface/trl/issues/6683) examples/scripts/openenv/opencode.py is broken against current OpenEnv@main - every rollout scores \"unscorable\"**\n建议：WAIT_MAINTAINER | 分数：14\n价值：Issue identifies a concrete API break in OpenEnv causing silent unscorable rollouts, with a minimal two-line fix. However, an existing PR #6672 by a maintainer already addresses the same code path, and the issue explicitly requests maintainer confirmation before sending a PR. The deterministic gate is HUMAN_REVIEW, and the PR's technical completeness and overlap require maintainer assessment.\n改动：Update examples/scripts/openenv/opencode.py to use proxy_trace_path(config) and proxy_log_path(config) functions instead of removed constants.\n验证：Run the example end-to-end with a small model and fixed seed to verify rollouts are scored and rewards are non-trivial.；Add a regression test that checks the example imports and calls the correct OpenEnv API symbols.\n风险：Existing PR #6672 may already fix the issue; duplicating work or conflicting changes.；The fix depends on OpenEnv API stability; future changes could break again.\n竞争：发现 PR #6672 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 9，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-08T09:25:11.972744Z",
+      "eventId": "329bff0de76cb2910dcc726102addb0a52cc3be1809c417c404cd059e7b14af1",
+      "idempotencyKey": "329bff0de76cb2910dcc726102addb0a52cc3be1809c417c40",
+      "kind": "review",
+      "runId": "scan-20260808T092116Z-6dba18c47245",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-08T09:08:06.373837Z",
+  "generatedAt": "2026-08-08T09:25:12.336050Z",
   "newEventCount": 0,
   "version": "notification_outbox_v2"
 }
