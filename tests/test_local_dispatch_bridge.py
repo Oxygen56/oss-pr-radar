@@ -980,6 +980,87 @@ def test_cleanup_commit_removes_managed_bootstrap_context(monkeypatch, tmp_path)
     assert not bootstrap.exists()
 
 
+def test_restore_list_and_commit_require_actual_unarchive(monkeypatch, tmp_path):
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute("CREATE TABLE threads (id TEXT, archived INTEGER, title TEXT)")
+        connection.execute("INSERT INTO threads VALUES (?,?,?)", ("thread-1", 1, "[无价值] task"))
+
+    class Store:
+        committed = False
+
+        def restore_candidates(self):
+            if self.committed:
+                return []
+            return [
+                {
+                    "key": "a/b#1",
+                    "issueUrl": "https://github.com/a/b/issues/1",
+                    "threadId": "thread-1",
+                    "worktreePath": "/tmp/worktree",
+                    "restoreNonce": "nonce",
+                }
+            ]
+
+        def commit_restore(self, **_kwargs):
+            self.committed = True
+
+    store = Store()
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+
+    pending = MODULE.restore_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    assert pending["restore"][0]["threadId"] == "thread-1"
+    assert store.committed is False
+
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute("UPDATE threads SET archived=0 WHERE id='thread-1'")
+    result = MODULE.restore_commit(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            thread_id="thread-1",
+            restore_nonce="nonce",
+        )
+    )
+
+    assert result["ok"] is True
+    assert store.committed is True
+
+
+def test_restore_list_reconciles_already_unarchived_task(monkeypatch, tmp_path):
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute("CREATE TABLE threads (id TEXT, archived INTEGER, title TEXT)")
+        connection.execute("INSERT INTO threads VALUES (?,?,?)", ("thread-1", 0, "task"))
+
+    class Store:
+        committed = False
+
+        def restore_candidates(self):
+            if self.committed:
+                return []
+            return [
+                {
+                    "key": "a/b#1",
+                    "threadId": "thread-1",
+                    "restoreNonce": "nonce",
+                }
+            ]
+
+        def commit_restore(self, **_kwargs):
+            self.committed = True
+
+    store = Store()
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+
+    result = MODULE.restore_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert result["restore"] == []
+    assert result["reconciled"][0]["threadId"] == "thread-1"
+    assert store.committed is True
+
+
 def test_controller_ingests_workspace_no_go_without_child_ledger_access(tmp_path):
     store, worktree = registered_store(tmp_path)
     context_path = MODULE.write_task_context(

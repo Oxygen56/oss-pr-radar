@@ -570,6 +570,91 @@ def test_archived_thread_is_not_retitle_candidate_when_issue_is_released_again(t
     store.claim("intent-2", "worker")
 
     assert store.title_candidates() == []
+    assert store.restore_candidates() == []
+
+
+def test_archived_task_is_restored_when_lifecycle_recovers(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+        title_time="08-09 21:30",
+    )
+    store.record_stage("a/b#1", "AUDIT_NO_GO", reason="VALIDATION_INCOMPLETE")
+    title = store.title_candidates()[0]
+    store.commit_title(
+        thread_id="thread-1",
+        state="AUDIT_NO_GO",
+        nonce=title["titleNonce"],
+    )
+    cleanup = store.cleanup_candidates()[0]
+    store.commit_cleanup(thread_id="thread-1", nonce=cleanup["cleanupNonce"])
+
+    store.record_stage("a/b#1", "PR_OPEN", evidence={"prUrl": "https://example.test/pr/1"})
+
+    assert store.title_candidates() == []
+    restore = store.restore_candidates()[0]
+    assert restore["threadId"] == "thread-1"
+    assert restore["stage"] == "PR_OPEN"
+    store.commit_restore(thread_id="thread-1", nonce=restore["restoreNonce"])
+    assert store.restore_candidates() == []
+    recovered_title = store.title_candidates()[0]
+    assert recovered_title["titleState"] == "PR_OPEN"
+
+
+def test_restored_task_can_be_archived_again_after_a_new_no_go(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+        title_time="08-09 21:30",
+    )
+    store.record_stage("a/b#1", "AUDIT_NO_GO", reason="VALIDATION_INCOMPLETE")
+    first_title = store.title_candidates()[0]
+    store.commit_title(
+        thread_id="thread-1",
+        state="AUDIT_NO_GO",
+        nonce=first_title["titleNonce"],
+    )
+    first_cleanup = store.cleanup_candidates()[0]
+    store.commit_cleanup(thread_id="thread-1", nonce=first_cleanup["cleanupNonce"])
+
+    store.record_stage("a/b#1", "VALIDATION_PENDING")
+    restore = store.restore_candidates()[0]
+    store.commit_restore(thread_id="thread-1", nonce=restore["restoreNonce"])
+    pending_title = store.title_candidates()[0]
+    store.commit_title(
+        thread_id="thread-1",
+        state="VALIDATION_PENDING",
+        nonce=pending_title["titleNonce"],
+    )
+    store.record_stage("a/b#1", "AUDIT_NO_GO", reason="ISSUE_CLOSED")
+    second_title = store.title_candidates()[0]
+    store.commit_title(
+        thread_id="thread-1",
+        state="AUDIT_NO_GO",
+        nonce=second_title["titleNonce"],
+    )
+    second_cleanup = store.cleanup_candidates()[0]
+    store.commit_cleanup(thread_id="thread-1", nonce=second_cleanup["cleanupNonce"])
+
+    assert store.cleanup_candidates() == []
+    with store.connect() as connection:
+        archived_count = connection.execute(
+            "SELECT COUNT(*) FROM events WHERE opportunity_key='a/b#1' "
+            "AND event_type='THREAD_ARCHIVED'"
+        ).fetchone()[0]
+    assert archived_count == 2
 
 
 def test_no_go_revokes_task_context_publication_authorization(tmp_path):

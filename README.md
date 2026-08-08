@@ -206,6 +206,10 @@ repository origin, and worktree identity before committing a receipt. It retries
 empty task at most once through a write-ahead recovery receipt. It archives a
 task only after that task records `AUDIT_NO_GO` and its title has first been
 synchronized to the visible `[无价值]` lifecycle prefix. If asynchronous
+evidence later moves that same current task out of `AUDIT_NO_GO`, the controller
+first unarchives it through a fresh restore receipt, then synchronizes the new
+valuable lifecycle title before continuing publication. Historical archive
+events never make a task permanently invisible. If asynchronous
 worktree creation returns only a client ID, the controller can reconcile the
 unique prompt/origin/worktree match before the next lifecycle action. The
 creation request remains in durable `CREATING` state until that match is

@@ -24,7 +24,7 @@
 | Child task requests broad local access | Git-ignored workspace context/result protocol; controller alone owns external ledgers and publication |
 | Unsafe automatic PR | SubmitReady evidence, exact task identity, independent live broker, short-lived permit bound to commit and full PR payload |
 | Duplicate push/PR after timeout | Write-ahead effect record, exact remote reconciliation, no retry after ambiguity |
-| Accidental task archival | Only `AUDIT_NO_GO`, current unarchived task, fresh cleanup nonce, post-archive receipt |
+| Accidental task archival | Only `AUDIT_NO_GO`, current unarchived task, fresh cleanup nonce, post-archive receipt; recovered current tasks require a verified unarchive and restore receipt |
 | Secret leakage | Secrets only in Actions secret store, environment, or Keychain; never in reports, prompts, state, or logs |
 
 ## Explicit Non-Goals

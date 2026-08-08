@@ -173,8 +173,10 @@ real dispatch-failure alerts, PR lifecycle refresh, actionable existing-PR task
 follow-up, live
 claim/revalidation, write-ahead creation, single-project task creation, isolated worktree preparation, task
 receipt verification, workspace context sync, result ingestion, publication
-advancement, one-shot recovery, title synchronization, and `AUDIT_NO_GO`
-cleanup in that order. Valid pending intents are ordinary queue state and must
+advancement, one-shot recovery, stale-archive restoration, title synchronization,
+and `AUDIT_NO_GO` cleanup in that order. The controller verifies that a task is
+actually unarchived before committing the restore receipt, and verifies the exact
+visible title before committing title state. Valid pending intents are ordinary queue state and must
 not be treated as a failed run; publication canary state does not cap private
 task creation.
 `githubNaturalScheduleHealthy` refers only to GitHub Actions cron delivery;

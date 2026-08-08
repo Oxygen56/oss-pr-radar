@@ -1896,6 +1896,62 @@ def retry_blocked_publication(args: argparse.Namespace) -> dict[str, Any]:
     return {"ok": True, **result}
 
 
+def restore_list(args: argparse.Namespace) -> dict[str, Any]:
+    store = ledger(args.ledger)
+    connection = sqlite3.connect(THREAD_DB)
+    connection.row_factory = sqlite3.Row
+    pending: list[dict[str, Any]] = []
+    reconciled: list[dict[str, Any]] = []
+    blocked: list[dict[str, Any]] = []
+    try:
+        for candidate in store.restore_candidates():
+            row = connection.execute(
+                "SELECT archived,title FROM threads WHERE id=?",
+                (candidate["threadId"],),
+            ).fetchone()
+            if row is None:
+                blocked.append(candidate | {"reason": "thread_missing"})
+                continue
+            if int(row["archived"] or 0) == 0:
+                store.commit_restore(
+                    thread_id=candidate["threadId"],
+                    nonce=candidate["restoreNonce"],
+                )
+                reconciled.append(candidate | {"title": row["title"]})
+                continue
+            pending.append(candidate | {"title": row["title"]})
+    finally:
+        connection.close()
+    return {
+        "ok": not blocked,
+        "restore": pending,
+        "reconciled": reconciled,
+        "blocked": blocked,
+    }
+
+
+def restore_commit(args: argparse.Namespace) -> dict[str, Any]:
+    store = ledger(args.ledger)
+    candidates = {item["threadId"]: item for item in store.restore_candidates()}
+    candidate = candidates.get(args.thread_id)
+    if candidate is None or candidate["restoreNonce"] != args.restore_nonce:
+        raise RuntimeError("restore authorization is stale or invalid")
+    connection = sqlite3.connect(THREAD_DB)
+    try:
+        row = connection.execute(
+            "SELECT archived FROM threads WHERE id=?", (args.thread_id,)
+        ).fetchone()
+    finally:
+        connection.close()
+    if row is None or int(row[0] or 0) != 0:
+        raise RuntimeError("thread is still archived")
+    store.commit_restore(
+        thread_id=args.thread_id,
+        nonce=args.restore_nonce,
+    )
+    return {"ok": True, "threadId": args.thread_id}
+
+
 def cleanup_list(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
     candidates = store.cleanup_candidates()
@@ -2262,6 +2318,10 @@ def main() -> int:
     publication_retry_parser = subparsers.add_parser("publication-retry")
     publication_retry_parser.add_argument("--request-id", required=True)
     publication_retry_parser.add_argument("--expected-reason", required=True)
+    subparsers.add_parser("restore-list")
+    restore_commit_parser = subparsers.add_parser("restore-commit")
+    restore_commit_parser.add_argument("--thread-id", required=True)
+    restore_commit_parser.add_argument("--restore-nonce", required=True)
     cleanup_commit_parser = subparsers.add_parser("cleanup-commit")
     cleanup_commit_parser.add_argument("--thread-id", required=True)
     cleanup_commit_parser.add_argument("--cleanup-nonce", required=True)
@@ -2338,6 +2398,10 @@ def main() -> int:
         result = run_publication_queue(args)
     elif args.operation == "publication-retry":
         result = retry_blocked_publication(args)
+    elif args.operation == "restore-list":
+        result = restore_list(args)
+    elif args.operation == "restore-commit":
+        result = restore_commit(args)
     elif args.operation == "cleanup-commit":
         result = cleanup_commit(args)
     elif args.operation == "title-list":

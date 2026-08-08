@@ -65,7 +65,10 @@ timing are external labels, not the north-star metric.
 
 `AUDIT_NO_GO` is a terminal no-value outcome and is the only lifecycle state
 that authorizes automatic task archival. Archival remains blocked until the
-same task has first acknowledged its `[无价值]` title state. Shadow observations
+same task has first acknowledged its `[无价值]` title state. If later evidence
+recovers the current task to a valuable state, a separately verified restore
+receipt unarchives it before title synchronization resumes. Archive state is
+derived from the latest archive/restore event, not historical presence. Shadow observations
 do not enter the SubmitReady denominator.
 
 Visible task titles progress through `GO`, `本地修复就绪`, `存在发布请求`,

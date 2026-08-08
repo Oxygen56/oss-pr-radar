@@ -1010,12 +1010,13 @@ class RadarLedger:
                    FROM opportunities o JOIN intents i ON i.opportunity_key=o.key
                    WHERE i.thread_id IS NOT NULL
                      AND i.status IN ('DISPATCHED','COMPLETED','REJECTED')
-                     AND NOT EXISTS (
-                       SELECT 1 FROM events archived
-                       WHERE archived.opportunity_key=o.key
-                         AND archived.event_type='THREAD_ARCHIVED'
-                         AND archived.dedupe_key=i.thread_id
-                     )
+                     AND COALESCE((
+                       SELECT lifecycle.event_type FROM events lifecycle
+                       WHERE lifecycle.opportunity_key=o.key
+                         AND lifecycle.event_type IN ('THREAD_ARCHIVED','THREAD_RESTORED')
+                         AND json_extract(lifecycle.payload_json,'$.threadId')=i.thread_id
+                       ORDER BY lifecycle.id DESC LIMIT 1
+                     ),'THREAD_RESTORED')<>'THREAD_ARCHIVED'
                    ORDER BY o.updated_at"""
             ).fetchall()
         values = []
@@ -1054,6 +1055,65 @@ class RadarLedger:
                 "THREAD_TITLE_SYNCED",
                 f"{thread_id}:{state}",
                 {"threadId": thread_id, "titleState": state},
+                now,
+            )
+
+    def restore_candidates(self) -> list[dict[str, Any]]:
+        """Return current tasks whose archived UI state no longer matches lifecycle."""
+
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT o.key,o.title,o.stage,o.updated_at,o.issue_url,
+                          i.thread_id,i.worktree_path,i.title_time,
+                          archived.id AS archived_event_id
+                   FROM opportunities o JOIN intents i ON i.opportunity_key=o.key
+                   JOIN events archived ON archived.id=(
+                     SELECT lifecycle.id FROM events lifecycle
+                     WHERE lifecycle.opportunity_key=o.key
+                       AND lifecycle.event_type IN ('THREAD_ARCHIVED','THREAD_RESTORED')
+                       AND json_extract(lifecycle.payload_json,'$.threadId')=i.thread_id
+                     ORDER BY lifecycle.id DESC LIMIT 1
+                   )
+                   WHERE o.stage<>'AUDIT_NO_GO'
+                     AND i.thread_id IS NOT NULL
+                     AND i.status IN ('DISPATCHED','COMPLETED','REJECTED')
+                     AND i.rowid=(
+                       SELECT MAX(current.rowid) FROM intents current
+                       WHERE current.opportunity_key=o.key
+                     )
+                     AND archived.event_type='THREAD_ARCHIVED'
+                   ORDER BY o.updated_at"""
+            ).fetchall()
+        return [
+            {
+                "key": row["key"],
+                "title": row["title"],
+                "stage": row["stage"],
+                "issueUrl": row["issue_url"],
+                "threadId": row["thread_id"],
+                "worktreePath": row["worktree_path"],
+                "titleTime": row["title_time"],
+                "restoreNonce": sha256_text(
+                    f"{row['key']}|{row['thread_id']}|{row['stage']}|"
+                    f"{row['updated_at']}|{row['archived_event_id']}"
+                ),
+            }
+            for row in rows
+        ]
+
+    def commit_restore(self, *, thread_id: str, nonce: str) -> None:
+        candidates = {item["threadId"]: item for item in self.restore_candidates()}
+        candidate = candidates.get(thread_id)
+        if not candidate or candidate["restoreNonce"] != nonce:
+            raise LedgerError("restore authorization is stale or invalid")
+        now = iso_z(datetime.now(UTC))
+        with self.transaction() as connection:
+            self._event(
+                connection,
+                candidate["key"],
+                "THREAD_RESTORED",
+                nonce,
+                {"threadId": thread_id, "restoreNonce": nonce},
                 now,
             )
 
@@ -2754,12 +2814,13 @@ class RadarLedger:
                    FROM opportunities o JOIN intents i ON i.opportunity_key=o.key
                    WHERE o.stage='AUDIT_NO_GO' AND i.thread_id IS NOT NULL
                      AND i.title_synced_state='AUDIT_NO_GO'
-                     AND NOT EXISTS (
-                       SELECT 1 FROM events e
-                       WHERE e.opportunity_key=o.key
-                         AND e.event_type='THREAD_ARCHIVED'
-                         AND e.dedupe_key=i.thread_id
-                     )
+                     AND COALESCE((
+                       SELECT lifecycle.event_type FROM events lifecycle
+                       WHERE lifecycle.opportunity_key=o.key
+                         AND lifecycle.event_type IN ('THREAD_ARCHIVED','THREAD_RESTORED')
+                         AND json_extract(lifecycle.payload_json,'$.threadId')=i.thread_id
+                       ORDER BY lifecycle.id DESC LIMIT 1
+                     ),'THREAD_RESTORED')<>'THREAD_ARCHIVED'
                    ORDER BY o.updated_at"""
             ).fetchall()
         return [
@@ -2787,7 +2848,7 @@ class RadarLedger:
                 connection,
                 candidate["key"],
                 "THREAD_ARCHIVED",
-                thread_id,
+                nonce,
                 {"threadId": thread_id, "cleanupNonce": nonce},
                 now,
             )
