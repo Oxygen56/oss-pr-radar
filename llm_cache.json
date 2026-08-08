@@ -6150,6 +6150,32 @@
     ],
     "why": "The issue reports a clear user-visible bug with a reproducible API behavior, but the root cause is not identified and the related issue audit and open PR lookup failed, leaving uncertainty about duplicates and existing work. The deterministic gate requires HUMAN_REVIEW."
   },
+  "720dafaa2fe122d41285b9e71ac03cafc7d7259e9d3dedd42a481bc0bf35dbd3": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify _add_proxy_hooks to skip hooks requiring prisma_client when prisma_client is None",
+      "Add regression test in tests/test_litellm/proxy/utils/proxy_logging/test_lifecycle.py"
+    ],
+    "risks": [
+      "Potential maintainer preference for alternative fix approach",
+      "Enterprise hook behavior may be intentionally required even without DB"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Add unit test verifying prisma_client-requiring hook is not registered when prisma_client is None",
+      "Manual QA: DB-less proxy with Vertex credentials, run batch create curls, expect 200 and pollable batch id"
+    ],
+    "unknowns": [
+      "Open PR status and related issue status due to lookup timeouts"
+    ],
+    "why": "The issue provides a precise root cause and a concrete fix direction, but the deterministic gate requires HUMAN_REVIEW and open PR/related issue lookups timed out, so duplicate work cannot be excluded."
+  },
   "729cddf2ac7224f7195fd74fe2acd8d1325c21efe02d050156dd3d6a5445e03f": {
     "confidence": 0.7,
     "contradictions": [
@@ -7338,6 +7364,40 @@
       "Status of PR #7604's failed CI checks and whether maintainer will merge or request changes."
     ],
     "why": "Issue provides a clear root cause and repro, but a maintainer (roboomp) is actively investigating and has already submitted PR #7604 with a fix and regression tests. The PR has failed CI checks, so it may be weak, but the maintainer's involvement and existing PR make a new candidate premature until the PR is reviewed or closed."
+  },
+  "8bbf2c53df2caa1e03f26ec1571ec0e685657e5587c0fd1f8f1be34647b30c4e": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Some users report fixed in later versions, others still see issue",
+      "Workaround LLAMA_ARG_FIT=off works for some but not all"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix in llama.cpp graph scheduler to handle more split inputs or adjust memory fitting for Gemma4 small models",
+      "Possibly adjust Ollama's model loading parameters or memory fitting logic"
+    ],
+    "risks": [
+      "Fix may be in upstream llama.cpp, not Ollama",
+      "Memory fitting changes could affect other models",
+      "Draft PR may be abandoned"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 11,
+    "test_plan": [
+      "Reproduce with gemma4:e2b on a low-VRAM GPU (e.g., 4GB) and Ollama 0.30.4",
+      "Run with LLAMA_ARG_FIT=off to confirm workaround",
+      "Add regression test that loads gemma4:e2b with limited VRAM and verifies no crash"
+    ],
+    "unknowns": [
+      "Exact root cause in llama.cpp scheduler",
+      "Maintainer interest in fixing this specific issue",
+      "Whether upstream llama.cpp has a fix in progress"
+    ],
+    "why": "The issue reports a reproducible crash in llama.cpp's graph scheduler (GGML_ASSERT n_inputs < GGML_SCHED_MAX_SPLIT_INPUTS) when loading Gemma4 models on limited VRAM. The logs show the crash occurs during memory fitting (common_params_fit_impl) and involves model architecture and quantization. However, the root cause is not fully diagnosed; the existing PR #16831 is a draft and stale, and the issue lacks maintainer confirmation or a clear fix direction. The deterministic gate requires HUMAN_REVIEW, so we must wait for maintainer guidance."
   },
   "8bf1059197a6c3ad139c0e1bbfc286d6082ec5d433169535baa623ac7ce49097": {
     "confidence": 0.8,
@@ -9613,6 +9673,35 @@
     ],
     "why": "The issue provides a detailed root cause analysis and a concrete suggested fix, but a related PR #20499 is actively refactoring the tracing model, and a contributor has asked whether to stack work on it. This requires maintainer direction before implementation to avoid conflicting changes."
   },
+  "c1d70ac8a8e5f15a55021e0ec70bb4ad6d502a9ba4b3108647ee096f3e27e046": {
+    "confidence": 0.7,
+    "contradictions": [
+      "The issue claims the bug is in LiteLLM's conversion, but the root cause is not confirmed; the candidate's algorithm_evidence suggests parameter_efficient_finetuning and distributed_training, which are unrelated to this streaming bug."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Anthropic SSE conversion logic in litellm to preserve tool_use blocks and input_json_delta events",
+      "stream_chunk_builder aggregation to include tool_calls"
+    ],
+    "risks": [
+      "The bug may be in the upstream Anthropic SDK or in LiteLLM's internal chunk format, requiring maintainer guidance",
+      "The fix may affect other streaming paths or event shapes, requiring broader integration tests"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "test_plan": [
+      "Create a deterministic regression test using a sanitized native SSE fixture that includes thinking, text, and tool_use blocks, and assert that litellm.completion(stream=True) yields chunks with tool_calls and that stream_chunk_builder preserves the tool call."
+    ],
+    "unknowns": [
+      "Open PR status and related issue status are unknown due to lookup failures, so duplicate work cannot be ruled out",
+      "The exact code path where tool_use is dropped is not identified",
+      "Maintainer confirmation on the expected fix approach is missing"
+    ],
+    "why": "The issue describes a concrete streaming bug in LiteLLM's Anthropic adapter where tool_use is lost during SSE conversion. It provides a clear reproduction and expected behavior, but the root cause is not identified and the track is llm_algorithm, which requires a concrete algorithmic mechanism. The supplied evidence lacks a specific training objective, model mechanism, or numerical method; it is an SDK integration bug. The open PR and related issue lookups failed, so duplicate work cannot be excluded. The gate decision is HUMAN_REVIEW, and the candidate's own category is WAIT_MAINTAINER."
+  },
   "c301810d47b79c21e5efba86a467a5fcdc47ceae3e488cb41b3111a430365572": {
     "confidence": 0.7,
     "contradictions": [
@@ -10758,6 +10847,32 @@
       "Maintainer has not confirmed the bug or provided design direction"
     ],
     "why": "Issue reports a runtime error with a complex multi-GPU configuration but lacks a clear root cause, minimal reproduction, or maintainer confirmation. The algorithm evidence is superficial (matched terms like 'attention' and 'tensor parallel') and does not establish a concrete algorithmic defect. Open PR and related issue lookups timed out, so duplicate work cannot be excluded."
+  },
+  "d7782a7af9fa02faaef68dbc3ec04a0b69a7c5255f744b039b3460a3e9b4f9ff": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify _run_lifecycle() in mcp_stateful_client.py to normalize and pass read_timeout_seconds to ClientSession for both HTTP and stdio clients."
+    ],
+    "risks": [
+      "Changing timeout wiring may affect existing behavior for users relying on indefinite reads; but the configured default is 300s, so impact is limited.",
+      "Potential interaction with other MCP lifecycle changes in related PRs (#6586, #6483) that may need coordination."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add unit test asserting ClientSession constructor receives the configured timeout for both client types.",
+      "Add integration-style test using in-memory SDK streams where server never responds to list_tools, verifying a terminal McpError is raised within the configured timeout."
+    ],
+    "unknowns": [
+      "No maintainer confirmation on preferred fix approach, but the issue is clearly actionable and no competing PR exists."
+    ],
+    "why": "Issue reports a user-visible bug where transient MCP transport failure leaves the active conversation permanently pending. A contributor reproduced the root cause on current main: the configured read timeout is never passed to the MCP SDK ClientSession, so in-flight requests can hang indefinitely. The fix is a small, well-scoped change with a clear regression test path."
   },
   "d7a04bdb4def010444f45071371431ed885071b0752c9868cfdba05f2a917e85": {
     "confidence": 0.8,
