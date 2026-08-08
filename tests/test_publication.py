@@ -273,6 +273,31 @@ def test_broker_allows_fast_forward_update_of_its_exact_existing_pr(monkeypatch,
     assert result["granted"] is True
     assert result["audit"]["evidence"]["publicationKind"] == "PR_UPDATE"
 
+    push = store.publication_effect(
+        permit_id=result["permit"]["permit_id"],
+        action="push",
+        request_digest="push-request",
+    )
+    store.complete_publication_effect(
+        push["effect_id"],
+        status="SUCCEEDED",
+        result={"ok": True, "remoteSha": current},
+    )
+
+    class PushedClient(UpdateClient):
+        def pull_request(self, repo, number):
+            value = super().pull_request(repo, number)
+            value["head"]["sha"] = current
+            return value
+
+    post_push = publication.audit_publication_request(
+        store,
+        update["request_id"],
+        client=PushedClient(),
+        expected_existing_pr_head=current,
+    )
+    assert post_push.status == "ALLOW"
+
 
 def test_evidence_digest_drift_blocks_publication(monkeypatch, tmp_path):
     store, request, evidence_path = prepared_request(tmp_path)

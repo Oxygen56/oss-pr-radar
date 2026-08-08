@@ -60,6 +60,9 @@ class ActiveStore:
     def rearm_pr_followup_after_publication_drift(self, request_id, *, reason):
         self.rearmed.append((request_id, reason))
 
+    def publication_action_succeeded(self, _request_id, *, action):
+        return action == "push"
+
 
 def pr_args(tmp_path: Path) -> SimpleNamespace:
     body = tmp_path / "body.md"
@@ -220,6 +223,32 @@ def test_create_pr_update_reuses_exact_existing_pr_without_creating_another(monk
     assert result["ok"] is True
     assert result["prUrl"] == "https://github.com/example/project/pull/2"
     assert store.succeeded[0]["pr_url"] == result["prUrl"]
+
+
+def test_post_push_recheck_accepts_the_permitted_target_head(monkeypatch):
+    store = ActiveStore()
+    captured = {}
+    monkeypatch.setattr(
+        MODULE,
+        "permit_request",
+        lambda *_args: {"publicationKind": "PR_UPDATE", "commitSha": "b" * 40},
+    )
+
+    def audit(_store, request_id, *, expected_existing_pr_head=None):
+        captured.update(
+            request_id=request_id,
+            expected_existing_pr_head=expected_existing_pr_head,
+        )
+        return SimpleNamespace(status="ALLOW", reason="LIVE_PUBLICATION_GATES_PASSED")
+
+    monkeypatch.setattr(MODULE, "audit_publication_request", audit)
+
+    MODULE.recheck_new_effect(store, {"request_id": "request-1"}, "effect-1")
+
+    assert captured == {
+        "request_id": "request-1",
+        "expected_existing_pr_head": "b" * 40,
+    }
 
 
 def test_push_allows_only_fast_forward_update_of_exact_existing_pr(monkeypatch, tmp_path):

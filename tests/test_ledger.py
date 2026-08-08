@@ -1002,3 +1002,83 @@ def test_pr_followup_is_bound_to_existing_task_and_sent_once(tmp_path):
     store.import_pr_followups(state)
     rearmed = store.pr_followup_candidates()[0]
     assert rearmed["wakeDigest"] != previous_wake
+
+
+def test_post_push_confirmation_recovers_legacy_head_drift_failure(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    now = iso_z(datetime.now(UTC))
+    request_id = "request-update"
+    permit_id = "permit-update"
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO publication_requests
+               (request_id,opportunity_key,thread_id,commit_sha,branch,worktree_path,
+                evidence_digest,status,request_json,created_at,updated_at)
+               VALUES (?,?,?,?,?,?,?,'GRANTED',?,?,?)""",
+            (
+                request_id,
+                "a/b#1",
+                "thread-1",
+                "b" * 40,
+                "fix/1-runtime",
+                "/tmp/worktree",
+                "evidence",
+                json.dumps({"publicationKind": "PR_UPDATE", "commitSha": "b" * 40}),
+                now,
+                now,
+            ),
+        )
+        connection.execute(
+            """INSERT INTO publication_permits
+               (permit_id,request_id,issue_url,commit_sha,branch,status,expires_at,
+                evidence_json,created_at,updated_at)
+               VALUES (?,?,?,?,?,'ACTIVE',?,'{}',?,?)""",
+            (
+                permit_id,
+                request_id,
+                "https://github.com/a/b/issues/1",
+                "b" * 40,
+                "fix/1-runtime",
+                iso_z(datetime.now(UTC) + timedelta(minutes=10)),
+                now,
+                now,
+            ),
+        )
+    push = store.publication_effect(
+        permit_id=permit_id,
+        action="push",
+        request_digest="push-request",
+    )
+    store.complete_publication_effect(
+        push["effect_id"],
+        status="SUCCEEDED",
+        result={"ok": True, "remoteSha": "b" * 40},
+    )
+    confirmation = store.publication_effect(
+        permit_id=permit_id,
+        action="create_pr",
+        request_digest="confirmation-request",
+    )
+    store.complete_publication_effect(
+        confirmation["effect_id"],
+        status="FAILED",
+        result={
+            "ok": False,
+            "reason": "LIVE_RECHECK_FAILED",
+            "detail": "EXISTING_PR_HEAD_DRIFT",
+        },
+    )
+    store.block_publication_request(request_id, "EXISTING_PR_HEAD_DRIFT")
+
+    assert [item["request_id"] for item in store.publication_work_items()] == [request_id]
+    recovered = store.prepare_post_push_reconciliation(request_id)
+
+    assert recovered["permit_id"] == permit_id
+    assert store.publication_request(request_id)["status"] == "GRANTED"
+    effect = store.publication_effect_by_request(
+        permit_id=permit_id,
+        action="create_pr",
+        request_digest="confirmation-request",
+    )
+    assert effect["status"] == "RECONCILE_REQUIRED"

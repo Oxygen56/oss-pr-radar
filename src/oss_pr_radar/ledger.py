@@ -1859,9 +1859,21 @@ class RadarLedger:
 
         with self.connect() as connection:
             rows = connection.execute(
-                """SELECT * FROM publication_requests
-                   WHERE status IN ('PENDING','GRANTED')
-                   ORDER BY created_at"""
+                """SELECT r.* FROM publication_requests r
+                   WHERE r.status IN ('PENDING','GRANTED') OR (
+                     r.status='BLOCKED'
+                     AND EXISTS (
+                       SELECT 1 FROM publication_permits p
+                       JOIN publication_effects push ON push.permit_id=p.permit_id
+                       JOIN publication_effects confirm ON confirm.permit_id=p.permit_id
+                       WHERE p.request_id=r.request_id
+                         AND push.action='push' AND push.status='SUCCEEDED'
+                         AND confirm.action='create_pr' AND confirm.status='FAILED'
+                         AND confirm.result_json LIKE '%\"reason\":\"LIVE_RECHECK_FAILED\"%'
+                         AND confirm.result_json LIKE '%\"detail\":\"EXISTING_PR_HEAD_DRIFT\"%'
+                     )
+                   )
+                   ORDER BY r.created_at"""
             ).fetchall()
         return [dict(row) | {"request": json.loads(row["request_json"])} for row in rows]
 
@@ -2213,6 +2225,108 @@ class RadarLedger:
                 "result_json": "{}",
                 "created": True,
             }
+
+    def publication_action_succeeded(self, request_id: str, *, action: str) -> bool:
+        with self.connect() as connection:
+            row = connection.execute(
+                """SELECT 1 FROM publication_permits p
+                   JOIN publication_effects e ON e.permit_id=p.permit_id
+                   WHERE p.request_id=? AND e.action=? AND e.status='SUCCEEDED'
+                   LIMIT 1""",
+                (request_id, action),
+            ).fetchone()
+        return row is not None
+
+    def prepare_post_push_reconciliation(self, request_id: str) -> dict[str, Any] | None:
+        """Resume exact-PR confirmation after its branch update already succeeded."""
+
+        current = datetime.now(UTC)
+        now = iso_z(current)
+        with self.transaction() as connection:
+            request_row = connection.execute(
+                "SELECT * FROM publication_requests WHERE request_id=?",
+                (request_id,),
+            ).fetchone()
+            if request_row is None or request_row["status"] == "CONSUMED":
+                return None
+            try:
+                request = json.loads(request_row["request_json"])
+            except json.JSONDecodeError:
+                return None
+            if request.get("publicationKind") != "PR_UPDATE":
+                return None
+            permit = connection.execute(
+                """SELECT * FROM publication_permits WHERE request_id=?
+                   ORDER BY updated_at DESC LIMIT 1""",
+                (request_id,),
+            ).fetchone()
+            if permit is None:
+                return None
+            pushed = connection.execute(
+                """SELECT 1 FROM publication_effects
+                   WHERE permit_id=? AND action='push' AND status='SUCCEEDED'
+                   LIMIT 1""",
+                (permit["permit_id"],),
+            ).fetchone()
+            if pushed is None:
+                return None
+            confirmation = connection.execute(
+                """SELECT * FROM publication_effects
+                   WHERE permit_id=? AND action='create_pr'
+                   ORDER BY updated_at DESC LIMIT 1""",
+                (permit["permit_id"],),
+            ).fetchone()
+            if confirmation is not None and confirmation["status"] == "FAILED":
+                try:
+                    failure = json.loads(confirmation["result_json"])
+                except json.JSONDecodeError:
+                    return None
+                if not (
+                    failure.get("reason") == "LIVE_RECHECK_FAILED"
+                    and failure.get("detail") == "EXISTING_PR_HEAD_DRIFT"
+                ):
+                    return None
+                connection.execute(
+                    """UPDATE publication_effects SET status='RECONCILE_REQUIRED',updated_at=?
+                       WHERE effect_id=?""",
+                    (now, confirmation["effect_id"]),
+                )
+            elif confirmation is not None and confirmation["status"] not in {
+                "ATTEMPTED",
+                "RECONCILE_REQUIRED",
+            }:
+                return None
+            if confirmation is not None and confirmation["status"] == "ATTEMPTED":
+                connection.execute(
+                    """UPDATE publication_effects SET status='RECONCILE_REQUIRED',updated_at=?
+                       WHERE effect_id=?""",
+                    (now, confirmation["effect_id"]),
+                )
+            if confirmation is None:
+                expires_at = iso_z(current + timedelta(minutes=10))
+                connection.execute(
+                    """UPDATE publication_permits SET status='ACTIVE',expires_at=?,updated_at=?
+                       WHERE permit_id=?""",
+                    (expires_at, now, permit["permit_id"]),
+                )
+            connection.execute(
+                """UPDATE publication_requests SET status='GRANTED',reason=?,updated_at=?
+                   WHERE request_id=?""",
+                ("POST_PUSH_RECONCILIATION", now, request_id),
+            )
+            self._event(
+                connection,
+                request_row["opportunity_key"],
+                "POST_PUSH_RECONCILIATION",
+                request_id,
+                {"requestId": request_id},
+                now,
+            )
+            refreshed = connection.execute(
+                "SELECT * FROM publication_permits WHERE permit_id=?",
+                (permit["permit_id"],),
+            ).fetchone()
+        return dict(refreshed) if refreshed else None
 
     def tracked_pull_requests(self) -> list[dict[str, Any]]:
         with self.connect() as connection:

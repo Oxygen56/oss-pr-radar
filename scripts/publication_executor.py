@@ -151,7 +151,17 @@ def ensure_permit(
 
 
 def recheck_new_effect(store: RadarLedger, permit: dict[str, Any], effect_id: str) -> None:
-    audit = audit_publication_request(store, permit["request_id"])
+    request = permit_request(store, permit)
+    expected_head = None
+    if request.get("publicationKind") == "PR_UPDATE" and store.publication_action_succeeded(
+        str(permit["request_id"]), action="push"
+    ):
+        expected_head = str(request.get("commitSha") or "")
+    audit = audit_publication_request(
+        store,
+        permit["request_id"],
+        expected_existing_pr_head=expected_head,
+    )
     if audit.status == "ALLOW":
         return
     store.complete_publication_effect(

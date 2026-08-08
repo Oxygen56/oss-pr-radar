@@ -1348,6 +1348,9 @@ def test_privileged_controller_runs_granted_publication_queue(monkeypatch, tmp_p
                 }
             ]
 
+        def prepare_post_push_reconciliation(self, _request_id):
+            return None
+
     monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
     monkeypatch.setattr(
         MODULE,
@@ -1372,6 +1375,27 @@ def test_privileged_controller_runs_granted_publication_queue(monkeypatch, tmp_p
     assert result["published"][0]["prUrl"] == "https://github.com/a/b/pull/2"
     assert [call[0] for call in calls] == ["push", "create-pr"]
     assert all(call[2] == ledger_path for call in calls)
+
+
+def test_publication_queue_returns_immediately_when_another_executor_holds_lock(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(
+        MODULE.fcntl,
+        "flock",
+        lambda *_args: (_ for _ in ()).throw(BlockingIOError()),
+    )
+
+    result = MODULE.run_publication_queue(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert result == {
+        "ok": True,
+        "busy": True,
+        "published": [],
+        "pending": [],
+        "blocked": [],
+        "errors": [],
+    }
 
 
 def test_task_context_self_reconciles_exact_async_handoff(monkeypatch, tmp_path):

@@ -204,6 +204,7 @@ def audit_publication_request(
     request_id: str,
     *,
     client: GitHubClient | None = None,
+    expected_existing_pr_head: str | None = None,
 ) -> PublicationAudit:
     row = store.publication_request(request_id)
     if not row:
@@ -266,8 +267,14 @@ def audit_publication_request(
     if publication_kind == "PR_UPDATE":
         existing_url = str(request.get("existingPrUrl") or "")
         previous_commit = str(request.get("previousCommitSha") or "")
+        expected_head = expected_existing_pr_head or previous_commit
         pr_match = PR_URL.fullmatch(existing_url)
-        if not pr_match or pr_match.group(1).casefold() != repo.casefold() or not previous_commit:
+        if (
+            not pr_match
+            or pr_match.group(1).casefold() != repo.casefold()
+            or not previous_commit
+            or expected_head not in {previous_commit, str(request.get("commitSha") or "")}
+        ):
             return PublicationAudit("BLOCK", "PR_UPDATE_BINDING_INVALID", request_id, {})
         try:
             existing_pr = github.pull_request(repo, int(pr_match.group(2)))
@@ -280,7 +287,7 @@ def audit_publication_request(
         if (
             str(existing_pr.get("state") or "").casefold() != "open"
             or str(existing_pr.get("html_url") or "") != existing_url
-            or str(head.get("sha") or "") != previous_commit
+            or str(head.get("sha") or "") != expected_head
             or str(head.get("ref") or "") != request.get("branch")
             or head_owner.casefold() != publication["headOwner"].casefold()
         ):
@@ -288,7 +295,7 @@ def audit_publication_request(
                 "BLOCK",
                 "EXISTING_PR_HEAD_DRIFT",
                 request_id,
-                {"existingPrUrl": existing_url, "previousCommitSha": previous_commit},
+                {"existingPrUrl": existing_url, "expectedCommitSha": expected_head},
             )
         expected_actor = os.environ.get("RADAR_GITHUB_ACTOR", "Oxygen56").casefold()
         assignees = evidence.issue.get("assignees") or []

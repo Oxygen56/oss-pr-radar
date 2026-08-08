@@ -1706,7 +1706,17 @@ def run_publication_queue(args: argparse.Namespace) -> dict[str, Any]:
     lock_path = Path(args.ledger).with_suffix(".publication.lock")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_path.open("a+", encoding="utf-8") as lock:
-        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return {
+                "ok": True,
+                "busy": True,
+                "published": [],
+                "pending": [],
+                "blocked": [],
+                "errors": [],
+            }
         return _run_publication_queue_unlocked(args)
 
 
@@ -1720,24 +1730,27 @@ def _run_publication_queue_unlocked(args: argparse.Namespace) -> dict[str, Any]:
         request_id = str(item["request_id"])
         request = item["request"]
         try:
-            broker = broker_publication_request(store, request_id)
-            if broker.get("pending"):
-                pending.append(
-                    {
-                        "requestId": request_id,
-                        "reason": (broker.get("audit") or {}).get("reason"),
-                    }
-                )
-                continue
-            if not broker.get("granted"):
-                blocked.append(
-                    {
-                        "requestId": request_id,
-                        "reason": (broker.get("audit") or {}).get("reason"),
-                    }
-                )
-                continue
-            permit = broker["permit"]
+            permit = store.prepare_post_push_reconciliation(request_id)
+            post_push_reconciliation = permit is not None
+            if permit is None:
+                broker = broker_publication_request(store, request_id)
+                if broker.get("pending"):
+                    pending.append(
+                        {
+                            "requestId": request_id,
+                            "reason": (broker.get("audit") or {}).get("reason"),
+                        }
+                    )
+                    continue
+                if not broker.get("granted"):
+                    blocked.append(
+                        {
+                            "requestId": request_id,
+                            "reason": (broker.get("audit") or {}).get("reason"),
+                        }
+                    )
+                    continue
+                permit = broker["permit"]
             publication = request["publication"]
             issue_url = str(request["issueUrl"])
             match = ISSUE_URL.match(issue_url)
@@ -1746,7 +1759,6 @@ def _run_publication_queue_unlocked(args: argparse.Namespace) -> dict[str, Any]:
             repo = match.group(1)
             worktree = Path(request["worktreePath"]).resolve()
             head_owner = str(publication["headOwner"])
-            remote = ensure_fork_remote(worktree, repo, head_owner)
             common = [
                 "--permit-id",
                 str(permit["permit_id"]),
@@ -1761,7 +1773,15 @@ def _run_publication_queue_unlocked(args: argparse.Namespace) -> dict[str, Any]:
                 "--head-owner",
                 head_owner,
             ]
-            push_result = _executor("push", [*common, "--remote", remote], ledger_path=args.ledger)
+            push_result = (
+                {"reconciled": True}
+                if post_push_reconciliation
+                else _executor(
+                    "push",
+                    [*common, "--remote", ensure_fork_remote(worktree, repo, head_owner)],
+                    ledger_path=args.ledger,
+                )
+            )
             pr_result = _executor(
                 "create-pr",
                 [
