@@ -13,8 +13,8 @@ CLAIM_RE = re.compile(
     r"|i can\s+(?:take|claim|work on|investigate|implement|prepare|open|submit|send|try)"
     r"|can (?:you )?assign (?:this|it) to me"
     r"|please assign (?:this|it) to me"
-    r"|working on this|already working on this|have (?:a )?(?:patch|fix|pr)"
-    r"|(?:patch|fix|pr) (?:is )?(?:ready|in progress)"
+    r"|working on this|already working on this|have (?:a )?(?:patch(?:es)?|fix(?:es)?|prs?)"
+    r"|(?:patch(?:es)?|fix(?:es)?|prs?) (?:is |are )?(?:ready|in progress)"
     r"|happy to contribute|plan(?:ning)? to (?:work|implement|submit|open)"
     r")\b",
     re.I,
@@ -82,11 +82,26 @@ def _body(comment: dict[str, Any]) -> str:
 
 
 def detect_claims(
-    comments: Iterable[dict[str, Any]], *, current_actor: str | None = None
+    comments: Iterable[dict[str, Any]],
+    *,
+    current_actor: str | None = None,
+    issue: dict[str, Any] | None = None,
 ) -> list[ClaimSignal]:
     actor = (current_actor or "").casefold()
     signals: list[ClaimSignal] = []
-    for comment in comments:
+    sources = list(comments)
+    if issue:
+        sources.insert(
+            0,
+            {
+                "body": issue.get("body"),
+                "user": issue.get("user") or issue.get("author"),
+                "author_association": issue.get("author_association")
+                or issue.get("authorAssociation"),
+                "created_at": issue.get("created_at") or issue.get("createdAt"),
+            },
+        )
+    for comment in sources:
         author = _author(comment)
         if not author or author.casefold() == actor or author.casefold().endswith("[bot]"):
             continue
@@ -94,17 +109,22 @@ def detect_claims(
         if not body:
             continue
         kind = ""
-        if CONDITIONAL_CLAIM_RE.search(body):
+        match = CONDITIONAL_CLAIM_RE.search(body)
+        if match:
             kind = "conditional_claim"
-        elif CLAIM_RE.search(body):
+        else:
+            match = CLAIM_RE.search(body)
+        if match and not kind:
             kind = "active_claim"
         if kind:
+            excerpt_start = max(0, match.start() - 80)
+            excerpt_end = min(len(body), match.end() + 120)
             signals.append(
                 ClaimSignal(
                     author=author,
                     created_at=_created(comment),
                     kind=kind,
-                    excerpt=" ".join(body.split())[:240],
+                    excerpt=" ".join(body[excerpt_start:excerpt_end].split())[:240],
                     association=_association(comment),
                 )
             )

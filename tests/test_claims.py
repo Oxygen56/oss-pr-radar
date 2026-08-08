@@ -29,6 +29,23 @@ def test_own_and_bot_comments_do_not_block():
     assert signals == []
 
 
+def test_issue_author_with_ready_fix_branches_is_an_active_claim():
+    signals = detect_claims(
+        [],
+        current_actor="Oxygen56",
+        issue={
+            "body": "I have fixes for all three, each on its own branch, and can open PRs.",
+            "user": {"login": "reporter"},
+            "author_association": "NONE",
+            "created_at": "2026-08-08T04:30:00Z",
+        },
+    )
+
+    assert signals[0].author == "reporter"
+    assert signals[0].kind == "active_claim"
+    assert "fixes for all three" in signals[0].excerpt
+
+
 def test_maintainer_approval_requires_privileged_association():
     assert detect_maintainer_approval([comment("Please open a PR for this", association="MEMBER")])
     assert not detect_maintainer_approval(

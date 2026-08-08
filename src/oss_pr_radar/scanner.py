@@ -404,7 +404,7 @@ ACTIVE_RE = re.compile(
     r"(?:reopen|reopening|restore) (?:pr\s*)?#\d+|"
     r"existing (?:repair|patch|fix) in (?:pr\s*)?#\d+|"
     r"(?:patch|fix)(?: plus (?:a )?regression test)? (?:is )?ready|"
-    r"(?:have|prepared) (?:a )?(?:focused )?(?:patch|fix)|"
+    r"(?:have|prepared) (?:a )?(?:focused )?(?:patch(?:es)?|fix(?:es)?)|"
     r"take the implementation|have (?:a )?pr up|"
     r"(?:i(?:['’]ll| will)|we(?:['’]ll| will)).{0,100}(?:implement|prepare|open|submit|send|"
     r"add (?:a )?(?:regression )?test|put up).{0,80}(?:fix|patch|pr|pull request|test)?|"
@@ -3123,6 +3123,7 @@ class Radar:
         claims = detect_claims(
             comments,
             current_actor=os.environ.get("RADAR_GITHUB_ACTOR", "Oxygen56"),
+            issue=issue,
         )
         if ACTIVE_RE.search(body) or claims:
             return None, "someone_active"

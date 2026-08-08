@@ -120,7 +120,11 @@ def collect_evidence(
         issue_title=str(issue.get("title") or ""),
         pull_requests=enriched_prs,
     )
-    claim_signals = detect_claims(comments, current_actor=current_actor)
+    claim_signals = detect_claims(
+        comments,
+        current_actor=current_actor,
+        issue=issue,
+    )
     approvals = detect_maintainer_approval(comments)
     text = "\n".join(
         [str(issue.get("title") or ""), str(issue.get("body") or "")]

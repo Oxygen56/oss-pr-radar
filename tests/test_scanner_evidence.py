@@ -230,6 +230,39 @@ def test_conditional_claim_blocks_cloud_candidate(tmp_path):
     assert reason == "someone_active"
 
 
+def test_issue_author_ready_fix_branches_block_cloud_candidate(tmp_path):
+    radar = Radar(
+        datetime.now(UTC),
+        2,
+        tmp_path / "seen.json",
+        "",
+        dry_run=True,
+    )
+    base = {
+        "repo": "example/project",
+        "num": 1,
+        "title": "Multi-output rollout corrupts trajectories",
+        "url": "https://github.com/example/project/issues/1",
+        "_explicit_recheck": True,
+    }
+    issue = {
+        "state": "open",
+        "title": base["title"],
+        "body": (
+            "Three reproducible runtime bugs. I have fixes for all three, "
+            "each on its own branch with a regression test, and can open PRs."
+        ),
+        "labels": [{"name": "bug"}],
+        "assignees": [],
+        "user": {"login": "reporter"},
+    }
+
+    candidate, reason = radar.score_issue(base, issue, [])
+
+    assert candidate is None
+    assert reason == "someone_active"
+
+
 def test_comment_fetch_failure_is_exposed(monkeypatch, tmp_path):
     radar = Radar(
         datetime.now(UTC),
