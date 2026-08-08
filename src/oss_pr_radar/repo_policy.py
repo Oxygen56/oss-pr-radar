@@ -51,6 +51,7 @@ AI_DISCLOSURE_RE = re.compile(
     r"(?:pull requests?|prs?).{0,100}(?:created|generated)\s+by\s+(?:an?\s+)?"
     r"(?:automated|coding|ai)\s+agents?.{0,160}"
     r"(?:add|include|specify|state).{0,80}(?:tool name|from\s+<tool name>)|"
+    r"(?:^|\n)\s*AGENT:\s*.{0,240}\bAI\s*/\s*LLM\s+agents?\s*:|"
     r"(?:new\s+)?branches?\s+(?:should|must|are required to)\s+use\s+"
     r"(?:the\s+)?[`'\"]?codex/",
     re.I | re.S,
@@ -89,7 +90,14 @@ ASSIGNMENT_RE = re.compile(
     r"\bfor\s+(?:all\s+)?other\s+issues\b.{0,100}\b(?:please\s+)?"
     r"(?:kindly\s+)?ask\b.{0,60}\bbefore\s+contribut|"
     r"\b(?:ask|check|confirm)\s+(?:with\s+)?(?:the\s+)?maintainers?\b"
-    r".{0,80}\bbefore\s+(?:contribut|implement|start)",
+    r".{0,80}\bbefore\s+(?:contribut|implement|start)|"
+    r"(?:do not|don['’]?t|must not).{0,160}"
+    r"(?:begin|start|implement|open\s+(?:a\s+)?(?:pull request|pr)).{0,180}"
+    r"(?:until|unless).{0,100}(?:issue\s+)?(?:has\s+)?(?:reached\s+)?"
+    r"(?:status\s+)?[`* ]*ready\b|"
+    r"pull requests?.{0,180}(?:do not|don['’]?t).{0,100}"
+    r"(?:implement|link).{0,100}(?:a\s+)?ready issue.{0,100}"
+    r"(?:will be closed|are closed)",
     re.I | re.S,
 )
 NO_UNSOLICITED_RE = re.compile(

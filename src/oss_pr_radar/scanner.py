@@ -558,6 +558,10 @@ SECURITY_SENSITIVE_RE = re.compile(
     r"indirect prompt injection|unauthorized (?:code )?execution)\b",
     re.I,
 )
+SECURITY_LABEL_RE = re.compile(
+    r"\b(?:security|secrets?|vulnerabilit(?:y|ies)|cve)\b",
+    re.I,
+)
 LOW_IMPACT_SELF_ASSESSMENT_RE = re.compile(
     r"(?:^|\n)\s*(?:#{1,6}\s*)?impact\s*[:\-–—]?\s*(?:low|minor|negligible)\b|"
     r"(?:^|\n)\s*(?:#{1,6}\s*)?priority(?:\s+note)?\s*[:\-–—]?\s*"
@@ -3044,7 +3048,9 @@ class Radar:
             return None, "low_value_label"
         if TRIVIAL_RE.search(title + "\n" + body[:1500]):
             return None, "trivial"
-        if SECURITY_SENSITIVE_RE.search(title + "\n" + body[:3000]):
+        if SECURITY_SENSITIVE_RE.search(title + "\n" + body[:3000]) or SECURITY_LABEL_RE.search(
+            labels_text
+        ):
             return None, "security_disclosure_required"
         if LOW_IMPACT_SELF_ASSESSMENT_RE.search(body) and not (maintainer_approved or help_wanted):
             return None, "explicitly_low_impact"

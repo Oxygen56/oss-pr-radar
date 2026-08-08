@@ -48,6 +48,7 @@ MAX_TITLE_CHARS = 59
 TASK_PRIVATE_DIR = ".oss-pr-radar"
 TASK_CONTEXT_SCHEMA = "radar-task-context-v1"
 TASK_RESULT_SCHEMA = "radar-task-result-v1"
+ORPHAN_ABANDON_MIN_AGE_MINUTES = 70
 TITLE_PREFIXES = {
     "GO": "[有价值·GO]",
     "AUDIT_NO_GO": "[无价值]",
@@ -503,6 +504,17 @@ def claim_intent(args: argparse.Namespace) -> dict[str, Any]:
     return result
 
 
+def release_claim(args: argparse.Namespace) -> dict[str, Any]:
+    released = ledger(args.ledger).release_claim(
+        args.intent_id,
+        owner=args.owner,
+        reason=args.reason,
+    )
+    if not released:
+        raise RuntimeError("claim release authorization is stale or invalid")
+    return {"ok": True, "intentId": args.intent_id, "released": True}
+
+
 def git_path(*args: str, cwd: Path) -> Path:
     return Path(command(["git", *args], cwd=cwd)).resolve()
 
@@ -602,6 +614,39 @@ def creation_cancel(args: argparse.Namespace) -> dict[str, Any]:
         reason=args.reason,
     )
     return {"ok": True, "intentId": args.intent_id, "cancelled": True}
+
+
+def creation_abandon(args: argparse.Namespace) -> dict[str, Any]:
+    if not re.fullmatch(r"[A-Z][A-Z0-9_]{2,80}", args.reason):
+        raise RuntimeError("abandon reason must be machine-readable")
+    result = orphan_list(args)
+    unmatched = {item["intentId"]: item for item in result["unmatched"]}
+    candidate = unmatched.get(args.intent_id)
+    if not candidate or not candidate.get("abandonable"):
+        raise RuntimeError("bound creation is not safely abandonable")
+    if candidate.get("abandonNonce") != args.abandon_nonce:
+        raise RuntimeError("creation abandonment authorization is stale or invalid")
+    if candidate.get("clientThreadId") != args.client_thread_id:
+        raise RuntimeError("bound client thread id changed")
+    store = ledger(args.ledger)
+    handoffs = {item["intentId"]: item for item in store.orphaned_handoffs()}
+    handoff = handoffs.get(args.intent_id)
+    if not handoff or not handoff.get("creationToken"):
+        raise RuntimeError("stored creation authorization is unavailable")
+    store.abandon_creation(
+        args.intent_id,
+        owner=args.owner,
+        creation_token=handoff["creationToken"],
+        client_thread_id=args.client_thread_id,
+        reason=args.reason,
+        min_age_minutes=args.min_age_minutes,
+    )
+    return {
+        "ok": True,
+        "intentId": args.intent_id,
+        "clientThreadId": args.client_thread_id,
+        "abandoned": True,
+    }
 
 
 def commit_receipt(args: argparse.Namespace) -> dict[str, Any]:
@@ -716,6 +761,10 @@ def orphan_list(args: argparse.Namespace) -> dict[str, Any]:
     blocked: list[dict[str, Any]] = []
     unmatched: list[dict[str, Any]] = []
     now = datetime.now().astimezone().timestamp()
+    abandon_min_age_minutes = max(
+        1,
+        int(getattr(args, "min_age_minutes", ORPHAN_ABANDON_MIN_AGE_MINUTES)),
+    )
     worktree_root = WORKTREE_ROOT.resolve()
     for handoff in handoffs:
         creation_started_at = handoff.get("creationStartedAt")
@@ -748,16 +797,35 @@ def orphan_list(args: argparse.Namespace) -> dict[str, Any]:
             if handoff["intentStatus"] == "CREATING" or (
                 handoff["intentStatus"] == "LEASED" and lease_until > now
             ):
-                unmatched.append(
-                    {
-                        "intentId": handoff["intentId"],
-                        "key": handoff["key"],
-                        "leaseStartedAt": handoff["leaseStartedAt"],
-                        "creationStartedAt": creation_started_at,
-                        "clientThreadId": handoff.get("clientThreadId"),
-                        "creationPending": handoff["intentStatus"] == "CREATING",
-                    }
-                )
+                value = {
+                    "intentId": handoff["intentId"],
+                    "key": handoff["key"],
+                    "leaseStartedAt": handoff["leaseStartedAt"],
+                    "creationStartedAt": creation_started_at,
+                    "clientThreadId": handoff.get("clientThreadId"),
+                    "creationPending": handoff["intentStatus"] == "CREATING",
+                }
+                if handoff["intentStatus"] == "CREATING" and creation_started_at:
+                    creation_age_minutes = max(
+                        0,
+                        int((now - parse_time(str(creation_started_at)).timestamp()) // 60),
+                    )
+                    value["creationAgeMinutes"] = creation_age_minutes
+                    value["abandonable"] = bool(
+                        handoff.get("clientThreadId")
+                        and creation_age_minutes >= abandon_min_age_minutes
+                    )
+                    if value["abandonable"]:
+                        value["abandonNonce"] = sha256_json(
+                            {
+                                "intentId": handoff["intentId"],
+                                "clientThreadId": handoff["clientThreadId"],
+                                "creationStartedAt": creation_started_at,
+                                "creationToken": handoff.get("creationToken"),
+                                "operation": "orphan-creation-abandon-v1",
+                            }
+                        )
+                unmatched.append(value)
             continue
         if len(matches) != 1:
             blocked.append(
@@ -1141,11 +1209,18 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                         publication_blocked and set(assessment.missing) == {"policy_verified"}
                     )
                     if not assessment.ready and not local_policy_only:
+                        missing = list(assessment.missing)
+                        store.record_validation_deferred(
+                            candidate["key"],
+                            thread_id=candidate["threadId"],
+                            result_digest=digest,
+                            missing=missing,
+                        )
                         validation_deferred.append(
                             {
                                 "key": candidate["key"],
                                 "reason": "SUBMIT_READY_EVIDENCE_INCOMPLETE",
-                                "missing": list(assessment.missing),
+                                "missing": missing,
                             }
                         )
                         continue
@@ -1643,6 +1718,10 @@ def main() -> int:
     claim.add_argument("--owner", required=True)
     claim.add_argument("--lease-minutes", type=int, default=15)
     claim.add_argument("--prepare", action="store_true")
+    claim_release = subparsers.add_parser("claim-release")
+    claim_release.add_argument("--intent-id", required=True)
+    claim_release.add_argument("--owner", required=True)
+    claim_release.add_argument("--reason", required=True)
     commit = subparsers.add_parser("commit")
     commit.add_argument("--intent-id", required=True)
     commit.add_argument("--owner", required=True)
@@ -1667,7 +1746,19 @@ def main() -> int:
     creation_cancel_parser.add_argument("--owner", required=True)
     creation_cancel_parser.add_argument("--creation-token", required=True)
     creation_cancel_parser.add_argument("--reason", required=True)
-    subparsers.add_parser("orphan-list")
+    creation_abandon_parser = subparsers.add_parser("creation-abandon")
+    creation_abandon_parser.add_argument("--intent-id", required=True)
+    creation_abandon_parser.add_argument("--owner", required=True)
+    creation_abandon_parser.add_argument("--client-thread-id", required=True)
+    creation_abandon_parser.add_argument("--abandon-nonce", required=True)
+    creation_abandon_parser.add_argument("--reason", required=True)
+    creation_abandon_parser.add_argument(
+        "--min-age-minutes", type=int, default=ORPHAN_ABANDON_MIN_AGE_MINUTES
+    )
+    orphan_list_parser = subparsers.add_parser("orphan-list")
+    orphan_list_parser.add_argument(
+        "--min-age-minutes", type=int, default=ORPHAN_ABANDON_MIN_AGE_MINUTES
+    )
     orphan_commit_parser = subparsers.add_parser("orphan-commit")
     orphan_commit_parser.add_argument("--intent-id", required=True)
     orphan_commit_parser.add_argument("--thread-id", required=True)
@@ -1731,6 +1822,8 @@ def main() -> int:
         result = dispatch_notifications(args)
     elif args.operation == "claim":
         result = claim_intent(args)
+    elif args.operation == "claim-release":
+        result = release_claim(args)
     elif args.operation == "commit":
         result = commit_receipt(args)
     elif args.operation == "retry-dispatch":
@@ -1741,6 +1834,8 @@ def main() -> int:
         result = creation_bind(args)
     elif args.operation == "creation-cancel":
         result = creation_cancel(args)
+    elif args.operation == "creation-abandon":
+        result = creation_abandon(args)
     elif args.operation == "orphan-list":
         result = orphan_list(args)
     elif args.operation == "orphan-commit":

@@ -65,6 +65,21 @@ def test_actual_security_vulnerability_is_blocked():
     assert result.reason_code == "SECURITY_SENSITIVE"
 
 
+def test_security_label_is_blocked_even_when_issue_text_is_generic():
+    current = evidence("Tool output is retained longer than expected.")
+    value = EvidenceBundle(
+        **{
+            **current.__dict__,
+            "issue": current.issue | {"labels": [{"name": "security"}, {"name": "secrets"}]},
+        }
+    )
+
+    result = authorize(candidate(), value)
+
+    assert result.status == "BLOCK"
+    assert result.reason_code == "SECURITY_SENSITIVE"
+
+
 def test_live_gate_rejects_weak_algorithm_snapshot():
     value = candidate()
     value.update(

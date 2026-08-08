@@ -95,6 +95,11 @@ receiving their own worktrees.
   local recovery list. Only an obviously empty or `完成`-only task may receive
   one repeat of the exact canonical prompt. The reservation is written before
   the message; an ambiguous send is reported and never retried automatically.
+- An asynchronous task creation that returned a client ID but still has no
+  uniquely matching Codex task after 70 minutes is reported as safely
+  abandonable. `creation-abandon` rechecks the local task catalog and requires
+  the original owner, stored creation token, client ID, age threshold, and
+  fresh abandonment nonce before releasing it for a later signed intent.
 - Cloud notification state is deduplicated per candidate and material evidence
   state, so adding another candidate to a scan cohort cannot resend unchanged
   issues. The compact candidate-state index is retained independently from the

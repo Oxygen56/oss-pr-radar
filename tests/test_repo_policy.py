@@ -136,6 +136,26 @@ def test_automated_agent_tool_name_template_is_ai_disclosure_policy():
     assert submission_policy_from_text(text) == "ai_disclosure_conflict"
 
 
+def test_dedicated_ai_agent_pr_section_is_a_disclosure_policy():
+    text = """HUMAN:
+<!-- Human contributors: describe the change here. -->
+
+AGENT:
+<!-- AI/LLM agents:
+In this AGENT section, provide evidence for the implementation and tests.
+-->
+"""
+
+    policy = discover_policy(
+        FakeClient({".github/pull_request_template.md": text}),
+        "OpenHands/OpenHands",
+    )
+
+    assert policy.status == "AI_POLICY_REVIEW"
+    assert policy.ai_disclosure is True
+    assert submission_policy_from_text(text) == "ai_disclosure_conflict"
+
+
 def test_pr_template_is_prioritized_over_nested_policy_noise():
     tree = [
         {"type": "blob", "path": f"docs/lang-{index}/CONTRIBUTING.md", "sha": str(index)}
@@ -218,6 +238,22 @@ def test_explicit_pre_pr_assignment_gate_is_shared_by_scanner_and_live_gate():
     policy = discover_policy(
         FakeClient({"CONTRIBUTING.md": text}),
         "example/project",
+    )
+
+    assert policy.assignment_required is True
+    assert submission_policy_from_text(text) == "needs_assignment"
+
+
+def test_project_board_ready_gate_is_treated_as_pre_implementation_approval():
+    text = (
+        "Do not begin implementation or open a pull request until the issue has "
+        "reached **Ready** on the Goose Issues board. Pull requests that do not "
+        "implement a Ready issue will be closed."
+    )
+
+    policy = discover_policy(
+        FakeClient({"CONTRIBUTING.md": text}),
+        "aaif-goose/goose",
     )
 
     assert policy.assignment_required is True

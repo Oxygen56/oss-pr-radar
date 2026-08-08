@@ -204,6 +204,56 @@ def test_creation_can_only_be_cancelled_before_client_id_is_bound(tmp_path):
         )
 
 
+def test_stale_bound_creation_can_be_abandoned_and_renewed(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "controller")
+    creation = store.reserve_creation("intent-1", owner="controller")
+    store.bind_creation_client(
+        "intent-1",
+        owner="controller",
+        creation_token=creation["creationToken"],
+        client_thread_id="client-1",
+    )
+    with pytest.raises(LedgerError, match="not old enough"):
+        store.abandon_creation(
+            "intent-1",
+            owner="controller",
+            creation_token=creation["creationToken"],
+            client_thread_id="client-1",
+            reason="ASYNC_CREATION_NOT_MATERIALIZED",
+        )
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE intents SET creation_started_at=? WHERE intent_id='intent-1'",
+            (iso_z(datetime.now(UTC) - timedelta(hours=2)),),
+        )
+
+    store.abandon_creation(
+        "intent-1",
+        owner="controller",
+        creation_token=creation["creationToken"],
+        client_thread_id="client-1",
+        reason="ASYNC_CREATION_NOT_MATERIALIZED",
+    )
+
+    with store.connect() as connection:
+        row = connection.execute(
+            """SELECT i.status,i.client_thread_id,i.creation_token,o.stage
+               FROM intents i JOIN opportunities o ON o.key=i.opportunity_key
+               WHERE i.intent_id='intent-1'"""
+        ).fetchone()
+    assert dict(row) == {
+        "status": "SUPERSEDED",
+        "client_thread_id": None,
+        "creation_token": None,
+        "stage": "AUDIT_PASS",
+    }
+    renewed_expiry = iso_z(datetime.now(UTC) + timedelta(hours=2))
+    assert store.enqueue(intent(expiresAt=renewed_expiry)) is False
+    assert store.pending()[0]["ledgerStatus"] == "PENDING"
+
+
 def test_expired_pending_intent_does_not_block_a_fresh_snapshot(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(intent(expiresAt="2020-01-01T00:00:00Z"))
@@ -253,6 +303,11 @@ def test_latest_signed_queue_supersedes_withdrawn_uncommitted_intent(tmp_path):
 
     assert store.reconcile_pending(set()) == ["intent-1"]
     assert store.pending() == []
+    with store.connect() as connection:
+        stage = connection.execute("SELECT stage FROM opportunities WHERE key='a/b#1'").fetchone()[
+            0
+        ]
+    assert stage == "AUDIT_PASS"
     with pytest.raises(LedgerError, match="not leased"):
         store.commit_dispatch(
             "intent-1",
@@ -284,6 +339,31 @@ def test_failed_preparation_can_release_an_exclusive_lease(tmp_path):
         ]
     assert json.loads(event["payload_json"])["reason"] == "clone timeout"
     assert stage == "AUDIT_PASS"
+
+
+def test_initialization_repairs_historical_lease_without_active_intent(tmp_path):
+    path = tmp_path / "ledger.sqlite3"
+    store = RadarLedger(path)
+    store.enqueue(intent())
+    store.claim("intent-1", "controller")
+    with store.connect() as connection:
+        connection.execute(
+            """UPDATE intents SET status='SUPERSEDED',lease_owner=NULL,lease_until=NULL
+               WHERE intent_id='intent-1'"""
+        )
+    store = RadarLedger(path)
+
+    with store.connect() as connection:
+        opportunity = connection.execute(
+            "SELECT stage FROM opportunities WHERE key='a/b#1'"
+        ).fetchone()
+        repair = connection.execute(
+            """SELECT payload_json FROM events
+               WHERE opportunity_key='a/b#1' AND event_type='LEDGER_STAGE_REPAIRED'"""
+        ).fetchone()
+
+    assert opportunity["stage"] == "AUDIT_PASS"
+    assert json.loads(repair["payload_json"]) == {"from": "LEASED", "to": "AUDIT_PASS"}
 
 
 def test_title_state_advances_from_go_to_fix_ready(tmp_path):
@@ -369,6 +449,78 @@ def test_no_go_requires_title_sync_before_cleanup(tmp_path):
     )
     assert store.title_candidates() == []
     assert store.cleanup_candidates()[0]["threadId"] == "thread-1"
+
+
+def test_archived_prior_thread_does_not_hide_later_no_go_thread(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree-1",
+        title_time="08-04 18:47",
+    )
+    store.record_stage("a/b#1", "AUDIT_NO_GO", reason="WRONG_REPO")
+    first_title = store.title_candidates()[0]
+    store.commit_title(
+        thread_id="thread-1",
+        state="AUDIT_NO_GO",
+        nonce=first_title["titleNonce"],
+    )
+    first_cleanup = store.cleanup_candidates()[0]
+    store.commit_cleanup(thread_id="thread-1", nonce=first_cleanup["cleanupNonce"])
+
+    store.enqueue(intent(intentId="intent-2", decisionDigest="decision-2"))
+    store.claim("intent-2", "worker")
+    store.commit_dispatch(
+        "intent-2",
+        owner="worker",
+        thread_id="thread-2",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree-2",
+        title_time="08-05 20:35",
+    )
+    store.record_stage("a/b#1", "AUDIT_NO_GO", reason="WRONG_REPO")
+
+    second_title = store.title_candidates()
+    assert [item["threadId"] for item in second_title] == ["thread-2"]
+    store.commit_title(
+        thread_id="thread-2",
+        state="AUDIT_NO_GO",
+        nonce=second_title[0]["titleNonce"],
+    )
+    assert [item["threadId"] for item in store.cleanup_candidates()] == ["thread-2"]
+
+
+def test_archived_thread_is_not_retitle_candidate_when_issue_is_released_again(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree-1",
+        title_time="08-04 18:47",
+    )
+    store.record_stage("a/b#1", "AUDIT_NO_GO", reason="SECURITY_SENSITIVE")
+    first_title = store.title_candidates()[0]
+    store.commit_title(
+        thread_id="thread-1",
+        state="AUDIT_NO_GO",
+        nonce=first_title["titleNonce"],
+    )
+    first_cleanup = store.cleanup_candidates()[0]
+    store.commit_cleanup(thread_id="thread-1", nonce=first_cleanup["cleanupNonce"])
+
+    store.enqueue(intent(intentId="intent-2", decisionDigest="decision-2"))
+    store.claim("intent-2", "worker")
+
+    assert store.title_candidates() == []
 
 
 def test_no_go_revokes_task_context_publication_authorization(tmp_path):
@@ -502,6 +654,35 @@ def test_stalled_dispatch_gets_one_write_ahead_recovery(tmp_path):
     assert candidate["threadId"] == "thread-1"
     store.commit_cleanup(thread_id="thread-1", nonce=candidate["cleanupNonce"])
     assert store.cleanup_candidates() == []
+
+
+def test_validation_deferred_result_is_not_an_empty_thread_recovery(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+    old = iso_z(datetime.now(UTC) - timedelta(hours=3))
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE events SET created_at=? WHERE event_type='DISPATCHED'",
+            (old,),
+        )
+    assert store.recovery_candidates(min_age_minutes=90)
+
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest="result-digest",
+        missing=["relevant_tests_green"],
+    )
+
+    assert store.recovery_candidates(min_age_minutes=90) == []
 
 
 def test_expired_intent_cannot_be_claimed(tmp_path):

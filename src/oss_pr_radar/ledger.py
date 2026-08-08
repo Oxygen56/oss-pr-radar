@@ -177,6 +177,30 @@ class RadarLedger:
                 connection.execute("ALTER TABLE intents ADD COLUMN client_thread_id TEXT")
             if "creation_started_at" not in columns:
                 connection.execute("ALTER TABLE intents ADD COLUMN creation_started_at TEXT")
+            now = iso_z(datetime.now(UTC))
+            stale_leases = connection.execute(
+                """SELECT key FROM opportunities o
+                   WHERE o.stage='LEASED'
+                     AND NOT EXISTS (
+                       SELECT 1 FROM intents i
+                       WHERE i.opportunity_key=o.key
+                         AND i.status IN ('PENDING','LEASED','CREATING','DISPATCHED','COMPLETED')
+                     )"""
+            ).fetchall()
+            for row in stale_leases:
+                connection.execute(
+                    """UPDATE opportunities SET stage='AUDIT_PASS',terminal_reason=NULL,
+                       updated_at=? WHERE key=?""",
+                    (now, row["key"]),
+                )
+                self._event(
+                    connection,
+                    row["key"],
+                    "LEDGER_STAGE_REPAIRED",
+                    "leased_without_active_intent",
+                    {"from": "LEASED", "to": "AUDIT_PASS"},
+                    now,
+                )
 
     def enqueue(self, intent: dict[str, Any]) -> bool:
         now = iso_z(datetime.now(UTC))
@@ -301,6 +325,17 @@ class RadarLedger:
                     """UPDATE intents SET status='SUPERSEDED',lease_owner=NULL,
                        lease_until=NULL,updated_at=? WHERE intent_id=?""",
                     (now, intent_id),
+                )
+                connection.execute(
+                    """UPDATE opportunities SET stage='AUDIT_PASS',terminal_reason=NULL,
+                       updated_at=?
+                       WHERE key=? AND stage='LEASED'
+                         AND NOT EXISTS (
+                           SELECT 1 FROM intents
+                           WHERE opportunity_key=? AND intent_id<>?
+                             AND status IN ('PENDING','LEASED','CREATING','DISPATCHED','COMPLETED')
+                         )""",
+                    (now, row["opportunity_key"], row["opportunity_key"], intent_id),
                 )
                 self._event(
                     connection,
@@ -536,6 +571,62 @@ class RadarLedger:
                 now,
             )
 
+    def abandon_creation(
+        self,
+        intent_id: str,
+        *,
+        owner: str,
+        creation_token: str,
+        client_thread_id: str,
+        reason: str,
+        min_age_minutes: int = 70,
+    ) -> None:
+        """Release a bound async creation after the desktop task never materialized."""
+
+        now_dt = datetime.now(UTC)
+        now = iso_z(now_dt)
+        with self.transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM intents WHERE intent_id=?", (intent_id,)
+            ).fetchone()
+            if row is None or row["status"] != "CREATING":
+                raise LedgerError("task creation is not reserved")
+            if row["lease_owner"] != owner or row["creation_token"] != creation_token:
+                raise LedgerError("task creation authorization mismatch")
+            if row["client_thread_id"] != client_thread_id:
+                raise LedgerError("bound client thread id changed")
+            if row["thread_id"]:
+                raise LedgerError("materialized task creation cannot be abandoned")
+            if not row["creation_started_at"]:
+                raise LedgerError("task creation start time is unavailable")
+            minimum_age = timedelta(minutes=max(1, min_age_minutes))
+            if parse_time(row["creation_started_at"]) + minimum_age > now_dt:
+                raise LedgerError("bound task creation is not old enough to abandon")
+            connection.execute(
+                """UPDATE intents SET status='SUPERSEDED',lease_owner=NULL,lease_until=NULL,
+                   creation_token=NULL,client_thread_id=NULL,creation_started_at=NULL,
+                   updated_at=? WHERE intent_id=?""",
+                (now, intent_id),
+            )
+            connection.execute(
+                """UPDATE opportunities SET stage='AUDIT_PASS',terminal_reason=NULL,
+                   updated_at=? WHERE key=?""",
+                (now, row["opportunity_key"]),
+            )
+            self._event(
+                connection,
+                row["opportunity_key"],
+                "CREATION_ABANDONED",
+                creation_token,
+                {
+                    "intentId": intent_id,
+                    "clientThreadId": client_thread_id,
+                    "reason": reason,
+                    "minimumAgeMinutes": max(1, min_age_minutes),
+                },
+                now,
+            )
+
     def commit_dispatch(
         self,
         intent_id: str,
@@ -729,12 +820,11 @@ class RadarLedger:
                    FROM opportunities o JOIN intents i ON i.opportunity_key=o.key
                    WHERE i.thread_id IS NOT NULL
                      AND i.status IN ('DISPATCHED','COMPLETED','REJECTED')
-                     AND NOT (
-                       o.stage='AUDIT_NO_GO' AND EXISTS (
-                         SELECT 1 FROM events archived
-                         WHERE archived.opportunity_key=o.key
-                           AND archived.event_type='THREAD_ARCHIVED'
-                       )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events archived
+                       WHERE archived.opportunity_key=o.key
+                         AND archived.event_type='THREAD_ARCHIVED'
+                         AND archived.dedupe_key=i.thread_id
                      )
                    ORDER BY o.updated_at"""
             ).fetchall()
@@ -972,7 +1062,11 @@ class RadarLedger:
                      AND NOT EXISTS (
                        SELECT 1 FROM events e
                        WHERE e.opportunity_key=o.key
-                         AND e.event_type='THREAD_RECOVERY_RESERVED'
+                         AND e.dedupe_key=i.thread_id
+                         AND e.event_type IN (
+                           'THREAD_RECOVERY_RESERVED',
+                           'TASK_RESULT_VALIDATION_DEFERRED'
+                         )
                      )
                    ORDER BY d.created_at""",
                 (cutoff,),
@@ -1001,6 +1095,7 @@ class RadarLedger:
                    JOIN intents i ON i.opportunity_key=o.key
                    JOIN events r ON r.opportunity_key=o.key
                      AND r.event_type='THREAD_RECOVERY_RESERVED'
+                     AND r.dedupe_key=i.thread_id
                    WHERE NOT EXISTS (
                      SELECT 1 FROM events e
                      WHERE e.opportunity_key=o.key
@@ -1028,8 +1123,8 @@ class RadarLedger:
         with self.transaction() as connection:
             existing = connection.execute(
                 """SELECT 1 FROM events WHERE opportunity_key=?
-                   AND event_type='THREAD_RECOVERY_RESERVED'""",
-                (candidate["key"],),
+                   AND event_type='THREAD_RECOVERY_RESERVED' AND dedupe_key=?""",
+                (candidate["key"], thread_id),
             ).fetchone()
             if existing:
                 raise LedgerError("recovery is already reserved")
@@ -1051,6 +1146,7 @@ class RadarLedger:
                    JOIN intents i ON i.opportunity_key=o.key
                    JOIN events r ON r.opportunity_key=o.key
                      AND r.event_type='THREAD_RECOVERY_RESERVED'
+                     AND r.dedupe_key=i.thread_id
                    WHERE i.thread_id=?""",
                 (thread_id,),
             ).fetchone()
@@ -1065,6 +1161,37 @@ class RadarLedger:
                 "THREAD_RECOVERY_SENT",
                 thread_id,
                 {"threadId": thread_id, "recoveryNonce": nonce},
+                iso_z(datetime.now(UTC)),
+            )
+
+    def record_validation_deferred(
+        self,
+        key: str,
+        *,
+        thread_id: str,
+        result_digest: str,
+        missing: list[str],
+    ) -> None:
+        """Record a substantive result that needs validation, not task recovery."""
+
+        with self.transaction() as connection:
+            row = connection.execute(
+                """SELECT 1 FROM intents
+                   WHERE opportunity_key=? AND thread_id=? AND status='DISPATCHED'""",
+                (key, thread_id),
+            ).fetchone()
+            if row is None:
+                raise LedgerError("validation-deferred task is not dispatched")
+            self._event(
+                connection,
+                key,
+                "TASK_RESULT_VALIDATION_DEFERRED",
+                thread_id,
+                {
+                    "threadId": thread_id,
+                    "resultDigest": result_digest,
+                    "missing": missing,
+                },
                 iso_z(datetime.now(UTC)),
             )
 
@@ -1878,7 +2005,9 @@ class RadarLedger:
                      AND i.title_synced_state='AUDIT_NO_GO'
                      AND NOT EXISTS (
                        SELECT 1 FROM events e
-                       WHERE e.opportunity_key=o.key AND e.event_type='THREAD_ARCHIVED'
+                       WHERE e.opportunity_key=o.key
+                         AND e.event_type='THREAD_ARCHIVED'
+                         AND e.dedupe_key=i.thread_id
                      )
                    ORDER BY o.updated_at"""
             ).fetchall()

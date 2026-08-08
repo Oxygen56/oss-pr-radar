@@ -370,6 +370,41 @@ def test_prepare_failure_releases_claim(monkeypatch, tmp_path):
     assert store.pending()[0]["ledgerStatus"] == "PENDING"
 
 
+def test_claim_release_returns_unstarted_lease_to_pending(monkeypatch, tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    now = datetime.now(UTC)
+    store.enqueue(
+        {
+            "intentId": "intent-1",
+            "key": "a/b#1",
+            "repo": "a/b",
+            "issueNumber": 1,
+            "issueUrl": "https://github.com/a/b/issues/1",
+            "title": "Runtime bug",
+            "mode": "canary",
+            "score": 9,
+            "snapshotId": "snapshot",
+            "decisionDigest": "decision",
+            "issuedAt": iso_z(now),
+            "expiresAt": iso_z(now + timedelta(hours=1)),
+        }
+    )
+    store.claim("intent-1", "controller")
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+
+    result = MODULE.release_claim(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            intent_id="intent-1",
+            owner="controller",
+            reason="CONTROLLER_DID_NOT_START_CREATION",
+        )
+    )
+
+    assert result == {"ok": True, "intentId": "intent-1", "released": True}
+    assert store.pending()[0]["ledgerStatus"] == "PENDING"
+
+
 def test_new_repo_clone_is_shallow_and_atomic(monkeypatch, tmp_path):
     commands = []
 
@@ -609,6 +644,16 @@ def test_controller_defers_blocked_local_fix_with_incomplete_validation(tmp_path
     ]
     assert result["publicationRequests"] == []
     assert result["ingested"] == []
+    with store.connect() as connection:
+        event = connection.execute(
+            """SELECT payload_json FROM events
+               WHERE event_type='TASK_RESULT_VALIDATION_DEFERRED'
+                 AND dedupe_key='thread-1'"""
+        ).fetchone()
+    assert json.loads(event["payload_json"])["missing"] == [
+        "regression_test_verified",
+        "relevant_tests_green",
+    ]
     finalized = json.loads(result_path.read_text(encoding="utf-8"))
     assert finalized["handoffMode"] == "controller_commit_complete"
     assert (
@@ -915,16 +960,95 @@ def test_orphan_list_keeps_bound_async_creation_after_lease_expiry(monkeypatch, 
     result = MODULE.orphan_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
 
     assert result["candidates"] == []
-    assert result["unmatched"] == [
+    unmatched = result["unmatched"][0]
+    expected = {
+        "intentId": "intent-1",
+        "key": "a/b#1",
+        "leaseStartedAt": iso_z(now - timedelta(hours=2)),
+        "creationStartedAt": iso_z(now - timedelta(hours=2)),
+        "clientThreadId": "client-1",
+        "creationPending": True,
+        "abandonable": True,
+    }
+    assert {key: unmatched[key] for key in expected} == expected
+    assert unmatched["creationAgeMinutes"] >= 119
+    assert unmatched["abandonNonce"]
+
+
+def test_creation_abandon_requires_a_stale_unmatched_bound_request(monkeypatch, tmp_path):
+    now = datetime.now(UTC)
+    thread_db = tmp_path / "threads.sqlite3"
+    worktree_root = tmp_path / "worktrees"
+    worktree_root.mkdir()
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            """CREATE TABLE threads (
+                id TEXT, cwd TEXT, title TEXT, first_user_message TEXT,
+                git_origin_url TEXT, archived INTEGER, created_at INTEGER,
+                created_at_ms INTEGER
+            )"""
+        )
+
+    class Store:
+        abandoned = None
+
+        def orphaned_handoffs(self):
+            return [
+                {
+                    "key": "a/b#1",
+                    "issueUrl": "https://github.com/a/b/issues/1",
+                    "title": "Runtime bug",
+                    "intentId": "intent-1",
+                    "intentStatus": "CREATING",
+                    "leaseOwner": "controller",
+                    "leaseStartedAt": iso_z(now - timedelta(hours=2)),
+                    "leaseUntil": iso_z(now - timedelta(hours=1)),
+                    "expiresAt": iso_z(now - timedelta(minutes=30)),
+                    "repo": "a/b",
+                    "creationStartedAt": iso_z(now - timedelta(hours=2)),
+                    "creationToken": "token-1",
+                    "clientThreadId": "client-1",
+                }
+            ]
+
+        def bound_thread_ids(self):
+            return set()
+
+        def abandon_creation(self, intent_id, **kwargs):
+            self.abandoned = (intent_id, kwargs)
+
+    store = Store()
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "WORKTREE_ROOT", worktree_root)
+    probe = MODULE.orphan_list(
+        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3", min_age_minutes=70)
+    )
+    nonce = probe["unmatched"][0]["abandonNonce"]
+
+    result = MODULE.creation_abandon(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            intent_id="intent-1",
+            owner="controller",
+            client_thread_id="client-1",
+            abandon_nonce=nonce,
+            reason="ASYNC_CREATION_NOT_MATERIALIZED",
+            min_age_minutes=70,
+        )
+    )
+
+    assert result["abandoned"] is True
+    assert store.abandoned == (
+        "intent-1",
         {
-            "intentId": "intent-1",
-            "key": "a/b#1",
-            "leaseStartedAt": iso_z(now - timedelta(hours=2)),
-            "creationStartedAt": iso_z(now - timedelta(hours=2)),
-            "clientThreadId": "client-1",
-            "creationPending": True,
-        }
-    ]
+            "owner": "controller",
+            "creation_token": "token-1",
+            "client_thread_id": "client-1",
+            "reason": "ASYNC_CREATION_NOT_MATERIALIZED",
+            "min_age_minutes": 70,
+        },
+    )
 
 
 def test_orphan_list_matches_late_thread_for_creating_intent(monkeypatch, tmp_path):

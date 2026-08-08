@@ -16,6 +16,10 @@ SECURITY_RE = re.compile(
     r"indirect prompt injection|unauthorized (?:code )?execution)\b",
     re.I,
 )
+SECURITY_LABEL_RE = re.compile(
+    r"\b(?:security|secrets?|vulnerabilit(?:y|ies)|cve)\b",
+    re.I,
+)
 DESIGN_RE = re.compile(
     r"\b(?:RFC|design proposal|architecture proposal|breaking API|roadmap)\b", re.I
 )
@@ -60,7 +64,11 @@ def authorize(candidate: dict[str, Any], evidence: EvidenceBundle) -> Authorizat
     if evidence.claims:
         return decision("BLOCK", "ACTIVE_OR_CONDITIONAL_CLAIM", "ownership")
     text = f"{issue.get('title') or ''}\n{issue.get('body') or ''}"
-    if SECURITY_RE.search(text):
+    labels = " ".join(
+        str(label.get("name") or "") if isinstance(label, dict) else str(label)
+        for label in (issue.get("labels") or [])
+    )
+    if SECURITY_RE.search(text) or SECURITY_LABEL_RE.search(labels):
         return decision("BLOCK", "SECURITY_SENSITIVE")
     policy = evidence.policy
     if policy.get("status") == "CONTRIBUTIONS_CLOSED":

@@ -50,6 +50,39 @@ def test_explicit_unavailable_hardware_requirement_is_preserved():
     )
 
 
+def test_security_label_is_filtered_before_candidate_scoring(tmp_path):
+    radar = Radar(
+        datetime(2026, 8, 4, tzinfo=UTC),
+        2,
+        tmp_path / "seen.json",
+        "chat",
+        dry_run=True,
+        notify=False,
+    )
+    base = {
+        "repo": "OpenHands/OpenHands",
+        "num": 16356,
+        "title": "Tool output is retained longer than expected",
+        "url": "https://github.com/OpenHands/OpenHands/issues/16356",
+    }
+    issue = {
+        "state": "open",
+        "title": base["title"],
+        "body": (
+            "Steps to reproduce: run the agent and inspect persisted tool output. "
+            "Expected behavior: transient values are removed. Actual behavior: values remain."
+        ),
+        "labels": [{"name": "security"}, {"name": "secrets"}],
+        "assignees": [],
+        "user": {"login": "reporter"},
+    }
+
+    candidate, reason = radar.score_issue(base, issue, [])
+
+    assert candidate is None
+    assert reason == "security_disclosure_required"
+
+
 def test_failure_tracker_requires_a_maintainer_split(tmp_path):
     radar = Radar(
         datetime(2026, 8, 4, tzinfo=UTC),
