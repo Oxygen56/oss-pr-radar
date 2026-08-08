@@ -1284,6 +1284,32 @@
     ],
     "why": "Issue provides a clear root cause and minimal reproduction for a user-visible bug in Qwen parser routing. However, an existing PR #50955 directly references this issue but has failing CI and incomplete evidence, and the deterministic gate requires HUMAN_REVIEW. Maintainer design preference is unconfirmed, so work should wait for maintainer guidance."
   },
+  "18348522a1bfdd7a584ae96094cb9bb55add0fbeb99e68c9d0637ced290b5740": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Add switchIfEmpty to handleIncomingRequest and stateless equivalent to emit an error response on empty completion",
+      "Add regression tests for empty Mono handler responses"
+    ],
+    "risks": [
+      "Potential behavior change for handlers that intentionally return empty; need to confirm error code choice",
+      "Maintainer may prefer a different design or error code"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Create a test with a handler returning Mono.empty() and assert a JSON-RPC error response is sent",
+      "Run existing test suite for mcp-core"
+    ],
+    "unknowns": [
+      "Maintainer design preference for error code and whether empty completion should be treated as error or no-op"
+    ],
+    "why": "Issue identifies a clear protocol-conformance bug in McpServerSession and McpStatelessAsyncServer where empty Mono completions suppress JSON-RPC responses, with a concrete root cause and suggested fix. However, the repository requires assignment and AI disclosure, and the deterministic gate is HUMAN_REVIEW, so work should not start without maintainer confirmation."
+  },
   "18ee1c2743e208f4c0beb3b6c8c52ae9be3acc5db0ccbed7248c9f81be7489a2": {
     "confidence": 0.85,
     "contradictions": [],
