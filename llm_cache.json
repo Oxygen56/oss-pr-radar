@@ -4954,6 +4954,32 @@
     ],
     "why": "Issue provides a clear root cause (AOT cache key ignores multimodal config) and a reproducible crash. Existing PR #50908 addresses the issue but has failed CI checks and may be incomplete. A materially better PR with comprehensive tests and a robust fix is plausible."
   },
+  "5572bd2f0341b616ddf17cd8cd4790ea217afa4fd7e15541e2a20413a897ba27": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify AnthropicConfig.calculate_usage in litellm/llms/anthropic/chat/transformation.py to read output_tokens_details.thinking_tokens and fall back to existing estimate."
+    ],
+    "risks": [
+      "Potential mismatch between Anthropic API versions or model-specific behavior; need to ensure fallback logic is robust.",
+      "The fix may affect existing users relying on the estimate; need to verify no breaking changes."
+    ],
+    "root_cause_clarity": "high",
+    "score": 13,
+    "test_plan": [
+      "Create a unit test with a mocked Anthropic API response containing output_tokens_details.thinking_tokens and assert reasoning_tokens equals that value.",
+      "Add a regression test for the fallback path when thinking_tokens is absent."
+    ],
+    "unknowns": [
+      "Whether an existing open PR already addresses this issue (open PR lookup timed out).",
+      "Maintainer confirmation on the proposed fix approach."
+    ],
+    "why": "The issue identifies a concrete bug in Anthropic usage calculation where provider-reported thinking_tokens are ignored, leading to incorrect reasoning_tokens. The proposed fix is clear and testable. However, the deterministic gate requires HUMAN_REVIEW, and open PR/related issue lookups timed out, so duplicate work cannot be excluded. Maintainer confirmation is needed before starting."
+  },
   "55da9ba2f74413c87a68d276301056a834cd5426e1d657baefb75b0ff3c074e7": {
     "confidence": 0.7,
     "contradictions": [],

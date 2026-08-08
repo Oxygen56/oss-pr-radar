@@ -240,6 +240,10 @@
       "seenAt": "2026-08-08T09:25:11.972744Z",
       "stateId": "bc22a18e4e356b0ec108ad09374d15bfead6ae70cac6e460f42aaadbe6c1a5a0"
     },
+    "review|BerriAI/litellm#36290": {
+      "seenAt": "2026-08-08T18:46:48.265149Z",
+      "stateId": "6c33f15cadcc92c65d81d3bd4ce8d99dd261af506c6442aa652c9507a31d21c9"
+    },
     "review|DeusData/codebase-memory-mcp#1339": {
       "legacy": true,
       "seenAt": "2026-08-05T21:41:10.562886Z"
@@ -1013,12 +1017,12 @@
       "seenAt": "2026-08-03T21:54:14.829777Z"
     },
     "watch|langflow-ai/langflow#14470": {
-      "seenAt": "2026-08-08T18:17:49.786209Z",
-      "stateId": "9f11e6038a8c226f5e1561bcd6f7fdc8ed9096825923142474efee8db87e3e11"
+      "seenAt": "2026-08-08T18:46:48.749406Z",
+      "stateId": "22e3b9267684dae54142c887e1223b39c0a49aa7733483c41708ee2031cb952d"
     },
     "watch|langflow-ai/langflow#14471": {
-      "seenAt": "2026-08-08T18:17:49.786209Z",
-      "stateId": "526c992126f320dd00ec1ea241838e67e7168a13a313e678fdb8ecebcd5ce40d"
+      "seenAt": "2026-08-08T18:46:48.749406Z",
+      "stateId": "4479817b71d612e0563fa7b052d79dd8112f055b368cdf52ac0c89d08ad9e537"
     },
     "watch|langgenius/dify#39954": {
       "legacy": true,
@@ -1281,7 +1285,7 @@
       "seenAt": "2026-08-06T10:09:13.778625Z"
     }
   },
-  "digest": "6cf14ef9be096ffdc5b6ce950ac494847a8a9852558698e8a1ebf8dd9c72bd8a",
+  "digest": "d9941c64367e6f46a2324e7b316d5d419af6f7ca4fe1a7de3b06c7f4328da3d5",
   "events": [
     {
       "attempts": 1,
@@ -17014,9 +17018,111 @@
       "runId": "pr-followup-1786212900",
       "sentAt": "2026-08-08T18:18:24.051560Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "BerriAI/litellm#36290"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "51992e90ab4f96afbf9cdaaf99eb0a7a3596e4887ab933ef05dd8728acb5aca9",
+          "key": "BerriAI/litellm#36290",
+          "kind": "review",
+          "stateId": "6c33f15cadcc92c65d81d3bd4ce8d99dd261af506c6442aa652c9507a31d21c9"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#36290](https://github.com/BerriAI/litellm/issues/36290) [Bug]: Anthropic API reasoning_tokens always 0 under default thinking display — usage.output_tokens_details.thinking_tokens ignored (Claude Opus 5 / Fable 5)**\n建议：WAIT_MAINTAINER | 分数：13\n价值：The issue identifies a concrete bug in Anthropic usage calculation where provider-reported thinking_tokens are ignored, leading to incorrect reasoning_tokens. The proposed fix is clear and testable. However, the deterministic gate requires HUMAN_REVIEW, and open PR/related issue lookups timed out, so duplicate work cannot be excluded. Maintainer confirmation is needed before starting.\n改动：Modify AnthropicConfig.calculate_usage in litellm/llms/anthropic/chat/transformation.py to read output_tokens_details.thinking_tokens and fall back to existing estimate.\n验证：Create a unit test with a mocked Anthropic API response containing output_tokens_details.thinking_tokens and assert reasoning_tokens equals that value.；Add a regression test for the fallback path when thinking_tokens is absent.\n风险：Potential mismatch between Anthropic API versions or model-specific behavior; need to ensure fallback logic is robust.；The fix may affect existing users relying on the estimate; need to verify no breaking changes.\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 2，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-08T18:46:48.265149Z",
+      "eventId": "0dbe2f6e0abd8d9d4966e617e9e77644dc9a75b25c9823fd92c461073296de33",
+      "idempotencyKey": "0dbe2f6e0abd8d9d4966e617e9e77644dc9a75b25c9823fd92",
+      "kind": "review",
+      "runId": "scan-20260808T184505Z-3b969ade5958",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "langflow-ai/langflow#14470",
+        "langflow-ai/langflow#14471"
+      ],
+      "candidateStates": [
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "3046903c7e979a7c1227683bbee2bbd88e3cf67af3e2beb9cde6d2f52dd1979e",
+          "key": "langflow-ai/langflow#14470",
+          "kind": "watch",
+          "stateId": "22e3b9267684dae54142c887e1223b39c0a49aa7733483c41708ee2031cb952d"
+        },
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "36dca2c159c044fbfba2d67c43f992171ef2975920f27e46b8f1d181506b48a8",
+          "key": "langflow-ai/langflow#14471",
+          "kind": "watch",
+          "stateId": "4479817b71d612e0563fa7b052d79dd8112f055b368cdf52ac0c89d08ad9e537"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[langflow-ai/langflow#14470](https://github.com/langflow-ai/langflow/pull/14470) fix: bound web search result content**\n建议：PR_FOLLOWUP\n价值：CI 检查失败\n验证：查看正式 review、失败检查或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[langflow-ai/langflow#14471](https://github.com/langflow-ai/langflow/pull/14471) fix(lfx): align tool mode capability detection with runtime**\n建议：PR_FOLLOWUP\n价值：CI 检查失败\n验证：查看正式 review、失败检查或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-08T18:46:48.749406Z",
+      "eventId": "2f544b6e0a72c13d5b9608bd0dace4c018829ecc3597bf8172c9d25b42457016",
+      "idempotencyKey": "2f544b6e0a72c13d5b9608bd0dace4c018829ecc3597bf8172",
+      "kind": "watch",
+      "runId": "pr-followup-1786214645",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-08T18:17:49.786209Z",
+  "generatedAt": "2026-08-08T18:46:48.749406Z",
   "newEventCount": 1,
   "version": "notification_outbox_v2"
 }
