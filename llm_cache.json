@@ -647,6 +647,34 @@
     ],
     "why": "Issue provides a detailed root cause and reproduction, but the deterministic gate is HUMAN_REVIEW and an existing PR (#51075) is open with gaps (no tests, failing CI). The candidate is actionable but requires maintainer confirmation and competition assessment."
   },
+  "0fbc35e10bc347dface165a133e3df627a734ec5e12272d71dbac197adda1781": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify Logger.ts to include args in non-dev builds (possibly with redaction) and pass error objects to #output",
+      "Update McpHub.ts or logger call sites to ensure error details are logged"
+    ],
+    "risks": [
+      "Potential logging of sensitive data if args are not redacted; need to implement redaction or opt-in verbose flag",
+      "Changing log output format may affect existing log parsing or user expectations"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add a unit test for Logger that simulates release build (IS_DEV unset) and verifies args are included",
+      "Add a test that verifies error objects are serialized into log output",
+      "Manual reproduction: install release build, configure failing MCP server, check log includes cause"
+    ],
+    "unknowns": [
+      "Maintainer preference on whether to redact args or add verbose flag; no explicit maintainer confirmation yet"
+    ],
+    "why": "The issue identifies a concrete logging bug in the VS Code extension: args are dropped on release builds and the error parameter is never passed, causing MCP failures to log without cause. This is a clear, actionable code-level fix with high impact on diagnosability."
+  },
   "101eaf6b17f2b8eed1889fed67867c9962941316bf4d6470cd189ec24d86d750": {
     "confidence": 0.7,
     "contradictions": [
@@ -2063,6 +2091,34 @@
     ],
     "why": "Issue provides a detailed root-cause analysis and clear reproduction steps, but the deterministic gate requires HUMAN_REVIEW and there is an existing PR (#1458) with semantic overlap that needs maintainer comparison before new work starts."
   },
+  "29c2ebc0a968ee2b6a157e9824c44cef649545a53e4e836c56cf0e8480f731de": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Add divergence clause to assertPlaneCoherence or update rationale/comments to state coverage limits",
+      "Reconcile walSnapshotClone limitation note",
+      "Add spec with four-row reproduction including positive control"
+    ],
+    "risks": [
+      "Choosing direction 1 without external served-root fact may reproduce defect",
+      "Changing assertion behavior could break overlay protection"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "test_plan": [
+      "Add unit test for assertPlaneCoherence with stubbed realpathFn covering the four rows",
+      "Run existing plane-related tests to ensure no regression"
+    ],
+    "unknowns": [
+      "Whether a served-root fact is available at boot (determines fix direction)",
+      "Maintainer preference on design direction"
+    ],
+    "why": "The issue clearly identifies a cannot-FAIL defect in a runtime guard, with a concrete reproduction and architectural analysis. However, the fix direction is explicitly left open between two honest options, requiring maintainer design confirmation. The issue is not assigned and no maintainer has approved or commented, so work should wait for direction."
+  },
   "2a04319a1bf88140a0e8e0bb4211629f530d2ed8f0d755ee9b3ada78bc19fe9b": {
     "confidence": 0.85,
     "contradictions": [],
@@ -2288,6 +2344,34 @@
       "Exact maintainer design preferences for fixing the issue"
     ],
     "why": "The issue precisely identifies a bug where request context is dropped after the first iteration in durable agents, with clear code paths and production impact. No competing PR or related issue exists, and the maintainer has acknowledged the report, making it actionable."
+  },
+  "2bfd1482ae064dcd15848148cec8b9a61fe57007abbe9f4ebad651d44c3de242": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add regression test for unreachable provider over ACP",
+      "Modify ACP session/prompt response to include error stopReason or structured error"
+    ],
+    "risks": [
+      "Changing stopReason may break existing clients",
+      "Potential duplicate issue #10751 needs triage"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 11,
+    "test_plan": [
+      "Reproduce with GOOSE_PROVIDER=ollama and no daemon, assert JSON-RPC error or distinct stopReason",
+      "Run existing ACP integration tests"
+    ],
+    "unknowns": [
+      "Whether maintainers have design preference for error signaling",
+      "Whether #10751 is truly duplicate and should be merged"
+    ],
+    "why": "Issue describes a clear ACP contract failure where unreachable provider turns return end_turn without JSON-RPC error. Root cause likely in retry/backoff or ACP session handling, but not pinpointed. Potential duplicate #10751 and no maintainer confirmation. Gate requires HUMAN_REVIEW."
   },
   "2c3f1e7861212ab9543faa10e8ea644425aabc2d8c3ed0de62d3446d17078cb7": {
     "confidence": 0.7,
@@ -4816,6 +4900,32 @@
       "Status of related issue audit (timeout) and whether PR #50514 will be merged or needs competition"
     ],
     "why": "The issue provides a detailed root cause (hard-coded WORLD group in fastsafetensors causing deadlock under PP-scoped draft loads) and a clear repro, but the deterministic gate requires HUMAN_REVIEW and the related issue audit timed out. A maintainer has acknowledged the report, so assignment/design confirmation is pending."
+  },
+  "59ff7620ea2ba4e2b2b7e46d9cca9ec5a87a700e050d8cd90bdeb8a36bc06e1d": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Maintainer could not reproduce on multiple platforms; issue suggests macOS Metal-specific."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "KV cache quantization handling or documentation"
+    ],
+    "risks": [
+      "May be model-specific and not a general bug; no clear code path for fix."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with provided models on macOS Metal; compare q4_0 vs q8_0 outputs; add regression test if code fix identified."
+    ],
+    "unknowns": [
+      "Open PR status and related issues due to lookup failures; whether maintainers consider this a code bug."
+    ],
+    "why": "Issue reports a user-visible bug with q4_0 KV cache causing garbage output, but maintainer comments indicate it may be model-specific and not reproducible on other platforms. No code change proposed; likely a configuration or model suitability issue. Open PR and related issue lookups failed, so duplicate work cannot be excluded."
   },
   "5abf5544b263f836e09fc9a31e6d57ef047f8e875f704bbd5f300695bcb5c990": {
     "confidence": 0.7,

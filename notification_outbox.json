@@ -289,8 +289,8 @@
       "stateId": "553113d5efbcb0751db50b60b08ee4e11a83046ac2e3b8c9dfbc70629df7fda0"
     },
     "review|aaif-goose/goose#11047": {
-      "seenAt": "2026-08-08T02:29:36.815696Z",
-      "stateId": "eeb4912c5f998632991a81a29ea324aa9f5889fd0f01b8cff5acbc4d7d33e5ad"
+      "seenAt": "2026-08-08T07:21:46.766873Z",
+      "stateId": "554f87eb1bfa13e488b76ded6792edd2b56852f8f95934d44a50bed435a882d9"
     },
     "review|ai-dynamo/dynamo#12630": {
       "legacy": true,
@@ -487,6 +487,10 @@
     "review|modelcontextprotocol/typescript-sdk#2614": {
       "legacy": true,
       "seenAt": "2026-08-04T18:14:12.208434Z"
+    },
+    "review|neomjs/neo#16662": {
+      "seenAt": "2026-08-08T07:21:46.766873Z",
+      "stateId": "c5e4700e4185ad306f165d65ab564c19f9daa1f199032d4f5a90606fce805b53"
     },
     "review|ollama/ollama#16506": {
       "seenAt": "2026-08-08T07:04:18.489442Z",
@@ -1185,7 +1189,7 @@
       "seenAt": "2026-08-06T10:09:13.778625Z"
     }
   },
-  "digest": "e73b9f2b7f8c59efffe0974bf1617b3ca157b3256dbc676429e7b2459fc1ab57",
+  "digest": "44b632296878ed1713f2ec3477673a15a417881385f36541d55133eaa709e8e0",
   "events": [
     {
       "attempts": 1,
@@ -15613,9 +15617,69 @@
       "runId": "scan-20260808T065935Z-324fd45cff63",
       "sentAt": "2026-08-08T07:05:03.147477Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "aaif-goose/goose#11047",
+        "neomjs/neo#16662"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "cfb61c515852ea73f8f680c33ff4194819b8f161d909c1f7e81d774a0374f81e",
+          "key": "aaif-goose/goose#11047",
+          "kind": "review",
+          "stateId": "554f87eb1bfa13e488b76ded6792edd2b56852f8f95934d44a50bed435a882d9"
+        },
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "c0942f91123a629b681fbc1679b01e0866f3e6ce7cc3c376b9cc01d3ad3e5822",
+          "key": "neomjs/neo#16662",
+          "kind": "review",
+          "stateId": "c5e4700e4185ad306f165d65ab564c19f9daa1f199032d4f5a90606fce805b53"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[aaif-goose/goose#11047](https://github.com/aaif-goose/goose/issues/11047) ACP: a failed/unreachable-provider turn is reported as a successful session/prompt (stopReason: end_turn, no JSON-RPC error)**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue describes a clear ACP contract failure where unreachable provider turns return end_turn without JSON-RPC error. Root cause likely in retry/backoff or ACP session handling, but not pinpointed. Potential duplicate #10751 and no maintainer confirmation. Gate requires HUMAN_REVIEW.\n改动：Add regression test for unreachable provider over ACP；Modify ACP session/prompt response to include error stopReason or structured error\n验证：Reproduce with GOOSE_PROVIDER=ollama and no daemon, assert JSON-RPC error or distinct stopReason；Run existing ACP integration tests\n风险：Changing stopReason may break existing clients；Potential duplicate issue #10751 needs triage\n竞争：仅发现未直接关联、无代码路径或强机制重合的 PR #11018；保留为搜索上下文，不阻止实现\n下一步：先人工比较相关 issue 的根因、维护者归并方向和可提交代码路径；确认不是重复后再进入实现。\n证据：复现信号 4，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[neomjs/neo#16662](https://github.com/neomjs/neo/issues/16662) The plane assertion cannot detect the hazard its own rationale names**\n建议：WAIT_MAINTAINER | 分数：11\n价值：The issue clearly identifies a cannot-FAIL defect in a runtime guard, with a concrete reproduction and architectural analysis. However, the fix direction is explicitly left open between two honest options, requiring maintainer design confirmation. The issue is not assigned and no maintainer has approved or commented, so work should wait for direction.\n改动：Add divergence clause to assertPlaneCoherence or update rationale/comments to state coverage limits；Reconcile walSnapshotClone limitation note；Add spec with four-row reproduction including positive control\n验证：Add unit test for assertPlaneCoherence with stubbed realpathFn covering the four rows；Run existing plane-related tests to ensure no regression\n风险：Choosing direction 1 without external served-root fact may reproduce defect；Changing assertion behavior could break overlay protection\n竞争：未发现相关 open PR\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 4，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-08T07:21:46.766873Z",
+      "eventId": "56115560c2e6ad1a9ff870b0d504da64310597d71c1775167f20c0595dcfda9c",
+      "idempotencyKey": "56115560c2e6ad1a9ff870b0d504da64310597d71c1775167f",
+      "kind": "review",
+      "runId": "scan-20260808T071944Z-c9d912b35f0f",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-08T07:04:18.853801Z",
+  "generatedAt": "2026-08-08T07:21:46.965744Z",
   "newEventCount": 0,
   "version": "notification_outbox_v2"
 }
