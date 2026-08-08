@@ -1187,6 +1187,22 @@ def _policy_from_context(context: dict[str, Any]) -> dict[str, Any]:
     return policy if isinstance(policy, dict) else {}
 
 
+def _prepared_default_branch(worktree: Path) -> str | None:
+    """Read the controller-prepared default branch without network access."""
+
+    default_ref = _optional_command(
+        ["git", "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"],
+        cwd=worktree,
+    )
+    prefix = "refs/remotes/origin/"
+    if not default_ref or not default_ref.startswith(prefix):
+        return None
+    branch = default_ref.removeprefix(prefix).strip()
+    if not branch or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,119}", branch):
+        raise RuntimeError("prepared default branch is invalid")
+    return branch
+
+
 def _finalize_controller_commit(
     *,
     candidate: dict[str, Any],
@@ -1260,6 +1276,12 @@ def _finalize_controller_commit(
     finalized["branch"] = command(["git", "symbolic-ref", "--short", "HEAD"], cwd=worktree)
     finalized["changedFiles"] = changed_files
     finalized["handoffMode"] = "controller_commit_complete"
+    default_branch = _prepared_default_branch(worktree)
+    publication = finalized.get("publication")
+    if default_branch and isinstance(publication, dict):
+        finalized_publication = dict(publication)
+        finalized_publication["baseBranch"] = default_branch
+        finalized["publication"] = finalized_publication
     _atomic_json(result_path, finalized)
     return finalized, result_path.read_bytes()
 

@@ -133,6 +133,9 @@ receiving their own worktrees.
   only when the technical evidence is complete and `policy_verified` is the
   sole missing field; it never creates a publication request. The hourly
   controller repeats ingestion and publication as a fallback.
+- For controller-owned commits, the publication base is taken from the
+  prepared checkout's `origin/HEAD`. A child-provided release or stale branch
+  hint cannot create a permanently blocked publication request.
 
 ## Quality Review
 

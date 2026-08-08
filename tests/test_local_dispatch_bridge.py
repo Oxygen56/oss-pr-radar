@@ -911,6 +911,7 @@ def _controller_commit_result(
     missing_quality: tuple[str, ...] = (),
     publication_blocked_reason: str | None = None,
     dco_required: bool = False,
+    base_branch: str = "main",
 ) -> tuple[RadarLedger, Path, Path]:
     store, worktree = registered_store(tmp_path)
     run_git(worktree, "config", "user.name", "Test Contributor")
@@ -919,6 +920,15 @@ def _controller_commit_result(
     source.write_text("value = 1\n", encoding="utf-8")
     run_git(worktree, "add", "runtime.py")
     run_git(worktree, "commit", "-m", "chore: baseline")
+    run_git(worktree, "branch", "-M", "main")
+    run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
+    run_git(worktree, "update-ref", "refs/remotes/origin/main", "HEAD")
+    run_git(
+        worktree,
+        "symbolic-ref",
+        "refs/remotes/origin/HEAD",
+        "refs/remotes/origin/main",
+    )
     source.write_text("value = 2\n", encoding="utf-8")
     context_path = MODULE.write_task_context(
         store,
@@ -952,7 +962,7 @@ def _controller_commit_result(
         "dcoRequired": dco_required,
         "publication": {
             "headOwner": "Oxygen56",
-            "baseBranch": "main",
+            "baseBranch": base_branch,
             "title": "fix: preserve runtime boundary",
             "bodyFile": str(body_path.resolve()),
         },
@@ -961,6 +971,24 @@ def _controller_commit_result(
         result["publicationBlockedReason"] = publication_blocked_reason
     result_path.write_text(json.dumps(result), encoding="utf-8")
     return store, worktree, result_path
+
+
+def test_controller_normalizes_child_base_to_prepared_default_branch(tmp_path):
+    store, _worktree, result_path = _controller_commit_result(
+        tmp_path,
+        base_branch="release-1.12.0",
+    )
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert result["ok"] is True
+    finalized = json.loads(result_path.read_text(encoding="utf-8"))
+    assert finalized["publication"]["baseBranch"] == "main"
+    with store.connect() as connection:
+        request = connection.execute(
+            "SELECT request_json FROM publication_requests WHERE opportunity_key='a/b#1'"
+        ).fetchone()
+    assert json.loads(request["request_json"])["publication"]["baseBranch"] == "main"
 
 
 def test_controller_commits_validated_child_patch_and_requests_publication(tmp_path):
