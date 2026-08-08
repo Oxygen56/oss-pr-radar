@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 
+import oss_pr_radar.scanner as scanner_module
 from oss_pr_radar.scanner import Radar
 
 
@@ -12,6 +13,76 @@ def radar(tmp_path):
         dry_run=True,
         notify=False,
     )
+
+
+def test_cross_repo_timeline_pr_is_included_when_it_explicitly_fixes_issue(monkeypatch, tmp_path):
+    instance = radar(tmp_path)
+
+    def fake_paginated(args, **_kwargs):
+        path = " ".join(args)
+        if "/timeline" in path:
+            return (
+                [
+                    {
+                        "event": "cross-referenced",
+                        "source": {
+                            "issue": {
+                                "number": 2,
+                                "title": "fix(runtime): preserve request context",
+                                "body": "Fixes upstream/project#7 with focused regression tests.",
+                                "html_url": "https://github.com/contributor/project/pull/2",
+                                "pull_request": {"url": "https://api.github.com/pulls/2"},
+                                "repository": {"full_name": "contributor/project"},
+                            }
+                        },
+                    }
+                ],
+                None,
+            )
+        return ([], None)
+
+    monkeypatch.setattr(scanner_module, "gh_paginated", fake_paginated)
+    monkeypatch.setattr(scanner_module, "gh", lambda *_args, **_kwargs: ({"items": []}, None))
+
+    hits = instance.open_pr_hits("upstream/project", 7, "Request context is lost")
+
+    assert len(hits) == 1
+    assert hits[0]["number"] == 2
+    assert hits[0]["_repo"] == "contributor/project"
+    assert hits[0]["_linked_from_issue"] is True
+
+
+def test_cross_repo_timeline_pr_details_are_loaded_from_its_own_repo(monkeypatch, tmp_path):
+    instance = radar(tmp_path)
+    requested = []
+
+    def detail(repo, number):
+        requested.append((repo, number))
+        return {
+            "number": number,
+            "title": "fix(runtime): preserve request context",
+            "url": "https://github.com/contributor/project/pull/2",
+            "body": "Fixes upstream/project#7 with focused regression tests.",
+            "state": "OPEN",
+            "updatedAt": "2026-08-04T00:00:00Z",
+            "files": [{"path": "tests/request-context.test.ts"}],
+            "changedFiles": 1,
+            "statusCheckRollup": [],
+            "comments": [],
+            "closingIssuesReferences": [{"number": 7}],
+        }
+
+    monkeypatch.setattr(instance, "pr_detail", detail)
+
+    result = instance.assess_single_pr(
+        "upstream/project",
+        7,
+        "Request context is lost",
+        {"number": 2, "_repo": "contributor/project"},
+    )
+
+    assert requested == [("contributor/project", 2)]
+    assert result["references_issue"] is True
 
 
 def test_one_stale_direct_pr_remains_a_competition_opportunity(monkeypatch, tmp_path):

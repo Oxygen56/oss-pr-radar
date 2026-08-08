@@ -2378,11 +2378,31 @@ class Radar:
             source_issue = (event.get("source") or {}).get("issue") or {}
             source_repo = (source_issue.get("repository") or {}).get("full_name") or ""
             source_url = source_issue.get("html_url") or ""
+            source_match = re.search(r"github\.com/([^/]+/[^/]+)/pull/(\d+)", source_url, re.I)
+            if not source_repo and source_match:
+                source_repo = source_match.group(1)
             same_repo = source_repo.casefold() == repo.casefold() or bool(
                 re.search(rf"github\.com/{re.escape(repo)}/pull/\d+", source_url, re.I)
             )
             if same_repo and "pull_request" in source_issue and source_issue.get("number"):
                 linked_numbers.add(int(source_issue["number"]))
+            elif source_repo and source_match and "pull_request" in source_issue:
+                source_text = f"{source_issue.get('title') or ''}\n{source_issue.get('body') or ''}"
+                cross_repo_exact = str(event.get("event") or "").casefold() == "connected" or bool(
+                    re.search(
+                        rf"\b{re.escape(repo)}#{num}\b|"
+                        rf"https://github\.com/{re.escape(repo)}/issues/{num}\b",
+                        source_text,
+                        re.I,
+                    )
+                )
+                if cross_repo_exact:
+                    hits_by_url[source_url] = source_issue | {
+                        "number": int(source_match.group(2)),
+                        "_repo": source_repo,
+                        "_linked_from_issue": True,
+                        "_timeline_event": str(event.get("event") or ""),
+                    }
         linked_numbers.update(
             int(match)
             for groups in re.findall(
@@ -2582,7 +2602,8 @@ class Radar:
         issue_context: str = "",
     ) -> dict[str, Any]:
         pr_num = int(hit.get("number") or 0)
-        detail = self.pr_detail(repo, pr_num) if pr_num else {}
+        pr_repo = str(hit.get("_repo") or repo)
+        detail = self.pr_detail(pr_repo, pr_num) if pr_num else {}
         title = detail.get("title") or hit.get("title") or ""
         body = detail.get("body") or hit.get("body") or ""
         url = detail.get("url") or hit.get("html_url") or ""
