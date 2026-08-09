@@ -2029,10 +2029,8 @@ class RadarLedger:
         with self.transaction() as connection:
             row = connection.execute(
                 """SELECT 1 FROM intents i
-                   JOIN opportunities o ON o.key=i.opportunity_key
                    WHERE i.opportunity_key=? AND i.thread_id=?
-                     AND (i.status='DISPATCHED'
-                          OR (i.status='COMPLETED' AND o.stage='VALIDATION_PENDING'))""",
+                     AND i.status IN ('DISPATCHED','COMPLETED')""",
                 (key, thread_id),
             ).fetchone()
             if row is None:
