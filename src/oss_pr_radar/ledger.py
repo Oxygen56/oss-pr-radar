@@ -1415,7 +1415,7 @@ class RadarLedger:
     def title_bindings(self) -> list[dict[str, Any]]:
         with self.connect() as connection:
             rows = connection.execute(
-                """SELECT o.key,o.title,o.stage,o.updated_at,i.thread_id,i.title_time,
+                """SELECT o.key,o.title,o.stage,i.thread_id,i.title_time,
                           i.title_synced_state,
                           CASE
                             WHEN o.stage='AUDIT_NO_GO' THEN 'AUDIT_NO_GO'
@@ -1454,7 +1454,15 @@ class RadarLedger:
                     "titleState": row["desired_state"],
                     "titleSyncedState": row["title_synced_state"],
                     "titleNonce": sha256_text(
-                        f"{row['key']}|{row['thread_id']}|{row['desired_state']}|{row['updated_at']}"
+                        canonical_json(
+                            {
+                                "key": row["key"],
+                                "threadId": row["thread_id"],
+                                "title": row["title"],
+                                "titleTime": row["title_time"],
+                                "titleState": row["desired_state"],
+                            }
+                        )
                     ),
                 }
             )

@@ -542,6 +542,37 @@ def test_synced_title_can_be_invalidated_after_desktop_drift(tmp_path):
     assert store.title_candidates() == []
 
 
+def test_title_nonce_ignores_unrelated_opportunity_timestamp_churn(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+        title_time="08-09 19:30",
+    )
+    store.record_stage("a/b#1", "FIX_READY", evidence={})
+    candidate = store.title_candidates()[0]
+
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE opportunities SET updated_at=? WHERE key=?",
+            ("2099-01-01T00:00:00Z", "a/b#1"),
+        )
+
+    current = store.title_candidates()[0]
+    assert current["titleNonce"] == candidate["titleNonce"]
+    store.commit_title(
+        thread_id="thread-1",
+        state="FIX_READY",
+        nonce=candidate["titleNonce"],
+    )
+    assert store.title_candidates() == []
+
+
 def test_validation_pending_is_non_terminal_and_not_archivable(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(
