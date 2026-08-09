@@ -182,6 +182,27 @@
     ],
     "why": "Issue provides a clear root cause and a verified fix for a user-visible UTF-8 corruption bug in the SGLang streaming detokenizer. However, multiple open PRs (e.g., #10344, #12562, #12820) overlap semantically with the same code path, and the deterministic gate requires HUMAN_REVIEW. The issue itself is a bug report with a proposed fix, not a PR, and the maintainer has not confirmed assignment or design preference. Given the overlapping PRs and the need to compare implementation boundaries, a new clean candidate cannot be confidently started without maintainer input."
   },
+  "048d329428fa98c0b4e0d94a7ca407995c07a5444dd683da03d0c14cbe83da78": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "decision": "REJECT",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify authentication logic in the Anthropic entrypoint to accept x-api-key header"
+    ],
+    "risks": [
+      "Potential security implications if not properly validated"
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "test_plan": [
+      "Add a test that sends a request with x-api-key header and expects success"
+    ],
+    "unknowns": [],
+    "why": "The issue is a straightforward authentication header compatibility request for the Anthropic Messages API. It is a small, localized fix in the API layer, not an algorithm or infrastructure change. The track is agent_ai_infra, but the work is ordinary API plumbing and does not meet the llm_algorithm requirement. The issue is actionable but low-value for the radar's purpose."
+  },
   "0611b49e9b5505e5bfdf7607a94c7adb98deb13db4c434a6e499cc84aabfce4f": {
     "confidence": 0.7,
     "contradictions": [
@@ -3310,6 +3331,37 @@
       "Whether a PR already exists for this fix; maintainer preference on the exact attribute name."
     ],
     "why": "Issue identifies a likely typo in attribute name causing DSPARK to ignore min_tokens, with a concrete patch. However, open PR and related issue lookups timed out, so duplicate work cannot be excluded. Maintainer design confirmation is needed before implementing."
+  },
+  "2c6749c8b80808b5593515aff5296f3e0168b4c59e41516b07026c671ad1f302": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "ui/litellm-dashboard/src/components/mcp_tools/mcp_server_edit.tsx: initialize env_json in initialValues from mcpServer.env",
+      "ui/litellm-dashboard/src/components/mcp_tools/mcp_server_edit.tsx: preserve existing env when env_json is absent in stdio save path",
+      "Add regression test for round-tripping an existing stdio server through edit/save without env changes"
+    ],
+    "risks": [
+      "Potential behavior change if users intentionally clear env; need to distinguish 'not touched' from 'cleared'",
+      "Second affected code path (stdio_config blob) may require additional changes beyond the primary fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Use the provided PoC as a failing test before the fix",
+      "Add a component test that loads an existing stdio server into the edit form and verifies env_json is populated",
+      "Add a save-path test that verifies env is preserved when env_json is unchanged",
+      "Run existing UI unit tests and lint for the dashboard"
+    ],
+    "unknowns": [
+      "Exact implementation details of the second affected component mentioned in the comment",
+      "Whether maintainers have a preferred design for distinguishing 'not touched' vs 'cleared' env"
+    ],
+    "why": "Issue provides a precise root cause (initialValues missing env_json, stdio save defaults to {}) with code references and a runnable PoC. A second user independently confirms the bug and adds a second affected code path. No competing PR or issue exists, and the fix is a minimal UI change with a clear regression test."
   },
   "2d20737835a18cacdd71192fb6a9764a1288bc51cb6e33179e270463ebe10767": {
     "confidence": 0.85,
@@ -11119,6 +11171,30 @@
     ],
     "why": "The issue clearly identifies a user-visible bug: LLM config is frozen at conversation creation, causing permanent authentication failures after key rotation. The proposed fix is actionable and includes a concrete repro and multiple solution levels. No competing PR or issue found."
   },
+  "93229d36c23acd26501f5b4d3e38be3dae04e5ef671a28c50d309b2f1534c60b": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify ai/src/protocols/bedrock-converse.ts to merge consecutive user messages when lowering tool results, ensuring all toolResult blocks for a toolUse turn are in a single user message."
+    ],
+    "risks": [
+      "Potential impact on other Bedrock message sequences (e.g., synthetic/compaction messages) if merge logic is too broad; need to preserve correct role alternation."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add a regression test that constructs a session with parallel tool calls and verifies the Bedrock Converse request contains a single user message with all toolResult blocks.",
+      "Run existing protocol tests for bedrock-converse and anthropic-messages to ensure no regressions."
+    ],
+    "unknowns": [
+      "Exact code structure and maintainer preferences for the merge implementation, but the issue provides sufficient detail for a minimal fix."
+    ],
+    "why": "Issue provides a deterministic failure with a clear root cause in the Bedrock Converse lowering: consecutive user messages are not merged, violating Anthropic's requirement for toolResult blocks. The fix is a minimal merge in the lowering, analogous to the existing anthropic-messages protocol. No competing PR or issue found."
+  },
   "93a8d9a7f4e1f9141ee16cf3f3c99e3101bc3acd859dfd50a04be51a5e43a6fd": {
     "confidence": 0.7,
     "contradictions": [],
@@ -11856,6 +11932,29 @@
       "Root cause of T2VA quality gap (keyframe vs clip length)"
     ],
     "why": "Issue provides empirical evidence that default residual_diff_threshold is inert and documents quality gaps, but root cause is not isolated (model/content dependent) and requires design confirmation. Existing PR #34148 overlaps semantically but does not reference the issue; manual comparison is needed before creating a new task."
+  },
+  "a1516340c6f844f7b2607e4153e633939178ca9061145ac91d185d606326cb8e": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify AzureOpenAIResponsesAPIConfig.transform_responses_api_request to normalize empty/whitespace-only descriptions on namespace tools inside additional_tools to a deterministic non-empty fallback, preserving non-empty descriptions."
+    ],
+    "risks": [
+      "Potential unintended changes to tool metadata if normalization is too broad; need to ensure only namespace tools are affected and only when description is empty/whitespace."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add a regression test that calls transform_responses_api_request with a payload containing empty, whitespace-only, and populated namespace descriptions, asserting the empty ones are replaced with a fallback and non-empty ones are unchanged."
+    ],
+    "unknowns": [
+      "Exact preferred fallback string (e.g., 'functions' or tool name) is not specified; maintainer may have a preference, but this is a minor design detail that can be decided during implementation."
+    ],
+    "why": "The issue clearly identifies a user-visible bug in the Azure Responses path where empty namespace descriptions are forwarded unchanged, causing Azure to reject requests. The root cause is localized to the transform function, and the issue provides a concrete reproduction and expected behavior. No existing PR directly addresses this specific failure, and the issue is actionable with a clear code path."
   },
   "a1f569cd7ebfb2922f7aa3cadce4713ea7e0eab80fef503843a8334fcbe58acc": {
     "confidence": 0.8,
