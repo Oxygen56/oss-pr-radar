@@ -1340,6 +1340,40 @@
     ],
     "why": "Issue provides a clear root cause and minimal reproduction for a user-visible bug in Qwen parser routing. However, an existing PR #50955 directly references this issue but has failing CI and incomplete evidence, and the deterministic gate requires HUMAN_REVIEW. Maintainer design preference is unconfirmed, so work should wait for maintainer guidance."
   },
+  "17bfb7d2862fda69852a00db7e6ba38f84f96a67aadd79e1f0fa8ff6102d4acf": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #25387 is closed but issue comments suggest fix not merged; PR #36328 is open but does not reference this issue."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "litellm/proxy/auth/auth_checks.py",
+      "litellm/proxy/utils.py",
+      "litellm/proxy/scheduler/reset_budget_job.py",
+      "add regression tests for budget_id persistence and reset"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #36328; need to ensure no conflicting changes.",
+      "Backfilling budget_id for existing users may have performance implications on large tables.",
+      "Changing upsert behavior could affect other end-user creation paths."
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Reproduce issue by configuring max_end_user_budget_id, sending request with x-litellm-end-user-id, and verifying budget_id is NULL in DB; then run budget reset job and confirm spend resets after fix.",
+      "Add unit/integration tests covering auto-creation with budget_id, backfill for existing NULL users, and reset job matching."
+    ],
+    "unknowns": [
+      "Maintainer preference on whether to revive #25387 or create a new PR.",
+      "Whether PR #36328 actually fixes this issue or is unrelated.",
+      "Current state of the codebase after recent commits mentioned in comments."
+    ],
+    "why": "Issue clearly identifies a bug where max_end_user_budget_id is not persisted to DB, causing budget reset to fail. However, an existing PR (#25387) directly addresses this issue but is closed with failing CI and no tests, and a newer PR (#36328) may partially overlap. Maintainer confirmation is needed to decide whether to revive, supersede, or create a new PR."
+  },
   "18348522a1bfdd7a584ae96094cb9bb55add0fbeb99e68c9d0637ced290b5740": {
     "confidence": 0.7,
     "contradictions": [],
@@ -5362,6 +5396,33 @@
     ],
     "why": "The issue provides a clear root cause: AOT compile cache key ignores limit_mm_per_prompt and multimodal_config, causing cache collisions between image-enabled and image-disabled runs. An existing PR #50908 attempts to fix this by including disabled multimodal modalities in the model config hash, but it has failed CI checks and may not fully address the root cause. A materially better PR could provide a more robust fix with comprehensive tests and ensure CI passes."
   },
+  "53e520a819bb7acec9b573bfb584525b05c9d561d34d3513f77cc96e2d21993f": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Implement prefill worker load booking in EPP (e.g., CallAddRequest for prefill) and enable active-block tracking",
+      "Modify prefill router selection to incorporate worker load signals (e.g., active tokens, queue depth)"
+    ],
+    "risks": [
+      "Potential performance overhead from booking and tracking active blocks",
+      "Behavioral changes may affect existing routing semantics; need careful backward compatibility"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add integration test simulating sustained mixed-size prefill traffic and assert balanced queue depths across prefill workers",
+      "Unit test for selection logic ensuring busy workers are deprioritized when load signals are present"
+    ],
+    "unknowns": [
+      "Exact desired load-balancing policy (e.g., least-connections vs. token-based) not specified"
+    ],
+    "why": "Issue describes a clear load-balancing bug in disaggregated prefill routing with a concrete reproduction and metrics. Maintainer comment identifies root cause: advisory selection without worker load booking and no active-block tracking, leading to random selection among workers. No competing PR addresses this; existing PRs are unrelated or lack tests."
+  },
   "53fcf4843f720f6be4a9109050b2c70064df91a4b63856f72974b19734e0f5ea": {
     "confidence": 0.8,
     "contradictions": [],
@@ -9362,6 +9423,39 @@
     ],
     "why": "Issue provides a clear root cause and repro, but a maintainer (roboomp) is actively investigating and has already submitted PR #7604 with a fix and regression tests. The PR has failed CI checks, so it may be weak, but the maintainer's involvement and existing PR make a new candidate premature until the PR is reviewed or closed."
   },
+  "8b6931d63178165a01655721004fdd844b81d100016a2e8ce5506bd5e5136674": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Reporter suspects distinct cause from #40742 and #48749, but contributor notes similar error patterns; no confirmation"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Investigate CUDA graph capture invalidation in distributed/kernel path",
+      "Fix root cause in vLLM compilation or distributed code",
+      "Add regression test for fullgraph with inductor graph partition and piecewise cudagraph"
+    ],
+    "risks": [
+      "Root cause may be environmental or flaky, not a code bug",
+      "Fix may require maintainer design input for CUDA graph capture changes"
+    ],
+    "root_cause_clarity": "low",
+    "score": 13,
+    "test_plan": [
+      "Reproduce on H200 with full test file in single session",
+      "Bisect to identify antecedent CUDA error",
+      "Run targeted test with fixed seed and synthetic batch to confirm fix"
+    ],
+    "unknowns": [
+      "Root cause of antecedent CUDA error",
+      "Whether issue is reproducible on H200",
+      "Whether an existing PR or issue already addresses this"
+    ],
+    "why": "Issue reports a flaky CUDA graph capture failure in a vLLM fullgraph test, but the root cause is unknown and the reporter explicitly asks for duplicate confirmation. A contributor attempted reproduction on H100 and failed, noting the CI uses H200 and cross-test state may matter. No maintainer assignment or design confirmation exists, and open PR lookup failed due to rate limit, so duplicate work cannot be excluded."
+  },
   "8bbf2c53df2caa1e03f26ec1571ec0e685657e5587c0fd1f8f1be34647b30c4e": {
     "confidence": 0.8,
     "contradictions": [
@@ -10689,6 +10783,33 @@
     ],
     "why": "Issue clearly identifies a real bug with a minimal repro and root cause in messages.py, but an open PR (#7053) has semantic overlap and the deterministic gate requires human review. Need maintainer confirmation to avoid duplicate work."
   },
+  "a74e841872b55e6bf9121db322dce0bc2d11e0184b3c7a0ee053c2abacacf112": {
+    "confidence": 0.7,
+    "contradictions": [
+      "DeepSeek claims root cause is q4_0 KV cache, but maintainer suggests model unsuitability; no definitive root cause."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "KV cache quantization handling",
+      "per-model KV cache configuration"
+    ],
+    "risks": [
+      "Changing KV cache defaults may impact performance or memory usage; per-model overrides add complexity."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with VibeThinker-3B and MiniCPM-1B using q4_0 vs q8_0 KV cache; compare output quality and token distributions."
+    ],
+    "unknowns": [
+      "Whether the issue is a bug in quantization implementation or expected model behavior; maintainer's stance on desired fix."
+    ],
+    "why": "Issue reports q4_0 KV cache causing degenerate output on small models, but root cause is not confirmed; maintainer suggests it may be model unsuitability and points to a PR for per-model overrides. No concrete code path or algorithm change is proposed."
+  },
   "a823f9098feb4dc5ced8f3d3636c148611845bde47820abc7ccd29ab75c0285b": {
     "confidence": 0.85,
     "contradictions": [],
@@ -11346,6 +11467,29 @@
       "Whether maintainers have already started a fix or have a preferred approach; the issue asks for confirmation of intended support path"
     ],
     "why": "The issue identifies a deterministic crash in the DSpark speculative decoding path caused by a NoneType dereference in the embedding-sharing logic of llm_base_proposer.py. The root cause is clearly explained with code snippets and a reproducible command. The fix is a small, well-scoped guard to skip the dimension check when the draft embedding is absent. This is a concrete algorithm-path bug in a vLLM runtime, with a clear reference-vs-implementation test (spec on vs off). No competing PR addresses this issue."
+  },
+  "b54456489363e100b2a97259adff3dbc4809d9d16c421c787eba98b1432cbdf6": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Fix in SGLang's packed sequence/reference-conditioning path for Ref2VA, likely timestep, reference token, or position handling."
+    ],
+    "risks": [
+      "Root cause may be in model weights or external dependencies; distinguishing algorithmic bug from environment/offload issue is nontrivial."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 12,
+    "test_plan": [
+      "Reproduce with provided command and request on 2x L40S BF16; compare Ref2VA vs FL2VA outputs; add regression test with fixed seed and reference image."
+    ],
+    "unknowns": [
+      "Open PR status unknown due to rate limit; maintainer confirmation absent; exact code path responsible not identified."
+    ],
+    "why": "Issue reports a reproducible Ref2VA-specific snow/noise bug with detailed diagnostics and a minimal repro, but root cause is unconfirmed and open PR lookup failed due to rate limit, so duplicate work cannot be excluded."
   },
   "b5cd2e181fc5bc44aa623875ac9e034f10b37017dc90ee2e9a83401815051729": {
     "confidence": 0.8,
@@ -12090,6 +12234,38 @@
       "Maintainer confirmation on the expected fix approach is missing"
     ],
     "why": "The issue describes a concrete streaming bug in LiteLLM's Anthropic adapter where tool_use is lost during SSE conversion. It provides a clear reproduction and expected behavior, but the root cause is not identified and the track is llm_algorithm, which requires a concrete algorithmic mechanism. The supplied evidence lacks a specific training objective, model mechanism, or numerical method; it is an SDK integration bug. The open PR and related issue lookups failed, so duplicate work cannot be excluded. The gate decision is HUMAN_REVIEW, and the candidate's own category is WAIT_MAINTAINER."
+  },
+  "c2f63253a0272f955ba3a076af4ca5df25b987746fea5e0e112c05e5c59d06a9": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Issue claims padding works but comment reports intermittent corruption"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "FlashInfer kernel instantiation for topk=192 in decode-dsv4",
+      "SGLang shim dispatch logic in flash_mla_sm120.py"
+    ],
+    "risks": [
+      "Kernel instantiation may require FlashInfer changes and coordination",
+      "Potential numerical or memory layout issues with new topk instantiation",
+      "Intermittent corruption risk if padding is used as a workaround"
+    ],
+    "root_cause_clarity": "high",
+    "score": 13,
+    "test_plan": [
+      "Reproduce the original failure with the provided command on SM120 hardware",
+      "Add a regression test that verifies DSpark speculative decoding starts and produces correct output over long sequences",
+      "Run deterministic fixtures comparing padded vs non-padded outputs to ensure no corruption"
+    ],
+    "unknowns": [
+      "Maintainer confirmation on the preferred fix approach",
+      "Whether FlashInfer maintainers are willing to add the topk=192 instantiation"
+    ],
+    "why": "The issue identifies a concrete kernel dispatch gap (topk=192 missing for decode-dsv4 on SM120) with a clear root cause and reproduction. However, the proposed padding workaround was withdrawn due to intermittent corruption, and the remaining fix (instantiating the kernel in FlashInfer) requires maintainer coordination and design confirmation. The gate decision is HUMAN_REVIEW, and the existing PR #33986 is closed and lacks tests."
   },
   "c2fcf3bf95dac9d2110426b14865c7f107c95a55fde99275b4247f7735287613": {
     "confidence": 0.7,
@@ -13579,6 +13755,35 @@
       "Exact WorkflowsStorage contract changes required"
     ],
     "why": "Issue clearly describes a race condition in workflow resume with public repro and production evidence, but the proposed fix requires storage-level atomic claim/CAS and maintainer confirmation on the WorkflowsStorage contract. Existing PR #20512 was closed as insufficient, and maintainer input is needed to choose between single-process mitigation and storage-backed solution."
+  },
+  "d8bd6aa097c0dc7757564b29a87268ecd5fc0abc5e7c045ec7f7c50aa8734102": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify StreamableHttpClientSessionTransport error handling to classify non-JSON-RPC 400 bodies as fallback-triggering errors",
+      "Adjust McpClientImpl.ConnectAsync catch clauses to handle this case"
+    ],
+    "risks": [
+      "Potential behavior change affecting error surfacing for other non-JSON-RPC error bodies",
+      "Overlap with open PR #1791 may lead to duplicate work"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 12,
+    "test_plan": [
+      "Add a unit test with a mock HTTP server returning the exact non-JSON-RPC 400 JSON body and assert fallback to initialize",
+      "Run existing SDK test suite for Streamable HTTP transport"
+    ],
+    "unknowns": [
+      "Exact throw site and exception type escaping ConnectAsync",
+      "Whether PR #1791 fully resolves this issue",
+      "Maintainer preference on error classification approach"
+    ],
+    "why": "Issue describes a real bug in server/discover fallback for non-JSON-RPC 400 bodies, but root cause is not precisely identified (author admits no debugger trace). Open PR #1791 likely addresses this but does not reference the issue, and PR lookup was incomplete due to rate limit. Maintainer design preference is unconfirmed."
   },
   "d90931ce4843cfecd8a001954c60a99fdce15220b3581596f86a4ce0f7c06f5a": {
     "confidence": 0.8,
@@ -16043,6 +16248,37 @@
       "Maintainer preference on whether to repair or retire the script is not yet confirmed."
     ],
     "why": "The issue identifies a deterministic contract mismatch in the live provisioning smoke script: it expects HTTP 202 with a jobId while the shared tier returns HTTP 200 with no job, and pairing always fails with 503. The fix is well-scoped: update the script to handle the shared contract, add a fail-closed staging guard, and add regression tests. No competing PR exists, and the maintainer has not yet responded, but the technical path is clear and actionable."
+  },
+  "fa690750e608582b140c647f3d5d43def007906101080fabe9bacab22bfd36cf": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Comment contradicts proposal's 'exactly once' claim, noting crash window remains"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add after_durable_model_request hook to AbstractCapability",
+      "Invoke hook inside durable model-request units in Temporal, DBOS, Prefect",
+      "Provide stable effect identity for idempotent external commits"
+    ],
+    "risks": [
+      "Exactly-once semantics may be unachievable without idempotency support; design may need adjustment",
+      "Maintainer may prefer a different approach (e.g., general durable primitive) or reject due to overhead concerns"
+    ],
+    "root_cause_clarity": "high",
+    "score": 13,
+    "test_plan": [
+      "Reproduce duplicate side effects with a capability writing to a store under Temporal replay",
+      "Add regression tests for replay after committed unit, crash before external commit, and idempotent retry with effect_id"
+    ],
+    "unknowns": [
+      "Maintainer design preference on hook placement vs general primitive",
+      "Whether effect identity approach is acceptable to maintainers"
+    ],
+    "why": "Issue identifies a real architectural gap: capability hooks run outside durable units causing duplicate side effects on replay. Proposal is concrete and references existing code paths. However, maintainer design confirmation is required, and the comment raises a critical correctness concern about exactly-once semantics that needs resolution."
   },
   "fc218c9da843331f587869de20b0af67bc06830cca7f3949c8640984bba7cacf": {
     "confidence": 0.85,
