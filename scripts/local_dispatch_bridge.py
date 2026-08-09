@@ -437,7 +437,7 @@ def publish_terminal_feedback(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _publish_controller_feedback_updates(
-    updates: dict[str, dict[str, Any]], max_attempts: int = 3
+    updates: dict[str, dict[str, Any]], max_attempts: int = 5
 ) -> tuple[bool, int]:
     """Merge terminal updates without weakening the state branch stale-write guard."""
 
@@ -491,6 +491,7 @@ def _publish_controller_feedback_updates(
         except RuntimeError as exc:
             if "state branch changed since restore" not in str(exc) or attempt == max_attempts:
                 raise
+            sleep(min(2**attempt, 8))
     raise RuntimeError("controller terminal feedback publish attempts exhausted")
 
 

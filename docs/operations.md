@@ -161,6 +161,9 @@ receiving their own worktrees.
 - For controller-owned commits, the publication base is taken from the
   prepared checkout's `origin/HEAD`. A child-provided release or stale branch
   hint cannot create a permanently blocked publication request.
+- Controller terminal feedback retains the state branch stale-write guard. On
+  concurrent cloud writes it restores and merges again with bounded backoff,
+  so a short scanner or watchdog publish does not exhaust immediate retries.
 
 ## Quality Review
 

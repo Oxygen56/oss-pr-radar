@@ -158,6 +158,7 @@ def test_terminal_feedback_reloads_and_merges_after_concurrent_publish(monkeypat
     state.mkdir()
     feedback_path = state / "controller_terminal_feedback.json"
     calls = []
+    delays = []
     restore_count = 0
     publish_count = 0
 
@@ -170,7 +171,7 @@ def test_terminal_feedback_reloads_and_merges_after_concurrent_publish(monkeypat
         calls.append(args)
         if args[2] == "restore":
             restore_count += 1
-            if restore_count == 2:
+            if restore_count >= 2:
                 feedback_path.write_text(
                     json.dumps(
                         {
@@ -184,22 +185,24 @@ def test_terminal_feedback_reloads_and_merges_after_concurrent_publish(monkeypat
                 )
         elif args[2] == "publish":
             publish_count += 1
-            if publish_count == 1:
+            if publish_count <= 4:
                 raise RuntimeError("state branch changed since restore")
         return ""
 
     monkeypatch.setattr(MODULE, "STATE", state)
     monkeypatch.setattr(MODULE, "GitHubClient", GitHub)
     monkeypatch.setattr(MODULE, "command", concurrent_command)
+    monkeypatch.setattr(MODULE, "sleep", delays.append)
 
     result = MODULE.publish_terminal_feedback(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
 
     saved = json.loads(feedback_path.read_text(encoding="utf-8"))
     assert result["published"] == 1
     assert result["stateChanged"] is True
-    assert result["publishAttempts"] == 2
+    assert result["publishAttempts"] == 5
     assert set(saved) == {"a/b#1", "x/y#2"}
-    assert [call[2] for call in calls] == ["restore", "publish", "restore", "publish"]
+    assert [call[2] for call in calls] == ["restore", "publish"] * 5
+    assert delays == [2, 4, 8, 8]
 
 
 def test_terminal_feedback_does_not_republish_unchanged_state(monkeypatch, tmp_path):
