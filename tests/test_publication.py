@@ -260,16 +260,15 @@ def test_broker_still_blocks_a_new_pr_when_a_strong_competitor_exists(tmp_path):
         def check_runs(self, repo, ref):
             return [{"conclusion": "success"}]
 
-    result = broker_publication_request(
-        store, request["request_id"], client=CompetitionClient()
-    )
+    result = broker_publication_request(store, request["request_id"], client=CompetitionClient())
 
     assert result["granted"] is False
     assert result["pending"] is False
     assert result["audit"]["reason"] == "STRONG_EXISTING_PR"
 
 
-def test_followup_publication_is_bound_to_existing_pr_and_previous_head(tmp_path):
+@pytest.mark.parametrize("completion", ["direct", "effect"])
+def test_followup_publication_is_bound_to_existing_pr_and_previous_head(tmp_path, completion):
     store, request, evidence_path = prepared_request(tmp_path)
     first = store.publication_request(request["request_id"])
     permit = store.grant_publication_request(
@@ -282,6 +281,26 @@ def test_followup_publication_is_bound_to_existing_pr_and_previous_head(tmp_path
     store.consume_publication_permit(
         permit["permit_id"], "https://github.com/example/project/pull/8"
     )
+    checked_at = iso_z(datetime.now(UTC))
+    store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": checked_at,
+            "items": [
+                {
+                    "url": "https://github.com/example/project/pull/8",
+                    "headSha": first["commit_sha"],
+                    "actionDigest": "old-action",
+                    "taskActionDigest": "old-task-action",
+                    "checkedAt": checked_at,
+                    "taskActions": ["old head check failed"],
+                    "taskFollowupRequired": True,
+                    "evidence": {"actionableCheckNames": ["Old check"]},
+                }
+            ],
+        }
+    )
+    assert store.pr_followup_candidates()
     worktree = tmp_path / "worktree"
     (worktree / "file.txt").write_text("fixed again\n", encoding="utf-8")
     git("add", "file.txt", cwd=worktree)
@@ -305,6 +324,47 @@ def test_followup_publication_is_bound_to_existing_pr_and_previous_head(tmp_path
     assert payload["publicationKind"] == "PR_UPDATE"
     assert payload["existingPrUrl"] == "https://github.com/example/project/pull/8"
     assert payload["previousCommitSha"] == first["commit_sha"]
+
+    update_permit = store.grant_publication_request(
+        update["request_id"],
+        issue_url=payload["issueUrl"],
+        commit_sha=payload["commitSha"],
+        branch=payload["branch"],
+        evidence={"publication": payload["publication"]},
+    )
+    if completion == "direct":
+        store.consume_publication_permit(
+            update_permit["permit_id"], "https://github.com/example/project/pull/8"
+        )
+    else:
+        effect = store.publication_effect(
+            permit_id=update_permit["permit_id"],
+            action="create_pr",
+            request_digest="confirm-update",
+        )
+        store.succeed_pull_request_effect(
+            effect_id=effect["effect_id"],
+            permit_id=update_permit["permit_id"],
+            pr_url="https://github.com/example/project/pull/8",
+            result={
+                "ok": True,
+                "prUrl": "https://github.com/example/project/pull/8",
+            },
+        )
+
+    assert store.pr_followup_candidates() == []
+    with store.connect() as connection:
+        followup = connection.execute(
+            """SELECT followup_required,wake_digest FROM pr_followups
+               WHERE opportunity_key='example/project#7'"""
+        ).fetchone()
+        event = connection.execute(
+            """SELECT payload_json FROM events
+               WHERE opportunity_key='example/project#7'
+                 AND event_type='PR_FOLLOWUP_SNAPSHOT_SUPERSEDED'"""
+        ).fetchone()
+    assert dict(followup) == {"followup_required": 0, "wake_digest": None}
+    assert json.loads(event["payload_json"])["commitSha"] == current
 
 
 def test_broker_allows_bound_update_despite_a_competing_pr(monkeypatch, tmp_path):

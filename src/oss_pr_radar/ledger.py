@@ -565,9 +565,11 @@ class RadarLedger:
             raise LedgerError("task context audit timestamp is invalid") from exc
         title_time = str(context.get("titleTime") or "").strip()
         if not re.fullmatch(r"\d{2}-\d{2} \d{2}:\d{2}", title_time):
-            title_time = parse_time(captured_at).astimezone(
-                timezone(timedelta(hours=8))
-            ).strftime("%m-%d %H:%M")
+            title_time = (
+                parse_time(captured_at)
+                .astimezone(timezone(timedelta(hours=8)))
+                .strftime("%m-%d %H:%M")
+            )
 
         if stage not in RECOVERABLE_CONTEXT_STAGES:
             if stage != "DISPATCHED":
@@ -581,8 +583,7 @@ class RadarLedger:
                 "titleTime": title_time,
             }
             if current is None or any(
-                current.get(field) != expected
-                for field, expected in immutable_binding.items()
+                current.get(field) != expected for field, expected in immutable_binding.items()
             ):
                 raise LedgerError("active task context disagrees with the ledger")
             if context.get("publicationReceipt") is not None:
@@ -603,10 +604,7 @@ class RadarLedger:
                 "intentStatus": intent_status,
                 "liveAudit": live_audit,
             }
-            if any(
-                current.get(field) != expected
-                for field, expected in expected_active.items()
-            ):
+            if any(current.get(field) != expected for field, expected in expected_active.items()):
                 raise LedgerError("active task context disagrees with the ledger")
             return {
                 "key": key,
@@ -1514,9 +1512,7 @@ class RadarLedger:
 
     def title_candidates(self) -> list[dict[str, Any]]:
         return [
-            item
-            for item in self.title_bindings()
-            if item["titleSyncedState"] != item["titleState"]
+            item for item in self.title_bindings() if item["titleSyncedState"] != item["titleState"]
         ]
 
     def invalidate_title_sync(
@@ -1911,9 +1907,7 @@ class RadarLedger:
         ):
             thread_id = str(row["thread_id"])
             followup_digest = (
-                str(row["followup_digest"])
-                if recovery_kind == "PR_FOLLOWUP_RESULT"
-                else None
+                str(row["followup_digest"]) if recovery_kind == "PR_FOLLOWUP_RESULT" else None
             )
             candidate = {
                 "key": row["key"],
@@ -2060,9 +2054,7 @@ class RadarLedger:
     def _normalized_validation_missing(missing: Any) -> tuple[str, ...]:
         if not isinstance(missing, list):
             return ()
-        return tuple(
-            sorted({str(item).strip() for item in missing if str(item).strip()})
-        )
+        return tuple(sorted({str(item).strip() for item in missing if str(item).strip()}))
 
     def _mark_validation_no_progress(
         self,
@@ -3433,23 +3425,37 @@ class RadarLedger:
         inserted = 0
         updated = 0
         matched = 0
+        stale_head_suppressed = 0
         with self.transaction() as connection:
             tracked = {
-                str(row["pr_url"]): str(row["opportunity_key"])
+                str(row["pr_url"]): {
+                    "key": str(row["opportunity_key"]),
+                    "commitSha": str(row["commit_sha"]),
+                    "consumedAt": str(row["consumed_at"]),
+                }
                 for row in connection.execute(
-                    """SELECT DISTINCT p.pr_url,r.opportunity_key
-                       FROM publication_requests r
-                       JOIN publication_permits p ON p.request_id=r.request_id
-                       WHERE p.status='CONSUMED' AND p.pr_url IS NOT NULL"""
+                    """SELECT pr_url,opportunity_key,commit_sha,consumed_at FROM (
+                         SELECT p.pr_url,r.opportunity_key,r.commit_sha,
+                                p.updated_at AS consumed_at,
+                                ROW_NUMBER() OVER (
+                                  PARTITION BY p.pr_url
+                                  ORDER BY p.updated_at DESC,r.updated_at DESC,
+                                           r.created_at DESC,r.request_id DESC
+                                ) AS latest_rank
+                         FROM publication_requests r
+                         JOIN publication_permits p ON p.request_id=r.request_id
+                         WHERE p.status='CONSUMED' AND p.pr_url IS NOT NULL
+                       ) WHERE latest_rank=1"""
                 ).fetchall()
             }
             for item in state["items"]:
                 if not isinstance(item, dict):
                     continue
                 pr_url = str(item.get("url") or "")
-                key = tracked.get(pr_url)
-                if not key or not PR_URL_RE.fullmatch(pr_url):
+                binding = tracked.get(pr_url)
+                if not binding or not PR_URL_RE.fullmatch(pr_url):
                     continue
+                key = binding["key"]
                 matched += 1
                 head_sha = str(item.get("headSha") or "")
                 action_digest = str(item.get("actionDigest") or "")
@@ -3461,6 +3467,38 @@ class RadarLedger:
                 evidence = item.get("evidence") or {}
                 if not isinstance(actions, list) or not isinstance(evidence, dict):
                     raise LedgerError("PR follow-up evidence is invalid")
+                try:
+                    checked_time = parse_time(checked_at)
+                    consumed_time = parse_time(binding["consumedAt"])
+                except (TypeError, ValueError) as exc:
+                    raise LedgerError("PR follow-up timestamps are invalid") from exc
+                if head_sha != binding["commitSha"] and checked_time <= consumed_time:
+                    retired = connection.execute(
+                        """UPDATE pr_followups
+                           SET followup_required=0,wake_digest=NULL,updated_at=?
+                           WHERE opportunity_key=?
+                             AND (followup_required<>0 OR wake_digest IS NOT NULL)""",
+                        (now, key),
+                    )
+                    updated += retired.rowcount
+                    stale_head_suppressed += 1
+                    self._event(
+                        connection,
+                        key,
+                        "PR_FOLLOWUP_STALE_HEAD_SUPPRESSED",
+                        sha256_text(
+                            f"{pr_url}|{head_sha}|{binding['commitSha']}|{binding['consumedAt']}"
+                        ),
+                        {
+                            "prUrl": pr_url,
+                            "staleHeadSha": head_sha,
+                            "currentCommitSha": binding["commitSha"],
+                            "checkedAt": checked_at,
+                            "consumedAt": binding["consumedAt"],
+                        },
+                        now,
+                    )
+                    continue
                 required = item.get("taskFollowupRequired") is True
                 previous = connection.execute(
                     "SELECT * FROM pr_followups WHERE opportunity_key=?", (key,)
@@ -3508,7 +3546,12 @@ class RadarLedger:
                 )
                 inserted += int(previous is None)
                 updated += int(previous is not None)
-        return {"matched": matched, "inserted": inserted, "updated": updated}
+        return {
+            "matched": matched,
+            "inserted": inserted,
+            "updated": updated,
+            "staleHeadSuppressed": stale_head_suppressed,
+        }
 
     def pr_followup_candidates(self) -> list[dict[str, Any]]:
         with self.connect() as connection:
@@ -3601,9 +3644,7 @@ class RadarLedger:
         )
         if candidate is None:
             raise LedgerError("PR follow-up authorization is stale or invalid")
-        if prepared_head_sha is not None and not re.fullmatch(
-            r"[0-9a-f]{40}", prepared_head_sha
-        ):
+        if prepared_head_sha is not None and not re.fullmatch(r"[0-9a-f]{40}", prepared_head_sha):
             raise LedgerError("PR follow-up prepared head is invalid")
         with self.transaction() as connection:
             self._event(
@@ -3713,9 +3754,7 @@ class RadarLedger:
             r"[0-9a-f]{64}", legacy_context_digest
         ):
             raise LedgerError("legacy PR follow-up context digest is invalid")
-        if legacy_wake_digest is not None and not re.fullmatch(
-            r"[0-9a-f]{64}", legacy_wake_digest
-        ):
+        if legacy_wake_digest is not None and not re.fullmatch(r"[0-9a-f]{64}", legacy_wake_digest):
             raise LedgerError("legacy PR follow-up wake digest is invalid")
         if (legacy_context_digest is None) != (legacy_wake_digest is None):
             raise LedgerError("legacy PR follow-up compatibility is incomplete")
@@ -3950,6 +3989,43 @@ class RadarLedger:
                 ),
             )
 
+    def _retire_pr_followup_snapshot_after_publication(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        request: sqlite3.Row,
+        pr_url: str,
+        now: str,
+    ) -> None:
+        payload = json.loads(request["request_json"])
+        if payload.get("publicationKind") != "PR_UPDATE":
+            return
+        previous = connection.execute(
+            "SELECT head_sha FROM pr_followups WHERE opportunity_key=? AND pr_url=?",
+            (request["opportunity_key"], pr_url),
+        ).fetchone()
+        if previous is None:
+            return
+        connection.execute(
+            """UPDATE pr_followups
+               SET followup_required=0,wake_digest=NULL,updated_at=?
+               WHERE opportunity_key=? AND pr_url=?""",
+            (now, request["opportunity_key"], pr_url),
+        )
+        self._event(
+            connection,
+            request["opportunity_key"],
+            "PR_FOLLOWUP_SNAPSHOT_SUPERSEDED",
+            str(request["request_id"]),
+            {
+                "requestId": request["request_id"],
+                "prUrl": pr_url,
+                "previousCommitSha": payload.get("previousCommitSha") or previous["head_sha"],
+                "commitSha": request["commit_sha"],
+            },
+            now,
+        )
+
     def consume_publication_permit(self, permit_id: str, pr_url: str) -> None:
         now = iso_z(datetime.now(UTC))
         with self.transaction() as connection:
@@ -3969,7 +4045,7 @@ class RadarLedger:
                 (now, permit["request_id"]),
             )
             request = connection.execute(
-                "SELECT opportunity_key FROM publication_requests WHERE request_id=?",
+                "SELECT * FROM publication_requests WHERE request_id=?",
                 (permit["request_id"],),
             ).fetchone()
             if request:
@@ -3988,6 +4064,9 @@ class RadarLedger:
                     pr_url,
                     {"permitId": permit_id, "prUrl": pr_url},
                     now,
+                )
+                self._retire_pr_followup_snapshot_after_publication(
+                    connection, request=request, pr_url=pr_url, now=now
                 )
 
     def succeed_pull_request_effect(
@@ -4033,7 +4112,7 @@ class RadarLedger:
                 (now, permit["request_id"]),
             )
             request = connection.execute(
-                "SELECT opportunity_key FROM publication_requests WHERE request_id=?",
+                "SELECT * FROM publication_requests WHERE request_id=?",
                 (permit["request_id"],),
             ).fetchone()
             if request:
@@ -4052,6 +4131,9 @@ class RadarLedger:
                     pr_url,
                     {"permitId": permit_id, "prUrl": pr_url},
                     now,
+                )
+                self._retire_pr_followup_snapshot_after_publication(
+                    connection, request=request, pr_url=pr_url, now=now
                 )
 
     def cleanup_candidates(self) -> list[dict[str, Any]]:

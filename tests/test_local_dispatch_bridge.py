@@ -136,9 +136,7 @@ def test_title_list_detects_desktop_title_drift(monkeypatch, tmp_path):
 
     assert len(result["titles"]) == 1
     assert result["titles"][0]["threadId"] == "thread-1"
-    assert result["titles"][0]["desiredTitle"].startswith(
-        "[有价值·PR已开] 08-05 16:00 a/b#1"
-    )
+    assert result["titles"][0]["desiredTitle"].startswith("[有价值·PR已开] 08-05 16:00 a/b#1")
     with store.connect() as connection:
         drift = connection.execute(
             "SELECT payload_json FROM events WHERE event_type='THREAD_TITLE_DRIFTED'"
@@ -591,9 +589,7 @@ def test_shared_context_recovery_rebuilds_a_lost_local_ledger(monkeypatch, tmp_p
     assert re.fullmatch(r"\d{2}-\d{2} \d{2}:\d{2}", context["titleTime"])
 
 
-def test_shared_context_recovery_verifies_an_existing_dispatched_task(
-    monkeypatch, tmp_path
-):
+def test_shared_context_recovery_verifies_an_existing_dispatched_task(monkeypatch, tmp_path):
     project_root = tmp_path / "github"
     monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
     worktree = MODULE.managed_worktree_path("intent-1", "a/b")
@@ -621,9 +617,7 @@ def test_shared_context_recovery_verifies_an_existing_dispatched_task(
     ]
 
 
-def test_shared_context_recovery_accepts_a_superseded_dispatched_mirror(
-    monkeypatch, tmp_path
-):
+def test_shared_context_recovery_accepts_a_superseded_dispatched_mirror(monkeypatch, tmp_path):
     project_root = tmp_path / "github"
     monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
     worktree = MODULE.managed_worktree_path("intent-1", "a/b")
@@ -653,9 +647,7 @@ def test_shared_context_recovery_accepts_a_superseded_dispatched_mirror(
     ]
 
 
-def test_shared_context_recovery_does_not_rebuild_a_dispatched_task(
-    monkeypatch, tmp_path
-):
+def test_shared_context_recovery_does_not_rebuild_a_dispatched_task(monkeypatch, tmp_path):
     project_root = tmp_path / "github"
     monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
     worktree = MODULE.managed_worktree_path("intent-1", "a/b")
@@ -700,9 +692,7 @@ def test_shared_context_recovery_fails_closed_when_mirrors_disagree(monkeypatch,
     assert result["errors"][0]["error"] == "shared and worktree task context mirrors disagree"
 
 
-def test_shared_context_recovery_marks_clean_published_result_as_consumed(
-    monkeypatch, tmp_path
-):
+def test_shared_context_recovery_marks_clean_published_result_as_consumed(monkeypatch, tmp_path):
     project_root = tmp_path / "github"
     monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
     worktree = MODULE.managed_worktree_path("intent-1", "a/b")
@@ -1724,9 +1714,7 @@ def test_latest_terminal_error_ignores_a_failure_before_a_new_turn(tmp_path):
     assert MODULE.latest_terminal_thread_error(str(rollout)) is None
 
 
-def test_recovery_reserve_rephrases_a_benign_policy_false_positive(
-    monkeypatch, tmp_path
-):
+def test_recovery_reserve_rephrases_a_benign_policy_false_positive(monkeypatch, tmp_path):
     rollout = tmp_path / "rollout.jsonl"
     rollout.write_text(
         json.dumps(
@@ -2066,9 +2054,7 @@ def test_context_sync_recovers_legacy_prepared_followup_binding(tmp_path):
             (json.dumps(evidence),),
         )
     candidate = store.pr_followup_candidates()[0]
-    store.reserve_pr_followup(
-        thread_id="thread-1", wake_digest=candidate["wakeDigest"]
-    )
+    store.reserve_pr_followup(thread_id="thread-1", wake_digest=candidate["wakeDigest"])
     next_checked_at = iso_z(datetime.now(UTC) + timedelta(minutes=1))
     store.import_pr_followups(
         {
@@ -2692,9 +2678,7 @@ def test_controller_policy_snapshot_recovers_an_existing_blocked_fix(monkeypatch
     )
     assert len(recovered["publicationRequests"]) == 1
     assert recovered["ingested"] == [{"key": "a/b#1", "stage": "FIX_READY"}]
-    assert json.loads(result_path.read_text(encoding="utf-8"))["quality"][
-        "policy_verified"
-    ] is True
+    assert json.loads(result_path.read_text(encoding="utf-8"))["quality"]["policy_verified"] is True
     request_id = recovered["publicationRequests"][0]["requestId"]
     request = store.publication_request(request_id)
     assert request is not None
@@ -3139,12 +3123,8 @@ def test_validation_followup_list_reconciles_and_reports_unchanged_gap(tmp_path)
         missing=["relevant_tests_green"],
     )
     store.record_stage("a/b#1", "VALIDATION_PENDING")
-    store.reserve_validation_followup(
-        thread_id="thread-1", result_digest="result-digest-1"
-    )
-    store.commit_validation_followup(
-        thread_id="thread-1", result_digest="result-digest-1"
-    )
+    store.reserve_validation_followup(thread_id="thread-1", result_digest="result-digest-1")
+    store.commit_validation_followup(thread_id="thread-1", result_digest="result-digest-1")
     with store.connect() as connection:
         connection.execute(
             """INSERT INTO events
@@ -3165,9 +3145,7 @@ def test_validation_followup_list_reconciles_and_reports_unchanged_gap(tmp_path)
             ),
         )
 
-    listed = MODULE.validation_followup_list(
-        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3")
-    )
+    listed = MODULE.validation_followup_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
 
     assert listed["ok"] is True
     assert listed["candidates"] == []
@@ -3522,9 +3500,9 @@ def test_validation_followup_reserve_runs_prefetch_inside_bridge(monkeypatch, tm
         missing=["regression_test_verified", "relevant_tests_green"],
     )
     store.record_stage("a/b#1", "VALIDATION_PENDING", evidence={})
-    listed = MODULE.validation_followup_list(
-        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3")
-    )["candidates"][0]
+    listed = MODULE.validation_followup_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))[
+        "candidates"
+    ][0]
     assert listed["prefetchRequired"] is True
     assert listed["prefetchMode"] == "bridge_managed"
     assert "prefetchCommands" not in listed

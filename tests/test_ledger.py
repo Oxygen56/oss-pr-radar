@@ -193,7 +193,12 @@ def test_verified_task_context_rebuilds_publication_and_suppresses_duplicate(tmp
             ],
         }
     )
-    assert imported == {"matched": 1, "inserted": 1, "updated": 0}
+    assert imported == {
+        "matched": 1,
+        "inserted": 1,
+        "updated": 0,
+        "staleHeadSuppressed": 0,
+    }
     candidate = store.pr_followup_candidates()[0]
     assert candidate["threadId"] == "thread-recovered"
     store.record_followup_result(
@@ -203,6 +208,71 @@ def test_verified_task_context_rebuilds_publication_and_suppresses_duplicate(tmp
         stage="PR_OPEN",
     )
     assert store.pr_followup_candidates() == []
+
+
+def test_pr_followup_import_suppresses_stale_head_but_accepts_later_external_head(
+    tmp_path,
+):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    published_time = datetime.now(UTC)
+    context = published_task_context()
+    context["publicationReceipt"]["requestedAt"] = iso_z(published_time - timedelta(minutes=1))
+    context["publicationReceipt"]["updatedAt"] = iso_z(published_time)
+    store.restore_task_context(context)
+    stale_checked_at = iso_z(published_time - timedelta(seconds=1))
+    state = {
+        "version": "pr_followup_v3",
+        "generatedAt": stale_checked_at,
+        "items": [
+            {
+                "url": "https://github.com/a/b/pull/9",
+                "headSha": "b" * 40,
+                "actionDigest": "stale-action",
+                "taskActionDigest": "stale-task-action",
+                "checkedAt": stale_checked_at,
+                "taskActions": ["old head check failed"],
+                "taskFollowupRequired": True,
+                "evidence": {"actionableCheckNames": ["Old check"]},
+            }
+        ],
+    }
+
+    stale = store.import_pr_followups(state)
+
+    assert stale == {
+        "matched": 1,
+        "inserted": 0,
+        "updated": 0,
+        "staleHeadSuppressed": 1,
+    }
+    assert store.pr_followup_candidates() == []
+    with store.connect() as connection:
+        event = connection.execute(
+            """SELECT payload_json FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type='PR_FOLLOWUP_STALE_HEAD_SUPPRESSED'"""
+        ).fetchone()
+    assert json.loads(event["payload_json"])["currentCommitSha"] == "a" * 40
+
+    fresh_checked_at = iso_z(published_time + timedelta(seconds=1))
+    state["generatedAt"] = fresh_checked_at
+    state["items"][0].update(
+        {
+            "headSha": "c" * 40,
+            "actionDigest": "fresh-action",
+            "taskActionDigest": "fresh-task-action",
+            "checkedAt": fresh_checked_at,
+        }
+    )
+    fresh = store.import_pr_followups(state)
+
+    assert fresh == {
+        "matched": 1,
+        "inserted": 1,
+        "updated": 0,
+        "staleHeadSuppressed": 0,
+    }
+    assert store.pr_followup_candidates()[0]["headSha"] == "c" * 40
 
 
 def test_task_context_recovery_is_idempotent(tmp_path):
@@ -531,11 +601,14 @@ def test_synced_title_can_be_invalidated_after_desktop_drift(tmp_path):
     )
 
     assert store.title_candidates() == []
-    assert store.invalidate_title_sync(
-        thread_id="thread-1",
-        state="GO",
-        actual_title_digest="a" * 64,
-    ) is True
+    assert (
+        store.invalidate_title_sync(
+            thread_id="thread-1",
+            state="GO",
+            actual_title_digest="a" * 64,
+        )
+        is True
+    )
     candidate = store.title_candidates()[0]
     assert candidate["titleState"] == "GO"
     store.commit_title(thread_id="thread-1", state="GO", nonce=candidate["titleNonce"])
@@ -1139,6 +1212,7 @@ def test_sent_pr_followup_without_a_result_gets_recovery(tmp_path):
         worktree_path="/tmp/worktree",
     )
     store.record_stage("a/b#1", "PR_OPEN", evidence={"prUrl": "https://github.com/a/b/pull/9"})
+    published_at = iso_z(datetime.now(UTC) - timedelta(minutes=2))
     now = iso_z(datetime.now(UTC))
     with store.connect() as connection:
         connection.execute(
@@ -1147,7 +1221,7 @@ def test_sent_pr_followup_without_a_result_gets_recovery(tmp_path):
                 evidence_digest,status,request_json,created_at,updated_at)
                VALUES ('request-1','a/b#1','thread-1',?,'fix/1-runtime','/tmp/worktree',
                        'evidence','CONSUMED','{}',?,?)""",
-            ("a" * 40, now, now),
+            ("a" * 40, published_at, published_at),
         )
         connection.execute(
             """INSERT INTO publication_permits
@@ -1155,7 +1229,12 @@ def test_sent_pr_followup_without_a_result_gets_recovery(tmp_path):
                 evidence_json,created_at,updated_at)
                VALUES ('permit-1','request-1','https://github.com/a/b/issues/1',?,
                        'fix/1-runtime','CONSUMED',?,'https://github.com/a/b/pull/9','{}',?,?)""",
-            ("a" * 40, iso_z(datetime.now(UTC) + timedelta(hours=1)), now, now),
+            (
+                "a" * 40,
+                iso_z(datetime.now(UTC) + timedelta(hours=1)),
+                published_at,
+                published_at,
+            ),
         )
     store.import_pr_followups(
         {
@@ -1304,9 +1383,7 @@ def test_validation_followup_is_write_ahead_and_rearms_for_a_new_result(tmp_path
     assert candidate["resultDigest"] == "result-digest-1"
     assert candidate["missing"] == ["relevant_tests_green"]
 
-    store.reserve_validation_followup(
-        thread_id="thread-1", result_digest="result-digest-1"
-    )
+    store.reserve_validation_followup(thread_id="thread-1", result_digest="result-digest-1")
     assert store.validation_followup_candidates() == []
     assert store.unresolved_validation_followups()[0]["resultDigest"] == "result-digest-1"
 
@@ -1515,6 +1592,7 @@ def test_pr_followup_is_bound_to_existing_task_and_sent_once(tmp_path):
         worktree_path="/tmp/worktree",
     )
     store.record_stage("a/b#1", "PR_OPEN", evidence={"prUrl": "https://github.com/a/b/pull/9"})
+    published_at = iso_z(datetime.now(UTC) - timedelta(minutes=2))
     now = iso_z(datetime.now(UTC))
     with store.connect() as connection:
         connection.execute(
@@ -1523,7 +1601,7 @@ def test_pr_followup_is_bound_to_existing_task_and_sent_once(tmp_path):
                 evidence_digest,status,request_json,created_at,updated_at)
                VALUES ('request-1','a/b#1','thread-1',?,'fix/1-runtime','/tmp/worktree',
                        'evidence','CONSUMED','{}',?,?)""",
-            ("a" * 40, now, now),
+            ("a" * 40, published_at, published_at),
         )
         connection.execute(
             """INSERT INTO publication_permits
@@ -1531,7 +1609,12 @@ def test_pr_followup_is_bound_to_existing_task_and_sent_once(tmp_path):
                 evidence_json,created_at,updated_at)
                VALUES ('permit-1','request-1','https://github.com/a/b/issues/1',?,
                        'fix/1-runtime','CONSUMED',?,'https://github.com/a/b/pull/9','{}',?,?)""",
-            ("a" * 40, iso_z(datetime.now(UTC) + timedelta(hours=1)), now, now),
+            (
+                "a" * 40,
+                iso_z(datetime.now(UTC) + timedelta(hours=1)),
+                published_at,
+                published_at,
+            ),
         )
     state = {
         "version": "pr_followup_v3",
@@ -1552,7 +1635,12 @@ def test_pr_followup_is_bound_to_existing_task_and_sent_once(tmp_path):
 
     imported = store.import_pr_followups(state)
     candidate = store.pr_followup_candidates()[0]
-    assert imported == {"matched": 1, "inserted": 1, "updated": 0}
+    assert imported == {
+        "matched": 1,
+        "inserted": 1,
+        "updated": 0,
+        "staleHeadSuppressed": 0,
+    }
     assert candidate["threadId"] == "thread-1"
     assert (
         store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")[
@@ -1568,9 +1656,9 @@ def test_pr_followup_is_bound_to_existing_task_and_sent_once(tmp_path):
     )
     assert store.pr_followup_candidates() == []
     assert store.unresolved_pr_followups()
-    bound = store.task_context(
-        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
-    )["prFollowup"]
+    bound = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")[
+        "prFollowup"
+    ]
     assert bound["headSha"] == "b" * 40
     assert bound["preparedHeadSha"] == "d" * 40
     store.commit_pr_followup(thread_id="thread-1", wake_digest=candidate["wakeDigest"])

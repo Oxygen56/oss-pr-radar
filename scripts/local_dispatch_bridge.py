@@ -550,16 +550,11 @@ def _recoverable_published_result(context: dict[str, Any]) -> dict[str, str] | N
         if value.get(key) != expected_value:
             raise RuntimeError(f"published task result mismatch: {key}")
     stage = str(value.get("stage") or "")
-    if (
-        value.get("contextDigest") != context.get("contextDigest")
-        and stage != "FIX_READY"
-    ):
+    if value.get("contextDigest") != context.get("contextDigest") and stage != "FIX_READY":
         # Context sync may refresh audit evidence long after this clean result
         # was published. The exact published checkout proves FIX_READY is old.
         followup = context.get("prFollowup")
-        wake_digest = (
-            str(followup.get("wakeDigest") or "") if isinstance(followup, dict) else ""
-        )
+        wake_digest = str(followup.get("wakeDigest") or "") if isinstance(followup, dict) else ""
         if wake_digest and value.get("followupDigest") != wake_digest:
             return None
         raise RuntimeError("published task result mismatch: contextDigest")
@@ -2112,8 +2107,7 @@ def _recover_unbound_pr_followup_preparations(
                 legacy_followup = legacy_context.get("prFollowup")
                 legacy_prepared_head = (
                     str(legacy_followup.get("preparedHeadSha"))
-                    if isinstance(legacy_followup, dict)
-                    and legacy_followup.get("preparedHeadSha")
+                    if isinstance(legacy_followup, dict) and legacy_followup.get("preparedHeadSha")
                     else None
                 )
                 if (
@@ -2227,10 +2221,7 @@ def pr_followup_list(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
     candidates = store.pr_followup_candidates()
     recent_cutoff = int(
-        (
-            datetime.now(UTC)
-            - timedelta(minutes=PR_FOLLOWUP_ACTIVE_DEFERRAL_MINUTES)
-        ).timestamp()
+        (datetime.now(UTC) - timedelta(minutes=PR_FOLLOWUP_ACTIVE_DEFERRAL_MINUTES)).timestamp()
     )
     activity: dict[str, int] = {}
     if candidates:
@@ -2742,9 +2733,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 candidate["key"], thread_id=candidate["threadId"]
             )
             compatibility = (
-                preparation.get("legacyCompatibility")
-                if isinstance(preparation, dict)
-                else None
+                preparation.get("legacyCompatibility") if isinstance(preparation, dict) else None
             )
             legacy_compatible_result = bool(
                 isinstance(compatibility, dict)
@@ -3281,9 +3270,7 @@ def title_list(args: argparse.Namespace) -> dict[str, Any]:
                 f"SELECT id,title,archived FROM threads WHERE id IN ({placeholders})",
                 thread_ids,
             ).fetchall()
-            current = {
-                str(row[0]): (str(row[1] or ""), int(row[2] or 0)) for row in rows
-            }
+            current = {str(row[0]): (str(row[1] or ""), int(row[2] or 0)) for row in rows}
         finally:
             connection.close()
     for binding in bindings:

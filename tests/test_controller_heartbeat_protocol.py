@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-PROTOCOL = (
-    Path(__file__).parents[1] / "docs" / "controller-heartbeat.md"
-).read_text(encoding="utf-8")
+PROTOCOL = (Path(__file__).parents[1] / "docs" / "controller-heartbeat.md").read_text(
+    encoding="utf-8"
+)
 
 
 def test_controller_protocol_requires_visible_complete_read():
