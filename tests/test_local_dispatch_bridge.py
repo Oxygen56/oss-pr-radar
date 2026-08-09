@@ -444,6 +444,59 @@ def test_managed_workspace_context_is_mirrored_for_github_project_bootstrap(monk
     assert local["worktreePath"] == str(worktree.resolve())
 
 
+def test_shared_context_recovery_rebuilds_a_lost_local_ledger(monkeypatch, tmp_path):
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, _ = registered_store(tmp_path / "original", worktree=worktree)
+    run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
+    store.record_stage("a/b#1", "FIX_READY", evidence={})
+    MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+
+    recovered = RadarLedger(tmp_path / "recovered.sqlite3")
+    result = MODULE.recover_shared_task_contexts(recovered)
+
+    assert result["verified"] == 1
+    assert result["errors"] == []
+    assert result["restored"][0]["stage"] == "FIX_READY"
+    context = recovered.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )
+    assert context is not None
+    assert context["intentStatus"] == "COMPLETED"
+    assert context["stage"] == "FIX_READY"
+
+
+def test_shared_context_recovery_fails_closed_when_mirrors_disagree(monkeypatch, tmp_path):
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, _ = registered_store(tmp_path / "original", worktree=worktree)
+    run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    value = json.loads(context_path.read_text(encoding="utf-8"))
+    value["stage"] = "FIX_READY"
+    MODULE._atomic_json(context_path, value)
+
+    recovered = RadarLedger(tmp_path / "recovered.sqlite3")
+    result = MODULE.recover_shared_task_contexts(recovered)
+
+    assert result["verified"] == 0
+    assert result["restored"] == []
+    assert result["errors"][0]["error"] == "shared and worktree task context mirrors disagree"
+
+
 def test_prepare_managed_worktree_is_isolated_under_github_project(monkeypatch, tmp_path):
     source = tmp_path / "source"
     source.mkdir()

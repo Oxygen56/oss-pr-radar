@@ -62,8 +62,17 @@ receiving their own worktrees.
 
 ## Recovery
 
+- Deploy local controller updates only through `scripts/deploy_local_runtime.py`.
+  It copies Git-tracked code and preserves `.git`, `.venv`, `reports`, and
+  `state`; release-worktree caches or databases can never overwrite production
+  runtime state.
 - A missing or corrupt state manifest stops the scan. Run
   `python scripts/state_branch.py migrate` once for a legacy branch.
+- If the local lifecycle database is missing or replaced, queue sync verifies
+  each controller-owned task context against its byte-identical worktree mirror,
+  digest, permissions, repository origin, and managed path. It then rebuilds
+  completed task and consumed publication records before accepting any new
+  intent. A mismatch fails closed, preventing duplicate task creation.
 - An expired or tampered intent is ignored locally.
 - An expired ordinary lease can be reclaimed only before task creation starts;
   a `CREATING` record remains exclusive until the exact asynchronous task is

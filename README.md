@@ -164,6 +164,10 @@ performs live audits without creating tasks; `active` enables normal publication
 # Read, verify, and ingest the latest signed cloud queue
 python scripts/local_dispatch_bridge.py sync
 
+# Deploy tracked controller code while preserving the runtime ledger and reports
+python scripts/deploy_local_runtime.py \
+  --target /Users/oxygen/Documents/github/oss-pr-radar
+
 # Pure local read: no clone, project lookup, or task creation
 python scripts/local_dispatch_bridge.py list
 
@@ -249,6 +253,11 @@ an LLM, create tasks, or rewrite active task contexts; the hourly controller
 remains a recovery fallback.
 Each sync also supersedes uncommitted local intents withdrawn from the latest
 signed cloud queue, so an older controller cannot dispatch a retracted decision.
+Before queue ingestion, sync verifies the private per-issue context in both its
+shared and worktree locations and reconstructs missing lifecycle/publication
+rows. A lost local database therefore cannot turn a completed issue into a new
+task or detach an existing pull request from follow-up. Any mirror, digest,
+repository, permission, or controller-boundary mismatch stops dispatch.
 
 ## Development
 

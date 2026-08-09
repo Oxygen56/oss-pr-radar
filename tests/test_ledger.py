@@ -30,6 +30,50 @@ def intent(**updates):
     return value
 
 
+def published_task_context(**updates):
+    now = iso_z(datetime.now(UTC))
+    value = {
+        "key": "a/b#1",
+        "stage": "PR_OPEN",
+        "issueUrl": "https://github.com/a/b/issues/1",
+        "intentId": "recovered-intent",
+        "threadId": "thread-recovered",
+        "worktreePath": "/tmp/recovered-worktree",
+        "intentStatus": "COMPLETED",
+        "track": "agent_ai_infra",
+        "algorithmEvidence": None,
+        "autoSubmitAuthorized": True,
+        "publicSubmissionAllowed": True,
+        "authorizationSource": "signed_live_revalidation_required",
+        "publicationMode": "canary",
+        "contextDigest": "context-digest",
+        "resultPath": "/tmp/recovered-worktree/.oss-pr-radar/result.json",
+        "liveAuditRecordedAt": now,
+        "liveAudit": {
+            "capturedAt": now,
+            "evidence": {
+                "digest": "evidence-digest",
+                "issue": {
+                    "state": "open",
+                    "title": "Recovered runtime bug",
+                    "updated_at": now,
+                },
+                "policy": {"digest": "policy-digest"},
+            },
+        },
+        "publicationReceipt": {
+            "status": "PR_OPEN",
+            "prUrl": "https://github.com/a/b/pull/9",
+            "commitSha": "a" * 40,
+            "branch": "fix/recovered-runtime",
+            "requestedAt": now,
+            "updatedAt": now,
+        },
+    }
+    value.update(updates)
+    return value
+
+
 def test_lease_is_exclusive_and_commit_is_idempotent(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     assert store.enqueue(intent()) is True
@@ -105,6 +149,77 @@ def test_same_issue_cannot_create_a_second_live_task(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     assert store.enqueue(intent()) is True
     assert store.enqueue(intent(intentId="intent-2", decisionDigest="new")) is False
+
+
+def test_verified_task_context_rebuilds_publication_and_suppresses_duplicate(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    assert store.enqueue(intent(intentId="new-intent", decisionDigest="new")) is True
+
+    restored = store.restore_task_context(published_task_context())
+
+    assert restored == {
+        "key": "a/b#1",
+        "stage": "PR_OPEN",
+        "intentRestored": True,
+        "publicationRestored": True,
+    }
+    assert store.pending() == []
+    context = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-recovered",
+    )
+    assert context is not None
+    assert context["stage"] == "PR_OPEN"
+    assert context["publicationReceipt"]["prUrl"] == "https://github.com/a/b/pull/9"
+    assert store.enqueue(intent(intentId="later-intent", decisionDigest="later")) is False
+
+    imported = store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": iso_z(datetime.now(UTC)),
+            "items": [
+                {
+                    "url": "https://github.com/a/b/pull/9",
+                    "headSha": "a" * 40,
+                    "actionDigest": "action",
+                    "taskActionDigest": "task-action",
+                    "checkedAt": iso_z(datetime.now(UTC)),
+                    "taskActions": ["current branch check failed"],
+                    "taskFollowupRequired": True,
+                    "evidence": {"baseIntegrationRequired": True},
+                }
+            ],
+        }
+    )
+    assert imported == {"matched": 1, "inserted": 1, "updated": 0}
+    assert store.pr_followup_candidates()[0]["threadId"] == "thread-recovered"
+
+
+def test_task_context_recovery_is_idempotent(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    context = published_task_context()
+
+    first = store.restore_task_context(context)
+    store.record_stage("a/b#1", "FIX_READY", evidence={"followup": True})
+    second = store.restore_task_context(context)
+
+    assert first["intentRestored"] is True
+    assert first["publicationRestored"] is True
+    assert second["intentRestored"] is False
+    assert second["publicationRestored"] is False
+    assert second["stage"] == "FIX_READY"
+    current = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-recovered",
+    )
+    assert current is not None
+    assert current["stage"] == "FIX_READY"
+    with store.connect() as connection:
+        recovered_events = connection.execute(
+            """SELECT COUNT(*) FROM events
+               WHERE opportunity_key='a/b#1' AND event_type='TASK_CONTEXT_RECOVERED'"""
+        ).fetchone()[0]
+    assert recovered_events == 1
 
 
 def test_creating_state_survives_expired_lease_and_blocks_duplicate(tmp_path):

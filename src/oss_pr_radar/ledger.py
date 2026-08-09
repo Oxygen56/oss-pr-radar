@@ -34,7 +34,44 @@ STAGES = (
 TERMINAL_STAGES = {"AUDIT_NO_GO", "MERGED", "CLOSED"}
 PUBLISHED_STAGES = {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED", "MERGED", "CLOSED"}
 PR_UPDATE_REARM_REASONS = {"EXISTING_PR_HEAD_DRIFT", "NON_FAST_FORWARD_PR_UPDATE"}
-PR_URL_RE = re.compile(r"^https://github\.com/[^/]+/[^/]+/pull/\d+$")
+PR_URL_RE = re.compile(r"^https://github\.com/([^/]+/[^/]+)/pull/(\d+)$")
+ISSUE_URL_RE = re.compile(r"^https://github\.com/([^/]+/[^/]+)/issues/(\d+)$")
+RECOVERABLE_CONTEXT_STAGES = {
+    "AUDIT_PASS",
+    "VALIDATION_PENDING",
+    "FIX_READY",
+    "PR_OPEN",
+    "CI_GREEN",
+    "MAINTAINER_ACCEPTED",
+    "MERGED",
+    "CLOSED",
+}
+RECOVERABLE_CONTEXT_INTENT_STATUSES = {"DISPATCHED", "COMPLETED"}
+RECOVERED_STAGE_RANK = {
+    "QUALIFIED": 0,
+    "LEASED": 1,
+    "CREATING": 2,
+    "DISPATCHED": 3,
+    "AUDIT_PASS": 4,
+    "VALIDATION_PENDING": 5,
+    "FIX_READY": 6,
+    "PR_OPEN": 7,
+    "CI_GREEN": 8,
+    "MAINTAINER_ACCEPTED": 9,
+    "MERGED": 10,
+    "CLOSED": 10,
+}
+RECOVERED_TITLE_STATE = {
+    "AUDIT_NO_GO": "AUDIT_NO_GO",
+    "AUDIT_PASS": "GO",
+    "VALIDATION_PENDING": "VALIDATION_PENDING",
+    "FIX_READY": "FIX_READY",
+    "PR_OPEN": "PR_OPEN",
+    "CI_GREEN": "PR_OPEN",
+    "MAINTAINER_ACCEPTED": "PR_OPEN",
+    "MERGED": "MERGED",
+    "CLOSED": "PR_OPEN",
+}
 
 
 class LedgerError(RuntimeError):
@@ -439,6 +476,354 @@ class RadarLedger:
                 )
             self._event(connection, key, "QUALIFIED", intent["intentId"], intent, now)
         return True
+
+    def restore_task_context(
+        self,
+        context: dict[str, Any],
+        *,
+        source_updated_at: str | None = None,
+    ) -> dict[str, Any]:
+        """Rebuild durable lifecycle state from a verified controller context mirror."""
+
+        key = str(context.get("key") or "")
+        issue_url = str(context.get("issueUrl") or "")
+        issue_match = ISSUE_URL_RE.fullmatch(issue_url)
+        if not key or issue_match is None:
+            raise LedgerError("task context issue identity is invalid")
+        repo, issue_number_text = issue_match.groups()
+        issue_number = int(issue_number_text)
+        if key != f"{repo}#{issue_number}":
+            raise LedgerError("task context key does not match issue URL")
+
+        stage = str(context.get("stage") or "")
+        intent_status = str(context.get("intentStatus") or "")
+        if stage not in RECOVERABLE_CONTEXT_STAGES:
+            raise LedgerError("task context lifecycle stage is not recoverable")
+        if intent_status not in RECOVERABLE_CONTEXT_INTENT_STATUSES:
+            raise LedgerError("task context intent status is not recoverable")
+        if stage in {
+            "VALIDATION_PENDING",
+            "FIX_READY",
+            "PR_OPEN",
+            "CI_GREEN",
+            "MAINTAINER_ACCEPTED",
+            "MERGED",
+            "CLOSED",
+        }:
+            intent_status = "COMPLETED"
+
+        intent_id = str(context.get("intentId") or "")
+        thread_id = str(context.get("threadId") or "")
+        worktree_path = str(context.get("worktreePath") or "")
+        context_digest = str(context.get("contextDigest") or "")
+        if not all((intent_id, thread_id, worktree_path, context_digest)):
+            raise LedgerError("task context lifecycle binding is incomplete")
+
+        live_audit = context.get("liveAudit")
+        if not isinstance(live_audit, dict) or not isinstance(live_audit.get("evidence"), dict):
+            raise LedgerError("task context live audit is missing")
+        evidence = live_audit["evidence"]
+        issue = evidence.get("issue")
+        if not isinstance(issue, dict):
+            raise LedgerError("task context issue snapshot is missing")
+        title = str(issue.get("title") or key)
+        evidence_digest = str(evidence.get("digest") or context_digest)
+        captured_at = str(
+            context.get("liveAuditRecordedAt")
+            or live_audit.get("capturedAt")
+            or source_updated_at
+            or iso_z(datetime.now(UTC))
+        )
+        try:
+            parse_time(captured_at)
+        except (TypeError, ValueError) as exc:
+            raise LedgerError("task context audit timestamp is invalid") from exc
+
+        receipt = context.get("publicationReceipt")
+        if receipt is not None and not isinstance(receipt, dict):
+            raise LedgerError("task context publication receipt is invalid")
+        if stage in PUBLISHED_STAGES:
+            if not isinstance(receipt, dict) or not PR_URL_RE.fullmatch(
+                str(receipt.get("prUrl") or "")
+            ):
+                raise LedgerError("published task context is missing a pull request receipt")
+        if isinstance(receipt, dict) and receipt.get("prUrl"):
+            pr_match = PR_URL_RE.fullmatch(str(receipt.get("prUrl")))
+            if pr_match is None:
+                raise LedgerError("task context pull request URL is invalid")
+            if pr_match.group(1).casefold() != repo.casefold():
+                raise LedgerError("task context pull request repository is invalid")
+            if not re.fullmatch(r"[0-9a-f]{40}", str(receipt.get("commitSha") or "")):
+                raise LedgerError("task context publication commit is invalid")
+            if not str(receipt.get("branch") or "").strip():
+                raise LedgerError("task context publication branch is missing")
+
+        now_dt = datetime.now(UTC)
+        now = iso_z(now_dt)
+        payload = {
+            "intentId": intent_id,
+            "key": key,
+            "repo": repo,
+            "issueNumber": issue_number,
+            "issueUrl": issue_url,
+            "issueUpdatedAt": issue.get("updated_at"),
+            "policyDigest": (
+                evidence.get("policy", {}).get("digest")
+                if isinstance(evidence.get("policy"), dict)
+                else None
+            ),
+            "title": title,
+            "mode": context.get("publicationMode") or "canary",
+            "track": context.get("track") or "agent_ai_infra",
+            "algorithmEvidence": context.get("algorithmEvidence"),
+            "snapshotId": evidence_digest,
+            "decisionDigest": context_digest,
+            "issuedAt": captured_at,
+            "expiresAt": iso_z(now_dt + timedelta(hours=1)),
+            "autoSubmitAuthorized": context.get("autoSubmitAuthorized") is True,
+            "publicSubmissionAllowed": context.get("publicSubmissionAllowed") is True,
+            "authorizationSource": context.get("authorizationSource"),
+            "publicationMode": context.get("publicationMode"),
+            "recoveredFromTaskContext": True,
+        }
+        restored_intent = False
+        restored_publication = False
+        with self.transaction() as connection:
+            existing_intent = connection.execute(
+                "SELECT * FROM intents WHERE intent_id=?", (intent_id,)
+            ).fetchone()
+            if existing_intent is not None and existing_intent["opportunity_key"] != key:
+                raise LedgerError("task context intent is bound to another opportunity")
+            restored_intent = existing_intent is None
+            existing_opportunity = connection.execute(
+                "SELECT stage,first_seen FROM opportunities WHERE key=?", (key,)
+            ).fetchone()
+            if existing_opportunity is None:
+                final_stage = stage
+                connection.execute(
+                    """INSERT INTO opportunities
+                       (key,repo,issue_number,issue_url,title,stage,first_seen,updated_at,
+                        snapshot_id,decision_digest,terminal_reason,metadata_json)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,NULL,?)""",
+                    (
+                        key,
+                        repo,
+                        issue_number,
+                        issue_url,
+                        title,
+                        final_stage,
+                        captured_at,
+                        now,
+                        evidence_digest,
+                        context_digest,
+                        canonical_json({"recoveredFromTaskContext": True}),
+                    ),
+                )
+            else:
+                current_stage = str(existing_opportunity["stage"])
+                if not restored_intent or current_stage in TERMINAL_STAGES:
+                    final_stage = current_stage
+                elif RECOVERED_STAGE_RANK.get(stage, -1) >= RECOVERED_STAGE_RANK.get(
+                    current_stage, -1
+                ):
+                    final_stage = stage
+                else:
+                    final_stage = current_stage
+                connection.execute(
+                    """UPDATE opportunities SET repo=?,issue_number=?,issue_url=?,title=?,
+                       stage=?,updated_at=?,snapshot_id=COALESCE(snapshot_id,?),
+                       decision_digest=COALESCE(decision_digest,?),
+                       metadata_json=? WHERE key=?""",
+                    (
+                        repo,
+                        issue_number,
+                        issue_url,
+                        title,
+                        final_stage,
+                        now,
+                        evidence_digest,
+                        context_digest,
+                        canonical_json({"recoveredFromTaskContext": True}),
+                        key,
+                    ),
+                )
+
+            if restored_intent:
+                title_state = RECOVERED_TITLE_STATE[final_stage]
+                connection.execute(
+                    """INSERT INTO intents
+                       (intent_id,opportunity_key,intent_digest,status,issued_at,expires_at,
+                        lease_owner,lease_until,thread_id,project_id,worktree_path,title_time,
+                        title_synced_state,payload_json,updated_at)
+                       VALUES (?,?,?,?,?,?,NULL,NULL,?,'github',?,'',?,?,?)""",
+                    (
+                        intent_id,
+                        key,
+                        context_digest,
+                        intent_status,
+                        captured_at,
+                        payload["expiresAt"],
+                        thread_id,
+                        str(Path(worktree_path).resolve()),
+                        title_state,
+                        canonical_json(payload),
+                        now,
+                    ),
+                )
+            else:
+                existing_thread = str(existing_intent["thread_id"] or "")
+                existing_worktree = str(existing_intent["worktree_path"] or "")
+                if existing_thread and existing_thread != thread_id:
+                    raise LedgerError("task context thread binding disagrees with the ledger")
+                if (
+                    existing_worktree
+                    and Path(existing_worktree).resolve() != Path(worktree_path).resolve()
+                ):
+                    raise LedgerError("task context worktree binding disagrees with the ledger")
+            connection.execute(
+                """UPDATE intents SET status='SUPERSEDED',lease_owner=NULL,lease_until=NULL,
+                   updated_at=? WHERE opportunity_key=? AND intent_id<>?
+                     AND status IN ('PENDING','LEASED','CREATING')""",
+                (now, key, intent_id),
+            )
+            connection.execute(
+                """INSERT INTO outcomes
+                   (opportunity_key,selected_at,submit_ready_at,quality_json,updated_at)
+                   VALUES (?,?,?,?,?)
+                   ON CONFLICT(opportunity_key) DO UPDATE SET
+                     selected_at=COALESCE(outcomes.selected_at,excluded.selected_at),
+                     submit_ready_at=COALESCE(outcomes.submit_ready_at,excluded.submit_ready_at),
+                     updated_at=excluded.updated_at""",
+                (
+                    key,
+                    captured_at,
+                    captured_at if final_stage in {"FIX_READY"} | PUBLISHED_STAGES else None,
+                    canonical_json({"recoveredFromTaskContext": True}),
+                    now,
+                ),
+            )
+            self._event(
+                connection,
+                key,
+                "AUDIT_SNAPSHOT",
+                f"recovered:{context_digest}",
+                {"liveAudit": live_audit, "recoveredFromTaskContext": True},
+                captured_at,
+            )
+
+            if isinstance(receipt, dict) and receipt.get("prUrl"):
+                pr_url = str(receipt["prUrl"])
+                commit_sha = str(receipt["commitSha"])
+                branch = str(receipt["branch"])
+                request_id = sha256_text(f"task-context-recovery|{key}|{pr_url}|{commit_sha}")
+                permit_id = sha256_text(f"task-context-recovery-permit|{request_id}")
+                requested_at = str(receipt.get("requestedAt") or captured_at)
+                updated_at = str(receipt.get("updatedAt") or source_updated_at or now)
+                for timestamp in (requested_at, updated_at):
+                    try:
+                        parse_time(timestamp)
+                    except (TypeError, ValueError) as exc:
+                        raise LedgerError("task context publication timestamp is invalid") from exc
+                request = {
+                    "requestId": request_id,
+                    "opportunityKey": key,
+                    "intentId": intent_id,
+                    "issueUrl": issue_url,
+                    "threadId": thread_id,
+                    "commitSha": commit_sha,
+                    "branch": branch,
+                    "worktreePath": str(Path(worktree_path).resolve()),
+                    "evidenceDigest": evidence_digest,
+                    "evidencePath": str(context.get("resultPath") or ""),
+                    "publication": {},
+                    "intent": payload,
+                    "publicationKind": "PR_CREATE",
+                    "recoveredFromTaskContext": True,
+                }
+                existing_publication = connection.execute(
+                    """SELECT r.opportunity_key FROM publication_permits p
+                       JOIN publication_requests r ON r.request_id=p.request_id
+                       WHERE p.pr_url=? AND p.status='CONSUMED'""",
+                    (pr_url,),
+                ).fetchone()
+                if (
+                    existing_publication is not None
+                    and existing_publication["opportunity_key"] != key
+                ):
+                    raise LedgerError("task context pull request is bound to another opportunity")
+                restored_publication = existing_publication is None
+                if restored_publication:
+                    connection.execute(
+                        """INSERT INTO publication_requests
+                           (request_id,opportunity_key,thread_id,commit_sha,branch,worktree_path,
+                            evidence_digest,status,reason,permit_id,request_json,created_at,updated_at)
+                           VALUES (?,?,?,?,?,?,?,'CONSUMED',NULL,?,?,?,?)""",
+                        (
+                            request_id,
+                            key,
+                            thread_id,
+                            commit_sha,
+                            branch,
+                            str(Path(worktree_path).resolve()),
+                            evidence_digest,
+                            permit_id,
+                            canonical_json(request),
+                            requested_at,
+                            updated_at,
+                        ),
+                    )
+                    connection.execute(
+                        """INSERT INTO publication_permits
+                           (permit_id,request_id,issue_url,commit_sha,branch,status,expires_at,
+                            pr_url,evidence_json,created_at,updated_at)
+                           VALUES (?,?,?,?,?,'CONSUMED',?,?,?,?,?)""",
+                        (
+                            permit_id,
+                            request_id,
+                            issue_url,
+                            commit_sha,
+                            branch,
+                            updated_at,
+                            pr_url,
+                            canonical_json(
+                                {
+                                    "contextDigest": context_digest,
+                                    "recoveredFromTaskContext": True,
+                                }
+                            ),
+                            requested_at,
+                            updated_at,
+                        ),
+                    )
+                    self._event(
+                        connection,
+                        key,
+                        "PR_OPEN",
+                        pr_url,
+                        {"permitId": permit_id, "prUrl": pr_url, "recovered": True},
+                        updated_at,
+                    )
+
+            self._event(
+                connection,
+                key,
+                "TASK_CONTEXT_RECOVERED",
+                context_digest,
+                {
+                    "intentId": intent_id,
+                    "threadId": thread_id,
+                    "worktreePath": str(Path(worktree_path).resolve()),
+                    "stage": final_stage,
+                    "publicationRestored": restored_publication,
+                },
+                now,
+            )
+        return {
+            "key": key,
+            "stage": final_stage,
+            "intentRestored": restored_intent,
+            "publicationRestored": restored_publication,
+        }
 
     def reconcile_terminal_intents(self) -> list[str]:
         """Reject active intents superseded by a later no-go decision."""

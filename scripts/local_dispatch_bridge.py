@@ -50,6 +50,7 @@ GITHUB_ROOT = Path.home() / "Documents" / "github"
 WORKTREE_ROOT = Path.home() / ".codex" / "worktrees"
 KEYCHAIN_SERVICE = "oss-pr-radar-dispatch"
 ISSUE_URL = re.compile(r"^https://github\.com/([^/]+/[^/]+)/issues/(\d+)$")
+PULL_URL = re.compile(r"^https://github\.com/([^/]+/[^/]+)/pull/(\d+)$")
 DELEGATED_INPUT = re.compile(r"<input>(.*?)</input>", re.DOTALL)
 MAX_TITLE_CHARS = 59
 TASK_PRIVATE_DIR = ".oss-pr-radar"
@@ -341,10 +342,145 @@ def ledger(path: Path = LEDGER_PATH) -> RadarLedger:
     return RadarLedger(path)
 
 
+def _verified_shared_task_context(path: Path) -> tuple[dict[str, Any], str]:
+    if path.is_symlink() or not path.is_file():
+        raise RuntimeError("shared task context is not a regular file")
+    if path.stat().st_mode & 0o022:
+        raise RuntimeError("shared task context is group or world writable")
+    raw = path.read_bytes()
+    try:
+        context = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("shared task context is not valid JSON") from exc
+    if not isinstance(context, dict) or context.get("schemaVersion") != TASK_CONTEXT_SCHEMA:
+        raise RuntimeError("shared task context schema is invalid")
+
+    issue_url = str(context.get("issueUrl") or "")
+    match = ISSUE_URL.fullmatch(issue_url)
+    if match is None:
+        raise RuntimeError("shared task context issue URL is invalid")
+    repo, issue_number = match.groups()
+    if context.get("key") != f"{repo}#{issue_number}":
+        raise RuntimeError("shared task context key does not match issue URL")
+    if path.resolve() != shared_context_path(issue_url):
+        raise RuntimeError("shared task context path does not match issue identity")
+    if Path(str(context.get("bootstrapContextPath") or "")).resolve() != path.resolve():
+        raise RuntimeError("shared task context bootstrap path is invalid")
+
+    worktree = Path(str(context.get("worktreePath") or "")).resolve()
+    if not worktree.is_dir() or not _is_managed_worktree(worktree):
+        raise RuntimeError("shared task context worktree is unavailable or unmanaged")
+    local_path = worktree / TASK_PRIVATE_DIR / "task-context.json"
+    if local_path.is_symlink() or not local_path.is_file():
+        raise RuntimeError("worktree task context mirror is missing")
+    if local_path.stat().st_mode & 0o022:
+        raise RuntimeError("worktree task context mirror is group or world writable")
+    if local_path.read_bytes() != raw:
+        raise RuntimeError("shared and worktree task context mirrors disagree")
+    if Path(command(["git", "rev-parse", "--show-toplevel"], cwd=worktree)).resolve() != worktree:
+        raise RuntimeError("shared task context worktree root is invalid")
+    remotes = command(["git", "remote"], cwd=worktree).splitlines()
+    if not any(
+        normalize_origin(command(["git", "remote", "get-url", remote], cwd=worktree))
+        == repo.casefold()
+        for remote in remotes
+    ):
+        raise RuntimeError("shared task context worktree does not belong to issue repository")
+
+    for key, expected in {
+        "controllerOwnsLifecycle": True,
+        "controllerOwnsPublication": True,
+        "controllerOwnsCommit": True,
+        "externalLedgerAccessAllowed": False,
+        "childMayRequestApproval": False,
+        "childMayWriteGitMetadata": False,
+    }.items():
+        if context.get(key) is not expected:
+            raise RuntimeError(f"shared task context controller boundary is invalid: {key}")
+    live_audit = context.get("liveAudit")
+    if not isinstance(live_audit, dict) or not isinstance(live_audit.get("evidence"), dict):
+        raise RuntimeError("shared task context live audit is missing")
+    evidence = live_audit["evidence"]
+    audit_repo = str(evidence.get("repo") or "")
+    if audit_repo and audit_repo.casefold() != repo.casefold():
+        raise RuntimeError("shared task context audit repository is invalid")
+    issue_snapshot = evidence.get("issue")
+    if not isinstance(issue_snapshot, dict):
+        raise RuntimeError("shared task context issue snapshot is missing")
+    snapshot_number = issue_snapshot.get("number") or evidence.get("issue_number")
+    if snapshot_number is not None and str(snapshot_number) != issue_number:
+        raise RuntimeError("shared task context issue snapshot identity is invalid")
+    receipt = context.get("publicationReceipt")
+    if isinstance(receipt, dict) and receipt.get("prUrl"):
+        pull_match = PULL_URL.fullmatch(str(receipt["prUrl"]))
+        if pull_match is None or pull_match.group(1).casefold() != repo.casefold():
+            raise RuntimeError("shared task context pull request identity is invalid")
+        commit_sha = str(receipt.get("commitSha") or "")
+        if not re.fullmatch(r"[0-9a-f]{40}", commit_sha):
+            raise RuntimeError("shared task context publication commit is invalid")
+        command(["git", "cat-file", "-e", f"{commit_sha}^{{commit}}"], cwd=worktree)
+    followup = context.get("prFollowup")
+    prepared_head = (
+        str(followup.get("preparedHeadSha"))
+        if isinstance(followup, dict) and followup.get("preparedHeadSha")
+        else None
+    )
+    digest_payload = {
+        "schemaVersion": TASK_CONTEXT_SCHEMA,
+        "key": context.get("key"),
+        "issueUrl": issue_url,
+        "intentId": context.get("intentId"),
+        "track": context.get("track"),
+        "algorithmEvidence": context.get("algorithmEvidence"),
+        "liveAuditDigest": live_audit["evidence"].get("digest"),
+        "threadId": context.get("threadId"),
+        "worktreePath": context.get("worktreePath"),
+    }
+    accepted_digests = {
+        sha256_json(digest_payload),
+        sha256_json(digest_payload | {"prFollowupPreparedHeadSha": prepared_head}),
+    }
+    if context.get("contextDigest") not in accepted_digests:
+        raise RuntimeError("shared task context digest mismatch")
+    source_updated_at = iso_z(
+        datetime.fromtimestamp(max(path.stat().st_mtime, local_path.stat().st_mtime), tz=UTC)
+    )
+    return context, source_updated_at
+
+
+def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
+    root = shared_context_root()
+    if not root.exists():
+        return {"verified": 0, "restored": [], "errors": []}
+    restored: list[dict[str, Any]] = []
+    errors: list[dict[str, str]] = []
+    for path in sorted(root.glob("*.json")):
+        try:
+            context, source_updated_at = _verified_shared_task_context(path)
+            restored.append(
+                store.restore_task_context(context, source_updated_at=source_updated_at)
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            errors.append({"path": str(path), "error": str(exc)[:300]})
+    return {"verified": len(restored), "restored": restored, "errors": errors}
+
+
 def sync_queue(path: Path = LEDGER_PATH) -> dict[str, Any]:
     queue = fetch_cloud_queue()
     intents = verify_queue(queue, DispatchSigner(signing_key()))
     store = ledger(path)
+    context_recovery = recover_shared_task_contexts(store)
+    if context_recovery["errors"]:
+        return {
+            "ok": False,
+            "mode": queue.get("mode"),
+            "verified": len(intents),
+            "inserted": 0,
+            "superseded": 0,
+            "staleTerminalRejected": 0,
+            "taskContextRecovery": context_recovery,
+            "prFollowup": {"status": "deferred", "reason": "task_context_recovery_failed"},
+        }
     stale_terminal = store.reconcile_terminal_intents()
     superseded = store.reconcile_pending(
         {str(item["intentId"]) for item in intents if item.get("intentId")}
@@ -366,6 +502,7 @@ def sync_queue(path: Path = LEDGER_PATH) -> dict[str, Any]:
         "inserted": inserted,
         "superseded": len(superseded),
         "staleTerminalRejected": len(stale_terminal),
+        "taskContextRecovery": context_recovery,
         "prFollowup": followup_import,
     }
 
