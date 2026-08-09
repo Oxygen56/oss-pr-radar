@@ -16280,6 +16280,26 @@
     ],
     "why": "Issue describes a clear load-balancing bug in disaggregated prefill routing with concrete repro and root-cause analysis in comments. However, the deterministic gate requires HUMAN_REVIEW, and there are overlapping issues (#9474, #11586) and open PRs (#12138, #11646) that may address related routing behavior. Maintainer design confirmation is needed before starting implementation."
   },
+  "de559a245796e6799c38bc6e153f619707d5683d69b49b6908bdbc237358d3b4": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Existing PRs may not fully resolve the issue; need verification."
+    ],
+    "root_cause_clarity": "high",
+    "score": 5,
+    "test_plan": [],
+    "unknowns": [
+      "Whether PR #40062 and #39704 are merged or sufficient; maintainer preference on fallback behavior."
+    ],
+    "why": "Issue clearly identifies root cause and fix, but existing PR #40062 already addresses the tool description fallback and PR #39704 addresses empty system text. The candidate is a duplicate of issue #40003, and the open PRs are technically plausible. No new work is needed unless those PRs are inadequate, which requires maintainer review."
+  },
   "de61db1b3d0d30440eac0335a1fe42160351a2267dd1e84a98e59429a9911e95": {
     "confidence": 0.95,
     "contradictions": [],
