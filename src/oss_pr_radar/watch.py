@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from time import monotonic
 from typing import Any
 
+from .dispatch import rejection_revokes
 from .evidence import collect_evidence
 from .github_client import GitHubClient
 from .repo_policy import discover_policy
@@ -33,6 +34,9 @@ def build_watchlist(
                     retained[str(item["key"])] = item
             except (KeyError, TypeError, ValueError):
                 continue
+    for key, outcome in (report.get("issue_outcomes") or {}).items():
+        if isinstance(key, str) and isinstance(outcome, dict) and rejection_revokes(outcome):
+            retained.pop(key, None)
     for candidate in report.get("candidate_details") or []:
         if not isinstance(candidate, dict):
             continue

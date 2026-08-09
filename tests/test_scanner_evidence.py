@@ -954,6 +954,56 @@ def test_controller_terminal_feedback_survives_scanner_migration_until_issue_cha
     )
 
 
+def test_stale_pending_recheck_cannot_reopen_unchanged_controller_terminal(monkeypatch, tmp_path):
+    seen_path = tmp_path / "seen.json"
+    seen_path.write_text(
+        json.dumps(
+            {
+                "example/project#1": {
+                    "status": "controller_terminal",
+                    "issue_updated": "2026-08-08T20:00:00Z",
+                    "analyzed": "2026-08-09T00:00:00Z",
+                },
+                "example/project#2": {
+                    "status": "controller_terminal",
+                    "issue_updated": "2026-08-08T20:00:00Z",
+                    "analyzed": "2026-08-09T00:00:00Z",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    radar = Radar(
+        datetime(2026, 8, 9, tzinfo=UTC),
+        2,
+        seen_path,
+        "",
+        dry_run=True,
+        notify=False,
+        pending_rechecks={
+            "example/project#1": {
+                "issueTitle": "Unchanged terminal issue",
+                "issueUrl": "https://github.com/example/project/issues/1",
+                "issueUpdated": "2026-08-08T20:00:00Z",
+            },
+            "example/project#2": {
+                "issueTitle": "Changed terminal issue",
+                "issueUrl": "https://github.com/example/project/issues/2",
+                "issueUpdated": "2026-08-09T01:00:00Z",
+            },
+        },
+    )
+    monkeypatch.setattr(radar, "add_repo_issues", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(radar, "add_search", lambda *_args, **_kwargs: None)
+
+    items = radar.collect_items()
+
+    assert "example/project#1" not in items
+    assert "example/project#1" not in radar.forced_recheck_keys
+    assert items["example/project#2"]["_explicit_recheck"] is True
+    assert "example/project#2" in radar.forced_recheck_keys
+
+
 def test_controller_terminal_feedback_does_not_override_newer_cloud_issue_revision():
     terminal = {
         "status": "controller_terminal",

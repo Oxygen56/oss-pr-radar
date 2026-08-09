@@ -77,6 +77,31 @@ def test_actionable_candidate_is_kept_as_a_durable_queued_opportunity():
     assert updated["items"][0]["status"] == "QUEUED"
 
 
+def test_controller_terminal_outcome_removes_durable_queued_opportunity():
+    existing = build_watchlist(
+        {
+            "candidate_details": [
+                held_candidate(
+                    auto_spawn=True,
+                    gate_decision="ALLOW_TO_WORK",
+                    category="NEW_CLEAN_CANDIDATE",
+                )
+            ]
+        },
+        now=NOW,
+    )
+    updated = build_watchlist(
+        {
+            "candidate_details": [],
+            "issue_outcomes": {"a/b#1": {"status": "rejected", "reason": "controller_terminal"}},
+        },
+        existing,
+        now=NOW,
+    )
+
+    assert updated["items"] == []
+
+
 def test_queued_candidate_without_changes_stays_queued():
     watchlist = build_watchlist(
         {

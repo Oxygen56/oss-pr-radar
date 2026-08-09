@@ -2036,6 +2036,19 @@ class Radar:
             repo, separator, number_text = key.rpartition("#")
             if not separator or not number_text.isdigit() or repo_is_excluded(repo):
                 continue
+            previous = self.seen.get(key)
+            if (
+                isinstance(previous, dict)
+                and previous.get("status") == CONTROLLER_TERMINAL_STATUS
+                and should_skip_seen(
+                    previous,
+                    entry.get("issueUpdated"),
+                    self.now,
+                    scanner_version=SCANNER_VERSION,
+                    decision_digest=decision_contract_digest(),
+                )
+            ):
+                continue
             self.forced_recheck_keys.add(key)
             items[key] = {
                 "repo": repo,

@@ -91,7 +91,7 @@ def _eligible(candidate: dict[str, Any]) -> bool:
     )
 
 
-def _rejection_revokes(outcome: dict[str, Any]) -> bool:
+def rejection_revokes(outcome: dict[str, Any]) -> bool:
     if outcome.get("status") != "rejected":
         return False
     return str(outcome.get("reason") or "") not in NON_REVOKING_REJECTION_REASONS
@@ -124,7 +124,7 @@ def build_queue(
     observed.update(
         key
         for key, outcome in (report.get("issue_outcomes") or {}).items()
-        if isinstance(key, str) and isinstance(outcome, dict) and _rejection_revokes(outcome)
+        if isinstance(key, str) and isinstance(outcome, dict) and rejection_revokes(outcome)
     )
     retained: dict[str, dict[str, Any]] = {}
     if isinstance(existing, dict) and existing.get("version") == QUEUE_VERSION:
