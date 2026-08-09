@@ -456,7 +456,7 @@ def test_contributor_confirmation_that_fix_is_on_current_main_is_terminal(tmp_pa
     }
     comments = [
         {
-            "body": "This looks fixed on current main by PR #123.",
+            "body": "This looks fixed on current `main` by PR #123.",
             "user": {"login": "contributor"},
             "author_association": "CONTRIBUTOR",
         }

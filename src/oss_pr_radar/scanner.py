@@ -496,7 +496,8 @@ RETRACTED_RE = re.compile(
 )
 RESOLVED_UPSTREAM_RE = re.compile(
     r"\b(already (?:been )?fixed|"
-    r"(?:this (?:looks|appears) )?fixed (?:in|on) (?:current )?(?:main|master|nightly)|"
+    r"(?:this (?:looks|appears) )?fixed (?:in|on) (?:current )?"
+    r"[`'\"]?(?:main|master|nightly)[`'\"]?|"
     r"(?:this|that|it|pr\s*#?\d+)?\s*should (?:already )?have (?:resolved|fixed)(?: this)?|"
     r"resolved in (?:main|master)|landed in (?:main|master)|"
     r"(?:fully )?resolved by (?:pr\s*)?#\d+|"
