@@ -248,6 +248,10 @@
       "seenAt": "2026-08-08T23:43:26.852822Z",
       "stateId": "d38e3c61c65952696061c988a8038e39eedcaf38727ba215fb58a8880796cec6"
     },
+    "review|ComposioHQ/composio#4101": {
+      "seenAt": "2026-08-09T00:07:32.205542Z",
+      "stateId": "8e9c7fdae4f5877693be65e9d6c8e65e1f366d5cce27dd365400318f9b7812f1"
+    },
     "review|DeusData/codebase-memory-mcp#1339": {
       "legacy": true,
       "seenAt": "2026-08-05T21:41:10.562886Z"
@@ -305,8 +309,8 @@
       "stateId": "30fcd2e2e7fe91d313da921641f0e2e0ba4c8f94ed4ecf3c68fcd6593808a53e"
     },
     "review|PrefectHQ/fastmcp#4789": {
-      "seenAt": "2026-08-08T23:54:32.372574Z",
-      "stateId": "5c4001078d324f78a2cf35d5bcdfa34edff9e1ccd3d71b36045c901399aa1721"
+      "seenAt": "2026-08-09T00:07:32.205542Z",
+      "stateId": "3535b6c84d75be88512ef948d1d8fa44c59c118e60e951ec7a8e02da2ed76354"
     },
     "review|aaif-goose/goose#10751": {
       "legacy": true,
@@ -1321,7 +1325,7 @@
       "seenAt": "2026-08-06T10:09:13.778625Z"
     }
   },
-  "digest": "a8a62adfbb451787d4cb33b599cbe0e8594068edad9febcca7f08bade860e867",
+  "digest": "6eebf9f514cc74924ece3b1dfa1a7e2528bea5c1d32270dea1ef535e7cb024f3",
   "events": [
     {
       "attempts": 1,
@@ -18962,9 +18966,69 @@
       "runId": "scan-20260808T235216Z-32830ed51333",
       "sentAt": "2026-08-08T23:55:12.167694Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "ComposioHQ/composio#4101",
+        "PrefectHQ/fastmcp#4789"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "d4c739b208281952f43f78304590c775591219e3ef45f09ee929e0b587c7d4f0",
+          "key": "ComposioHQ/composio#4101",
+          "kind": "review",
+          "stateId": "8e9c7fdae4f5877693be65e9d6c8e65e1f366d5cce27dd365400318f9b7812f1"
+        },
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "43cec8edb4fce1720f470bb0736326286e8e8c4846e863c5a35571cd6a397a0e",
+          "key": "PrefectHQ/fastmcp#4789",
+          "kind": "review",
+          "stateId": "3535b6c84d75be88512ef948d1d8fa44c59c118e60e951ec7a8e02da2ed76354"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[ComposioHQ/composio#4101](https://github.com/ComposioHQ/composio/issues/4101) [Bug]: ServiceM8 writes report successful:false on HTTP 200, and record_uuid is never returned**\n建议：WAIT_MAINTAINER | 分数：12\n价值：The issue provides a clear, reproducible server-side bug in the ServiceM8 toolkit response handler: successful writes return HTTP 200 with empty body and x-record-uuid header, but the handler unconditionally parses JSON and discards the header, causing false failure and missing record_uuid. However, the deterministic gate is HUMAN_REVIEW, and the open PR lookup failed due to rate limiting, so duplicate work cannot be excluded. The issue is labeled 'support' and the only comment is an automated triage note, so maintainer confirmation is needed.\n改动：ServiceM8 write response handler: on 2xx, avoid requiring JSON body; read x-record-uuid header into data.record_uuid\n验证：Create a failing test that mocks a ServiceM8 write response with HTTP 200, empty body, and x-record-uuid header, asserting successful:true and record_uuid set；Run targeted unit tests for the ServiceM8 toolkit and static checks\n风险：Potential maintainer design preference on response handling; risk of changing API behavior if not scoped carefully\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 13，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[PrefectHQ/fastmcp#4789](https://github.com/PrefectHQ/fastmcp/issues/4789) release/3.x: CIMD private_key_jwt clients always rejected — expected aud has a doubled slash (fixed on main in #4659, unreleased on 3.x)**\n建议：WAIT_MAINTAINER | 分数：12\n价值：The issue clearly identifies a bug in the 3.x branch where the expected audience for private_key_jwt has a doubled slash, causing all such clients to be rejected. A backport PR (#4783) already exists and is technically complete, but was auto-closed due to a missing issue link. The deterministic gate requires HUMAN_REVIEW, and the existing PR needs maintainer action to reopen/merge. This is not a new candidate but a duplicate of an existing PR that requires maintainer intervention.\n改动：Backport of #4659 to release/3.x, specifically fixing the audience construction in fastmcp_slim/fastmcp/server/auth/oauth_proxy/proxy.py\n验证：Use the provided MRE to create a failing test that asserts the expected audience equals the advertised token_endpoint, then run the test against the patched code.\n风险：Potential merge conflicts or unintended behavior changes if the backport is not clean; need to ensure the fix is consistent with 3.x branch stability.\n竞争：发现关键词相关 PR，但未确认直接覆盖：#4783；需人工核对\n下一步：已有 PR 但强度不足；先看维护者规则和 issue 讨论，必要时先请求确认方案或分配。\n证据：复现信号 2，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-09T00:07:32.205542Z",
+      "eventId": "692272e86a1176fb0688cf80ccca22f0e9836a773fa14daa063ee1b29ab0089a",
+      "idempotencyKey": "692272e86a1176fb0688cf80ccca22f0e9836a773fa14daa06",
+      "kind": "review",
+      "runId": "scan-20260809T000242Z-885bb6c05a01",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-08T23:54:32.788152Z",
+  "generatedAt": "2026-08-09T00:07:32.581354Z",
   "newEventCount": 0,
   "version": "notification_outbox_v2"
 }
