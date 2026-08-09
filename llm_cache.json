@@ -4179,6 +4179,33 @@
     ],
     "why": "Issue provides a clear root cause and repro for a real resource leak, but existing PRs #5416 and #5417 overlap semantically and may already address the fix. The deterministic gate requires HUMAN_REVIEW, and the open PR assessment indicates semantic overlap requiring manual comparison. No maintainer approval or active investigation is present, so starting new work risks duplication."
   },
+  "3a34274325afeb4a12a8acaa33138cdab1dd8359a0d82aee360348fcb362db74": {
+    "confidence": 0.7,
+    "contradictions": [
+      "PR #20548 references the issue but is semantically unrelated; PR #21068 has semantic overlap but does not reference the issue"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "storage layer",
+      "workflow runtime"
+    ],
+    "risks": [
+      "Potential design changes to storage semantics may conflict with maintainer preferences"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "test_plan": [
+      "Create a minimal reproduction with a large conversation and measure storage size/time; add regression test for incremental saves"
+    ],
+    "unknowns": [
+      "Exact code path causing full re-save; maintainer's preferred fix approach; whether PR #21068 resolves the issue"
+    ],
+    "why": "Issue reports a high-impact performance bug with concrete numbers, but the root cause is not precisely identified and the maintainer has only labeled it for triage. Existing PR #21068 may partially address the issue but does not reference it, and PR #20548 is unrelated. The deterministic gate requires human review, and the lack of a confirmed root cause and maintainer direction makes immediate action premature."
+  },
   "3a3cbb805e9f805a3e3c7f155aec42a430204f56779a9b332daee80799b6880b": {
     "confidence": 0.8,
     "contradictions": [],
@@ -13680,6 +13707,32 @@
     ],
     "why": "Issue clearly describes a silent truncation bug in RemoteA2aAgent when A2A stream ends before terminal state, with reproduction steps and expected fixes. However, the deterministic gate requires HUMAN_REVIEW, and the submission policy needs assignment, so work should wait for maintainer confirmation."
   },
+  "c42c06ebec1d1c076d1708384630eef5ee9e5d3700d48dc6a9023458559b57a1": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify approval-response consumer in agent-framework-core to iterate all synthesized approval responses instead of resolving only the first pending approval per resume.",
+      "Add regression test for two gated calls in one batch."
+    ],
+    "risks": [
+      "Potential behavior change in approval resume path could affect other scenarios; need maintainer confirmation on design."
+    ],
+    "root_cause_clarity": "high",
+    "score": 15,
+    "test_plan": [
+      "Add a test that approves two always_require tool calls in one assistant message and asserts both execute and produce results.",
+      "Run existing approval-related tests to ensure no regression."
+    ],
+    "unknowns": [
+      "Maintainer preference on the suggested fix approach; whether a fix is already in progress."
+    ],
+    "why": "The issue provides a clear, reproducible bug with a detailed root cause analysis and a suggested fix direction. However, the deterministic gate requires HUMAN_REVIEW, and the issue explicitly requests design confirmation. The existing PR #7546 is not a direct competitor, but maintainer input is needed to avoid conflicting with ongoing work."
+  },
   "c479e95b8a2b407d2063e5d36c287dea858f90243fa13eedfb20353dbd958b63": {
     "confidence": 0.7,
     "contradictions": [
@@ -13776,6 +13829,32 @@
       "Maintainer confirmation on desired fix approach"
     ],
     "why": "The issue reports a CUDA illegal memory access in the GDN kernel with multiple reproductions, but the root cause is not yet identified. Existing PRs (e.g., #51508) target the GDN path but do not reference this issue, and a maintainer has not confirmed the fix direction. The deterministic gate requires HUMAN_REVIEW, and the open PR assessment indicates semantic overlap requiring manual comparison."
+  },
+  "c59cd4dbdc685c2589947ab1e731c1d5afafc71289870fec9d837e2acfe8f47a": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Initial diagnosis of suppression gate being the fix was contradicted by later analysis showing the root is in inference, not suppression."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify contextual generic call instantiation logic in call_context.rs and related call resolution paths to handle nested generic calls in argument position."
+    ],
+    "risks": [
+      "Risk of breaking #17000's unit test arrow_argument_to_overloaded_parameter_reports_ts2345 if gate-level changes are made; need to preserve that behavior."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "test_plan": [
+      "Add regression tests using the two corpus rows: lambdaParameterWithTupleArgsHasCorrectAssignability.ts and parenthesizedContexualTyping3.ts, ensuring zero TS2345 errors and matching tsc output."
+    ],
+    "unknowns": [
+      "Which exact condition in the apply_contextual chain blocks the contextual instantiation; the actual code path that computes the diagnostic for non-generic outer callees."
+    ],
+    "why": "The issue identifies a real regression with clear repro, but the root cause is still under investigation; a collaborator has already explored and eliminated several hypotheses, indicating the fix requires deeper inference work and design confirmation. The issue is unclaimed and no PR exists, but the complexity and need for maintainer input on the correct approach make it premature to start."
   },
   "c5e289015b57fa3fe1c82622c83efab13347e927e6564498eba70be9660f566f": {
     "confidence": 0.85,
@@ -16849,6 +16928,37 @@
       "Maintainer preference on fix approach"
     ],
     "why": "Issue reports a clear bug: nested Pydantic models in dicts ignore serialize_by_alias=False. The root cause is likely in FastMCP's serialization path, but not yet confirmed. No open PR or related issue found, and no maintainer input. The gate decision is HUMAN_REVIEW, so we must wait for maintainer guidance."
+  },
+  "eaa43ccde1d9d2fe7793ea2dafa1d2ac7f0f897bb418202a993d367211b757ec": {
+    "confidence": 0.9,
+    "contradictions": [
+      "PR #5240 is closed but may not be merged; PR #4969 is closed after 17 days without update"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Extraction pipeline to emit UPDATE/DELETE or soft-supersede events",
+      "Scoring/retrieval to incorporate recency or filter inactive facts",
+      "Metadata schema for supersession flags"
+    ],
+    "risks": [
+      "Changing extraction semantics may break existing users",
+      "Soft-supersede approach may conflict with append-only architecture"
+    ],
+    "root_cause_clarity": "high",
+    "score": 10,
+    "test_plan": [
+      "Reproduce with the issue's scenario: add old and new employer facts, query current employer, assert only new fact returned",
+      "Add regression test for recency-aware ranking in scoring.py"
+    ],
+    "unknowns": [
+      "Maintainer's preferred fix direction (soft-supersede vs. CRUD restore)",
+      "Whether any existing PR is mergeable or will be revived"
+    ],
+    "why": "Issue identifies a concrete stale-fact bug in mem0 v3 ADD-only extraction, with clear reproduction and user impact. However, multiple PRs already target this issue (#5240, #4969, #4965), and the deterministic gate requires HUMAN_REVIEW due to AI disclosure conflict. Maintainer design preference is evident from comments, so work should wait for maintainer direction."
   },
   "ec9f83ed4bdeb5e8eef46a9e2a7e580cb4a6c448e892d97006784fb336a77bc3": {
     "confidence": 0.7,
