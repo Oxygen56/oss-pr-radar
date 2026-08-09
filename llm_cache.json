@@ -2464,6 +2464,31 @@
     ],
     "why": "The issue provides a detailed root cause in middleware.py, a concrete reproduction, and a proposed 13-line fix. However, the fix has not been tested against a live multi-round session, and the maintainer has not confirmed the design direction. The related issue #24758 is closed but may indicate prior maintainer preferences. The candidate is actionable but requires maintainer confirmation before implementation."
   },
+  "255b91502b065467846296d52c3974c5dba9622468772f23b07194e6435359c5": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify service_account_dict_to_scheme_credential and service_account_scheme_credential in google/adk-python/src/google/adk/tools/openapi_tool/auth/auth_helpers.py to return OAuth2 clientCredentials scheme instead of HTTPBearer."
+    ],
+    "risks": [
+      "Changing auth_scheme may affect other consumers expecting HTTPBearer; need to verify no other code paths depend on the old scheme.",
+      "The proposed tokenUrl is a placeholder; ensure it does not break token exchange logic."
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Add a regression test that calls the helper functions and asserts the returned auth_scheme is OAuth2 with clientCredentials flow.",
+      "Create an integration test using an McpToolset with a service account protected endpoint to verify token retrieval succeeds."
+    ],
+    "unknowns": [
+      "Maintainer approval or assignment status is unknown; the repository may require assignment before accepting contributions."
+    ],
+    "why": "Issue identifies a concrete bug in auth_scheme generation for service accounts, with a clear root cause and proposed fix. However, the deterministic gate requires HUMAN_REVIEW, and the submission policy indicates needs_assignment. No competing PR exists, but maintainer confirmation is needed before implementation."
+  },
   "2566e652e6fa8090066e3ad581d828156b7194fe38a86774a4165517c47e9746": {
     "confidence": 0.85,
     "contradictions": [],
@@ -7143,6 +7168,36 @@
     ],
     "why": "Issue describes a clear bug with exact location and a reproduced failing test, but the deterministic gate requires HUMAN_REVIEW and design confirmation is needed before implementation."
   },
+  "60ac23d0229bf12bd3284ba951c4b3e1ff8202f059e05f24bcf21a5d2ef7ae26": {
+    "confidence": 0.7,
+    "contradictions": [
+      "None"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Bump nvidia-cutlass-dsl pin to >=4.6.2 in requirements/cuda.txt",
+      "Defensive initialization of n_block_first in flash_fwd_sm100.py"
+    ],
+    "risks": [
+      "DSL bump may affect other kernels or require compatibility testing",
+      "Existing PR #41834 may already fix this; avoid duplicate work"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Run provided repro.py on SM100 with DSL 4.6.0 to confirm failure",
+      "After fix, rerun repro and vllm serve Kimi-K3 startup to verify no crash"
+    ],
+    "unknowns": [
+      "Whether PR #41834 already includes the fix for this issue",
+      "Maintainer preference on DSL pin bump vs code fix"
+    ],
+    "why": "Issue provides a clear root cause and deterministic repro for a real startup crash, but the deterministic gate is HUMAN_REVIEW and the repo requires AI-use disclosure, blocking autonomous action. Existing PR #41834 overlaps semantically and may already address the root cause, so maintainer comparison is needed before starting new work."
+  },
   "615cb814a1e7a188854b34263a5802040c3808520065673c46ed52394f2937d0": {
     "confidence": 0.7,
     "contradictions": [],
@@ -8860,6 +8915,38 @@
       "Whether assignment is required before contributing"
     ],
     "why": "Issue provides a detailed root cause and reproduction for a misleading error and unrecoverable session state in the ACP provider path. However, the deterministic gate is HUMAN_REVIEW and the submission policy requires assignment, so work should not start without maintainer confirmation."
+  },
+  "7610f117446e68fd1dfda5319e31633b5ef0c697115ce30de2020093333f8b8c": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Initial claim of universal remote bug contradicted by maintainer's correction that aria2 config avoids it"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify migrateInFlightJobs to skip or properly handle via_manager records",
+      "Copy via_manager, trayId, pid, started_at fields during migration",
+      "Consider probing writer process before marking INTERRUPTED"
+    ],
+    "risks": [
+      "Changing migration behavior may affect existing recovery flows",
+      "Handling aria2 path may require additional logic to verify file landing"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add unit tests for migration with via_manager records and missing aria2 sidecar",
+      "Add integration test simulating restart mid-transfer without aria2",
+      "Verify existing tests for download-progress still pass"
+    ],
+    "unknowns": [
+      "Maintainer's preferred fix approach for aria2 vs non-aria2 paths",
+      "Whether maintainer wants to address the broader 'done' semantics for Manager jobs"
+    ],
+    "why": "The issue describes a concrete bug in the migration logic that can lead to model corruption, with a clear root cause and suggested fix. However, the maintainer's correction reveals that the bug is configuration-dependent and the fix scope is broader than initially stated, requiring design confirmation on how to handle both aria2 and non-aria2 paths."
   },
   "762cf2305b4b37a8f61882d4c8f68dd26f9a5d1a90456ca0b6e2a011e24c3609": {
     "confidence": 0.8,
@@ -11917,6 +12004,37 @@
       "Maintainer preference on scope of changes"
     ],
     "why": "Issue clearly identifies a real bug with a minimal repro and root cause in messages.py, but an open PR (#7053) has semantic overlap and the deterministic gate requires human review. Need maintainer confirmation to avoid duplicate work."
+  },
+  "a7081b9a3dc40edab43b7d211602e1765a75b35da09659bcae8ff05c4ced0660": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "gateway loop-stall watchdog",
+      "Windows event loop blocking paths",
+      "api_models retry loop"
+    ],
+    "risks": [
+      "Root cause may be external or non-deterministic",
+      "Fix may require design changes to watchdog or startup ordering"
+    ],
+    "root_cause_clarity": "low",
+    "score": 7,
+    "test_plan": [
+      "Reproduce on Windows with full stack dumps after #1571 fix",
+      "Add regression test for watchdog capturing stacks",
+      "Test api_models failure loop under load"
+    ],
+    "unknowns": [
+      "Actual blocking frame from stack dumps",
+      "Whether #1571 fix is verified on Windows",
+      "Maintainer preference for fix approach"
+    ],
+    "why": "Issue documents a real Windows watchdog failure but explicitly states root cause unknown and is blocked on a now-closed dependency (#1571) that must be re-verified. No concrete fix or test is proposed; investigation is needed before implementation."
   },
   "a715655792cd0266c66c9874eb3c84d75ad928b3fd73a4b32ce9d85c050cee2c": {
     "confidence": 0.7,
@@ -16537,6 +16655,37 @@
     ],
     "why": "The issue is a well-documented bug report with a clear root cause (hybrid KV cache block size reduction and metric labeling), but the maintainer has already provided a detailed explanation and a proposed fix on the PR branch. The open PR assessment failed due to timeout, and the related issue audit also failed, so we cannot rule out existing duplicate work. The deterministic gate is HUMAN_REVIEW, and the submission policy conflicts with automatic public actions. Therefore, we must wait for maintainer direction and complete the missing lookups."
   },
+  "e5f5f221ff4263a9fd6f338c63efeb0397f294f44e14b4482831ddfb876213c0": {
+    "confidence": 0.8,
+    "contradictions": [
+      "maintainer comment says PR #6582 is candidate, but later counter-evidence shows sanitizer fix incomplete"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "instrumentation around repair_message_sequence and sanitize_api_messages",
+      "fix in agent library or WebUI to prevent empty tool_calls at request-build time"
+    ],
+    "risks": [
+      "fix may be in upstream agent library, not WebUI",
+      "parallel-write corruption may require broader concurrency fix"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "test_plan": [
+      "reproduce long tool-loop/context-compaction scenario with DeepSeek V4",
+      "add regression test for empty tool_calls in middle of transcript after compaction",
+      "verify non-empty tool_calls arrays are preserved unchanged"
+    ],
+    "unknowns": [
+      "exact mutation boundary producing empty tool_calls",
+      "whether PR #6582 will be updated or superseded"
+    ],
+    "why": "Issue reports a real bug with strong evidence, but maintainer has explicitly linked PR #6582 as the candidate implementation and requested specific validation (long tool-loop case, non-empty preservation). Recent counter-evidence shows the sanitizer fix is incomplete, and the maintainer has redirected investigation to identify the mutation boundary, not to revive a persistence-only patch. The issue is now an upstream diagnostic/self-build candidate requiring maintainer-guided investigation."
+  },
   "e63a70b10d97940ab96e59b12f306347f81a5b54ec98103b974281b529c5fc74": {
     "confidence": 0.7,
     "contradictions": [],
@@ -17015,6 +17164,34 @@
       "Whether PR #36115 fully resolves the issue and maintainer preference on approach"
     ],
     "why": "Issue clearly identifies a runtime validation gap causing silent group failure, but existing PR #36115 overlaps semantically and requires maintainer review to avoid duplicate work."
+  },
+  "ed7e2afd22e2396a609c0ce2971d85153ec290a1c93c057ba2e497ac014ba5e8": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims bug but commenter cannot reproduce without exact code"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix in langgraph prebuilt chat_agent_executor to handle thinking content blocks from DeepSeek responses"
+    ],
+    "risks": [
+      "Potential API behavior changes if fix is too broad"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Create a failing test using a mocked DeepSeek response with reasoning_content to reproduce the 400 error"
+    ],
+    "unknowns": [
+      "Exact minimal reproduction code",
+      "Root cause confirmation",
+      "Maintainer design preference"
+    ],
+    "why": "Issue reports a user-facing bug with DeepSeek thinking mode in react_agent, but lacks a minimal reproducible example and root cause is unconfirmed. Existing PR #6535 is closed and stale, and repository requires assignment, so maintainer confirmation is needed."
   },
   "ede4abec7806a1c7bcceef5153e6068762f7a13dcb9fa50d624e6c46e02de705": {
     "confidence": 0.85,
