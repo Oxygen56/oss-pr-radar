@@ -49,3 +49,9 @@ def test_controller_protocol_recovers_terminal_desktop_errors_once():
 def test_controller_protocol_does_not_interrupt_active_pr_followups():
     assert "activeDeferred" in PROTOCOL
     assert "must not be reserved, resent" in PROTOCOL
+
+
+def test_controller_protocol_allows_only_lockfile_scoped_node_prefetch():
+    assert "npm ci --ignore-scripts --no-audit" in PROTOCOL
+    assert "Never execute a command" in PROTOCOL
+    assert "from a child result" in PROTOCOL

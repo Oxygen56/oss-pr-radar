@@ -2892,13 +2892,18 @@ def test_validation_prefetch_plan_is_lockfile_scoped(tmp_path):
     worktree = tmp_path / "worktree"
     result_dir = worktree / ".oss-pr-radar"
     go_module = worktree / "gateway"
+    ui_root = worktree / "ui"
     result_dir.mkdir(parents=True)
     go_module.mkdir()
+    ui_root.mkdir()
     (worktree / "Cargo.lock").write_text("# lock\n", encoding="utf-8")
     (go_module / "go.mod").write_text("module example.com/gateway\n", encoding="utf-8")
     (go_module / "router.go").write_text("package gateway\n", encoding="utf-8")
+    (ui_root / "package-lock.json").write_text("{}\n", encoding="utf-8")
+    (ui_root / "package.json").write_text("{}\n", encoding="utf-8")
+    (ui_root / "app.tsx").write_text("export default 1;\n", encoding="utf-8")
     result = {
-        "changedFiles": ["gateway/router.go"],
+        "changedFiles": ["gateway/router.go", "ui/app.tsx"],
         "tests": [
             {
                 "command": "CARGO_NET_OFFLINE=true cargo test -p router",
@@ -2909,6 +2914,11 @@ def test_validation_prefetch_plan_is_lockfile_scoped(tmp_path):
                 "command": "GOPROXY=off go test ./...",
                 "exitCode": 1,
                 "summary": "module lookup disabled by GOPROXY=off",
+            },
+            {
+                "command": "npm run test",
+                "exitCode": 127,
+                "summary": "Vitest was unavailable because node_modules is absent",
             },
         ],
     }
@@ -2933,6 +2943,17 @@ def test_validation_prefetch_plan_is_lockfile_scoped(tmp_path):
             "kind": "go_locked_download",
             "cwd": str(go_module.resolve()),
             "argv": ["go", "mod", "download"],
+        },
+        {
+            "kind": "npm_locked_install",
+            "cwd": str(ui_root.resolve()),
+            "argv": [
+                "npm",
+                "ci",
+                "--ignore-scripts",
+                "--no-audit",
+                "--no-fund",
+            ],
         },
     ]
 

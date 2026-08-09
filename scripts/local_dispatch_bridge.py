@@ -2336,6 +2336,11 @@ def _validation_prefetch_commands(candidate: dict[str, Any]) -> list[dict[str, A
                 "lacks locked dependency",
                 "module lookup disabled",
                 "goproxy=off",
+                "node_modules",
+                "vitest was unavailable",
+                "prettier was unavailable",
+                "eslint was unavailable",
+                "next.js was unavailable",
             )
         )
     ]
@@ -2371,6 +2376,34 @@ def _validation_prefetch_commands(candidate: dict[str, Any]) -> list[dict[str, A
                     "kind": "go_locked_download",
                     "cwd": str(root),
                     "argv": ["go", "mod", "download"],
+                }
+            )
+    if "npm " in combined:
+        roots: set[Path] = set()
+        changed_files = result.get("changedFiles")
+        if isinstance(changed_files, list):
+            for relative in changed_files:
+                if not isinstance(relative, str) or not relative.endswith(
+                    (".js", ".jsx", ".ts", ".tsx")
+                ):
+                    continue
+                manifest_root = _nearest_manifest_root(
+                    worktree / relative, stop=worktree, manifest="package-lock.json"
+                )
+                if manifest_root is not None and (manifest_root / "package.json").is_file():
+                    roots.add(manifest_root)
+        for root in sorted(roots, key=str):
+            commands.append(
+                {
+                    "kind": "npm_locked_install",
+                    "cwd": str(root),
+                    "argv": [
+                        "npm",
+                        "ci",
+                        "--ignore-scripts",
+                        "--no-audit",
+                        "--no-fund",
+                    ],
                 }
             )
     return commands
