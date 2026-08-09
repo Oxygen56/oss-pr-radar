@@ -3153,7 +3153,9 @@ class RadarLedger:
                      AND p.status='CONSUMED' AND p.pr_url=f.pr_url
                      AND NOT EXISTS (
                        SELECT 1 FROM events e WHERE e.opportunity_key=o.key
-                         AND e.event_type='PR_FOLLOWUP_RESERVED'
+                         AND e.event_type IN (
+                           'PR_FOLLOWUP_RESERVED','PR_FOLLOWUP_RESULT_INGESTED'
+                         )
                          AND e.dedupe_key=f.wake_digest
                      )
                    ORDER BY f.checked_at,r.updated_at DESC"""

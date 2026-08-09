@@ -456,7 +456,7 @@ def _verified_shared_task_context(path: Path) -> tuple[dict[str, Any], str]:
 
 
 def _recoverable_published_result(context: dict[str, Any]) -> dict[str, str] | None:
-    """Identify a clean, already-published FIX_READY result after ledger loss."""
+    """Identify a clean result already represented by a published task context."""
 
     if str(context.get("stage") or "") not in PUBLISHED_TASK_STAGES:
         return None
@@ -495,20 +495,24 @@ def _recoverable_published_result(context: dict[str, Any]) -> dict[str, str] | N
         if value.get(key) != expected_value:
             raise RuntimeError(f"published task result mismatch: {key}")
 
-    # PR_OPEN results are current follow-up evidence. A FIX_READY result is only
-    # historical when the checkout is still exactly the published commit.
-    if value.get("stage") != "FIX_READY":
-        return None
     commit_sha = str(receipt.get("commitSha") or "")
     if command(["git", "status", "--porcelain"], cwd=worktree):
         return None
     if command(["git", "rev-parse", "HEAD"], cwd=worktree) != commit_sha:
         return None
-    return {
+    stage = str(value.get("stage") or "")
+    recovered = {
         "key": str(context["key"]),
         "digest": hashlib.sha256(raw).hexdigest(),
-        "stage": "FIX_READY",
+        "stage": stage,
     }
+    if stage == "FIX_READY":
+        return recovered
+    followup = context.get("prFollowup")
+    wake_digest = str(followup.get("wakeDigest") or "") if isinstance(followup, dict) else ""
+    if stage == "PR_OPEN" and wake_digest and value.get("followupDigest") == wake_digest:
+        return recovered | {"wakeDigest": wake_digest}
+    return None
 
 
 def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
@@ -539,6 +543,13 @@ def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
                     digest=result_receipt["digest"],
                     stage=result_receipt["stage"],
                 )
+                if result_receipt.get("wakeDigest"):
+                    store.record_followup_result(
+                        result_receipt["key"],
+                        wake_digest=result_receipt["wakeDigest"],
+                        result_digest=result_receipt["digest"],
+                        stage=result_receipt["stage"],
+                    )
                 receipt_restored = True
                 result_receipts_restored += 1
             restored.append(restored_context | {"resultReceiptRestored": receipt_restored})

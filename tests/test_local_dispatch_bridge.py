@@ -590,6 +590,58 @@ def test_shared_context_recovery_marks_clean_published_result_as_consumed(
     assert followup_results == 0
 
 
+def test_clean_pr_followup_result_restores_its_wake_receipt(tmp_path):
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    run_git(worktree, "init")
+    run_git(worktree, "config", "user.name", "Test Contributor")
+    run_git(worktree, "config", "user.email", "test@example.com")
+    (worktree / "runtime.py").write_text("value = 1\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "-m", "fix: runtime")
+    head_sha = run_git(worktree, "rev-parse", "HEAD")
+    MODULE._exclude_private_task_dir(worktree)
+    private = worktree / ".oss-pr-radar"
+    private.mkdir()
+    result_path = private / "result.json"
+    context = {
+        "key": "a/b#1",
+        "issueUrl": "https://github.com/a/b/issues/1",
+        "threadId": "thread-1",
+        "worktreePath": str(worktree.resolve()),
+        "resultPath": str(result_path),
+        "contextDigest": "context",
+        "stage": "PR_OPEN",
+        "publicationReceipt": {
+            "prUrl": "https://github.com/a/b/pull/2",
+            "commitSha": head_sha,
+        },
+        "prFollowup": {"wakeDigest": "wake"},
+    }
+    result_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": "radar-task-result-v1",
+                "contextDigest": "context",
+                "key": "a/b#1",
+                "issueUrl": "https://github.com/a/b/issues/1",
+                "threadId": "thread-1",
+                "worktreePath": str(worktree.resolve()),
+                "stage": "PR_OPEN",
+                "followupDigest": "wake",
+                "evidence": {"reviewed": True},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    recovered = MODULE._recoverable_published_result(context)
+
+    assert recovered is not None
+    assert recovered["stage"] == "PR_OPEN"
+    assert recovered["wakeDigest"] == "wake"
+
+
 def test_prepare_managed_worktree_is_isolated_under_github_project(monkeypatch, tmp_path):
     source = tmp_path / "source"
     source.mkdir()

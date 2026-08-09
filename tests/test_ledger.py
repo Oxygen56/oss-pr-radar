@@ -194,7 +194,15 @@ def test_verified_task_context_rebuilds_publication_and_suppresses_duplicate(tmp
         }
     )
     assert imported == {"matched": 1, "inserted": 1, "updated": 0}
-    assert store.pr_followup_candidates()[0]["threadId"] == "thread-recovered"
+    candidate = store.pr_followup_candidates()[0]
+    assert candidate["threadId"] == "thread-recovered"
+    store.record_followup_result(
+        "a/b#1",
+        wake_digest=candidate["wakeDigest"],
+        result_digest="result",
+        stage="PR_OPEN",
+    )
+    assert store.pr_followup_candidates() == []
 
 
 def test_task_context_recovery_is_idempotent(tmp_path):
