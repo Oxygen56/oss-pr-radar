@@ -30,8 +30,14 @@ PROJECT_PATH=/Users/oxygen/Documents/github
 LEASE_OWNER=heartbeat-019f71c3-4f26-7030-b126-25f8cfbac4c4
 ```
 
-Every command below runs from `ROOT`. A command that returns a running process
-must be waited to a real exit before the same operation may be retried.
+Every command below runs from `ROOT`. For commands that can exceed one tool
+yield, especially `claim --prepare`, the tool wrapper must emit the complete
+`exec_command` result with `text(JSON.stringify(result))`, not only
+`text(result.output)`. If that result contains `session_id`, poll that exact ID
+with `write_stdin` until an `exit_code` is returned. `functions.wait` waits only
+for the outer tool cell and is not a substitute for polling the returned command
+session. Empty output accompanied by a session ID means still running, never
+"no result"; do not release the claim while that session exists.
 
 ## 1. Runtime and health
 

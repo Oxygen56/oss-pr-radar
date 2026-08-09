@@ -31,3 +31,10 @@ def test_controller_protocol_requires_structured_no_code_followup_result():
     assert "prose alone is not a" in PROTOCOL
     assert "completed handoff" in PROTOCOL
     assert "exact follow-up digest" in PROTOCOL
+
+
+def test_controller_protocol_preserves_long_running_command_sessions():
+    assert "text(JSON.stringify(result))" in PROTOCOL
+    assert "poll that exact ID" in PROTOCOL
+    assert "with `write_stdin`" in PROTOCOL
+    assert "Empty output accompanied by a session ID means still running" in PROTOCOL
