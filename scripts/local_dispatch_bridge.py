@@ -1583,11 +1583,17 @@ def _finalize_controller_commit(
         commit_changed_files = _validated_changed_files(
             value.get("controllerCommitChangedFiles") or value.get("changedFiles")
         )
-        publication_changed_files = _validation_publication_changed_files(
-            worktree=worktree,
-            context=context,
-            commit_changed_files=commit_changed_files,
+        publication_changed_files = (
+            _validation_publication_changed_files(
+                worktree=worktree,
+                context=context,
+                commit_changed_files=commit_changed_files,
+            )
+            if context.get("stage") == "VALIDATION_PENDING"
+            else _validated_changed_files(value.get("changedFiles"))
         )
+        if not set(commit_changed_files).issubset(publication_changed_files):
+            raise RuntimeError("controller commit files are missing from publication evidence")
         if (
             value.get("changedFiles") != publication_changed_files
             or value.get("controllerCommitChangedFiles") != commit_changed_files

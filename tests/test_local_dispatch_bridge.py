@@ -2059,6 +2059,14 @@ def test_validation_followup_uses_cumulative_files_for_first_publication(tmp_pat
     finalized = json.loads(result_path.read_text(encoding="utf-8"))
     assert finalized["controllerCommitChangedFiles"] == ["test_runtime.py"]
     assert finalized["changedFiles"] == ["runtime.py", "test_runtime.py"]
+
+    finalized_after_sync, _raw = MODULE._finalize_controller_commit(
+        candidate={"worktreePath": str(worktree)},
+        context=context | {"stage": "PR_OPEN"},
+        value=finalized,
+        result_path=result_path,
+    )
+    assert finalized_after_sync["changedFiles"] == ["runtime.py", "test_runtime.py"]
     assert run_git(worktree, "show", "--pretty=format:", "--name-only", "HEAD") == (
         "test_runtime.py"
     )
