@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import re
+import selectors
 import shutil
 import sqlite3
 import subprocess
@@ -1275,8 +1276,6 @@ def commit_receipt(args: argparse.Namespace) -> dict[str, Any]:
         raise RuntimeError("thread is missing or archived")
     if Path(row["cwd"]).resolve() != thread_cwd:
         raise RuntimeError("thread cwd mismatch")
-    if row["title"] != expected_title:
-        raise RuntimeError("thread title mismatch")
     if canonical_prompt(row["first_user_message"] or "") != issue_prompt(intent["issueUrl"]):
         raise RuntimeError("thread prompt mismatch")
     if (
@@ -1284,6 +1283,7 @@ def commit_receipt(args: argparse.Namespace) -> dict[str, Any]:
         and normalize_origin(row["git_origin_url"] or "") != str(intent["repo"]).casefold()
     ):
         raise RuntimeError("thread origin mismatch")
+    _ensure_desktop_thread_title(args.thread_id, expected_title)
     store.commit_dispatch(
         intent["intentId"],
         owner=_active_owner(store, args),
@@ -1532,13 +1532,9 @@ def orphan_commit(args: argparse.Namespace) -> dict[str, Any]:
         ).fetchone()
     finally:
         connection.close()
-    if (
-        row is None
-        or int(row[1] or 0) != 0
-        or row[0] != args.desired_title
-        or Path(row[2]).resolve() != thread_cwd
-    ):
-        raise RuntimeError("orphan thread title was not applied")
+    if row is None or int(row[1] or 0) != 0 or Path(row[2]).resolve() != thread_cwd:
+        raise RuntimeError("orphan thread binding is invalid")
+    _ensure_desktop_thread_title(args.thread_id, args.desired_title)
     store = ledger(args.ledger)
     store.commit_orphan_dispatch(
         args.intent_id,
@@ -2986,6 +2982,181 @@ def title_commit(args: argparse.Namespace) -> dict[str, Any]:
     return {"ok": True, "threadId": args.thread_id, "title": args.desired_title}
 
 
+def _set_desktop_thread_titles(
+    titles: list[dict[str, Any]], *, timeout_seconds: float = 20.0
+) -> dict[str, str | None]:
+    """Apply lifecycle titles through the supported local app-server protocol."""
+
+    results = {str(item["threadId"]): "app_server_response_missing" for item in titles}
+    if not titles:
+        return results
+    executable = shutil.which("codex")
+    if not executable:
+        return {thread_id: "codex_executable_missing" for thread_id in results}
+    process = subprocess.Popen(
+        [
+            executable,
+            "app-server",
+            "--disable",
+            "recommended_plugins",
+            "--disable",
+            "remote_plugin",
+            "--stdio",
+        ],
+        cwd=ROOT,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        bufsize=0,
+    )
+    request_ids = {index: str(item["threadId"]) for index, item in enumerate(titles, 1)}
+    try:
+        if process.stdin is None or process.stdout is None:
+            raise RuntimeError("app server pipes are unavailable")
+        requests = [
+            {
+                "id": 0,
+                "method": "initialize",
+                "params": {
+                    "clientInfo": {"name": "oss-pr-radar", "version": "1.0"},
+                    "capabilities": {"experimentalApi": True},
+                },
+            }
+        ]
+        requests.extend(
+            {
+                "id": request_id,
+                "method": "thread/name/set",
+                "params": {
+                    "threadId": request_ids[request_id],
+                    "name": str(titles[request_id - 1]["desiredTitle"]),
+                },
+            }
+            for request_id in request_ids
+        )
+        process.stdin.write(
+            b"".join(
+                (json.dumps(request, ensure_ascii=False) + "\n").encode("utf-8")
+                for request in requests
+            )
+        )
+        process.stdin.flush()
+
+        pending = {0, *request_ids}
+        buffer = b""
+        deadline = monotonic() + max(1.0, timeout_seconds)
+        with selectors.DefaultSelector() as selector:
+            selector.register(process.stdout, selectors.EVENT_READ)
+            while pending and monotonic() < deadline:
+                ready = selector.select(max(0.0, deadline - monotonic()))
+                if not ready:
+                    break
+                chunk = os.read(process.stdout.fileno(), 65536)
+                if not chunk:
+                    break
+                buffer += chunk
+                while b"\n" in buffer:
+                    raw, buffer = buffer.split(b"\n", 1)
+                    try:
+                        response = json.loads(raw)
+                    except (UnicodeDecodeError, json.JSONDecodeError):
+                        continue
+                    if not isinstance(response, dict):
+                        continue
+                    response_id = response.get("id")
+                    if response_id not in pending:
+                        continue
+                    pending.remove(response_id)
+                    if response_id == 0:
+                        if response.get("error"):
+                            raise RuntimeError("app server initialization failed")
+                        continue
+                    thread_id = request_ids[response_id]
+                    results[thread_id] = (
+                        "app_server_title_update_failed" if response.get("error") else None
+                    )
+        if 0 in pending:
+            return {thread_id: "app_server_initialization_timeout" for thread_id in results}
+        for request_id in pending:
+            if request_id in request_ids:
+                results[request_ids[request_id]] = "app_server_title_update_timeout"
+        return results
+    except (OSError, RuntimeError, ValueError) as exc:
+        reason = f"{type(exc).__name__}:{str(exc)[:160]}"
+        return {
+            thread_id: (current if current is None else reason)
+            for thread_id, current in results.items()
+        }
+    finally:
+        if process.stdin is not None:
+            process.stdin.close()
+        if process.poll() is None:
+            process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+
+
+def _ensure_desktop_thread_title(thread_id: str, desired_title: str) -> None:
+    connection = sqlite3.connect(THREAD_DB)
+    try:
+        row = connection.execute(
+            "SELECT title,archived FROM threads WHERE id=?", (thread_id,)
+        ).fetchone()
+    finally:
+        connection.close()
+    if row is None or int(row[1] or 0) != 0:
+        raise RuntimeError("thread is missing or archived")
+    if row[0] != desired_title:
+        result = _set_desktop_thread_titles(
+            [{"threadId": thread_id, "desiredTitle": desired_title}]
+        )
+        apply_error = result.get(thread_id)
+        connection = sqlite3.connect(THREAD_DB)
+        try:
+            row = connection.execute(
+                "SELECT title,archived FROM threads WHERE id=?", (thread_id,)
+            ).fetchone()
+        finally:
+            connection.close()
+        if row is None or int(row[1] or 0) != 0 or row[0] != desired_title:
+            raise RuntimeError(apply_error or "thread title was not applied")
+
+
+def title_reconcile(args: argparse.Namespace) -> dict[str, Any]:
+    candidates = title_list(args)["titles"]
+    if not candidates:
+        return {"ok": True, "renamed": [], "errors": []}
+    apply_results = _set_desktop_thread_titles(candidates)
+    renamed: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    for candidate in candidates:
+        thread_id = str(candidate["threadId"])
+        try:
+            committed = title_commit(
+                argparse.Namespace(
+                    ledger=args.ledger,
+                    thread_id=thread_id,
+                    title_state=candidate["titleState"],
+                    title_nonce=candidate["titleNonce"],
+                    desired_title=candidate["desiredTitle"],
+                )
+            )
+            renamed.append({"key": candidate["key"], **committed})
+        except (OSError, RuntimeError, ValueError) as exc:
+            errors.append(
+                {
+                    "key": candidate["key"],
+                    "threadId": thread_id,
+                    "error": apply_results.get(thread_id)
+                    or f"{type(exc).__name__}:{str(exc)[:160]}",
+                }
+            )
+    return {"ok": not errors, "renamed": renamed, "errors": errors}
+
+
 def pr_lifecycle_stage(value: dict[str, Any]) -> str:
     if value.get("mergedAt") or str(value.get("state") or "").upper() == "MERGED":
         return "MERGED"
@@ -3280,6 +3451,7 @@ def main() -> int:
     cleanup_commit_parser.add_argument("--thread-id", required=True)
     cleanup_commit_parser.add_argument("--cleanup-nonce", required=True)
     subparsers.add_parser("title-list")
+    subparsers.add_parser("title-reconcile")
     title_commit_parser = subparsers.add_parser("title-commit")
     title_commit_parser.add_argument("--thread-id", required=True)
     title_commit_parser.add_argument("--title-state", required=True)
@@ -3370,6 +3542,8 @@ def main() -> int:
         result = cleanup_commit(args)
     elif args.operation == "title-list":
         result = title_list(args)
+    elif args.operation == "title-reconcile":
+        result = title_reconcile(args)
     elif args.operation == "title-commit":
         result = title_commit(args)
     elif args.operation == "refresh-prs":

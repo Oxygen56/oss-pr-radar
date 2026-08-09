@@ -147,6 +147,40 @@ def test_title_list_detects_desktop_title_drift(monkeypatch, tmp_path):
     assert "<codex_delegation>" not in drift["payload_json"]
 
 
+def test_title_reconcile_applies_and_receipts_desktop_title(monkeypatch, tmp_path):
+    store, _worktree = registered_store(tmp_path)
+    store.record_stage("a/b#1", "PR_OPEN", evidence={})
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute("CREATE TABLE threads (id TEXT, title TEXT, archived INTEGER)")
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?)",
+            ("thread-1", "<codex_delegation>...", 0),
+        )
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+
+    def apply_titles(candidates):
+        with sqlite3.connect(thread_db) as connection:
+            for candidate in candidates:
+                connection.execute(
+                    "UPDATE threads SET title=? WHERE id=?",
+                    (candidate["desiredTitle"], candidate["threadId"]),
+                )
+        return {str(candidate["threadId"]): None for candidate in candidates}
+
+    monkeypatch.setattr(MODULE, "_set_desktop_thread_titles", apply_titles)
+
+    result = MODULE.title_reconcile(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert result["ok"] is True
+    assert result["errors"] == []
+    assert result["renamed"][0]["threadId"] == "thread-1"
+    assert MODULE.title_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3")) == {
+        "ok": True,
+        "titles": [],
+    }
+
+
 def test_canonical_prompt_unwraps_delegation():
     prompt = "[$gh-issue-pr](/tmp/SKILL.md)\nhttps://github.com/a/b/issues/1"
     wrapped = f"<codex_delegation><source_thread_id>x</source_thread_id><input>{prompt}</input></codex_delegation>"
@@ -799,7 +833,7 @@ def test_commit_receipt_binds_github_project_thread_to_managed_worktree(monkeypa
             (
                 "thread-1",
                 str(project_root),
-                title,
+                "automatic title",
                 MODULE.issue_prompt("https://github.com/a/b/issues/1"),
                 None,
                 0,
@@ -807,6 +841,17 @@ def test_commit_receipt_binds_github_project_thread_to_managed_worktree(monkeypa
         )
     monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
     monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+
+    def apply_titles(candidates):
+        assert candidates[0]["desiredTitle"] == title
+        with sqlite3.connect(thread_db) as connection:
+            connection.execute(
+                "UPDATE threads SET title=? WHERE id=?",
+                (candidates[0]["desiredTitle"], candidates[0]["threadId"]),
+            )
+        return {"thread-1": None}
+
+    monkeypatch.setattr(MODULE, "_set_desktop_thread_titles", apply_titles)
 
     result = MODULE.commit_receipt(
         SimpleNamespace(

@@ -182,6 +182,9 @@ python scripts/local_dispatch_bridge.py context-recover
 python scripts/local_dispatch_bridge.py context-sync
 python scripts/local_dispatch_bridge.py ingest-results
 
+# Detect and repair lifecycle title drift through the local Codex protocol
+python scripts/local_dispatch_bridge.py title-reconcile
+
 # Inspect and transactionally reserve actionable follow-up for existing PR tasks
 python scripts/local_dispatch_bridge.py pr-followup-list
 python scripts/local_dispatch_bridge.py pr-followup-reserve \

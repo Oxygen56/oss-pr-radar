@@ -63,6 +63,8 @@ receiving their own worktrees.
 ## Recovery
 
 - Deploy local controller updates only through `scripts/deploy_local_runtime.py`.
+- Repair task title drift with `local_dispatch_bridge.py title-reconcile`; it applies
+  and verifies lifecycle titles through the local Codex app-server protocol.
   It copies Git-tracked code and preserves `.git`, `.venv`, `reports`, and
   `state`; release-worktree caches or databases can never overwrite production
   runtime state.
