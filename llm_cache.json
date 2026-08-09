@@ -8875,6 +8875,37 @@
     ],
     "why": "Issue provides a clear root cause and repro, but maintainer comment questions the desired behavior (retry vs fast fail) and suggests possible UX mitigation, indicating design confirmation is needed before implementation."
   },
+  "7f30220f40e9b114741477edd63a3b1ff0dd062173703670e00220da32b7a2d5": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify InstallWithHome to accept resolved AgentIDs",
+      "Update detectedCodeGraphTargets and InjectCodeGraphGuidance to use selected agent scope",
+      "Adjust standalone Community Tools flow to use persisted InstalledAgents or explicit scope",
+      "Replace existing test with regression test respecting selected agents"
+    ],
+    "risks": [
+      "Potential behavior change in standalone Community Tools flow may require design confirmation",
+      "Risk of breaking existing functionality if scope propagation is incomplete",
+      "Need to ensure backward compatibility with existing tests that encode old behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add regression test TestCodeGraphConfigurationRespectsSelectedAgents that sets up multiple agents, selects only one, runs installation, and asserts unselected agents' configs are byte-for-byte unchanged",
+      "Run existing communitytool tests and targeted unit tests for modified functions",
+      "Run static checks and full test suite for affected packages"
+    ],
+    "unknowns": [
+      "Maintainer design preferences for standalone flow scope derivation",
+      "Exact API changes needed for InstallWithHome signature"
+    ],
+    "why": "The issue clearly describes a user-visible bug where CodeGraph configuration ignores the user's agent selection and modifies unselected agents' configs. It provides a concrete reproduction, traces the root cause to specific functions (InstallWithHome, detectedCodeGraphTargets, InjectCodeGraphGuidance) that use DiscoverInstalled instead of the selected AgentIDs, and suggests acceptance criteria. No competing PR or related issue exists, and the gate allows work. The fix is actionable: pass resolved AgentIDs through the installation flow and scope all CodeGraph operations to selected agents."
+  },
   "7ffc092f6097897ffb61cc4818a501139b39891f7517ecdc84cad0e0b33b9ad3": {
     "confidence": 0.7,
     "contradictions": [
@@ -16624,6 +16655,35 @@
       "Whether maintainers prefer a dependency pin or a code fix; whether PR #22557 already addresses this issue."
     ],
     "why": "The issue reports an ImportError due to a missing symbol in qdrant-client 1.17.0, with a clear workaround and likely fix (pin dependency or adjust import). However, the deterministic gate requires HUMAN_REVIEW, and there is an existing PR (#22557) with semantic overlap that needs manual comparison. The fix is straightforward but requires maintainer confirmation on the preferred approach (dependency pin vs code change)."
+  },
+  "f551dd24ae243eb964acd68ee0a0dfe64fd2656d30fcfb4e52bf5f9bf02db0fc": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Issue remains open despite merged fix and maintainer comment indicating resolution."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "No new code changes expected; verify the merged fix resolves the issue and close the issue if confirmed."
+    ],
+    "risks": [
+      "The merged PR may not fully address all edge cases (e.g., very large payloads or different platforms).",
+      "The issue may be closed without further action, making any new PR redundant."
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Run the minimal repro from the issue against current main to confirm the fix works.",
+      "Add a regression test for large Code Mode return values if not already covered."
+    ],
+    "unknowns": [
+      "Whether the merged PR fully resolves the issue on all platforms and payload sizes.",
+      "Whether maintainers intend to close the issue or accept further improvements."
+    ],
+    "why": "The issue describes a clear race condition in Code Mode's stdio transport where process.exit() can truncate large stdout writes, causing NoResultError. However, a maintainer-owned PR (#19878) has already been merged that claims to fix this exact issue, and a contributor comment states the fix is on main. The issue remains open, but the fix appears to be in place, so the candidate is no longer actionable without confirmation that the bug still reproduces."
   },
   "f580240228eb0aa89114f3b733518dbe4f7694c2d22d53d5915b22e63e18a2fe": {
     "confidence": 0.8,
