@@ -232,6 +232,43 @@ def test_broker_grants_commit_bound_permit(monkeypatch, tmp_path):
     )
 
 
+def test_broker_still_blocks_a_new_pr_when_a_strong_competitor_exists(tmp_path):
+    store, request, _ = prepared_request(tmp_path)
+
+    class CompetitionClient(Client):
+        def related_open_prs(self, repo, number, **kwargs):
+            return [{"number": 9, "_repo": repo}]
+
+        def pull_request(self, repo, number):
+            return {
+                "number": number,
+                "state": "open",
+                "html_url": f"https://github.com/{repo}/pull/{number}",
+                "title": "Fix streaming tool arguments",
+                "body": "Fixes #7",
+                "draft": False,
+                "updated_at": "2026-08-09T01:00:00Z",
+                "head": {"sha": "competing-head"},
+            }
+
+        def pull_files(self, repo, number):
+            return [{"filename": "file.txt"}]
+
+        def pull_reviews(self, repo, number):
+            return []
+
+        def check_runs(self, repo, ref):
+            return [{"conclusion": "success"}]
+
+    result = broker_publication_request(
+        store, request["request_id"], client=CompetitionClient()
+    )
+
+    assert result["granted"] is False
+    assert result["pending"] is False
+    assert result["audit"]["reason"] == "STRONG_EXISTING_PR"
+
+
 def test_followup_publication_is_bound_to_existing_pr_and_previous_head(tmp_path):
     store, request, evidence_path = prepared_request(tmp_path)
     first = store.publication_request(request["request_id"])
@@ -270,7 +307,7 @@ def test_followup_publication_is_bound_to_existing_pr_and_previous_head(tmp_path
     assert payload["previousCommitSha"] == first["commit_sha"]
 
 
-def test_broker_allows_fast_forward_update_of_its_exact_existing_pr(monkeypatch, tmp_path):
+def test_broker_allows_bound_update_despite_a_competing_pr(monkeypatch, tmp_path):
     store, request, evidence_path = prepared_request(tmp_path)
     first = store.publication_request(request["request_id"])
     permit = store.grant_publication_request(
@@ -302,9 +339,23 @@ def test_broker_allows_fast_forward_update_of_its_exact_existing_pr(monkeypatch,
 
     class UpdateClient(Client):
         def related_open_prs(self, repo, number, **kwargs):
-            return [{"number": 8, "_repo": repo}]
+            return [
+                {"number": 8, "_repo": repo},
+                {"number": 9, "_repo": repo},
+            ]
 
         def pull_request(self, repo, number):
+            if number == 9:
+                return {
+                    "number": 9,
+                    "state": "open",
+                    "html_url": "https://github.com/example/project/pull/9",
+                    "title": "Fix streaming tool arguments",
+                    "body": "Fixes #7",
+                    "draft": False,
+                    "updated_at": "2026-08-09T01:00:00Z",
+                    "head": {"sha": "competing-head"},
+                }
             return {
                 "number": 8,
                 "state": "open",
@@ -333,6 +384,8 @@ def test_broker_allows_fast_forward_update_of_its_exact_existing_pr(monkeypatch,
 
     assert result["granted"] is True
     assert result["audit"]["evidence"]["publicationKind"] == "PR_UPDATE"
+    relations = result["audit"]["evidence"]["evidence"]["pull_relations"]
+    assert any(relation["url"].endswith("/pull/9") for relation in relations)
 
     push = store.publication_effect(
         permit_id=result["permit"]["permit_id"],

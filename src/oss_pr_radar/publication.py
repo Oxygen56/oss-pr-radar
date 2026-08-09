@@ -405,11 +405,9 @@ def audit_publication_request(
         authorization_evidence = replace(
             evidence,
             issue=evidence.issue | {"assignees": []},
-            pull_relations=tuple(
-                relation
-                for relation in evidence.pull_relations
-                if relation.get("url") != existing_url
-            ),
+            # Duplicate PRs prevent new submissions, but must not freeze a
+            # fully bound update to this controller's already-open PR.
+            pull_relations=(),
         )
     elif publication_kind != "PR_CREATE":
         return PublicationAudit("BLOCK", "PUBLICATION_KIND_INVALID", request_id, {})
