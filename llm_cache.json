@@ -6687,6 +6687,34 @@
     ],
     "why": "The issue clearly identifies a recurring bug: new Claude models fail because temperature is deprecated, and the fix requires a maintainable approach rather than adding each model to an exclusion list. No open PR or issue addresses this, and the issue provides a concrete reproduction and expected behavior."
   },
+  "59802e04bcad3c806fd559db19ab9246d3e71347abfac9b2ea6d868336a0d514": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "FunctionTool.invoke to add a pre-validation normalization hook",
+      "Optional JSON-string-to-array coercion in schema validation"
+    ],
+    "risks": [
+      "Changing validation order may affect existing middleware behavior",
+      "Coercion could mask genuine type errors if not narrowly scoped"
+    ],
+    "root_cause_clarity": "high",
+    "score": 15,
+    "test_plan": [
+      "Add a regression test that calls tool.invoke with a JSON-encoded list string and asserts the tool executes with parsed list",
+      "Add a test for the anyOf optional case to ensure coercion fires",
+      "Add a test for a str|list[str] schema to ensure no coercion occurs"
+    ],
+    "unknowns": [
+      "Maintainer design preference for the hook vs coercion",
+      "Whether a pre-validation hook is acceptable in the public API"
+    ],
+    "why": "Issue clearly identifies a validation-before-middleware ordering problem in FunctionTool.invoke, with concrete production examples and a minimal reproduction. However, the proposed fixes (coercion or pre-validation hook) require design confirmation from maintainers, and the deterministic gate is HUMAN_REVIEW."
+  },
   "59d8d15af87f333e2a0b9cc214dd240ad387204e6a4258d3653a6baa77a0a2cb": {
     "confidence": 0.7,
     "contradictions": [],
@@ -9579,6 +9607,37 @@
       "Exact code path causing the issue"
     ],
     "why": "Issue reports a clear bug: nested Pydantic models in dicts ignore serialize_by_alias=False. No open PR or related issue found, but the repository requires assignment and AI disclosure. Root cause is not yet confirmed; likely in serialization path for nested models."
+  },
+  "8121fb423d96200503ac675f71b93e0ac908c68f147d22a6df33fd3ce3d96b75": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify gpu_model_runner.py to use runner-owned CPU buffer for async accepted-count snapshot",
+      "Update mamba_utils.py postprocess to copy into independent buffer",
+      "Adjust _prepare_inputs to gather from snapshot and remap via prev_positions",
+      "Preserve non-async path behavior"
+    ],
+    "risks": [
+      "Potential performance impact from additional buffer copies",
+      "Risk of breaking non-async scheduling if not carefully gated",
+      "Need to ensure synchronization semantics are preserved"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a regression test that reproduces the race by simulating async scheduling with MTP and hybrid Mamba/GDN model, verifying accepted counts are correctly remapped after condensation",
+      "Run existing vLLM unit tests for gpu_model_runner and mamba_utils"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred design for this fix",
+      "Exact runtime reproduction on CUDA main is not yet confirmed, though static analysis is strong"
+    ],
+    "why": "The issue identifies a concrete race condition in vLLM's async MTP align mode where accepted-token counts are copied into mutable InputBatch rows before condensation, leading to incorrect state-copy offsets and garbled tokens. The root cause is clearly explained with code references and a concrete example, and a specific fix is proposed using an existing runner-owned CPU buffer. No competing PR exists, and the issue is actionable with a clear test path."
   },
   "812e3835f62acd6c50bddc089ca6b00b658059fdffab9a2b78768c260f77da59": {
     "confidence": 0.7,
