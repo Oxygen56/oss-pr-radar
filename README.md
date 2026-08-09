@@ -177,7 +177,8 @@ python scripts/local_dispatch_bridge.py alerts --min-age-minutes 70 --notify
 # Notify Feishu only after a Codex task has actually been created
 python scripts/local_dispatch_bridge.py dispatch-notifications --notify
 
-# Repair workspace-local task contexts and ingest completed task results
+# Recover ledger receipts, repair task contexts, and ingest completed results
+python scripts/local_dispatch_bridge.py context-recover
 python scripts/local_dispatch_bridge.py context-sync
 python scripts/local_dispatch_bridge.py ingest-results
 
@@ -255,9 +256,14 @@ Each sync also supersedes uncommitted local intents withdrawn from the latest
 signed cloud queue, so an older controller cannot dispatch a retracted decision.
 Before queue ingestion, sync verifies the private per-issue context in both its
 shared and worktree locations and reconstructs missing lifecycle/publication
-rows. A lost local database therefore cannot turn a completed issue into a new
-task or detach an existing pull request from follow-up. Any mirror, digest,
-repository, permission, or controller-boundary mismatch stops dispatch.
+rows. For a clean checkout still pinned to its published commit, it also restores
+the exact consumed-result digest so an old `FIX_READY` file cannot request a
+second publication. The fast local publisher performs the same recovery first
+and stops before every public action when recovery or result validation fails.
+A lost local database therefore cannot turn a completed issue into a new task,
+detach an existing pull request from follow-up, or replay an old result. Any
+mirror, digest, repository, permission, or controller-boundary mismatch stops
+dispatch and publication.
 
 ## Development
 

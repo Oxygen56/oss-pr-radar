@@ -497,6 +497,99 @@ def test_shared_context_recovery_fails_closed_when_mirrors_disagree(monkeypatch,
     assert result["errors"][0]["error"] == "shared and worktree task context mirrors disagree"
 
 
+def test_shared_context_recovery_marks_clean_published_result_as_consumed(
+    monkeypatch, tmp_path
+):
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, _ = registered_store(tmp_path / "original", worktree=worktree)
+    run_git(worktree, "config", "user.name", "Test Contributor")
+    run_git(worktree, "config", "user.email", "test@example.com")
+    source = worktree / "runtime.py"
+    source.write_text("value = 2\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "-m", "fix: runtime")
+    head_sha = run_git(worktree, "rev-parse", "HEAD")
+    run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
+    store.record_stage("a/b#1", "FIX_READY", evidence={})
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    context = json.loads(context_path.read_text(encoding="utf-8"))
+    result_path = Path(context["resultPath"])
+    result_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": "radar-task-result-v1",
+                "contextDigest": context["contextDigest"],
+                "key": "a/b#1",
+                "issueUrl": "https://github.com/a/b/issues/1",
+                "threadId": "thread-1",
+                "worktreePath": str(worktree.resolve()),
+                "stage": "FIX_READY",
+                "changedFiles": ["runtime.py"],
+                "quality": {key: True for key in QUALITY_FIELDS},
+                "publication": {
+                    "headOwner": "Oxygen56",
+                    "baseBranch": "main",
+                    "title": "fix: runtime",
+                    "bodyFile": str(worktree / ".oss-pr-radar" / "pr-body.md"),
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    request = store.create_publication_request(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        commit_sha=head_sha,
+        branch="fix-runtime",
+        worktree_path=str(worktree),
+        evidence_digest="evidence",
+        evidence_path=str(result_path),
+        publication={
+            "headOwner": "Oxygen56",
+            "baseBranch": "main",
+            "title": "fix: runtime",
+            "bodyPath": str(worktree / ".oss-pr-radar" / "pr-body.md"),
+        },
+    )
+    permit = store.grant_publication_request(
+        request["request_id"],
+        issue_url="https://github.com/a/b/issues/1",
+        commit_sha=head_sha,
+        branch="fix-runtime",
+        evidence={},
+    )
+    store.consume_publication_permit(permit["permit_id"], "https://github.com/a/b/pull/2")
+    MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+
+    recovered_path = tmp_path / "recovered.sqlite3"
+    recovered = RadarLedger(recovered_path)
+    recovery = MODULE.recover_shared_task_contexts(recovered)
+    ingestion = MODULE.ingest_task_results(SimpleNamespace(ledger=recovered_path))
+
+    assert recovery["resultReceiptsRestored"] == 1
+    assert recovery["restored"][0]["resultReceiptRestored"] is True
+    assert ingestion["ok"] is True
+    assert ingestion["ingested"] == []
+    assert ingestion["publicationRequests"] == []
+    with recovered.connect() as connection:
+        followup_results = connection.execute(
+            "SELECT COUNT(*) FROM events WHERE event_type='PR_FOLLOWUP_RESULT_INGESTED'"
+        ).fetchone()[0]
+    assert followup_results == 0
+
+
 def test_prepare_managed_worktree_is_isolated_under_github_project(monkeypatch, tmp_path):
     source = tmp_path / "source"
     source.mkdir()

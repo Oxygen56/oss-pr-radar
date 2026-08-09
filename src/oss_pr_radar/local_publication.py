@@ -58,7 +58,38 @@ def advance_once(
     runner: Callable[[Path, str], dict[str, Any]] = run_bridge,
 ) -> dict[str, Any]:
     root = root.resolve()
+    recovery = runner(root, "context-recover")
+    recovery_errors = list(recovery.get("errors") or [])
+    if recovery.get("ok") is False or recovery_errors:
+        return {
+            "ok": False,
+            "activity": True,
+            "resultsIngested": [],
+            "publicationRequests": [],
+            "validationDeferred": [],
+            "published": [],
+            "contextsSynced": [],
+            "pending": [],
+            "blocked": [],
+            "errors": recovery_errors
+            or [{"error": "task context recovery failed before result ingestion"}],
+        }
     ingestion = runner(root, "ingest-results")
+    ingestion_errors = list(ingestion.get("errors") or [])
+    if ingestion.get("ok") is False or ingestion_errors:
+        return {
+            "ok": False,
+            "activity": True,
+            "resultsIngested": list(ingestion.get("ingested") or []),
+            "publicationRequests": list(ingestion.get("publicationRequests") or []),
+            "validationDeferred": list(ingestion.get("validationDeferred") or []),
+            "published": [],
+            "contextsSynced": [],
+            "pending": [],
+            "blocked": [],
+            "errors": ingestion_errors
+            or [{"error": "task result ingestion failed before publication"}],
+        }
     publication = runner(root, "publication-run")
     published = list(publication.get("published") or [])
     context_sync = (
@@ -66,7 +97,6 @@ def advance_once(
     )
 
     errors = [
-        *list(ingestion.get("errors") or []),
         *list(publication.get("errors") or []),
         *list(context_sync.get("errors") or []),
     ]
@@ -78,7 +108,6 @@ def advance_once(
     activity = bool(ingested or requests or published or blocked or errors)
     return {
         "ok": not errors
-        and ingestion.get("ok") is not False
         and publication.get("ok") is not False
         and context_sync.get("ok") is not False,
         "activity": activity,

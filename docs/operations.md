@@ -71,8 +71,11 @@ receiving their own worktrees.
 - If the local lifecycle database is missing or replaced, queue sync verifies
   each controller-owned task context against its byte-identical worktree mirror,
   digest, permissions, repository origin, and managed path. It then rebuilds
-  completed task and consumed publication records before accepting any new
-  intent. A mismatch fails closed, preventing duplicate task creation.
+  completed task, consumed publication records, and the exact digest of any
+  clean result already represented by a published commit before accepting any
+  new intent. The local publication agent performs this recovery before result
+  ingestion and stops the whole cycle on any recovery or ingestion error. A
+  mismatch therefore fails closed before duplicate task creation or publication.
 - An expired or tampered intent is ignored locally.
 - An expired ordinary lease can be reclaimed only before task creation starts;
   a `CREATING` record remains exclusive until the exact asynchronous task is

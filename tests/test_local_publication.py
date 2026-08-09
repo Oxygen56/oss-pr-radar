@@ -6,6 +6,7 @@ from oss_pr_radar.local_publication import advance_once, launch_agent_spec
 def test_fast_publication_runs_ingestion_and_publication_in_order(tmp_path):
     calls = []
     responses = {
+        "context-recover": {"ok": True, "verified": 1, "errors": []},
         "ingest-results": {
             "ok": True,
             "ingested": [{"key": "a/b#1", "stage": "FIX_READY"}],
@@ -33,6 +34,7 @@ def test_fast_publication_runs_ingestion_and_publication_in_order(tmp_path):
     result = advance_once(tmp_path, runner=runner)
 
     assert [operation for _, operation in calls] == [
+        "context-recover",
         "ingest-results",
         "publication-run",
         "context-sync",
@@ -45,6 +47,8 @@ def test_fast_publication_runs_ingestion_and_publication_in_order(tmp_path):
 
 def test_fast_publication_is_quiet_when_no_result_or_request_exists(tmp_path):
     def runner(_root: Path, operation: str):
+        if operation == "context-recover":
+            return {"ok": True, "verified": 0, "errors": []}
         if operation == "ingest-results":
             return {"ok": True, "ingested": [], "publicationRequests": [], "errors": []}
         return {"ok": True, "published": [], "pending": [], "blocked": [], "errors": []}
@@ -63,6 +67,8 @@ def test_incomplete_validation_is_healthy_and_quiet(tmp_path):
     }
 
     def runner(_root: Path, operation: str):
+        if operation == "context-recover":
+            return {"ok": True, "verified": 0, "errors": []}
         if operation == "ingest-results":
             return {
                 "ok": True,
@@ -78,6 +84,38 @@ def test_incomplete_validation_is_healthy_and_quiet(tmp_path):
     assert result["ok"] is True
     assert result["activity"] is False
     assert result["validationDeferred"] == [deferred]
+
+
+def test_recovery_failure_stops_ingestion_and_publication(tmp_path):
+    calls = []
+
+    def runner(_root: Path, operation: str):
+        calls.append(operation)
+        return {"ok": False, "errors": [{"error": "context mismatch"}]}
+
+    result = advance_once(tmp_path, runner=runner)
+
+    assert calls == ["context-recover"]
+    assert result["ok"] is False
+    assert result["published"] == []
+    assert result["errors"] == [{"error": "context mismatch"}]
+
+
+def test_ingestion_failure_stops_publication(tmp_path):
+    calls = []
+
+    def runner(_root: Path, operation: str):
+        calls.append(operation)
+        if operation == "context-recover":
+            return {"ok": True, "verified": 0, "errors": []}
+        return {"ok": False, "errors": [{"error": "invalid result"}]}
+
+    result = advance_once(tmp_path, runner=runner)
+
+    assert calls == ["context-recover", "ingest-results"]
+    assert result["ok"] is False
+    assert result["published"] == []
+    assert result["errors"] == [{"error": "invalid result"}]
 
 
 def test_launch_agent_uses_local_venv_and_contains_no_credentials(tmp_path):

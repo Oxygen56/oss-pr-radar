@@ -75,6 +75,13 @@ PR_STAGE_PRIORITY = {
     "CLOSED": 4,
 }
 CONTROLLER_TERMINAL_STATUS = "controller_terminal"
+PUBLISHED_TASK_STAGES = {
+    "PR_OPEN",
+    "CI_GREEN",
+    "MAINTAINER_ACCEPTED",
+    "MERGED",
+    "CLOSED",
+}
 issue_prompt = canonical_prompt
 
 
@@ -448,21 +455,106 @@ def _verified_shared_task_context(path: Path) -> tuple[dict[str, Any], str]:
     return context, source_updated_at
 
 
+def _recoverable_published_result(context: dict[str, Any]) -> dict[str, str] | None:
+    """Identify a clean, already-published FIX_READY result after ledger loss."""
+
+    if str(context.get("stage") or "") not in PUBLISHED_TASK_STAGES:
+        return None
+    receipt = context.get("publicationReceipt")
+    if not isinstance(receipt, dict) or not receipt.get("prUrl"):
+        return None
+
+    worktree = Path(str(context.get("worktreePath") or "")).resolve()
+    result_path = Path(str(context.get("resultPath") or "")).resolve()
+    expected_path = worktree / TASK_PRIVATE_DIR / "result.json"
+    if result_path != expected_path:
+        raise RuntimeError("shared task context result path is invalid")
+    if not result_path.exists():
+        return None
+    if result_path.is_symlink() or not result_path.is_file():
+        raise RuntimeError("published task result is not a regular file")
+    if result_path.stat().st_mode & 0o022:
+        raise RuntimeError("published task result is group or world writable")
+
+    raw = result_path.read_bytes()
+    try:
+        value = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("published task result is not valid JSON") from exc
+    expected = {
+        "schemaVersion": TASK_RESULT_SCHEMA,
+        "key": context.get("key"),
+        "issueUrl": context.get("issueUrl"),
+        "threadId": context.get("threadId"),
+        "worktreePath": str(worktree),
+        "contextDigest": context.get("contextDigest"),
+    }
+    if not isinstance(value, dict):
+        raise RuntimeError("published task result must be an object")
+    for key, expected_value in expected.items():
+        if value.get(key) != expected_value:
+            raise RuntimeError(f"published task result mismatch: {key}")
+
+    # PR_OPEN results are current follow-up evidence. A FIX_READY result is only
+    # historical when the checkout is still exactly the published commit.
+    if value.get("stage") != "FIX_READY":
+        return None
+    commit_sha = str(receipt.get("commitSha") or "")
+    if command(["git", "status", "--porcelain"], cwd=worktree):
+        return None
+    if command(["git", "rev-parse", "HEAD"], cwd=worktree) != commit_sha:
+        return None
+    return {
+        "key": str(context["key"]),
+        "digest": hashlib.sha256(raw).hexdigest(),
+        "stage": "FIX_READY",
+    }
+
+
 def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
     root = shared_context_root()
     if not root.exists():
-        return {"verified": 0, "restored": [], "errors": []}
+        return {
+            "verified": 0,
+            "restored": [],
+            "resultReceiptsRestored": 0,
+            "errors": [],
+        }
     restored: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
+    result_receipts_restored = 0
     for path in sorted(root.glob("*.json")):
         try:
             context, source_updated_at = _verified_shared_task_context(path)
-            restored.append(
-                store.restore_task_context(context, source_updated_at=source_updated_at)
+            result_receipt = _recoverable_published_result(context)
+            restored_context = store.restore_task_context(
+                context, source_updated_at=source_updated_at
             )
+            receipt_restored = False
+            if result_receipt and not store.task_result_digest_seen(
+                result_receipt["key"], result_receipt["digest"]
+            ):
+                store.record_task_result_ingested(
+                    result_receipt["key"],
+                    digest=result_receipt["digest"],
+                    stage=result_receipt["stage"],
+                )
+                receipt_restored = True
+                result_receipts_restored += 1
+            restored.append(restored_context | {"resultReceiptRestored": receipt_restored})
         except (OSError, RuntimeError, ValueError) as exc:
             errors.append({"path": str(path), "error": str(exc)[:300]})
-    return {"verified": len(restored), "restored": restored, "errors": errors}
+    return {
+        "verified": len(restored),
+        "restored": restored,
+        "resultReceiptsRestored": result_receipts_restored,
+        "errors": errors,
+    }
+
+
+def recover_task_contexts(args: argparse.Namespace) -> dict[str, Any]:
+    result = recover_shared_task_contexts(ledger(args.ledger))
+    return {"ok": not result["errors"]} | result
 
 
 def sync_queue(path: Path = LEDGER_PATH) -> dict[str, Any]:
@@ -3098,6 +3190,7 @@ def main() -> int:
     publication_check_parser.add_argument("--commit-sha", required=True)
     publication_check_parser.add_argument("--branch", required=True)
     subparsers.add_parser("cleanup-list")
+    subparsers.add_parser("context-recover")
     subparsers.add_parser("context-sync")
     subparsers.add_parser("pr-followup-list")
     pr_followup_reserve_parser = subparsers.add_parser("pr-followup-reserve")
@@ -3188,6 +3281,8 @@ def main() -> int:
         result = publication_check(args)
     elif args.operation == "cleanup-list":
         result = cleanup_list(args)
+    elif args.operation == "context-recover":
+        result = recover_task_contexts(args)
     elif args.operation == "context-sync":
         result = sync_task_contexts(args)
     elif args.operation == "pr-followup-list":
