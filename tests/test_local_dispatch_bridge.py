@@ -2500,6 +2500,7 @@ def _controller_commit_result(
     tmp_path: Path,
     *,
     policy_verified: bool = True,
+    controller_policy_complete: bool = False,
     missing_quality: tuple[str, ...] = (),
     publication_blocked_reason: str | None = None,
     dco_required: bool = False,
@@ -2522,6 +2523,30 @@ def _controller_commit_result(
         "refs/remotes/origin/main",
     )
     source.write_text("value = 2\n", encoding="utf-8")
+    if controller_policy_complete:
+        store.record_audit_snapshot(
+            "a/b#1",
+            evidence={
+                "authorization": {"status": "ALLOW"},
+                "evidenceDigest": "c" * 64,
+                "liveAudit": {
+                    "capturedAt": iso_z(datetime.now(UTC)),
+                    "evidence": {
+                        "digest": "c" * 64,
+                        "repo": "a/b",
+                        "issue": {"number": 1, "state": "open"},
+                        "completeness": {"repositoryPolicy": "COMPLETE"},
+                        "policy": {
+                            "status": "NORMAL",
+                            "digest": "d" * 64,
+                            "ai_disclosure": False,
+                            "ai_prohibited": False,
+                        },
+                    },
+                },
+            },
+            dedupe_key="controller-policy-complete",
+        )
     context_path = MODULE.write_task_context(
         store,
         issue_url="https://github.com/a/b/issues/1",
@@ -2603,6 +2628,70 @@ def test_controller_commits_validated_child_patch_and_requests_publication(tmp_p
         ]
         == "FIX_READY"
     )
+
+
+def test_controller_policy_snapshot_satisfies_child_policy_quality(tmp_path):
+    store, _worktree, result_path = _controller_commit_result(
+        tmp_path,
+        policy_verified=False,
+        controller_policy_complete=True,
+    )
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert result["ok"] is True
+    assert len(result["publicationRequests"]) == 1
+    assert result["validationDeferred"] == []
+    finalized = json.loads(result_path.read_text(encoding="utf-8"))
+    assert finalized["quality"]["policy_verified"] is True
+    assert finalized["controllerPolicyVerification"] == {
+        "source": "controller_live_audit",
+        "capturedAt": finalized["controllerPolicyVerification"]["capturedAt"],
+        "policyDigest": "d" * 64,
+        "policyStatus": "NORMAL",
+    }
+    assert finalized["controllerPolicyVerification"]["capturedAt"]
+
+
+def test_controller_policy_snapshot_recovers_an_existing_blocked_fix(monkeypatch, tmp_path):
+    store, _worktree, _result_path = _controller_commit_result(
+        tmp_path,
+        policy_verified=False,
+        controller_policy_complete=True,
+    )
+    controller_verification = MODULE._controller_policy_verification
+    monkeypatch.setattr(MODULE, "_controller_policy_verification", lambda _context: None)
+
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    candidate = MODULE.validation_followup_list(
+        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3")
+    )["candidates"][0]
+    MODULE.validation_followup_reserve(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            thread_id="thread-1",
+            result_digest=candidate["resultDigest"],
+            prefetch_complete=False,
+        )
+    )
+    MODULE.validation_followup_commit(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            thread_id="thread-1",
+            result_digest=candidate["resultDigest"],
+        )
+    )
+    blocked = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    monkeypatch.setattr(MODULE, "_controller_policy_verification", controller_verification)
+
+    recovered = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert first["validationDeferred"][0]["missing"] == ["policy_verified"]
+    assert blocked["ingested"][0]["publicationBlockedReason"] == (
+        "REPOSITORY_POLICY_EVIDENCE_REQUIRED"
+    )
+    assert len(recovered["publicationRequests"]) == 1
+    assert recovered["ingested"] == [{"key": "a/b#1", "stage": "FIX_READY"}]
 
 
 def test_controller_creates_two_parent_commit_for_conflicted_pr_followup(tmp_path):

@@ -1864,6 +1864,31 @@ def _policy_from_context(context: dict[str, Any]) -> dict[str, Any]:
     return policy if isinstance(policy, dict) else {}
 
 
+def _controller_policy_verification(context: dict[str, Any]) -> dict[str, str] | None:
+    """Return controller-owned proof that repository policy discovery completed."""
+    live_audit = context.get("liveAudit")
+    evidence = live_audit.get("evidence") if isinstance(live_audit, dict) else None
+    completeness = evidence.get("completeness") if isinstance(evidence, dict) else None
+    policy = evidence.get("policy") if isinstance(evidence, dict) else None
+    if not isinstance(completeness, dict) or not isinstance(policy, dict):
+        return None
+    status = str(policy.get("status") or "")
+    digest = str(policy.get("digest") or "")
+    if (
+        completeness.get("repositoryPolicy") != "COMPLETE"
+        or status == "UNKNOWN"
+        or not status
+        or not re.fullmatch(r"[0-9a-f]{64}", digest)
+    ):
+        return None
+    return {
+        "source": "controller_live_audit",
+        "capturedAt": str(live_audit.get("capturedAt") or ""),
+        "policyDigest": digest,
+        "policyStatus": status,
+    }
+
+
 def _prepared_default_branch(worktree: Path) -> str | None:
     """Read the controller-prepared default branch without network access."""
 
@@ -2677,11 +2702,22 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
             raw = result_path.read_bytes()
             initial_digest = hashlib.sha256(raw).hexdigest()
             digest_seen = store.task_result_digest_seen(candidate["key"], initial_digest)
-            if digest_seen and candidate["stage"] != "VALIDATION_PENDING":
-                continue
             value = json.loads(raw)
             if not isinstance(value, dict):
                 raise RuntimeError("task result must be an object")
+            initial_quality = value.get("quality")
+            possible_policy_recovery = bool(
+                value.get("stage") == "FIX_READY"
+                and isinstance(initial_quality, dict)
+                and initial_quality.get("policy_verified") is not True
+                and candidate["stage"] == "FIX_READY"
+            )
+            if (
+                digest_seen
+                and candidate["stage"] != "VALIDATION_PENDING"
+                and not possible_policy_recovery
+            ):
+                continue
             context_path = result_path.parent / "task-context.json"
             context = json.loads(context_path.read_text(encoding="utf-8"))
             if not isinstance(context, dict):
@@ -2724,6 +2760,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     raise RuntimeError("task result context digest mismatch")
             stage = str(value.get("stage") or "")
             quality = value.get("quality")
+            controller_policy = _controller_policy_verification(context)
             policy_followup_exhausted = bool(
                 stage == "FIX_READY"
                 and isinstance(quality, dict)
@@ -2731,7 +2768,14 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 and set(assess_submit_ready(quality).missing) == {"policy_verified"}
                 and store.validation_followup_was_sent(thread_id=candidate["threadId"])
             )
-            if digest_seen and not policy_followup_exhausted:
+            controller_policy_recoverable = bool(
+                stage == "FIX_READY"
+                and isinstance(quality, dict)
+                and quality.get("policy_verified") is not True
+                and candidate["stage"] == "FIX_READY"
+                and controller_policy is not None
+            )
+            if digest_seen and not policy_followup_exhausted and not controller_policy_recoverable:
                 continue
             if candidate["stage"] in {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED"} and (
                 isinstance(context_followup, dict)
@@ -2759,6 +2803,12 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
             elif stage == "FIX_READY":
                 if not isinstance(quality, dict):
                     raise RuntimeError("FIX_READY requires a quality object")
+                if quality.get("policy_verified") is not True and controller_policy is not None:
+                    value = dict(value)
+                    quality = dict(quality)
+                    quality["policy_verified"] = True
+                    value["quality"] = quality
+                    value["controllerPolicyVerification"] = controller_policy
                 value, raw = _finalize_controller_commit(
                     candidate=candidate,
                     context=context,
@@ -2769,10 +2819,14 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 assert isinstance(quality, dict)
                 digest = hashlib.sha256(raw).hexdigest()
                 publication_blocked = _publication_block_reason(context, value)
-                if policy_followup_exhausted and not publication_blocked:
+                assessment = assess_submit_ready(quality)
+                if (
+                    policy_followup_exhausted
+                    and not publication_blocked
+                    and set(assessment.missing) == {"policy_verified"}
+                ):
                     publication_blocked = "REPOSITORY_POLICY_EVIDENCE_REQUIRED"
                 if candidate["stage"] != "FIX_READY":
-                    assessment = assess_submit_ready(quality)
                     local_policy_only = bool(
                         publication_blocked and set(assessment.missing) == {"policy_verified"}
                     )
