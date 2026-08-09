@@ -349,6 +349,38 @@
     ],
     "why": "Issue provides a clear root cause and a verified fix for a user-visible streaming corruption bug, but the deterministic gate requires HUMAN_REVIEW and there is potential overlap with issue #11997. Maintainer confirmation is needed before starting work."
   },
+  "076d552e37a3bd92663ce5f083e793f3db858de0202718dcf1beac6af896a91a": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The original report claimed the developer message injection mechanism was unknown, but later comments identified it as PreToolUse hook injecting task_plan.md content."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify repairOrphanedInputItems in src/adapters/openai-responses.ts to normalize ordering by moving function_call_output to immediately follow its matching function_call, or hoisting interleaved non-tool items out from between them.",
+      "Gate the normalization behind a provider predicate to avoid changing message order for providers that tolerate interleaving.",
+      "Add regression tests for interleaved developer messages between function_call and function_call_output."
+    ],
+    "risks": [
+      "Reordering messages may change model-visible semantics for providers that tolerate interleaving, potentially affecting output quality.",
+      "The fix may need to be scoped to DeepSeek or similar strict providers to avoid unintended behavior changes."
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Create a unit test with a synthetic input containing function_call, developer message, function_call_output with matching call_id, and assert the output is reordered to have function_call_output immediately after function_call.",
+      "Add an integration test using a mock DeepSeek Responses endpoint that rejects interleaved pairs, verifying the normalized request succeeds.",
+      "Run existing adapter tests to ensure no regression for providers that tolerate interleaving."
+    ],
+    "unknowns": [
+      "Whether the maintainer has approved the proposed fix approach and the exact provider predicate to use.",
+      "Whether an existing open PR already addresses this issue, as the open PR lookup failed due to rate limiting."
+    ],
+    "why": "The issue is a well-evidenced provider compatibility bug with a clear root cause: OpenCodex's repairOrphanedInputItems only checks pair presence, not contiguity, so interleaved developer messages between function_call and function_call_output are forwarded to DeepSeek, which rejects them. The maintainer has confirmed the mechanism and proposed a bounded fix (ordering normalization), but explicitly requested design confirmation on blast radius and semantic impact before patching. The open PR lookup failed due to rate limiting, so duplicate work cannot be excluded. This is a concrete, actionable bug fix in the adapter layer, but requires maintainer confirmation and duplicate check."
+  },
   "07c0530f49902fb9c00bd9a8684de9cd7eef3d96c5ecc0ea35ef755c6db2a457": {
     "confidence": 0.7,
     "contradictions": [],
@@ -2545,6 +2577,36 @@
       "Exact code location and current implementation of the no-temperature list; maintainer preference for approach."
     ],
     "why": "Issue clearly identifies a recurring bug: new Claude models fail because temperature is deprecated, and the fix requires a robust approach rather than per-model additions. No open PR or issue addresses this, and the issue provides a concrete reproduction."
+  },
+  "28f9cfb3f978b1ffb0926613f82ac59f5fcf4b8957d023e0f1c7620b034da945": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims 0% hits even with 561-token prefix; maintainer shows hits=0 for 561 tokens but hits=1056 for 1200 tokens, suggesting block size dependency"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Verify fix in PR #46384 on current main",
+      "Potentially add warning for unsupported hybrid prefix caching"
+    ],
+    "risks": [
+      "Duplicate work if PR #46384 already resolves",
+      "Misdiagnosis if block size was the cause"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 12,
+    "test_plan": [
+      "Reproduce with block size > 561 tokens on current main",
+      "Run with --prefix-match-unit 16 and --mamba-cache-mode align to verify partial hits"
+    ],
+    "unknowns": [
+      "Whether issue persists on current main after PR #46384",
+      "Complete open PR landscape due to rate limit"
+    ],
+    "why": "Issue reports prefix caching ineffective for Mamba-2/GDN hybrid, but maintainer comments indicate it may be a block-size issue and PR #46384 already addresses it. Open PR search failed due to rate limit, and the issue is not confirmed on current main. Requires maintainer confirmation and duplicate review."
   },
   "299193e33be75e17c4de14a725267dadb6b46592dacd4bdf988adf4aa81509ad": {
     "confidence": 0.7,
@@ -10783,6 +10845,40 @@
     ],
     "why": "Issue clearly identifies a real bug with a minimal repro and root cause in messages.py, but an open PR (#7053) has semantic overlap and the deterministic gate requires human review. Need maintainer confirmation to avoid duplicate work."
   },
+  "a715655792cd0266c66c9874eb3c84d75ad928b3fd73a4b32ce9d85c050cee2c": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims bug is unintended, but no maintainer confirmation",
+      "Comments indicate project is no longer actively maintained"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "PR check session keying by head SHA",
+      "status posting logic",
+      "CLI error handling for org-scoped checks"
+    ],
+    "risks": [
+      "Repository is read-only; no active maintainer to review",
+      "Open PR lookup failed, so duplicate implementation cannot be excluded",
+      "Suggested fix may conflict with intended product behavior"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 12,
+    "test_plan": [
+      "Reproduce with the provided protocol: open PR, push fix, compare task IDs in status target_urls",
+      "Add regression test for pull_request.synchronize creating fresh sessions"
+    ],
+    "unknowns": [
+      "Whether any open PR already addresses this",
+      "Whether maintainers will accept changes in a read-only repo",
+      "Exact server-side session keying logic"
+    ],
+    "why": "The issue describes a plausible stale-session bug in Continue's PR check pipeline, but the repository is now read-only post-acquisition, the open-PR lookup failed, and the deterministic gate requires HUMAN_REVIEW. The suggested fix direction is speculative and needs maintainer confirmation."
+  },
   "a74e841872b55e6bf9121db322dce0bc2d11e0184b3c7a0ee053c2abacacf112": {
     "confidence": 0.7,
     "contradictions": [
@@ -11491,6 +11587,33 @@
     ],
     "why": "Issue reports a reproducible Ref2VA-specific snow/noise bug with detailed diagnostics and a minimal repro, but root cause is unconfirmed and open PR lookup failed due to rate limit, so duplicate work cannot be excluded."
   },
+  "b57f22059d6ae10ec03f60e1a45c70184d6c4e2bd304eac2559d337979424121": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/config/vllm.py: add weight offloading to unsupported features for V2 runner",
+      "vllm/v1/worker/gpu/model_runner.py: optionally wire set_offloader for feature parity"
+    ],
+    "risks": [
+      "Feature parity implementation may have subtle interactions with V2 cudagraph capture/replay",
+      "Changing default runner selection may affect performance for models that currently use V2"
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Add end-to-end test that runs a model with cpu_offload_gb and asserts offload log line appears and GPU memory usage is reduced",
+      "Reproduce issue with DeepSeek-V2-Lite and cpu_offload_gb=12, verify fallback to V1 or clear error"
+    ],
+    "unknowns": [
+      "Maintainer preference on minimal fail-safe vs full feature parity",
+      "Whether PR #51397 can be revived or superseded"
+    ],
+    "why": "Issue clearly identifies a silent no-op bug in V2 model runner with root cause and empirical evidence. However, an existing PR (#51397) directly addresses the issue with a fail-safe approach, but its CI failed and it is closed. The issue suggests both a minimal fix and a feature-parity option, requiring maintainer decision on scope. The submission policy conflict (AI disclosure) blocks automated action, and the gate requires human review."
+  },
   "b5cd2e181fc5bc44aa623875ac9e034f10b37017dc90ee2e9a83401815051729": {
     "confidence": 0.8,
     "contradictions": [],
@@ -12112,6 +12235,35 @@
       "Maintainer preference on which inference_mode alignment option to adopt"
     ],
     "why": "Issue identifies a clear inconsistency in inference_mode usage between warmup/autotune and real forward, with a concrete failure mode and reproduction. However, open PR lookup timed out and related issue audit failed, so duplicate implementation cannot be excluded. Maintainer comment raises design question about aligning modes, requiring maintainer decision."
+  },
+  "bfe527fa914c87544191b88b5776b9a65a0e50b78e840c792851ac86b99c5b3c": {
+    "confidence": 0.9,
+    "contradictions": [
+      "PR #20642 is referenced as implementing the fix but is closed unmerged; comments indicate it remains open in one place."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "server-adapters/hono",
+      "patches/fetch-to-node@2.1.0.patch",
+      "pnpm-workspace.yaml"
+    ],
+    "risks": [
+      "Bundling fetch-to-node may conflict with packaging model; vendoring adds maintenance burden; upstream fix may be slow."
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Add a regression test that connects one MCP client, disconnects, waits 17 seconds, and asserts the server is still alive.",
+      "Run the full API smoke suite to ensure no process crash."
+    ],
+    "unknowns": [
+      "Maintainer preference among fix approaches (A/B/C) is not yet decided."
+    ],
+    "why": "The issue provides a deterministic reproduction and a fully isolated root cause with a clear failure chain. However, the deterministic gate is HUMAN_REVIEW, and the existing PR #20642 is closed unmerged with mergeable state blocked, indicating maintainer design decisions are pending. The fix requires choosing among vendoring, bundling, or upstream patching, which needs maintainer confirmation."
   },
   "c0ba76ae47e3750946c1e502ee01758f4b2e8ef175ba29fdd21b606f7296e429": {
     "confidence": 0.7,
@@ -12980,6 +13132,33 @@
     ],
     "why": "Issue clearly identifies a shallow update in get_config causing recursive merge failure, with a public repro. However, an existing PR #33525 directly addresses the same issue but lacks tests and has failing CI, so a new PR would be a competition opportunity only if it can improve on those gaps. Given the gate decision is HUMAN_REVIEW and the existing PR is weak, the appropriate action is to wait for maintainer input or further evidence."
   },
+  "d02e48932ee126d283146cce35d38ee3d77314acc6ef997d084498beb9d6fab8": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Add ToolListChangedNotification emission in server-level enable/disable in fastmcp/server/providers/base.py",
+      "Possibly refactor to share notification logic with session-level APIs"
+    ],
+    "risks": [
+      "May conflict with an existing open PR or maintainer design choice",
+      "Changing notification behavior could affect other clients or tests"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 11,
+    "test_plan": [
+      "Create a failing test that connects a client, calls mcp.disable(), and asserts a ToolListChangedNotification is received",
+      "Run existing FastMCP server tests for enable/disable and notification behavior"
+    ],
+    "unknowns": [
+      "Whether maintainers have already discussed or planned a fix",
+      "Whether there is an existing open PR (lookup failed due to rate limit)"
+    ],
+    "why": "Issue reports a concrete bug: server-level enable/disable does not emit ToolListChangedNotification, causing stale tool lists in connected clients. The code path is identified and a clear fix is plausible. However, the deterministic gate is HUMAN_REVIEW, and open PR lookup failed due to rate limit, so duplicate work cannot be excluded. Maintainer design preferences are unknown."
+  },
   "d03becb25b1186162801fddd0598a5ce352b81e94da4f59faab43c642b8a0a5d": {
     "confidence": 0.7,
     "contradictions": [],
@@ -13010,6 +13189,67 @@
       "Whether the issue is already under active investigation by maintainers"
     ],
     "why": "Issue identifies a clear correctness bug from inconsistent torch.inference_mode usage between warmup/autotune and real forward, with a concrete reproduction and maintainer discussion. However, open PR lookup timed out and related issue audit failed, so duplicate implementation cannot be excluded. Maintainer has not confirmed design direction, and the suggested fixes (options 1-4) require maintainer decision."
+  },
+  "d03c0b65d0dbd1c8060da510b7c6ccc14134e3544c592a854ee1f13fa602e109": {
+    "confidence": 0.7,
+    "contradictions": [
+      "One comment reports the issue on a single RTX 5090 with TP=1, while another reports it only under high concurrency on H200, suggesting multiple triggers or a common underlying bug"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix the FlashInfer fuse_allreduce_rms compiler pass or the GDN kernel memory access pattern",
+      "Add regression tests for long-context prefill and multi-GPU configurations"
+    ],
+    "risks": [
+      "The fix may be in FlashInfer or vLLM's integration, requiring coordination with upstream",
+      "The issue may be hardware-specific (H200, SM120) and not reproducible on all platforms"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 12,
+    "test_plan": [
+      "Reproduce with the minimal TP=2 configuration and --disable-custom-all-reduce plus fuse_allreduce_rms=false to confirm workaround",
+      "Run the failing scenario with CUDA_LAUNCH_BLOCKING=1 and compute-sanitizer to identify the exact faulting kernel",
+      "Add a regression test that runs a long prefill with TP=2 and asserts no illegal memory access"
+    ],
+    "unknowns": [
+      "Open PR search failed due to rate limit; cannot confirm no existing PR addresses this issue",
+      "Exact root cause not yet identified; the workaround suggests the fuse_allreduce_rms pass, but the faulting kernel is not directly attributed in all traces"
+    ],
+    "why": "The issue reports a reproducible CUDA illegal memory access in the GDN kernel, with multiple independent reproductions and a confirmed workaround (disabling fuse_allreduce_rms). However, the root cause is not yet identified, and the open PR search failed due to rate limits, so duplicate or competing implementations cannot be ruled out. The deterministic gate requires HUMAN_REVIEW."
+  },
+  "d06c8e85b4388846a844bfc902645fa48b10b28766cbed6fac5ebc258646a0e9": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Investigate Quark FP8-to-MXFP4 conversion for invalid weights/scales",
+      "Fix chat template enable_thinking switch",
+      "Investigate FP8 completion length increase"
+    ],
+    "risks": [
+      "Distinguishing numerical error from floating-point/random variation",
+      "Potential duplicate issue #33800 and overlapping PRs not yet assessed"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "test_plan": [
+      "Reproduce with single request and fixed seed",
+      "Compare MXFP4 vs FP8 outputs on GSM8K with fixed template",
+      "Numerical tolerance checks on converted weights/scales",
+      "Regression test for completion length ratio"
+    ],
+    "unknowns": [
+      "Open PR search incomplete due to rate limit; potential duplicate implementations",
+      "Maintainer confirmation on root cause and desired fix direction"
+    ],
+    "why": "The issue reports a concrete LLM quantization regression (FP8 to MXFP4) with a clear reproduction path and numerical evidence (completion length increase). However, the root cause is unconfirmed, and the open PR search failed due to rate limits, leaving potential duplicate implementations unassessed. The deterministic gate requires HUMAN_REVIEW."
   },
   "d0f25ec094f9677c72859d8a2aa6b432d9cb6298191f9d7fa940754b4e74a8b7": {
     "confidence": 0.7,
