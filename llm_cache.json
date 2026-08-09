@@ -613,6 +613,33 @@
     ],
     "why": "Issue reports a concrete, reproducible bug in session.abort() with three distinct symptoms, all pointing to a single ordering/durability problem: abort is observable before the terminal state is committed. The provided minimal reproduction and detailed analysis by a contributor give a clear root cause and a proposed fix pattern (persist terminal transitions before publishing completion). This is a high-value, actionable bug fix in the agent runtime path."
   },
+  "0cc3c4ab1ccfff3aff65b1b3e0fae36ebd707957aea5951a7d354b9e251733d2": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify _agent_run.py to call clear_interrupts for APPROVAL_RESUME_NOT_FOUND",
+      "Add regression test for snapshot interrupt clearing on NOT_FOUND"
+    ],
+    "risks": [
+      "Potential API behavior change if clearing interrupts affects client expectations",
+      "Need to confirm maintainer preference on whether to also release client pending state"
+    ],
+    "root_cause_clarity": "high",
+    "score": 15,
+    "test_plan": [
+      "Run the provided failing test test_approval_resume_not_found_clears_snapshot_interrupt",
+      "Add a test that simulates process restart and verifies snapshot interrupt is cleared after NOT_FOUND"
+    ],
+    "unknowns": [
+      "Whether an existing PR already addresses this issue (open PR lookup failed)"
+    ],
+    "why": "Issue clearly identifies a bug in _agent_run.py where APPROVAL_RESUME_NOT_FOUND fails to clear snapshot interrupt, causing repeated unanswerable approval cards. Triage reproduced with a failing test. However, open PR lookup failed due to rate limit, so duplicate work cannot be excluded. Maintainer design confirmation is needed for the suggested fix and potential client-side pending state release."
+  },
   "0d385b09d9fff8e674fab9a786d17239e3d1d9995f453b01a12bf7652e30d614": {
     "confidence": 0.85,
     "contradictions": [],
@@ -1253,6 +1280,35 @@
       "Whether the reported timeouts are reproducible in a controlled environment"
     ],
     "why": "Issue reports intermittent timeouts in LiveKit Inference but lacks a clear root cause; a contributor comment suggests possible misconfiguration (wrong model name), and no maintainer confirmation or design direction exists. The report is a bug report without a concrete code path or reproducible test, making it premature to start implementation."
+  },
+  "16519cf5533c5654742400de797e7d911887310a0a6b24e3edbbb4325f9395cb": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify FAST_SKIP_DIRS in src/discover/discover.c to remove 'scripts' or gate it behind a heuristic",
+      "Possibly add warning when skipping top-level source dirs",
+      "Add regression test for fast mode indexing of scripts/"
+    ],
+    "risks": [
+      "Changing skip list may affect performance or index size for large repos",
+      "Broader fix (configurable skip list) may require design discussion"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "test_plan": [
+      "Create minimal repo with scripts/ containing importable modules and assert fast mode indexes them",
+      "Run existing discovery tests and full CI"
+    ],
+    "unknowns": [
+      "Maintainer's preferred fix approach (remove 'scripts' vs configurable list vs warning only)",
+      "Whether the fix should also address similar skip entries like 'docs', 'external'"
+    ],
+    "why": "Issue identifies a concrete bug: fast mode silently excludes 'scripts/' via hardcoded FAST_SKIP_DIRS in discover.c, with reproduction and root cause confirmed by a contributor. Maintainer acknowledged and routed as high-priority. However, the issue is not assigned and no design decision has been made on the fix approach (e.g., remove 'scripts', make list configurable, or add warning). The scope is broader than just 'scripts' as comments show similar issues for 'docs', 'external', etc. Actionability is high but requires maintainer confirmation on desired behavior."
   },
   "178beb142a7ded8d283979807c3ae6643ee82f8f7489521e8537f997234e6751": {
     "confidence": 0.8,
@@ -4770,6 +4826,39 @@
     ],
     "why": "Issue reports a user-visible bug loading MiniMaxH3 with sglang, but lacks a clear root cause and the provided reproduction is incomplete (no error message text, only an image). The deterministic gate requires HUMAN_REVIEW, and related issue/open PR lookups timed out, so duplicate work cannot be excluded."
   },
+  "4b8709b0ddf23938285422990f90486c435c11e66961fe0e04577e52045684b2": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The issue title says 'silently produces incorrect output', but the comment reports that on gloo backend it aborts with SIGABRT; this is a backend-dependent symptom, not a contradiction in the root cause"
+    ],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add a divisibility assertion for sequence length in deepspeed/sequence/layer.py::_generate_layout_params",
+      "Optionally add a similar guard in the newer ulysses_sp.py path if applicable",
+      "Add a regression test that runs DistributedAttention with non-divisible sequence length and verifies an error is raised"
+    ],
+    "risks": [
+      "The old path may be deprecated in favor of the new ulysses_sp.py, so adding a guard there could be wasted effort if the path is removed soon",
+      "The fix might need to be applied to both old and new paths to avoid inconsistency",
+      "The assertion could break existing users who rely on the silent truncation behavior, though that behavior is incorrect"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Run the provided reproduction script with 2 GPUs and qkv_len = world_size*2+1; assert that the new guard raises an error instead of silently producing incorrect output",
+      "Add a unit test that calls _generate_layout_params with a non-divisible sequence length and expects an AssertionError",
+      "Run existing DistributedAttention tests to ensure no regression for divisible cases"
+    ],
+    "unknowns": [
+      "Whether the maintainers intend to keep supporting deepspeed/sequence/layer.py or prefer to only fix the newer ulysses_sp.py path",
+      "Whether the fix should also handle the case where the sequence length is not divisible by the world size in the new path"
+    ],
+    "why": "The issue identifies a concrete bug in DeepSpeed's DistributedAttention: when the global sequence length is not divisible by the sequence-parallel world size, the implementation silently truncates the remainder, producing incorrect outputs without error. The root cause is a missing divisibility guard in the sequence-sharding branch of _generate_layout_params, analogous to the existing head-dimension assertion. The issue includes a minimal reproduction script and a clear reference-vs-implementation comparison, satisfying the llm_algorithm track's requirement for a numerical regression test. No competing PR or issue exists, and the maintainer's comment indicates the old path is still present, though the new path may be preferred; this is a design question that can be resolved during implementation."
+  },
   "4bad929f9c51b29ce7f132dab4aa28ca0b3ca597477b6cbc5fa601fd6d4b078c": {
     "confidence": 0.85,
     "contradictions": [],
@@ -7324,6 +7413,37 @@
     ],
     "why": "Issue clearly identifies a detached promise causing silent title loss on serverless runtimes, with a minimal repro. However, the deterministic gate requires HUMAN_REVIEW, and existing PRs (e.g., #16218) overlap semantically, requiring maintainer comparison before creating a new task."
   },
+  "6c1e9cf82ea27f4aeef31390d4b02cb44af6c6a3175c42f9c2227bd0180bfb4c": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Comment suggests quack-kernels 0.6.3 as cause, while issue body attributes to cutlass-dsl version; both may be relevant"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Bump nvidia-cutlass-dsl pin to >=4.6.2 in requirements/cuda.txt",
+      "Defensive initialization of n_block_first in flash_fwd_sm100.py"
+    ],
+    "risks": [
+      "Pin bump may conflict with other dependencies or require CUDA-specific extras",
+      "Kernel patch may affect performance or correctness on other paths"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Run the provided repro.py on SM100 with DSL 4.6.0 to confirm failure",
+      "After fix, run repro.py with DSL 4.6.0 and 4.6.2 to verify success",
+      "Run vLLM startup with Kimi-K3 vision warmup to ensure no crash"
+    ],
+    "unknowns": [
+      "Whether any open PR already addresses this issue (open PR lookup failed)",
+      "Maintainer preference for pin bump vs kernel patch"
+    ],
+    "why": "Issue provides a clear root cause (TYPE_UNSTABLE_JOIN from split-KV path) and a minimal repro, but the deterministic gate is HUMAN_REVIEW and open PR lookup failed, so we cannot rule out existing work. Maintainer input is needed to confirm the preferred fix (pin bump vs kernel patch) and avoid duplicate effort."
+  },
   "6c8f10a04ab386a229a4c98323ae8fe36422aabb093efa84860c263e52f34c58": {
     "confidence": 0.7,
     "contradictions": [
@@ -7531,6 +7651,34 @@
       "Whether PR #1791 fully addresses this specific case"
     ],
     "why": "Issue describes a real fallback failure for non-JSON-RPC 400 bodies during server/discover, but the exact throw site is unconfirmed and an existing PR (#1791) overlaps semantically, requiring maintainer comparison before new work."
+  },
+  "6e81f3267f11a69ea8771502bc372e461bfc2443c4454f0f265d1e248b868373": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify approval-response consumption in agent-framework-ag-ui to iterate all approved responses instead of resolving only the first pending approval per resume.",
+      "Add regression test for two gated calls in one batch."
+    ],
+    "risks": [
+      "Potential overlap with existing PRs not found due to search failure.",
+      "Changing approval-response handling may affect other approval flows; need to ensure no regression in single-approval or mixed-batch scenarios."
+    ],
+    "root_cause_clarity": "high",
+    "score": 15,
+    "test_plan": [
+      "Run the provided failing test: python/packages/ag-ui/tests/ag_ui/test_repro_7569_multi_gated_approval.py::test_two_gated_approvals_both_execute",
+      "Verify existing never-require sibling tests still pass."
+    ],
+    "unknowns": [
+      "Whether any open PR already addresses this issue (search failed).",
+      "Maintainer preference on the suggested fix approach."
+    ],
+    "why": "Issue provides a clear, reproducible bug with a suggested fix and a failing test path. However, the open PR search failed due to rate limiting, so duplicate or competing implementations cannot be ruled out. The issue is labeled with 'triage' and 'reproduced', and the automated triage notes indicate a suspected fix location, but no maintainer approval or design confirmation is present. Given the need to confirm no existing PR and possibly align with maintainer preferences, a human review is warranted."
   },
   "6e95c8bc6ac025c26bec6ec88c283f7145ff07bd309fbac7b24fb74fe830a3ca": {
     "confidence": 0.85,
@@ -8081,6 +8229,35 @@
       "Exact CI failure details of PR #35811; maintainer preference on coercion approach"
     ],
     "why": "Issue provides a precise root cause and minimal repro; existing PR #35811 is weak due to failed CI, leaving room for a stronger PR with comprehensive tests and coverage."
+  },
+  "7968a5ea8471c837d17ea66ad430f5eae36784ca12656446a96c666a0b5e4b5e": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify LiteLLM's Gemini provider to map reasoning_effort to generationConfig.thinking_summaries for 3.x models",
+      "Possibly add support for Interactions API to retrieve reasoning summaries",
+      "Add regression test for gemini-3.5-flash reasoning_content"
+    ],
+    "risks": [
+      "Existing PR #36292 may already fix the issue; need to compare implementations",
+      "API behavior may vary across Gemini versions; need to avoid breaking 2.5 support"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "test_plan": [
+      "Use the provided minimal repro to create a failing test that asserts reasoning_content is not None for gemini-3.5-flash",
+      "Run existing LiteLLM test suite for Gemini provider"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred design (e.g., Interactions API vs. thinking_summaries)",
+      "Whether PR #36292 actually resolves the issue for gemini-3.5-flash"
+    ],
+    "why": "Issue reports a concrete bug with a clear repro and plausible root cause (Gemini 3.5 API change). Existing PR #36292 overlaps semantically but is not linked to the issue and may not fully address the root cause. A new PR that directly fixes the mapping and adds a regression test could be materially better."
   },
   "7a433a046ec698544ac5a0b3645938c74f695c63b0b3d94a5fee9331c3c00fd6": {
     "confidence": 0.85,
@@ -10426,6 +10603,36 @@
     ],
     "why": "Issue provides a clear root cause and reproduction for a user-visible crash with TP>1, but the deterministic gate requires HUMAN_REVIEW and the related issue audit failed (timeout). A draft PR (#50894) exists with failed CI and incomplete evidence, so a new clean candidate is not appropriate without maintainer confirmation."
   },
+  "a57ce1d2ab337e3257aa76c6286e7979a6bb0088294130d9c6e7488a6550d8d0": {
+    "confidence": 0.8,
+    "contradictions": [
+      "The issue title mentions tool-availability deltas under 'system', but the body focuses on tool responses under 'user'; both are confirmed symptoms."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "pydantic_ai/_otel_messages.py: extend Role literal to include 'tool'",
+      "pydantic_ai/models/instrumented.py: route ToolReturnPart to role 'tool' and handle ToolAvailabilityDeltaPart appropriately"
+    ],
+    "risks": [
+      "Changing role mapping may affect downstream consumers expecting current behavior",
+      "ToolAvailabilityDeltaPart handling may require design decision on whether to omit or use a different role"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Run the provided minimal reproduction script and assert roles are 'tool' for tool responses and not mid-conversation 'system' for availability deltas",
+      "Add unit tests for messages_to_otel_messages covering ToolReturnPart and ToolAvailabilityDeltaPart"
+    ],
+    "unknowns": [
+      "Maintainer preference on how to handle ToolAvailabilityDeltaPart (omit, keep as system, or new role)",
+      "Whether the closed PR #7261 will be reopened or superseded"
+    ],
+    "why": "The issue precisely identifies a semantic-convention violation in OTel GenAI message roles, with a minimal reproduction and confirmed root cause. However, the repository requires assignment and the existing PR #7261 is closed with CI failures, so maintainer direction is needed before starting new work."
+  },
   "a5c23c12415cb1a107ffe454dcd4137da5829deddeb48869891d5cbda4e291d1": {
     "confidence": 0.7,
     "contradictions": [],
@@ -11794,6 +12001,40 @@
     ],
     "why": "The issue is a bug report about runtime metrics undercounting RSS and dropped entity tags in gunicorn pre-fork scenarios. It includes a public repro and detailed analysis, but the track is llm_algorithm, which requires a concrete algorithm mechanism. The issue is about process management and metrics collection, not an LLM algorithm. The candidate's algorithm evidence is fabricated (matched terms like 'bootstrap', 'contamination', 'zero' are not present in the issue). The issue is actionable for a library bug fix, but it does not meet the llm_algorithm track requirements. The deterministic gate says ALLOW_TO_WORK, but the track mismatch and lack of algorithm evidence make it a maintainer decision."
   },
+  "c0cd491e600ece7d687af3ca1eb1834c26fde7e35e90db4064ab9dbbe6dcfbaa": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims CUDA illegal memory access but comments suggest indexing issue without crash"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix MTP speculative decoding state update in gpu_model_runner.py",
+      "Correct drafter hidden state indexing for mixed prefill/decode batches",
+      "Add regression test for concurrency >=4 with MTP"
+    ],
+    "risks": [
+      "Root cause may be in complex V1 scheduler interaction, not isolated to MTP",
+      "Fix may require deep changes to speculative decoding state management",
+      "Hardware-specific (CUDA illegal access) may not reproduce on all setups"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 13,
+    "test_plan": [
+      "Reproduce with provided script on 4+ concurrent requests and MTP num_speculative_tokens=2",
+      "Run with num_speculative_tokens=1 to isolate multi-token logic",
+      "Test with --disable-async-output-proc to check async race",
+      "Vary max_num_batched_tokens to confirm mixed-batch trigger"
+    ],
+    "unknowns": [
+      "Whether existing PRs or fixes already address this (related issue lookup failed)",
+      "Maintainer confirmation of bug and desired fix approach"
+    ],
+    "why": "The issue reports a reproducible MTP speculative decoding corruption at concurrency >=4, with multiple user confirmations and a plausible root cause in mixed-batch indexing. However, the deterministic gate is HUMAN_REVIEW, and the related-issue lookup failed due to rate limiting, leaving unknown whether existing PRs or fixes already address this. The candidate is technically valuable but requires maintainer confirmation and evidence of no competing implementation."
+  },
   "c1cc22b223081a242f8b3ddfbf3d9264c802dbdcd2052af99d74af8fb2269a59": {
     "confidence": 0.7,
     "contradictions": [],
@@ -12283,6 +12524,39 @@
       "Exact internal structure of activations_hlsmodel and how model.trace expects input; maintainer preference on handling multi-input profiling."
     ],
     "why": "The issue clearly identifies a bug in profiling.numerical() for multi-input models, with a reproducible traceback showing np.ascontiguousarray(X) fails on a list of arrays with different shapes. The fix is localized to the profiling code path, and no competing PR exists."
+  },
+  "ca42484156817d96d22dadd6c3338a476df322576ca5368384fb7d071dea5830": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Maintainer suggests random tokens break specdec; reporter's data uses random tokens",
+      "Reporter suspects kernel issue; maintainer has not seen it on GB200/GB300"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "DSpark speculative decoding acceptance logic",
+      "draft model markov head sampling",
+      "fp4 expert handling in MTP blocks"
+    ],
+    "risks": [
+      "Benchmark artifact may invalidate the bug report",
+      "Hardware-specific kernel issue may not be reproducible on other platforms"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 13,
+    "test_plan": [
+      "Reproduce with MT-Bench-style prompts instead of random tokens",
+      "Compare acceptance rates across hardware (GB10 vs GB200/GB300)",
+      "Add regression test for per-position acceptance on a fixed prompt"
+    ],
+    "unknowns": [
+      "Whether the issue reproduces on non-random prompts",
+      "Whether an existing PR already addresses this (open PR search failed)"
+    ],
+    "why": "Issue reports a plausible DSpark acceptance collapse on DeepSeek-V4-Flash-0731 with detailed per-position data and ruled-out factors, but maintainer comments suggest the random-token benchmark may be the cause, and open PR search failed due to rate limit, leaving duplicate/competing work unassessed."
   },
   "cad64f1b75bd66c21f7cebf442c1a21d1ebca66db58c873b4c656e05db8dba73": {
     "confidence": 0.6,
@@ -13446,6 +13720,34 @@
     ],
     "why": "Issue reports a user-visible bug when switching moe-runner-backend to flashinfer_mxfp4, but root cause is unclear and may be related to tool-call parser rather than backend. Open PRs exist with potential fixes but are unmerged and unverified. Maintainer input needed to confirm scope and avoid duplicate work."
   },
+  "dd322b317c8dea587021ce9b1feb822c6b21a8927c7e4af3a78c6c7aa49563e6": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Add (\"ping\", \"2026-07-28\") to CLIENT_REQUESTS in mcp-types",
+      "Add PingRequest to vendored _v2026_07_28 schema module",
+      "Possibly adjust ServerRunner._on_request to exempt ping from version gate"
+    ],
+    "risks": [
+      "Potential maintainer preference for exempting ping vs adding schema entry",
+      "Schema changes may require coordination with mcp-types package"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Run the provided reproduction script to confirm failure before fix",
+      "Add regression test that initializes a 2026-07-28 session and sends ping, expecting success",
+      "Run existing test suite for mcp server and client"
+    ],
+    "unknowns": [
+      "Whether maintainers have already decided on the preferred fix approach"
+    ],
+    "why": "Issue provides a precise root cause: missing ping entry in CLIENT_REQUESTS for protocol version 2026-07-28, with a minimal reproduction script and clear expected fix. No competing PR addresses this specific bug."
+  },
   "dd39aea937620ad80f38fed518aae887cc4263805aeefbdc23983d057ceb8e84": {
     "confidence": 0.7,
     "contradictions": [
@@ -14230,6 +14532,34 @@
       "Exact internal approval-key derivation mechanism, though issue points to likely location"
     ],
     "why": "Issue provides a minimal, self-contained repro with no external dependencies, clearly isolating the bug to the approval/resume path when a context is supplied. The root cause is likely in approval-key derivation or context handling during resume, and the issue explicitly rules out common red herrings. No competing PR exists, and the maintainer has not yet responded, but the evidence is strong enough to start work."
+  },
+  "e599d755b53abda60d81891603211574acaa239f4c986820a06d8e7221af0305": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify get_model_config_by_id or task_handler._bind_embedding_model to validate non-empty api_key and fall back to resolve_model_config when empty",
+      "Add regression test reproducing stale tenant_embd_id scenario"
+    ],
+    "risks": [
+      "Potential behavior change if fallback triggers in unexpected cases",
+      "Need to ensure fallback does not mask real configuration errors"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "test_plan": [
+      "Create a test that mocks a tenant_model_instance with empty api_key and verifies fallback to resolve_model_config",
+      "Run existing task_handler and tenant_model_service unit tests"
+    ],
+    "unknowns": [
+      "Whether any open PR already addresses this exact execution-time fallback (PR lookup failed)",
+      "Maintainer preference on whether to fix in get_model_config_by_id or task_handler"
+    ],
+    "why": "Issue clearly identifies a stale tenant_embd_id causing empty api_key in queued tasks, with a concrete code path and suggested fix. However, open PR lookup failed due to rate limit, and existing merged PRs (#17176, #14923) partially address related tenant_embd_id resolution but not execution-time fallback. Need to confirm no competing implementation and maintainer design preference before starting work."
   },
   "e5ea3167f2aa19a46867a35b21e2e57413caca7752954fc886ac541997ab9110": {
     "confidence": 0.8,
