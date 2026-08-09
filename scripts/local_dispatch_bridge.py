@@ -2142,6 +2142,7 @@ def sync_task_contexts(args: argparse.Namespace) -> dict[str, Any]:
     written: list[dict[str, str]] = []
     refreshed: list[dict[str, str]] = []
     no_go: list[dict[str, str]] = []
+    superseded = store.reconcile_superseded_pr_followups()
     prepared_recovered, errors = _recover_unbound_pr_followup_preparations(store)
     preparation_error_keys = {item["key"] for item in errors}
     for candidate in store.task_context_candidates():
@@ -2194,6 +2195,7 @@ def sync_task_contexts(args: argparse.Namespace) -> dict[str, Any]:
         "ok": not errors,
         "written": written,
         "refreshed": refreshed,
+        "prFollowupsSuperseded": superseded,
         "preparedFollowupsRecovered": prepared_recovered,
         "noGo": no_go,
         "errors": errors,

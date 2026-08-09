@@ -2100,6 +2100,36 @@ def test_context_sync_recovers_legacy_prepared_followup_binding(tmp_path):
     assert store.pr_followup_candidates()[0]["wakeDigest"] == legacy["prFollowup"]["wakeDigest"]
 
 
+def test_context_sync_closes_legacy_reservation_superseded_by_later_result(tmp_path):
+    store, worktree, head_sha, _pr_url = _published_followup_store(tmp_path)
+    candidate = store.pr_followup_candidates()[0]
+    store.reserve_pr_followup(
+        thread_id="thread-1",
+        wake_digest=candidate["wakeDigest"],
+        prepared_head_sha=head_sha,
+    )
+    store.commit_pr_followup(thread_id="thread-1", wake_digest=candidate["wakeDigest"])
+    store.record_followup_result(
+        "a/b#1",
+        wake_digest="f" * 64,
+        result_digest="later-result",
+        stage="PR_OPEN",
+    )
+
+    synced = MODULE.sync_task_contexts(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert synced["ok"] is True
+    assert synced["prFollowupsSuperseded"] == [
+        {
+            "key": "a/b#1",
+            "wakeDigest": candidate["wakeDigest"],
+            "supersededBy": "f" * 64,
+        }
+    ]
+    assert store.active_pr_followup_preparation("a/b#1", thread_id="thread-1") is None
+    assert (worktree / ".oss-pr-radar" / "task-context.json").is_file()
+
+
 def test_ingest_skips_consumed_result_after_followup_context_refresh(tmp_path):
     store, worktree, _head_sha, _pr_url = _published_followup_store(tmp_path)
     original_path = MODULE.write_task_context(

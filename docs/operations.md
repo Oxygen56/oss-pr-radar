@@ -152,7 +152,9 @@ receiving their own worktrees.
   parent binding or dispatch a second follow-up while the task is active.
   Legacy reservations are repaired
   only when the worktree head is the original PR head or a verifiable
-  controller-created base-integration merge.
+  controller-created base-integration merge. An older incomplete reservation is
+  closed as superseded only when the ledger contains a later ingested PR
+  follow-up result for the same opportunity.
 - A publication side effect records `ATTEMPTED` before execution. Ambiguous
   results become `RECONCILE_REQUIRED` and are never blindly retried. Recovery
   only reads the exact remote branch or pull request bound to the original

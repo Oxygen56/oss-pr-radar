@@ -3611,6 +3611,53 @@ class RadarLedger:
             "legacyCompatibility": compatibility if isinstance(compatibility, dict) else None,
         }
 
+    def reconcile_superseded_pr_followups(self) -> list[dict[str, str]]:
+        """Close legacy reservations that a later ingested follow-up superseded."""
+
+        now = iso_z(datetime.now(UTC))
+        reconciled: list[dict[str, str]] = []
+        with self.transaction() as connection:
+            rows = connection.execute(
+                """SELECT r.opportunity_key AS key,r.dedupe_key AS wake_digest,
+                          (SELECT later.dedupe_key FROM events later
+                           WHERE later.opportunity_key=r.opportunity_key
+                             AND later.event_type='PR_FOLLOWUP_RESULT_INGESTED'
+                             AND later.id>r.id
+                           ORDER BY later.id DESC LIMIT 1) AS superseded_by
+                   FROM events r
+                   WHERE r.event_type='PR_FOLLOWUP_RESERVED'
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events same
+                       WHERE same.opportunity_key=r.opportunity_key
+                         AND same.event_type='PR_FOLLOWUP_RESULT_INGESTED'
+                         AND same.dedupe_key=r.dedupe_key
+                     )
+                     AND EXISTS (
+                       SELECT 1 FROM events later
+                       WHERE later.opportunity_key=r.opportunity_key
+                         AND later.event_type='PR_FOLLOWUP_RESULT_INGESTED'
+                         AND later.id>r.id
+                     )
+                   ORDER BY r.id"""
+            ).fetchall()
+            for row in rows:
+                self._event(
+                    connection,
+                    row["key"],
+                    "PR_FOLLOWUP_RESULT_INGESTED",
+                    row["wake_digest"],
+                    {"stage": "SUPERSEDED", "supersededBy": row["superseded_by"]},
+                    now,
+                )
+                reconciled.append(
+                    {
+                        "key": row["key"],
+                        "wakeDigest": row["wake_digest"],
+                        "supersededBy": row["superseded_by"],
+                    }
+                )
+        return reconciled
+
     def commit_pr_followup(self, *, thread_id: str, wake_digest: str) -> None:
         now = iso_z(datetime.now(UTC))
         with self.transaction() as connection:
