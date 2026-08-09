@@ -4455,6 +4455,35 @@
     ],
     "why": "Issue reports a Triton illegal memory access in Qwen3.5 with vLLM 0.23.0, but root cause is unconfirmed; maintainer asked to try latest release, and related issue/PR lookup timed out, so duplicate coverage cannot be excluded."
   },
+  "3af1369e67a0b6d7d7a62dbca2c849291bfd0d303633f6e8174b909d98b495cc": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify async MTP align postprocess to snapshot accepted counts into runner-owned CPU buffer",
+      "Gather snapshot through prev_positions after sync",
+      "Write remapped counts back to InputBatch"
+    ],
+    "risks": [
+      "Potential performance impact from extra H2D copy",
+      "Behavioral changes for non-async scheduling must be preserved"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "test_plan": [
+      "Create a failing test reproducing the race with async scheduling, MTP, hybrid Mamba/GDN, and align mode",
+      "Run targeted unit tests for gpu_model_runner and mamba_utils"
+    ],
+    "unknowns": [
+      "Native CUDA reproduction on latest main is missing",
+      "Maintainer approval or design confirmation not yet obtained"
+    ],
+    "why": "Issue provides a detailed root-cause analysis with code references and a concrete race scenario, but lacks a native CUDA reproduction and maintainer confirmation. A contributor has claimed the fix, so assignment and design confirmation are needed before starting work."
+  },
   "3b2b9b7c73213495c130b948d4923b71045d3de4581197c71dd6a24c291681a5": {
     "confidence": 0.85,
     "contradictions": [
@@ -7046,6 +7075,34 @@
       "Whether the two remaining quiet readers should be fixed in the same PR"
     ],
     "why": "Issue provides a precise root cause (two writers of requestContext user with different shapes) and a verified workaround. Existing PR #20690 is open but has failing CI/checks and may not cover all affected readers, leaving room for a materially better PR."
+  },
+  "5d252d1303e08657bc338541965c855d113ae91961c82c6c42c582880de2e348": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "CLI session startup to read enableXmlToolCalling or equivalent config/env",
+      "Wire toolCallingMode: 'xml' in CLI request path"
+    ],
+    "risks": [
+      "Potential maintainer design preference for CLI config vs env var",
+      "Risk of breaking existing CLI behavior if default changes"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add a CLI integration test that starts a session with enableXmlToolCalling set and asserts the outgoing request uses XML tool schemas",
+      "Reproduce with Qwen-class model and verify file-edit task completes without native tool schemas"
+    ],
+    "unknowns": [
+      "Exact CLI code path for session startup and config loading",
+      "Whether maintainers prefer integrating into #12835 or a separate PR"
+    ],
+    "why": "Issue clearly identifies a CLI gap: nativeToolCallEnabled is ignored and no CLI-visible control for XML tool calling exists. The related PR #12835 adds the setting but only wires it for VS Code, leaving CLI parity unaddressed. The issue provides a concrete reproduction and expected behavior, making it actionable."
   },
   "5d39a492a84d1b06be35f4afe8e5345953abe29077f0a3989b8667bfb78da9c7": {
     "confidence": 0.7,
@@ -12612,6 +12669,33 @@
     ],
     "why": "Issue provides a clear root cause and minimal repro, but requires maintainer design confirmation due to potential overlap with #7491 and need to align with maintainer preferences on fix scope."
   },
+  "abe619337c4746698c86629090e62ad52d03058731db42e5b30622465b76ee8f": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Fix _resolve_param_hints to handle functools.partial on Python 3.14",
+      "Add regression test for partial parameter hints"
+    ],
+    "risks": [
+      "Potential behavior change for other callable types",
+      "Python version-specific introspection differences"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 11,
+    "test_plan": [
+      "Run the provided repro on Python 3.14 and 3.13",
+      "Add unit test asserting partial hints include unbound parameters"
+    ],
+    "unknowns": [
+      "Root cause of empty hints on Python 3.14",
+      "Maintainer preference for fix approach"
+    ],
+    "why": "Issue reports a concrete Python 3.14 regression in partial parameter hint resolution with a minimal repro, but the root cause is not identified and no maintainer confirmation or assignment exists. The deterministic gate requires HUMAN_REVIEW, and the fix may involve subtle introspection changes across Python versions."
+  },
   "ac553920bd412a17a26482b4718dff959c811094b3d3fdd52c4485e5bcb18249": {
     "confidence": 0.8,
     "contradictions": [
@@ -12771,6 +12855,32 @@
       "Run targeted AG-UI SDK tests and the package's existing streaming regression suite"
     ],
     "why": "The issue gives a precise root cause (snapshot assigns fresh ids to re-factored tool-call messages, breaking the client's id-keyed merge and causing ordering displacement) and proposes a concrete fix. However, maintainer triage is required: the gate says HUMAN_REVIEW, there are overlapping open PRs (#7423, #7479) that touch AG-UI snapshot/support paths, and a potential duplicate issue #7490 with shared behavior signals. The fix may also involve design choices about message identity that need maintainer confirmation."
+  },
+  "aec3914e518f72f930560b4e67a2899354e12aa4996efb8f96366f5c1019aea4": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify SharedOffloadRegion to unlink the mmap file after all expected ranks have attached, instead of only on cleanup()",
+      "Add a regression test that simulates SIGKILL or unclean exit and verifies the file is removed"
+    ],
+    "risks": [
+      "Potential race if ranks attach at different times; need to ensure unlink happens only after all expected ranks have opened the file",
+      "Behavior change might affect debugging or external tools that rely on the file's presence"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce the leak by starting an engine, confirming the mmap file exists, killing the EngineCore with SIGKILL, and checking the file remains; then apply the fix and verify the file is gone after all ranks attach",
+      "Run existing CPU offloading unit tests and integration tests for multi-rank attach"
+    ],
+    "unknowns": [
+      "Exact mechanism for determining when all ranks have attached (e.g., rendezvous protocol) is not detailed in the issue"
+    ],
+    "why": "The issue identifies a concrete resource leak in vLLM's CPU offloading: the mmap file in /dev/shm is only unlinked on explicit shutdown, so SIGKILL or library embedding leaks it. The proposed fix (unlink after all ranks attach) is a standard POSIX pattern and directly addresses the root cause. No competing PR or issue exists, and the fix is localized with a clear reproduction."
   },
   "aed6f7eb9c8ff562f9cc81a1c5d04822d5f11e9b76ae52c7270358d1425f1314": {
     "confidence": 0.7,
@@ -14033,6 +14143,34 @@
     ],
     "why": "The issue reports a client-side dispatch failure in Claude Desktop when using server-filesystem >=2025.11.25, with strong evidence that the server is healthy and the failure is client-side. However, the repository is modelcontextprotocol/servers, which contains the server implementation, not the Claude Desktop client. The fix likely belongs in the client (Claude Desktop) or requires coordination with the client team. The issue requests a client fix or rollback, which is outside the scope of this repository. The root cause is not fully confirmed; the sanitize shim workaround suggests the client rejects certain tool schema artifacts, but the exact validation logic is unknown. The issue is not a clear actionable code contribution to this repo without maintainer guidance."
   },
+  "c3192cd4fcd73817014045cfe3d3e87b415f5237d8c99e9610dc6a80a78f4bd9": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify NIXL handshake logic in vllm/distributed/kv_transfer/kv_connector/v1/nixl/worker.py to normalize block counts across asymmetric TP ranks",
+      "Add rank-aware metadata scaling for remote agent registration"
+    ],
+    "risks": [
+      "Fix may interact with existing heterogeneous TP layout changes (#22663) and require careful coordination",
+      "Potential performance impact on handshake latency due to added synchronization"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce with pTP2+dTP4 on 8 GPUs using gemma-4-26B-A4B and enable_bidirectional_kv; assert handshake succeeds and KV transfer works",
+      "Add a unit test for block count normalization logic with mocked NIXL metadata",
+      "Run existing KV transfer tests with symmetric and asymmetric TP configurations"
+    ],
+    "unknowns": [
+      "Exact NIXL API semantics for metadata scaling; whether maintainers prefer a different fix location"
+    ],
+    "why": "The issue identifies a concrete distributed-training invariant violation: NIXL handshake fails when prefill TP (2) differs from decode TP (4) due to block count mismatch (113 vs 211). The root cause is a missing rank normalization in the NIXL metadata exchange, which is a clear algorithmic bug in the distributed KV transfer path. The issue includes a reproducible configuration, error logs, and a proposed fix direction (rank normalization in nixl/worker.py). No competing PR exists; the only open PR is unrelated and draft. The candidate is actionable and testable via multi-rank regression."
+  },
   "c31f56ba0affaf935cc3daa11cb6d52389718f19b63c8feb6ccec90f65f1ab61": {
     "confidence": 0.7,
     "contradictions": [],
@@ -15011,6 +15149,34 @@
       "Whether maintainers have already planned a fix; whether the workaround is officially supported; open PR status."
     ],
     "why": "Issue reports a CLI argument parsing error for MiniMax-H3, but a comment suggests a workaround (adding --model-type diffusion). The root cause is likely missing model-type detection or default, but no maintainer confirmation or design preference is available. Open PR and related issue lookups failed, so duplicate work cannot be excluded."
+  },
+  "d107919dae54e1cf764f22cca6ab9e08ee2e8a401f6247e3758fb695bd0bc74f": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix MessageInjectionMiddleware streaming path to propagate conversation_id sentinel from inner final response",
+      "Add regression test for streaming create_harness_agent with tool calls"
+    ],
+    "risks": [
+      "Existing PR #7562 or #7289 may already address the root cause; need to compare implementations",
+      "Potential duplicate issue #7559 may require consolidation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 15,
+    "test_plan": [
+      "Run the provided repro script and assert request 2 is valid",
+      "Add unit test for _stream_injected_messages finalizer preserving conversation_id"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred fix approach or are already working on it",
+      "Whether existing PRs actually fix this issue despite not referencing it"
+    ],
+    "why": "Issue provides a detailed root cause and a self-contained repro, but the deterministic gate requires HUMAN_REVIEW and existing PRs overlap semantically, so maintainer confirmation is needed before starting work."
   },
   "d13641da6e8c0502fa7b871d695f17af0f145dc4d3e6659e928e72c153bb4f6b": {
     "confidence": 0.8,
