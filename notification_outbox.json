@@ -696,6 +696,14 @@
       "seenAt": "2026-08-09T02:33:27.653196Z",
       "stateId": "4d8816f379f647bf802cc685b5ab074ff3a73bedf3a50d080a4416d11158bb58"
     },
+    "review|lidge-jun/opencodex#1354": {
+      "category": "WAIT_MAINTAINER",
+      "digest": "63e02a36c985d74a4c6c6bc46d0fbd8bcd957884087bd8f36da263d46f81b560",
+      "kind": "review",
+      "scannerVersion": "oss_pr_radar_v42_terminal_feedback_revoke",
+      "seenAt": "2026-08-09T11:52:21.452185Z",
+      "stateId": "5a2b73216dee8950a295e26012d32cbe8a92f419627d7ab9522519407b835bab"
+    },
     "review|maka-agent/maka-agent#2074": {
       "legacy": true,
       "seenAt": "2026-08-04T05:06:24.809190Z"
@@ -1849,7 +1857,7 @@
       "seenAt": "2026-08-06T10:09:13.778625Z"
     }
   },
-  "digest": "a0b9adac8a9af0b9b89048230a767abf7c936c3128f7d5363ecbaee3516b6d5a",
+  "digest": "7d1bff18840670d3511d055f42a186fe867bf7b56b73768d21aa6b4b3acb61d8",
   "events": [
     {
       "attempts": 1,
@@ -21912,9 +21920,52 @@
       "runId": "scan-20260809T105644Z-24a1d49646bd",
       "sentAt": "2026-08-09T10:59:12.396134Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "lidge-jun/opencodex#1354"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "63e02a36c985d74a4c6c6bc46d0fbd8bcd957884087bd8f36da263d46f81b560",
+          "key": "lidge-jun/opencodex#1354",
+          "kind": "review",
+          "scannerVersion": "oss_pr_radar_v42_terminal_feedback_revoke",
+          "stateId": "5a2b73216dee8950a295e26012d32cbe8a92f419627d7ab9522519407b835bab"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[lidge-jun/opencodex#1354](https://github.com/lidge-jun/opencodex/issues/1354) [Bug]: transient code-mode-host process makes catalog staleness check return \"unknown\", emitting a false \"catalog changed after Codex started\" restart prompt (2.11.1, Windows)**\n建议：WAIT_MAINTAINER | 分数：11\n价值：用户可见 bug/性能问题，合并动机明确；命中 agent/inference/RAG 关键路径；影响面高，适合做可复现修复\n改动：先补失败用例，再沿相关 runtime/provider/scheduler 路径做最小修复。\n验证：用 issue 的公开最小复现先建立失败测试，再运行目标 package 的定向单测和静态检查。\n风险：需确认是否已有 maintainer 设计偏好；避免扩大 API 行为变更。\n竞争：未发现相关 open PR\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 10，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-09T11:52:21.452185Z",
+      "eventId": "48d64c6c97e971706fe3da4dd57e4f55e769955761e438fbbfe808acae2334d5",
+      "idempotencyKey": "48d64c6c97e971706fe3da4dd57e4f55e769955761e438fbbf",
+      "kind": "review",
+      "runId": "scan-20260809T115038Z-cfc02f588bb9",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-09T10:58:27.188080Z",
+  "generatedAt": "2026-08-09T11:52:21.891002Z",
   "newEventCount": 0,
   "version": "notification_outbox_v2"
 }
