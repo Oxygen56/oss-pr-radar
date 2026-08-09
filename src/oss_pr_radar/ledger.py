@@ -1833,7 +1833,7 @@ class RadarLedger:
             datetime.now(UTC) - timedelta(minutes=max(30, min(int(min_age_minutes), 24 * 60)))
         )
         with self.connect() as connection:
-            rows = connection.execute(
+            dispatched_rows = connection.execute(
                 """SELECT o.key,o.issue_url,o.title,i.intent_id,i.thread_id,
                           i.worktree_path,d.created_at AS dispatched_at
                    FROM opportunities o
@@ -1856,21 +1856,66 @@ class RadarLedger:
                    ORDER BY d.created_at""",
                 (cutoff,),
             ).fetchall()
-        return [
-            {
+            followup_rows = connection.execute(
+                """SELECT o.key,o.issue_url,o.title,i.intent_id,i.thread_id,
+                          i.worktree_path,s.created_at AS dispatched_at,
+                          s.dedupe_key AS followup_digest
+                   FROM opportunities o
+                   JOIN intents i ON i.intent_id=(
+                     SELECT i2.intent_id FROM intents i2
+                     WHERE i2.opportunity_key=o.key
+                       AND i2.thread_id IS NOT NULL AND i2.worktree_path IS NOT NULL
+                     ORDER BY i2.updated_at DESC,i2.intent_id DESC LIMIT 1
+                   )
+                   JOIN events s ON s.opportunity_key=o.key
+                     AND s.event_type='PR_FOLLOWUP_SENT'
+                   WHERE o.stage IN ('PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED')
+                     AND s.created_at<=?
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events result
+                       WHERE result.opportunity_key=o.key
+                         AND result.event_type='PR_FOLLOWUP_RESULT_INGESTED'
+                         AND result.dedupe_key=s.dedupe_key
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events recovery
+                       WHERE recovery.opportunity_key=o.key
+                         AND recovery.event_type='THREAD_RECOVERY_RESERVED'
+                         AND json_extract(recovery.payload_json,'$.threadId')=i.thread_id
+                     )
+                   ORDER BY s.created_at""",
+                (cutoff,),
+            ).fetchall()
+        candidates: dict[str, dict[str, Any]] = {}
+        for row, recovery_kind in (
+            *((row, "DISPATCHED_TASK") for row in dispatched_rows),
+            *((row, "PR_FOLLOWUP_RESULT") for row in followup_rows),
+        ):
+            thread_id = str(row["thread_id"])
+            followup_digest = (
+                str(row["followup_digest"])
+                if recovery_kind == "PR_FOLLOWUP_RESULT"
+                else None
+            )
+            candidate = {
                 "key": row["key"],
                 "issueUrl": row["issue_url"],
                 "title": row["title"],
                 "intentId": row["intent_id"],
-                "threadId": row["thread_id"],
+                "threadId": thread_id,
                 "worktreePath": row["worktree_path"],
                 "dispatchedAt": row["dispatched_at"],
+                "recoveryKind": recovery_kind,
+                "followupDigest": followup_digest,
                 "recoveryNonce": sha256_text(
-                    f"{row['key']}|{row['thread_id']}|{row['dispatched_at']}|recovery-v1"
+                    f"{row['key']}|{thread_id}|{row['dispatched_at']}|"
+                    f"{recovery_kind}|{followup_digest or ''}|recovery-v2"
                 ),
             }
-            for row in rows
-        ]
+            previous = candidates.get(thread_id)
+            if previous is None or candidate["dispatchedAt"] > previous["dispatchedAt"]:
+                candidates[thread_id] = candidate
+        return sorted(candidates.values(), key=lambda item: item["dispatchedAt"])
 
     def unresolved_recoveries(self) -> list[dict[str, Any]]:
         with self.connect() as connection:

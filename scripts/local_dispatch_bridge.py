@@ -14,7 +14,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from time import monotonic, sleep
 from typing import Any
@@ -3215,6 +3215,9 @@ def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
     connection.row_factory = sqlite3.Row
     recoverable: list[dict[str, Any]] = []
     blocked: list[dict[str, Any]] = []
+    activity_cutoff = int(
+        (datetime.now(UTC) - timedelta(minutes=max(30, args.min_age_minutes))).timestamp()
+    )
     try:
         for candidate in store.recovery_candidates(min_age_minutes=args.min_age_minutes):
             row = connection.execute(
@@ -3256,6 +3259,8 @@ def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
                 )
             if not valid_workspace:
                 blocked.append(candidate | {"reason": "thread_origin_mismatch"})
+                continue
+            if int(row["updated_at"] or 0) > activity_cutoff:
                 continue
             recoverable.append(
                 candidate

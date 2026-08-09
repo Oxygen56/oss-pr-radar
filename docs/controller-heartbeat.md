@@ -169,7 +169,9 @@ Run `validation-followup-list`. For each candidate:
 ## 7. Recovery, titles, and cleanup
 
 1. Run `recovery-list --min-age-minutes 90`; use one write-ahead recovery only
-   for tasks with no substantive output and no active implementation.
+   for tasks with no recent activity and no structured result. This includes an
+   existing-PR follow-up that was sent successfully but never returned its
+   required identity-matched result. Recently active tasks must not be woken.
 2. Run `restore-list`. Unarchive each exact candidate, then use `restore-commit`
    with its nonce. Recheck until empty.
 3. Run `title-reconcile`. This command compares live desktop titles, repairs

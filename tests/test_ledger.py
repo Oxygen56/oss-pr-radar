@@ -1081,6 +1081,7 @@ def test_stalled_dispatch_gets_one_write_ahead_recovery(tmp_path):
 
     candidate = store.recovery_candidates(min_age_minutes=90)[0]
     assert candidate["threadId"] == "thread-1"
+    assert candidate["recoveryKind"] == "DISPATCHED_TASK"
     store.reserve_recovery(thread_id="thread-1", nonce=candidate["recoveryNonce"])
     assert store.recovery_candidates(min_age_minutes=90) == []
     assert store.unresolved_recoveries()[0]["threadId"] == "thread-1"
@@ -1098,6 +1099,113 @@ def test_stalled_dispatch_gets_one_write_ahead_recovery(tmp_path):
     assert candidate["threadId"] == "thread-1"
     store.commit_cleanup(thread_id="thread-1", nonce=candidate["cleanupNonce"])
     assert store.cleanup_candidates() == []
+
+
+def test_sent_pr_followup_without_a_result_gets_recovery(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(
+        intent(
+            autoSubmitAuthorized=True,
+            publicSubmissionAllowed=True,
+            authorizationSource="signed_live_revalidation_required",
+            publicationMode="canary",
+        )
+    )
+    store.claim("intent-1", "controller")
+    store.commit_dispatch(
+        "intent-1",
+        owner="controller",
+        thread_id="thread-1",
+        project_id="github",
+        worktree_path="/tmp/worktree",
+    )
+    store.record_stage("a/b#1", "PR_OPEN", evidence={"prUrl": "https://github.com/a/b/pull/9"})
+    now = iso_z(datetime.now(UTC))
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO publication_requests
+               (request_id,opportunity_key,thread_id,commit_sha,branch,worktree_path,
+                evidence_digest,status,request_json,created_at,updated_at)
+               VALUES ('request-1','a/b#1','thread-1',?,'fix/1-runtime','/tmp/worktree',
+                       'evidence','CONSUMED','{}',?,?)""",
+            ("a" * 40, now, now),
+        )
+        connection.execute(
+            """INSERT INTO publication_permits
+               (permit_id,request_id,issue_url,commit_sha,branch,status,expires_at,pr_url,
+                evidence_json,created_at,updated_at)
+               VALUES ('permit-1','request-1','https://github.com/a/b/issues/1',?,
+                       'fix/1-runtime','CONSUMED',?,'https://github.com/a/b/pull/9','{}',?,?)""",
+            ("a" * 40, iso_z(datetime.now(UTC) + timedelta(hours=1)), now, now),
+        )
+    store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": now,
+            "items": [
+                {
+                    "url": "https://github.com/a/b/pull/9",
+                    "headSha": "b" * 40,
+                    "actionDigest": "action",
+                    "taskActionDigest": "task-action",
+                    "taskFollowupRequired": True,
+                    "taskActions": ["当前分支检查失败"],
+                    "evidence": {"actionableCheckNames": ["Ruff"]},
+                    "checkedAt": now,
+                }
+            ],
+        }
+    )
+    followup = store.pr_followup_candidates()[0]
+    store.reserve_pr_followup(thread_id="thread-1", wake_digest=followup["wakeDigest"])
+    store.commit_pr_followup(thread_id="thread-1", wake_digest=followup["wakeDigest"])
+    old = iso_z(datetime.now(UTC) - timedelta(hours=3))
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE events SET created_at=? WHERE event_type='PR_FOLLOWUP_SENT'",
+            (old,),
+        )
+
+    candidate = store.recovery_candidates(min_age_minutes=90)[0]
+
+    assert candidate["threadId"] == "thread-1"
+    assert candidate["recoveryKind"] == "PR_FOLLOWUP_RESULT"
+    assert candidate["followupDigest"] == followup["wakeDigest"]
+    store.reserve_recovery(thread_id="thread-1", nonce=candidate["recoveryNonce"])
+    assert store.recovery_candidates(min_age_minutes=90) == []
+
+    store.commit_recovery(thread_id="thread-1", nonce=candidate["recoveryNonce"])
+    assert store.unresolved_recoveries() == []
+
+
+def test_pr_followup_result_prevents_recovery(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.restore_task_context(published_task_context())
+    old = iso_z(datetime.now(UTC) - timedelta(hours=3))
+    wake_digest = "followup-wake"
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO events
+               (opportunity_key,event_type,dedupe_key,payload_json,created_at)
+               VALUES ('a/b#1','PR_FOLLOWUP_SENT',?,? ,?)""",
+            (
+                wake_digest,
+                json.dumps(
+                    {
+                        "threadId": "thread-recovered",
+                        "prUrl": "https://github.com/a/b/pull/9",
+                    }
+                ),
+                old,
+            ),
+        )
+    assert store.recovery_candidates(min_age_minutes=90)
+
+    store.record_followup_result(
+        "a/b#1", wake_digest=wake_digest, result_digest="result", stage="PR_OPEN"
+    )
+
+    assert store.recovery_candidates(min_age_minutes=90) == []
 
 
 def test_validation_deferred_result_is_not_an_empty_thread_recovery(tmp_path):
