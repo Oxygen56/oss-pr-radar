@@ -1343,7 +1343,12 @@ def test_pr_followup_reserve_refreshes_context_and_uses_canonical_prompt(monkeyp
     store, worktree, _head_sha, pr_url = _published_followup_store(tmp_path)
     candidate = store.pr_followup_candidates()[0]
     prepared = []
-    monkeypatch.setattr(MODULE, "_prepare_pr_followup", lambda value: prepared.append(value))
+
+    def prepare(value):
+        prepared.append(value)
+        return "b" * 40
+
+    monkeypatch.setattr(MODULE, "_prepare_pr_followup", prepare)
 
     result = MODULE.pr_followup_reserve(
         SimpleNamespace(
@@ -1362,6 +1367,7 @@ def test_pr_followup_reserve_refreshes_context_and_uses_canonical_prompt(monkeyp
     ]
     context = json.loads(Path(result["contextPath"]).read_text(encoding="utf-8"))
     assert context["prFollowup"]["wakeDigest"] == candidate["wakeDigest"]
+    assert context["prFollowup"]["preparedHeadSha"] == "b" * 40
     assert context["publicationReceipt"]["prUrl"] == pr_url
     assert store.pr_followup_candidates() == []
     assert store.unresolved_pr_followups()
@@ -1438,6 +1444,65 @@ def test_prepare_conflicted_pr_followup_requires_signed_base_snapshot(monkeypatc
         )
 
 
+def test_prepare_pr_followup_creates_local_base_integration_commit(monkeypatch, tmp_path):
+    worktree = tmp_path / "worktree"
+    remote = tmp_path / "remote.git"
+    worktree.mkdir()
+    run_git(worktree, "init")
+    run_git(worktree, "config", "user.name", "Test Contributor")
+    run_git(worktree, "config", "user.email", "test@example.com")
+    (worktree / "runtime.py").write_text("value = 1\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "-m", "chore: baseline")
+    baseline = run_git(worktree, "rev-parse", "HEAD")
+    run_git(remote.parent, "init", "--bare", str(remote))
+    run_git(worktree, "remote", "add", "origin", str(remote))
+    run_git(worktree, "push", "origin", f"{baseline}:refs/heads/main")
+
+    run_git(worktree, "switch", "-c", "fix/1-runtime")
+    (worktree / "runtime.py").write_text("value = 2\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "-m", "fix: runtime")
+    live_head = run_git(worktree, "rev-parse", "HEAD")
+    run_git(worktree, "push", "origin", "HEAD:refs/heads/fix/1-runtime")
+    run_git(remote, "update-ref", "refs/pull/9/head", live_head)
+
+    run_git(worktree, "switch", "--detach", baseline)
+    (worktree / "base.py").write_text("base = 2\n", encoding="utf-8")
+    run_git(worktree, "add", "base.py")
+    run_git(worktree, "commit", "-m", "chore: advance base")
+    live_base = run_git(worktree, "rev-parse", "HEAD")
+    run_git(worktree, "push", "origin", f"{live_base}:refs/heads/main")
+    run_git(worktree, "switch", "fix/1-runtime")
+    monkeypatch.setattr(MODULE, "_upstream_remote", lambda *_args: "origin")
+
+    prepared = MODULE._prepare_pr_followup(
+        {
+            "prUrl": "https://github.com/a/b/pull/9",
+            "worktreePath": str(worktree),
+            "branch": "fix/1-runtime",
+            "headSha": live_head,
+            "evidence": {
+                "mergeConflict": False,
+                "baseIntegrationRequired": True,
+                "baseRefName": "main",
+                "baseSha": live_base,
+            },
+        }
+    )
+
+    assert prepared == run_git(worktree, "rev-parse", "HEAD")
+    assert prepared != live_head
+    assert run_git(worktree, "rev-list", "--parents", "-n", "1", "HEAD").split()[1:] == [
+        live_head,
+        live_base,
+    ]
+    assert "Signed-off-by: Test Contributor <test@example.com>" in run_git(
+        worktree, "show", "-s", "--format=%B", "HEAD"
+    )
+    assert run_git(worktree, "status", "--porcelain") == ""
+
+
 def test_controller_ingests_followup_fix_as_update_to_exact_existing_pr(tmp_path):
     store, worktree, previous_head, pr_url = _published_followup_store(tmp_path)
     candidate = store.pr_followup_candidates()[0]
@@ -1497,6 +1562,71 @@ def test_controller_ingests_followup_fix_as_update_to_exact_existing_pr(tmp_path
     assert store.task_result_digest_seen(
         "a/b#1", hashlib.sha256(result_path.read_bytes()).hexdigest()
     )
+
+
+def test_followup_commit_preserves_prepared_base_integration_diff(tmp_path):
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    run_git(worktree, "init")
+    run_git(worktree, "config", "user.name", "Test Contributor")
+    run_git(worktree, "config", "user.email", "test@example.com")
+    (worktree / "runtime.py").write_text("value = 1\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "-m", "chore: baseline")
+    run_git(worktree, "branch", "-M", "main")
+    baseline = run_git(worktree, "rev-parse", "HEAD")
+
+    run_git(worktree, "switch", "-c", "fix/1-runtime")
+    (worktree / "feature.py").write_text("feature = True\n", encoding="utf-8")
+    run_git(worktree, "add", "feature.py")
+    run_git(worktree, "commit", "-m", "fix: feature")
+    previous_head = run_git(worktree, "rev-parse", "HEAD")
+
+    run_git(worktree, "switch", "main")
+    (worktree / "base.py").write_text("base = 2\n", encoding="utf-8")
+    run_git(worktree, "add", "base.py")
+    run_git(worktree, "commit", "-m", "chore: advance base")
+    base_sha = run_git(worktree, "rev-parse", "HEAD")
+    run_git(worktree, "switch", "fix/1-runtime")
+    run_git(worktree, "merge", "--no-ff", "--no-commit", base_sha)
+    run_git(worktree, "commit", "--signoff", "-m", "merge: refresh upstream branch")
+    prepared_head = run_git(worktree, "rev-parse", "HEAD")
+
+    (worktree / "runtime.py").write_text("value = 2\n", encoding="utf-8")
+    result_path = tmp_path / "result.json"
+    value = {
+        "handoffMode": "controller_commit_required",
+        "commitSha": None,
+        "branch": "fix/1-runtime",
+        "commitMessage": "fix: adapt runtime to current base",
+        "changedFiles": ["runtime.py"],
+        "publication": {"baseBranch": "main"},
+    }
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+
+    finalized, _raw = MODULE._finalize_controller_commit(
+        candidate={"worktreePath": str(worktree)},
+        context={
+            "stage": "PR_OPEN",
+            "prFollowup": {
+                "headSha": previous_head,
+                "preparedHeadSha": prepared_head,
+                "evidence": {
+                    "baseIntegrationRequired": True,
+                    "baseSha": base_sha,
+                },
+            },
+        },
+        value=value,
+        result_path=result_path,
+    )
+
+    assert finalized["controllerCommitChangedFiles"] == ["runtime.py"]
+    assert finalized["changedFiles"] == ["base.py", "runtime.py"]
+    assert run_git(worktree, "rev-list", "--parents", "-n", "1", "HEAD").split()[1:] == [
+        prepared_head
+    ]
+    assert run_git(worktree, "merge-base", baseline, "HEAD") == baseline
 
 
 def _controller_commit_result(
@@ -1626,7 +1756,8 @@ def test_controller_creates_two_parent_commit_for_conflicted_pr_followup(tmp_pat
     previous_head = run_git(worktree, "rev-parse", "HEAD")
     run_git(worktree, "switch", "main")
     source.write_text("value = 'upstream'\n", encoding="utf-8")
-    run_git(worktree, "add", "runtime.py")
+    (worktree / "base.py").write_text("base = True\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py", "base.py")
     run_git(worktree, "commit", "-m", "refactor: update runtime")
     base_sha = run_git(worktree, "rev-parse", "HEAD")
     run_git(worktree, "switch", "fix/1-runtime")
@@ -1661,6 +1792,8 @@ def test_controller_creates_two_parent_commit_for_conflicted_pr_followup(tmp_pat
 
     assert finalized["handoffMode"] == "controller_merge_complete"
     assert finalized["mergeResolutionFiles"] == ["runtime.py"]
+    assert finalized["controllerCommitChangedFiles"] == ["runtime.py"]
+    assert finalized["changedFiles"] == ["runtime.py"]
     assert run_git(worktree, "rev-list", "--parents", "-n", "1", "HEAD").split()[1:] == [
         previous_head,
         base_sha,

@@ -66,3 +66,19 @@ def test_branch_reads_the_live_branch_head(monkeypatch):
 
     assert result["commit"]["sha"] == "a" * 40
     assert calls == ["repos/a/b/branches/release%2Fnext"]
+
+
+def test_compare_reads_base_relationship(monkeypatch):
+    calls = []
+    client = GitHubClient()
+
+    def api(endpoint, **_kwargs):
+        calls.append(endpoint)
+        return {"status": "diverged", "merge_base_commit": {"sha": "c" * 40}}
+
+    monkeypatch.setattr(client, "api", api)
+
+    result = client.compare("a/b", "release/next", "feature/head")
+
+    assert result["status"] == "diverged"
+    assert calls == ["repos/a/b/compare/release%2Fnext...feature%2Fhead"]

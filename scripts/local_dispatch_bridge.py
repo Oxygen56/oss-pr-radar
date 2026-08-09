@@ -857,7 +857,14 @@ def _exclude_private_task_dir(worktree: Path) -> None:
             handle.write(rule + "\n")
 
 
-def write_task_context(store: RadarLedger, *, issue_url: str, thread_id: str, cwd: Path) -> Path:
+def write_task_context(
+    store: RadarLedger,
+    *,
+    issue_url: str,
+    thread_id: str,
+    cwd: Path,
+    prepared_followup_head: str | None = None,
+) -> Path:
     context = store.task_context(
         issue_url=issue_url,
         thread_id=thread_id,
@@ -868,6 +875,15 @@ def write_task_context(store: RadarLedger, *, issue_url: str, thread_id: str, cw
     live_audit = context.get("liveAudit")
     if not isinstance(live_audit, dict) or not isinstance(live_audit.get("evidence"), dict):
         raise RuntimeError("registered task context is missing controller live audit")
+    if prepared_followup_head is not None:
+        followup = context.get("prFollowup")
+        if not isinstance(followup, dict) or not re.fullmatch(
+            r"[0-9a-f]{40}", prepared_followup_head
+        ):
+            raise RuntimeError("prepared PR follow-up head is invalid")
+        context["prFollowup"] = dict(followup) | {
+            "preparedHeadSha": prepared_followup_head,
+        }
     _exclude_private_task_dir(cwd)
     private_dir = cwd / TASK_PRIVATE_DIR
     private_dir.mkdir(parents=True, exist_ok=True)
@@ -898,6 +914,7 @@ def write_task_context(store: RadarLedger, *, issue_url: str, thread_id: str, cw
             "track": context.get("track"),
             "algorithmEvidence": context.get("algorithmEvidence"),
             "liveAuditDigest": live_audit["evidence"].get("digest"),
+            "prFollowupPreparedHeadSha": prepared_followup_head,
             "threadId": context["threadId"],
             "worktreePath": context["worktreePath"],
         }
@@ -1502,6 +1519,7 @@ def _finalize_controller_merge(
     finalized = dict(value)
     finalized["commitSha"] = command(["git", "rev-parse", "HEAD"], cwd=worktree)
     finalized["branch"] = command(["git", "symbolic-ref", "--short", "HEAD"], cwd=worktree)
+    finalized["controllerCommitChangedFiles"] = changed_files
     finalized["changedFiles"] = changed_files
     finalized["mergeResolutionFiles"] = changed_files
     finalized["previousCommitSha"] = expected_head
@@ -1543,7 +1561,24 @@ def _prepared_default_branch(worktree: Path) -> str | None:
 def _validation_publication_changed_files(
     *, worktree: Path, context: dict[str, Any], commit_changed_files: list[str]
 ) -> list[str]:
-    if context.get("stage") != "VALIDATION_PENDING" or isinstance(context.get("prFollowup"), dict):
+    followup = context.get("prFollowup")
+    if isinstance(followup, dict):
+        previous_head = str(followup.get("headSha") or "")
+        if not re.fullmatch(r"[0-9a-f]{40}", previous_head):
+            raise RuntimeError("PR follow-up lacks the signed previous head")
+        cumulative = _validated_changed_files(
+            [
+                line
+                for line in command(
+                    ["git", "diff", "--name-only", f"{previous_head}..HEAD"], cwd=worktree
+                ).splitlines()
+                if line
+            ]
+        )
+        if not set(commit_changed_files).issubset(cumulative):
+            raise RuntimeError("PR follow-up commit files are missing from the cumulative diff")
+        return cumulative
+    if context.get("stage") != "VALIDATION_PENDING":
         return commit_changed_files
     default_branch = _prepared_default_branch(worktree)
     if not default_branch:
@@ -1590,6 +1625,7 @@ def _finalize_controller_commit(
                 commit_changed_files=commit_changed_files,
             )
             if context.get("stage") == "VALIDATION_PENDING"
+            or isinstance(context.get("prFollowup"), dict)
             else _validated_changed_files(value.get("changedFiles"))
         )
         if not set(commit_changed_files).issubset(publication_changed_files):
@@ -1621,6 +1657,12 @@ def _finalize_controller_commit(
         raise RuntimeError("controller commit message contains an AI-assistance disclosure")
 
     actual = _local_changed_files(worktree)
+    followup = context.get("prFollowup")
+    expected_parent = ""
+    if isinstance(followup, dict):
+        expected_parent = str(followup.get("preparedHeadSha") or followup.get("headSha") or "")
+        if not re.fullmatch(r"[0-9a-f]{40}", expected_parent):
+            raise RuntimeError("controller commit lacks a valid PR follow-up parent")
     if actual:
         if actual != changed_files:
             raise RuntimeError(
@@ -1628,6 +1670,11 @@ def _finalize_controller_commit(
                 f"expected={changed_files!r} actual={actual!r}"
             )
         _switch_controller_branch(worktree, branch)
+        if (
+            expected_parent
+            and command(["git", "rev-parse", "HEAD"], cwd=worktree) != expected_parent
+        ):
+            raise RuntimeError("controller commit parent drifted from the prepared PR follow-up")
         command(["git", "add", "--", *changed_files], cwd=worktree)
         _require_git_identity(worktree, context, value)
         command(
@@ -1637,6 +1684,8 @@ def _finalize_controller_commit(
         # Recover idempotently if the process stopped after the commit but before
         # rewriting result.json.
         _switch_controller_branch(worktree, branch)
+        if expected_parent and _merge_parents(worktree) != [expected_parent]:
+            raise RuntimeError("controller commit recovery parent does not match the PR follow-up")
         committed = sorted(
             line
             for line in command(
@@ -1768,7 +1817,7 @@ def _upstream_remote(worktree: Path, repo: str) -> str:
     raise RuntimeError("managed worktree has no upstream remote")
 
 
-def _prepare_pr_followup(candidate: dict[str, Any]) -> None:
+def _prepare_pr_followup(candidate: dict[str, Any]) -> str:
     worktree = Path(candidate["worktreePath"]).resolve()
     match = re.fullmatch(r"https://github\.com/([^/]+/[^/]+)/pull/(\d+)", candidate["prUrl"])
     if not match:
@@ -1781,11 +1830,16 @@ def _prepare_pr_followup(candidate: dict[str, Any]) -> None:
         raise RuntimeError("PR follow-up branch is unsafe")
     remote = _upstream_remote(worktree, repo)
     evidence = candidate.get("evidence") or {}
-    if evidence.get("mergeConflict") is True:
+    needs_base_snapshot = (
+        evidence.get("mergeConflict") is True or evidence.get("baseIntegrationRequired") is True
+    )
+    base_ref_name = ""
+    base_sha = ""
+    if needs_base_snapshot:
         base_ref_name = str(evidence.get("baseRefName") or "")
         base_sha = str(evidence.get("baseSha") or "")
         if not base_ref_name or not re.fullmatch(r"[0-9a-f]{40}", base_sha):
-            raise RuntimeError("PR follow-up merge conflict lacks base snapshot")
+            raise RuntimeError("PR follow-up base integration lacks base snapshot")
         command(["git", "check-ref-format", "--branch", base_ref_name], cwd=worktree)
         base_tracking_ref = f"refs/remotes/{remote}/{base_ref_name}"
         command(
@@ -1816,6 +1870,59 @@ def _prepare_pr_followup(candidate: dict[str, Any]) -> None:
         command(["git", "switch", "--detach", fetched], cwd=worktree)
         command(["git", "branch", "-f", branch, fetched], cwd=worktree)
         command(["git", "switch", branch], cwd=worktree)
+    if evidence.get("baseIntegrationRequired") is not True:
+        return fetched
+
+    ancestor = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", base_sha, fetched],
+        cwd=worktree,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if ancestor.returncode == 0:
+        return fetched
+    if ancestor.returncode != 1:
+        raise RuntimeError("cannot verify PR base ancestry")
+    completed = subprocess.run(
+        ["git", "merge", "--no-ff", "--no-commit", base_sha],
+        cwd=worktree,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    unmerged = _optional_command(["git", "diff", "--name-only", "--diff-filter=U"], cwd=worktree)
+    if completed.returncode != 0 or unmerged:
+        _optional_command(["git", "merge", "--abort"], cwd=worktree)
+        raise RuntimeError("PR base integration is no longer a clean merge")
+    if (
+        _optional_command(["git", "rev-parse", "-q", "--verify", "MERGE_HEAD"], cwd=worktree)
+        is None
+    ):
+        return fetched
+    name = command(["git", "config", "user.name"], cwd=worktree)
+    email = command(["git", "config", "user.email"], cwd=worktree)
+    if not name or not email:
+        _optional_command(["git", "merge", "--abort"], cwd=worktree)
+        raise RuntimeError("PR base integration requires configured Git identity")
+    command(
+        [
+            "git",
+            "commit",
+            "--signoff",
+            "-m",
+            "merge: refresh upstream branch for CI validation",
+        ],
+        cwd=worktree,
+    )
+    prepared = command(["git", "rev-parse", "HEAD"], cwd=worktree)
+    if _merge_parents(worktree) != [fetched, base_sha]:
+        raise RuntimeError("PR base integration commit parent binding failed")
+    if command(["git", "status", "--porcelain"], cwd=worktree):
+        raise RuntimeError("PR base integration did not leave a clean worktree")
+    return prepared
 
 
 def pr_followup_reserve(args: argparse.Namespace) -> dict[str, Any]:
@@ -1830,12 +1937,18 @@ def pr_followup_reserve(args: argparse.Namespace) -> dict[str, Any]:
     )
     if candidate is None:
         raise RuntimeError("PR follow-up authorization is stale or invalid")
-    _prepare_pr_followup(candidate)
+    prepared_head = _prepare_pr_followup(candidate)
     context_path = write_task_context(
         store,
         issue_url=candidate["issueUrl"],
         thread_id=candidate["threadId"],
         cwd=Path(candidate["worktreePath"]),
+        prepared_followup_head=(
+            prepared_head
+            if candidate.get("evidence", {}).get("baseIntegrationRequired") is True
+            or prepared_head != candidate["headSha"]
+            else None
+        ),
     )
     reserved = store.reserve_pr_followup(
         thread_id=candidate["threadId"], wake_digest=candidate["wakeDigest"]

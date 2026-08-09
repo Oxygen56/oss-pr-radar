@@ -248,6 +248,12 @@ class GitHubClient:
         )
         return [item for item in value if isinstance(item, dict)]
 
+    def compare(self, repo: str, base: str, head: str) -> dict[str, Any]:
+        value = self.api(f"repos/{repo}/compare/{quote(base, safe='')}...{quote(head, safe='')}")
+        if not isinstance(value, dict):
+            raise GitHubError("repository comparison is invalid")
+        return value
+
     def repository_tree(self, repo: str, ref: str) -> list[dict[str, Any]]:
         value = self.api(f"repos/{repo}/git/trees/{quote(ref, safe='')}", params={"recursive": 1})
         if not isinstance(value, dict) or not isinstance(value.get("tree"), list):

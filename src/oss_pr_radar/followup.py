@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import re
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
+from pathlib import Path
 from time import monotonic
 from typing import Any
 
@@ -26,6 +28,36 @@ AGGREGATE_CHECK_NAMES = {
     "required checks",
     "build success",
 }
+LANGUAGE_CHECK_TERMS = {
+    ".rs": ("rust", "cargo", "clippy"),
+    ".go": ("golang", "go test", "gofmt", "go vet", "golangci"),
+    ".py": ("python", "pytest", "ruff", "mypy", "pyright"),
+    ".js": ("javascript", "node", "npm", "pnpm", "yarn", "eslint", "jest"),
+    ".jsx": ("javascript", "node", "npm", "pnpm", "yarn", "eslint", "jest"),
+    ".ts": ("typescript", "node", "npm", "pnpm", "yarn", "eslint", "vitest"),
+    ".tsx": ("typescript", "node", "npm", "pnpm", "yarn", "eslint", "vitest"),
+    ".java": ("java", "gradle", "maven"),
+    ".kt": ("kotlin", "gradle"),
+    ".kts": ("kotlin", "gradle"),
+    ".c": ("clang", "gcc", "cmake", "meson"),
+    ".cc": ("clang", "gcc", "cmake", "meson", "c++"),
+    ".cpp": ("clang", "gcc", "cmake", "meson", "c++"),
+    ".h": ("clang", "gcc", "cmake", "meson", "c++"),
+    ".hpp": ("clang", "gcc", "cmake", "meson", "c++"),
+}
+GENERIC_CODE_CHECK_NAMES = {
+    "build",
+    "compile",
+    "integration test",
+    "integration tests",
+    "lint",
+    "test",
+    "tests",
+    "type check",
+    "typecheck",
+    "unit test",
+    "unit tests",
+}
 
 
 def _annotation_evidence(value: dict[str, Any]) -> dict[str, Any]:
@@ -38,19 +70,56 @@ def _annotation_evidence(value: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _check_is_task_actionable(check: dict[str, Any], changed_files: set[str]) -> bool:
+def _normalized_check_name(check: dict[str, Any]) -> str:
+    return " ".join(re.sub(r"[^a-z0-9+#.]+", " ", str(check.get("name") or "").casefold()).split())
+
+
+def _is_aggregate_check(check: dict[str, Any]) -> bool:
+    name = _normalized_check_name(check)
+    return name in AGGREGATE_CHECK_NAMES or "status check" in name or "all dependent jobs" in name
+
+
+def _informative_annotation_paths(check: dict[str, Any]) -> set[str]:
+    paths: set[str] = set()
+    for item in check.get("_annotations") or []:
+        path = str(item.get("path") or "").strip()
+        if not path or path == ".github" or path.startswith(".github/workflows/"):
+            continue
+        paths.add(path)
+    return paths
+
+
+def _check_action_basis(check: dict[str, Any], changed_files: set[str]) -> str | None:
     conclusion = str(check.get("conclusion") or "").casefold()
-    name = str(check.get("name") or "").strip().casefold()
-    if conclusion not in TASK_FAILURE_CONCLUSIONS or name in AGGREGATE_CHECK_NAMES:
-        return False
+    if conclusion not in TASK_FAILURE_CONCLUSIONS or _is_aggregate_check(check):
+        return None
     annotations = check.get("_annotations") or []
     if any(str(item.get("path") or "") in changed_files for item in annotations):
-        return True
+        return "changed_file_annotation"
     output = check.get("output") or {}
     summary = "\n".join(
         str(output.get(field) or "") for field in ("title", "summary", "text")
     ).casefold()
-    return any(path.casefold() in summary for path in changed_files if path)
+    if any(path.casefold() in summary for path in changed_files if path):
+        return "changed_file_output"
+
+    # GitHub Actions frequently emits only a generic `.github` exit-code
+    # annotation for compiler and test failures. Preserve explicit unrelated
+    # source annotations, but diagnose unattributed checks that match the
+    # language of files changed by this PR.
+    if _informative_annotation_paths(check):
+        return None
+    name = _normalized_check_name(check)
+    changed_suffixes = {Path(path).suffix.casefold() for path in changed_files}
+    if any(
+        term in name for suffix in changed_suffixes for term in LANGUAGE_CHECK_TERMS.get(suffix, ())
+    ):
+        return "unattributed_language_check"
+    if name in GENERIC_CODE_CHECK_NAMES and any(
+        suffix in LANGUAGE_CHECK_TERMS for suffix in changed_suffixes
+    ):
+        return "unattributed_code_check"
+    return None
 
 
 def _actionable_review_threads(
@@ -283,9 +352,36 @@ def collect_followup(
             unresolved_review_threads = _actionable_review_threads(
                 review_threads, author=author, changed_files=changed_files
             )
-        actionable_checks = [
-            check for check in failing_checks if _check_is_task_actionable(check, changed_files)
-        ]
+        actionable_checks = []
+        for check in failing_checks:
+            basis = _check_action_basis(check, changed_files)
+            if basis:
+                actionable_checks.append(check | {"_action_basis": basis})
+        inferred_check_failure = any(
+            str(check.get("_action_basis") or "").startswith("unattributed_")
+            for check in actionable_checks
+        )
+        base_integration_required = False
+        base_compare_status = None
+        base_merge_base_sha = None
+        base_compare_error = None
+        if inferred_check_failure and head and base_sha:
+            try:
+                comparison = client.compare(repo, base_sha, head)
+                base_compare_status = str(comparison.get("status") or "").casefold() or None
+                base_merge_base_sha = (
+                    str((comparison.get("merge_base_commit") or {}).get("sha") or "") or None
+                )
+                base_integration_required = base_compare_status in {"behind", "diverged"} or (
+                    bool(base_merge_base_sha) and base_merge_base_sha != base_sha
+                )
+            except GitHubError as exc:
+                base_compare_error = str(exc)[:160]
+                # The controller performs an independent ancestry check before
+                # preparing a merge. Conservatively request that check instead
+                # of letting an unavailable comparison hide a merge-state CI
+                # failure.
+                base_integration_required = True
         mergeable_state = str(pull.get("mergeable_state") or "").lower()
         previous_conflict = previous_item.get("mergeConflict")
         if previous_conflict is None:
@@ -350,6 +446,7 @@ def collect_followup(
                 {
                     "name": item.get("name"),
                     "url": item.get("details_url"),
+                    "basis": item.get("_action_basis"),
                     "annotations": [
                         _annotation_evidence(annotation)
                         for annotation in (item.get("_annotations") or [])[:20]
@@ -368,6 +465,10 @@ def collect_followup(
             "failingChecks": failing_check_evidence,
             "changedFiles": sorted(changed_files),
             "actionableCheckNames": actionable_check_names,
+            "baseIntegrationRequired": base_integration_required,
+            "baseCompareStatus": base_compare_status,
+            "baseMergeBaseSha": base_merge_base_sha,
+            "baseCompareError": base_compare_error,
             "unresolvedReviewThreads": unresolved_review_threads,
         }
         action_evidence = {
@@ -385,6 +486,10 @@ def collect_followup(
             "mergeConflictBaseSha": base_sha if merge_conflict else None,
             "requestedChanges": requested_changes,
             "actionableChecks": actionable_check_evidence,
+            "baseIntegrationRequired": base_integration_required,
+            "baseIntegrationHead": head if base_integration_required else None,
+            "baseIntegrationBaseRefName": (base_ref_name if base_integration_required else None),
+            "baseIntegrationBaseSha": base_sha if base_integration_required else None,
             "unresolvedReviewThreads": unresolved_review_threads,
         }
         task_digest = sha256_json(task_evidence)

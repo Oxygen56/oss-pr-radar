@@ -315,6 +315,124 @@ def test_unrelated_test_failure_is_retained_without_notification_or_task_wake():
     assert state["items"][0]["taskActions"] == []
 
 
+def test_unattributed_language_failure_wakes_task_and_requires_base_integration():
+    class CheckClient(Client):
+        def pull_request(self, repo, number):
+            pull = super().pull_request(repo, number)
+            pull["head"] = {"sha": "feature-head"}
+            return pull
+
+        def pull_reviews(self, repo, number):
+            return []
+
+        def pull_files(self, repo, number):
+            return [{"filename": "lib/router/query.rs"}]
+
+        def check_runs(self, repo, ref):
+            return [
+                {
+                    "id": 14,
+                    "name": "rust-clippy (.)",
+                    "status": "completed",
+                    "conclusion": "failure",
+                    "details_url": "https://github.com/a/b/actions/runs/1/job/14",
+                }
+            ]
+
+        def check_annotations(self, repo, check_run_id):
+            return [
+                {
+                    "path": ".github",
+                    "annotation_level": "failure",
+                    "message": "Process completed with exit code 101.",
+                }
+            ]
+
+        def compare(self, repo, base, head):
+            assert (repo, base, head) == ("a/b", "base", "feature-head")
+            return {
+                "status": "diverged",
+                "merge_base_commit": {"sha": "old-base"},
+            }
+
+    state, report = collect_followup(
+        CheckClient(), author="Oxygen56", now=datetime(2026, 8, 4, tzinfo=UTC)
+    )
+
+    item = state["items"][0]
+    assert item["taskFollowupRequired"] is True
+    assert item["taskActions"] == ["当前分支检查失败"]
+    assert item["evidence"]["baseIntegrationRequired"] is True
+    assert item["evidence"]["baseCompareStatus"] == "diverged"
+    actionable = item["evidence"]["actionableCheckNames"]
+    assert actionable == ["rust-clippy (.)"]
+    assert report["candidate_details"][0]["why"] == "当前分支检查失败"
+
+
+def test_aggregate_failure_does_not_wake_task_without_source_evidence():
+    class CheckClient(Client):
+        def pull_reviews(self, repo, number):
+            return []
+
+        def pull_files(self, repo, number):
+            return [{"filename": "lib/router/query.rs"}]
+
+        def check_runs(self, repo, ref):
+            return [
+                {
+                    "id": 15,
+                    "name": "pre-merge-status-check",
+                    "status": "completed",
+                    "conclusion": "failure",
+                    "details_url": "https://github.com/a/b/actions/runs/1/job/15",
+                }
+            ]
+
+        def check_annotations(self, repo, check_run_id):
+            return [{"path": ".github", "message": "Process completed with exit code 1."}]
+
+    state, report = collect_followup(
+        CheckClient(), author="Oxygen56", now=datetime(2026, 8, 4, tzinfo=UTC)
+    )
+
+    assert state["items"][0]["taskFollowupRequired"] is False
+    assert report["candidate_details"] == []
+
+
+def test_unavailable_base_comparison_fails_safe_to_controller_ancestry_check():
+    class CheckClient(Client):
+        def pull_reviews(self, repo, number):
+            return []
+
+        def pull_files(self, repo, number):
+            return [{"filename": "lib/router/query.rs"}]
+
+        def check_runs(self, repo, ref):
+            return [
+                {
+                    "id": 16,
+                    "name": "cargo test",
+                    "status": "completed",
+                    "conclusion": "failure",
+                }
+            ]
+
+        def check_annotations(self, repo, check_run_id):
+            return []
+
+        def compare(self, repo, base, head):
+            raise GitHubError("comparison temporarily unavailable")
+
+    state, report = collect_followup(
+        CheckClient(), author="Oxygen56", now=datetime(2026, 8, 4, tzinfo=UTC)
+    )
+
+    evidence = state["items"][0]["evidence"]
+    assert evidence["baseIntegrationRequired"] is True
+    assert evidence["baseCompareError"] == "comparison temporarily unavailable"
+    assert report["candidate_details"]
+
+
 def test_unresolved_review_bot_thread_on_changed_file_wakes_original_task():
     class ReviewThreadClient(Client):
         def pull_reviews(self, repo, number):

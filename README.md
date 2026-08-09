@@ -207,9 +207,12 @@ python scripts/check_workflow_health.py --max-effective-age-minutes 65 --notify 
 
 PR follow-up keeps all failing checks as diagnostic evidence, but only notifies
 Feishu or wakes a task for maintainer requests, merge conflicts, unresolved
-review threads, or failures tied to files changed by the current branch. For a
-merge conflict, the signed snapshot includes both the PR head and target-branch
-head; the controller aligns both refs before waking the task.
+review threads, failures tied to files changed by the current branch, or
+unattributed compiler/test failures that match the language of changed files.
+When the target branch has advanced, the controller prepares a signed local
+integration merge so validation runs against the same combined code shape as
+GitHub CI. For a merge conflict, the signed snapshot includes both the PR head
+and target-branch head; the controller aligns both refs before waking the task.
 
 The hourly Codex heartbeat reuses one controller task, calls `sync`, claims each pending intent through a
 fresh live audit, and creates every issue task in the single configured GitHub
