@@ -1977,16 +1977,11 @@ def _finalize_controller_commit(
         )
         if not set(commit_changed_files).issubset(publication_changed_files):
             raise RuntimeError("controller commit files are missing from publication evidence")
-        if (
-            value.get("changedFiles") != publication_changed_files
-            or value.get("controllerCommitChangedFiles") != commit_changed_files
-        ):
-            finalized = dict(value)
-            finalized["controllerCommitChangedFiles"] = commit_changed_files
-            finalized["changedFiles"] = publication_changed_files
-            _atomic_json(result_path, finalized)
-            return finalized, result_path.read_bytes()
-        return value, result_path.read_bytes()
+        finalized = dict(value)
+        finalized["controllerCommitChangedFiles"] = commit_changed_files
+        finalized["changedFiles"] = publication_changed_files
+        _atomic_json(result_path, finalized)
+        return finalized, result_path.read_bytes()
     if value.get("handoffMode") != "controller_commit_required":
         return value, result_path.read_bytes()
 
@@ -2722,6 +2717,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
             context = json.loads(context_path.read_text(encoding="utf-8"))
             if not isinstance(context, dict):
                 raise RuntimeError("task result context must be an object")
+            controller_policy = _controller_policy_verification(context)
             expected = {
                 "schemaVersion": TASK_RESULT_SCHEMA,
                 "key": candidate["key"],
@@ -2752,6 +2748,8 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 and value.get("followupDigest") == compatibility.get("wakeDigest")
             )
             if value.get("contextDigest") != context.get("contextDigest"):
+                if digest_seen and possible_policy_recovery:
+                    continue
                 if legacy_compatible_result:
                     pass
                 elif current_wake_digest and value.get("followupDigest") != current_wake_digest:
@@ -2760,7 +2758,6 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     raise RuntimeError("task result context digest mismatch")
             stage = str(value.get("stage") or "")
             quality = value.get("quality")
-            controller_policy = _controller_policy_verification(context)
             policy_followup_exhausted = bool(
                 stage == "FIX_READY"
                 and isinstance(quality, dict)

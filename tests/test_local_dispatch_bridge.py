@@ -2654,7 +2654,7 @@ def test_controller_policy_snapshot_satisfies_child_policy_quality(tmp_path):
 
 
 def test_controller_policy_snapshot_recovers_an_existing_blocked_fix(monkeypatch, tmp_path):
-    store, _worktree, _result_path = _controller_commit_result(
+    store, _worktree, result_path = _controller_commit_result(
         tmp_path,
         policy_verified=False,
         controller_policy_complete=True,
@@ -2692,6 +2692,50 @@ def test_controller_policy_snapshot_recovers_an_existing_blocked_fix(monkeypatch
     )
     assert len(recovered["publicationRequests"]) == 1
     assert recovered["ingested"] == [{"key": "a/b#1", "stage": "FIX_READY"}]
+    assert json.loads(result_path.read_text(encoding="utf-8"))["quality"][
+        "policy_verified"
+    ] is True
+
+
+def test_existing_policy_block_with_refreshed_context_stays_idempotent(tmp_path):
+    store, _worktree, result_path = _controller_commit_result(
+        tmp_path,
+        policy_verified=False,
+    )
+    MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    candidate = MODULE.validation_followup_list(
+        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3")
+    )["candidates"][0]
+    MODULE.validation_followup_reserve(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            thread_id="thread-1",
+            result_digest=candidate["resultDigest"],
+            prefetch_complete=False,
+        )
+    )
+    MODULE.validation_followup_commit(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            thread_id="thread-1",
+            result_digest=candidate["resultDigest"],
+        )
+    )
+    MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    context_path = result_path.parent / "task-context.json"
+    context = json.loads(context_path.read_text(encoding="utf-8"))
+    context["contextDigest"] = "refreshed-context"
+    context_path.write_text(json.dumps(context), encoding="utf-8")
+
+    repeated = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert repeated == {
+        "ok": True,
+        "ingested": [],
+        "publicationRequests": [],
+        "validationDeferred": [],
+        "errors": [],
+    }
 
 
 def test_controller_creates_two_parent_commit_for_conflicted_pr_followup(tmp_path):
