@@ -2742,8 +2742,11 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
             )
             if value.get("contextDigest") != context.get("contextDigest"):
                 if digest_seen and possible_policy_recovery:
-                    continue
-                if legacy_compatible_result:
+                    if controller_policy is None:
+                        continue
+                    value = dict(value)
+                    value["contextDigest"] = context.get("contextDigest")
+                elif legacy_compatible_result:
                     pass
                 elif current_wake_digest and value.get("followupDigest") != current_wake_digest:
                     continue

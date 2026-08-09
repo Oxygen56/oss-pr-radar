@@ -2669,6 +2669,10 @@ def test_controller_policy_snapshot_recovers_an_existing_blocked_fix(monkeypatch
     )
     blocked = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
     monkeypatch.setattr(MODULE, "_controller_policy_verification", controller_verification)
+    context_path = result_path.parent / "task-context.json"
+    context = json.loads(context_path.read_text(encoding="utf-8"))
+    context["contextDigest"] = "refreshed-controller-context"
+    context_path.write_text(json.dumps(context), encoding="utf-8")
 
     recovered = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
 
