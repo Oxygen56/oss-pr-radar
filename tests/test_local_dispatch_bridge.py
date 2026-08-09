@@ -543,6 +543,59 @@ def test_shared_context_recovery_rebuilds_a_lost_local_ledger(monkeypatch, tmp_p
     assert re.fullmatch(r"\d{2}-\d{2} \d{2}:\d{2}", context["titleTime"])
 
 
+def test_shared_context_recovery_verifies_an_existing_dispatched_task(
+    monkeypatch, tmp_path
+):
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, _ = registered_store(tmp_path / "original", worktree=worktree)
+    run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
+    MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+
+    verified = MODULE.recover_shared_task_contexts(store)
+
+    assert verified["verified"] == 1
+    assert verified["errors"] == []
+    assert verified["restored"] == [
+        {
+            "key": "a/b#1",
+            "stage": "DISPATCHED",
+            "intentRestored": False,
+            "publicationRestored": False,
+            "resultReceiptRestored": False,
+        }
+    ]
+
+
+def test_shared_context_recovery_does_not_rebuild_a_dispatched_task(
+    monkeypatch, tmp_path
+):
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, _ = registered_store(tmp_path / "original", worktree=worktree)
+    run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
+    MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+
+    recovered = RadarLedger(tmp_path / "recovered.sqlite3")
+    result = MODULE.recover_shared_task_contexts(recovered)
+
+    assert result["verified"] == 0
+    assert result["restored"] == []
+    assert result["errors"][0]["error"] == "active task context disagrees with the ledger"
+
+
 def test_shared_context_recovery_fails_closed_when_mirrors_disagree(monkeypatch, tmp_path):
     project_root = tmp_path / "github"
     monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)

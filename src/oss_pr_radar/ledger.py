@@ -524,8 +524,6 @@ class RadarLedger:
 
         stage = str(context.get("stage") or "")
         intent_status = str(context.get("intentStatus") or "")
-        if stage not in RECOVERABLE_CONTEXT_STAGES:
-            raise LedgerError("task context lifecycle stage is not recoverable")
         if intent_status not in RECOVERABLE_CONTEXT_INTENT_STATUSES:
             raise LedgerError("task context intent status is not recoverable")
         if stage in {
@@ -570,6 +568,34 @@ class RadarLedger:
             title_time = parse_time(captured_at).astimezone(
                 timezone(timedelta(hours=8))
             ).strftime("%m-%d %H:%M")
+
+        if stage not in RECOVERABLE_CONTEXT_STAGES:
+            if stage != "DISPATCHED":
+                raise LedgerError("task context lifecycle stage is not recoverable")
+            current = self.task_context(issue_url=issue_url, thread_id=thread_id)
+            expected_binding = {
+                "key": key,
+                "stage": stage,
+                "intentId": intent_id,
+                "threadId": thread_id,
+                "worktreePath": str(Path(worktree_path).resolve()),
+                "intentStatus": intent_status,
+                "titleTime": title_time,
+                "liveAudit": live_audit,
+            }
+            if current is None or any(
+                current.get(field) != expected
+                for field, expected in expected_binding.items()
+            ):
+                raise LedgerError("active task context disagrees with the ledger")
+            if context.get("publicationReceipt") is not None:
+                raise LedgerError("active task context has an unexpected publication receipt")
+            return {
+                "key": key,
+                "stage": stage,
+                "intentRestored": False,
+                "publicationRestored": False,
+            }
 
         receipt = context.get("publicationReceipt")
         if receipt is not None and not isinstance(receipt, dict):
