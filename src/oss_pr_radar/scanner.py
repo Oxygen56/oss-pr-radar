@@ -2513,14 +2513,25 @@ class Radar:
                     "_semantic_code_like": code_like_overlap,
                 }
 
+        title_semantic_terms = semantic_terms(title)
         technical_terms = [
-            term for term in semantic_terms(title) if term in SEMANTIC_TECHNICAL_TERMS
+            term
+            for term in title_semantic_terms
+            if term in SEMANTIC_TECHNICAL_TERMS
+            or "_" in term
+            or any(char.isdigit() for char in term)
         ]
-        if len(technical_terms) >= 2:
+        # High-velocity repositories can update more than 100 PRs between scans,
+        # pushing a relevant PR out of the bounded recent inventory. A single
+        # code-like identifier such as ``routing_groups`` is distinctive enough
+        # for a supplemental GitHub search; all hits still pass the conservative
+        # semantic-overlap check below before they are considered competition.
+        if technical_terms:
             search_terms = sorted(
                 technical_terms,
                 key=lambda term: (
-                    term not in {"mamba", "dtype", "credential", "audience"},
+                    term not in SEMANTIC_STRONG_TECHNICAL_TERMS,
+                    "_" not in term and not any(char.isdigit() for char in term),
                     term,
                 ),
             )[:2]

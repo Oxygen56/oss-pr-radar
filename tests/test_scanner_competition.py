@@ -71,6 +71,46 @@ def test_open_pr_inventory_uses_one_bounded_recent_page(monkeypatch, tmp_path):
     assert "--paginate" not in calls[0]
 
 
+def test_identifier_search_finds_pr_beyond_recent_inventory(monkeypatch, tmp_path):
+    instance = radar(tmp_path)
+    search_calls = []
+
+    monkeypatch.setattr(scanner_module, "gh_paginated", lambda *_args, **_kwargs: ([], None))
+    monkeypatch.setattr(scanner_module, "gh_list_page", lambda *_args, **_kwargs: ([], None))
+
+    def fake_gh(args, **_kwargs):
+        if "search/issues" not in args:
+            return ({}, None)
+        search_calls.append(args)
+        return (
+            {
+                "items": [
+                    {
+                        "number": 36115,
+                        "html_url": "https://github.com/BerriAI/litellm/pull/36115",
+                        "title": "feat(router): per-model-group routing strategy",
+                        "body": (
+                            "Deprecate routing_groups in the Admin UI and preserve the "
+                            "runtime routing strategy behavior."
+                        ),
+                    }
+                ]
+            },
+            None,
+        )
+
+    monkeypatch.setattr(scanner_module, "gh", fake_gh)
+
+    hits = instance.open_pr_hits(
+        "BerriAI/litellm",
+        36310,
+        "Admin UI saves routing_groups config rejected by runtime",
+    )
+
+    assert [hit["number"] for hit in hits] == [36115]
+    assert any("routing_groups" in arg for arg in search_calls[0])
+
+
 def test_cross_repo_timeline_pr_details_are_loaded_from_its_own_repo(monkeypatch, tmp_path):
     instance = radar(tmp_path)
     requested = []
