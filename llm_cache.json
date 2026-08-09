@@ -10687,6 +10687,37 @@
     ],
     "why": "Issue provides a precise root cause (shape mismatch in requestContext user slot) and a verified workaround, but a PR (#20690) already exists and is closed, with maintainer triage ongoing. The deterministic gate requires HUMAN_REVIEW, and the PR's completeness and maintainer scope decisions (e.g., handling two other quiet readers) are unresolved."
   },
+  "962331b72cfd70ae701f13de6c2903b1c3cf51f246e7b189366d85d7878d86c2": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue title mentions Qwen3.6 but body says Qwen3.6:35b-3ba; comment says issue affects all Ollama models, not just Qwen"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix tool syntax handling for local Ollama models",
+      "Restore or make configurable compact context and native tool call switches"
+    ],
+    "risks": [
+      "Existing PR #11486 may already address the root cause; need to compare implementation boundaries",
+      "Changing tool syntax behavior may break other providers or require maintainer design approval"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Create a regression test using the reported minimal reproduction with Ollama and Qwen3.6",
+      "Run targeted unit tests for provider/tool-call parsing"
+    ],
+    "unknowns": [
+      "Whether maintainers have acknowledged the regression or have a preferred fix",
+      "Whether PR #11486 actually resolves the reported issue",
+      "Exact code path responsible for the tool syntax change"
+    ],
+    "why": "Issue reports regression in tool syntax handling for local Ollama models after Cline 4.1.x, but root cause is not clearly identified. Existing PR #11486 overlaps semantically but does not reference the issue, and maintainer has not confirmed design direction. The request for documentation is not actionable code work."
+  },
   "9677b68315c92ab510c2b4fb02c91a500d89172d110b051e9ca2878b373ca539": {
     "confidence": 0.8,
     "contradictions": [
