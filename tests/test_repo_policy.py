@@ -299,6 +299,26 @@ def test_explicit_pre_pr_assignment_gate_is_shared_by_scanner_and_live_gate():
     assert submission_policy_from_text(text) == "needs_assignment"
 
 
+def test_ai_disclosure_and_maintainer_buy_in_policy_is_detected():
+    text = """
+Wait for maintainer feedback or a `ready for work` label before starting.
+Before starting, comment on the issue so we can assign it to you.
+
+If you used AI assistance for a contribution, disclose it in the PR or issue.
+No drive-by agents. PRs produced by an autonomous agent with no human review
+get closed on sight.
+"""
+
+    policy = discover_policy(
+        FakeClient({"CONTRIBUTING.md": text}),
+        "modelcontextprotocol/python-sdk",
+    )
+
+    assert policy.ai_disclosure is True
+    assert policy.assignment_required is True
+    assert submission_policy_from_text(text) == "ai_disclosure_and_assignment"
+
+
 def test_project_board_ready_gate_is_treated_as_pre_implementation_approval():
     text = (
         "Do not begin implementation or open a pull request until the issue has "

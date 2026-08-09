@@ -33,6 +33,8 @@ POLICY_PARTS = {
 }
 POLICY_FILE_WORKERS = 6
 AI_DISCLOSURE_RE = re.compile(
+    r"(?:if|when).{0,80}(?:ai assistance|ai[- ]assisted|ai tools?|generative ai)"
+    r".{0,100}(?:,\s*|\b(?:please|must|should)\s+)disclos(?:e|ure)\b|"
     r"(?:generative ai|ai[- ]generated|ai[- ]assisted|ai tools?|"
     r"large language models?|llms?|coding assistants?).{0,160}"
     r"(?:must|required|mandatory|always).{0,100}(?:disclos|declare|identify|"
@@ -78,6 +80,10 @@ AI_PROHIBITION_RE = re.compile(
     re.I | re.S,
 )
 ASSIGNMENT_RE = re.compile(
+    r"\bwait for maintainer (?:feedback|approval).{0,120}"
+    r"\bbefore (?:starting|implementing)\b|"
+    r"\bbefore (?:starting|implementing)\b.{0,120}"
+    r"\bcomment on (?:the )?issue\b.{0,120}\bassign(?:ed|ment)?\b|"
     r"(?:issue|pull request|pr).{0,180}(?:must|required).{0,120}assign|"
     r"\bwait for assignment\b|"
     r"\bmaintainer\b.{0,80}\bassign\b.{0,100}\bbefore\b.{0,80}"
