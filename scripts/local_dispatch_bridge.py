@@ -2593,6 +2593,7 @@ def _execute_validation_prefetch(
 
 def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
+    reconciled_no_progress = store.reconcile_validation_no_progress()
     candidates: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
     for candidate in store.validation_followup_candidates():
@@ -2610,11 +2611,14 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
             errors.append({"key": candidate["key"], "error": str(exc)[:300]})
     unresolved = store.unresolved_validation_followups()
     stale = store.stale_validation_followups(min_age_minutes=getattr(args, "min_age_minutes", 90))
+    blocked_no_progress = store.validation_no_progress()
     return {
         "ok": not errors and not unresolved and not stale,
         "candidates": candidates,
         "unresolved": unresolved,
         "stale": stale,
+        "blockedNoProgress": blocked_no_progress,
+        "reconciledNoProgress": reconciled_no_progress,
         "errors": errors,
     }
 

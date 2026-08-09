@@ -2048,6 +2048,108 @@ class RadarLedger:
                 iso_z(datetime.now(UTC)),
             )
 
+            self._mark_validation_no_progress(
+                connection,
+                key=key,
+                thread_id=thread_id,
+                result_digest=result_digest,
+                missing=missing,
+            )
+
+    @staticmethod
+    def _normalized_validation_missing(missing: Any) -> tuple[str, ...]:
+        if not isinstance(missing, list):
+            return ()
+        return tuple(
+            sorted({str(item).strip() for item in missing if str(item).strip()})
+        )
+
+    def _mark_validation_no_progress(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        key: str,
+        thread_id: str,
+        result_digest: str,
+        missing: list[str],
+    ) -> bool:
+        """Stop repeat continuations when a completed continuation changed no gap."""
+
+        normalized_missing = self._normalized_validation_missing(missing)
+        if not normalized_missing:
+            return False
+        previous = connection.execute(
+            """SELECT d.dedupe_key,d.payload_json
+               FROM events d
+               WHERE d.opportunity_key=?
+                 AND d.event_type='TASK_RESULT_VALIDATION_DEFERRED'
+                 AND d.dedupe_key<>?
+                 AND EXISTS (
+                   SELECT 1 FROM events s
+                   WHERE s.opportunity_key=d.opportunity_key
+                     AND s.event_type='VALIDATION_FOLLOWUP_SENT'
+                     AND s.dedupe_key=d.dedupe_key
+                 )
+               ORDER BY d.id DESC LIMIT 1""",
+            (key, result_digest),
+        ).fetchone()
+        if previous is None:
+            return False
+        previous_payload = json.loads(previous["payload_json"])
+        if (
+            self._normalized_validation_missing(previous_payload.get("missing"))
+            != normalized_missing
+        ):
+            return False
+        self._event(
+            connection,
+            key,
+            "VALIDATION_FOLLOWUP_NO_PROGRESS",
+            result_digest,
+            {
+                "threadId": thread_id,
+                "resultDigest": result_digest,
+                "previousResultDigest": previous["dedupe_key"],
+                "missing": list(normalized_missing),
+                "reason": "UNCHANGED_VALIDATION_GAP",
+            },
+            iso_z(datetime.now(UTC)),
+        )
+        return True
+
+    def reconcile_validation_no_progress(self) -> int:
+        """Backfill no-progress markers for current validation results."""
+
+        marked = 0
+        with self.transaction() as connection:
+            rows = connection.execute(
+                """SELECT o.key,d.payload_json
+                   FROM opportunities o
+                   JOIN events d ON d.id=(
+                     SELECT MAX(d2.id) FROM events d2
+                     WHERE d2.opportunity_key=o.key
+                       AND d2.event_type='TASK_RESULT_VALIDATION_DEFERRED'
+                   )
+                   WHERE o.stage='VALIDATION_PENDING'
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events n
+                       WHERE n.opportunity_key=o.key
+                         AND n.event_type='VALIDATION_FOLLOWUP_NO_PROGRESS'
+                         AND n.dedupe_key=json_extract(d.payload_json,'$.resultDigest')
+                     )"""
+            ).fetchall()
+            for row in rows:
+                payload = json.loads(row["payload_json"])
+                if self._mark_validation_no_progress(
+                    connection,
+                    key=row["key"],
+                    thread_id=str(payload.get("threadId") or ""),
+                    result_digest=str(payload.get("resultDigest") or ""),
+                    missing=list(payload.get("missing") or []),
+                ):
+                    marked += 1
+        return marked
+
     def validation_followup_candidates(self) -> list[dict[str, Any]]:
         """Return validation-pending tasks that have not been resumed for this result."""
 
@@ -2070,6 +2172,11 @@ class RadarLedger:
                          AND r.event_type='VALIDATION_FOLLOWUP_RESERVED'
                          AND r.dedupe_key=json_extract(d.payload_json,'$.resultDigest')
                      )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events n WHERE n.opportunity_key=o.key
+                         AND n.event_type='VALIDATION_FOLLOWUP_NO_PROGRESS'
+                         AND n.dedupe_key=json_extract(d.payload_json,'$.resultDigest')
+                     )
                    ORDER BY d.created_at"""
             ).fetchall()
         candidates: list[dict[str, Any]] = []
@@ -2088,6 +2195,47 @@ class RadarLedger:
                 }
             )
         return candidates
+
+    def validation_no_progress(self) -> list[dict[str, Any]]:
+        """Return current validation tasks whose latest continuation made no progress."""
+
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT o.key,o.issue_url,o.title,i.thread_id,i.worktree_path,
+                          d.payload_json,n.payload_json AS no_progress_json,n.created_at
+                   FROM opportunities o
+                   JOIN events d ON d.id=(
+                     SELECT MAX(d2.id) FROM events d2
+                     WHERE d2.opportunity_key=o.key
+                       AND d2.event_type='TASK_RESULT_VALIDATION_DEFERRED'
+                   )
+                   JOIN events n ON n.opportunity_key=o.key
+                     AND n.event_type='VALIDATION_FOLLOWUP_NO_PROGRESS'
+                     AND n.dedupe_key=json_extract(d.payload_json,'$.resultDigest')
+                   JOIN intents i ON i.opportunity_key=o.key
+                     AND i.thread_id=json_extract(d.payload_json,'$.threadId')
+                   WHERE o.stage='VALIDATION_PENDING'
+                   ORDER BY n.created_at"""
+            ).fetchall()
+        blocked: list[dict[str, Any]] = []
+        for row in rows:
+            payload = json.loads(row["payload_json"])
+            no_progress = json.loads(row["no_progress_json"])
+            blocked.append(
+                {
+                    "key": row["key"],
+                    "issueUrl": row["issue_url"],
+                    "title": row["title"],
+                    "threadId": row["thread_id"],
+                    "worktreePath": row["worktree_path"],
+                    "resultDigest": payload.get("resultDigest"),
+                    "previousResultDigest": no_progress.get("previousResultDigest"),
+                    "missing": list(no_progress.get("missing") or []),
+                    "reason": no_progress.get("reason"),
+                    "blockedAt": row["created_at"],
+                }
+            )
+        return blocked
 
     def validation_followup_was_sent(self, *, thread_id: str) -> bool:
         """Return whether this task already received a validation continuation."""

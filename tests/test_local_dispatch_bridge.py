@@ -3130,6 +3130,57 @@ def test_controller_defers_blocked_local_fix_with_incomplete_validation(tmp_path
     assert stalled["stale"][0]["threadId"] == "thread-1"
 
 
+def test_validation_followup_list_reconciles_and_reports_unchanged_gap(tmp_path):
+    store, _worktree = registered_store(tmp_path)
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest="result-digest-1",
+        missing=["relevant_tests_green"],
+    )
+    store.record_stage("a/b#1", "VALIDATION_PENDING")
+    store.reserve_validation_followup(
+        thread_id="thread-1", result_digest="result-digest-1"
+    )
+    store.commit_validation_followup(
+        thread_id="thread-1", result_digest="result-digest-1"
+    )
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO events
+               (opportunity_key,event_type,dedupe_key,payload_json,created_at)
+               VALUES (?,?,?,?,?)""",
+            (
+                "a/b#1",
+                "TASK_RESULT_VALIDATION_DEFERRED",
+                "result-digest-2",
+                json.dumps(
+                    {
+                        "threadId": "thread-1",
+                        "resultDigest": "result-digest-2",
+                        "missing": ["relevant_tests_green"],
+                    }
+                ),
+                iso_z(datetime.now(UTC)),
+            ),
+        )
+
+    listed = MODULE.validation_followup_list(
+        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3")
+    )
+
+    assert listed["ok"] is True
+    assert listed["candidates"] == []
+    assert listed["unresolved"] == []
+    assert listed["stale"] == []
+    assert listed["errors"] == []
+    assert listed["reconciledNoProgress"] == 1
+    assert listed["blockedNoProgress"][0]["key"] == "a/b#1"
+    assert listed["blockedNoProgress"][0]["resultDigest"] == "result-digest-2"
+    assert listed["blockedNoProgress"][0]["previousResultDigest"] == "result-digest-1"
+    assert listed["blockedNoProgress"][0]["missing"] == ["relevant_tests_green"]
+
+
 def test_controller_defers_unvalidated_publishable_fix_without_agent_failure(tmp_path):
     store, worktree, result_path = _controller_commit_result(
         tmp_path,

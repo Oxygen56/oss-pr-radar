@@ -182,6 +182,10 @@ Run `validation-followup-list`. For each candidate:
 - Unknown send results stay unresolved and are never resent automatically.
 - Report entries stale after 90 minutes as `validationFollowupStalled`; this is
   a delivery watchdog, not a general review cooldown.
+- `blockedNoProgress` means the same task completed a continuation but returned
+  exactly the same missing evidence. Do not resend it automatically. Report the
+  key and unchanged gap as an environment/no-progress block. A changed or
+  reduced missing set becomes eligible immediately; this is not a time cooldown.
 
 ## 7. Recovery, titles, and cleanup
 
@@ -216,7 +220,9 @@ Before reporting success, prove these six queues are empty:
 - `orphan-list`
 - `pr-followup-list` candidates, unresolved, and errors (`activeDeferred` may
   remain while its task is actively working)
-- `validation-followup-list` candidates, unresolved, stale, and errors
+- `validation-followup-list` candidates, unresolved, stale, and errors;
+  `blockedNoProgress` may remain only when each key and unchanged gap is included
+  in the final operational summary
 - `restore-list`
 - `title-list`
 - `cleanup-list`
@@ -236,6 +242,7 @@ Return one concise Chinese paragraph containing only the operational summary:
 local publication agent and health state, natural schedule state, repairs or
 fallback, reconciled creation, contexts/results/validation/feedback/publication,
 dispatch and notification counts, recovery/restore/title/archive counts,
-remaining pending/alerts, policy suppressions, schedule warnings, and genuine
-failed stages. Expected policy filters and historical schedule gaps are warnings,
-not execution failures. Never print credentials.
+remaining pending/alerts, validation no-progress blocks, policy suppressions,
+schedule warnings, and genuine failed stages. Expected policy filters, explicit
+validation no-progress blocks, and historical schedule gaps are warnings, not
+execution failures. Never print credentials.

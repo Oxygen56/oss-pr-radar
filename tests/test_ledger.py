@@ -1304,7 +1304,9 @@ def test_validation_followup_is_write_ahead_and_rearms_for_a_new_result(tmp_path
     assert candidate["resultDigest"] == "result-digest-1"
     assert candidate["missing"] == ["relevant_tests_green"]
 
-    store.reserve_validation_followup(thread_id="thread-1", result_digest="result-digest-1")
+    store.reserve_validation_followup(
+        thread_id="thread-1", result_digest="result-digest-1"
+    )
     assert store.validation_followup_candidates() == []
     assert store.unresolved_validation_followups()[0]["resultDigest"] == "result-digest-1"
 
@@ -1328,10 +1330,75 @@ def test_validation_followup_is_write_ahead_and_rearms_for_a_new_result(tmp_path
     rearmed = store.validation_followup_candidates()[0]
     assert rearmed["resultDigest"] == "result-digest-2"
     assert rearmed["missing"] == ["reproduction_verified"]
+    assert store.validation_no_progress() == []
     assert store.stale_validation_followups(min_age_minutes=90) == []
 
     assert store.validation_followup_was_sent(thread_id="thread-1") is True
     assert store.validation_followup_was_sent(thread_id="missing-thread") is False
+
+
+def test_validation_followup_stops_when_a_new_result_has_the_same_gap(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest="result-digest-1",
+        missing=["relevant_tests_green", "regression_test_verified"],
+    )
+    store.record_stage("a/b#1", "VALIDATION_PENDING")
+    store.reserve_validation_followup(thread_id="thread-1", result_digest="result-digest-1")
+    store.commit_validation_followup(thread_id="thread-1", result_digest="result-digest-1")
+
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest="result-digest-2",
+        missing=["regression_test_verified", "relevant_tests_green"],
+    )
+
+    assert store.validation_followup_candidates() == []
+    blocked = store.validation_no_progress()
+    assert blocked[0]["resultDigest"] == "result-digest-2"
+    assert blocked[0]["previousResultDigest"] == "result-digest-1"
+    assert blocked[0]["missing"] == [
+        "regression_test_verified",
+        "relevant_tests_green",
+    ]
+    assert blocked[0]["reason"] == "UNCHANGED_VALIDATION_GAP"
+    assert store.reconcile_validation_no_progress() == 0
+
+
+def test_first_validation_result_is_not_mistaken_for_no_progress(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest="result-digest-1",
+        missing=["relevant_tests_green"],
+    )
+    store.record_stage("a/b#1", "VALIDATION_PENDING")
+
+    assert store.reconcile_validation_no_progress() == 0
+    assert store.validation_no_progress() == []
+    assert store.validation_followup_candidates()[0]["resultDigest"] == "result-digest-1"
 
 
 def test_expired_intent_cannot_be_claimed(tmp_path):
