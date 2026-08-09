@@ -381,6 +381,54 @@ def test_pr_lifecycle_prefers_merge_review_and_green_checks():
     )
 
 
+@pytest.mark.parametrize("current", ["VALIDATION_PENDING", "FIX_READY"])
+def test_remote_open_state_does_not_replace_local_pr_action_stage(current):
+    assert MODULE.should_apply_pr_lifecycle_stage(current, "PR_OPEN") is False
+    assert MODULE.should_apply_pr_lifecycle_stage(current, "CI_GREEN") is False
+    assert MODULE.should_apply_pr_lifecycle_stage(current, "MAINTAINER_ACCEPTED") is False
+
+
+@pytest.mark.parametrize("current", ["VALIDATION_PENDING", "FIX_READY"])
+@pytest.mark.parametrize("remote", ["MERGED", "CLOSED"])
+def test_remote_terminal_state_replaces_local_pr_action_stage(current, remote):
+    assert MODULE.should_apply_pr_lifecycle_stage(current, remote) is True
+
+
+def test_remote_pr_lifecycle_only_advances_published_stage():
+    assert MODULE.should_apply_pr_lifecycle_stage("PR_OPEN", "CI_GREEN") is True
+    assert MODULE.should_apply_pr_lifecycle_stage("CI_GREEN", "MAINTAINER_ACCEPTED") is True
+    assert MODULE.should_apply_pr_lifecycle_stage("MAINTAINER_ACCEPTED", "PR_OPEN") is False
+
+
+def test_refresh_pull_requests_preserves_local_validation_stage(monkeypatch, tmp_path):
+    recorded = []
+
+    class Store:
+        def tracked_pull_requests(self):
+            return [
+                {
+                    "key": "a/b#1",
+                    "pr_url": "https://github.com/a/b/pull/9",
+                    "stage": "VALIDATION_PENDING",
+                }
+            ]
+
+        def record_stage(self, *args, **kwargs):
+            recorded.append((args, kwargs))
+
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+    monkeypatch.setattr(
+        MODULE,
+        "command",
+        lambda *_args, **_kwargs: json.dumps({"state": "OPEN", "statusCheckRollup": []}),
+    )
+
+    result = MODULE.refresh_pull_requests(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert result == {"ok": True, "updates": [], "errors": []}
+    assert recorded == []
+
+
 def test_task_context_waits_for_live_handoff_receipt(monkeypatch, tmp_path):
     expected = {"threadId": "thread-1", "worktreePath": str(tmp_path)}
 

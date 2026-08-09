@@ -75,13 +75,14 @@ TITLE_PREFIXES = {
     "MERGED": "[有价值·已合并]",
 }
 PR_STAGE_PRIORITY = {
-    "FIX_READY": 0,
     "PR_OPEN": 1,
     "CI_GREEN": 2,
     "MAINTAINER_ACCEPTED": 3,
     "MERGED": 4,
     "CLOSED": 4,
 }
+LOCAL_PR_ACTION_STAGES = {"VALIDATION_PENDING", "FIX_READY"}
+TERMINAL_PR_STAGES = {"MERGED", "CLOSED"}
 CONTROLLER_TERMINAL_STATUS = "controller_terminal"
 PUBLISHED_TASK_STAGES = {
     "PR_OPEN",
@@ -3472,6 +3473,15 @@ def pr_lifecycle_stage(value: dict[str, Any]) -> str:
     return "PR_OPEN"
 
 
+def should_apply_pr_lifecycle_stage(current: str, remote: str) -> bool:
+    """Keep local validation/update work authoritative until the PR is terminal."""
+    if remote in TERMINAL_PR_STAGES:
+        return current != remote
+    if current in LOCAL_PR_ACTION_STAGES:
+        return False
+    return PR_STAGE_PRIORITY[remote] > PR_STAGE_PRIORITY.get(current, -1)
+
+
 def refresh_pull_requests(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
     updates = []
@@ -3495,8 +3505,7 @@ def refresh_pull_requests(args: argparse.Namespace) -> dict[str, Any]:
             errors.append({"key": item["key"], "error": str(exc)[:200]})
             continue
         stage = pr_lifecycle_stage(value)
-        current_priority = PR_STAGE_PRIORITY.get(str(item["stage"]), -1)
-        if PR_STAGE_PRIORITY[stage] > current_priority:
+        if should_apply_pr_lifecycle_stage(str(item["stage"]), stage):
             store.record_stage(
                 item["key"],
                 stage,

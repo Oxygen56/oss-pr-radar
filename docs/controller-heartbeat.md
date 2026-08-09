@@ -225,6 +225,13 @@ Also prove that every completed task result has passed through `ingest-results`.
 If any gate remains nonempty, report the exact failing stage rather than a
 successful summary.
 
+The final fixed-point results are authoritative. If an earlier attempt reported
+an error but the same stage was rerun successfully and its final queue is empty,
+count it only as a repaired transient condition; do not list it as a failed
+stage. Derive `genuine failed stages` solely from the last execution of each
+gate plus unresolved durable state, never from an accumulated narrative of the
+whole heartbeat.
+
 Return one concise Chinese paragraph containing only the operational summary:
 local publication agent and health state, natural schedule state, repairs or
 fallback, reconciled creation, contexts/results/validation/feedback/publication,
