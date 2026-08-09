@@ -143,10 +143,105 @@ def test_terminal_feedback_is_published_only_for_unchanged_issues(monkeypatch, t
 
     saved = json.loads(feedback_path.read_text(encoding="utf-8"))
     assert result["published"] == 1
+    assert result["stateChanged"] is True
+    assert result["publishAttempts"] == 1
     assert saved["a/b#1"]["status"] == "controller_terminal"
     assert saved["a/b#1"]["terminal_reason"] == "ALREADY_FIXED"
     assert [call[2] for call in calls] == ["restore", "publish"]
     assert all("controller-feedback" in call for call in calls)
+
+
+def test_terminal_feedback_reloads_and_merges_after_concurrent_publish(monkeypatch, tmp_path):
+    store, _worktree = registered_store(tmp_path)
+    store.record_stage("a/b#1", "AUDIT_NO_GO", reason="ALREADY_FIXED")
+    state = tmp_path / "state"
+    state.mkdir()
+    feedback_path = state / "controller_terminal_feedback.json"
+    calls = []
+    restore_count = 0
+    publish_count = 0
+
+    class GitHub:
+        def issue(self, _repo, _number):
+            return {"updated_at": "2020-01-01T00:00:00Z", "state": "open"}
+
+    def concurrent_command(args, **_kwargs):
+        nonlocal restore_count, publish_count
+        calls.append(args)
+        if args[2] == "restore":
+            restore_count += 1
+            if restore_count == 2:
+                feedback_path.write_text(
+                    json.dumps(
+                        {
+                            "x/y#2": {
+                                "status": "controller_terminal",
+                                "terminal_reason": "CONCURRENT_RESULT",
+                            }
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+        elif args[2] == "publish":
+            publish_count += 1
+            if publish_count == 1:
+                raise RuntimeError("state branch changed since restore")
+        return ""
+
+    monkeypatch.setattr(MODULE, "STATE", state)
+    monkeypatch.setattr(MODULE, "GitHubClient", GitHub)
+    monkeypatch.setattr(MODULE, "command", concurrent_command)
+
+    result = MODULE.publish_terminal_feedback(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    saved = json.loads(feedback_path.read_text(encoding="utf-8"))
+    assert result["published"] == 1
+    assert result["stateChanged"] is True
+    assert result["publishAttempts"] == 2
+    assert set(saved) == {"a/b#1", "x/y#2"}
+    assert [call[2] for call in calls] == ["restore", "publish", "restore", "publish"]
+
+
+def test_terminal_feedback_does_not_republish_unchanged_state(monkeypatch, tmp_path):
+    store, _worktree = registered_store(tmp_path)
+    store.record_stage("a/b#1", "AUDIT_NO_GO", reason="ALREADY_FIXED")
+    state = tmp_path / "state"
+    state.mkdir()
+    feedback_path = state / "controller_terminal_feedback.json"
+    feedback_path.write_text(
+        json.dumps(
+            {
+                "a/b#1": {
+                    "analyzed": "2020-01-01T00:00:00Z",
+                    "status": "controller_terminal",
+                    "controller_stage": "AUDIT_NO_GO",
+                    "terminal_reason": "ALREADY_FIXED",
+                    "issue_updated": "2020-01-01T00:00:00Z",
+                    "scanner_version": MODULE.SCANNER_DECISION_REVISION,
+                    "decision_contract_digest": MODULE.decision_contract_digest(),
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls = []
+
+    class GitHub:
+        def issue(self, _repo, _number):
+            return {"updated_at": "2020-01-01T00:00:00Z", "state": "open"}
+
+    monkeypatch.setattr(MODULE, "STATE", state)
+    monkeypatch.setattr(MODULE, "GitHubClient", GitHub)
+    monkeypatch.setattr(MODULE, "command", lambda args, **_kwargs: calls.append(args) or "")
+
+    result = MODULE.publish_terminal_feedback(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    saved = json.loads(feedback_path.read_text(encoding="utf-8"))
+    assert result["published"] == 1
+    assert result["stateChanged"] is False
+    assert result["publishAttempts"] == 1
+    assert saved["a/b#1"]["analyzed"] == "2020-01-01T00:00:00Z"
+    assert [call[2] for call in calls] == ["restore"]
 
 
 def test_terminal_feedback_defers_when_issue_changed_after_dispatch(monkeypatch, tmp_path):

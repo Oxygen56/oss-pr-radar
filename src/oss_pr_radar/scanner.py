@@ -1579,6 +1579,16 @@ def merge_controller_terminal_feedback(
     return merged
 
 
+def controller_terminal_issue_outcomes(seen: dict[str, Any]) -> dict[str, dict[str, str]]:
+    """Expose durable controller decisions so pending dispatch intents are revoked."""
+
+    return {
+        key: {"status": "rejected", "reason": "controller_terminal"}
+        for key, value in seen.items()
+        if isinstance(value, dict) and value.get("status") == CONTROLLER_TERMINAL_STATUS
+    }
+
+
 def requires_unavailable_hardware(title: str, labels_text: str, body: str) -> bool:
     """Skip only issues whose unavailable hardware is part of the actual scope."""
     return not assess_hardware_requirements(title, labels_text, body)["compatible"]
@@ -4251,6 +4261,7 @@ class Radar:
         atomic_write_json(self.seen_path, self.seen)
         self.persistent_repo_cache["updatedAt"] = self.analyzed
         atomic_write_json(self.repo_cache_path, self.persistent_repo_cache)
+        self.issue_outcomes = controller_terminal_issue_outcomes(self.seen) | self.issue_outcomes
         auto_spawn_candidates = [
             candidate for candidate in candidates if candidate.get("auto_spawn")
         ]

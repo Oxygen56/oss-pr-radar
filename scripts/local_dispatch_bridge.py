@@ -375,31 +375,21 @@ def publish_terminal_feedback(args: argparse.Namespace) -> dict[str, Any]:
 
     rows = ledger(args.ledger).terminal_feedback()
     if not rows:
-        return {"ok": True, "published": 0, "deferred": [], "errors": []}
-
-    state_script = ROOT / "scripts" / "state_branch.py"
-    command(
-        [
-            sys.executable,
-            str(state_script),
-            "restore",
-            "--profile",
-            "controller-feedback",
-            "--allow-missing",
-        ],
-        cwd=ROOT,
-        timeout=90,
-    )
-    feedback_path = STATE / "controller_terminal_feedback.json"
-    feedback = read_json(feedback_path, missing={})
-    if not isinstance(feedback, dict):
-        raise RuntimeError("controller terminal feedback is invalid")
+        return {
+            "ok": True,
+            "published": 0,
+            "stateChanged": False,
+            "publishAttempts": 0,
+            "deferred": [],
+            "errors": [],
+        }
 
     github = GitHubClient()
     analyzed = iso_z(datetime.now(UTC))
     published: list[dict[str, Any]] = []
     deferred: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
+    updates: dict[str, dict[str, Any]] = {}
     for row in rows:
         key = str(row["key"])
         try:
@@ -419,8 +409,7 @@ def publish_terminal_feedback(args: argparse.Namespace) -> dict[str, Any]:
             if issue_changed:
                 deferred.append({"key": key, "reason": "issue_updated_after_local_snapshot"})
                 continue
-            previous = feedback.get(key) if isinstance(feedback.get(key), dict) else {}
-            feedback[key] = previous | {
+            updates[key] = {
                 "analyzed": analyzed,
                 "status": CONTROLLER_TERMINAL_STATUS,
                 "controller_stage": row["stage"],
@@ -433,25 +422,76 @@ def publish_terminal_feedback(args: argparse.Namespace) -> dict[str, Any]:
         except (KeyError, OSError, RuntimeError, ValueError) as exc:
             errors.append({"key": key, "error": str(exc)[:240]})
 
-    if published:
-        atomic_write_json(feedback_path, feedback)
+    state_changed = False
+    publish_attempts = 0
+    if updates:
+        state_changed, publish_attempts = _publish_controller_feedback_updates(updates)
+    return {
+        "ok": not errors,
+        "published": len(published),
+        "stateChanged": state_changed,
+        "publishAttempts": publish_attempts,
+        "deferred": deferred,
+        "errors": errors,
+    }
+
+
+def _publish_controller_feedback_updates(
+    updates: dict[str, dict[str, Any]], max_attempts: int = 3
+) -> tuple[bool, int]:
+    """Merge terminal updates without weakening the state branch stale-write guard."""
+
+    state_script = ROOT / "scripts" / "state_branch.py"
+    feedback_path = STATE / "controller_terminal_feedback.json"
+    for attempt in range(1, max_attempts + 1):
         command(
             [
                 sys.executable,
                 str(state_script),
-                "publish",
+                "restore",
                 "--profile",
                 "controller-feedback",
+                "--allow-missing",
             ],
             cwd=ROOT,
             timeout=90,
         )
-    return {
-        "ok": not errors,
-        "published": len(published),
-        "deferred": deferred,
-        "errors": errors,
-    }
+        feedback = read_json(feedback_path, missing={})
+        if not isinstance(feedback, dict):
+            raise RuntimeError("controller terminal feedback is invalid")
+
+        changed = False
+        for key, update in updates.items():
+            previous = feedback.get(key) if isinstance(feedback.get(key), dict) else {}
+            semantic_update = {name: value for name, value in update.items() if name != "analyzed"}
+            if previous and all(
+                previous.get(name) == value for name, value in semantic_update.items()
+            ):
+                continue
+            feedback[key] = previous | update
+            changed = True
+
+        if not changed:
+            return False, attempt
+
+        atomic_write_json(feedback_path, feedback)
+        try:
+            command(
+                [
+                    sys.executable,
+                    str(state_script),
+                    "publish",
+                    "--profile",
+                    "controller-feedback",
+                ],
+                cwd=ROOT,
+                timeout=90,
+            )
+            return True, attempt
+        except RuntimeError as exc:
+            if "state branch changed since restore" not in str(exc) or attempt == max_attempts:
+                raise
+    raise RuntimeError("controller terminal feedback publish attempts exhausted")
 
 
 def list_pending(path: Path = LEDGER_PATH) -> dict[str, Any]:

@@ -13,6 +13,7 @@ from oss_pr_radar.scanner import (
     SCANNER_VERSION,
     Radar,
     candidate_notification_digest,
+    controller_terminal_issue_outcomes,
     count_seen_rechecks,
     merge_controller_terminal_feedback,
     select_inspection_bases,
@@ -976,6 +977,17 @@ def test_controller_terminal_feedback_does_not_override_newer_cloud_issue_revisi
 
     assert merged["a/b#1"]["status"] == "inspection_budget_deferred"
     assert merged["a/b#2"]["status"] == "controller_terminal"
+
+
+def test_controller_terminal_feedback_revokes_pending_dispatch_intents():
+    outcomes = controller_terminal_issue_outcomes(
+        {
+            "a/b#1": {"status": "controller_terminal"},
+            "a/b#2": {"status": "inspection_budget_deferred"},
+        }
+    )
+
+    assert outcomes == {"a/b#1": {"status": "rejected", "reason": "controller_terminal"}}
 
 
 def test_unselected_active_migrations_are_declassified_until_revalidated(monkeypatch, tmp_path):
