@@ -978,6 +978,14 @@ def test_validation_followup_is_write_ahead_and_rearms_for_a_new_result(tmp_path
 
     store.commit_validation_followup(thread_id="thread-1", result_digest="result-digest-1")
     assert store.unresolved_validation_followups() == []
+    old = iso_z(datetime.now(UTC) - timedelta(hours=3))
+    with store.connect() as connection:
+        connection.execute(
+            """UPDATE events SET created_at=?
+               WHERE event_type='VALIDATION_FOLLOWUP_SENT'""",
+            (old,),
+        )
+    assert store.stale_validation_followups(min_age_minutes=90)[0]["threadId"] == "thread-1"
 
     store.record_validation_deferred(
         "a/b#1",
@@ -988,6 +996,7 @@ def test_validation_followup_is_write_ahead_and_rearms_for_a_new_result(tmp_path
     rearmed = store.validation_followup_candidates()[0]
     assert rearmed["resultDigest"] == "result-digest-2"
     assert rearmed["missing"] == ["reproduction_verified"]
+    assert store.stale_validation_followups(min_age_minutes=90) == []
 
 
 def test_expired_intent_cannot_be_claimed(tmp_path):

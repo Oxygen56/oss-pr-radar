@@ -1846,6 +1846,7 @@ def test_controller_defers_blocked_local_fix_with_incomplete_validation(tmp_path
     listed = MODULE.validation_followup_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
     assert listed["ok"] is True
     assert listed["unresolved"] == []
+    assert listed["stale"] == []
     assert listed["errors"] == []
     assert listed["candidates"][0]["threadId"] == "thread-1"
     assert listed["candidates"][0]["missing"] == [
@@ -1884,6 +1885,19 @@ def test_controller_defers_blocked_local_fix_with_incomplete_validation(tmp_path
     )
     assert final_list["candidates"] == []
     assert final_list["unresolved"] == []
+    assert final_list["stale"] == []
+
+    with store.connect() as connection:
+        connection.execute(
+            """UPDATE events SET created_at=?
+               WHERE event_type='VALIDATION_FOLLOWUP_SENT'""",
+            (iso_z(datetime.now(UTC) - timedelta(hours=3)),),
+        )
+    stalled = MODULE.validation_followup_list(
+        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3", min_age_minutes=90)
+    )
+    assert stalled["ok"] is False
+    assert stalled["stale"][0]["threadId"] == "thread-1"
 
 
 def test_controller_defers_unvalidated_publishable_fix_without_agent_failure(tmp_path):

@@ -1605,6 +1605,38 @@ class RadarLedger:
             for row in rows
         ]
 
+    def stale_validation_followups(self, *, min_age_minutes: int = 90) -> list[dict[str, Any]]:
+        cutoff = iso_z(
+            datetime.now(UTC) - timedelta(minutes=max(30, min(int(min_age_minutes), 24 * 60)))
+        )
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT o.key,o.issue_url,d.payload_json,s.created_at
+                   FROM opportunities o
+                   JOIN events d ON d.id=(
+                     SELECT MAX(d2.id) FROM events d2
+                     WHERE d2.opportunity_key=o.key
+                       AND d2.event_type='TASK_RESULT_VALIDATION_DEFERRED'
+                   )
+                   JOIN events s ON s.opportunity_key=o.key
+                     AND s.event_type='VALIDATION_FOLLOWUP_SENT'
+                     AND s.dedupe_key=json_extract(d.payload_json,'$.resultDigest')
+                   WHERE o.stage='VALIDATION_PENDING' AND s.created_at<=?
+                   ORDER BY s.created_at""",
+                (cutoff,),
+            ).fetchall()
+        return [
+            {
+                "key": row["key"],
+                "issueUrl": row["issue_url"],
+                "threadId": json.loads(row["payload_json"]).get("threadId"),
+                "resultDigest": json.loads(row["payload_json"]).get("resultDigest"),
+                "missing": list(json.loads(row["payload_json"]).get("missing") or []),
+                "sentAt": row["created_at"],
+            }
+            for row in rows
+        ]
+
     def task_context(
         self,
         *,

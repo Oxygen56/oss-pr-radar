@@ -1888,10 +1888,12 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
         except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
             errors.append({"key": candidate["key"], "error": str(exc)[:300]})
     unresolved = store.unresolved_validation_followups()
+    stale = store.stale_validation_followups(min_age_minutes=getattr(args, "min_age_minutes", 90))
     return {
-        "ok": not errors and not unresolved,
+        "ok": not errors and not unresolved and not stale,
         "candidates": candidates,
         "unresolved": unresolved,
+        "stale": stale,
         "errors": errors,
     }
 
@@ -2788,7 +2790,8 @@ def main() -> int:
     pr_followup_commit_parser = subparsers.add_parser("pr-followup-commit")
     pr_followup_commit_parser.add_argument("--thread-id", required=True)
     pr_followup_commit_parser.add_argument("--wake-digest", required=True)
-    subparsers.add_parser("validation-followup-list")
+    validation_followup_list_parser = subparsers.add_parser("validation-followup-list")
+    validation_followup_list_parser.add_argument("--min-age-minutes", type=int, default=90)
     validation_followup_reserve_parser = subparsers.add_parser("validation-followup-reserve")
     validation_followup_reserve_parser.add_argument("--thread-id", required=True)
     validation_followup_reserve_parser.add_argument("--result-digest", required=True)

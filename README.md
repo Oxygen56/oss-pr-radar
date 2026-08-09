@@ -184,8 +184,9 @@ python scripts/local_dispatch_bridge.py pr-followup-reserve \
 python scripts/local_dispatch_bridge.py pr-followup-commit \
   --thread-id THREAD_ID --wake-digest WAKE_DIGEST
 
-# Prefetch only lockfile-declared dependencies, then resume incomplete validation
-python scripts/local_dispatch_bridge.py validation-followup-list
+# Prefetch only lockfile-declared dependencies, then resume incomplete validation.
+# The listing also reports follow-ups that have made no progress for 90 minutes.
+python scripts/local_dispatch_bridge.py validation-followup-list --min-age-minutes 90
 python scripts/local_dispatch_bridge.py validation-followup-reserve \
   --thread-id THREAD_ID --result-digest RESULT_DIGEST --prefetch-complete
 python scripts/local_dispatch_bridge.py validation-followup-commit \
