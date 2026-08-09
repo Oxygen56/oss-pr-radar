@@ -2691,7 +2691,7 @@ class RadarLedger:
                          AND NOT EXISTS (
                            SELECT 1 FROM publication_requests p
                            WHERE p.opportunity_key=o.key
-                             AND p.status IN ('PENDING','GRANTED','CONSUMED')
+                             AND p.status IN ('PENDING','GRANTED')
                          )
                        )
                      )

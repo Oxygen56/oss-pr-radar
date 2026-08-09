@@ -1401,6 +1401,51 @@ def test_first_validation_result_is_not_mistaken_for_no_progress(tmp_path):
     assert store.validation_followup_candidates()[0]["resultDigest"] == "result-digest-1"
 
 
+@pytest.mark.parametrize(
+    ("publication_status", "expected_candidates"),
+    [("PENDING", 0), ("GRANTED", 0), ("CONSUMED", 1), ("BLOCKED", 1)],
+)
+def test_task_result_candidate_is_blocked_only_by_active_publication(
+    tmp_path, publication_status, expected_candidates
+):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+    store.record_stage("a/b#1", "VALIDATION_PENDING")
+    now = iso_z(datetime.now(UTC))
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO publication_requests
+               (request_id,opportunity_key,thread_id,commit_sha,branch,worktree_path,
+                evidence_digest,status,reason,permit_id,request_json,created_at,updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                "request-1",
+                "a/b#1",
+                "thread-1",
+                "a" * 40,
+                "fix/test",
+                "/tmp/worktree",
+                "evidence",
+                publication_status,
+                None,
+                None,
+                "{}",
+                now,
+                now,
+            ),
+        )
+
+    assert len(store.task_result_candidates()) == expected_candidates
+
+
 def test_expired_intent_cannot_be_claimed(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(intent(expiresAt="2020-01-01T00:00:00Z"))
