@@ -2015,6 +2015,95 @@ def test_controller_defers_unvalidated_publishable_fix_without_agent_failure(tmp
     )
 
 
+def test_validation_followup_uses_cumulative_files_for_first_publication(tmp_path):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        missing_quality=("regression_test_verified", "relevant_tests_green"),
+    )
+
+    deferred = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    assert deferred["validationDeferred"]
+    original_head = run_git(worktree, "rev-parse", "HEAD")
+
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    context = json.loads(context_path.read_text(encoding="utf-8"))
+    assert context["stage"] == "VALIDATION_PENDING"
+    (worktree / "test_runtime.py").write_text(
+        "def test_runtime():\n    assert True\n", encoding="utf-8"
+    )
+    followup = json.loads(result_path.read_text(encoding="utf-8"))
+    followup.update(
+        {
+            "contextDigest": context["contextDigest"],
+            "handoffMode": "controller_commit_required",
+            "commitSha": None,
+            "commitMessage": "test: cover runtime boundary",
+            "changedFiles": ["test_runtime.py"],
+            "quality": {field: True for field in QUALITY_FIELDS},
+        }
+    )
+    followup.pop("controllerCommitChangedFiles", None)
+    result_path.write_text(json.dumps(followup), encoding="utf-8")
+
+    advanced = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert advanced["ok"] is True
+    assert advanced["ingested"] == [{"key": "a/b#1", "stage": "FIX_READY"}]
+    assert len(advanced["publicationRequests"]) == 1
+    assert run_git(worktree, "rev-parse", "HEAD") != original_head
+    finalized = json.loads(result_path.read_text(encoding="utf-8"))
+    assert finalized["controllerCommitChangedFiles"] == ["test_runtime.py"]
+    assert finalized["changedFiles"] == ["runtime.py", "test_runtime.py"]
+    assert run_git(worktree, "show", "--pretty=format:", "--name-only", "HEAD") == (
+        "test_runtime.py"
+    )
+
+
+def test_validation_followup_normalizes_existing_complete_handoff(tmp_path):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        missing_quality=("regression_test_verified", "relevant_tests_green"),
+    )
+    MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    context = json.loads(context_path.read_text(encoding="utf-8"))
+    (worktree / "test_runtime.py").write_text(
+        "def test_runtime():\n    assert True\n", encoding="utf-8"
+    )
+    run_git(worktree, "add", "test_runtime.py")
+    run_git(worktree, "commit", "-m", "test: cover runtime boundary")
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value.update(
+        {
+            "handoffMode": "controller_commit_complete",
+            "commitSha": run_git(worktree, "rev-parse", "HEAD"),
+            "changedFiles": ["test_runtime.py"],
+        }
+    )
+    value.pop("controllerCommitChangedFiles", None)
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+
+    finalized, _raw = MODULE._finalize_controller_commit(
+        candidate={"worktreePath": str(worktree)},
+        context=context,
+        value=value,
+        result_path=result_path,
+    )
+
+    assert finalized["controllerCommitChangedFiles"] == ["test_runtime.py"]
+    assert finalized["changedFiles"] == ["runtime.py", "test_runtime.py"]
+
+
 def test_validation_prefetch_plan_is_lockfile_scoped(tmp_path):
     worktree = tmp_path / "worktree"
     result_dir = worktree / ".oss-pr-radar"

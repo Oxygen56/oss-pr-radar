@@ -1540,6 +1540,30 @@ def _prepared_default_branch(worktree: Path) -> str | None:
     return branch
 
 
+def _validation_publication_changed_files(
+    *, worktree: Path, context: dict[str, Any], commit_changed_files: list[str]
+) -> list[str]:
+    if context.get("stage") != "VALIDATION_PENDING" or isinstance(context.get("prFollowup"), dict):
+        return commit_changed_files
+    default_branch = _prepared_default_branch(worktree)
+    if not default_branch:
+        raise RuntimeError("validation continuation lacks a prepared default branch")
+    tracking_ref = f"refs/remotes/origin/{default_branch}"
+    base = command(["git", "merge-base", "HEAD", tracking_ref], cwd=worktree)
+    cumulative = _validated_changed_files(
+        [
+            line
+            for line in command(
+                ["git", "diff", "--name-only", f"{base}..HEAD"], cwd=worktree
+            ).splitlines()
+            if line
+        ]
+    )
+    if not set(commit_changed_files).issubset(cumulative):
+        raise RuntimeError("validation commit files are missing from the cumulative diff")
+    return cumulative
+
+
 def _finalize_controller_commit(
     *,
     candidate: dict[str, Any],
@@ -1554,6 +1578,26 @@ def _finalize_controller_commit(
             value=value,
             result_path=result_path,
         )
+    if value.get("handoffMode") == "controller_commit_complete":
+        worktree = Path(candidate["worktreePath"]).resolve()
+        commit_changed_files = _validated_changed_files(
+            value.get("controllerCommitChangedFiles") or value.get("changedFiles")
+        )
+        publication_changed_files = _validation_publication_changed_files(
+            worktree=worktree,
+            context=context,
+            commit_changed_files=commit_changed_files,
+        )
+        if (
+            value.get("changedFiles") != publication_changed_files
+            or value.get("controllerCommitChangedFiles") != commit_changed_files
+        ):
+            finalized = dict(value)
+            finalized["controllerCommitChangedFiles"] = commit_changed_files
+            finalized["changedFiles"] = publication_changed_files
+            _atomic_json(result_path, finalized)
+            return finalized, result_path.read_bytes()
+        return value, result_path.read_bytes()
     if value.get("handoffMode") != "controller_commit_required":
         return value, result_path.read_bytes()
 
@@ -1613,7 +1657,12 @@ def _finalize_controller_commit(
     finalized = dict(value)
     finalized["commitSha"] = command(["git", "rev-parse", "HEAD"], cwd=worktree)
     finalized["branch"] = command(["git", "symbolic-ref", "--short", "HEAD"], cwd=worktree)
-    finalized["changedFiles"] = changed_files
+    finalized["controllerCommitChangedFiles"] = changed_files
+    finalized["changedFiles"] = _validation_publication_changed_files(
+        worktree=worktree,
+        context=context,
+        commit_changed_files=changed_files,
+    )
     finalized["handoffMode"] = "controller_commit_complete"
     default_branch = _prepared_default_branch(worktree)
     publication = finalized.get("publication")
