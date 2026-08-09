@@ -1,90 +1,87 @@
 {
-  "digest": "1d3740aefebcaf8cbb5adbd63e76a4dfd5dacf19c3a9b7a24b82fdafca679856",
-  "generatedAt": "2026-08-09T21:50:56.722702Z",
+  "digest": "4bc8211c9b6187b1e44ad1c4ff4da123fa7a5fd607afc481979054aed425f610",
+  "generatedAt": "2026-08-09T22:53:23.659066Z",
   "items": [
     {
-      "actionDigest": "d522046d217aaacf71ebb090d5aa6393d22cacb23970a1eeb3bf87683b35968a",
-      "actions": [
-        "CI 检查失败",
-        "存在未解决审查线程"
-      ],
+      "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
+      "actions": [],
       "baseRefName": "litellm_internal_staging",
       "baseSha": "f6b9518ddbb1e91542ae406f230500adcf58c8e4",
-      "checkedAt": "2026-08-09T21:50:56.722702Z",
+      "checkedAt": "2026-08-09T22:53:23.659066Z",
       "draft": false,
       "evidence": {
-        "actionableCheckNames": [
-          "lint"
-        ],
+        "actionableCheckNames": [],
         "baseCompareError": null,
-        "baseCompareStatus": "ahead",
+        "baseCompareStatus": null,
         "baseIntegrationRequired": false,
-        "baseMergeBaseSha": "f6b9518ddbb1e91542ae406f230500adcf58c8e4",
+        "baseMergeBaseSha": null,
         "baseRefName": "litellm_internal_staging",
         "baseSha": "f6b9518ddbb1e91542ae406f230500adcf58c8e4",
         "changedFiles": [
           "litellm/llms/azure/responses/transformation.py",
           "tests/test_litellm/llms/azure/response/test_azure_transformation.py"
         ],
-        "failingChecks": [
-          {
-            "annotations": [
-              {
-                "endLine": 2,
-                "level": "warning",
-                "message": "Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955, actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/",
-                "path": ".github",
-                "startLine": 2
-              },
-              {
-                "endLine": 22,
-                "level": "failure",
-                "message": "Process completed with exit code 1.",
-                "path": ".github",
-                "startLine": 22
-              }
-            ],
-            "conclusion": "failure",
-            "name": "lint",
-            "url": "https://github.com/BerriAI/litellm/actions/runs/31337205304/job/93304908184"
-          }
-        ],
-        "headSha": "bde115f480bfb1986b1f1196e37c33bec839d47c",
+        "failingChecks": [],
+        "headSha": "5d08d5e3096c1751f79905098b8b1c8d3dce5a44",
         "mergeConflict": false,
         "requestedChanges": [],
-        "unresolvedReviewThreads": [
-          {
-            "association": "CONTRIBUTOR",
-            "authorType": "Bot",
-            "createdAt": "2026-08-09T21:37:02Z",
-            "path": "litellm/llms/azure/responses/transformation.py",
-            "reviewer": "greptile-apps",
-            "summary": "<a href=\"#\"><img alt=\"P2\" src=\"https://greptile-static-assets.s3.amazonaws.com/badges/p2.svg?v=9\" align=\"top\"></a> **Avoid untyped normalization boundaries** The new normalization helpers accept and return `Any`, preventing static validation of their supported input and output shapes; use strongly typed parameters and return values for these Azure tool transformations. **Context Used:** CLAUDE.md ",
-            "url": "https://github.com/BerriAI/litellm/pull/36372#discussion_r3745365577"
-          }
-        ]
+        "unresolvedReviewThreads": []
       },
-      "headSha": "bde115f480bfb1986b1f1196e37c33bec839d47c",
+      "headSha": "5d08d5e3096c1751f79905098b8b1c8d3dce5a44",
       "key": "BerriAI/litellm#36372",
       "mergeConflict": false,
       "mergeableState": "blocked",
       "number": 36372,
       "repo": "BerriAI/litellm",
-      "taskActionDigest": "59965169b8a68e005014ecdb4e7a91fbb97c305fd8a51f60db8416849c87ffbb",
-      "taskActions": [
-        "当前分支检查失败",
-        "存在未解决审查线程"
-      ],
-      "taskFollowupRequired": true,
+      "taskActionDigest": "cc3e1387498f4810fa6d5d610e71a0cf1c9a82498092f975ea29a3da68d1c9ff",
+      "taskActions": [],
+      "taskFollowupRequired": false,
       "title": "fix(azure): normalize empty namespace tool descriptions",
       "url": "https://github.com/BerriAI/litellm/pull/36372"
     },
     {
       "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
       "actions": [],
+      "baseRefName": "litellm_internal_staging",
+      "baseSha": "f6b9518ddbb1e91542ae406f230500adcf58c8e4",
+      "checkedAt": "2026-08-09T22:53:23.659066Z",
+      "draft": false,
+      "evidence": {
+        "actionableCheckNames": [],
+        "baseCompareError": null,
+        "baseCompareStatus": null,
+        "baseIntegrationRequired": false,
+        "baseMergeBaseSha": null,
+        "baseRefName": "litellm_internal_staging",
+        "baseSha": "f6b9518ddbb1e91542ae406f230500adcf58c8e4",
+        "changedFiles": [
+          "ui/litellm-dashboard/src/app/(dashboard)/mcp-servers/_components/mcp_server_edit.test.tsx",
+          "ui/litellm-dashboard/src/app/(dashboard)/mcp-servers/_components/mcp_server_edit.tsx"
+        ],
+        "failingChecks": [],
+        "headSha": "29fcded639ff5cd5a7b6ef105bf3411699983dd8",
+        "mergeConflict": false,
+        "requestedChanges": [],
+        "unresolvedReviewThreads": []
+      },
+      "headSha": "29fcded639ff5cd5a7b6ef105bf3411699983dd8",
+      "key": "BerriAI/litellm#36374",
+      "mergeConflict": false,
+      "mergeableState": "blocked",
+      "number": 36374,
+      "repo": "BerriAI/litellm",
+      "taskActionDigest": "cc3e1387498f4810fa6d5d610e71a0cf1c9a82498092f975ea29a3da68d1c9ff",
+      "taskActions": [],
+      "taskFollowupRequired": false,
+      "title": "fix(ui): preserve stdio MCP environment variables on edit",
+      "url": "https://github.com/BerriAI/litellm/pull/36374"
+    },
+    {
+      "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
+      "actions": [],
       "baseRefName": "develop",
       "baseSha": "f5900d1e9e61513b6bc189e1f58b9e50e94fbd9a",
-      "checkedAt": "2026-08-09T21:50:56.722702Z",
+      "checkedAt": "2026-08-09T22:53:23.659066Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -126,7 +123,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "944172f6c0d0f90fdc1921fd38c1dcae62c48592",
-      "checkedAt": "2026-08-09T21:50:56.722702Z",
+      "checkedAt": "2026-08-09T22:53:23.659066Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -176,7 +173,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "944172f6c0d0f90fdc1921fd38c1dcae62c48592",
-      "checkedAt": "2026-08-09T21:50:56.722702Z",
+      "checkedAt": "2026-08-09T22:53:23.659066Z",
       "draft": true,
       "evidence": {
         "actionableCheckNames": [],
@@ -226,8 +223,8 @@
       "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
       "actions": [],
       "baseRefName": "main",
-      "baseSha": "6889c9d0ebbda807eece8e84895eada41c94e4f5",
-      "checkedAt": "2026-08-09T21:50:56.722702Z",
+      "baseSha": "ebe261606939d9e1fc29a3b2b3460a836b5f77d0",
+      "checkedAt": "2026-08-09T22:53:23.659066Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -236,7 +233,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "6889c9d0ebbda807eece8e84895eada41c94e4f5",
+        "baseSha": "ebe261606939d9e1fc29a3b2b3460a836b5f77d0",
         "changedFiles": [
           "swebench/harness/constants/__init__.py",
           "swebench/harness/test_spec/test_spec.py"
@@ -263,8 +260,8 @@
       "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
       "actions": [],
       "baseRefName": "main",
-      "baseSha": "6889c9d0ebbda807eece8e84895eada41c94e4f5",
-      "checkedAt": "2026-08-09T21:50:56.722702Z",
+      "baseSha": "ebe261606939d9e1fc29a3b2b3460a836b5f77d0",
+      "checkedAt": "2026-08-09T22:53:23.659066Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -273,7 +270,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "6889c9d0ebbda807eece8e84895eada41c94e4f5",
+        "baseSha": "ebe261606939d9e1fc29a3b2b3460a836b5f77d0",
         "changedFiles": [
           "swebench/harness/constants/__init__.py",
           "swebench/harness/grading.py",
@@ -304,7 +301,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "bf548641c30bddcccf257f35399ca3c02a7f74c6",
-      "checkedAt": "2026-08-09T21:50:56.722702Z",
+      "checkedAt": "2026-08-09T22:53:23.659066Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -340,7 +337,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "bacac7410cf2ac122dd892152beff8b03f38729f",
-      "checkedAt": "2026-08-09T21:50:56.722702Z",
+      "checkedAt": "2026-08-09T22:53:23.659066Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -373,28 +370,25 @@
       "url": "https://github.com/agentscope-ai/QwenPaw/pull/6825"
     },
     {
-      "actionDigest": "99792a33c4b3f078b02026097e86429fa62a952bc85f5a42c98939ba77b03c97",
+      "actionDigest": "9642b49f06e06cc533d2df7d6d05e47fc96ce6dda2bfb85c19b55a0f0b7eedc1",
       "actions": [
-        "CI 检查失败",
         "存在未解决审查线程"
       ],
       "baseRefName": "main",
       "baseSha": "cb5082f61b06d6b31423ba07000f010e25192af1",
-      "checkedAt": "2026-08-09T21:50:56.722702Z",
+      "checkedAt": "2026-08-09T22:53:23.659066Z",
       "draft": false,
       "evidence": {
-        "actionableCheckNames": [
-          "rust-clippy (.)",
-          "rust-tests (lib/bindings/python)"
-        ],
+        "actionableCheckNames": [],
         "baseCompareError": null,
-        "baseCompareStatus": "diverged",
-        "baseIntegrationRequired": true,
-        "baseMergeBaseSha": "ac7b7513790ef1d619b46f805aea03c9f21200ba",
+        "baseCompareStatus": null,
+        "baseIntegrationRequired": false,
+        "baseMergeBaseSha": null,
         "baseRefName": "main",
         "baseSha": "cb5082f61b06d6b31423ba07000f010e25192af1",
         "changedFiles": [
           "deploy/inference-gateway/epp/pkg/plugins/disagg/decode_scorer.go",
+          "deploy/inference-gateway/epp/pkg/plugins/disagg/decode_scorer_test.go",
           "deploy/inference-gateway/epp/pkg/plugins/disagg/prefill_scorer.go",
           "deploy/inference-gateway/epp/pkg/plugins/disagg/profile_handler.go",
           "deploy/inference-gateway/epp/pkg/plugins/disagg/reservation_test.go",
@@ -403,118 +397,24 @@
           "deploy/inference-gateway/epp/pkg/plugins/dynamo_kv_scorer/plugin_test.go",
           "deploy/inference-gateway/ext-proc/src/epp.rs",
           "lib/bindings/c/src/lib.rs",
+          "lib/llm/src/kv_router.rs",
+          "lib/llm/src/kv_router/prefill_router/activation.rs",
           "lib/llm/src/kv_router/prefill_router/mod.rs",
           "lib/llm/src/kv_router/prefill_router/query.rs"
         ],
-        "failingChecks": [
-          {
-            "annotations": [
-              {
-                "endLine": 48,
-                "level": "failure",
-                "message": "Process completed with exit code 1.",
-                "path": ".github",
-                "startLine": 48
-              }
-            ],
-            "conclusion": "failure",
-            "name": "pre-merge-status-check",
-            "url": "https://github.com/ai-dynamo/dynamo/actions/runs/31307542854/job/93230614419"
-          },
-          {
-            "annotations": [
-              {
-                "endLine": 2,
-                "level": "warning",
-                "message": "Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/",
-                "path": ".github",
-                "startLine": 2
-              },
-              {
-                "endLine": 892,
-                "level": "failure",
-                "message": "Process completed with exit code 101.",
-                "path": ".github",
-                "startLine": 892
-              }
-            ],
-            "conclusion": "failure",
-            "name": "rust-clippy (.)",
-            "url": "https://github.com/ai-dynamo/dynamo/actions/runs/31307542854/job/93230165939"
-          },
-          {
-            "annotations": [],
-            "conclusion": "cancelled",
-            "name": "rust-clippy (lib/bindings/kvbm)",
-            "url": "https://github.com/ai-dynamo/dynamo/actions/runs/31307542854/job/93230165933"
-          },
-          {
-            "annotations": [],
-            "conclusion": "cancelled",
-            "name": "rust-clippy (lib/bindings/python)",
-            "url": "https://github.com/ai-dynamo/dynamo/actions/runs/31307542854/job/93230165938"
-          },
-          {
-            "annotations": [],
-            "conclusion": "cancelled",
-            "name": "rust-tests (.)",
-            "url": "https://github.com/ai-dynamo/dynamo/actions/runs/31307542854/job/93230165934"
-          },
-          {
-            "annotations": [],
-            "conclusion": "cancelled",
-            "name": "rust-tests (lib/bindings/kvbm)",
-            "url": "https://github.com/ai-dynamo/dynamo/actions/runs/31307542854/job/93230166016"
-          },
-          {
-            "annotations": [
-              {
-                "endLine": 2,
-                "level": "warning",
-                "message": "Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/",
-                "path": ".github",
-                "startLine": 2
-              },
-              {
-                "endLine": 729,
-                "level": "failure",
-                "message": "Process completed with exit code 101.",
-                "path": ".github",
-                "startLine": 729
-              }
-            ],
-            "conclusion": "failure",
-            "name": "rust-tests (lib/bindings/python)",
-            "url": "https://github.com/ai-dynamo/dynamo/actions/runs/31307542854/job/93230165931"
-          },
-          {
-            "annotations": [],
-            "conclusion": "cancelled",
-            "name": "rust-tests (lib/runtime/examples)",
-            "url": "https://github.com/ai-dynamo/dynamo/actions/runs/31307542854/job/93230165937"
-          }
-        ],
-        "headSha": "13dd2e2de2ab5c3ac741789f2b2b020fd2da2a3d",
+        "failingChecks": [],
+        "headSha": "383aa6a36f760ae7996e718a9ff194c135e7842c",
         "mergeConflict": false,
         "requestedChanges": [],
         "unresolvedReviewThreads": [
           {
-            "association": "CONTRIBUTOR",
+            "association": "NONE",
             "authorType": "Bot",
-            "createdAt": "2026-08-09T10:12:27Z",
+            "createdAt": "2026-08-09T22:48:45Z",
             "path": "deploy/inference-gateway/epp/pkg/plugins/disagg/decode_scorer.go",
-            "reviewer": "coderabbitai",
-            "summary": "_🩺 Stability & Availability_ | _🟠 Major_ | _⚡ Quick win_ **`firstTokenSeen` entries leak when a stream never reaches end-of-stream.** `ResponseBody` stores `bookingID` in `firstTokenSeen` on the first non-terminal callback and deletes it only on `EndOfStream`. If the client disconnects or the upstream stream aborts, no terminal callback arrives and the entry stays in the map for the process lifeti",
-            "url": "https://github.com/ai-dynamo/dynamo/pull/12907#discussion_r3743421086"
-          },
-          {
-            "association": "CONTRIBUTOR",
-            "authorType": "Bot",
-            "createdAt": "2026-08-09T10:13:13Z",
-            "path": "deploy/inference-gateway/epp/pkg/plugins/disagg/decode_scorer.go",
-            "reviewer": "devin-ai-integration",
-            "summary": "<!-- devin-review-comment {\"id\": \"BUG_pr-review-job-ac60945860ab412f876da81a390e9aee_0001\", \"file_path\": \"deploy/inference-gateway/epp/pkg/plugins/disagg/decode_scorer.go\", \"start_line\": 458, \"end_line\": 461, \"side\": \"RIGHT\", \"based_on_repo_rules\": false} --> 🟡 **A failing prefill-completion notification is retried on every streamed chunk, which can stall responses** The record that prefill comple",
-            "url": "https://github.com/ai-dynamo/dynamo/pull/12907#discussion_r3743422840"
+            "reviewer": "dynamo-review-agent",
+            "summary": "When rollback cleanup fails, the code only flips `PrefillEnabledState` and leaves `x-dynamo-routing-mode=disaggregated` plus the prefill worker headers on the request, so the fallback decode dispatch can still be sent as disaggregated with stale prefill routing metadata. Fix: on rollback failure, keep `PrefillReservationIDHeader` for retry but remove `PrefillWorkerIDHeader`/`PrefillDpRankHeader` a",
+            "url": "https://github.com/ai-dynamo/dynamo/pull/12907#discussion_r3745554473"
           },
           {
             "association": "CONTRIBUTOR",
@@ -551,27 +451,17 @@
             "reviewer": "devin-ai-integration",
             "summary": "<!-- devin-review-comment {\"id\": \"ANALYSIS_pr-review-job-ac60945860ab412f876da81a390e9aee_0003\", \"file_path\": \"lib/llm/src/kv_router/prefill_router/query.rs\", \"start_line\": 176, \"end_line\": 197, \"side\": \"RIGHT\"} --> 🔍 **Prefill reservation holds an active-request slot for the whole decode duration** `reserve_prefill_worker` books the request in the prefill router's sequence tracker; `mark_prefill_",
             "url": "https://github.com/ai-dynamo/dynamo/pull/12907#discussion_r3743422896"
-          },
-          {
-            "association": "NONE",
-            "authorType": "Bot",
-            "createdAt": "2026-08-09T10:12:41Z",
-            "path": "lib/llm/src/kv_router/prefill_router/query.rs",
-            "reviewer": "dynamo-review-agent",
-            "summary": "Tracked prefill routing now hard-fails for `InnerPrefillRouter::SimpleRouter`, which regresses configurations that previously routed through the simple prefill router and makes ext-proc return a routing failure instead of falling back to aggregated decode. Fix: preserve the previous simple-router behavior for tracked calls without scheduler load reservation, or return `PrefillError::NotActivated` ",
-            "url": "https://github.com/ai-dynamo/dynamo/pull/12907#discussion_r3743421676"
           }
         ]
       },
-      "headSha": "13dd2e2de2ab5c3ac741789f2b2b020fd2da2a3d",
+      "headSha": "383aa6a36f760ae7996e718a9ff194c135e7842c",
       "key": "ai-dynamo/dynamo#12907",
       "mergeConflict": false,
       "mergeableState": "blocked",
       "number": 12907,
       "repo": "ai-dynamo/dynamo",
-      "taskActionDigest": "a4c4a6a62d66cc4e538d085303c80ef5c2a5c10056d6930e4650321195adedc3",
+      "taskActionDigest": "7095543c9bc243c87a31420512a248b225edba63ede8da234f1872b3cf04537c",
       "taskActions": [
-        "当前分支检查失败",
         "存在未解决审查线程"
       ],
       "taskFollowupRequired": true,
@@ -585,7 +475,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "f17010c9bb483898c1d9c9f42dde2b3a98889434",
-      "checkedAt": "2026-08-09T21:50:56.722702Z",
+      "checkedAt": "2026-08-09T22:53:23.659066Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -624,7 +514,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "e7868690d76a9ef39ed283bcd2e39203f6abe77d",
-      "checkedAt": "2026-08-09T21:50:56.722702Z",
+      "checkedAt": "2026-08-09T22:53:23.659066Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -662,7 +552,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "32601887cfbc9f4f1e3cad3e2b678e56aeaeaae4",
-      "checkedAt": "2026-08-09T21:50:56.722702Z",
+      "checkedAt": "2026-08-09T22:53:23.659066Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -706,7 +596,7 @@
       ],
       "baseRefName": "master",
       "baseSha": "32fb32494897fe793538eb3e0f87b27116500179",
-      "checkedAt": "2026-08-09T21:50:56.722702Z",
+      "checkedAt": "2026-08-09T22:53:23.659066Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [
@@ -894,7 +784,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "b3cee3f973ffe9d023a10c5c414deba68cd6e09d",
-      "checkedAt": "2026-08-09T21:50:56.722702Z",
+      "checkedAt": "2026-08-09T22:53:23.659066Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [
@@ -979,7 +869,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "b3cee3f973ffe9d023a10c5c414deba68cd6e09d",
-      "checkedAt": "2026-08-09T21:50:56.722702Z",
+      "checkedAt": "2026-08-09T22:53:23.659066Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1016,7 +906,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "b3cee3f973ffe9d023a10c5c414deba68cd6e09d",
-      "checkedAt": "2026-08-09T21:50:56.722702Z",
+      "checkedAt": "2026-08-09T22:53:23.659066Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1053,7 +943,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "17f107c197e64ea486a1c985a36b3c4aecb20d28",
-      "checkedAt": "2026-08-09T21:50:56.722702Z",
+      "checkedAt": "2026-08-09T22:53:23.659066Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1091,7 +981,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "17f107c197e64ea486a1c985a36b3c4aecb20d28",
-      "checkedAt": "2026-08-09T21:50:56.722702Z",
+      "checkedAt": "2026-08-09T22:53:23.659066Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1126,71 +1016,11 @@
       "url": "https://github.com/crewAIInc/crewAI/pull/6048"
     },
     {
-      "actionDigest": "e7772194a2f872e462c26c10c4895ca507cc7d7a4c4f95b37e79681e5a03edfb",
-      "actions": [
-        "存在未解决审查线程"
-      ],
-      "baseRefName": "main",
-      "baseSha": "17f107c197e64ea486a1c985a36b3c4aecb20d28",
-      "checkedAt": "2026-08-09T21:50:56.722702Z",
-      "draft": false,
-      "evidence": {
-        "actionableCheckNames": [],
-        "baseCompareError": null,
-        "baseCompareStatus": null,
-        "baseIntegrationRequired": false,
-        "baseMergeBaseSha": null,
-        "baseRefName": "main",
-        "baseSha": "17f107c197e64ea486a1c985a36b3c4aecb20d28",
-        "changedFiles": [
-          "lib/crewai/src/crewai/crew.py",
-          "lib/crewai/tests/test_crew.py"
-        ],
-        "failingChecks": [],
-        "headSha": "e899991bff40436cb4b9d5eac8c5980392588919",
-        "mergeConflict": false,
-        "requestedChanges": [],
-        "unresolvedReviewThreads": [
-          {
-            "association": "NONE",
-            "authorType": "Bot",
-            "createdAt": "2026-07-01T05:17:46Z",
-            "path": "lib/crewai/src/crewai/crew.py",
-            "reviewer": "coderabbitai",
-            "summary": "_🩺 Stability & Availability_ | _🔴 Critical_ | _⚡ Quick win_ <details> <summary>🧩 Analysis chain</summary> 🏁 Script executed: ```shell #!/bin/bash set -euo pipefail # Locate the relevant function and surrounding async control flow. FILE=\"lib/crewai/src/crewai/crew.py\" # Show a compact outline first. ast-grep outline \"$FILE\" --view expanded || true # Read the relevant section with line numbers. sed ",
-            "url": "https://github.com/crewAIInc/crewAI/pull/6407#discussion_r3503442757"
-          },
-          {
-            "association": "NONE",
-            "authorType": "Bot",
-            "createdAt": "2026-07-01T05:17:47Z",
-            "path": "lib/crewai/src/crewai/crew.py",
-            "reviewer": "coderabbitai",
-            "summary": "_🩺 Stability & Availability_ | _🟠 Major_ | _⚡ Quick win_ <details> <summary>🧩 Analysis chain</summary> 🏁 Script executed: ```shell #!/bin/bash set -euo pipefail # Inspect the relevant region and surrounding context FILE=\"lib/crewai/src/crewai/crew.py\" wc -l \"$FILE\" sed -n '1830,1935p' \"$FILE\" # Search for futures/wait/FIRST_EXCEPTION usage in this file rg -n \"FIRST_EXCEPTION|concurrent\\.futures|fu",
-            "url": "https://github.com/crewAIInc/crewAI/pull/6407#discussion_r3503442759"
-          }
-        ]
-      },
-      "headSha": "e899991bff40436cb4b9d5eac8c5980392588919",
-      "key": "crewAIInc/crewAI#6407",
-      "mergeConflict": false,
-      "mergeableState": "behind",
-      "number": 6407,
-      "repo": "crewAIInc/crewAI",
-      "taskActionDigest": "3f03b265de65a25058092ae55772fec589d57d35263f77791975451515738e95",
-      "taskActions": [
-        "存在未解决审查线程"
-      ],
-      "taskFollowupRequired": true,
-      "title": "Fix async task failure cleanup",
-      "url": "https://github.com/crewAIInc/crewAI/pull/6407"
-    },
-    {
       "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
       "actions": [],
       "baseRefName": "main",
       "baseSha": "f22f93074cf265ba6f9401947404f090c2584d9d",
-      "checkedAt": "2026-08-09T21:50:56.722702Z",
+      "checkedAt": "2026-08-09T22:53:23.659066Z",
       "draft": true,
       "evidence": {
         "actionableCheckNames": [],
@@ -1229,7 +1059,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "4f583064778bcacd7ea7baa1fbe16fdd0aa2e630",
-      "checkedAt": "2026-08-09T21:50:56.722702Z",
+      "checkedAt": "2026-08-09T22:53:23.659066Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1269,7 +1099,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "3762b5c02d4ad1b454e93efc69f95dae0504ab24",
-      "checkedAt": "2026-08-09T21:50:56.722702Z",
+      "checkedAt": "2026-08-09T22:53:23.659066Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1309,7 +1139,7 @@
       "actions": [],
       "baseRefName": "master",
       "baseSha": "117261274eb0f7cd76e25b05928cc9b8553a531d",
-      "checkedAt": "2026-08-09T21:50:56.722702Z",
+      "checkedAt": "2026-08-09T22:53:23.659066Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1349,7 +1179,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "3325c4642c489bfc2e2f4c9f3c63a32961f9581f",
-      "checkedAt": "2026-08-09T21:50:56.722702Z",
+      "checkedAt": "2026-08-09T22:53:23.659066Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1417,7 +1247,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "3325c4642c489bfc2e2f4c9f3c63a32961f9581f",
-      "checkedAt": "2026-08-09T21:50:56.722702Z",
+      "checkedAt": "2026-08-09T22:53:23.659066Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1485,7 +1315,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "4debc58a83377b18be81ae1e5969a300736b2fac",
-      "checkedAt": "2026-08-09T21:50:56.722702Z",
+      "checkedAt": "2026-08-09T22:53:23.659066Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1524,7 +1354,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "acdf81510d58d993de6175f8565b504d9777940a",
-      "checkedAt": "2026-08-09T21:50:56.722702Z",
+      "checkedAt": "2026-08-09T22:53:23.659066Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1563,7 +1393,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "944000d5f1c88c7d78d0a0a404f8304bb4bd7d8c",
-      "checkedAt": "2026-08-09T21:50:56.722702Z",
+      "checkedAt": "2026-08-09T22:53:23.659066Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1609,7 +1439,7 @@
       ],
       "baseRefName": "master",
       "baseSha": "ceb4d22a2d05b3b2a476cfc857b975ad44e3b536",
-      "checkedAt": "2026-08-09T21:50:56.722702Z",
+      "checkedAt": "2026-08-09T22:53:23.659066Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1662,7 +1492,7 @@
       "actions": [],
       "baseRefName": "develop",
       "baseSha": "9936b2b9ce560283d7be21fdfad027cb537be69c",
-      "checkedAt": "2026-08-09T21:50:56.722702Z",
+      "checkedAt": "2026-08-09T22:53:23.659066Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1707,8 +1537,8 @@
       "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
       "actions": [],
       "baseRefName": "main",
-      "baseSha": "5c0e64eee28ae0f55601cdf29ae3cc03380fea75",
-      "checkedAt": "2026-08-09T21:50:56.722702Z",
+      "baseSha": "47b85c8ec229f725aa680ed3d613d2c02359480f",
+      "checkedAt": "2026-08-09T22:53:23.659066Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1717,7 +1547,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "5c0e64eee28ae0f55601cdf29ae3cc03380fea75",
+        "baseSha": "47b85c8ec229f725aa680ed3d613d2c02359480f",
         "changedFiles": [
           "llama-index-core/llama_index/core/llms/__init__.py",
           "llama-index-core/llama_index/core/llms/fallback.py",
@@ -1732,7 +1562,7 @@
       "headSha": "437ff65281615de3e26dfdb88ab750a65edd4fc9",
       "key": "run-llama/llama_index#21894",
       "mergeConflict": false,
-      "mergeableState": "blocked",
+      "mergeableState": "unknown",
       "number": 21894,
       "repo": "run-llama/llama_index",
       "taskActionDigest": "cc3e1387498f4810fa6d5d610e71a0cf1c9a82498092f975ea29a3da68d1c9ff",
@@ -1745,8 +1575,8 @@
       "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
       "actions": [],
       "baseRefName": "main",
-      "baseSha": "5c0e64eee28ae0f55601cdf29ae3cc03380fea75",
-      "checkedAt": "2026-08-09T21:50:56.722702Z",
+      "baseSha": "47b85c8ec229f725aa680ed3d613d2c02359480f",
+      "checkedAt": "2026-08-09T22:53:23.659066Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1755,7 +1585,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "5c0e64eee28ae0f55601cdf29ae3cc03380fea75",
+        "baseSha": "47b85c8ec229f725aa680ed3d613d2c02359480f",
         "changedFiles": [
           "llama-index-core/llama_index/core/agent/workflow/multi_agent_workflow.py"
         ],
@@ -1768,7 +1598,7 @@
       "headSha": "4291b4a1bd3aecdf5ef0fb33b7796dd2c63a19e3",
       "key": "run-llama/llama_index#21895",
       "mergeConflict": false,
-      "mergeableState": "blocked",
+      "mergeableState": "unknown",
       "number": 21895,
       "repo": "run-llama/llama_index",
       "taskActionDigest": "cc3e1387498f4810fa6d5d610e71a0cf1c9a82498092f975ea29a3da68d1c9ff",
@@ -1781,8 +1611,8 @@
       "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
       "actions": [],
       "baseRefName": "main",
-      "baseSha": "5c0e64eee28ae0f55601cdf29ae3cc03380fea75",
-      "checkedAt": "2026-08-09T21:50:56.722702Z",
+      "baseSha": "47b85c8ec229f725aa680ed3d613d2c02359480f",
+      "checkedAt": "2026-08-09T22:53:23.659066Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1791,7 +1621,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "5c0e64eee28ae0f55601cdf29ae3cc03380fea75",
+        "baseSha": "47b85c8ec229f725aa680ed3d613d2c02359480f",
         "changedFiles": [
           "llama-index-core/llama_index/core/memory/vector_memory.py"
         ],
@@ -1804,7 +1634,7 @@
       "headSha": "9b2e4d2a8f6f1217d1b9b147e4d0a21995e4450c",
       "key": "run-llama/llama_index#21896",
       "mergeConflict": false,
-      "mergeableState": "blocked",
+      "mergeableState": "unknown",
       "number": 21896,
       "repo": "run-llama/llama_index",
       "taskActionDigest": "cc3e1387498f4810fa6d5d610e71a0cf1c9a82498092f975ea29a3da68d1c9ff",
@@ -1817,8 +1647,8 @@
       "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
       "actions": [],
       "baseRefName": "main",
-      "baseSha": "5c0e64eee28ae0f55601cdf29ae3cc03380fea75",
-      "checkedAt": "2026-08-09T21:50:56.722702Z",
+      "baseSha": "47b85c8ec229f725aa680ed3d613d2c02359480f",
+      "checkedAt": "2026-08-09T22:53:23.659066Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1827,7 +1657,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "5c0e64eee28ae0f55601cdf29ae3cc03380fea75",
+        "baseSha": "47b85c8ec229f725aa680ed3d613d2c02359480f",
         "changedFiles": [
           "llama-index-core/llama_index/core/callbacks/token_counting.py",
           "llama-index-integrations/llms/llama-index-llms-google-genai/llama_index/llms/google_genai/utils.py",
@@ -1842,7 +1672,7 @@
       "headSha": "054af15ac03cfeda00a560129e633cb78f0cd660",
       "key": "run-llama/llama_index#21897",
       "mergeConflict": false,
-      "mergeableState": "blocked",
+      "mergeableState": "unknown",
       "number": 21897,
       "repo": "run-llama/llama_index",
       "taskActionDigest": "cc3e1387498f4810fa6d5d610e71a0cf1c9a82498092f975ea29a3da68d1c9ff",
@@ -1859,7 +1689,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "57f2105118f84a8d08e39c7b692a3472ba18a6c5",
-      "checkedAt": "2026-08-09T21:50:56.722702Z",
+      "checkedAt": "2026-08-09T22:53:23.659066Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -2031,7 +1861,7 @@
       "headSha": "10cba90dbcbb50d7412e044386981e88d6e93783",
       "key": "sgl-project/sglang#30554",
       "mergeConflict": true,
-      "mergeableState": "unknown",
+      "mergeableState": "dirty",
       "number": 30554,
       "repo": "sgl-project/sglang",
       "taskActionDigest": "4dcd87d08905913bf02a13915f9f1f8d7ad63861211da33cc423fbcc9a306674",
@@ -2049,7 +1879,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "57f2105118f84a8d08e39c7b692a3472ba18a6c5",
-      "checkedAt": "2026-08-09T21:50:56.722702Z",
+      "checkedAt": "2026-08-09T22:53:23.659066Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -2221,7 +2051,7 @@
       "headSha": "b0daf7987048c203e542093e3a7d39afd3f5ed72",
       "key": "sgl-project/sglang#33217",
       "mergeConflict": false,
-      "mergeableState": "unknown",
+      "mergeableState": "blocked",
       "number": 33217,
       "repo": "sgl-project/sglang",
       "taskActionDigest": "cc3e1387498f4810fa6d5d610e71a0cf1c9a82498092f975ea29a3da68d1c9ff",
@@ -2238,7 +2068,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "57f2105118f84a8d08e39c7b692a3472ba18a6c5",
-      "checkedAt": "2026-08-09T21:50:56.722702Z",
+      "checkedAt": "2026-08-09T22:53:23.659066Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -2405,7 +2235,7 @@
       "headSha": "8b46aad59b4be76dbc71d94db7ccd58f25a2152d",
       "key": "sgl-project/sglang#34138",
       "mergeConflict": true,
-      "mergeableState": "unknown",
+      "mergeableState": "dirty",
       "number": 34138,
       "repo": "sgl-project/sglang",
       "taskActionDigest": "420d2c112ad9bca11442316e569702430265ca7f8cbfe8998d5d8c8cba2075f3",
@@ -2422,8 +2252,8 @@
         "CI 检查失败"
       ],
       "baseRefName": "main",
-      "baseSha": "83ad767eed3be3ee7f2df63be693bfaca5c7c922",
-      "checkedAt": "2026-08-09T21:50:56.722702Z",
+      "baseSha": "d6941300fcb9d4a8bbea19f8b610c2aff9fc5cc3",
+      "checkedAt": "2026-08-09T22:53:23.659066Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -2432,7 +2262,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "83ad767eed3be3ee7f2df63be693bfaca5c7c922",
+        "baseSha": "d6941300fcb9d4a8bbea19f8b610c2aff9fc5cc3",
         "changedFiles": [
           "tests/kernels/moe/test_oracle_base.py"
         ],
@@ -2474,7 +2304,7 @@
       "headSha": "bf03fd287e90e665cdc91b02ede947e9a395f0c2",
       "key": "vllm-project/vllm#44231",
       "mergeConflict": false,
-      "mergeableState": "blocked",
+      "mergeableState": "unknown",
       "number": 44231,
       "repo": "vllm-project/vllm",
       "taskActionDigest": "cc3e1387498f4810fa6d5d610e71a0cf1c9a82498092f975ea29a3da68d1c9ff",
@@ -2489,8 +2319,8 @@
         "CI 检查失败"
       ],
       "baseRefName": "main",
-      "baseSha": "83ad767eed3be3ee7f2df63be693bfaca5c7c922",
-      "checkedAt": "2026-08-09T21:50:56.722702Z",
+      "baseSha": "d6941300fcb9d4a8bbea19f8b610c2aff9fc5cc3",
+      "checkedAt": "2026-08-09T22:53:23.659066Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -2499,7 +2329,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "83ad767eed3be3ee7f2df63be693bfaca5c7c922",
+        "baseSha": "d6941300fcb9d4a8bbea19f8b610c2aff9fc5cc3",
         "changedFiles": [
           "vllm/sampling_params.py"
         ],
@@ -2527,7 +2357,7 @@
       "headSha": "cec787e20a92202a7e670de7f67de37bc5e6fa74",
       "key": "vllm-project/vllm#45522",
       "mergeConflict": false,
-      "mergeableState": "blocked",
+      "mergeableState": "unknown",
       "number": 45522,
       "repo": "vllm-project/vllm",
       "taskActionDigest": "cc3e1387498f4810fa6d5d610e71a0cf1c9a82498092f975ea29a3da68d1c9ff",
@@ -2542,8 +2372,8 @@
         "CI 检查失败"
       ],
       "baseRefName": "main",
-      "baseSha": "83ad767eed3be3ee7f2df63be693bfaca5c7c922",
-      "checkedAt": "2026-08-09T21:50:56.722702Z",
+      "baseSha": "d6941300fcb9d4a8bbea19f8b610c2aff9fc5cc3",
+      "checkedAt": "2026-08-09T22:53:23.659066Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -2552,7 +2382,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "83ad767eed3be3ee7f2df63be693bfaca5c7c922",
+        "baseSha": "d6941300fcb9d4a8bbea19f8b610c2aff9fc5cc3",
         "changedFiles": [
           "tests/v1/worker/test_mamba_utils.py",
           "vllm/v1/worker/mamba_utils.py"
@@ -2581,7 +2411,7 @@
       "headSha": "5133492ec356d5e46cee73053ba5d9ea13dcf489",
       "key": "vllm-project/vllm#48109",
       "mergeConflict": false,
-      "mergeableState": "blocked",
+      "mergeableState": "unknown",
       "number": 48109,
       "repo": "vllm-project/vllm",
       "taskActionDigest": "cc3e1387498f4810fa6d5d610e71a0cf1c9a82498092f975ea29a3da68d1c9ff",
