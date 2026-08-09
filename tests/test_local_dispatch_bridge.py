@@ -573,6 +573,38 @@ def test_shared_context_recovery_verifies_an_existing_dispatched_task(
     ]
 
 
+def test_shared_context_recovery_accepts_a_superseded_dispatched_mirror(
+    monkeypatch, tmp_path
+):
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, _ = registered_store(tmp_path / "original", worktree=worktree)
+    run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
+    MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    store.record_stage("a/b#1", "VALIDATION_PENDING", evidence={})
+
+    verified = MODULE.recover_shared_task_contexts(store)
+
+    assert verified["verified"] == 1
+    assert verified["errors"] == []
+    assert verified["restored"] == [
+        {
+            "key": "a/b#1",
+            "stage": "VALIDATION_PENDING",
+            "intentRestored": False,
+            "publicationRestored": False,
+            "supersededActiveMirror": True,
+            "resultReceiptRestored": False,
+        }
+    ]
+
+
 def test_shared_context_recovery_does_not_rebuild_a_dispatched_task(
     monkeypatch, tmp_path
 ):
@@ -2897,6 +2929,8 @@ def test_validation_prefetch_plan_is_lockfile_scoped(tmp_path):
     go_module.mkdir()
     ui_root.mkdir()
     (worktree / "Cargo.lock").write_text("# lock\n", encoding="utf-8")
+    (worktree / "uv.lock").write_text("version = 1\n", encoding="utf-8")
+    (worktree / "pyproject.toml").write_text("[project]\nname = 'x'\n", encoding="utf-8")
     (go_module / "go.mod").write_text("module example.com/gateway\n", encoding="utf-8")
     (go_module / "router.go").write_text("package gateway\n", encoding="utf-8")
     (ui_root / "package-lock.json").write_text("{}\n", encoding="utf-8")
@@ -2919,6 +2953,11 @@ def test_validation_prefetch_plan_is_lockfile_scoped(tmp_path):
                 "command": "npm run test",
                 "exitCode": 127,
                 "summary": "Vitest was unavailable because node_modules is absent",
+            },
+            {
+                "command": "python3 -m pytest tests/test_router.py",
+                "exitCode": 1,
+                "summary": "pytest is not installed in the prepared environment",
             },
         ],
     }
@@ -2943,6 +2982,11 @@ def test_validation_prefetch_plan_is_lockfile_scoped(tmp_path):
             "kind": "go_locked_download",
             "cwd": str(go_module.resolve()),
             "argv": ["go", "mod", "download"],
+        },
+        {
+            "kind": "uv_locked_sync",
+            "cwd": str(worktree.resolve()),
+            "argv": ["uv", "sync", "--frozen", "--no-install-project"],
         },
         {
             "kind": "npm_locked_install",

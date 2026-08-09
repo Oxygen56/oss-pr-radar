@@ -573,23 +573,41 @@ class RadarLedger:
             if stage != "DISPATCHED":
                 raise LedgerError("task context lifecycle stage is not recoverable")
             current = self.task_context(issue_url=issue_url, thread_id=thread_id)
-            expected_binding = {
+            immutable_binding = {
                 "key": key,
-                "stage": stage,
                 "intentId": intent_id,
                 "threadId": thread_id,
                 "worktreePath": str(Path(worktree_path).resolve()),
-                "intentStatus": intent_status,
                 "titleTime": title_time,
-                "liveAudit": live_audit,
             }
             if current is None or any(
                 current.get(field) != expected
-                for field, expected in expected_binding.items()
+                for field, expected in immutable_binding.items()
             ):
                 raise LedgerError("active task context disagrees with the ledger")
             if context.get("publicationReceipt") is not None:
                 raise LedgerError("active task context has an unexpected publication receipt")
+            current_stage = str(current.get("stage") or "")
+            if current_stage != stage:
+                if current_stage not in RECOVERABLE_CONTEXT_STAGES:
+                    raise LedgerError("active task context disagrees with the ledger")
+                return {
+                    "key": key,
+                    "stage": current_stage,
+                    "intentRestored": False,
+                    "publicationRestored": False,
+                    "supersededActiveMirror": True,
+                }
+            expected_active = {
+                "stage": stage,
+                "intentStatus": intent_status,
+                "liveAudit": live_audit,
+            }
+            if any(
+                current.get(field) != expected
+                for field, expected in expected_active.items()
+            ):
+                raise LedgerError("active task context disagrees with the ledger")
             return {
                 "key": key,
                 "stage": stage,

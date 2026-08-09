@@ -2341,6 +2341,8 @@ def _validation_prefetch_commands(candidate: dict[str, Any]) -> list[dict[str, A
                 "prettier was unavailable",
                 "eslint was unavailable",
                 "next.js was unavailable",
+                "pytest is not installed",
+                "no module named pytest",
             )
         )
     ]
@@ -2378,6 +2380,18 @@ def _validation_prefetch_commands(candidate: dict[str, Any]) -> list[dict[str, A
                     "argv": ["go", "mod", "download"],
                 }
             )
+    if (
+        ("pytest" in combined or "python -m" in combined or "python3 -m" in combined)
+        and (worktree / "uv.lock").is_file()
+        and (worktree / "pyproject.toml").is_file()
+    ):
+        commands.append(
+            {
+                "kind": "uv_locked_sync",
+                "cwd": str(worktree),
+                "argv": ["uv", "sync", "--frozen", "--no-install-project"],
+            }
+        )
     if "npm " in combined:
         roots: set[Path] = set()
         changed_files = result.get("changedFiles")
@@ -2435,7 +2449,7 @@ def _validation_followup_prompt(candidate: dict[str, Any]) -> str:
     missing = "、".join(str(item) for item in candidate.get("missing") or [])
     prefetch = bool(candidate.get("prefetchCommands"))
     dependency_note = (
-        "控制器已经按锁文件预取缺失依赖；继续保持离线，只重新运行相关测试。"
+        "控制器已经按锁文件预取缺失依赖；继续保持离线，使用项目虚拟环境或锁文件工具重新运行相关测试。"
         if prefetch
         else "无需新增依赖；直接补齐缺失证据并重新运行相关检查。"
     )

@@ -53,5 +53,6 @@ def test_controller_protocol_does_not_interrupt_active_pr_followups():
 
 def test_controller_protocol_allows_only_lockfile_scoped_node_prefetch():
     assert "npm ci --ignore-scripts --no-audit" in PROTOCOL
+    assert "uv sync --frozen --no-install-project" in PROTOCOL
     assert "Never execute a command" in PROTOCOL
     assert "from a child result" in PROTOCOL
