@@ -1702,17 +1702,17 @@ class Radar:
     def since_str(self) -> str:
         return self.since.strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    def add_search(
+    def search_issues(
         self,
-        items: dict[str, dict[str, Any]],
         query: str,
         per_page: int,
-        required: bool = True,
-    ) -> None:
+        timeout: int = 25,
+    ) -> tuple[Any | None, str | None]:
+        """Run a paced GitHub search so deep audits cannot burst into rate limits."""
+
         data: Any | None = None
         err: str | None = None
-        retry_delays = SEARCH_RETRY_DELAYS_SECONDS
-        for attempt in range(len(retry_delays) + 1):
+        for attempt in range(len(SEARCH_RETRY_DELAYS_SECONDS) + 1):
             if self._last_search_at is not None:
                 elapsed = self.monotonic_fn() - self._last_search_at
                 if elapsed < SEARCH_MIN_INTERVAL_SECONDS:
@@ -1732,15 +1732,25 @@ class Radar:
                     "-f",
                     f"per_page={per_page}",
                 ],
-                timeout=25,
+                timeout=timeout,
             )
             self._last_search_at = self.monotonic_fn()
             if not err:
                 break
             is_rate_limit = "rate limit" in err.lower() or "abuse detection" in err.lower()
-            if not is_rate_limit or attempt >= len(retry_delays):
+            if not is_rate_limit or attempt >= len(SEARCH_RETRY_DELAYS_SECONDS):
                 break
-            self.sleep_fn(retry_delays[attempt])
+            self.sleep_fn(SEARCH_RETRY_DELAYS_SECONDS[attempt])
+        return data, err
+
+    def add_search(
+        self,
+        items: dict[str, dict[str, Any]],
+        query: str,
+        per_page: int,
+        required: bool = True,
+    ) -> None:
+        data, err = self.search_issues(query, per_page)
         if err:
             prefix = "search" if required else "discovery_degraded"
             self.errors.append(f"{prefix}:{err}:{query[:90]}")
@@ -2189,23 +2199,7 @@ class Radar:
             query = (
                 f'repo:{repo} is:issue is:open {compiler_match.group(1)} "{failure_match.group(1)}"'
             )
-            search_data, search_err = gh(
-                [
-                    "api",
-                    "-X",
-                    "GET",
-                    "search/issues",
-                    "-f",
-                    f"q={query}",
-                    "-f",
-                    "sort=updated",
-                    "-f",
-                    "order=desc",
-                    "-f",
-                    "per_page=20",
-                ],
-                timeout=20,
-            )
+            search_data, search_err = self.search_issues(query, 20, timeout=20)
             if search_err or not isinstance(search_data, dict):
                 return {
                     "status": "lookup_failed",
@@ -2575,21 +2569,9 @@ class Radar:
                     term,
                 ),
             )[:2]
-            search_data, search_error = gh(
-                [
-                    "api",
-                    "-X",
-                    "GET",
-                    "search/issues",
-                    "-f",
-                    f"q=repo:{repo} is:pr {' '.join(search_terms)}",
-                    "-f",
-                    "sort=updated",
-                    "-f",
-                    "order=desc",
-                    "-f",
-                    "per_page=20",
-                ],
+            search_data, search_error = self.search_issues(
+                f"repo:{repo} is:pr {' '.join(search_terms)}",
+                20,
                 timeout=20,
             )
             if search_error:
@@ -3513,6 +3495,29 @@ class Radar:
                 "issue_updated": base.get("updated") or base.get("issue_updated") or "",
             }
 
+        def defer_evidence_lookup(base: dict[str, Any], issue: dict[str, Any], reason: str) -> None:
+            key = f"{base['repo']}#{base['num']}"
+            previous = self.seen.get(key) if isinstance(self.seen.get(key), dict) else {}
+            reject(reason, base)
+            self.issue_outcomes[key] = {"status": "deferred", "reason": reason}
+            self.seen[key] = {
+                "analyzed": self.analyzed,
+                "status": "status_update",
+                "reason": reason,
+                "requeue_reason": "critical_evidence_fetch_failure",
+                "requeued_at": self.analyzed,
+                "first_deferred_at": previous.get("first_deferred_at")
+                or previous.get("requeued_at")
+                or self.analyzed,
+                "defer_count": int(previous.get("defer_count") or 0) + 1,
+                "title": issue.get("title") or base.get("title") or key,
+                "url": base.get("url") or f"https://github.com/{base['repo']}/issues/{base['num']}",
+                "issue_updated": issue.get("updated_at")
+                or base.get("updated")
+                or base.get("issue_updated")
+                or "",
+            }
+
         for base in items.values():
             if repo_is_excluded(base["repo"]):
                 reject("excluded_repo", base)
@@ -3668,10 +3673,12 @@ class Radar:
                 scored["next_step"] = (
                     "仅完成本地复现、修复、测试和私有提交包；由用户自行决定公开提交。"
                 )
+            if policy == "policy_unknown":
+                defer_evidence_lookup(base, issue, "policy_lookup_failed")
+                continue
             elif policy in {
                 "needs_assignment",
                 "ai_disclosure_and_assignment",
-                "policy_unknown",
             }:
                 scored["bucket"] = "needs_approval"
                 scored["category"] = "WAIT_MAINTAINER"
@@ -3712,6 +3719,9 @@ class Radar:
                 issue_context,
             )
             scored["related_issue_assessment"] = related_issue_assessment
+            if related_issue_assessment["status"] == "lookup_failed":
+                defer_evidence_lookup(base, issue, "related_issue_lookup_failed")
+                continue
             if related_issue_assessment["status"] != "none":
                 scored["bucket"] = "needs_approval"
                 scored["category"] = "WAIT_MAINTAINER"
@@ -3751,14 +3761,8 @@ class Radar:
                 }
                 continue
             if pr_assessment["status"] == "lookup_failed":
-                scored["bucket"] = "needs_approval"
-                scored["category"] = "WAIT_MAINTAINER"
-                scored["gate_decision"] = "HUMAN_REVIEW"
-                scored["auto_spawn"] = False
-                scored["risk"] = f"{scored['risk']}；open PR 检索失败，当前无法排除重复实现。"
-                scored["next_step"] = (
-                    "恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。"
-                )
+                defer_evidence_lookup(base, issue, "open_pr_lookup_failed")
+                continue
             elif pr_assessment["status"] == "weak_pr_competition_possible":
                 scored["open_pr_assessment"] = pr_assessment
                 if scored["bucket"] == "immediate":

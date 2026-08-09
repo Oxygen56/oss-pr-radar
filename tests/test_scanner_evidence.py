@@ -3,6 +3,8 @@ import json
 import subprocess
 from datetime import UTC, datetime
 
+import pytest
+
 from oss_pr_radar import scanner
 from oss_pr_radar.policy import decision_contract_digest
 from oss_pr_radar.scanner import (
@@ -166,6 +168,110 @@ def test_optional_discovery_retries_rate_limit(monkeypatch, tmp_path):
     assert 3.0 in sleeps
     assert radar.errors == []
     assert "example/project#7" in items
+
+
+def test_searches_share_pacing_across_discovery_and_duplicate_audits(monkeypatch, tmp_path):
+    clock = [0.0]
+    sleeps = []
+
+    def fake_gh(_args, timeout=18):
+        return {"items": []}, None
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        clock[0] += seconds
+
+    monkeypatch.setattr(scanner, "gh", fake_gh)
+    radar = Radar(
+        datetime.now(UTC),
+        2,
+        tmp_path / "seen.json",
+        "",
+        dry_run=True,
+        sleep_fn=sleep,
+        monotonic_fn=lambda: clock[0],
+    )
+
+    radar.search_issues("is:issue MCP", 10)
+    radar.search_issues("repo:example/project is:pr tool_call", 10)
+
+    assert sleeps == [scanner.SEARCH_MIN_INTERVAL_SECONDS]
+
+
+@pytest.mark.parametrize(
+    ("policy", "related_status", "pr_status", "expected_reason"),
+    [
+        ("policy_unknown", "none", "none", "policy_lookup_failed"),
+        ("normal", "lookup_failed", "none", "related_issue_lookup_failed"),
+        ("normal", "none", "lookup_failed", "open_pr_lookup_failed"),
+    ],
+)
+def test_critical_evidence_lookup_failure_is_silently_requeued(
+    monkeypatch,
+    tmp_path,
+    policy,
+    related_status,
+    pr_status,
+    expected_reason,
+):
+    radar = Radar(
+        datetime(2026, 8, 9, tzinfo=UTC),
+        2,
+        tmp_path / f"{expected_reason}.json",
+        "",
+        dry_run=True,
+        notify=False,
+    )
+    key = "example/project#19"
+    base = {
+        "repo": "example/project",
+        "num": 19,
+        "title": "Tool result disappears after resume",
+        "url": "https://github.com/example/project/issues/19",
+        "updated": "2026-08-09T00:00:00Z",
+        "labels": ["bug"],
+        "assignees": [],
+    }
+    issue = {
+        "state": "open",
+        "title": base["title"],
+        "updated_at": base["updated"],
+        "body": "Steps to reproduce the tool result loss.",
+    }
+    scored = {
+        **base,
+        "score": 10,
+        "bucket": "immediate",
+        "category": "NEW_CLEAN_CANDIDATE",
+        "gate_decision": "ALLOW_TO_WORK",
+        "auto_spawn": True,
+        "public_submission_allowed": True,
+        "hardware_compatible": True,
+        "risk": "Low",
+        "next_step": "Reproduce locally.",
+    }
+    monkeypatch.setattr(radar, "repo_quality", lambda *_args: (True, "ok"))
+    monkeypatch.setattr(radar, "issue", lambda *_args: issue)
+    monkeypatch.setattr(radar, "comments", lambda *_args: [])
+    monkeypatch.setattr(radar, "score_issue", lambda *_args: (scored.copy(), None))
+    monkeypatch.setattr(radar, "submission_policy", lambda *_args: policy)
+    monkeypatch.setattr(
+        radar,
+        "assess_related_issues",
+        lambda *_args: {"status": related_status, "issues": []},
+    )
+    monkeypatch.setattr(
+        radar,
+        "assess_open_prs",
+        lambda *_args: {"status": pr_status, "prs": []},
+    )
+
+    candidates, _, _ = radar.shortlist({key: base})
+
+    assert candidates == []
+    assert radar.issue_outcomes[key] == {"status": "deferred", "reason": expected_reason}
+    assert radar.seen[key]["status"] == "status_update"
+    assert radar.seen[key]["requeue_reason"] == "critical_evidence_fetch_failure"
 
 
 def test_notification_digest_ignores_llm_wording_and_age_churn():
