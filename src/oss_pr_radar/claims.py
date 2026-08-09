@@ -15,7 +15,10 @@ CLAIM_RE = re.compile(
     r"|please assign (?:this|it) to me"
     r"|working on this|already working on this|have (?:a )?(?:patch(?:es)?|fix(?:es)?|prs?)"
     r"|(?:patch(?:es)?|fix(?:es)?|prs?) (?:is |are )?(?:ready|in progress)"
-    r"|happy to contribute|plan(?:ning)? to (?:work|implement|submit|open)"
+    r"|happy to contribute"
+    r"|happy to (?:send|submit|open|prepare|write) "
+    r"(?:a |the )?(?:small |focused )?(?:fix|patch|pr|pull request)"
+    r"|plan(?:ning)? to (?:work|implement|submit|open)"
     r")\b",
     re.I,
 )

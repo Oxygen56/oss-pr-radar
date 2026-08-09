@@ -265,6 +265,46 @@ def test_issue_author_ready_fix_branches_block_cloud_candidate(tmp_path):
     assert reason == "someone_active"
 
 
+def test_offer_to_send_small_pr_blocks_cloud_candidate(tmp_path):
+    radar = Radar(
+        datetime.now(UTC),
+        2,
+        tmp_path / "seen.json",
+        "",
+        dry_run=True,
+    )
+    base = {
+        "repo": "example/project",
+        "num": 1,
+        "title": "Distributed attention truncates remainder tokens",
+        "url": "https://github.com/example/project/issues/1",
+        "_explicit_recheck": True,
+    }
+    issue = {
+        "state": "open",
+        "title": base["title"],
+        "body": "Non-divisible sequence lengths produce incorrect output.",
+        "labels": [{"name": "bug"}],
+        "assignees": [],
+        "user": {"login": "reporter"},
+    }
+    comments = [
+        {
+            "body": (
+                "If you would take it, I am happy to send a small PR "
+                "adding the assertion with a test."
+            ),
+            "user": {"login": "contributor"},
+            "author_association": "NONE",
+        }
+    ]
+
+    candidate, reason = radar.score_issue(base, issue, comments)
+
+    assert candidate is None
+    assert reason == "someone_active"
+
+
 def test_comment_fetch_failure_is_exposed(monkeypatch, tmp_path):
     radar = Radar(
         datetime.now(UTC),
