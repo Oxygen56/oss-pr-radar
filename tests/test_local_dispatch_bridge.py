@@ -1797,6 +1797,51 @@ def test_controller_keeps_ai_disclosure_fix_local_and_signs_dco(tmp_path):
     assert store.publication_work_items() == []
 
 
+def test_controller_stops_policy_only_validation_after_one_followup(tmp_path):
+    store, _worktree, _result_path = _controller_commit_result(
+        tmp_path,
+        policy_verified=False,
+    )
+
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    assert first["validationDeferred"][0]["missing"] == ["policy_verified"]
+    candidate = MODULE.validation_followup_list(
+        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3")
+    )["candidates"][0]
+    MODULE.validation_followup_reserve(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            thread_id="thread-1",
+            result_digest=candidate["resultDigest"],
+            prefetch_complete=False,
+        )
+    )
+    MODULE.validation_followup_commit(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            thread_id="thread-1",
+            result_digest=candidate["resultDigest"],
+        )
+    )
+
+    reconciled = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert reconciled["ingested"] == [
+        {
+            "key": "a/b#1",
+            "stage": "FIX_READY",
+            "publicationBlockedReason": "REPOSITORY_POLICY_EVIDENCE_REQUIRED",
+        }
+    ]
+    assert reconciled["publicationRequests"] == []
+    assert (
+        MODULE.validation_followup_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))[
+            "candidates"
+        ]
+        == []
+    )
+
+
 def test_controller_defers_blocked_local_fix_with_incomplete_validation(tmp_path):
     store, _worktree, result_path = _controller_commit_result(
         tmp_path,

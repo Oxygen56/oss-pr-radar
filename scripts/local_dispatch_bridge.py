@@ -1975,8 +1975,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
         try:
             raw = result_path.read_bytes()
             initial_digest = hashlib.sha256(raw).hexdigest()
-            if store.task_result_digest_seen(candidate["key"], initial_digest):
-                continue
+            digest_seen = store.task_result_digest_seen(candidate["key"], initial_digest)
             value = json.loads(raw)
             if not isinstance(value, dict):
                 raise RuntimeError("task result must be an object")
@@ -1997,6 +1996,16 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 if value.get(key) != expected_value:
                     raise RuntimeError(f"task result mismatch: {key}")
             stage = str(value.get("stage") or "")
+            quality = value.get("quality")
+            policy_followup_exhausted = bool(
+                stage == "FIX_READY"
+                and isinstance(quality, dict)
+                and candidate["stage"] == "VALIDATION_PENDING"
+                and set(assess_submit_ready(quality).missing) == {"policy_verified"}
+                and store.validation_followup_was_sent(thread_id=candidate["threadId"])
+            )
+            if digest_seen and not policy_followup_exhausted:
+                continue
             context_followup = context.get("prFollowup")
             if candidate["stage"] in {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED"} and (
                 isinstance(context_followup, dict)
@@ -2025,7 +2034,6 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 )
                 ingested.append({"key": candidate["key"], "stage": stage, "reason": reason})
             elif stage == "FIX_READY":
-                quality = value.get("quality")
                 if not isinstance(quality, dict):
                     raise RuntimeError("FIX_READY requires a quality object")
                 value, raw = _finalize_controller_commit(
@@ -2038,6 +2046,8 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 assert isinstance(quality, dict)
                 digest = hashlib.sha256(raw).hexdigest()
                 publication_blocked = _publication_block_reason(context, value)
+                if policy_followup_exhausted and not publication_blocked:
+                    publication_blocked = "REPOSITORY_POLICY_EVIDENCE_REQUIRED"
                 if candidate["stage"] != "FIX_READY":
                     assessment = assess_submit_ready(quality)
                     local_policy_only = bool(

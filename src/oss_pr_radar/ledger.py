@@ -1525,6 +1525,19 @@ class RadarLedger:
             )
         return candidates
 
+    def validation_followup_was_sent(self, *, thread_id: str) -> bool:
+        """Return whether this task already received a validation continuation."""
+
+        with self.connect() as connection:
+            row = connection.execute(
+                """SELECT 1 FROM events
+                   WHERE event_type='VALIDATION_FOLLOWUP_SENT'
+                     AND json_extract(payload_json,'$.threadId')=?
+                   LIMIT 1""",
+                (thread_id,),
+            ).fetchone()
+        return row is not None
+
     def reserve_validation_followup(self, *, thread_id: str, result_digest: str) -> dict[str, Any]:
         candidate = next(
             (

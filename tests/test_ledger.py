@@ -998,6 +998,9 @@ def test_validation_followup_is_write_ahead_and_rearms_for_a_new_result(tmp_path
     assert rearmed["missing"] == ["reproduction_verified"]
     assert store.stale_validation_followups(min_age_minutes=90) == []
 
+    assert store.validation_followup_was_sent(thread_id="thread-1") is True
+    assert store.validation_followup_was_sent(thread_id="missing-thread") is False
+
 
 def test_expired_intent_cannot_be_claimed(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")

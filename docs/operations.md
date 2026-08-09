@@ -153,7 +153,10 @@ receiving their own worktrees.
   result with complete evidence may advance it to `FIX_READY`. A
   policy-blocked fix may settle as local `FIX_READY`
   only when the technical evidence is complete and `policy_verified` is the
-  sole missing field; it never creates a publication request. The hourly
+  sole missing field. The controller gives that policy check one continuation;
+  if it remains the only missing field, the task settles with
+  `REPOSITORY_POLICY_EVIDENCE_REQUIRED` and never creates a publication request.
+  The hourly
   controller repeats ingestion and publication as a fallback.
 - For controller-owned commits, the publication base is taken from the
   prepared checkout's `origin/HEAD`. A child-provided release or stale branch
