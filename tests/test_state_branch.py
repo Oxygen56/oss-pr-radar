@@ -39,6 +39,36 @@ def test_publish_and_restore_verify_manifest(tmp_path):
     assert (restored / "state" / "base_sha.txt").read_text().strip()
 
 
+def test_controller_feedback_uses_an_independent_integrity_branch(tmp_path):
+    root, origin = initialized_repo(tmp_path)
+    feedback = root / "state" / "controller_terminal_feedback.json"
+    feedback.write_text('{"a/b#1": {"status": "controller_terminal"}}\n', encoding="utf-8")
+    MODULE.publish(
+        root,
+        "radar-controller-feedback",
+        files=MODULE.CONTROLLER_FEEDBACK_FILES,
+        manifest_name=MODULE.CONTROLLER_FEEDBACK_MANIFEST,
+        base_sha_path=MODULE.CONTROLLER_FEEDBACK_BASE_SHA,
+        manifest_version=MODULE.CONTROLLER_FEEDBACK_MANIFEST_VERSION,
+    )
+
+    restored = tmp_path / "restored-feedback"
+    git("clone", str(origin), str(restored), cwd=tmp_path)
+    MODULE.restore(
+        restored,
+        "radar-controller-feedback",
+        files=MODULE.CONTROLLER_FEEDBACK_FILES,
+        manifest_name=MODULE.CONTROLLER_FEEDBACK_MANIFEST,
+        base_sha_path=MODULE.CONTROLLER_FEEDBACK_BASE_SHA,
+        manifest_version=MODULE.CONTROLLER_FEEDBACK_MANIFEST_VERSION,
+    )
+
+    assert json.loads((restored / "state" / "controller_terminal_feedback.json").read_text()) == {
+        "a/b#1": {"status": "controller_terminal"}
+    }
+    assert not (restored / "state" / "seen.json").exists()
+
+
 def test_publish_fetches_existing_state_through_authenticated_root(tmp_path, monkeypatch):
     root, _origin = initialized_repo(tmp_path)
     MODULE.publish(root, "radar-state")

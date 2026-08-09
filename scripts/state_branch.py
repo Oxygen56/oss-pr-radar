@@ -27,6 +27,28 @@ FILES = {
 MANIFEST = "state_manifest.json"
 BASE_SHA = Path("state/base_sha.txt")
 MANIFEST_VERSION = "radar_state_v2"
+CONTROLLER_FEEDBACK_FILES = {
+    "controller_terminal_feedback.json": Path("state/controller_terminal_feedback.json"),
+}
+CONTROLLER_FEEDBACK_MANIFEST = "controller_feedback_manifest.json"
+CONTROLLER_FEEDBACK_BASE_SHA = Path("state/controller_feedback_base_sha.txt")
+CONTROLLER_FEEDBACK_MANIFEST_VERSION = "radar_controller_feedback_v1"
+PROFILES = {
+    "radar": {
+        "branch": "radar-state",
+        "files": FILES,
+        "manifest": MANIFEST,
+        "base_sha": BASE_SHA,
+        "manifest_version": MANIFEST_VERSION,
+    },
+    "controller-feedback": {
+        "branch": "radar-controller-feedback",
+        "files": CONTROLLER_FEEDBACK_FILES,
+        "manifest": CONTROLLER_FEEDBACK_MANIFEST,
+        "base_sha": CONTROLLER_FEEDBACK_BASE_SHA,
+        "manifest_version": CONTROLLER_FEEDBACK_MANIFEST_VERSION,
+    },
+}
 
 
 def git(
@@ -68,26 +90,37 @@ def atomic_write(path: Path, value: bytes) -> None:
     temporary.replace(path)
 
 
-def restore(root: Path, branch: str, *, allow_missing: bool = False) -> None:
+def restore(
+    root: Path,
+    branch: str,
+    *,
+    allow_missing: bool = False,
+    files: dict[str, Path] = FILES,
+    manifest_name: str = MANIFEST,
+    base_sha_path: Path = BASE_SHA,
+    manifest_version: str = MANIFEST_VERSION,
+) -> None:
     fetched = git("fetch", "origin", branch, cwd=root, check=False)
     if fetched.returncode != 0:
         if allow_missing:
-            atomic_write(root / BASE_SHA, b"")
+            for source in files.values():
+                (root / source).unlink(missing_ok=True)
+            atomic_write(root / base_sha_path, b"")
             return
         raise RuntimeError(f"state branch fetch failed: {fetched.stderr[:300]}")
     sha = git("rev-parse", "FETCH_HEAD", cwd=root).stdout.strip()
-    manifest_result = git_bytes("show", f"FETCH_HEAD:{MANIFEST}", cwd=root, check=False)
+    manifest_result = git_bytes("show", f"FETCH_HEAD:{manifest_name}", cwd=root, check=False)
     if manifest_result.returncode != 0:
         raise RuntimeError("state manifest is missing; migrate the state branch first")
     try:
         manifest = json.loads(manifest_result.stdout.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise RuntimeError("state manifest is invalid") from exc
-    if manifest.get("version") != MANIFEST_VERSION:
+    if manifest.get("version") != manifest_version:
         raise RuntimeError("unsupported state manifest")
     listed = manifest.get("files") or {}
     for remote_name, metadata in listed.items():
-        if remote_name not in FILES or not isinstance(metadata, dict):
+        if remote_name not in files or not isinstance(metadata, dict):
             raise RuntimeError(f"unexpected state file: {remote_name}")
         result = git_bytes("show", f"FETCH_HEAD:{remote_name}", cwd=root, check=False)
         if result.returncode != 0:
@@ -99,18 +132,23 @@ def restore(root: Path, branch: str, *, allow_missing: bool = False) -> None:
             json.loads(raw)
         except json.JSONDecodeError as exc:
             raise RuntimeError(f"state file contains invalid JSON: {remote_name}") from exc
-        atomic_write(root / FILES[remote_name], raw)
-    atomic_write(root / BASE_SHA, sha.encode("ascii"))
+        atomic_write(root / files[remote_name], raw)
+    atomic_write(root / base_sha_path, sha.encode("ascii"))
 
 
-def build_manifest(root: Path, available: dict[str, Path]) -> dict[str, object]:
+def build_manifest(
+    root: Path,
+    available: dict[str, Path],
+    *,
+    manifest_version: str = MANIFEST_VERSION,
+) -> dict[str, object]:
     files = {}
     for remote_name, source in available.items():
         raw = source.read_bytes()
         json.loads(raw)
         files[remote_name] = {"sha256": digest_bytes(raw), "bytes": len(raw)}
     return {
-        "version": MANIFEST_VERSION,
+        "version": manifest_version,
         "generatedAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "runId": os.environ.get("RADAR_RUN_ID") or os.environ.get("GITHUB_RUN_ID", ""),
         "sourceSha": os.environ.get("GITHUB_SHA", ""),
@@ -118,16 +156,26 @@ def build_manifest(root: Path, available: dict[str, Path]) -> dict[str, object]:
     }
 
 
-def publish(root: Path, branch: str) -> None:
+def publish(
+    root: Path,
+    branch: str,
+    *,
+    files: dict[str, Path] = FILES,
+    manifest_name: str = MANIFEST,
+    base_sha_path: Path = BASE_SHA,
+    manifest_version: str = MANIFEST_VERSION,
+) -> None:
     available = {
         remote_name: root / source
-        for remote_name, source in FILES.items()
+        for remote_name, source in files.items()
         if (root / source).exists()
     }
     if not available:
         raise RuntimeError("no state files are available to publish")
     expected = (
-        (root / BASE_SHA).read_text(encoding="utf-8").strip() if (root / BASE_SHA).exists() else ""
+        (root / base_sha_path).read_text(encoding="utf-8").strip()
+        if (root / base_sha_path).exists()
+        else ""
     )
     fetched = git("fetch", "origin", branch, cwd=root, check=False)
     actual = ""
@@ -137,7 +185,7 @@ def publish(root: Path, branch: str) -> None:
             raise RuntimeError("state branch changed since restore")
     elif expected:
         raise RuntimeError("authenticated state branch fetch failed")
-    manifest = build_manifest(root, available)
+    manifest = build_manifest(root, available, manifest_version=manifest_version)
     manifest_bytes = (
         json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     ).encode("utf-8")
@@ -157,7 +205,7 @@ def publish(root: Path, branch: str) -> None:
                 cwd=root,
                 env=index_env,
             )
-        manifest_path = temporary / MANIFEST
+        manifest_path = temporary / manifest_name
         atomic_write(manifest_path, manifest_bytes)
         manifest_blob = git("hash-object", "-w", str(manifest_path), cwd=root).stdout.strip()
         git(
@@ -166,7 +214,7 @@ def publish(root: Path, branch: str) -> None:
             "--cacheinfo",
             "100644",
             manifest_blob,
-            MANIFEST,
+            manifest_name,
             cwd=root,
             env=index_env,
         )
@@ -189,7 +237,14 @@ def publish(root: Path, branch: str) -> None:
     git("push", lease, "origin", f"{commit}:refs/heads/{branch}", cwd=root)
 
 
-def migrate(root: Path, branch: str) -> None:
+def migrate(
+    root: Path,
+    branch: str,
+    *,
+    files: dict[str, Path] = FILES,
+    manifest_name: str = MANIFEST,
+    manifest_version: str = MANIFEST_VERSION,
+) -> None:
     """Add or repair the v2 manifest without changing state JSON bytes."""
 
     fetched = git("fetch", "origin", branch, cwd=root, check=False)
@@ -197,7 +252,7 @@ def migrate(root: Path, branch: str) -> None:
         raise RuntimeError(f"state branch fetch failed: {fetched.stderr[:300]}")
     actual = git("rev-parse", "FETCH_HEAD", cwd=root).stdout.strip()
     available_raw: dict[str, bytes] = {}
-    for remote_name in FILES:
+    for remote_name in files:
         result = git_bytes("show", f"FETCH_HEAD:{remote_name}", cwd=root, check=False)
         if result.returncode == 0:
             json.loads(result.stdout.decode("utf-8"))
@@ -209,13 +264,13 @@ def migrate(root: Path, branch: str) -> None:
         name: {"sha256": digest_bytes(raw), "bytes": len(raw)}
         for name, raw in available_raw.items()
     }
-    existing = git_bytes("show", f"FETCH_HEAD:{MANIFEST}", cwd=root, check=False)
+    existing = git_bytes("show", f"FETCH_HEAD:{manifest_name}", cwd=root, check=False)
     if existing.returncode == 0:
         try:
             manifest = json.loads(existing.stdout.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise RuntimeError("state branch manifest is invalid") from exc
-        if manifest.get("version") != MANIFEST_VERSION:
+        if manifest.get("version") != manifest_version:
             raise RuntimeError("state branch has an unsupported manifest")
         if manifest.get("files") == expected_files:
             return
@@ -236,12 +291,12 @@ def migrate(root: Path, branch: str) -> None:
             source = work / remote_name
             atomic_write(source, raw)
             available[remote_name] = source
-        manifest = build_manifest(work, available)
-        (work / MANIFEST).write_text(
+        manifest = build_manifest(work, available, manifest_version=manifest_version)
+        (work / manifest_name).write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
-        git("add", MANIFEST, cwd=work)
+        git("add", manifest_name, cwd=work)
         git(
             "-c",
             "user.name=github-actions[bot]",
@@ -265,15 +320,29 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("operation", choices=("restore", "publish", "migrate"))
     parser.add_argument("--root", type=Path, default=Path.cwd())
-    parser.add_argument("--branch", default="radar-state")
+    parser.add_argument("--profile", choices=tuple(PROFILES), default="radar")
+    parser.add_argument("--branch", default=None)
     parser.add_argument("--allow-missing", action="store_true")
     args = parser.parse_args()
+    profile = PROFILES[args.profile]
+    branch = args.branch or str(profile["branch"])
+    options = {
+        "files": profile["files"],
+        "manifest_name": profile["manifest"],
+        "manifest_version": profile["manifest_version"],
+    }
     if args.operation == "restore":
-        restore(args.root, args.branch, allow_missing=args.allow_missing)
+        restore(
+            args.root,
+            branch,
+            allow_missing=args.allow_missing,
+            base_sha_path=profile["base_sha"],
+            **options,
+        )
     elif args.operation == "publish":
-        publish(args.root, args.branch)
+        publish(args.root, branch, base_sha_path=profile["base_sha"], **options)
     else:
-        migrate(args.root, args.branch)
+        migrate(args.root, branch, **options)
     return 0
 
 

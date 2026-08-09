@@ -378,11 +378,22 @@ def publish_terminal_feedback(args: argparse.Namespace) -> dict[str, Any]:
         return {"ok": True, "published": 0, "deferred": [], "errors": []}
 
     state_script = ROOT / "scripts" / "state_branch.py"
-    command([sys.executable, str(state_script), "restore"], cwd=ROOT, timeout=90)
-    seen_path = STATE / "seen.json"
-    seen = read_json(seen_path, missing={})
-    if not isinstance(seen, dict):
-        raise RuntimeError("cloud seen state is invalid")
+    command(
+        [
+            sys.executable,
+            str(state_script),
+            "restore",
+            "--profile",
+            "controller-feedback",
+            "--allow-missing",
+        ],
+        cwd=ROOT,
+        timeout=90,
+    )
+    feedback_path = STATE / "controller_terminal_feedback.json"
+    feedback = read_json(feedback_path, missing={})
+    if not isinstance(feedback, dict):
+        raise RuntimeError("controller terminal feedback is invalid")
 
     github = GitHubClient()
     analyzed = iso_z(datetime.now(UTC))
@@ -408,8 +419,8 @@ def publish_terminal_feedback(args: argparse.Namespace) -> dict[str, Any]:
             if issue_changed:
                 deferred.append({"key": key, "reason": "issue_updated_after_local_snapshot"})
                 continue
-            previous = seen.get(key) if isinstance(seen.get(key), dict) else {}
-            seen[key] = previous | {
+            previous = feedback.get(key) if isinstance(feedback.get(key), dict) else {}
+            feedback[key] = previous | {
                 "analyzed": analyzed,
                 "status": CONTROLLER_TERMINAL_STATUS,
                 "controller_stage": row["stage"],
@@ -423,8 +434,18 @@ def publish_terminal_feedback(args: argparse.Namespace) -> dict[str, Any]:
             errors.append({"key": key, "error": str(exc)[:240]})
 
     if published:
-        atomic_write_json(seen_path, seen)
-        command([sys.executable, str(state_script), "publish"], cwd=ROOT, timeout=90)
+        atomic_write_json(feedback_path, feedback)
+        command(
+            [
+                sys.executable,
+                str(state_script),
+                "publish",
+                "--profile",
+                "controller-feedback",
+            ],
+            cwd=ROOT,
+            timeout=90,
+        )
     return {
         "ok": not errors,
         "published": len(published),

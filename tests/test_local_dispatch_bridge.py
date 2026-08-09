@@ -124,7 +124,7 @@ def test_terminal_feedback_is_published_only_for_unchanged_issues(monkeypatch, t
     store.record_stage("a/b#1", "AUDIT_NO_GO", reason="ALREADY_FIXED")
     state = tmp_path / "state"
     state.mkdir()
-    (state / "seen.json").write_text("{}", encoding="utf-8")
+    feedback_path = state / "controller_terminal_feedback.json"
     calls = []
 
     class GitHub:
@@ -141,11 +141,12 @@ def test_terminal_feedback_is_published_only_for_unchanged_issues(monkeypatch, t
 
     result = MODULE.publish_terminal_feedback(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
 
-    saved = json.loads((state / "seen.json").read_text(encoding="utf-8"))
+    saved = json.loads(feedback_path.read_text(encoding="utf-8"))
     assert result["published"] == 1
     assert saved["a/b#1"]["status"] == "controller_terminal"
     assert saved["a/b#1"]["terminal_reason"] == "ALREADY_FIXED"
-    assert [call[-1] for call in calls] == ["restore", "publish"]
+    assert [call[2] for call in calls] == ["restore", "publish"]
+    assert all("controller-feedback" in call for call in calls)
 
 
 def test_terminal_feedback_defers_when_issue_changed_after_dispatch(monkeypatch, tmp_path):
@@ -153,7 +154,6 @@ def test_terminal_feedback_defers_when_issue_changed_after_dispatch(monkeypatch,
     store.record_stage("a/b#1", "AUDIT_NO_GO", reason="ALREADY_FIXED")
     state = tmp_path / "state"
     state.mkdir()
-    (state / "seen.json").write_text("{}", encoding="utf-8")
 
     class GitHub:
         def issue(self, _repo, _number):
@@ -167,7 +167,7 @@ def test_terminal_feedback_defers_when_issue_changed_after_dispatch(monkeypatch,
 
     assert result["published"] == 0
     assert result["deferred"] == [{"key": "a/b#1", "reason": "issue_updated_after_local_snapshot"}]
-    assert json.loads((state / "seen.json").read_text(encoding="utf-8")) == {}
+    assert not (state / "controller_terminal_feedback.json").exists()
 
 
 def test_terminal_feedback_uses_latest_terminal_recheck_time(monkeypatch, tmp_path):
@@ -180,7 +180,6 @@ def test_terminal_feedback_uses_latest_terminal_recheck_time(monkeypatch, tmp_pa
     store.record_stage("a/b#1", "AUDIT_NO_GO", reason="UNCHANGED_AFTER_RECHECK")
     state = tmp_path / "state"
     state.mkdir()
-    (state / "seen.json").write_text("{}", encoding="utf-8")
 
     class GitHub:
         def issue(self, _repo, _number):

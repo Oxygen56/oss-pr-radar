@@ -11,6 +11,7 @@ from oss_pr_radar.scanner import (
     Radar,
     candidate_notification_digest,
     count_seen_rechecks,
+    merge_controller_terminal_feedback,
     select_inspection_bases,
     select_seen_rechecks,
     should_skip_seen,
@@ -508,6 +509,31 @@ def test_controller_terminal_feedback_survives_scanner_migration_until_issue_cha
         scanner_version=SCANNER_VERSION,
         decision_digest=decision_contract_digest(),
     )
+
+
+def test_controller_terminal_feedback_does_not_override_newer_cloud_issue_revision():
+    terminal = {
+        "status": "controller_terminal",
+        "issue_updated": "2026-08-08T20:00:00Z",
+        "terminal_reason": "ALREADY_FIXED",
+    }
+
+    merged = merge_controller_terminal_feedback(
+        {
+            "a/b#1": {
+                "status": "inspection_budget_deferred",
+                "issue_updated": "2026-08-09T01:00:00Z",
+            },
+            "a/b#2": {
+                "status": "inspection_budget_deferred",
+                "issue_updated": "2026-08-08T20:00:00Z",
+            },
+        },
+        {"a/b#1": terminal, "a/b#2": terminal},
+    )
+
+    assert merged["a/b#1"]["status"] == "inspection_budget_deferred"
+    assert merged["a/b#2"]["status"] == "controller_terminal"
 
 
 def test_unselected_active_migrations_are_declassified_until_revalidated(monkeypatch, tmp_path):

@@ -43,6 +43,7 @@ DEFAULT_REPORTS = BASE_DIR / "reports"
 DEFAULT_SEEN = DEFAULT_REPORTS / "oss_pr_radar_seen.json"
 DEFAULT_STATE = DEFAULT_REPORTS / "pr_radar_runtime_state.json"
 DEFAULT_REPO_CACHE = BASE_DIR / "state" / "repo_cache.json"
+DEFAULT_CONTROLLER_FEEDBACK = BASE_DIR / "state" / "controller_terminal_feedback.json"
 DEFAULT_CHAT_ID = os.environ.get("FEISHU_CHAT_ID", "")
 PROFILE = "agent_ai_infra_v2"
 AGENT_INFRA_TRACK = "agent_ai_infra"
@@ -1534,6 +1535,28 @@ def should_skip_seen(
     return current - analyzed < timedelta(hours=SEEN_RECHECK_HOURS)
 
 
+def merge_controller_terminal_feedback(
+    seen: dict[str, Any], feedback: dict[str, Any]
+) -> dict[str, Any]:
+    """Overlay controller terminal judgments unless cloud state saw a newer issue revision."""
+
+    merged = dict(seen)
+    for key, value in feedback.items():
+        if not isinstance(value, dict) or value.get("status") != CONTROLLER_TERMINAL_STATUS:
+            continue
+        current = merged.get(key) if isinstance(merged.get(key), dict) else {}
+        current_updated = parse_github_time(
+            current.get("issue_updated"), datetime.min.replace(tzinfo=timezone.utc)
+        )
+        feedback_updated = parse_github_time(
+            value.get("issue_updated"), datetime.min.replace(tzinfo=timezone.utc)
+        )
+        if current_updated > feedback_updated:
+            continue
+        merged[key] = current | value
+    return merged
+
+
 def requires_unavailable_hardware(title: str, labels_text: str, body: str) -> bool:
     """Skip only issues whose unavailable hardware is part of the actual scope."""
     return not assess_hardware_requirements(title, labels_text, body)["compatible"]
@@ -1607,6 +1630,7 @@ class Radar:
         deep_inspection_deadline_seconds: float = SCAN_DEEP_INSPECTION_DEADLINE_SECONDS,
         notify: bool = True,
         repo_cache_path: Path = DEFAULT_REPO_CACHE,
+        controller_feedback_path: Path = DEFAULT_CONTROLLER_FEEDBACK,
     ):
         self.now = now.astimezone(timezone.utc)
         self.since = self.now - timedelta(hours=window_hours)
@@ -1616,7 +1640,12 @@ class Radar:
         self.window_hours = window_hours
         self.requested_window_hours = requested_window_hours or window_hours
         self.last_successful_scan = last_successful_scan
-        self.seen: dict[str, Any] = load_json(seen_path, {})
+        seen = load_json(seen_path, {})
+        feedback = load_json(controller_feedback_path, {})
+        self.seen = merge_controller_terminal_feedback(
+            seen if isinstance(seen, dict) else {},
+            feedback if isinstance(feedback, dict) else {},
+        )
         self.errors: list[str] = []
         self.repo_cache: dict[str, tuple[bool, str]] = {}
         self.policy_cache: dict[str, str] = {}
@@ -4257,6 +4286,7 @@ def main() -> int:
     parser.add_argument("--state", type=Path, default=DEFAULT_STATE)
     parser.add_argument("--pending-rechecks", type=Path, default=None)
     parser.add_argument("--repo-cache", type=Path, default=DEFAULT_REPO_CACHE)
+    parser.add_argument("--controller-feedback", type=Path, default=DEFAULT_CONTROLLER_FEEDBACK)
     parser.add_argument("--max-backfill-hours", type=float, default=24.0)
     parser.add_argument("--chat-id", default=DEFAULT_CHAT_ID)
     parser.add_argument("--scan-out", type=Path, default=None)
@@ -4283,6 +4313,7 @@ def main() -> int:
         pending_rechecks=(load_json(args.pending_rechecks, {}) if args.pending_rechecks else {}),
         notify=not args.no_notify,
         repo_cache_path=args.repo_cache,
+        controller_feedback_path=args.controller_feedback,
     )
     result = radar.run(args.scan_out)
     next_state = dict(state) if isinstance(state, dict) else {}

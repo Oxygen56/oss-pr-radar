@@ -122,6 +122,12 @@ jobs:
       - name: Restore integrity-checked state
         run: python scripts/state_branch.py restore
 
+      - name: Restore controller terminal feedback
+        run: >-
+          python scripts/state_branch.py restore
+          --profile controller-feedback
+          --allow-missing
+
       - name: Restore fresh watch results
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
