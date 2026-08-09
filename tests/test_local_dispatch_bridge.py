@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -111,6 +112,39 @@ def test_no_go_title_is_visibly_marked_before_archive():
         "AUDIT_NO_GO", "08-04 18:47", "repo/project#42", "Duplicate work"
     )
     assert result.startswith("[无价值] 08-04 18:47 repo/project#42")
+
+
+def test_title_list_detects_desktop_title_drift(monkeypatch, tmp_path):
+    store, _worktree = registered_store(tmp_path)
+    store.record_stage("a/b#1", "PR_OPEN", evidence={})
+    pending = store.title_candidates()[0]
+    store.commit_title(
+        thread_id="thread-1",
+        state="PR_OPEN",
+        nonce=pending["titleNonce"],
+    )
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute("CREATE TABLE threads (id TEXT, title TEXT, archived INTEGER)")
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?)",
+            ("thread-1", "<codex_delegation>...", 0),
+        )
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+
+    result = MODULE.title_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert len(result["titles"]) == 1
+    assert result["titles"][0]["threadId"] == "thread-1"
+    assert result["titles"][0]["desiredTitle"].startswith(
+        "[有价值·PR已开] 08-05 16:00 a/b#1"
+    )
+    with store.connect() as connection:
+        drift = connection.execute(
+            "SELECT payload_json FROM events WHERE event_type='THREAD_TITLE_DRIFTED'"
+        ).fetchone()
+    assert drift is not None
+    assert "<codex_delegation>" not in drift["payload_json"]
 
 
 def test_canonical_prompt_unwraps_delegation():
@@ -361,6 +395,7 @@ def test_workspace_task_context_is_private_and_git_ignored(tmp_path):
     value = json.loads(path.read_text(encoding="utf-8"))
     assert value["schemaVersion"] == "radar-task-context-v1"
     assert value["threadId"] == "thread-1"
+    assert value["titleTime"] == "08-05 16:00"
     assert value["externalLedgerAccessAllowed"] is False
     assert value["planHubRequired"] is False
     assert value["networkPolicy"] == "controller_snapshot_only"
@@ -471,6 +506,7 @@ def test_shared_context_recovery_rebuilds_a_lost_local_ledger(monkeypatch, tmp_p
     assert context is not None
     assert context["intentStatus"] == "COMPLETED"
     assert context["stage"] == "FIX_READY"
+    assert re.fullmatch(r"\d{2}-\d{2} \d{2}:\d{2}", context["titleTime"])
 
 
 def test_shared_context_recovery_fails_closed_when_mirrors_disagree(monkeypatch, tmp_path):

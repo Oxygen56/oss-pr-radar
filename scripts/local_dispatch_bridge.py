@@ -2919,8 +2919,39 @@ def cleanup_commit(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def title_list(args: argparse.Namespace) -> dict[str, Any]:
+    store = ledger(args.ledger)
+    bindings = store.title_bindings()
+    thread_ids = [str(item["threadId"]) for item in bindings]
+    current: dict[str, tuple[str, int]] = {}
+    if thread_ids:
+        connection = sqlite3.connect(THREAD_DB)
+        try:
+            placeholders = ",".join("?" for _ in thread_ids)
+            rows = connection.execute(
+                f"SELECT id,title,archived FROM threads WHERE id IN ({placeholders})",
+                thread_ids,
+            ).fetchall()
+            current = {
+                str(row[0]): (str(row[1] or ""), int(row[2] or 0)) for row in rows
+            }
+        finally:
+            connection.close()
+    for binding in bindings:
+        title_time = str(binding.get("titleTime") or "")
+        actual = current.get(str(binding["threadId"]))
+        if not title_time or actual is None or actual[1] != 0:
+            continue
+        desired = lifecycle_title(
+            binding["titleState"], title_time, binding["key"], binding["title"]
+        )
+        if actual[0] != desired and binding["titleSyncedState"] == binding["titleState"]:
+            store.invalidate_title_sync(
+                thread_id=binding["threadId"],
+                state=binding["titleState"],
+                actual_title_digest=hashlib.sha256(actual[0].encode("utf-8")).hexdigest(),
+            )
     values = []
-    for candidate in ledger(args.ledger).title_candidates():
+    for candidate in store.title_candidates():
         if not candidate.get("titleTime"):
             continue
         values.append(

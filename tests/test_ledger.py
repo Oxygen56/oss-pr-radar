@@ -517,6 +517,31 @@ def test_title_state_advances_from_go_to_fix_ready(tmp_path):
     assert store.title_candidates() == []
 
 
+def test_synced_title_can_be_invalidated_after_desktop_drift(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+        title_time="08-09 19:30",
+    )
+
+    assert store.title_candidates() == []
+    assert store.invalidate_title_sync(
+        thread_id="thread-1",
+        state="GO",
+        actual_title_digest="a" * 64,
+    ) is True
+    candidate = store.title_candidates()[0]
+    assert candidate["titleState"] == "GO"
+    store.commit_title(thread_id="thread-1", state="GO", nonce=candidate["titleNonce"])
+    assert store.title_candidates() == []
+
+
 def test_validation_pending_is_non_terminal_and_not_archivable(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(

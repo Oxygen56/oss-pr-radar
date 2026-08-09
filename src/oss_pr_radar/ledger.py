@@ -7,7 +7,7 @@ import re
 import secrets
 import sqlite3
 from contextlib import contextmanager
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -565,6 +565,11 @@ class RadarLedger:
             parse_time(captured_at)
         except (TypeError, ValueError) as exc:
             raise LedgerError("task context audit timestamp is invalid") from exc
+        title_time = str(context.get("titleTime") or "").strip()
+        if not re.fullmatch(r"\d{2}-\d{2} \d{2}:\d{2}", title_time):
+            title_time = parse_time(captured_at).astimezone(
+                timezone(timedelta(hours=8))
+            ).strftime("%m-%d %H:%M")
 
         receipt = context.get("publicationReceipt")
         if receipt is not None and not isinstance(receipt, dict):
@@ -612,6 +617,7 @@ class RadarLedger:
             "authorizationSource": context.get("authorizationSource"),
             "publicationMode": context.get("publicationMode"),
             "recoveredFromTaskContext": True,
+            "titleTime": title_time,
         }
         restored_intent = False
         restored_publication = False
@@ -682,7 +688,7 @@ class RadarLedger:
                        (intent_id,opportunity_key,intent_digest,status,issued_at,expires_at,
                         lease_owner,lease_until,thread_id,project_id,worktree_path,title_time,
                         title_synced_state,payload_json,updated_at)
-                       VALUES (?,?,?,?,?,?,NULL,NULL,?,'github',?,'',?,?,?)""",
+                       VALUES (?,?,?,?,?,?,NULL,NULL,?,'github',?,?,?,?,?)""",
                     (
                         intent_id,
                         key,
@@ -692,6 +698,7 @@ class RadarLedger:
                         payload["expiresAt"],
                         thread_id,
                         str(Path(worktree_path).resolve()),
+                        title_time,
                         title_state,
                         canonical_json(payload),
                         now,
@@ -707,6 +714,11 @@ class RadarLedger:
                     and Path(existing_worktree).resolve() != Path(worktree_path).resolve()
                 ):
                     raise LedgerError("task context worktree binding disagrees with the ledger")
+                if not str(existing_intent["title_time"] or ""):
+                    connection.execute(
+                        "UPDATE intents SET title_time=?,updated_at=? WHERE intent_id=?",
+                        (title_time, now, intent_id),
+                    )
             connection.execute(
                 """UPDATE intents SET status='SUPERSEDED',lease_owner=NULL,lease_until=NULL,
                    updated_at=? WHERE opportunity_key=? AND intent_id<>?
@@ -1400,7 +1412,7 @@ class RadarLedger:
                 now,
             )
 
-    def title_candidates(self) -> list[dict[str, Any]]:
+    def title_bindings(self) -> list[dict[str, Any]]:
         with self.connect() as connection:
             rows = connection.execute(
                 """SELECT o.key,o.title,o.stage,o.updated_at,i.thread_id,i.title_time,
@@ -1431,10 +1443,8 @@ class RadarLedger:
                      ),'THREAD_RESTORED')<>'THREAD_ARCHIVED'
                    ORDER BY o.updated_at"""
             ).fetchall()
-        values = []
+        values: list[dict[str, Any]] = []
         for row in rows:
-            if row["title_synced_state"] == row["desired_state"]:
-                continue
             values.append(
                 {
                     "key": row["key"],
@@ -1442,12 +1452,55 @@ class RadarLedger:
                     "threadId": row["thread_id"],
                     "titleTime": row["title_time"],
                     "titleState": row["desired_state"],
+                    "titleSyncedState": row["title_synced_state"],
                     "titleNonce": sha256_text(
                         f"{row['key']}|{row['thread_id']}|{row['desired_state']}|{row['updated_at']}"
                     ),
                 }
             )
         return values
+
+    def title_candidates(self) -> list[dict[str, Any]]:
+        return [
+            item
+            for item in self.title_bindings()
+            if item["titleSyncedState"] != item["titleState"]
+        ]
+
+    def invalidate_title_sync(
+        self, *, thread_id: str, state: str, actual_title_digest: str
+    ) -> bool:
+        binding = next(
+            (item for item in self.title_bindings() if item["threadId"] == thread_id),
+            None,
+        )
+        if (
+            binding is None
+            or binding["titleState"] != state
+            or binding["titleSyncedState"] != state
+        ):
+            return False
+        now = iso_z(datetime.now(UTC))
+        with self.transaction() as connection:
+            updated = connection.execute(
+                """UPDATE intents SET title_synced_state=NULL,updated_at=?
+                   WHERE thread_id=? AND title_synced_state=?""",
+                (now, thread_id, state),
+            ).rowcount
+            if updated:
+                self._event(
+                    connection,
+                    binding["key"],
+                    "THREAD_TITLE_DRIFTED",
+                    f"{thread_id}:{state}:{actual_title_digest}",
+                    {
+                        "threadId": thread_id,
+                        "titleState": state,
+                        "actualTitleDigest": actual_title_digest,
+                    },
+                    now,
+                )
+        return bool(updated)
 
     def commit_title(self, *, thread_id: str, state: str, nonce: str) -> None:
         candidates = {item["threadId"]: item for item in self.title_candidates()}
@@ -2082,7 +2135,7 @@ class RadarLedger:
         with self.connect() as connection:
             row = connection.execute(
                 f"""SELECT o.key,o.stage,o.issue_url,i.intent_id,i.thread_id,
-                           i.worktree_path,i.status,i.payload_json
+                           i.worktree_path,i.status,i.payload_json,i.title_time
                     FROM opportunities o JOIN intents i ON i.opportunity_key=o.key
                     WHERE {" AND ".join(clauses)}
                     ORDER BY i.updated_at DESC LIMIT 1""",
@@ -2171,6 +2224,7 @@ class RadarLedger:
             "algorithmEvidence": payload.get("algorithmEvidence"),
             "intentId": row["intent_id"],
             "threadId": row["thread_id"],
+            "titleTime": row["title_time"],
             "worktreePath": row["worktree_path"],
             "intentStatus": row["status"],
             "autoSubmitAuthorized": (
