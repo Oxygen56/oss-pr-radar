@@ -1,6 +1,6 @@
 {
-  "digest": "3a7693ed4f39e433051a62f0a04552ada9028f60de7041eccc501aec17be0aa6",
-  "generatedAt": "2026-08-09T02:39:29.407561Z",
+  "digest": "a835407aece73764f35de0e73553a3567b5d25f2a2e5bced69b9fa00eaa72ef8",
+  "generatedAt": "2026-08-09T02:45:07.800750Z",
   "items": [
     {
       "category": "WAIT_MAINTAINER",
@@ -17,6 +17,23 @@
       "policyDigest": "c89091ec68a6cc2ee6c90c1300eda200c1d26b04bcb2f33961326ea32ec75de1",
       "reason": "先在 issue 下请求分配/确认方案，获批后再开 PR。",
       "repo": "1jehuang/jcode",
+      "status": "WATCHING"
+    },
+    {
+      "category": "WAIT_MAINTAINER",
+      "createdAt": "2026-08-09T02:45:07.800750Z",
+      "evidenceDigest": "12b9d7159d4cb2fe0185fbf87027cdc1b4c8f67299ca4c905ce620faa5ab18b9",
+      "expiresAt": "2026-08-23T02:45:07.800750Z",
+      "gateDecision": "HUMAN_REVIEW",
+      "issueNumber": 898,
+      "issueTitle": "[Bug] Operit 平台 Issue：Terminal Manager 坏会话恢复导致 hiddenExec 全局挂起（App 暖启动卡死）",
+      "issueUpdated": "2026-08-09T02:37:53Z",
+      "issueUrl": "https://github.com/AAswordman/Operit/issues/898",
+      "key": "AAswordman/Operit#898",
+      "lastCheckedAt": null,
+      "policyDigest": "81192d8effbbc61741f83bac281d794e8592a98cb1c31667eeefe2b14cd2fe54",
+      "reason": "阅读相关实现和测试，先本地复现，再决定是否开 PR。",
+      "repo": "AAswordman/Operit",
       "status": "WATCHING"
     },
     {
@@ -66,8 +83,8 @@
       "issueUpdated": "2026-08-06T13:47:52Z",
       "issueUrl": "https://github.com/BerriAI/litellm/issues/27767",
       "key": "BerriAI/litellm#27767",
-      "lastCheckedAt": "2026-08-08T23:51:38.421400Z",
-      "latestEvidenceDigest": "3eaa897e9c3bd715bfe8fc18a6c4ffc3c44557267142f12eb9314fac2af86b0b",
+      "lastCheckedAt": "2026-08-09T02:41:23.518559Z",
+      "latestEvidenceDigest": "062a2214a4e4901447983207aace0f8b8446920bfba771f005ddbfce3bcc4863",
       "latestPolicyDigest": "976643b130dc6915919fd8f6847351458e0fc9b94b8a3f99ce80d57f57632004",
       "policyDigest": "db87e16600ea735caa901926382b4860d57965f4f4176f028e26107f0fd6d1f5",
       "reason": "先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。",
@@ -607,8 +624,8 @@
       "issueUpdated": "2026-08-08T14:46:33Z",
       "issueUrl": "https://github.com/NousResearch/hermes-agent/issues/81793",
       "key": "NousResearch/hermes-agent#81793",
-      "lastCheckedAt": "2026-08-08T23:51:38.421400Z",
-      "latestEvidenceDigest": "8a52152f86c179b68dbd37bde36b6d946ec9525916cb9ad4f9155eaa5638a190",
+      "lastCheckedAt": "2026-08-09T02:41:23.518559Z",
+      "latestEvidenceDigest": "98a9b9aaffbc9af4b9b01747ba677ce9abf2c2d5b12671c50b1660efdf434630",
       "latestPolicyDigest": "8a9e9be41bf64e09dfc71048f0c2d1ca657a58acd45f4ab38bacedfc3c048ce7",
       "policyDigest": "82f1716fdd0c14ff242da91b901702b4a62bf39c0518ff45ef8816caebd69f5a",
       "reason": "恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。",
@@ -1146,8 +1163,8 @@
     {
       "category": "WAIT_MAINTAINER",
       "createdAt": "2026-08-08T02:29:37.410382Z",
-      "evidenceDigest": "0cbd3b9b93e20594c825ad605d07ae1e5b6194b5a658aa912f1492f6b9600e7e",
-      "expiresAt": "2026-08-23T02:00:00.031206Z",
+      "evidenceDigest": "60d965d9ddc0036aa97fca598bd7d1152f36bbb0ee9e0e11a253cb4ecb34e505",
+      "expiresAt": "2026-08-23T02:45:07.800750Z",
       "gateDecision": "HUMAN_REVIEW",
       "issueNumber": 12864,
       "issueTitle": "[BUG]: Disaggregated prefill routing is not load-balanced — some prefill workers queue deeply while others stay idle",
@@ -1155,8 +1172,6 @@
       "issueUrl": "https://github.com/ai-dynamo/dynamo/issues/12864",
       "key": "ai-dynamo/dynamo#12864",
       "lastCheckedAt": "2026-08-09T02:16:54.743539Z",
-      "latestEvidenceDigest": "c5704de1eb4e1cfddbfe9f9e6dda3f1ce2023c5247a835e825fac9e3d50b94ad",
-      "latestPolicyDigest": "27ca43062a9eefd2cc34ffd808c727f63f63eb26d01efbd3f83902ea004bb915",
       "policyDigest": "cadaef4c207a2a09f5e5ee779474dfdaa0a3bfdb4ce420b85370e08dd5a71445",
       "reason": "先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。",
       "repo": "ai-dynamo/dynamo",
@@ -1344,13 +1359,13 @@
       "issueUpdated": "2026-08-06T12:06:58Z",
       "issueUrl": "https://github.com/cline/cline/issues/13003",
       "key": "cline/cline#13003",
-      "lastCheckedAt": "2026-08-08T23:47:44.558516Z",
-      "latestEvidenceDigest": "b06d9a7249b2d4811a0add3d88e74cefec4dd584e2e0986803b82dc319944e8f",
+      "lastCheckedAt": "2026-08-09T02:41:23.518559Z",
+      "latestEvidenceDigest": "68a03c82fd25f9e3033b1f9aac7726942d6ba8635cb111a705a24312df5832ac",
       "latestPolicyDigest": "c258a431226649f75d939232f23814ea01a032fe391c1a8a5afe992a87b7df3f",
       "policyDigest": "93bb1870df0cd99bd181783fd8c5296bbbb90c1f10841f757d3927a4b9a5c4b1",
       "reason": "先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。",
       "repo": "cline/cline",
-      "status": "DATA_HOLD"
+      "status": "CLOSED"
     },
     {
       "category": "NEW_CLEAN_CANDIDATE",
@@ -1648,13 +1663,13 @@
       "issueUpdated": "2026-08-06T09:05:22Z",
       "issueUrl": "https://github.com/infiniflow/ragflow/issues/17941",
       "key": "infiniflow/ragflow#17941",
-      "lastCheckedAt": "2026-08-08T23:47:44.558516Z",
-      "latestEvidenceDigest": "c61d0f03e7916968885f328be4a38575d2969548d89412b490dc95060956b12e",
+      "lastCheckedAt": "2026-08-09T02:41:23.518559Z",
+      "latestEvidenceDigest": "af1b3e6d46ec4817432dace4e1f6d9199f92207b817fd1a6b390ff0359483018",
       "latestPolicyDigest": "bb43fae5dc2bc702d1aacafc3a07ef65a70392db05e499e772e1d8b10ffe60d5",
       "policyDigest": "be5af36882f993a9f38ea4e030d81cebf5df982fbf336ed4b37a1c44ccb28bb2",
       "reason": "相关 issue 审计失败；恢复审计并确认无重复后再进入实现。",
       "repo": "infiniflow/ragflow",
-      "status": "DATA_HOLD"
+      "status": "COVERED"
     },
     {
       "category": "WAIT_MAINTAINER",
@@ -1817,11 +1832,13 @@
       "issueUpdated": "2026-08-08T16:15:20Z",
       "issueUrl": "https://github.com/lidge-jun/opencodex/issues/1292",
       "key": "lidge-jun/opencodex#1292",
-      "lastCheckedAt": "2026-08-08T23:51:38.421400Z",
+      "lastCheckedAt": "2026-08-09T02:41:23.518559Z",
+      "latestEvidenceDigest": "8d893df814edb10966e0f4a8dc0eb3446a9df0863f8344ce9679c290fcdd3e2e",
+      "latestPolicyDigest": "f5121662dfec78558f25243a83b2f2a87f6b5892d040ca79c68d5b26edf8b68b",
       "policyDigest": "e3090c60d617017314d534dfbc1d8f88ec87c221db0f36760c6b3825b126c260",
       "reason": "阅读相关实现和测试，先本地复现，再决定是否开 PR。",
       "repo": "lidge-jun/opencodex",
-      "status": "WATCHING"
+      "status": "DATA_HOLD"
     },
     {
       "category": "WAIT_MAINTAINER",
@@ -1865,7 +1882,7 @@
       "category": "WAIT_MAINTAINER",
       "createdAt": "2026-08-09T01:14:02.304413Z",
       "evidenceDigest": "a720e9c9cbd333dc61d2d7b40ec22e0c76de2da70dd139ee7f85ba8a73a6db6e",
-      "expiresAt": "2026-08-23T02:00:00.031206Z",
+      "expiresAt": "2026-08-23T02:45:07.800750Z",
       "gateDecision": "HUMAN_REVIEW",
       "issueNumber": 20332,
       "issueTitle": "BUG: MCP client disconnect crashes server 15s later (cancellation not propagated through fetch-to-node)",
@@ -2129,7 +2146,7 @@
       "category": "WAIT_MAINTAINER",
       "createdAt": "2026-08-09T01:30:33.952948Z",
       "evidenceDigest": "91d5efcfe4f3f1cbbb58c7026c7d7aa37443e3b4186f77410273eb787a8d23ca",
-      "expiresAt": "2026-08-23T02:00:00.031206Z",
+      "expiresAt": "2026-08-23T02:45:07.800750Z",
       "gateDecision": "HUMAN_REVIEW",
       "issueNumber": 20747,
       "issueTitle": "Every step re-saves the entire conversation — in Postgres and Redis",
@@ -2191,13 +2208,13 @@
       "issueUpdated": "2026-08-06T17:34:52Z",
       "issueUrl": "https://github.com/mastra-ai/mastra/issues/20798",
       "key": "mastra-ai/mastra#20798",
-      "lastCheckedAt": "2026-08-08T23:47:44.558516Z",
-      "latestEvidenceDigest": "3abb7b5fdfbdbdeba7aa204146480808c4fcdd15fa14e96b2d286fc32dc1a916",
+      "lastCheckedAt": "2026-08-09T02:41:23.518559Z",
+      "latestEvidenceDigest": "33338981c6141e0dec5ea78e0818ac9b308ef9281b0948268a1741eaaf1f2151",
       "latestPolicyDigest": "bc0deb02db18c7766ac02c45d4c753969e2a4772b5d30f8865775aa0e11fb5e2",
       "policyDigest": "9b0f29d4d0fe764adc5ec1271cf962771521e64d554fe89b0af8e906a5105f25",
       "reason": "阅读相关实现和测试，先本地复现，再决定是否开 PR。",
       "repo": "mastra-ai/mastra",
-      "status": "DATA_HOLD"
+      "status": "CLOSED"
     },
     {
       "category": "NEW_CLEAN_CANDIDATE",
@@ -2248,13 +2265,13 @@
       "issueUpdated": "2026-08-07T17:05:49Z",
       "issueUrl": "https://github.com/mastra-ai/mastra/issues/20887",
       "key": "mastra-ai/mastra#20887",
-      "lastCheckedAt": "2026-08-08T23:47:44.558516Z",
-      "latestEvidenceDigest": "9e52eb1fb9260730b3185668f1d032ff5fee6b06d211ee50ae6a8587dc838846",
+      "lastCheckedAt": "2026-08-09T02:41:23.518559Z",
+      "latestEvidenceDigest": "21839e7c01b70bc2ec4cbec87f9890a0a54da819d2c04469fe8120e63c129d0c",
       "latestPolicyDigest": "bc0deb02db18c7766ac02c45d4c753969e2a4772b5d30f8865775aa0e11fb5e2",
       "policyDigest": "9b0f29d4d0fe764adc5ec1271cf962771521e64d554fe89b0af8e906a5105f25",
       "reason": "先人工比较相关 issue 的根因、维护者归并方向和可提交代码路径；确认不是重复后再进入实现。",
       "repo": "mastra-ai/mastra",
-      "status": "DATA_HOLD"
+      "status": "CLOSED"
     },
     {
       "category": "WAIT_MAINTAINER",
@@ -2267,13 +2284,13 @@
       "issueUpdated": "2026-08-07T04:41:40Z",
       "issueUrl": "https://github.com/mastra-ai/mastra/issues/20888",
       "key": "mastra-ai/mastra#20888",
-      "lastCheckedAt": "2026-08-08T23:47:44.558516Z",
-      "latestEvidenceDigest": "5b46da5228d50ada241db0326fb641f12ea6aabaaec2b2d3bbb7e03701bc2121",
+      "lastCheckedAt": "2026-08-09T02:41:23.518559Z",
+      "latestEvidenceDigest": "652c0ca95d6b25fe69f69130b82d3db9354373f9b9d78b801ca35b7a6f7dc6a7",
       "latestPolicyDigest": "bc0deb02db18c7766ac02c45d4c753969e2a4772b5d30f8865775aa0e11fb5e2",
       "policyDigest": "9b0f29d4d0fe764adc5ec1271cf962771521e64d554fe89b0af8e906a5105f25",
       "reason": "先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。",
       "repo": "mastra-ai/mastra",
-      "status": "DATA_HOLD"
+      "status": "CLOSED"
     },
     {
       "category": "WAIT_MAINTAINER",
@@ -2286,13 +2303,13 @@
       "issueUpdated": "2026-08-07T16:02:15Z",
       "issueUrl": "https://github.com/mastra-ai/mastra/issues/20934",
       "key": "mastra-ai/mastra#20934",
-      "lastCheckedAt": "2026-08-08T23:47:44.558516Z",
-      "latestEvidenceDigest": "aaddaea3fff9f6f5f96fa3f7c2277d9670d4f925d080701e4f44371fdf04b78b",
+      "lastCheckedAt": "2026-08-09T02:41:23.518559Z",
+      "latestEvidenceDigest": "8857fbcee5a4b0d609ac24ca091e77f092330c05a2f12129325d4fb5704114d4",
       "latestPolicyDigest": "bc0deb02db18c7766ac02c45d4c753969e2a4772b5d30f8865775aa0e11fb5e2",
       "policyDigest": "9b0f29d4d0fe764adc5ec1271cf962771521e64d554fe89b0af8e906a5105f25",
       "reason": "先人工比较相关 issue 的根因、维护者归并方向和可提交代码路径；确认不是重复后再进入实现。",
       "repo": "mastra-ai/mastra",
-      "status": "DATA_HOLD"
+      "status": "CLOSED"
     },
     {
       "category": "WAIT_MAINTAINER",
@@ -2355,7 +2372,7 @@
       "category": "WAIT_MAINTAINER",
       "createdAt": "2026-08-08T13:19:42.953188Z",
       "evidenceDigest": "dd4d1c4e538e97c449ca56f6d47916e9e4ad7ddebe990e4d0668391ff80099c8",
-      "expiresAt": "2026-08-23T02:00:00.031206Z",
+      "expiresAt": "2026-08-23T02:45:07.800750Z",
       "gateDecision": "HUMAN_REVIEW",
       "issueNumber": 4956,
       "issueTitle": "ADD-only extraction in v3 may surface stale/contradictory facts for time-sensitive attributes",
@@ -2363,8 +2380,6 @@
       "issueUrl": "https://github.com/mem0ai/mem0/issues/4956",
       "key": "mem0ai/mem0#4956",
       "lastCheckedAt": "2026-08-09T02:34:29.916009Z",
-      "latestEvidenceDigest": "efafb518a9e2c968c0b97ff95d0bdd35aeb6be6de65a48e3fe1fb58eacf38189",
-      "latestPolicyDigest": "1878a4bc9131eae0f7c80825e60d44f2a49bd9b2709adcaf4db88ec08fcfde47",
       "policyDigest": "4c66e036985e281de1539e235ce5738e24a6f9010dd29a543cfaa26ce0447251",
       "reason": "已有 PR 但强度不足；先看维护者规则和 issue 讨论，必要时先请求确认方案或分配。",
       "repo": "mem0ai/mem0",
@@ -2469,7 +2484,7 @@
       "category": "WAIT_MAINTAINER",
       "createdAt": "2026-08-07T13:48:28.467590Z",
       "evidenceDigest": "6d2ae3b986b7c8355588625ff43f7734f4de14cc616795d38f9b5a59a0335fa6",
-      "expiresAt": "2026-08-23T02:00:00.031206Z",
+      "expiresAt": "2026-08-23T02:45:07.800750Z",
       "gateDecision": "HUMAN_REVIEW",
       "issueNumber": 7569,
       "issueTitle": "Python: [Bug]: AG-UI approval resume executes only the first of several approved calls in one batch — the rest are silently dropped",
@@ -2477,8 +2492,6 @@
       "issueUrl": "https://github.com/microsoft/agent-framework/issues/7569",
       "key": "microsoft/agent-framework#7569",
       "lastCheckedAt": "2026-08-09T02:29:56.567182Z",
-      "latestEvidenceDigest": "f607e634eb76c536611e03dd90a6750613be0af8549634ea5d03f4c1b2d9cf58",
-      "latestPolicyDigest": "d9bb7e1d81ef5e98f7dfda69389022cb763b16d5920230d14105927502e3e71e",
       "policyDigest": "32a17b7b073a96dbffc7522b6c186c68caac1a9cfa070b99cc22a7e248fa087f",
       "reason": "先在 issue 下请求分配/确认方案，获批后再开 PR。",
       "repo": "microsoft/agent-framework",
@@ -2531,7 +2544,9 @@
       "issueUpdated": "2026-08-07T16:02:44Z",
       "issueUrl": "https://github.com/modelcontextprotocol/csharp-sdk/issues/1799",
       "key": "modelcontextprotocol/csharp-sdk#1799",
-      "lastCheckedAt": "2026-08-08T23:47:44.558516Z",
+      "lastCheckedAt": "2026-08-09T02:41:23.518559Z",
+      "latestEvidenceDigest": "e094e369204533760ebf22e65de4041c7222453c6b73e998efa408e683c5d3ef",
+      "latestPolicyDigest": "088684d17f7f3a3f2f5bac2ab08cb40adcaba20881578b2818d850381d6e51e5",
       "policyDigest": "2c84ffcbfc604822a5ba4ca23fc581356045a0e917b5cb9d22b8a820d77256f6",
       "reason": "先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。",
       "repo": "modelcontextprotocol/csharp-sdk",
@@ -2945,7 +2960,7 @@
       "issueUpdated": "2026-08-07T13:50:42Z",
       "issueUrl": "https://github.com/promptfoo/promptfoo/issues/10321",
       "key": "promptfoo/promptfoo#10321",
-      "lastCheckedAt": "2026-08-08T23:47:44.558516Z",
+      "lastCheckedAt": "2026-08-09T02:41:23.518559Z",
       "latestEvidenceDigest": "00c3ef4cdf01e97415abf318f9f7a4619e4d82f3e4da4d9900acc02527ceeeec",
       "latestPolicyDigest": "629bca1637e4f363c43827cf137558f193e75c3527aa547ca2b5efb6003a6ae7",
       "policyDigest": "5ca0154d496aa79c2158f02dae6e06253792111389b50480309973d59c6924c6",
@@ -3450,13 +3465,13 @@
       "issueUpdated": "2026-08-06T02:16:25Z",
       "issueUrl": "https://github.com/sgl-project/sglang/issues/33783",
       "key": "sgl-project/sglang#33783",
-      "lastCheckedAt": "2026-08-08T23:47:44.558516Z",
-      "latestEvidenceDigest": "ab7225198297404d84d4ae28ee781c3211e44278383e9315e034cdf0930cfd2b",
+      "lastCheckedAt": "2026-08-09T02:41:23.518559Z",
+      "latestEvidenceDigest": "699abf9d9adc26db7503c92459532d767edde79acb60d0b2c4f3596c91d0d9b4",
       "latestPolicyDigest": "f448507073cf83542e69a0494310e5c3568ed1578d86d155a7232726e2947d4b",
       "policyDigest": "f8da4891e986aef7819f561c8ae9f2860558d899c97af457bd9fc3e1ac307ef1",
       "reason": "相关 issue 审计失败；恢复审计并确认无重复后再进入实现。",
       "repo": "sgl-project/sglang",
-      "status": "COVERED"
+      "status": "DATA_HOLD"
     },
     {
       "category": "WAIT_MAINTAINER",
@@ -3469,13 +3484,13 @@
       "issueUpdated": "2026-08-06T02:10:41Z",
       "issueUrl": "https://github.com/sgl-project/sglang/issues/33789",
       "key": "sgl-project/sglang#33789",
-      "lastCheckedAt": "2026-08-08T23:47:44.558516Z",
-      "latestEvidenceDigest": "cb7b3db31f96ae1e9933954097328575fe9b290a1cd1f4a66d0fc01a7c2c2804",
+      "lastCheckedAt": "2026-08-09T02:41:23.518559Z",
+      "latestEvidenceDigest": "92e6458a242e5e9a82902152c88861527f0209f16c36ca3ea7ae07f083f9c8db",
       "latestPolicyDigest": "f448507073cf83542e69a0494310e5c3568ed1578d86d155a7232726e2947d4b",
       "policyDigest": "f8da4891e986aef7819f561c8ae9f2860558d899c97af457bd9fc3e1ac307ef1",
       "reason": "恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。",
       "repo": "sgl-project/sglang",
-      "status": "WATCHING"
+      "status": "DATA_HOLD"
     },
     {
       "category": "WAIT_MAINTAINER",
@@ -3596,19 +3611,19 @@
       "issueUpdated": "2026-08-08T05:34:43Z",
       "issueUrl": "https://github.com/sgl-project/sglang/issues/34000",
       "key": "sgl-project/sglang#34000",
-      "lastCheckedAt": "2026-08-08T23:47:44.558516Z",
-      "latestEvidenceDigest": "f78c5b4f349a2db84b442d64eab5ff3589b89ff8591e34c4be047a59cb6bba11",
+      "lastCheckedAt": "2026-08-09T02:41:23.518559Z",
+      "latestEvidenceDigest": "58ef41bb83cda03f3e6ee36ef9235e95336bcb827151ba89f8631de8df5c4ee8",
       "latestPolicyDigest": "f448507073cf83542e69a0494310e5c3568ed1578d86d155a7232726e2947d4b",
       "policyDigest": "f8da4891e986aef7819f561c8ae9f2860558d899c97af457bd9fc3e1ac307ef1",
       "reason": "先复现 issue，再逐项对比已有 PR 的缺口；只有能提供更小改动、更强测试或更完整边界覆盖时才开 PR。",
       "repo": "sgl-project/sglang",
-      "status": "COVERED"
+      "status": "DATA_HOLD"
     },
     {
       "category": "WAIT_MAINTAINER",
       "createdAt": "2026-08-08T10:57:27.656052Z",
       "evidenceDigest": "17807b9c9483c28cb278aebb5d55150761e1c448c728fb13b2aae5698a1ce802",
-      "expiresAt": "2026-08-23T01:46:57.272429Z",
+      "expiresAt": "2026-08-23T02:45:07.800750Z",
       "gateDecision": "HUMAN_REVIEW",
       "issueNumber": 34110,
       "issueTitle": "[Bug] MiniMax-H3 Ref2VA consistently produces snow/noise on SGLang 0.5.17 with L40S offload",
@@ -3616,18 +3631,16 @@
       "issueUrl": "https://github.com/sgl-project/sglang/issues/34110",
       "key": "sgl-project/sglang#34110",
       "lastCheckedAt": "2026-08-09T02:34:29.916009Z",
-      "latestEvidenceDigest": "099b08839275372cc5a5ad9bc7da4fcd6a6e1edab3193f029383aa457dad11cc",
-      "latestPolicyDigest": "f448507073cf83542e69a0494310e5c3568ed1578d86d155a7232726e2947d4b",
       "policyDigest": "f8da4891e986aef7819f561c8ae9f2860558d899c97af457bd9fc3e1ac307ef1",
       "reason": "阅读相关实现和测试，先本地复现，再决定是否开 PR。",
       "repo": "sgl-project/sglang",
-      "status": "DATA_HOLD"
+      "status": "WATCHING"
     },
     {
       "category": "WAIT_MAINTAINER",
       "createdAt": "2026-08-08T11:51:46.791555Z",
       "evidenceDigest": "742f1a56914e3fa8a4fbaee76d718e8f7cb544a852870f652766247a0aa4327f",
-      "expiresAt": "2026-08-23T02:00:00.031206Z",
+      "expiresAt": "2026-08-23T02:45:07.800750Z",
       "gateDecision": "HUMAN_REVIEW",
       "issueNumber": 34111,
       "issueTitle": "[Bug] A cancelled grammar-constrained overlap request can still emit visible text before abort",
@@ -3635,12 +3648,10 @@
       "issueUrl": "https://github.com/sgl-project/sglang/issues/34111",
       "key": "sgl-project/sglang#34111",
       "lastCheckedAt": "2026-08-09T02:34:29.916009Z",
-      "latestEvidenceDigest": "6df3a4d04295f1887022d752ba2028669f7ce22b90059e9973a0786e997050b6",
-      "latestPolicyDigest": "f448507073cf83542e69a0494310e5c3568ed1578d86d155a7232726e2947d4b",
       "policyDigest": "f8da4891e986aef7819f561c8ae9f2860558d899c97af457bd9fc3e1ac307ef1",
       "reason": "阅读相关实现和测试，先本地复现，再决定是否开 PR。",
       "repo": "sgl-project/sglang",
-      "status": "DATA_HOLD"
+      "status": "WATCHING"
     },
     {
       "category": "NEW_CLEAN_CANDIDATE",
@@ -3710,13 +3721,13 @@
       "issueUpdated": "2026-08-07T04:14:07Z",
       "issueUrl": "https://github.com/stanfordnlp/dspy/issues/10165",
       "key": "stanfordnlp/dspy#10165",
-      "lastCheckedAt": "2026-08-08T23:47:44.558516Z",
-      "latestEvidenceDigest": "73e1fb9b08c199170da68a09fd4d5c1e1003fb404a76676ccf9ada392a9b373d",
+      "lastCheckedAt": "2026-08-09T02:41:23.518559Z",
+      "latestEvidenceDigest": "d162a405ab0d1d586995ed91cf4633fa7707b3574f2a4204323ec500571ce1b8",
       "latestPolicyDigest": "87b2a29653e891f286184233cb7d9cef89ee63b801db7428dedd18e0352960fb",
       "policyDigest": "92b0b93635a85ae270e36d8d891e76cd8232dcd24a4b53171dc51dea18079685",
       "reason": "先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。",
       "repo": "stanfordnlp/dspy",
-      "status": "COVERED"
+      "status": "DATA_HOLD"
     },
     {
       "category": "NEW_CLEAN_CANDIDATE",
@@ -3767,13 +3778,13 @@
       "issueUpdated": "2026-08-06T02:13:01Z",
       "issueUrl": "https://github.com/vercel/ai/issues/18503",
       "key": "vercel/ai#18503",
-      "lastCheckedAt": "2026-08-08T23:47:44.558516Z",
-      "latestEvidenceDigest": "be267f0cab2cbf337b64c602d372da30bd5172adf2d363cc196807ea2881eaba",
+      "lastCheckedAt": "2026-08-09T02:41:23.518559Z",
+      "latestEvidenceDigest": "542cc22b3e5a96185f7c303f7d6ef327bd551da4025a350bcbed90e5a8d28e82",
       "latestPolicyDigest": "cd056489bd07afbc065a92b81472c7946a72fd8198b0c8581efe90cf1ae94eed",
       "policyDigest": "8cf4eee9c385051bdeac1f79faeedd59056875ce58854db3a9ecc149c585ca82",
       "reason": "相关 issue 审计失败；恢复审计并确认无重复后再进入实现。",
       "repo": "vercel/ai",
-      "status": "CLOSED"
+      "status": "DATA_HOLD"
     },
     {
       "category": "WAIT_MAINTAINER",
@@ -3841,11 +3852,13 @@
       "issueUpdated": "2026-08-07T12:11:40Z",
       "issueUrl": "https://github.com/vllm-project/vllm/issues/35288",
       "key": "vllm-project/vllm#35288",
-      "lastCheckedAt": "2026-08-08T23:47:44.558516Z",
+      "lastCheckedAt": "2026-08-09T02:41:23.518559Z",
+      "latestEvidenceDigest": "1106a255acc15600d7a0673f8e678a10ad506ae7e55c43f537e03de20907dbee",
+      "latestPolicyDigest": "58a570f63a9f7b0b8a528747ab88696ae0db5e4c09011fa50264f77a72817385",
       "policyDigest": "5c3ff74806b2f2e496e1ea0d76a1de5e30e38b4fce821d788a3836e42bb834f3",
       "reason": "先人工比较相关 issue 的根因、维护者归并方向和可提交代码路径；确认不是重复后再进入实现。",
       "repo": "vllm-project/vllm",
-      "status": "WATCHING"
+      "status": "DATA_HOLD"
     },
     {
       "category": "WAIT_MAINTAINER",
@@ -3877,13 +3890,13 @@
       "issueUpdated": "2026-08-05T23:19:13Z",
       "issueUrl": "https://github.com/vllm-project/vllm/issues/46097",
       "key": "vllm-project/vllm#46097",
-      "lastCheckedAt": "2026-08-08T23:47:44.558516Z",
-      "latestEvidenceDigest": "24a0f4fa2f65350e3faa40b7c2788af558fd223d78a1a04cfc55dcb5df4b4f80",
+      "lastCheckedAt": "2026-08-09T02:41:23.518559Z",
+      "latestEvidenceDigest": "8f55dcc7efbaa763046c1636b460acb47ff9a62bf46ab6ef3045081149d2ec76",
       "latestPolicyDigest": "58a570f63a9f7b0b8a528747ab88696ae0db5e4c09011fa50264f77a72817385",
       "policyDigest": "5c3ff74806b2f2e496e1ea0d76a1de5e30e38b4fce821d788a3836e42bb834f3",
       "reason": "恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。",
       "repo": "vllm-project/vllm",
-      "status": "WATCHING"
+      "status": "DATA_HOLD"
     },
     {
       "category": "WAIT_MAINTAINER",
@@ -4084,11 +4097,13 @@
       "issueUpdated": "2026-08-04T14:26:38Z",
       "issueUrl": "https://github.com/vllm-project/vllm/issues/51035",
       "key": "vllm-project/vllm#51035",
-      "lastCheckedAt": "2026-08-08T23:47:44.558516Z",
+      "lastCheckedAt": "2026-08-09T02:41:23.518559Z",
+      "latestEvidenceDigest": "e4da0026a131619e1e6ffd7abc8697b8b38a5d1bc05b6cfe933a574807d2165d",
+      "latestPolicyDigest": "58a570f63a9f7b0b8a528747ab88696ae0db5e4c09011fa50264f77a72817385",
       "policyDigest": "5c3ff74806b2f2e496e1ea0d76a1de5e30e38b4fce821d788a3836e42bb834f3",
       "reason": "仅完成本地复现、修复、测试和私有提交包；由用户自行决定公开提交。",
       "repo": "vllm-project/vllm",
-      "status": "WATCHING"
+      "status": "DATA_HOLD"
     },
     {
       "category": "WAIT_MAINTAINER",
@@ -4177,8 +4192,8 @@
       "issueUpdated": "2026-08-05T19:22:06Z",
       "issueUrl": "https://github.com/vllm-project/vllm/issues/51140",
       "key": "vllm-project/vllm#51140",
-      "lastCheckedAt": "2026-08-08T23:47:44.558516Z",
-      "latestEvidenceDigest": "e4357a20430ce9a61274ed6ddff1759a4876433491fbb13835d6eec830b951b9",
+      "lastCheckedAt": "2026-08-09T02:41:23.518559Z",
+      "latestEvidenceDigest": "db1131f43dd88d293c7874c8784f676e89b48ae4fc59f8aa5f1ba7d4ba7cfcc1",
       "latestPolicyDigest": "58a570f63a9f7b0b8a528747ab88696ae0db5e4c09011fa50264f77a72817385",
       "policyDigest": "5c3ff74806b2f2e496e1ea0d76a1de5e30e38b4fce821d788a3836e42bb834f3",
       "reason": "相关 issue 审计失败；恢复审计并确认无重复后再进入实现。",
@@ -4262,8 +4277,8 @@
     {
       "category": "WAIT_MAINTAINER",
       "createdAt": "2026-08-07T10:59:18.035354Z",
-      "evidenceDigest": "66713621c48fca88b85d2504b3af04ae2f42df5ec05289d413474c3a19e49aaa",
-      "expiresAt": "2026-08-23T02:00:00.031206Z",
+      "evidenceDigest": "480af309b8100822ea053674dbabf8eae069bb01d240373bc63b66a9104ef643",
+      "expiresAt": "2026-08-23T02:45:07.800750Z",
       "gateDecision": "HUMAN_REVIEW",
       "issueNumber": 51286,
       "issueTitle": "[Bug]: FA4 SM100 split-KV kernels fail to compile with `TYPE_UNSTABLE_JOIN` (nvidia-cutlass-dsl 4.6.0 pin) — crashes Kimi-K3 startup during CuTeDSL warmup",
@@ -4271,12 +4286,10 @@
       "issueUrl": "https://github.com/vllm-project/vllm/issues/51286",
       "key": "vllm-project/vllm#51286",
       "lastCheckedAt": "2026-08-09T02:16:54.743539Z",
-      "latestEvidenceDigest": "768c6b38b419cb7397880d68d3613ae3d9c1826a04bac6e7c0218c71cce41ecb",
-      "latestPolicyDigest": "58a570f63a9f7b0b8a528747ab88696ae0db5e4c09011fa50264f77a72817385",
       "policyDigest": "5c3ff74806b2f2e496e1ea0d76a1de5e30e38b4fce821d788a3836e42bb834f3",
       "reason": "先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。",
       "repo": "vllm-project/vllm",
-      "status": "DATA_HOLD"
+      "status": "WATCHING"
     },
     {
       "category": "WAIT_MAINTAINER",
@@ -4320,7 +4333,7 @@
       "category": "WAIT_MAINTAINER",
       "createdAt": "2026-08-08T10:57:27.656052Z",
       "evidenceDigest": "4f74ca7beb6801998e69b1b70935ad2ff8ed5a6195951008d8e3b7e67e82d634",
-      "expiresAt": "2026-08-23T02:00:00.031206Z",
+      "expiresAt": "2026-08-23T02:45:07.800750Z",
       "gateDecision": "HUMAN_REVIEW",
       "issueNumber": 51396,
       "issueTitle": "[Bug]: cpu_offload_gb silently no-ops on Model Runner V2 — offloader never installed, model loads fully on-GPU with no warning",
@@ -4328,12 +4341,10 @@
       "issueUrl": "https://github.com/vllm-project/vllm/issues/51396",
       "key": "vllm-project/vllm#51396",
       "lastCheckedAt": "2026-08-09T02:34:29.916009Z",
-      "latestEvidenceDigest": "ce4f360984ad6d20cc12e8e18313167049a8e7744716f0d22a4a43b121d19b01",
-      "latestPolicyDigest": "58a570f63a9f7b0b8a528747ab88696ae0db5e4c09011fa50264f77a72817385",
       "policyDigest": "5c3ff74806b2f2e496e1ea0d76a1de5e30e38b4fce821d788a3836e42bb834f3",
       "reason": "已有 PR 但强度不足；先看维护者规则和 issue 讨论，必要时先请求确认方案或分配。",
       "repo": "vllm-project/vllm",
-      "status": "DATA_HOLD"
+      "status": "WATCHING"
     },
     {
       "category": "WAIT_MAINTAINER",

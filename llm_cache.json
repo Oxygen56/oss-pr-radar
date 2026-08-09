@@ -559,6 +559,34 @@
     ],
     "why": "The issue reports a reproducible multi-node TP deadlock with strong evidence of NCCL collective desync, but the root cause is not definitively identified; multiple orthogonal causes (NCCL build, FlashInfer kernel livelock, TP-divergence) are discussed. The deterministic gate requires HUMAN_REVIEW, and open PR/related issue lookups failed, so duplicate work cannot be excluded."
   },
+  "09781cee75435ba3d10d4eca11d08d1b0697587d32058faa625331c17ae7cdac": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Prefill router booking and active-block tracking in EPP path",
+      "Load-aware prefill selection in kv-router selector"
+    ],
+    "risks": [
+      "Existing PR #12890 may already fix the issue; duplicate work risk",
+      "Changing router behavior may affect performance or compatibility"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "test_plan": [
+      "Reproduce with mixed prompt sizes and compare queue depths across prefill pods",
+      "Add regression test for prefill worker load balancing in EPP integration"
+    ],
+    "unknowns": [
+      "Whether PR #12890 actually resolves the load imbalance",
+      "Maintainer preference for design approach"
+    ],
+    "why": "Issue provides a clear user-visible load imbalance with a concrete reproduction and root cause analysis in comments. However, existing PR #12890 overlaps semantically and may already address the root cause, requiring maintainer comparison before new work. No maintainer approval or design confirmation exists."
+  },
   "09825a63c7595dbc0ab01b0f35ce09e3128060df67572bc7681e652c013b6039": {
     "confidence": 0.7,
     "contradictions": [],
@@ -2261,6 +2289,36 @@
       "Maintainer preference on whether to accept a new PR or rely on the existing one."
     ],
     "why": "Issue identifies a concrete API break in OpenEnv causing silent unscorable rollouts, with a minimal two-line fix. However, an existing PR #6672 by a maintainer already addresses the same code path, and the issue explicitly requests maintainer confirmation before sending a PR. The deterministic gate is HUMAN_REVIEW, and the PR's technical completeness and overlap require maintainer assessment."
+  },
+  "234a5773c1a20bafc8169dd2e932b4e8b2d7da7420334786814d915ddde54852": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Terminal Manager session recovery logic",
+      "hiddenExec queue health checks",
+      "UI session list synchronization with underlying processes"
+    ],
+    "risks": [
+      "Potential API behavior changes if fixes are too broad",
+      "May require maintainer design preferences for session management"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "test_plan": [
+      "Reproduce with 5-10 terminal sessions and app restart, then verify hiddenExec resumes after killing orphan proot processes",
+      "Add regression test for session recovery with multiple sessions and ensure hiddenExec does not hang"
+    ],
+    "unknowns": [
+      "No maintainer response or assignment status",
+      "No minimal code reproduction or specific code path identified",
+      "Root cause not precisely isolated; multiple hypotheses remain"
+    ],
+    "why": "The issue provides extensive empirical evidence of a serious bug in Terminal Manager session recovery causing hiddenExec hangs, but the root cause is not precisely identified. The proposed fixes are broad and require architectural decisions. No maintainer response or assignment is present, and the issue is a bug report without a concrete code path or minimal reproduction. The track is agent_ai_infra, not llm_algorithm, so algorithm evidence is not required, but the lack of maintainer confirmation and the need for design decisions make this a WAIT_MAINTAINER."
   },
   "236afcda8e3f600285a07b386b41dce4b374cc582a5772e37720fd6748b8efe6": {
     "confidence": 0.85,
@@ -4698,6 +4756,35 @@
       "Whether the related issue audit failure indicates missing context that could affect actionability"
     ],
     "why": "Issue provides a clear root cause and reproduction, but the supplied deterministic gate says HUMAN_REVIEW and the related issue audit failed with timeout. An existing PR (#33449) directly addresses the issue but has failed CI checks, so a materially better PR may be possible, but maintainer confirmation is needed."
+  },
+  "46c2ac5ab4389fb40d243f886e3d1fece97f802c8e4295a8c237db60121fbe90": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Comment suggests quack-kernels 0.6.3 also causes issue, conflicting with DSL-only root cause"
+    ],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Bump nvidia-cutlass-dsl pin to >=4.6.2 in requirements/cuda.txt",
+      "Defensively initialize n_block_first before dynamic branch in flash_fwd_sm100.py"
+    ],
+    "risks": [
+      "DSL pin bump may affect other kernels or require compatibility testing",
+      "Kernel change must preserve behavior across DSL versions"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Run provided repro.py on SM100 with DSL 4.6.0 to confirm failure, then after fix verify success",
+      "Add regression test for split-KV FA4 varlen compile with seqlen>=513"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer pin bump vs kernel fix; exact impact of quack-kernels version"
+    ],
+    "why": "Issue provides a deterministic repro and root cause for a startup crash on SM100 with split-KV FA4 warmup. Existing PR #41834 overlaps semantically but is broad and not directly linked; a focused fix (DSL pin bump plus defensive kernel change) is actionable and materially better."
   },
   "477dc03a7b3a67b3c04962c25431fb23ed294c621ee5072c9de53286f237f2c5": {
     "confidence": 0.8,
