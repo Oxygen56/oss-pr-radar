@@ -2397,7 +2397,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
             raw = result_path.read_bytes()
             initial_digest = hashlib.sha256(raw).hexdigest()
             digest_seen = store.task_result_digest_seen(candidate["key"], initial_digest)
-            if digest_seen and candidate["stage"] in PUBLISHED_TASK_STAGES:
+            if digest_seen and candidate["stage"] != "VALIDATION_PENDING":
                 continue
             value = json.loads(raw)
             if not isinstance(value, dict):

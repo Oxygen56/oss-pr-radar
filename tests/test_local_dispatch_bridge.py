@@ -1627,6 +1627,24 @@ def test_ingest_skips_consumed_result_after_followup_context_refresh(tmp_path):
     assert result["errors"] == []
 
 
+def test_ingest_skips_blocked_fix_after_context_refresh(tmp_path):
+    store, _worktree, result_path = _controller_commit_result(tmp_path)
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    request_id = first["publicationRequests"][0]["requestId"]
+    store.block_publication_request(request_id, "SUBMIT_READY_EVIDENCE_INCOMPLETE")
+    context_path = result_path.parent / "task-context.json"
+    refreshed = json.loads(context_path.read_text(encoding="utf-8"))
+    refreshed["contextDigest"] = "refreshed-context"
+    context_path.write_text(json.dumps(refreshed), encoding="utf-8")
+
+    repeated = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert repeated["ok"] is True
+    assert repeated["ingested"] == []
+    assert repeated["publicationRequests"] == []
+    assert repeated["errors"] == []
+
+
 def test_prepare_pr_followup_aligns_worktree_to_exact_live_head(monkeypatch, tmp_path):
     worktree = tmp_path / "worktree"
     remote = tmp_path / "remote.git"
