@@ -279,6 +279,7 @@ def test_notification_digest_ignores_llm_wording_and_age_churn():
         "repo": "google/adk-python",
         "num": 6585,
         "title": "Remote stream ends before terminal state",
+        "scanner_version": "scanner-v1",
         "category": "NEW_CLEAN_CANDIDATE",
         "gate_decision": "ALLOW_TO_WORK",
         "submission_policy": "normal",
@@ -296,8 +297,12 @@ def test_notification_digest_ignores_llm_wording_and_age_churn():
     reworded["expected_changes"] = "Equivalent implementation prose"
     reworded["llm_review"]["confidence"] = 0.8
     reworded["open_pr_assessment"]["prs"][0]["age_days"] = 21
+    reworded["scanner_version"] = "scanner-v2"
 
     assert candidate_notification_digest(candidate) == candidate_notification_digest(reworded)
+    assert candidate_notification_digest(
+        candidate, bind_scanner_version=True
+    ) != candidate_notification_digest(reworded, bind_scanner_version=True)
 
     reworded["open_pr_assessment"]["prs"][0]["state"] = "CLOSED"
     assert candidate_notification_digest(candidate) != candidate_notification_digest(reworded)
@@ -469,6 +474,80 @@ def test_outbox_mode_marks_candidates_as_queued(monkeypatch, tmp_path):
     assert result["notification_mode"] == "outbox"
     assert seen["example/project#7"]["status"] == "queued_outbox"
     assert seen["example/project#7"]["notification_digest"]
+
+
+def test_legacy_version_bound_notification_is_migrated_without_resending(monkeypatch, tmp_path):
+    seen_path = tmp_path / "seen.json"
+    candidate = {
+        "repo": "example/project",
+        "num": 7,
+        "title": "Streaming tool-call chunks lose their id",
+        "url": "https://github.com/example/project/issues/7",
+        "score": 9,
+        "scanner_version": SCANNER_VERSION,
+        "category": "WAIT_MAINTAINER",
+        "gate_decision": "HUMAN_REVIEW",
+        "auto_spawn": False,
+        "labels": ["bug"],
+        "issue_updated": "2026-08-04T00:00:00Z",
+        "submission_policy": "normal",
+        "public_submission_allowed": True,
+        "actionability_evidence": {"public_repro_signals": 1},
+        "open_pr_assessment": {"status": "human_review_required", "prs": []},
+        "related_issue_assessment": {"status": "none"},
+    }
+    legacy_candidate = candidate | {"scanner_version": "oss_pr_radar_v39_language_gates"}
+    legacy_digest = candidate_notification_digest(
+        legacy_candidate,
+        bind_scanner_version=True,
+    )
+    seen_path.write_text(
+        json.dumps(
+            {
+                "example/project#7": {
+                    "analyzed": "2026-08-04T00:00:00Z",
+                    "notified": False,
+                    "status": "policy_migration_pending",
+                    "deferred_from_status": "queued_outbox",
+                    "notification_digest": legacy_digest,
+                    "scanner_version": "oss_pr_radar_v39_language_gates",
+                    "issue_updated": candidate["issue_updated"],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    radar = Radar(
+        datetime(2026, 8, 4, tzinfo=UTC),
+        2,
+        seen_path,
+        "",
+        dry_run=True,
+        notify=False,
+    )
+
+    class IdentityEvaluator:
+        @classmethod
+        def from_environment(cls, _path):
+            return cls()
+
+        def evaluate_candidates(self, candidates):
+            return candidates
+
+    monkeypatch.setattr(radar, "collect_items", lambda: {"example/project#7": {}})
+    monkeypatch.setattr(radar, "shortlist", lambda _items: ([candidate], 1, 1))
+    monkeypatch.setattr(scanner, "DeepSeekEvaluator", IdentityEvaluator)
+
+    result = radar.run(None)
+    seen = json.loads(seen_path.read_text(encoding="utf-8"))
+
+    assert result["notification_candidate_count"] == 0
+    assert result["notification_suppressed_count"] == 1
+    assert seen["example/project#7"]["status"] == "queued_outbox"
+    assert seen["example/project#7"]["notification_digest"] == candidate_notification_digest(
+        candidate
+    )
+    assert "deferred_from_status" not in seen["example/project#7"]
 
 
 def test_llm_rejection_is_persisted_as_terminal_seen_status(monkeypatch, tmp_path):

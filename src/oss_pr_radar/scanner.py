@@ -1461,7 +1461,9 @@ def atomic_write_json(path: Path, data: Any) -> None:
     tmp.replace(path)
 
 
-def candidate_notification_digest(candidate: dict[str, Any]) -> str:
+def candidate_notification_digest(
+    candidate: dict[str, Any], *, bind_scanner_version: bool = False
+) -> str:
     """Hash material opportunity judgment while ignoring scan-time churn."""
 
     volatile = {
@@ -1475,8 +1477,10 @@ def candidate_notification_digest(candidate: dict[str, Any]) -> str:
         "next_step",
         "notification_digest",
         "now",
+        "policy_digest",
         "risk",
         "role_eta",
+        "schema_version",
         "summary",
         "strengths",
         "gaps",
@@ -1485,6 +1489,8 @@ def candidate_notification_digest(candidate: dict[str, Any]) -> str:
         "updated_at",
         "why",
     }
+    if not bind_scanner_version:
+        volatile.add("scanner_version")
 
     def normalized(value: Any) -> Any:
         if isinstance(value, dict):
@@ -4067,11 +4073,52 @@ class Radar:
                 key = f"{candidate['repo']}#{candidate['num']}"
                 digest = candidate_notification_digest(candidate)
                 previous = self.seen.get(key)
+                previous_digest = (
+                    str(previous.get("notification_digest") or "")
+                    if isinstance(previous, dict)
+                    else ""
+                )
+                legacy_candidate = dict(candidate)
+                if isinstance(previous, dict) and previous.get("scanner_version"):
+                    legacy_candidate["scanner_version"] = previous["scanner_version"]
+                legacy_digest = candidate_notification_digest(
+                    legacy_candidate,
+                    bind_scanner_version=True,
+                )
                 if (
                     isinstance(previous, dict)
-                    and previous.get("notified") is True
-                    and previous.get("notification_digest") == digest
+                    and previous_digest
+                    and previous_digest in {digest, legacy_digest}
                 ):
+                    origin_status = str(
+                        previous.get("deferred_from_status") or previous.get("status") or ""
+                    )
+                    migrated = dict(previous)
+                    migrated.update(
+                        {
+                            "analyzed": self.analyzed,
+                            "status": (
+                                origin_status
+                                if origin_status in {"notified", "queued_outbox"}
+                                else str(previous.get("status") or "notified")
+                            ),
+                            "score": candidate.get("score"),
+                            "title": candidate.get("title"),
+                            "url": candidate.get("url"),
+                            "issue_updated": candidate.get("issue_updated") or "",
+                            "notification_digest": digest,
+                        }
+                    )
+                    for field in (
+                        "defer_count",
+                        "deferred_from_status",
+                        "first_deferred_at",
+                        "reason",
+                        "requeue_reason",
+                        "requeued_at",
+                    ):
+                        migrated.pop(field, None)
+                    self.seen[key] = migrated
                     continue
                 candidate["notification_digest"] = digest
                 notification_candidates.append(candidate)
