@@ -62,6 +62,10 @@ receiving their own worktrees.
 
 ## Recovery
 
+- Treat `docs/controller-heartbeat.md` as the single source of truth for the
+  desktop automation. The saved automation prompt should only select the fixed
+  runtime directory and require that protocol; do not duplicate the checklist
+  in desktop configuration.
 - Deploy local controller updates only through `scripts/deploy_local_runtime.py`.
 - Repair task title drift with `local_dispatch_bridge.py title-reconcile`; it applies
   and verifies lifecycle titles through the local Codex app-server protocol.

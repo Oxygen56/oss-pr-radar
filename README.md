@@ -160,6 +160,11 @@ performs live audits without creating tasks; `active` enables normal publication
 
 ## Local Commands
 
+The desktop heartbeat follows the versioned
+[controller protocol](docs/controller-heartbeat.md). Keep the automation prompt
+as a short pointer to that file so protocol changes are reviewed and tested with
+the repository.
+
 ```bash
 # Read, verify, and ingest the latest signed cloud queue
 python scripts/local_dispatch_bridge.py sync
