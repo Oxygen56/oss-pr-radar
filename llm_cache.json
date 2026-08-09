@@ -1889,6 +1889,35 @@
     ],
     "why": "Issue identifies a clear regression from PR #31499 with a proposed fix and reproduction steps, but open PR lookup timed out and related issue audit failed, so duplicate/competing work cannot be excluded. Maintainer approval or design confirmation is absent, and the fix touches core request processing paths."
   },
+  "206fa77bfe85b635c2123c2ec9b213affd6e4ebe6dc0bbbd22ce5f22af815a64": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Add failing regression test using provided reproducer",
+      "Investigate cancellation path in scheduler/runtime for grammar-constrained requests",
+      "Minimal fix to prevent token emission after abort"
+    ],
+    "risks": [
+      "Potential overlap with existing PR or ongoing maintainer work",
+      "Fix may require careful handling of async cancellation and grammar state"
+    ],
+    "root_cause_clarity": "low",
+    "score": 11,
+    "test_plan": [
+      "Run provided reproducer script to confirm failure",
+      "Add regression test that asserts no visible tokens after cancellation",
+      "Run targeted unit tests for grammar and cancellation paths"
+    ],
+    "unknowns": [
+      "Whether maintainers have already acknowledged or are investigating",
+      "Whether an open PR already addresses this issue"
+    ],
+    "why": "Issue reports a reproducible grammar-constrained cancellation bug with a clear reproducer, but root cause is not identified and open PR lookup failed due to rate limit, so duplicate work cannot be excluded."
+  },
   "20c7f520726b094abb49b75fecfbb7aceeb0ca83b0a9197bd3b6c32056e72b58": {
     "confidence": 0.6,
     "contradictions": [],
@@ -5583,6 +5612,38 @@
       "Whether PR #42074 is a viable fix despite being closed"
     ],
     "why": "Issue reports GPU memory not freed after vLLM crash or normal exit, possibly related to CPU offloading and driver versions. Existing PR #42074 is draft, closed, lacks tests, and has failed checks, so not a strong competing implementation. However, root cause is unclear and may be driver-related, requiring maintainer investigation."
+  },
+  "549637667c6965aa21ae7e5c3a4cdb071dd30a260dd050d394b4664e51b546b6": {
+    "confidence": 0.9,
+    "contradictions": [
+      "The bot comment in recent_comments is about a different feature (teardownCommand) and unrelated to the issue"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Storage layer: implement incremental/delta saves instead of full snapshots",
+      "Workflow runtime: adjust save points for durable vs non-durable modes",
+      "Possibly Redis serialization to avoid duplication"
+    ],
+    "risks": [
+      "Changing save semantics may affect resume correctness and durability guarantees",
+      "Potential API or behavior changes in storage providers"
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Create a minimal reproduction with a 300 kB conversation and 57 steps, measure disk/Redis size before and after fix",
+      "Add regression test verifying that intermediate saves only write deltas",
+      "Run existing workflow and storage test suites"
+    ],
+    "unknowns": [
+      "Exact code path causing full re-save is not identified in the issue",
+      "Maintainer design preference for fix approach is unknown"
+    ],
+    "why": "Issue reports a clear performance bug: every step re-saves the entire conversation, causing 135 MB Postgres and 1.2 GB Redis bloat. Root cause is evident from the description. However, the deterministic gate requires HUMAN_REVIEW, and the issue is labeled for maintainer investigation (trio-tnt). The related PR #20548 is closed and unrelated, so no competition. Actionability is high but maintainer assignment and design confirmation are needed."
   },
   "54b76b2e1cde101b88c0c18c5da20cad436b0fcfdfe9d54a1c5a1c2d07778c0f": {
     "confidence": 0.7,
@@ -10242,6 +10303,37 @@
       "Maintainer's stance on the existing PR"
     ],
     "why": "The issue provides a clear root cause and reproduction, but a collaborator has already submitted PR #7598 that directly addresses the issue with tests and is actively maintained. The existing PR appears technically complete, though it has failed CI checks. Without evidence that the PR is weak or abandoned, starting a competing PR risks duplication. Maintainer review is needed to confirm whether the existing PR is acceptable or if a better approach is required."
+  },
+  "98702c64e7451a11309f9d2163cca409a3e682e4745e029636babf0061dde291": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Update live-cloud-provision-smoke.ts to handle shared-tier 200 contract",
+      "Add fail-closed staging guard for CLOUD_SMOKE_BASE_URL",
+      "Add regression tests for tier selection and provision response"
+    ],
+    "risks": [
+      "Potential duplicate work if an existing PR addresses this",
+      "Maintainer may prefer retiring the script over fixing it",
+      "Changes to smoke script may affect staging environments"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "test_plan": [
+      "Run existing unit tests for tier selection and provision normalization",
+      "Add a test that mocks shared-tier provision response and asserts smoke script accepts it",
+      "Add a test that verifies production URL is rejected"
+    ],
+    "unknowns": [
+      "Whether an open PR already exists (lookup failed)",
+      "Maintainer preference on fixing vs retiring the script"
+    ],
+    "why": "Issue identifies a deterministic contract mismatch in a live smoke script, with detailed evidence and proposed fixes. However, the gate decision is HUMAN_REVIEW and open PR lookup failed, so duplicate work cannot be excluded. Maintainer approval is absent, and the issue is a bug report rather than a direct code contribution."
   },
   "9b6186d41b23dc14e8161eec43190a7a17d066425808168fb276f0416a5fd6c6": {
     "confidence": 0.85,
