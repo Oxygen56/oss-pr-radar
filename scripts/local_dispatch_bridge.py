@@ -28,13 +28,20 @@ from oss_pr_radar.github_client import GitHubClient  # noqa: E402
 from oss_pr_radar.ledger import RadarLedger  # noqa: E402
 from oss_pr_radar.metrics import assess_submit_ready, rolling_quality  # noqa: E402
 from oss_pr_radar.notifier import FeishuClient, NotificationError, candidate_card  # noqa: E402
+from oss_pr_radar.policy import SCANNER_DECISION_REVISION, decision_contract_digest  # noqa: E402
 from oss_pr_radar.publication import (  # noqa: E402
     broker_publication_request,
     public_branch_is_safe,
     public_text_is_safe,
     request_publication,
 )
-from oss_pr_radar.util import iso_z, parse_time, sha256_json  # noqa: E402
+from oss_pr_radar.util import (  # noqa: E402
+    atomic_write_json,
+    iso_z,
+    parse_time,
+    read_json,
+    sha256_json,
+)
 
 STATE = ROOT / "state"
 LEDGER_PATH = STATE / "radar_ledger.sqlite3"
@@ -66,6 +73,7 @@ PR_STAGE_PRIORITY = {
     "MERGED": 4,
     "CLOSED": 4,
 }
+CONTROLLER_TERMINAL_STATUS = "controller_terminal"
 issue_prompt = canonical_prompt
 
 
@@ -359,6 +367,69 @@ def sync_queue(path: Path = LEDGER_PATH) -> dict[str, Any]:
         "superseded": len(superseded),
         "staleTerminalRejected": len(stale_terminal),
         "prFollowup": followup_import,
+    }
+
+
+def publish_terminal_feedback(args: argparse.Namespace) -> dict[str, Any]:
+    """Publish local terminal judgments into the integrity-checked cloud state."""
+
+    rows = ledger(args.ledger).terminal_feedback()
+    if not rows:
+        return {"ok": True, "published": 0, "deferred": [], "errors": []}
+
+    state_script = ROOT / "scripts" / "state_branch.py"
+    command([sys.executable, str(state_script), "restore"], cwd=ROOT, timeout=90)
+    seen_path = STATE / "seen.json"
+    seen = read_json(seen_path, missing={})
+    if not isinstance(seen, dict):
+        raise RuntimeError("cloud seen state is invalid")
+
+    github = GitHubClient()
+    analyzed = iso_z(datetime.now(UTC))
+    published: list[dict[str, Any]] = []
+    deferred: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    for row in rows:
+        key = str(row["key"])
+        try:
+            issue = github.issue(str(row["repo"]), int(row["issue_number"]))
+            issue_updated = str(issue.get("updated_at") or "")
+            terminal_recorded_at = str(
+                row.get("terminal_recorded_at") or row.get("latest_intent_issued_at") or ""
+            )
+            terminal_issue_updated_at = str(row.get("terminal_issue_updated_at") or "")
+            if not issue_updated or not terminal_recorded_at:
+                deferred.append({"key": key, "reason": "missing_issue_snapshot_time"})
+                continue
+            if terminal_issue_updated_at:
+                issue_changed = issue_updated != terminal_issue_updated_at
+            else:
+                issue_changed = parse_time(issue_updated) > parse_time(terminal_recorded_at)
+            if issue_changed:
+                deferred.append({"key": key, "reason": "issue_updated_after_local_snapshot"})
+                continue
+            previous = seen.get(key) if isinstance(seen.get(key), dict) else {}
+            seen[key] = previous | {
+                "analyzed": analyzed,
+                "status": CONTROLLER_TERMINAL_STATUS,
+                "controller_stage": row["stage"],
+                "terminal_reason": row.get("terminal_reason") or row["stage"],
+                "issue_updated": issue_updated,
+                "scanner_version": SCANNER_DECISION_REVISION,
+                "decision_contract_digest": decision_contract_digest(),
+            }
+            published.append({"key": key, "stage": row["stage"]})
+        except (KeyError, OSError, RuntimeError, ValueError) as exc:
+            errors.append({"key": key, "error": str(exc)[:240]})
+
+    if published:
+        atomic_write_json(seen_path, seen)
+        command([sys.executable, str(state_script), "publish"], cwd=ROOT, timeout=90)
+    return {
+        "ok": not errors,
+        "published": len(published),
+        "deferred": deferred,
+        "errors": errors,
     }
 
 
@@ -2409,6 +2480,7 @@ def main() -> int:
     parser.add_argument("--ledger", type=Path, default=LEDGER_PATH)
     subparsers = parser.add_subparsers(dest="operation", required=True)
     subparsers.add_parser("sync")
+    subparsers.add_parser("publish-terminal-feedback")
     subparsers.add_parser("list")
     alerts_parser = subparsers.add_parser("alerts")
     alerts_parser.add_argument("--min-age-minutes", type=int, default=70)
@@ -2532,6 +2604,8 @@ def main() -> int:
     args = parser.parse_args()
     if args.operation == "sync":
         result = sync_queue(args.ledger)
+    elif args.operation == "publish-terminal-feedback":
+        result = publish_terminal_feedback(args)
     elif args.operation == "list":
         result = list_pending(args.ledger)
     elif args.operation == "alerts":

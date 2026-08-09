@@ -13,6 +13,7 @@ from oss_pr_radar.scanner import (
     count_seen_rechecks,
     select_inspection_bases,
     select_seen_rechecks,
+    should_skip_seen,
 )
 from oss_pr_radar.util import atomic_write_json
 
@@ -482,6 +483,31 @@ def test_migration_rechecks_prioritize_actionable_queue_over_newer_rejections(
 def test_scanner_migration_does_not_reopen_unrelated_terminal_rejections():
     assert "no_bug_or_maintainer_actionability" not in SCANNER_MIGRATION_RECHECK_STATUSES
     assert "frontend_interaction_issue" not in SCANNER_MIGRATION_RECHECK_STATUSES
+
+
+def test_controller_terminal_feedback_survives_scanner_migration_until_issue_changes():
+    old = {
+        "status": "controller_terminal",
+        "analyzed": "2026-08-09T00:00:00Z",
+        "issue_updated": "2026-08-08T20:00:00Z",
+        "scanner_version": "older",
+        "decision_contract_digest": "older",
+    }
+
+    assert should_skip_seen(
+        old,
+        issue_updated="2026-08-08T20:00:00Z",
+        now=datetime(2026, 8, 9, tzinfo=UTC),
+        scanner_version=SCANNER_VERSION,
+        decision_digest=decision_contract_digest(),
+    )
+    assert not should_skip_seen(
+        old,
+        issue_updated="2026-08-09T01:00:00Z",
+        now=datetime(2026, 8, 9, tzinfo=UTC),
+        scanner_version=SCANNER_VERSION,
+        decision_digest=decision_contract_digest(),
+    )
 
 
 def test_unselected_active_migrations_are_declassified_until_revalidated(monkeypatch, tmp_path):

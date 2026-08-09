@@ -1268,6 +1268,39 @@ class RadarLedger:
             )
         return values
 
+    def terminal_feedback(self) -> list[dict[str, Any]]:
+        """Return local terminal judgments eligible for cloud suppression."""
+
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT o.key, o.repo, o.issue_number, o.issue_url, o.stage,
+                       o.terminal_reason,
+                       MAX(i.issued_at) AS latest_intent_issued_at,
+                       (
+                           SELECT MAX(e.created_at)
+                             FROM events e
+                            WHERE e.opportunity_key=o.key
+                              AND e.event_type=o.stage
+                       ) AS terminal_recorded_at,
+                       (
+                           SELECT json_extract(e.payload_json, '$.issueUpdatedAt')
+                             FROM events e
+                            WHERE e.opportunity_key=o.key
+                              AND e.event_type=o.stage
+                            ORDER BY e.created_at DESC, e.id DESC
+                            LIMIT 1
+                       ) AS terminal_issue_updated_at
+                  FROM opportunities o
+                  LEFT JOIN intents i ON i.opportunity_key=o.key
+                 WHERE o.stage IN ('AUDIT_NO_GO', 'MERGED', 'CLOSED')
+                 GROUP BY o.key, o.repo, o.issue_number, o.issue_url, o.stage,
+                          o.terminal_reason
+                 ORDER BY o.key
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def pending_alerts(self, *, min_age_minutes: int = 70) -> list[dict[str, Any]]:
         threshold = max(60, min(int(min_age_minutes), 24 * 60))
         alerts: list[dict[str, Any]] = []

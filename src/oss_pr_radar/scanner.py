@@ -49,6 +49,7 @@ AGENT_INFRA_TRACK = "agent_ai_infra"
 LLM_ALGORITHM_TRACK = "llm_algorithm"
 SCAN_TRACKS = (AGENT_INFRA_TRACK, LLM_ALGORITHM_TRACK)
 SCANNER_VERSION = SCANNER_DECISION_REVISION
+CONTROLLER_TERMINAL_STATUS = "controller_terminal"
 MIN_ACTIONABLE_SCORE = 8
 SEEN_RECHECK_HOURS = 24
 SEARCH_MIN_INTERVAL_SECONDS = 1.5
@@ -1508,6 +1509,13 @@ def should_skip_seen(
 ) -> bool:
     if not isinstance(old, dict):
         return False
+    if old.get("status") == CONTROLLER_TERMINAL_STATUS:
+        old_updated = old.get("issue_updated")
+        if issue_updated and old_updated:
+            return issue_updated == old_updated
+        analyzed = parse_github_time(old.get("analyzed"), datetime.min.replace(tzinfo=timezone.utc))
+        current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        return current - analyzed < timedelta(hours=SEEN_RECHECK_HOURS)
     if old.get("status") in {"send_failed", "status_update"}:
         return False
     if not (old.get("analyzed") or old.get("notified")):

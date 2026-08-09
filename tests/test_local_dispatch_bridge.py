@@ -119,6 +119,83 @@ def test_canonical_prompt_unwraps_delegation():
     assert MODULE.canonical_prompt(wrapped) == prompt
 
 
+def test_terminal_feedback_is_published_only_for_unchanged_issues(monkeypatch, tmp_path):
+    store, _worktree = registered_store(tmp_path)
+    store.record_stage("a/b#1", "AUDIT_NO_GO", reason="ALREADY_FIXED")
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "seen.json").write_text("{}", encoding="utf-8")
+    calls = []
+
+    class GitHub:
+        def issue(self, _repo, _number):
+            return {"updated_at": "2020-01-01T00:00:00Z", "state": "open"}
+
+    monkeypatch.setattr(MODULE, "STATE", state)
+    monkeypatch.setattr(MODULE, "GitHubClient", GitHub)
+    monkeypatch.setattr(
+        MODULE,
+        "command",
+        lambda args, **_kwargs: calls.append(args) or "",
+    )
+
+    result = MODULE.publish_terminal_feedback(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    saved = json.loads((state / "seen.json").read_text(encoding="utf-8"))
+    assert result["published"] == 1
+    assert saved["a/b#1"]["status"] == "controller_terminal"
+    assert saved["a/b#1"]["terminal_reason"] == "ALREADY_FIXED"
+    assert [call[-1] for call in calls] == ["restore", "publish"]
+
+
+def test_terminal_feedback_defers_when_issue_changed_after_dispatch(monkeypatch, tmp_path):
+    store, _worktree = registered_store(tmp_path)
+    store.record_stage("a/b#1", "AUDIT_NO_GO", reason="ALREADY_FIXED")
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "seen.json").write_text("{}", encoding="utf-8")
+
+    class GitHub:
+        def issue(self, _repo, _number):
+            return {"updated_at": "2099-01-01T00:00:00Z", "state": "open"}
+
+    monkeypatch.setattr(MODULE, "STATE", state)
+    monkeypatch.setattr(MODULE, "GitHubClient", GitHub)
+    monkeypatch.setattr(MODULE, "command", lambda *_args, **_kwargs: "")
+
+    result = MODULE.publish_terminal_feedback(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert result["published"] == 0
+    assert result["deferred"] == [{"key": "a/b#1", "reason": "issue_updated_after_local_snapshot"}]
+    assert json.loads((state / "seen.json").read_text(encoding="utf-8")) == {}
+
+
+def test_terminal_feedback_uses_latest_terminal_recheck_time(monkeypatch, tmp_path):
+    store, _worktree = registered_store(tmp_path)
+    store.record_stage("a/b#1", "AUDIT_NO_GO", reason="INITIAL_NO_GO")
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE intents SET issued_at='2020-01-01T00:00:00Z' WHERE opportunity_key='a/b#1'"
+        )
+    store.record_stage("a/b#1", "AUDIT_NO_GO", reason="UNCHANGED_AFTER_RECHECK")
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "seen.json").write_text("{}", encoding="utf-8")
+
+    class GitHub:
+        def issue(self, _repo, _number):
+            return {"updated_at": "2021-01-01T00:00:00Z", "state": "open"}
+
+    monkeypatch.setattr(MODULE, "STATE", state)
+    monkeypatch.setattr(MODULE, "GitHubClient", GitHub)
+    monkeypatch.setattr(MODULE, "command", lambda *_args, **_kwargs: "")
+
+    result = MODULE.publish_terminal_feedback(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert result["published"] == 1
+    assert result["deferred"] == []
+
+
 def test_pr_lifecycle_prefers_merge_review_and_green_checks():
     assert MODULE.pr_lifecycle_stage({"state": "MERGED"}) == "MERGED"
     assert (
