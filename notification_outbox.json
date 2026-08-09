@@ -430,11 +430,11 @@
     },
     "review|PrefectHQ/fastmcp#4792": {
       "category": "WAIT_MAINTAINER",
-      "digest": "b3ba16d4b51a018cdb5f2b17c9ec977aed59acb1ed4c1de044fdbec9a40f08d8",
+      "digest": "f7aab7a65f0f774179ccfb87b9e5a79eab5d6221d422ab3d65c2569625faab9c",
       "kind": "review",
       "scannerVersion": "oss_pr_radar_v42_terminal_feedback_revoke",
-      "seenAt": "2026-08-09T08:41:45.912939Z",
-      "stateId": "f1335d9a3dbf0e09ee0629e5a7d95762f0e6175f6c2fd5a9338f17193b36ec74"
+      "seenAt": "2026-08-09T14:58:25.020426Z",
+      "stateId": "99695218038edbd0ea4c5cf43eeb6d180ec6ddb09be530da4c9f19f47ee8e3f1"
     },
     "review|aaif-goose/goose#10751": {
       "legacy": true,
@@ -1673,12 +1673,8 @@
       "seenAt": "2026-08-06T10:09:13.778625Z"
     },
     "watch|multica-ai/multica#4163": {
-      "category": "PR_FOLLOWUP",
-      "digest": "f46a2ba0b455719a6fa29ec66c24e1428d5909e2f222803219e7c010dc31bade",
-      "kind": "watch",
-      "scannerVersion": "",
-      "seenAt": "2026-08-09T13:21:51.127141Z",
-      "stateId": "e0f46a2b711bea97299c7d1e876c9ac0ff9493e1a2d8f5089523e1434f038939"
+      "legacy": true,
+      "seenAt": "2026-08-04T04:44:22.859607Z"
     },
     "watch|ollama/ollama#17356": {
       "legacy": true,
@@ -1734,11 +1730,11 @@
     },
     "watch|sgl-project/sglang#30554": {
       "category": "PR_FOLLOWUP",
-      "digest": "ed5145256f21aea0fac2bb6b99687e3cec368256e373b51c9220832e3910c7ff",
+      "digest": "ebeae6f6ca7770935726b390ef43fa78d5b72da5062f41b6b483decb41824bd0",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-09T13:21:51.127141Z",
-      "stateId": "5b20e6ada2ab8b35c2dfa7839e5b3898430090ad344926b4f0c8bf380a071172"
+      "seenAt": "2026-08-09T14:58:25.410989Z",
+      "stateId": "c50309162e1266d26fe11f50eabefd59f97534ed229547e386da50052b1ac72e"
     },
     "watch|sgl-project/sglang#33217": {
       "legacy": true,
@@ -1790,11 +1786,11 @@
     },
     "watch|sgl-project/sglang#34138": {
       "category": "PR_FOLLOWUP",
-      "digest": "65108a91116943d764570b49a46509aa7c2a657847b3901dbbec3fb149040a1f",
+      "digest": "667baaf6d45ebb044df21ffca5ece3a8683314a1f03ac51be3c76803abb0f003",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-09T13:21:51.127141Z",
-      "stateId": "cdab8c4bec4f6dce9614abbf19ed17fcf748ac64fccc5c910fad839a91129f96"
+      "seenAt": "2026-08-09T14:58:25.410989Z",
+      "stateId": "ade76aeabb61a486662fa0d033af458d74aa2e80c392ce233751d2754f780c24"
     },
     "watch|usekaneo/kaneo#1484": {
       "legacy": true,
@@ -1873,7 +1869,7 @@
       "seenAt": "2026-08-06T10:09:13.778625Z"
     }
   },
-  "digest": "7f543d9423a88b93ffebeaab08cfa2cd8b1fd570c8fb57e429d3dc62664fcab3",
+  "digest": "e966d4e03eb79e8195d73097578cbb963db0176731e54edb4dea658ded15594c",
   "events": [
     {
       "attempts": 1,
@@ -22093,9 +22089,95 @@
       "runId": "pr-followup-1786281518",
       "sentAt": "2026-08-09T13:22:26.458688Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "PrefectHQ/fastmcp#4792"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "f7aab7a65f0f774179ccfb87b9e5a79eab5d6221d422ab3d65c2569625faab9c",
+          "key": "PrefectHQ/fastmcp#4792",
+          "kind": "review",
+          "scannerVersion": "oss_pr_radar_v42_terminal_feedback_revoke",
+          "stateId": "99695218038edbd0ea4c5cf43eeb6d180ec6ddb09be530da4c9f19f47ee8e3f1"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[PrefectHQ/fastmcp#4792](https://github.com/PrefectHQ/fastmcp/issues/4792) OpenAPI parameter-level `example` is dropped from generated tool input schemas**\n建议：WAIT_MAINTAINER | 分数：12\n价值：用户可见 bug/性能问题，合并动机明确；命中 agent/inference/RAG 关键路径；影响面高，适合做可复现修复\n改动：复现 schema/structured-output 校验问题，修正 schema 生成或解析兼容性，并补模型无关单测。\n验证：用 issue 的公开最小复现先建立失败测试，再运行目标 package 的定向单测和静态检查。\n风险：需确认是否已有 maintainer 设计偏好；避免扩大 API 行为变更。\n竞争：发现关键词相关 PR，但未确认直接覆盖：#4793；需人工核对\n下一步：已有 PR 但强度不足；先看维护者规则和 issue 讨论，必要时先请求确认方案或分配。\n证据：复现信号 6，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-09T14:58:25.020426Z",
+      "eventId": "2ebb701c5e6966fa6ed853dcdd5cc31cf3fc424bcfe70fa13caec5e2c4dcedc7",
+      "idempotencyKey": "2ebb701c5e6966fa6ed853dcdd5cc31cf3fc424bcfe70fa13c",
+      "kind": "review",
+      "runId": "scan-20260809T145606Z-974ddb0e0ade",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "sgl-project/sglang#34138"
+      ],
+      "candidateStates": [
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "667baaf6d45ebb044df21ffca5ece3a8683314a1f03ac51be3c76803abb0f003",
+          "key": "sgl-project/sglang#34138",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "ade76aeabb61a486662fa0d033af458d74aa2e80c392ce233751d2754f780c24"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#34138](https://github.com/sgl-project/sglang/pull/34138) Bind streaming abort cleanup to request lifecycle**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-09T14:58:25.410989Z",
+      "eventId": "19c262aa71ad2a43257408c97a22f920db954ecadb85b1d573b41848eb47c5b5",
+      "idempotencyKey": "19c262aa71ad2a43257408c97a22f920db954ecadb85b1d573",
+      "kind": "watch",
+      "runId": "pr-followup-1786287322",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-09T13:21:51.127141Z",
+  "generatedAt": "2026-08-09T14:58:25.410989Z",
   "newEventCount": 1,
   "version": "notification_outbox_v2"
 }
