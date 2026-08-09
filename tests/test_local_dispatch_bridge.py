@@ -1982,8 +1982,70 @@ def test_pr_followup_reserve_refreshes_context_and_uses_canonical_prompt(monkeyp
     assert context["prFollowup"]["wakeDigest"] == candidate["wakeDigest"]
     assert context["prFollowup"]["preparedHeadSha"] == "b" * 40
     assert context["publicationReceipt"]["prUrl"] == pr_url
+    refreshed = json.loads(
+        MODULE.write_task_context(
+            store,
+            issue_url="https://github.com/a/b/issues/1",
+            thread_id="thread-1",
+            cwd=worktree,
+        ).read_text(encoding="utf-8")
+    )
+    assert refreshed["prFollowup"]["preparedHeadSha"] == "b" * 40
+    assert refreshed["contextDigest"] == context["contextDigest"]
     assert store.pr_followup_candidates() == []
     assert store.unresolved_pr_followups()
+
+
+def test_context_sync_recovers_legacy_prepared_followup_binding(tmp_path):
+    store, worktree, previous_head, _pr_url = _published_followup_store(tmp_path)
+    run_git(worktree, "switch", "main")
+    (worktree / "base.py").write_text("base = True\n", encoding="utf-8")
+    run_git(worktree, "add", "base.py")
+    run_git(worktree, "commit", "-m", "chore: advance base")
+    prepared_base = run_git(worktree, "rev-parse", "HEAD")
+    run_git(worktree, "switch", "fix/1-runtime")
+    run_git(worktree, "merge", "--no-ff", "--no-commit", prepared_base)
+    run_git(worktree, "commit", "-m", "merge: refresh upstream branch for CI validation")
+    prepared_head = run_git(worktree, "rev-parse", "HEAD")
+    with store.connect() as connection:
+        row = connection.execute(
+            "SELECT evidence_json FROM pr_followups WHERE opportunity_key='a/b#1'"
+        ).fetchone()
+        evidence = json.loads(row["evidence_json"])
+        evidence.update({"baseIntegrationRequired": True, "baseSha": "f" * 40})
+        connection.execute(
+            "UPDATE pr_followups SET evidence_json=? WHERE opportunity_key='a/b#1'",
+            (json.dumps(evidence),),
+        )
+    candidate = store.pr_followup_candidates()[0]
+    store.reserve_pr_followup(
+        thread_id="thread-1", wake_digest=candidate["wakeDigest"]
+    )
+    legacy_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    legacy = json.loads(legacy_path.read_text(encoding="utf-8"))
+    assert "preparedHeadSha" not in legacy["prFollowup"]
+
+    recovered, errors = MODULE._recover_unbound_pr_followup_preparations(store)
+    refreshed_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    refreshed = json.loads(refreshed_path.read_text(encoding="utf-8"))
+
+    assert errors == []
+    assert recovered[0]["preparedHeadSha"] == prepared_head
+    assert refreshed["prFollowup"]["headSha"] == previous_head
+    assert refreshed["prFollowup"]["preparedHeadSha"] == prepared_head
+    assert refreshed["prFollowup"]["evidence"]["baseSha"] == prepared_base
+    assert refreshed["contextDigest"] != legacy["contextDigest"]
+    assert MODULE._task_context_digest(refreshed, None) == legacy["contextDigest"]
 
 
 def test_ingest_skips_consumed_result_after_followup_context_refresh(tmp_path):

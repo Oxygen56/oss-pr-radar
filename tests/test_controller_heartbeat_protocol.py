@@ -57,6 +57,12 @@ def test_controller_protocol_does_not_interrupt_active_pr_followups():
     assert "must not be reserved, resent" in PROTOCOL
 
 
+def test_controller_protocol_preserves_prepared_pr_followup_snapshot():
+    assert "ledger-bound prepared commit" in PROTOCOL
+    assert "immutable follow-up snapshot" in PROTOCOL
+    assert "verifiable controller merge" in PROTOCOL
+
+
 def test_controller_protocol_delegates_validation_prefetch_to_bridge():
     assert "The bridge itself computes" in PROTOCOL
     assert "lockfile-scoped dependency prefetch" in PROTOCOL

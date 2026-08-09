@@ -1425,9 +1425,18 @@ def test_pr_followup_is_bound_to_existing_task_and_sent_once(tmp_path):
         == "b" * 40
     )
 
-    store.reserve_pr_followup(thread_id="thread-1", wake_digest=candidate["wakeDigest"])
+    store.reserve_pr_followup(
+        thread_id="thread-1",
+        wake_digest=candidate["wakeDigest"],
+        prepared_head_sha="d" * 40,
+    )
     assert store.pr_followup_candidates() == []
     assert store.unresolved_pr_followups()
+    bound = store.task_context(
+        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
+    )["prFollowup"]
+    assert bound["headSha"] == "b" * 40
+    assert bound["preparedHeadSha"] == "d" * 40
     store.commit_pr_followup(thread_id="thread-1", wake_digest=candidate["wakeDigest"])
     assert store.unresolved_pr_followups() == []
 
@@ -1438,6 +1447,11 @@ def test_pr_followup_is_bound_to_existing_task_and_sent_once(tmp_path):
     state["items"][0]["checkedAt"] = iso_z(datetime.now(UTC) + timedelta(minutes=1))
     store.import_pr_followups(state)
     assert store.pr_followup_candidates() == []
+    still_bound = store.task_context(
+        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
+    )["prFollowup"]
+    assert still_bound["headSha"] == "b" * 40
+    assert still_bound["preparedHeadSha"] == "d" * 40
 
     previous_wake = candidate["wakeDigest"]
     store.record_stage("a/b#1", "FIX_READY", evidence={field: True for field in QUALITY_FIELDS})

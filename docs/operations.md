@@ -147,6 +147,11 @@ receiving their own worktrees.
   the exact existing PR URL, public branch, and previous remote head. The
   executor permits only a fast-forward push and verifies that the same open PR
   now points to the permitted commit; it never opens a second PR.
+- A PR follow-up reservation records its prepared commit and immutable evidence
+  snapshot in the append-only ledger. Later audit refreshes cannot replace that
+  parent binding while the task is active. Legacy reservations are repaired
+  only when the worktree head is the original PR head or a verifiable
+  controller-created base-integration merge.
 - A publication side effect records `ATTEMPTED` before execution. Ambiguous
   results become `RECONCILE_REQUIRED` and are never blindly retried. Recovery
   only reads the exact remote branch or pull request bound to the original

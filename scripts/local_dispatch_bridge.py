@@ -1164,6 +1164,26 @@ def _exclude_private_task_dir(worktree: Path) -> None:
             handle.write(rule + "\n")
 
 
+def _task_context_digest(context: dict[str, Any], prepared_head: str | None) -> str:
+    live_audit = context.get("liveAudit")
+    if not isinstance(live_audit, dict) or not isinstance(live_audit.get("evidence"), dict):
+        raise RuntimeError("task context live audit is invalid")
+    return sha256_json(
+        {
+            "schemaVersion": TASK_CONTEXT_SCHEMA,
+            "key": context.get("key"),
+            "issueUrl": context.get("issueUrl"),
+            "intentId": context.get("intentId"),
+            "track": context.get("track"),
+            "algorithmEvidence": context.get("algorithmEvidence"),
+            "liveAuditDigest": live_audit["evidence"].get("digest"),
+            "prFollowupPreparedHeadSha": prepared_head,
+            "threadId": context.get("threadId"),
+            "worktreePath": context.get("worktreePath"),
+        }
+    )
+
+
 def write_task_context(
     store: RadarLedger,
     *,
@@ -1182,14 +1202,26 @@ def write_task_context(
     live_audit = context.get("liveAudit")
     if not isinstance(live_audit, dict) or not isinstance(live_audit.get("evidence"), dict):
         raise RuntimeError("registered task context is missing controller live audit")
-    if prepared_followup_head is not None:
-        followup = context.get("prFollowup")
+    followup = context.get("prFollowup")
+    bound_prepared_head = (
+        str(followup.get("preparedHeadSha"))
+        if isinstance(followup, dict) and followup.get("preparedHeadSha")
+        else None
+    )
+    if (
+        prepared_followup_head is not None
+        and bound_prepared_head is not None
+        and prepared_followup_head != bound_prepared_head
+    ):
+        raise RuntimeError("prepared PR follow-up head disagrees with the ledger")
+    effective_prepared_head = prepared_followup_head or bound_prepared_head
+    if effective_prepared_head is not None:
         if not isinstance(followup, dict) or not re.fullmatch(
-            r"[0-9a-f]{40}", prepared_followup_head
+            r"[0-9a-f]{40}", effective_prepared_head
         ):
             raise RuntimeError("prepared PR follow-up head is invalid")
         context["prFollowup"] = dict(followup) | {
-            "preparedHeadSha": prepared_followup_head,
+            "preparedHeadSha": effective_prepared_head,
         }
     _exclude_private_task_dir(cwd)
     private_dir = cwd / TASK_PRIVATE_DIR
@@ -1212,20 +1244,7 @@ def write_task_context(
         "childMayRequestApproval": False,
         "childMayWriteGitMetadata": False,
     }
-    payload["contextDigest"] = sha256_json(
-        {
-            "schemaVersion": TASK_CONTEXT_SCHEMA,
-            "key": context["key"],
-            "issueUrl": context["issueUrl"],
-            "intentId": context["intentId"],
-            "track": context.get("track"),
-            "algorithmEvidence": context.get("algorithmEvidence"),
-            "liveAuditDigest": live_audit["evidence"].get("digest"),
-            "prFollowupPreparedHeadSha": prepared_followup_head,
-            "threadId": context["threadId"],
-            "worktreePath": context["worktreePath"],
-        }
-    )
+    payload["contextDigest"] = _task_context_digest(context, effective_prepared_head)
     path = private_dir / "task-context.json"
     bootstrap_path = None
     if managed:
@@ -2043,13 +2062,55 @@ def _publication_block_reason(context: dict[str, Any], value: dict[str, Any]) ->
     return None
 
 
+def _recover_unbound_pr_followup_preparations(
+    store: RadarLedger,
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    recovered: list[dict[str, str]] = []
+    errors: list[dict[str, str]] = []
+    for candidate in store.unbound_pr_followup_preparations():
+        try:
+            worktree = Path(candidate["worktreePath"]).resolve()
+            prepared_head = command(["git", "rev-parse", "HEAD"], cwd=worktree)
+            prepared_base = None
+            if prepared_head != candidate["headSha"]:
+                parents = _merge_parents(worktree)
+                subject = command(["git", "show", "-s", "--format=%s", "HEAD"], cwd=worktree)
+                if (
+                    candidate.get("evidence", {}).get("baseIntegrationRequired") is not True
+                    or len(parents) != 2
+                    or parents[0] != candidate["headSha"]
+                    or subject != "merge: refresh upstream branch for CI validation"
+                ):
+                    raise RuntimeError("legacy PR follow-up preparation cannot be verified")
+                prepared_base = parents[1]
+            store.bind_pr_followup_preparation(
+                thread_id=candidate["threadId"],
+                wake_digest=candidate["wakeDigest"],
+                prepared_head_sha=prepared_head,
+                prepared_base_sha=prepared_base,
+            )
+            recovered.append(
+                {
+                    "key": candidate["key"],
+                    "threadId": candidate["threadId"],
+                    "preparedHeadSha": prepared_head,
+                }
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            errors.append({"key": candidate["key"], "error": str(exc)[:300]})
+    return recovered, errors
+
+
 def sync_task_contexts(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
     written: list[dict[str, str]] = []
     refreshed: list[dict[str, str]] = []
     no_go: list[dict[str, str]] = []
-    errors: list[dict[str, str]] = []
+    prepared_recovered, errors = _recover_unbound_pr_followup_preparations(store)
+    preparation_error_keys = {item["key"] for item in errors}
     for candidate in store.task_context_candidates():
+        if candidate["key"] in preparation_error_keys:
+            continue
         try:
             current = store.task_context(
                 issue_url=candidate["issueUrl"],
@@ -2097,6 +2158,7 @@ def sync_task_contexts(args: argparse.Namespace) -> dict[str, Any]:
         "ok": not errors,
         "written": written,
         "refreshed": refreshed,
+        "preparedFollowupsRecovered": prepared_recovered,
         "noGo": no_go,
         "errors": errors,
     }
@@ -2275,20 +2337,17 @@ def pr_followup_reserve(args: argparse.Namespace) -> dict[str, Any]:
     if candidate is None:
         raise RuntimeError("PR follow-up authorization is stale or invalid")
     prepared_head = _prepare_pr_followup(candidate)
+    reserved = store.reserve_pr_followup(
+        thread_id=candidate["threadId"],
+        wake_digest=candidate["wakeDigest"],
+        prepared_head_sha=prepared_head,
+    )
     context_path = write_task_context(
         store,
         issue_url=candidate["issueUrl"],
         thread_id=candidate["threadId"],
         cwd=Path(candidate["worktreePath"]),
-        prepared_followup_head=(
-            prepared_head
-            if candidate.get("evidence", {}).get("baseIntegrationRequired") is True
-            or prepared_head != candidate["headSha"]
-            else None
-        ),
-    )
-    reserved = store.reserve_pr_followup(
-        thread_id=candidate["threadId"], wake_digest=candidate["wakeDigest"]
+        prepared_followup_head=prepared_head,
     )
     return {
         "ok": True,
@@ -2607,7 +2666,11 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
             if value.get("contextDigest") != context.get("contextDigest"):
                 if current_wake_digest and value.get("followupDigest") != current_wake_digest:
                     continue
-                raise RuntimeError("task result context digest mismatch")
+                legacy_unbound_digest = (
+                    _task_context_digest(context, None) if current_wake_digest else None
+                )
+                if value.get("contextDigest") != legacy_unbound_digest:
+                    raise RuntimeError("task result context digest mismatch")
             stage = str(value.get("stage") or "")
             quality = value.get("quality")
             policy_followup_exhausted = bool(

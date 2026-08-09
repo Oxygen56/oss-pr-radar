@@ -159,6 +159,9 @@ Run:
 
 `context-sync` covers valuable `DISPATCHED` and `COMPLETED` tasks and writes the
 current stage, live evidence, and publication receipt into both context copies.
+For an active PR follow-up it preserves the ledger-bound prepared commit and
+immutable follow-up snapshot while refreshing unrelated live evidence; legacy
+unbound snapshots are recovered only from a verifiable controller merge.
 If a task is waiting for routine network or privilege approval, send once to
 the same task: `控制器证据已补齐。取消当前联网或提权请求；只使用已验证 task-context 的 liveAudit.evidence 和 worktreePath 继续，不运行 gh、curl、git fetch、联网安装，不请求人工权限。`
 

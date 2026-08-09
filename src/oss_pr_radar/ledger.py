@@ -2277,6 +2277,24 @@ class RadarLedger:
                 if row is not None
                 else None
             )
+            preparation_row = (
+                connection.execute(
+                    """SELECT payload_json FROM events
+                       WHERE opportunity_key=?
+                         AND event_type='PR_FOLLOWUP_PREPARATION_BOUND'
+                         AND dedupe_key=?
+                         AND NOT EXISTS (
+                           SELECT 1 FROM events x
+                           WHERE x.opportunity_key=events.opportunity_key
+                             AND x.event_type='PR_FOLLOWUP_RESULT_INGESTED'
+                             AND x.dedupe_key=events.dedupe_key
+                         )
+                       ORDER BY id DESC LIMIT 1""",
+                    (row["key"], followup_row["wake_digest"]),
+                ).fetchone()
+                if row is not None and followup_row is not None
+                else None
+            )
         if row is None:
             return None
         payload = json.loads(row["payload_json"])
@@ -2317,6 +2335,18 @@ class RadarLedger:
                     "mergeConflictHandoffMode": "controller_merge_required",
                 },
             }
+            if preparation_row is not None:
+                preparation = json.loads(preparation_row["payload_json"])
+                snapshot = preparation.get("snapshot")
+                if (
+                    not isinstance(snapshot, dict)
+                    or snapshot.get("wakeDigest") != followup_row["wake_digest"]
+                    or snapshot.get("prUrl") != followup_row["pr_url"]
+                ):
+                    raise LedgerError("PR follow-up preparation snapshot is invalid")
+                pr_followup = dict(snapshot) | {
+                    "resultContract": pr_followup["resultContract"]
+                }
         return {
             "key": row["key"],
             "stage": row["stage"],
@@ -3325,6 +3355,8 @@ class RadarLedger:
                     "issueUrl": row["issue_url"],
                     "prUrl": row["pr_url"],
                     "headSha": row["head_sha"],
+                    "actionDigest": row["action_digest"],
+                    "taskActionDigest": row["task_action_digest"],
                     "wakeDigest": row["wake_digest"],
                     "actions": json.loads(row["actions_json"]),
                     "evidence": json.loads(row["evidence_json"]),
@@ -3336,7 +3368,25 @@ class RadarLedger:
             )
         return list(unique.values())
 
-    def reserve_pr_followup(self, *, thread_id: str, wake_digest: str) -> dict[str, Any]:
+    @staticmethod
+    def _pr_followup_snapshot(
+        candidate: dict[str, Any], *, prepared_head_sha: str
+    ) -> dict[str, Any]:
+        return {
+            "prUrl": candidate["prUrl"],
+            "headSha": candidate["headSha"],
+            "preparedHeadSha": prepared_head_sha,
+            "actionDigest": candidate["actionDigest"],
+            "taskActionDigest": candidate["taskActionDigest"],
+            "wakeDigest": candidate["wakeDigest"],
+            "actions": candidate["actions"],
+            "evidence": candidate["evidence"],
+            "checkedAt": candidate["checkedAt"],
+        }
+
+    def reserve_pr_followup(
+        self, *, thread_id: str, wake_digest: str, prepared_head_sha: str | None = None
+    ) -> dict[str, Any]:
         candidate = next(
             (
                 item
@@ -3347,6 +3397,10 @@ class RadarLedger:
         )
         if candidate is None:
             raise LedgerError("PR follow-up authorization is stale or invalid")
+        if prepared_head_sha is not None and not re.fullmatch(
+            r"[0-9a-f]{40}", prepared_head_sha
+        ):
+            raise LedgerError("PR follow-up prepared head is invalid")
         with self.transaction() as connection:
             self._event(
                 connection,
@@ -3356,7 +3410,106 @@ class RadarLedger:
                 {"threadId": thread_id, "prUrl": candidate["prUrl"]},
                 iso_z(datetime.now(UTC)),
             )
+            if prepared_head_sha is not None:
+                self._event(
+                    connection,
+                    candidate["key"],
+                    "PR_FOLLOWUP_PREPARATION_BOUND",
+                    wake_digest,
+                    {
+                        "threadId": thread_id,
+                        "snapshot": self._pr_followup_snapshot(
+                            candidate, prepared_head_sha=prepared_head_sha
+                        ),
+                    },
+                    iso_z(datetime.now(UTC)),
+                )
         return candidate
+
+    def unbound_pr_followup_preparations(self) -> list[dict[str, Any]]:
+        """Return sent follow-ups created before prepared snapshots were durable."""
+
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT f.*,o.key,o.issue_url,i.thread_id,i.worktree_path
+                   FROM pr_followups f
+                   JOIN opportunities o ON o.key=f.opportunity_key
+                   JOIN events r ON r.opportunity_key=o.key
+                     AND r.event_type='PR_FOLLOWUP_RESERVED'
+                     AND r.dedupe_key=f.wake_digest
+                   JOIN intents i ON i.opportunity_key=o.key
+                     AND i.thread_id=json_extract(r.payload_json,'$.threadId')
+                   WHERE f.wake_digest IS NOT NULL
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events b WHERE b.opportunity_key=o.key
+                         AND b.event_type='PR_FOLLOWUP_PREPARATION_BOUND'
+                         AND b.dedupe_key=f.wake_digest
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events x WHERE x.opportunity_key=o.key
+                         AND x.event_type='PR_FOLLOWUP_RESULT_INGESTED'
+                         AND x.dedupe_key=f.wake_digest
+                     )
+                   ORDER BY r.created_at"""
+            ).fetchall()
+        return [
+            {
+                "key": row["key"],
+                "issueUrl": row["issue_url"],
+                "prUrl": row["pr_url"],
+                "headSha": row["head_sha"],
+                "wakeDigest": row["wake_digest"],
+                "actionDigest": row["action_digest"],
+                "taskActionDigest": row["task_action_digest"],
+                "actions": json.loads(row["actions_json"]),
+                "evidence": json.loads(row["evidence_json"]),
+                "checkedAt": row["checked_at"],
+                "threadId": row["thread_id"],
+                "worktreePath": row["worktree_path"],
+            }
+            for row in rows
+        ]
+
+    def bind_pr_followup_preparation(
+        self,
+        *,
+        thread_id: str,
+        wake_digest: str,
+        prepared_head_sha: str,
+        prepared_base_sha: str | None = None,
+    ) -> dict[str, Any]:
+        candidate = next(
+            (
+                item
+                for item in self.unbound_pr_followup_preparations()
+                if item["threadId"] == thread_id and item["wakeDigest"] == wake_digest
+            ),
+            None,
+        )
+        if candidate is None:
+            raise LedgerError("PR follow-up preparation binding is stale or invalid")
+        if not re.fullmatch(r"[0-9a-f]{40}", prepared_head_sha):
+            raise LedgerError("PR follow-up prepared head is invalid")
+        evidence = dict(candidate["evidence"])
+        if prepared_base_sha is not None:
+            if not re.fullmatch(r"[0-9a-f]{40}", prepared_base_sha):
+                raise LedgerError("PR follow-up prepared base is invalid")
+            if evidence.get("baseIntegrationRequired") is not True:
+                raise LedgerError("PR follow-up prepared base is unexpected")
+            evidence["baseSha"] = prepared_base_sha
+        snapshot = self._pr_followup_snapshot(
+            candidate | {"evidence": evidence}, prepared_head_sha=prepared_head_sha
+        )
+        with self.transaction() as connection:
+            self._event(
+                connection,
+                candidate["key"],
+                "PR_FOLLOWUP_PREPARATION_BOUND",
+                wake_digest,
+                {"threadId": thread_id, "snapshot": snapshot, "legacyRecovered": True},
+                iso_z(datetime.now(UTC)),
+            )
+        return candidate | {"preparedHeadSha": prepared_head_sha}
 
     def commit_pr_followup(self, *, thread_id: str, wake_digest: str) -> None:
         now = iso_z(datetime.now(UTC))
