@@ -2021,6 +2021,28 @@ def test_context_sync_recovers_legacy_prepared_followup_binding(tmp_path):
     store.reserve_pr_followup(
         thread_id="thread-1", wake_digest=candidate["wakeDigest"]
     )
+    next_checked_at = iso_z(datetime.now(UTC) + timedelta(minutes=1))
+    store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": next_checked_at,
+            "items": [
+                {
+                    "url": "https://github.com/a/b/pull/9",
+                    "headSha": previous_head,
+                    "actionDigest": "new-action",
+                    "taskActionDigest": "new-task-action",
+                    "taskFollowupRequired": True,
+                    "taskActions": ["存在未解决审查线程"],
+                    "evidence": {
+                        "baseIntegrationRequired": True,
+                        "baseSha": "f" * 40,
+                    },
+                    "checkedAt": next_checked_at,
+                }
+            ],
+        }
+    )
     legacy_path = MODULE.write_task_context(
         store,
         issue_url="https://github.com/a/b/issues/1",
@@ -2029,6 +2051,23 @@ def test_context_sync_recovers_legacy_prepared_followup_binding(tmp_path):
     )
     legacy = json.loads(legacy_path.read_text(encoding="utf-8"))
     assert "preparedHeadSha" not in legacy["prFollowup"]
+    assert legacy["prFollowup"]["wakeDigest"] != candidate["wakeDigest"]
+    Path(legacy["resultPath"]).write_text(
+        json.dumps(
+            {
+                "schemaVersion": "radar-task-result-v1",
+                "contextDigest": legacy["contextDigest"],
+                "key": "a/b#1",
+                "issueUrl": "https://github.com/a/b/issues/1",
+                "threadId": "thread-1",
+                "worktreePath": str(worktree.resolve()),
+                "stage": "PR_OPEN",
+                "followupDigest": legacy["prFollowup"]["wakeDigest"],
+                "evidence": {"verified": True},
+            }
+        ),
+        encoding="utf-8",
+    )
 
     recovered, errors = MODULE._recover_unbound_pr_followup_preparations(store)
     refreshed_path = MODULE.write_task_context(
@@ -2045,7 +2084,20 @@ def test_context_sync_recovers_legacy_prepared_followup_binding(tmp_path):
     assert refreshed["prFollowup"]["preparedHeadSha"] == prepared_head
     assert refreshed["prFollowup"]["evidence"]["baseSha"] == prepared_base
     assert refreshed["contextDigest"] != legacy["contextDigest"]
-    assert MODULE._task_context_digest(refreshed, None) == legacy["contextDigest"]
+    assert refreshed["prFollowup"]["wakeDigest"] == candidate["wakeDigest"]
+    preparation = store.active_pr_followup_preparation("a/b#1", thread_id="thread-1")
+    assert preparation["legacyCompatibility"] == {
+        "contextDigest": legacy["contextDigest"],
+        "wakeDigest": legacy["prFollowup"]["wakeDigest"],
+    }
+    assert store.pr_followup_candidates() == []
+
+    ingested = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert ingested["ok"] is True
+    assert ingested["ingested"] == [{"key": "a/b#1", "stage": "PR_OPEN"}]
+    assert store.active_pr_followup_preparation("a/b#1", thread_id="thread-1") is None
+    assert store.pr_followup_candidates()[0]["wakeDigest"] == legacy["prFollowup"]["wakeDigest"]
 
 
 def test_ingest_skips_consumed_result_after_followup_context_refresh(tmp_path):

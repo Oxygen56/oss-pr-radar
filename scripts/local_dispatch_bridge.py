@@ -2070,6 +2070,40 @@ def _recover_unbound_pr_followup_preparations(
     for candidate in store.unbound_pr_followup_preparations():
         try:
             worktree = Path(candidate["worktreePath"]).resolve()
+            if not re.fullmatch(r"[0-9a-f]{40}", str(candidate.get("headSha") or "")):
+                raise RuntimeError("legacy PR follow-up lacks an immutable published head")
+            legacy_context_digest = None
+            legacy_wake_digest = None
+            context_path = worktree / TASK_PRIVATE_DIR / "task-context.json"
+            if context_path.is_file():
+                legacy_context = json.loads(context_path.read_text(encoding="utf-8"))
+                expected_context = {
+                    "key": candidate["key"],
+                    "issueUrl": candidate["issueUrl"],
+                    "threadId": candidate["threadId"],
+                    "worktreePath": str(worktree),
+                }
+                if not isinstance(legacy_context, dict) or any(
+                    legacy_context.get(key) != expected
+                    for key, expected in expected_context.items()
+                ):
+                    raise RuntimeError("legacy PR follow-up context identity is invalid")
+                legacy_followup = legacy_context.get("prFollowup")
+                legacy_prepared_head = (
+                    str(legacy_followup.get("preparedHeadSha"))
+                    if isinstance(legacy_followup, dict)
+                    and legacy_followup.get("preparedHeadSha")
+                    else None
+                )
+                if (
+                    not isinstance(legacy_followup, dict)
+                    or legacy_followup.get("prUrl") != candidate["prUrl"]
+                    or legacy_context.get("contextDigest")
+                    != _task_context_digest(legacy_context, legacy_prepared_head)
+                ):
+                    raise RuntimeError("legacy PR follow-up context digest is invalid")
+                legacy_context_digest = str(legacy_context["contextDigest"])
+                legacy_wake_digest = str(legacy_followup.get("wakeDigest") or "")
             prepared_head = command(["git", "rev-parse", "HEAD"], cwd=worktree)
             prepared_base = None
             if prepared_head != candidate["headSha"]:
@@ -2088,6 +2122,8 @@ def _recover_unbound_pr_followup_preparations(
                 wake_digest=candidate["wakeDigest"],
                 prepared_head_sha=prepared_head,
                 prepared_base_sha=prepared_base,
+                legacy_context_digest=legacy_context_digest,
+                legacy_wake_digest=legacy_wake_digest,
             )
             recovered.append(
                 {
@@ -2663,13 +2699,25 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 if isinstance(context_followup, dict)
                 else ""
             )
+            preparation = store.active_pr_followup_preparation(
+                candidate["key"], thread_id=candidate["threadId"]
+            )
+            compatibility = (
+                preparation.get("legacyCompatibility")
+                if isinstance(preparation, dict)
+                else None
+            )
+            legacy_compatible_result = bool(
+                isinstance(compatibility, dict)
+                and value.get("contextDigest") == compatibility.get("contextDigest")
+                and value.get("followupDigest") == compatibility.get("wakeDigest")
+            )
             if value.get("contextDigest") != context.get("contextDigest"):
-                if current_wake_digest and value.get("followupDigest") != current_wake_digest:
+                if legacy_compatible_result:
+                    pass
+                elif current_wake_digest and value.get("followupDigest") != current_wake_digest:
                     continue
-                legacy_unbound_digest = (
-                    _task_context_digest(context, None) if current_wake_digest else None
-                )
-                if value.get("contextDigest") != legacy_unbound_digest:
+                else:
                     raise RuntimeError("task result context digest mismatch")
             stage = str(value.get("stage") or "")
             quality = value.get("quality")
@@ -2685,6 +2733,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
             if candidate["stage"] in {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED"} and (
                 isinstance(context_followup, dict)
                 and value.get("followupDigest") != context_followup.get("wakeDigest")
+                and not legacy_compatible_result
             ):
                 raise RuntimeError("task result PR follow-up digest mismatch")
             if stage == "AUDIT_NO_GO":
@@ -2797,11 +2846,10 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 store.record_task_result_ingested(
                     candidate["key"], digest=digest, stage="FIX_READY"
                 )
-                followup = store.active_pr_followup(candidate["key"])
-                if followup and followup.get("wake_digest"):
+                if current_wake_digest:
                     store.record_followup_result(
                         candidate["key"],
-                        wake_digest=str(followup["wake_digest"]),
+                        wake_digest=current_wake_digest,
                         result_digest=digest,
                         stage=stage,
                     )
@@ -2813,11 +2861,10 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     raise RuntimeError("PR_OPEN follow-up result requires evidence")
                 digest = hashlib.sha256(raw).hexdigest()
                 store.record_task_result_ingested(candidate["key"], digest=digest, stage=stage)
-                followup = store.active_pr_followup(candidate["key"])
-                if followup and followup.get("wake_digest"):
+                if current_wake_digest:
                     store.record_followup_result(
                         candidate["key"],
-                        wake_digest=str(followup["wake_digest"]),
+                        wake_digest=current_wake_digest,
                         result_digest=digest,
                         stage=stage,
                     )

@@ -149,7 +149,8 @@ receiving their own worktrees.
   now points to the permitted commit; it never opens a second PR.
 - A PR follow-up reservation records its prepared commit and immutable evidence
   snapshot in the append-only ledger. Later audit refreshes cannot replace that
-  parent binding while the task is active. Legacy reservations are repaired
+  parent binding or dispatch a second follow-up while the task is active.
+  Legacy reservations are repaired
   only when the worktree head is the original PR head or a verifiable
   controller-created base-integration merge.
 - A publication side effect records `ATTEMPTED` before execution. Ambiguous

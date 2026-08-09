@@ -2271,7 +2271,7 @@ class RadarLedger:
             followup_row = (
                 connection.execute(
                     """SELECT * FROM pr_followups
-                       WHERE opportunity_key=? AND followup_required=1""",
+                       WHERE opportunity_key=?""",
                     (row["key"],),
                 ).fetchone()
                 if row is not None
@@ -2279,20 +2279,20 @@ class RadarLedger:
             )
             preparation_row = (
                 connection.execute(
-                    """SELECT payload_json FROM events
-                       WHERE opportunity_key=?
-                         AND event_type='PR_FOLLOWUP_PREPARATION_BOUND'
-                         AND dedupe_key=?
+                    """SELECT b.payload_json FROM events b
+                       WHERE b.opportunity_key=?
+                         AND b.event_type='PR_FOLLOWUP_PREPARATION_BOUND'
+                         AND json_extract(b.payload_json,'$.threadId')=?
                          AND NOT EXISTS (
                            SELECT 1 FROM events x
-                           WHERE x.opportunity_key=events.opportunity_key
+                           WHERE x.opportunity_key=b.opportunity_key
                              AND x.event_type='PR_FOLLOWUP_RESULT_INGESTED'
-                             AND x.dedupe_key=events.dedupe_key
+                             AND x.dedupe_key=b.dedupe_key
                          )
-                       ORDER BY id DESC LIMIT 1""",
-                    (row["key"], followup_row["wake_digest"]),
+                       ORDER BY b.id DESC LIMIT 1""",
+                    (row["key"], row["thread_id"]),
                 ).fetchone()
-                if row is not None and followup_row is not None
+                if row is not None
                 else None
             )
         if row is None:
@@ -2318,7 +2318,16 @@ class RadarLedger:
                 or publication_row["request_updated_at"],
             }
         pr_followup = None
-        if followup_row is not None:
+        if preparation_row is not None or (
+            followup_row is not None and bool(followup_row["followup_required"])
+        ):
+            result_contract = {
+                "requiredWakeDigestField": "followupDigest",
+                "allowedStages": ["FIX_READY", "PR_OPEN"],
+                "noLocalActionStage": "PR_OPEN",
+                "mergeConflictHandoffMode": "controller_merge_required",
+            }
+        if followup_row is not None and bool(followup_row["followup_required"]):
             pr_followup = {
                 "prUrl": followup_row["pr_url"],
                 "headSha": followup_row["head_sha"],
@@ -2328,25 +2337,14 @@ class RadarLedger:
                 "actions": json.loads(followup_row["actions_json"]),
                 "evidence": json.loads(followup_row["evidence_json"]),
                 "checkedAt": followup_row["checked_at"],
-                "resultContract": {
-                    "requiredWakeDigestField": "followupDigest",
-                    "allowedStages": ["FIX_READY", "PR_OPEN"],
-                    "noLocalActionStage": "PR_OPEN",
-                    "mergeConflictHandoffMode": "controller_merge_required",
-                },
+                "resultContract": result_contract,
             }
-            if preparation_row is not None:
-                preparation = json.loads(preparation_row["payload_json"])
-                snapshot = preparation.get("snapshot")
-                if (
-                    not isinstance(snapshot, dict)
-                    or snapshot.get("wakeDigest") != followup_row["wake_digest"]
-                    or snapshot.get("prUrl") != followup_row["pr_url"]
-                ):
-                    raise LedgerError("PR follow-up preparation snapshot is invalid")
-                pr_followup = dict(snapshot) | {
-                    "resultContract": pr_followup["resultContract"]
-                }
+        if preparation_row is not None:
+            preparation = json.loads(preparation_row["payload_json"])
+            snapshot = preparation.get("snapshot")
+            if not isinstance(snapshot, dict):
+                raise LedgerError("PR follow-up preparation snapshot is invalid")
+            pr_followup = dict(snapshot) | {"resultContract": result_contract}
         return {
             "key": row["key"],
             "stage": row["stage"],
@@ -2865,6 +2863,27 @@ class RadarLedger:
                WHERE opportunity_key=?""",
             (now, key),
         )
+        active_reservations = connection.execute(
+            """SELECT r.dedupe_key FROM events r
+               WHERE r.opportunity_key=?
+                 AND r.event_type='PR_FOLLOWUP_RESERVED'
+                 AND NOT EXISTS (
+                   SELECT 1 FROM events finished
+                   WHERE finished.opportunity_key=r.opportunity_key
+                     AND finished.event_type='PR_FOLLOWUP_RESULT_INGESTED'
+                     AND finished.dedupe_key=r.dedupe_key
+                 )""",
+            (key,),
+        ).fetchall()
+        for reservation in active_reservations:
+            self._event(
+                connection,
+                key,
+                "PR_FOLLOWUP_RESULT_INGESTED",
+                reservation["dedupe_key"],
+                {"requestId": request_id, "stage": "REARMED"},
+                now,
+            )
         self._event(
             connection,
             key,
@@ -3343,6 +3362,17 @@ class RadarLedger:
                          )
                          AND e.dedupe_key=f.wake_digest
                      )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events active
+                       WHERE active.opportunity_key=o.key
+                         AND active.event_type='PR_FOLLOWUP_RESERVED'
+                         AND NOT EXISTS (
+                           SELECT 1 FROM events finished
+                           WHERE finished.opportunity_key=active.opportunity_key
+                             AND finished.event_type='PR_FOLLOWUP_RESULT_INGESTED'
+                             AND finished.dedupe_key=active.dedupe_key
+                         )
+                     )
                    ORDER BY f.checked_at,r.updated_at DESC"""
             ).fetchall()
         unique: dict[str, dict[str, Any]] = {}
@@ -3431,24 +3461,36 @@ class RadarLedger:
 
         with self.connect() as connection:
             rows = connection.execute(
-                """SELECT f.*,o.key,o.issue_url,i.thread_id,i.worktree_path
-                   FROM pr_followups f
-                   JOIN opportunities o ON o.key=f.opportunity_key
-                   JOIN events r ON r.opportunity_key=o.key
-                     AND r.event_type='PR_FOLLOWUP_RESERVED'
-                     AND r.dedupe_key=f.wake_digest
+                """SELECT f.*,o.key,o.issue_url,r.dedupe_key AS reserved_wake_digest,
+                          json_extract(r.payload_json,'$.threadId') AS reserved_thread_id,
+                          json_extract(r.payload_json,'$.prUrl') AS reserved_pr_url,
+                          i.worktree_path,
+                          (
+                            SELECT request.commit_sha
+                            FROM publication_requests request
+                            JOIN publication_permits permit
+                              ON permit.request_id=request.request_id
+                            WHERE request.opportunity_key=o.key
+                              AND permit.status='CONSUMED'
+                              AND permit.pr_url=json_extract(r.payload_json,'$.prUrl')
+                            ORDER BY permit.updated_at DESC LIMIT 1
+                          ) AS published_head_sha
+                   FROM events r
+                   JOIN opportunities o ON o.key=r.opportunity_key
+                   JOIN pr_followups f ON f.opportunity_key=o.key
+                     AND f.pr_url=json_extract(r.payload_json,'$.prUrl')
                    JOIN intents i ON i.opportunity_key=o.key
                      AND i.thread_id=json_extract(r.payload_json,'$.threadId')
-                   WHERE f.wake_digest IS NOT NULL
+                   WHERE r.event_type='PR_FOLLOWUP_RESERVED'
                      AND NOT EXISTS (
                        SELECT 1 FROM events b WHERE b.opportunity_key=o.key
                          AND b.event_type='PR_FOLLOWUP_PREPARATION_BOUND'
-                         AND b.dedupe_key=f.wake_digest
+                         AND b.dedupe_key=r.dedupe_key
                      )
                      AND NOT EXISTS (
                        SELECT 1 FROM events x WHERE x.opportunity_key=o.key
                          AND x.event_type='PR_FOLLOWUP_RESULT_INGESTED'
-                         AND x.dedupe_key=f.wake_digest
+                         AND x.dedupe_key=r.dedupe_key
                      )
                    ORDER BY r.created_at"""
             ).fetchall()
@@ -3456,15 +3498,16 @@ class RadarLedger:
             {
                 "key": row["key"],
                 "issueUrl": row["issue_url"],
-                "prUrl": row["pr_url"],
-                "headSha": row["head_sha"],
-                "wakeDigest": row["wake_digest"],
+                "prUrl": row["reserved_pr_url"],
+                "headSha": row["published_head_sha"],
+                "wakeDigest": row["reserved_wake_digest"],
+                "currentWakeDigest": row["wake_digest"],
                 "actionDigest": row["action_digest"],
                 "taskActionDigest": row["task_action_digest"],
                 "actions": json.loads(row["actions_json"]),
                 "evidence": json.loads(row["evidence_json"]),
                 "checkedAt": row["checked_at"],
-                "threadId": row["thread_id"],
+                "threadId": row["reserved_thread_id"],
                 "worktreePath": row["worktree_path"],
             }
             for row in rows
@@ -3477,6 +3520,8 @@ class RadarLedger:
         wake_digest: str,
         prepared_head_sha: str,
         prepared_base_sha: str | None = None,
+        legacy_context_digest: str | None = None,
+        legacy_wake_digest: str | None = None,
     ) -> dict[str, Any]:
         candidate = next(
             (
@@ -3490,6 +3535,16 @@ class RadarLedger:
             raise LedgerError("PR follow-up preparation binding is stale or invalid")
         if not re.fullmatch(r"[0-9a-f]{40}", prepared_head_sha):
             raise LedgerError("PR follow-up prepared head is invalid")
+        if legacy_context_digest is not None and not re.fullmatch(
+            r"[0-9a-f]{64}", legacy_context_digest
+        ):
+            raise LedgerError("legacy PR follow-up context digest is invalid")
+        if legacy_wake_digest is not None and not re.fullmatch(
+            r"[0-9a-f]{64}", legacy_wake_digest
+        ):
+            raise LedgerError("legacy PR follow-up wake digest is invalid")
+        if (legacy_context_digest is None) != (legacy_wake_digest is None):
+            raise LedgerError("legacy PR follow-up compatibility is incomplete")
         evidence = dict(candidate["evidence"])
         if prepared_base_sha is not None:
             if not re.fullmatch(r"[0-9a-f]{40}", prepared_base_sha):
@@ -3506,26 +3561,72 @@ class RadarLedger:
                 candidate["key"],
                 "PR_FOLLOWUP_PREPARATION_BOUND",
                 wake_digest,
-                {"threadId": thread_id, "snapshot": snapshot, "legacyRecovered": True},
+                {
+                    "threadId": thread_id,
+                    "snapshot": snapshot,
+                    "legacyRecovered": True,
+                    "legacyCompatibility": (
+                        {
+                            "contextDigest": legacy_context_digest,
+                            "wakeDigest": legacy_wake_digest,
+                        }
+                        if legacy_context_digest is not None
+                        else None
+                    ),
+                },
                 iso_z(datetime.now(UTC)),
             )
         return candidate | {"preparedHeadSha": prepared_head_sha}
+
+    def active_pr_followup_preparation(
+        self, key: str, *, thread_id: str | None = None
+    ) -> dict[str, Any] | None:
+        clauses = [
+            "b.opportunity_key=?",
+            "b.event_type='PR_FOLLOWUP_PREPARATION_BOUND'",
+            "NOT EXISTS (SELECT 1 FROM events x WHERE "
+            "x.opportunity_key=b.opportunity_key "
+            "AND x.event_type='PR_FOLLOWUP_RESULT_INGESTED' "
+            "AND x.dedupe_key=b.dedupe_key)",
+        ]
+        params: list[Any] = [key]
+        if thread_id is not None:
+            clauses.append("json_extract(b.payload_json,'$.threadId')=?")
+            params.append(thread_id)
+        with self.connect() as connection:
+            row = connection.execute(
+                f"""SELECT b.payload_json FROM events b
+                    WHERE {" AND ".join(clauses)}
+                    ORDER BY b.id DESC LIMIT 1""",
+                tuple(params),
+            ).fetchone()
+        if row is None:
+            return None
+        payload = json.loads(row["payload_json"])
+        snapshot = payload.get("snapshot")
+        if not isinstance(snapshot, dict):
+            raise LedgerError("PR follow-up preparation snapshot is invalid")
+        compatibility = payload.get("legacyCompatibility")
+        return {
+            "threadId": payload.get("threadId"),
+            "snapshot": snapshot,
+            "legacyCompatibility": compatibility if isinstance(compatibility, dict) else None,
+        }
 
     def commit_pr_followup(self, *, thread_id: str, wake_digest: str) -> None:
         now = iso_z(datetime.now(UTC))
         with self.transaction() as connection:
             row = connection.execute(
-                """SELECT o.key,f.pr_url FROM opportunities o
-                   JOIN intents i ON i.opportunity_key=o.key
-                   JOIN pr_followups f ON f.opportunity_key=o.key
-                   JOIN events r ON r.opportunity_key=o.key
-                     AND r.event_type='PR_FOLLOWUP_RESERVED'
-                     AND r.dedupe_key=f.wake_digest
-                   WHERE i.thread_id=? AND f.wake_digest=?
+                """SELECT r.opportunity_key AS key,
+                          json_extract(r.payload_json,'$.prUrl') AS pr_url
+                   FROM events r
+                   WHERE r.event_type='PR_FOLLOWUP_RESERVED'
+                     AND json_extract(r.payload_json,'$.threadId')=?
+                     AND r.dedupe_key=?
                      AND NOT EXISTS (
-                       SELECT 1 FROM events s WHERE s.opportunity_key=o.key
+                       SELECT 1 FROM events s WHERE s.opportunity_key=r.opportunity_key
                          AND s.event_type='PR_FOLLOWUP_SENT'
-                         AND s.dedupe_key=f.wake_digest
+                         AND s.dedupe_key=r.dedupe_key
                      )""",
                 (thread_id, wake_digest),
             ).fetchone()
@@ -3543,23 +3644,21 @@ class RadarLedger:
     def unresolved_pr_followups(self) -> list[dict[str, Any]]:
         with self.connect() as connection:
             rows = connection.execute(
-                """SELECT o.key,f.pr_url,f.wake_digest,r.payload_json,r.created_at
-                   FROM opportunities o
-                   JOIN pr_followups f ON f.opportunity_key=o.key
-                   JOIN events r ON r.opportunity_key=o.key
-                     AND r.event_type='PR_FOLLOWUP_RESERVED'
-                     AND r.dedupe_key=f.wake_digest
-                   WHERE NOT EXISTS (
-                     SELECT 1 FROM events s WHERE s.opportunity_key=o.key
+                """SELECT r.opportunity_key AS key,r.dedupe_key AS wake_digest,
+                          r.payload_json,r.created_at
+                   FROM events r
+                   WHERE r.event_type='PR_FOLLOWUP_RESERVED'
+                     AND NOT EXISTS (
+                     SELECT 1 FROM events s WHERE s.opportunity_key=r.opportunity_key
                        AND s.event_type='PR_FOLLOWUP_SENT'
-                       AND s.dedupe_key=f.wake_digest
+                       AND s.dedupe_key=r.dedupe_key
                    ) ORDER BY r.created_at"""
             ).fetchall()
         return [
             {
                 "key": row["key"],
                 "thread_id": json.loads(row["payload_json"]).get("threadId"),
-                "pr_url": row["pr_url"],
+                "pr_url": json.loads(row["payload_json"]).get("prUrl"),
                 "wake_digest": row["wake_digest"],
                 "created_at": row["created_at"],
             }
