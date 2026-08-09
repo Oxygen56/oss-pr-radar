@@ -3,7 +3,11 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from oss_pr_radar.notifier import FeishuClient, candidate_card
-from oss_pr_radar.outbox import build_outbox, validate_outbox
+from oss_pr_radar.outbox import (
+    build_outbox,
+    latest_candidate_notification_history,
+    validate_outbox,
+)
 
 NOW = datetime(2026, 8, 4, tzinfo=UTC)
 
@@ -83,6 +87,30 @@ def test_candidate_material_state_change_can_be_notified_again():
     assert len(second["events"]) == 2
 
 
+def test_scanner_version_change_does_not_resend_same_candidate():
+    first = build_outbox(
+        {
+            "scanner_version": "scanner-v1",
+            "candidate_details": [candidate(notification_digest="notice")],
+        },
+        now=NOW,
+        kind="immediate",
+    )
+    second = build_outbox(
+        {
+            "scanner_version": "scanner-v2",
+            "candidate_details": [candidate(notification_digest="notice")],
+        },
+        first,
+        now=NOW + timedelta(hours=1),
+        kind="immediate",
+    )
+
+    assert second["newEventCount"] == 0
+    assert len(second["events"]) == 1
+    assert second["candidateStateIndex"]["immediate|a/b#1"]["scannerVersion"] == "scanner-v2"
+
+
 def test_candidate_dedup_survives_event_retention_cleanup():
     first = build_outbox(
         {"candidate_details": [candidate()]},
@@ -99,6 +127,61 @@ def test_candidate_dedup_survives_event_retention_cleanup():
     assert second["newEventCount"] == 0
     assert second["events"] == []
     assert len(second["candidateStateIndex"]) == 1
+    state = second["candidateStateIndex"]["immediate|a/b#1"]
+    assert state["digest"] == "evidence"
+    assert state["scannerVersion"] == ""
+
+
+def test_notification_history_survives_event_retention_cleanup():
+    first = build_outbox(
+        {
+            "scanner_version": "scanner-v1",
+            "candidate_details": [candidate(notification_digest="notice-v1")],
+        },
+        now=NOW,
+        kind="immediate",
+    )
+    retained = build_outbox(
+        {"scanner_version": "scanner-v1", "candidate_details": []},
+        first,
+        now=NOW + timedelta(days=8),
+        kind="immediate",
+    )
+
+    assert retained["events"] == []
+    assert latest_candidate_notification_history(retained) == {
+        "a/b#1": {
+            "notification_digest": "notice-v1",
+            "notification_scanner_version": "scanner-v1",
+        }
+    }
+
+
+def test_notification_history_uses_latest_material_state():
+    first = build_outbox(
+        {
+            "scanner_version": "scanner-v1",
+            "candidate_details": [candidate(notification_digest="notice-v1")],
+        },
+        now=NOW,
+        kind="immediate",
+    )
+    second = build_outbox(
+        {
+            "scanner_version": "scanner-v2",
+            "candidate_details": [candidate(notification_digest="notice-v2")],
+        },
+        first,
+        now=NOW + timedelta(hours=1),
+        kind="immediate",
+    )
+
+    assert latest_candidate_notification_history(second) == {
+        "a/b#1": {
+            "notification_digest": "notice-v2",
+            "notification_scanner_version": "scanner-v2",
+        }
+    }
 
 
 def test_material_change_after_event_cleanup_is_notified():

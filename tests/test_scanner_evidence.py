@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 import pytest
 
 from oss_pr_radar import scanner
+from oss_pr_radar.outbox import build_outbox
 from oss_pr_radar.policy import decision_contract_digest
 from oss_pr_radar.scanner import (
     SCANNER_MIGRATION_RECHECK_STATUSES,
@@ -214,10 +215,21 @@ def test_critical_evidence_lookup_failure_is_silently_requeued(
     pr_status,
     expected_reason,
 ):
+    seen_path = tmp_path / f"{expected_reason}.json"
+    atomic_write_json(
+        seen_path,
+        {
+            "example/project#19": {
+                "status": "queued_outbox",
+                "notification_digest": "prior-notification",
+                "notification_scanner_version": "scanner-at-notification",
+            }
+        },
+    )
     radar = Radar(
         datetime(2026, 8, 9, tzinfo=UTC),
         2,
-        tmp_path / f"{expected_reason}.json",
+        seen_path,
         "",
         dry_run=True,
         notify=False,
@@ -272,6 +284,50 @@ def test_critical_evidence_lookup_failure_is_silently_requeued(
     assert radar.issue_outcomes[key] == {"status": "deferred", "reason": expected_reason}
     assert radar.seen[key]["status"] == "status_update"
     assert radar.seen[key]["requeue_reason"] == "critical_evidence_fetch_failure"
+    assert radar.seen[key]["deferred_from_status"] == "queued_outbox"
+    assert radar.seen[key]["notification_digest"] == "prior-notification"
+    assert radar.seen[key]["notification_scanner_version"] == "scanner-at-notification"
+
+
+def test_deadline_deferral_preserves_notification_identity(tmp_path):
+    seen_path = tmp_path / "seen.json"
+    atomic_write_json(
+        seen_path,
+        {
+            "example/project#20": {
+                "status": "queued_outbox",
+                "notification_digest": "prior-notification",
+                "notification_scanner_version": "scanner-at-notification",
+            }
+        },
+    )
+    radar = Radar(
+        datetime(2026, 8, 9, tzinfo=UTC),
+        2,
+        seen_path,
+        "",
+        dry_run=True,
+        notify=False,
+        deep_inspection_deadline_seconds=0,
+    )
+    key = "example/project#20"
+    base = {
+        "repo": "example/project",
+        "num": 20,
+        "title": "Tool result disappears after resume",
+        "url": "https://github.com/example/project/issues/20",
+        "updated": "2026-08-09T00:00:00Z",
+        "labels": ["bug"],
+        "assignees": [],
+    }
+
+    candidates, _, _ = radar.shortlist({key: base})
+
+    assert candidates == []
+    assert radar.seen[key]["status"] == "inspection_budget_deferred"
+    assert radar.seen[key]["deferred_from_status"] == "queued_outbox"
+    assert radar.seen[key]["notification_digest"] == "prior-notification"
+    assert radar.seen[key]["notification_scanner_version"] == "scanner-at-notification"
 
 
 def test_notification_digest_ignores_llm_wording_and_age_churn():
@@ -474,6 +530,92 @@ def test_outbox_mode_marks_candidates_as_queued(monkeypatch, tmp_path):
     assert result["notification_mode"] == "outbox"
     assert seen["example/project#7"]["status"] == "queued_outbox"
     assert seen["example/project#7"]["notification_digest"]
+    assert seen["example/project#7"]["notification_scanner_version"] == SCANNER_VERSION
+
+
+def test_outbox_recovers_lost_deferred_notification_identity(monkeypatch, tmp_path):
+    seen_path = tmp_path / "seen.json"
+    outbox_path = tmp_path / "notification_outbox.json"
+    candidate = {
+        "repo": "example/project",
+        "num": 7,
+        "title": "Streaming tool-call chunks lose their id",
+        "url": "https://github.com/example/project/issues/7",
+        "score": 9,
+        "category": "WAIT_MAINTAINER",
+        "gate_decision": "HUMAN_REVIEW",
+        "auto_spawn": False,
+        "labels": ["bug"],
+        "issue_updated": "2026-08-04T00:00:00Z",
+        "submission_policy": "needs_assignment",
+        "public_submission_allowed": True,
+        "actionability_evidence": {"public_repro_signals": 1},
+        "open_pr_assessment": {"status": "none"},
+        "related_issue_assessment": {"status": "none"},
+    }
+    notification_digest = candidate_notification_digest(candidate)
+    outbox = build_outbox(
+        {
+            "run_id": "run-1",
+            "scanner_version": SCANNER_VERSION,
+            "candidate_details": [candidate | {"notification_digest": notification_digest}],
+        },
+        now=datetime(2026, 8, 4, tzinfo=UTC),
+        kind="review",
+    )
+    atomic_write_json(outbox_path, outbox)
+    atomic_write_json(
+        seen_path,
+        {
+            "example/project#7": {
+                "status": "inspection_budget_deferred",
+                "deferred_from_status": "queued_outbox",
+                "scanner_version": SCANNER_VERSION,
+                "issue_updated": candidate["issue_updated"],
+            }
+        },
+    )
+    radar = Radar(
+        datetime(2026, 8, 4, tzinfo=UTC),
+        2,
+        seen_path,
+        "",
+        dry_run=True,
+        notify=False,
+        notification_outbox_path=outbox_path,
+    )
+
+    class IdentityEvaluator:
+        @classmethod
+        def from_environment(cls, _path):
+            return cls()
+
+        def evaluate_candidates(self, candidates):
+            return candidates
+
+    monkeypatch.setattr(radar, "collect_items", lambda: {"example/project#7": {}})
+    monkeypatch.setattr(radar, "shortlist", lambda _items: ([candidate], 1, 1))
+    monkeypatch.setattr(scanner, "DeepSeekEvaluator", IdentityEvaluator)
+
+    report_path = tmp_path / "scan.json"
+    result = radar.run(report_path)
+    seen = json.loads(seen_path.read_text(encoding="utf-8"))
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    rebuilt_outbox = build_outbox(
+        report,
+        outbox,
+        now=datetime(2026, 8, 4, 1, tzinfo=UTC),
+        kind="review",
+    )
+
+    assert result["notification_state_recovered"] == 1
+    assert result["notification_candidate_count"] == 0
+    assert result["notification_suppressed_count"] == 1
+    assert seen["example/project#7"]["status"] == "queued_outbox"
+    assert seen["example/project#7"]["notification_digest"] == notification_digest
+    assert seen["example/project#7"]["notification_scanner_version"] == SCANNER_VERSION
+    assert report["candidate_details"][0]["notification_digest"] == notification_digest
+    assert rebuilt_outbox["newEventCount"] == 0
 
 
 def test_legacy_version_bound_notification_is_migrated_without_resending(monkeypatch, tmp_path):
@@ -510,7 +652,8 @@ def test_legacy_version_bound_notification_is_migrated_without_resending(monkeyp
                     "status": "policy_migration_pending",
                     "deferred_from_status": "queued_outbox",
                     "notification_digest": legacy_digest,
-                    "scanner_version": "oss_pr_radar_v39_language_gates",
+                    "notification_scanner_version": "oss_pr_radar_v39_language_gates",
+                    "scanner_version": "newer-state-contract",
                     "issue_updated": candidate["issue_updated"],
                 }
             }
@@ -547,6 +690,7 @@ def test_legacy_version_bound_notification_is_migrated_without_resending(monkeyp
     assert seen["example/project#7"]["notification_digest"] == candidate_notification_digest(
         candidate
     )
+    assert seen["example/project#7"]["notification_scanner_version"] == SCANNER_VERSION
     assert "deferred_from_status" not in seen["example/project#7"]
 
 

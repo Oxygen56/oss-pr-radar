@@ -14,14 +14,19 @@ EVENT_RETENTION_DAYS = 7
 STATE_RETENTION_DAYS = 180
 
 
-def _candidate_state(item: dict[str, Any], *, kind: str) -> dict[str, str]:
+def _candidate_state(
+    item: dict[str, Any], *, kind: str, scanner_version: str = ""
+) -> dict[str, str]:
     value = {
         "key": f"{item['repo']}#{item['num']}",
         "digest": str(item.get("notification_digest") or item.get("evidence_digest") or ""),
         "category": str(item.get("category") or ""),
         "kind": kind,
+        "scannerVersion": str(item.get("notification_scanner_version") or scanner_version or ""),
     }
-    value["stateId"] = sha256_json(value)
+    value["stateId"] = sha256_json(
+        {key: item for key, item in value.items() if key != "scannerVersion"}
+    )
     return value
 
 
@@ -35,6 +40,57 @@ def _valid_seen_at(value: Any, *, keep_after: datetime) -> str | None:
     except (TypeError, ValueError):
         return None
     return iso_z(parsed) if parsed >= keep_after else None
+
+
+def _state_index_entry(state: dict[str, Any], *, seen_at: str) -> dict[str, str]:
+    return {
+        "stateId": str(state.get("stateId") or ""),
+        "digest": str(state.get("digest") or ""),
+        "category": str(state.get("category") or ""),
+        "kind": str(state.get("kind") or ""),
+        "scannerVersion": str(state.get("scannerVersion") or ""),
+        "seenAt": seen_at,
+    }
+
+
+def latest_candidate_notification_history(
+    outbox: dict[str, Any],
+    *,
+    kinds: frozenset[str] = frozenset({"immediate", "review"}),
+) -> dict[str, dict[str, str]]:
+    """Return the latest durable notification identity for each issue."""
+
+    validate_outbox(outbox)
+    history: dict[str, dict[str, str]] = {}
+    for event in outbox.get("events") or []:
+        if not isinstance(event, dict) or event.get("status") not in {"PENDING", "SENT"}:
+            continue
+        event_kind = str(event.get("kind") or "")
+        if event_kind not in kinds:
+            continue
+        for state in event.get("candidateStates") or []:
+            if not isinstance(state, dict):
+                continue
+            key = str(state.get("key") or "")
+            digest = str(state.get("digest") or "")
+            if key and digest:
+                history[key] = {
+                    "notification_digest": digest,
+                    "notification_scanner_version": str(state.get("scannerVersion") or ""),
+                }
+    index = outbox.get("candidateStateIndex")
+    if isinstance(index, dict):
+        for index_key, state in index.items():
+            if not isinstance(index_key, str) or not isinstance(state, dict):
+                continue
+            kind, separator, key = index_key.partition("|")
+            digest = str(state.get("digest") or "")
+            if separator and kind in kinds and key and digest:
+                history[key] = {
+                    "notification_digest": digest,
+                    "notification_scanner_version": str(state.get("scannerVersion") or ""),
+                }
+    return history
 
 
 def build_outbox(
@@ -62,7 +118,11 @@ def build_outbox(
                 seen_at = _valid_seen_at(entry.get("seenAt"), keep_after=keep_state_after)
                 state_id = entry.get("stateId")
                 if seen_at and isinstance(state_id, str) and state_id:
-                    state_index[index_key] = {"stateId": state_id, "seenAt": seen_at}
+                    state_index[index_key] = {
+                        key: value
+                        for key, value in _state_index_entry(entry, seen_at=seen_at).items()
+                        if value
+                    }
         for event in existing.get("events") or []:
             if not isinstance(event, dict):
                 continue
@@ -84,10 +144,10 @@ def build_outbox(
                     key = str(state.get("key") or "")
                     state_id = str(state.get("stateId") or "")
                     if key and state_id:
-                        state_index[_state_index_key(event_kind, key)] = {
-                            "stateId": state_id,
-                            "seenAt": seen_at,
-                        }
+                        state_index[_state_index_key(event_kind, key)] = _state_index_entry(
+                            state,
+                            seen_at=seen_at,
+                        )
             else:
                 for key in event.get("candidateKeys") or []:
                     if key:
@@ -109,7 +169,14 @@ def build_outbox(
         and (kind != "watch" or item.get("notify") is True)
     ]
     candidates.sort(key=lambda item: f"{item['repo']}#{item['num']}")
-    candidate_states = [_candidate_state(item, kind=kind) for item in candidates]
+    candidate_states = [
+        _candidate_state(
+            item,
+            kind=kind,
+            scanner_version=str(report.get("scanner_version") or ""),
+        )
+        for item in candidates
+    ]
     new_pairs: list[tuple[dict[str, Any], dict[str, str]]] = []
     for item, state in zip(candidates, candidate_states, strict=True):
         index_key = _state_index_key(kind, state["key"])
@@ -118,7 +185,7 @@ def build_outbox(
             previous.get("stateId") != state["stateId"] and previous.get("legacy") is not True
         ):
             new_pairs.append((item, state))
-        state_index[index_key] = {"stateId": state["stateId"], "seenAt": iso_z(current)}
+        state_index[index_key] = _state_index_entry(state, seen_at=iso_z(current))
     candidates = [item for item, _state in new_pairs]
     candidate_states = [state for _item, state in new_pairs]
     new_count = 0

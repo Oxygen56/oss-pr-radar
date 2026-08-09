@@ -30,6 +30,7 @@ from .contracts import CANDIDATE_SCHEMA, SCAN_SCHEMA, contract_digest
 from .evidence import assess_hardware_requirements
 from .llm import DeepSeekEvaluator
 from .messages import add_chinese_explanations
+from .outbox import latest_candidate_notification_history
 from .policy import SCANNER_DECISION_REVISION, decision_contract_digest
 from .repo_policy import (
     POLICY_FILE_WORKERS,
@@ -44,6 +45,7 @@ DEFAULT_SEEN = DEFAULT_REPORTS / "oss_pr_radar_seen.json"
 DEFAULT_STATE = DEFAULT_REPORTS / "pr_radar_runtime_state.json"
 DEFAULT_REPO_CACHE = BASE_DIR / "state" / "repo_cache.json"
 DEFAULT_CONTROLLER_FEEDBACK = BASE_DIR / "state" / "controller_terminal_feedback.json"
+DEFAULT_NOTIFICATION_OUTBOX = BASE_DIR / "state" / "notification_outbox.json"
 DEFAULT_CHAT_ID = os.environ.get("FEISHU_CHAT_ID", "")
 PROFILE = "agent_ai_infra_v2"
 AGENT_INFRA_TRACK = "agent_ai_infra"
@@ -1476,6 +1478,7 @@ def candidate_notification_digest(
         "llm_review",
         "next_step",
         "notification_digest",
+        "notification_scanner_version",
         "now",
         "policy_digest",
         "risk",
@@ -1640,6 +1643,7 @@ class Radar:
         notify: bool = True,
         repo_cache_path: Path = DEFAULT_REPO_CACHE,
         controller_feedback_path: Path = DEFAULT_CONTROLLER_FEEDBACK,
+        notification_outbox_path: Path = DEFAULT_NOTIFICATION_OUTBOX,
     ):
         self.now = now.astimezone(timezone.utc)
         self.since = self.now - timedelta(hours=window_hours)
@@ -1655,6 +1659,47 @@ class Radar:
             seen if isinstance(seen, dict) else {},
             feedback if isinstance(feedback, dict) else {},
         )
+        self.notification_history: dict[str, dict[str, Any]] = {}
+        for key, entry in self.seen.items():
+            if not isinstance(entry, dict) or not entry.get("notification_digest"):
+                continue
+            self.notification_history[key] = {
+                "notification_digest": str(entry["notification_digest"]),
+                "notification_scanner_version": str(
+                    entry.get("notification_scanner_version") or entry.get("scanner_version") or ""
+                ),
+            }
+        outbox = load_json(notification_outbox_path, {})
+        try:
+            durable_history = latest_candidate_notification_history(
+                outbox if isinstance(outbox, dict) else {}
+            )
+        except ValueError:
+            durable_history = {}
+        for key, history in durable_history.items():
+            if key in self.notification_history:
+                continue
+            scanner_version = str(history.get("notification_scanner_version") or "")
+            if not scanner_version:
+                seen_entry = self.seen.get(key)
+                scanner_version = str(
+                    (seen_entry or {}).get("notification_scanner_version")
+                    or (seen_entry or {}).get("scanner_version")
+                    or ""
+                )
+            self.notification_history[key] = {
+                "notification_digest": str(history["notification_digest"]),
+                "notification_scanner_version": scanner_version,
+            }
+        self.notification_state_recovered = 0
+        for key, history in self.notification_history.items():
+            entry = self.seen.get(key)
+            if not isinstance(entry, dict) or entry.get("notification_digest"):
+                continue
+            entry["notification_digest"] = history["notification_digest"]
+            if history.get("notification_scanner_version"):
+                entry["notification_scanner_version"] = history["notification_scanner_version"]
+            self.notification_state_recovered += 1
         self.errors: list[str] = []
         self.repo_cache: dict[str, tuple[bool, str]] = {}
         self.policy_cache: dict[str, str] = {}
@@ -3499,6 +3544,7 @@ class Radar:
                 "title": base.get("title") or key,
                 "url": base.get("url") or f"https://github.com/{base['repo']}/issues/{base['num']}",
                 "issue_updated": base.get("updated") or base.get("issue_updated") or "",
+                **self.notification_history.get(key, {}),
             }
 
         def defer_evidence_lookup(base: dict[str, Any], issue: dict[str, Any], reason: str) -> None:
@@ -3516,12 +3562,15 @@ class Radar:
                 or previous.get("requeued_at")
                 or self.analyzed,
                 "defer_count": int(previous.get("defer_count") or 0) + 1,
+                "deferred_from_status": previous.get("deferred_from_status")
+                or previous.get("status"),
                 "title": issue.get("title") or base.get("title") or key,
                 "url": base.get("url") or f"https://github.com/{base['repo']}/issues/{base['num']}",
                 "issue_updated": issue.get("updated_at")
                 or base.get("updated")
                 or base.get("issue_updated")
                 or "",
+                **self.notification_history.get(key, {}),
             }
 
         for base in items.values():
@@ -4079,12 +4128,18 @@ class Radar:
                     else ""
                 )
                 legacy_candidate = dict(candidate)
-                if isinstance(previous, dict) and previous.get("scanner_version"):
-                    legacy_candidate["scanner_version"] = previous["scanner_version"]
+                if isinstance(previous, dict) and (
+                    previous.get("notification_scanner_version") or previous.get("scanner_version")
+                ):
+                    legacy_candidate["scanner_version"] = (
+                        previous.get("notification_scanner_version") or previous["scanner_version"]
+                    )
                 legacy_digest = candidate_notification_digest(
                     legacy_candidate,
                     bind_scanner_version=True,
                 )
+                candidate["notification_digest"] = digest
+                candidate["notification_scanner_version"] = SCANNER_VERSION
                 if (
                     isinstance(previous, dict)
                     and previous_digest
@@ -4107,6 +4162,7 @@ class Radar:
                             "url": candidate.get("url"),
                             "issue_updated": candidate.get("issue_updated") or "",
                             "notification_digest": digest,
+                            "notification_scanner_version": SCANNER_VERSION,
                         }
                     )
                     for field in (
@@ -4120,7 +4176,6 @@ class Radar:
                         migrated.pop(field, None)
                     self.seen[key] = migrated
                     continue
-                candidate["notification_digest"] = digest
                 notification_candidates.append(candidate)
             sent, send_error = (
                 self.send_feishu(notification_candidates) if self.notify else (False, None)
@@ -4139,6 +4194,7 @@ class Radar:
                     "url": candidate["url"],
                     "issue_updated": candidate.get("issue_updated") or "",
                     "notification_digest": candidate["notification_digest"],
+                    "notification_scanner_version": SCANNER_VERSION,
                 }
         elif notification_candidates and send_error:
             for candidate in notification_candidates:
@@ -4161,7 +4217,16 @@ class Radar:
                     "url": candidate["url"],
                     "issue_updated": candidate.get("issue_updated") or "",
                     "notification_digest": candidate["notification_digest"],
+                    "notification_scanner_version": SCANNER_VERSION,
                 }
+
+        for key, history in self.notification_history.items():
+            entry = self.seen.get(key)
+            if not isinstance(entry, dict) or entry.get("notification_digest"):
+                continue
+            entry["notification_digest"] = history["notification_digest"]
+            if history.get("notification_scanner_version"):
+                entry["notification_scanner_version"] = history["notification_scanner_version"]
 
         for entry in self.seen.values():
             if isinstance(entry, dict) and entry.get("analyzed") == self.analyzed:
@@ -4272,6 +4337,7 @@ class Radar:
             "send_error": send_error,
             "notification_candidate_count": len(notification_candidates),
             "notification_suppressed_count": len(candidates) - len(notification_candidates),
+            "notification_state_recovered": self.notification_state_recovered,
             "dry_run": self.dry_run,
             "notification_mode": "direct" if self.notify else "outbox",
             "auto_spawn_candidates": len(auto_spawn_candidates),
