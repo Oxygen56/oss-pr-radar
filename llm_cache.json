@@ -5941,6 +5941,37 @@
     ],
     "why": "The issue provides a precise root cause and a deterministic repro, but the supplied gate says HUMAN_REVIEW and the existing PR #29288 is stale and incomplete. A commenter found a second bug (remaining_list never reaches the provider) that changes the fix shape, so a new PR must address both. Maintainer confirmation is needed before starting."
   },
+  "5680baee3d4dd927ef0452aaf0a919bfd2065c1257af7f58cfc45b20696e6fa5": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add isolation: 'auto' option resolving via detectIsolation()",
+      "Add construction-time warning when isolation is 'none' on platforms with no backend",
+      "Document Windows as unsupported with Docker/WSL2 recommendation"
+    ],
+    "risks": [
+      "Changing default behavior may break existing users relying on silent 'none'",
+      "Adding warning could be noisy for legitimate use cases",
+      "Native addon or helper binary would add distribution burden to @mastra/core"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "test_plan": [
+      "Unit test for detectIsolation() on win32 returning 'none' with available:false",
+      "Unit test for LocalSandbox constructor warning when isolation defaults to 'none' on win32",
+      "Integration test verifying isolation: 'auto' resolves to 'none' on win32 and warns"
+    ],
+    "unknowns": [
+      "Maintainer preference on backend direction (options 1-3)",
+      "Whether the low-cost fix (option 4) is approved for implementation"
+    ],
+    "why": "The issue clearly identifies a silent security gap on Windows where LocalSandbox defaults to unisolated execution, but the fix requires an architectural decision (native addon vs helper binary vs documented unsupported) that only maintainers can make. The reporter explicitly asks for direction, and the maintainer bot confirms the need for maintainer decision. The low-cost improvement (isolation: 'auto' + warning) is actionable but not yet approved."
+  },
   "56a49d69d145fac5894e4e4b07d6be8c3cd401ccc11c30b1e833ad3744522948": {
     "confidence": 0.7,
     "contradictions": [
@@ -12515,6 +12546,35 @@
       "Root cause not identified"
     ],
     "why": "Issue reports a severe hang in dsv4/DSPARK at long context with TP=8, but lacks deterministic reproducer and root cause. Open PR and related issue lookups timed out, so duplicate work cannot be excluded. Maintainer input needed for design and bisection guidance."
+  },
+  "bd91d191c4b48ce87015155df29e14d97bf08132893259fdffcd8529d1dae77f": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify communitytool installation flow to pass resolved AgentIDs into CodeGraph configuration",
+      "Update codegraph_contract.go and codegraph_guidance.go to use selected-agent scope instead of DiscoverInstalled",
+      "Add regression test TestCodeGraphConfigurationRespectsSelectedAgents"
+    ],
+    "risks": [
+      "Potential API changes to InstallWithHome and related functions may affect other callers",
+      "Need to ensure standalone Community Tools flow correctly derives scope from persisted InstalledAgents"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "test_plan": [
+      "Run existing TestCodeGraphGuidanceInjectsForRepresentativeAgents to confirm it currently passes (encodes bug)",
+      "Add new test that verifies only selected agents are configured and unselected agents remain unchanged",
+      "Run targeted tests in internal/components/communitytool"
+    ],
+    "unknowns": [
+      "Maintainer approval status and design preferences for the fix",
+      "Exact implementation details for passing AgentIDs through the installation flow"
+    ],
+    "why": "The issue clearly identifies a bug where CodeGraph configuration ignores the user's agent selection, with specific code paths and a failing test that encodes the bug. However, the repository requires issues to have 'status:approved' before PRs are accepted, and the issue lacks maintainer approval or design confirmation. The gate decision is HUMAN_REVIEW, indicating a need for maintainer input before implementation."
   },
   "bdbb3e86ab975b8c28880afb175193ef8c314715f635a79aff1646adf06117bf": {
     "confidence": 0.7,
