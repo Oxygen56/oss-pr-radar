@@ -4237,6 +4237,36 @@
     ],
     "why": "Issue provides a precise root cause and a concrete fix for a user-visible bug in vLLM's Inkling parser, with a no-GPU repro. However, the deterministic gate requires HUMAN_REVIEW, and the open PR/related issue lookup failed, so we cannot rule out duplicate work. Maintainer design confirmation is also absent."
   },
+  "4117ad056d3fac0da06f26f9a77522786340251d5aff44dff2e0e715c904fbf9": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add prefill worker booking in EPP path",
+      "Enable active-block tracking for prefill router",
+      "Modify prefill router selection to consider worker load"
+    ],
+    "risks": [
+      "Potential overlap with PR #12890 requiring careful merge",
+      "Behavioral changes to routing may affect latency or throughput"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "test_plan": [
+      "Reproduce with mixed prompt sizes and compare queue depths across prefill pods",
+      "Add integration test for EPP prefill booking",
+      "Add unit test for selection logit with load signal"
+    ],
+    "unknowns": [
+      "Maintainer preference on design approach",
+      "Whether PR #12890 already addresses the root cause"
+    ],
+    "why": "Issue describes a clear load-balancing bug with a concrete root cause identified in comments (no prefill booking, no active-block tracking). However, an existing PR #12890 overlaps semantically and requires maintainer comparison to avoid duplicate work. The deterministic gate is HUMAN_REVIEW, and the candidate lacks maintainer approval or design confirmation."
+  },
   "415d6dfd9ae2964cc77eccd9abb7b62ad99fe2dde9645d0fb78cda2a77be158e": {
     "confidence": 0.8,
     "contradictions": [
@@ -10362,6 +10392,36 @@
     ],
     "why": "Issue provides a precise root cause (shape mismatch in requestContext user slot) and a verified workaround, but a PR (#20690) already exists and is closed, with maintainer triage ongoing. The deterministic gate requires HUMAN_REVIEW, and the PR's completeness and maintainer scope decisions (e.g., handling two other quiet readers) are unresolved."
   },
+  "976688a9d2c27073cb10b153949b73bb4fe8a9cba1d5af38e05f3826dfee61b6": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The issue states the drop is downstream of AG-UI, but the triage comment identifies the root cause in AG-UI's _resolve_approval_responses. This is a minor contradiction that needs resolution."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify approval-response consumer in agent-framework-core to iterate all synthesized approval responses instead of resolving only the first pending approval per resume.",
+      "Add regression test for two gated calls in one batch asserting two executions and two results."
+    ],
+    "risks": [
+      "Potential behavior change in approval resume path could affect other scenarios; need to ensure no unintended side effects on existing approval flows.",
+      "The fix may require coordination with AG-UI layer changes if the root cause spans both packages."
+    ],
+    "root_cause_clarity": "high",
+    "score": 15,
+    "test_plan": [
+      "Add a regression test that reproduces the issue: two always_require tools, one assistant message with two tool calls, two approval responses, assert two TOOL_CALL_RESULT events.",
+      "Run existing approval-related tests to ensure no regression, especially the never-require sibling case."
+    ],
+    "unknowns": [
+      "Maintainer's design preference for the fix approach; whether they prefer a minimal fix in the consumer or a broader refactor.",
+      "Whether the existing PR #7546 has any indirect impact on the same code path despite no direct overlap."
+    ],
+    "why": "The issue provides a clear, reproducible bug with a detailed root cause analysis and a suggested fix direction. However, the deterministic gate requires HUMAN_REVIEW, and the issue explicitly requests design confirmation. The existing PR #7546 is not a direct competitor, but the maintainer's design preferences are unknown. The bug is in the agent/inference critical path and is user-visible, making it a valuable candidate, but the gate and need for maintainer confirmation block a clean start."
+  },
   "976b4ba1dc070c3b4427e1660bc07cdd14958c14ad095a6f32d90fd3bce68e5b": {
     "confidence": 0.7,
     "contradictions": [],
@@ -14884,6 +14944,29 @@
     ],
     "why": "Issue reports a clear bug: Azure Functions adds Domain attribute to __Host- cookie, causing browser rejection and 403. Root cause is well understood and reproducible. However, the deterministic gate says HUMAN_REVIEW, and there is no maintainer approval or help-wanted signal. The fix may involve design choices about cookie handling and deployment compatibility, so maintainer input is needed."
   },
+  "df4c511631abfc62e9924c75170cd62fe8c688f1c213fd9b833da1b3859c75ff": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify StreamableHttpClientSessionTransport or McpClientImpl.ConnectAsync to handle non-JSON-RPC JSON error envelopes on HTTP 400 and fall back to initialize."
+    ],
+    "risks": [
+      "Changing error handling may affect existing JSON-RPC error classification; need to preserve behavior for recognized MCP errors."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 12,
+    "test_plan": [
+      "Add a regression test using a mock HTTP server returning the exact Azure AI Foundry error body, asserting fallback to initialize occurs."
+    ],
+    "unknowns": [
+      "Exact throw site and code path causing the unhandled exception; whether PR #1791 already fixes this issue."
+    ],
+    "why": "Issue describes a reproducible failure in server/discover fallback when HTTP 400 body is non-JSON-RPC JSON, but root cause is not pinpointed. Existing PR #1791 overlaps semantically and may already address it, requiring maintainer comparison. No maintainer approval or design confirmation."
+  },
   "df546373182f911b11af536b55625f6ad47c333f4827ef5bbe821c267a9b228c": {
     "confidence": 0.7,
     "contradictions": [],
@@ -15335,6 +15418,36 @@
       "Related issue status unknown due to timeout"
     ],
     "why": "Issue identifies a clear shallow-update bug in get_config causing recursive config override failure, with a concrete reproduction. However, open PR and related issue lookups timed out, so duplicate implementation cannot be excluded. Maintainer design confirmation is needed before starting work."
+  },
+  "e38a19f54ec92da189678c6929767a7f28279bf0858e236e8056be48eb1f3dbf": {
+    "confidence": 0.7,
+    "contradictions": [
+      "None"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Bump nvidia-cutlass-dsl pin to >=4.6.2 in requirements/cuda.txt",
+      "Defensive initialization of n_block_first in vllm_flash_attn/cute/flash_fwd_sm100.py"
+    ],
+    "risks": [
+      "Potential dependency conflict with other packages requiring cutlass-dsl 4.6.0",
+      "The defensive fix may need to be coordinated with vllm-flash-attention upstream."
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Run the provided repro.py on SM100-family GPU with cutlass-dsl 4.6.0 to confirm failure, then after fix verify it compiles and runs.",
+      "Add a regression test that exercises split-KV FA4 varlen path with seqlen >= 513."
+    ],
+    "unknowns": [
+      "Maintainer preference on whether to bump dependency or patch kernel source",
+      "Whether PR #41834 already addresses this issue or is a different change"
+    ],
+    "why": "Issue provides a clear root cause and a minimal repro for a deterministic compile failure in FA4 SM100 split-KV kernels, with a suggested fix (bump nvidia-cutlass-dsl pin and/or defensive initialization). However, the deterministic gate is HUMAN_REVIEW, and there is an existing PR (#41834) with semantic overlap that needs maintainer comparison. Also, the issue is a bug report, not a code contribution; actionability depends on maintainer assignment or confirmation."
   },
   "e424f4ebec0915a61bdc2a0b8aba5c7e2e997268d45e0d65dbc3329dc3af303c": {
     "confidence": 0.8,
@@ -17016,6 +17129,40 @@
       "Maintainer confirmation or design preference on whether server-level enable/disable should emit notifications"
     ],
     "why": "Issue reports a concrete bug: server-level enable/disable do not emit ToolListChangedNotification, causing stale tool lists in connected clients. The code path is identified and a minimal fix is plausible, but the deterministic gate requires HUMAN_REVIEW and the issue lacks maintainer confirmation or design guidance."
+  },
+  "fc96c396852003bf83e3673f294b3adea018fdd7557c0bd5d4ea4fcd4c90f534": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue states 0% hits, but maintainer comment shows hits with larger block size",
+      "Issue suggests limitation, but PR #46384 claims to fix it"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Verify fix on current main",
+      "Add regression tests for hybrid prefix caching",
+      "Possibly improve warning for unsupported models"
+    ],
+    "risks": [
+      "Existing PRs may already cover the fix",
+      "Hardware-specific behavior (GB10) may not generalize",
+      "Need to distinguish between caching and numerical correctness issues"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with vLLM main including PR #46384",
+      "Run e2e tests for hybrid Mamba prefix caching",
+      "Check metrics for prefix cache hits with shared prefixes"
+    ],
+    "unknowns": [
+      "Whether the fix in PR #46384 fully resolves the issue on all platforms",
+      "Whether maintainers want additional changes beyond the merged PR"
+    ],
+    "why": "The issue reports a real bug in prefix caching for hybrid Mamba models, but the root cause is already addressed by merged PR #46384, and the issue itself contains a detailed resolution comment. The candidate's proposed work overlaps with existing PRs (#39559, #42792, #48970) and requires maintainer confirmation on whether further action is needed."
   },
   "fd47108caeda7314532797a09655a868ff9cb7e4c7f7a2cc8922ebb520281895": {
     "confidence": 0.7,
