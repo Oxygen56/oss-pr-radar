@@ -2695,6 +2695,52 @@ def test_controller_policy_snapshot_recovers_an_existing_blocked_fix(monkeypatch
     assert json.loads(result_path.read_text(encoding="utf-8"))["quality"][
         "policy_verified"
     ] is True
+    request_id = recovered["publicationRequests"][0]["requestId"]
+    request = store.publication_request(request_id)
+    assert request is not None
+    assert request["request"]["quality"]["policy_verified"] is True
+
+
+def test_repaired_quality_rearms_same_blocked_publication_request(tmp_path):
+    store, worktree, result_path = _controller_commit_result(tmp_path)
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    request_id = first["publicationRequests"][0]["requestId"]
+    request = store.publication_request(request_id)
+    assert request is not None
+    stale_quality = dict(request["request"]["quality"])
+    stale_quality["policy_verified"] = False
+    stale_request = dict(request["request"])
+    stale_request["quality"] = stale_quality
+    with store.connect() as connection:
+        connection.execute(
+            """UPDATE outcomes SET quality_json=? WHERE opportunity_key='a/b#1'""",
+            (json.dumps(stale_quality),),
+        )
+        connection.execute(
+            """UPDATE publication_requests
+               SET status='BLOCKED',reason='SUBMIT_READY_EVIDENCE_INCOMPLETE',request_json=?
+               WHERE request_id=?""",
+            (json.dumps(stale_request), request_id),
+        )
+    store.record_stage(
+        "a/b#1",
+        "FIX_READY",
+        evidence=request["request"]["quality"],
+        dedupe_key="quality-repaired",
+    )
+
+    repaired = MODULE.request_publication(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        worktree=worktree,
+        evidence_path=result_path,
+    )
+
+    assert repaired["request_id"] == request_id
+    assert repaired["status"] == "PENDING"
+    assert repaired["request"]["quality"]["policy_verified"] is True
+    assert store.publication_request(request_id)["reason"] is None
 
 
 def test_existing_policy_block_with_refreshed_context_stays_idempotent(tmp_path):

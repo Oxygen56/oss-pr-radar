@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-from .util import canonical_json, iso_z, parse_time, sha256_text
+from .util import canonical_json, iso_z, parse_time, sha256_json, sha256_text
 
 STAGES = (
     "DISCOVERED",
@@ -2688,6 +2688,34 @@ class RadarLedger:
                 (request_id,),
             ).fetchone()
             if existing:
+                existing_request = json.loads(existing["request_json"])
+                if (
+                    existing["status"] == "BLOCKED"
+                    and existing["reason"] == "SUBMIT_READY_EVIDENCE_INCOMPLETE"
+                    and existing["evidence_digest"] == evidence_digest
+                    and existing_request.get("quality") != quality
+                ):
+                    connection.execute(
+                        """UPDATE publication_requests
+                           SET status='PENDING',reason=NULL,request_json=?,updated_at=?
+                           WHERE request_id=?""",
+                        (canonical_json(request), now, request_id),
+                    )
+                    self._event(
+                        connection,
+                        row["key"],
+                        "PUBLICATION_REQUEST_REARMED",
+                        f"{request_id}:{sha256_json(quality)}",
+                        {"requestId": request_id, "reason": "QUALITY_EVIDENCE_REPAIRED"},
+                        now,
+                    )
+                    return {
+                        **dict(existing),
+                        "status": "PENDING",
+                        "reason": None,
+                        "request_json": canonical_json(request),
+                        "request": request,
+                    }
                 return dict(existing) | {"request": json.loads(existing["request_json"])}
             connection.execute(
                 """INSERT INTO publication_requests

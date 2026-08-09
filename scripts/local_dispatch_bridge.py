@@ -2823,7 +2823,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     and set(assessment.missing) == {"policy_verified"}
                 ):
                     publication_blocked = "REPOSITORY_POLICY_EVIDENCE_REQUIRED"
-                if candidate["stage"] != "FIX_READY":
+                if candidate["stage"] != "FIX_READY" or controller_policy_recoverable:
                     local_policy_only = bool(
                         publication_blocked and set(assessment.missing) == {"policy_verified"}
                     )
