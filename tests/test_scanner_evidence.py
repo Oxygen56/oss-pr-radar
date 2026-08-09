@@ -432,6 +432,79 @@ def test_issue_author_ready_fix_branches_block_cloud_candidate(tmp_path):
     assert reason == "someone_active"
 
 
+def test_contributor_confirmation_that_fix_is_on_current_main_is_terminal(tmp_path):
+    radar = Radar(
+        datetime.now(UTC),
+        2,
+        tmp_path / "seen.json",
+        "",
+        dry_run=True,
+    )
+    base = {
+        "repo": "example/project",
+        "num": 1,
+        "title": "Large tool result is truncated",
+        "url": "https://github.com/example/project/issues/1",
+    }
+    issue = {
+        "state": "open",
+        "title": base["title"],
+        "body": "Large results are truncated because process.exit races stdout flush.",
+        "labels": [{"name": "bug"}],
+        "assignees": [],
+        "user": {"login": "reporter"},
+    }
+    comments = [
+        {
+            "body": "This looks fixed on current main by PR #123.",
+            "user": {"login": "contributor"},
+            "author_association": "CONTRIBUTOR",
+        }
+    ]
+
+    candidate, reason = radar.score_issue(base, issue, comments)
+
+    assert candidate is None
+    assert reason == "resolved_upstream"
+
+
+def test_issue_template_and_label_approval_gate_prevents_auto_spawn(tmp_path):
+    radar = Radar(
+        datetime.now(UTC),
+        2,
+        tmp_path / "seen.json",
+        "",
+        dry_run=True,
+    )
+    base = {
+        "repo": "google/adk-python",
+        "num": 2,
+        "title": "Agent selection is ignored",
+        "url": "https://github.com/google/adk-python/issues/2",
+    }
+    issue = {
+        "state": "open",
+        "title": base["title"],
+        "body": (
+            "PRs will be rejected if the linked issue does not have `status:approved`.\n"
+            "Steps to reproduce: select one agent. Actual: all agents are modified.\n"
+            "Root cause: discovery is used instead of the selected agent IDs."
+        ),
+        "labels": [{"name": "bug"}, {"name": "status:needs-review"}],
+        "assignees": [],
+        "user": {"login": "reporter"},
+    }
+
+    candidate, reason = radar.score_issue(base, issue, [])
+
+    assert reason is None
+    assert candidate is not None
+    assert candidate["category"] == "WAIT_MAINTAINER"
+    assert candidate["gate_decision"] == "HUMAN_REVIEW"
+    assert candidate["auto_spawn"] is False
+    assert candidate["actionability_evidence"]["needs_confirmation"] is True
+
+
 def test_offer_to_send_small_pr_blocks_cloud_candidate(tmp_path):
     radar = Radar(
         datetime.now(UTC),

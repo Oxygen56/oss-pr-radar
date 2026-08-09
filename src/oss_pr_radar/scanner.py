@@ -351,9 +351,17 @@ SKIP_LABEL_RE = re.compile(
     re.I,
 )
 WAIT_LABEL_RE = re.compile(
-    r"\b(needs?[- ](?:confirmation|repro(?:duction)?|info(?:rmation)?|triage)|"
+    r"\b(needs?[- ](?:confirmation|repro(?:duction)?|info(?:rmation)?|triage|review)|"
     r"awaiting[- ](?:response|confirmation|repro(?:duction)?|info(?:rmation)?)|"
     r"needs?\s*:\s*(?:design|product decision)|blocked|on hold)\b",
+    re.I,
+)
+ISSUE_APPROVAL_GATE_RE = re.compile(
+    r"\b(?:prs?|pull requests?)\s+(?:will be|are)\s+rejected\s+if\s+"
+    r"(?:the\s+)?(?:linked\s+)?issue\s+does\s+not\s+have\s+"
+    r"[`'\"]?status\s*:\s*approved|"
+    r"(?:do not|don't)\s+open\s+(?:a\s+)?(?:pr|pull request)\s+until\s+"
+    r"(?:the\s+)?issue\s+(?:is|has been)\s+approved\b",
     re.I,
 )
 HIGH_RE = re.compile(
@@ -487,7 +495,8 @@ RETRACTED_RE = re.compile(
     re.I,
 )
 RESOLVED_UPSTREAM_RE = re.compile(
-    r"\b(already (?:been )?fixed|fixed in (?:main|master|nightly)|"
+    r"\b(already (?:been )?fixed|"
+    r"(?:this (?:looks|appears) )?fixed (?:in|on) (?:current )?(?:main|master|nightly)|"
     r"(?:this|that|it|pr\s*#?\d+)?\s*should (?:already )?have (?:resolved|fixed)(?: this)?|"
     r"resolved in (?:main|master)|landed in (?:main|master)|"
     r"(?:fully )?resolved by (?:pr\s*)?#\d+|"
@@ -3115,7 +3124,9 @@ class Radar:
             for comment in comments
         )
         help_wanted = bool(HELP_WANTED_RE.search(labels_text))
-        needs_confirmation = bool(WAIT_LABEL_RE.search(labels_text))
+        needs_confirmation = bool(
+            WAIT_LABEL_RE.search(labels_text) or ISSUE_APPROVAL_GATE_RE.search(body)
+        )
         public_repro_signals = public_reproduction_signal_count(body)
         root_cause_signal = bool(ROOT_CAUSE_RE.search(title + "\n" + body))
         algorithm_evidence = llm_algorithm_evidence(

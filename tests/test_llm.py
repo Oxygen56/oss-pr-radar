@@ -41,6 +41,26 @@ def test_reject_removes_candidate(tmp_path, monkeypatch):
     assert instance.rejected_candidates["example/project#42"]["reason"] == "llm_reject"
 
 
+def test_review_that_requires_no_code_is_rejected(tmp_path, monkeypatch):
+    instance = evaluator(tmp_path)
+    monkeypatch.setattr(
+        instance,
+        "_request",
+        lambda payload: {
+            "decision": "WAIT_MAINTAINER",
+            "score": 10,
+            "confidence": 0.9,
+            "why": ("A merged fix is on current main, so the candidate is no longer actionable."),
+            "expected_changes": [
+                "No new code changes expected; verify the merged fix and close the issue."
+            ],
+        },
+    )
+
+    assert instance.evaluate_candidates([candidate()]) == []
+    assert instance.rejected_candidates["example/project#42"]["reason"] == "llm_no_code_action"
+
+
 def test_llm_cannot_upgrade_human_review(tmp_path, monkeypatch):
     instance = evaluator(tmp_path)
     monkeypatch.setattr(
