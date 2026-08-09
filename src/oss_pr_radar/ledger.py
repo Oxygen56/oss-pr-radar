@@ -1346,10 +1346,12 @@ class RadarLedger:
                      AND NOT EXISTS (
                        SELECT 1 FROM events e
                        WHERE e.opportunity_key=o.key
-                         AND e.dedupe_key=i.thread_id
-                         AND e.event_type IN (
-                           'THREAD_RECOVERY_RESERVED',
-                           'TASK_RESULT_VALIDATION_DEFERRED'
+                         AND (
+                           (e.event_type='THREAD_RECOVERY_RESERVED'
+                            AND e.dedupe_key=i.thread_id)
+                           OR
+                           (e.event_type='TASK_RESULT_VALIDATION_DEFERRED'
+                            AND json_extract(e.payload_json,'$.threadId')=i.thread_id)
                          )
                      )
                    ORDER BY d.created_at""",
@@ -1460,8 +1462,11 @@ class RadarLedger:
 
         with self.transaction() as connection:
             row = connection.execute(
-                """SELECT 1 FROM intents
-                   WHERE opportunity_key=? AND thread_id=? AND status='DISPATCHED'""",
+                """SELECT 1 FROM intents i
+                   JOIN opportunities o ON o.key=i.opportunity_key
+                   WHERE i.opportunity_key=? AND i.thread_id=?
+                     AND (i.status='DISPATCHED'
+                          OR (i.status='COMPLETED' AND o.stage='VALIDATION_PENDING'))""",
                 (key, thread_id),
             ).fetchone()
             if row is None:
@@ -1470,7 +1475,7 @@ class RadarLedger:
                 connection,
                 key,
                 "TASK_RESULT_VALIDATION_DEFERRED",
-                thread_id,
+                result_digest,
                 {
                     "threadId": thread_id,
                     "resultDigest": result_digest,
@@ -1478,6 +1483,127 @@ class RadarLedger:
                 },
                 iso_z(datetime.now(UTC)),
             )
+
+    def validation_followup_candidates(self) -> list[dict[str, Any]]:
+        """Return validation-pending tasks that have not been resumed for this result."""
+
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT o.key,o.issue_url,o.title,i.thread_id,i.worktree_path,
+                          d.payload_json,d.created_at
+                   FROM opportunities o
+                   JOIN events d ON d.id=(
+                     SELECT MAX(d2.id) FROM events d2
+                     WHERE d2.opportunity_key=o.key
+                       AND d2.event_type='TASK_RESULT_VALIDATION_DEFERRED'
+                   )
+                   JOIN intents i ON i.opportunity_key=o.key
+                     AND i.thread_id=json_extract(d.payload_json,'$.threadId')
+                   WHERE o.stage='VALIDATION_PENDING'
+                     AND i.thread_id IS NOT NULL AND i.worktree_path IS NOT NULL
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events r WHERE r.opportunity_key=o.key
+                         AND r.event_type='VALIDATION_FOLLOWUP_RESERVED'
+                         AND r.dedupe_key=json_extract(d.payload_json,'$.resultDigest')
+                     )
+                   ORDER BY d.created_at"""
+            ).fetchall()
+        candidates: list[dict[str, Any]] = []
+        for row in rows:
+            payload = json.loads(row["payload_json"])
+            candidates.append(
+                {
+                    "key": row["key"],
+                    "issueUrl": row["issue_url"],
+                    "title": row["title"],
+                    "threadId": row["thread_id"],
+                    "worktreePath": row["worktree_path"],
+                    "resultDigest": payload.get("resultDigest"),
+                    "missing": list(payload.get("missing") or []),
+                    "deferredAt": row["created_at"],
+                }
+            )
+        return candidates
+
+    def reserve_validation_followup(self, *, thread_id: str, result_digest: str) -> dict[str, Any]:
+        candidate = next(
+            (
+                item
+                for item in self.validation_followup_candidates()
+                if item["threadId"] == thread_id and item["resultDigest"] == result_digest
+            ),
+            None,
+        )
+        if candidate is None:
+            raise LedgerError("validation follow-up authorization is stale or invalid")
+        with self.transaction() as connection:
+            self._event(
+                connection,
+                candidate["key"],
+                "VALIDATION_FOLLOWUP_RESERVED",
+                result_digest,
+                {
+                    "threadId": thread_id,
+                    "resultDigest": result_digest,
+                    "missing": candidate["missing"],
+                },
+                iso_z(datetime.now(UTC)),
+            )
+        return candidate
+
+    def commit_validation_followup(self, *, thread_id: str, result_digest: str) -> None:
+        now = iso_z(datetime.now(UTC))
+        with self.transaction() as connection:
+            row = connection.execute(
+                """SELECT o.key FROM opportunities o
+                   JOIN intents i ON i.opportunity_key=o.key
+                   JOIN events r ON r.opportunity_key=o.key
+                     AND r.event_type='VALIDATION_FOLLOWUP_RESERVED'
+                     AND r.dedupe_key=?
+                   WHERE i.thread_id=?
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events s WHERE s.opportunity_key=o.key
+                         AND s.event_type='VALIDATION_FOLLOWUP_SENT'
+                         AND s.dedupe_key=?
+                     )""",
+                (result_digest, thread_id, result_digest),
+            ).fetchone()
+            if row is None:
+                raise LedgerError(
+                    "validation follow-up reservation is missing or already committed"
+                )
+            self._event(
+                connection,
+                row["key"],
+                "VALIDATION_FOLLOWUP_SENT",
+                result_digest,
+                {"threadId": thread_id, "resultDigest": result_digest},
+                now,
+            )
+
+    def unresolved_validation_followups(self) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT o.key,r.payload_json,r.created_at
+                   FROM opportunities o
+                   JOIN events r ON r.opportunity_key=o.key
+                     AND r.event_type='VALIDATION_FOLLOWUP_RESERVED'
+                   WHERE NOT EXISTS (
+                     SELECT 1 FROM events s WHERE s.opportunity_key=o.key
+                       AND s.event_type='VALIDATION_FOLLOWUP_SENT'
+                       AND s.dedupe_key=r.dedupe_key
+                   ) ORDER BY r.created_at"""
+            ).fetchall()
+        return [
+            {
+                "key": row["key"],
+                "threadId": json.loads(row["payload_json"]).get("threadId"),
+                "resultDigest": json.loads(row["payload_json"]).get("resultDigest"),
+                "missing": list(json.loads(row["payload_json"]).get("missing") or []),
+                "reservedAt": row["created_at"],
+            }
+            for row in rows
+        ]
 
     def task_context(
         self,

@@ -184,6 +184,13 @@ python scripts/local_dispatch_bridge.py pr-followup-reserve \
 python scripts/local_dispatch_bridge.py pr-followup-commit \
   --thread-id THREAD_ID --wake-digest WAKE_DIGEST
 
+# Prefetch only lockfile-declared dependencies, then resume incomplete validation
+python scripts/local_dispatch_bridge.py validation-followup-list
+python scripts/local_dispatch_bridge.py validation-followup-reserve \
+  --thread-id THREAD_ID --result-digest RESULT_DIGEST --prefetch-complete
+python scripts/local_dispatch_bridge.py validation-followup-commit \
+  --thread-id THREAD_ID --result-digest RESULT_DIGEST
+
 # Advance independently revalidated publication requests
 python scripts/local_dispatch_bridge.py publication-run
 

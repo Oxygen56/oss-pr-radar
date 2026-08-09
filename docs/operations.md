@@ -143,8 +143,12 @@ receiving their own worktrees.
   publishable fix with incomplete SubmitReady evidence is reported once as
   `validationDeferred` and settles as non-terminal `VALIDATION_PENDING`. It is
   titled as valuable work awaiting validation, releases dispatch capacity, and
-  never enters the no-value cleanup queue. A later result with complete evidence
-  may advance it to `FIX_READY`. A
+  never enters the no-value cleanup queue. The controller consumes
+  `validation-followup-list`, prefetches only the returned lockfile-scoped Cargo
+  or Go dependencies, reserves the exact result digest, and resumes the same
+  task once. A changed result digest rearms validation without duplicating the
+  previous wake-up. A later result with complete evidence may advance it to
+  `FIX_READY`. A
   policy-blocked fix may settle as local `FIX_READY`
   only when the technical evidence is complete and `policy_verified` is the
   sole missing field; it never creates a publication request. The hourly

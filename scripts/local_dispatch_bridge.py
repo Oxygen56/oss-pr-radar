@@ -1800,6 +1800,166 @@ def pr_followup_commit(args: argparse.Namespace) -> dict[str, Any]:
     return {"ok": True, "threadId": args.thread_id, "wakeDigest": args.wake_digest}
 
 
+def _nearest_manifest_root(path: Path, *, stop: Path, manifest: str) -> Path | None:
+    current = path if path.is_dir() else path.parent
+    stop = stop.resolve()
+    while current == stop or stop in current.parents:
+        if (current / manifest).is_file():
+            return current
+        if current == stop:
+            break
+        current = current.parent
+    return None
+
+
+def _validation_prefetch_commands(candidate: dict[str, Any]) -> list[dict[str, Any]]:
+    worktree = Path(candidate["worktreePath"]).resolve()
+    result_path = worktree / ".oss-pr-radar" / "result.json"
+    raw = result_path.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != candidate["resultDigest"]:
+        raise RuntimeError("validation result changed after it was queued")
+    result = json.loads(raw)
+    tests = result.get("tests") if isinstance(result, dict) else None
+    if not isinstance(tests, list):
+        return []
+    failed = [
+        item for item in tests if isinstance(item, dict) and item.get("exitCode") not in {None, 0}
+    ]
+    dependency_failures = [
+        item
+        for item in failed
+        if any(
+            marker in f"{item.get('command', '')}\n{item.get('summary', '')}".casefold()
+            for marker in (
+                "offline",
+                "not cached",
+                "lacks locked dependency",
+                "module lookup disabled",
+                "goproxy=off",
+            )
+        )
+    ]
+    if not dependency_failures:
+        return []
+
+    commands: list[dict[str, Any]] = []
+    combined = "\n".join(str(item.get("command") or "") for item in dependency_failures)
+    if "cargo " in combined and (worktree / "Cargo.lock").is_file():
+        commands.append(
+            {
+                "kind": "cargo_locked_fetch",
+                "cwd": str(worktree),
+                "argv": ["cargo", "fetch", "--locked"],
+            }
+        )
+
+    if "go test" in combined:
+        roots: set[Path] = set()
+        changed_files = result.get("changedFiles")
+        if isinstance(changed_files, list):
+            for relative in changed_files:
+                if not isinstance(relative, str) or not relative.endswith(".go"):
+                    continue
+                manifest_root = _nearest_manifest_root(
+                    worktree / relative, stop=worktree, manifest="go.mod"
+                )
+                if manifest_root is not None:
+                    roots.add(manifest_root)
+        for root in sorted(roots, key=str):
+            commands.append(
+                {
+                    "kind": "go_locked_download",
+                    "cwd": str(root),
+                    "argv": ["go", "mod", "download"],
+                }
+            )
+    return commands
+
+
+def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
+    store = ledger(args.ledger)
+    candidates: list[dict[str, Any]] = []
+    errors: list[dict[str, str]] = []
+    for candidate in store.validation_followup_candidates():
+        try:
+            candidates.append(
+                candidate | {"prefetchCommands": _validation_prefetch_commands(candidate)}
+            )
+        except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
+            errors.append({"key": candidate["key"], "error": str(exc)[:300]})
+    unresolved = store.unresolved_validation_followups()
+    return {
+        "ok": not errors and not unresolved,
+        "candidates": candidates,
+        "unresolved": unresolved,
+        "errors": errors,
+    }
+
+
+def _validation_followup_prompt(candidate: dict[str, Any]) -> str:
+    missing = "、".join(str(item) for item in candidate.get("missing") or [])
+    prefetch = bool(candidate.get("prefetchCommands"))
+    dependency_note = (
+        "控制器已经按锁文件预取缺失依赖；继续保持离线，只重新运行相关测试。"
+        if prefetch
+        else "无需新增依赖；直接补齐缺失证据并重新运行相关检查。"
+    )
+    return (
+        "这是同一任务的验证续跑，不要创建新任务或重新实现。重新读取工作树内的 "
+        ".oss-pr-radar/task-context.json，并只在其中记录的 worktreePath 继续。\n\n"
+        f"当前缺失发布证据：{missing}。{dependency_note}\n\n"
+        "必须依据真实运行结果更新 .oss-pr-radar/result.json：补充针对性回归测试；如以测试作为复现证据，"
+        "需证明修复前失败、修复后通过。不得刷新 GitHub、不得安装依赖、不得请求权限、不得执行提交、推送、"
+        "建 PR 或其他公开动作。若仍无法完成验证，保留对应 quality=false 并写清可复核原因；不得把格式检查"
+        "当作功能验证。完成后正常结束，由控制器重新接收结果。"
+    )
+
+
+def validation_followup_reserve(args: argparse.Namespace) -> dict[str, Any]:
+    store = ledger(args.ledger)
+    candidate = next(
+        (
+            item
+            for item in store.validation_followup_candidates()
+            if item["threadId"] == args.thread_id and item["resultDigest"] == args.result_digest
+        ),
+        None,
+    )
+    if candidate is None:
+        raise RuntimeError("validation follow-up authorization is stale or invalid")
+    enriched = candidate | {"prefetchCommands": _validation_prefetch_commands(candidate)}
+    if enriched["prefetchCommands"] and not args.prefetch_complete:
+        raise RuntimeError("locked dependency prefetch must complete before reservation")
+    context_path = write_task_context(
+        store,
+        issue_url=enriched["issueUrl"],
+        thread_id=enriched["threadId"],
+        cwd=Path(enriched["worktreePath"]),
+    )
+    reserved = store.reserve_validation_followup(
+        thread_id=enriched["threadId"], result_digest=enriched["resultDigest"]
+    )
+    return {
+        "ok": True,
+        "key": reserved["key"],
+        "threadId": reserved["threadId"],
+        "resultDigest": reserved["resultDigest"],
+        "contextPath": str(context_path),
+        "prompt": _validation_followup_prompt(enriched),
+    }
+
+
+def validation_followup_commit(args: argparse.Namespace) -> dict[str, Any]:
+    ledger(args.ledger).commit_validation_followup(
+        thread_id=args.thread_id, result_digest=args.result_digest
+    )
+    return {
+        "ok": True,
+        "threadId": args.thread_id,
+        "resultDigest": args.result_digest,
+    }
+
+
 def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
     ingested: list[dict[str, Any]] = []
@@ -2628,6 +2788,14 @@ def main() -> int:
     pr_followup_commit_parser = subparsers.add_parser("pr-followup-commit")
     pr_followup_commit_parser.add_argument("--thread-id", required=True)
     pr_followup_commit_parser.add_argument("--wake-digest", required=True)
+    subparsers.add_parser("validation-followup-list")
+    validation_followup_reserve_parser = subparsers.add_parser("validation-followup-reserve")
+    validation_followup_reserve_parser.add_argument("--thread-id", required=True)
+    validation_followup_reserve_parser.add_argument("--result-digest", required=True)
+    validation_followup_reserve_parser.add_argument("--prefetch-complete", action="store_true")
+    validation_followup_commit_parser = subparsers.add_parser("validation-followup-commit")
+    validation_followup_commit_parser.add_argument("--thread-id", required=True)
+    validation_followup_commit_parser.add_argument("--result-digest", required=True)
     subparsers.add_parser("ingest-results")
     subparsers.add_parser("publication-run")
     publication_retry_parser = subparsers.add_parser("publication-retry")
@@ -2709,6 +2877,12 @@ def main() -> int:
         result = pr_followup_reserve(args)
     elif args.operation == "pr-followup-commit":
         result = pr_followup_commit(args)
+    elif args.operation == "validation-followup-list":
+        result = validation_followup_list(args)
+    elif args.operation == "validation-followup-reserve":
+        result = validation_followup_reserve(args)
+    elif args.operation == "validation-followup-commit":
+        result = validation_followup_commit(args)
     elif args.operation == "ingest-results":
         result = ingest_task_results(args)
     elif args.operation == "publication-run":

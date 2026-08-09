@@ -1825,8 +1825,7 @@ def test_controller_defers_blocked_local_fix_with_incomplete_validation(tmp_path
     with store.connect() as connection:
         event = connection.execute(
             """SELECT payload_json FROM events
-               WHERE event_type='TASK_RESULT_VALIDATION_DEFERRED'
-                 AND dedupe_key='thread-1'"""
+               WHERE event_type='TASK_RESULT_VALIDATION_DEFERRED'"""
         ).fetchone()
     assert json.loads(event["payload_json"])["missing"] == [
         "regression_test_verified",
@@ -1843,6 +1842,48 @@ def test_controller_defers_blocked_local_fix_with_incomplete_validation(tmp_path
     assert store.task_result_candidates()[0]["stage"] == "VALIDATION_PENDING"
     repeated = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
     assert repeated["ingested"] == []
+
+    listed = MODULE.validation_followup_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    assert listed["ok"] is True
+    assert listed["unresolved"] == []
+    assert listed["errors"] == []
+    assert listed["candidates"][0]["threadId"] == "thread-1"
+    assert listed["candidates"][0]["missing"] == [
+        "regression_test_verified",
+        "relevant_tests_green",
+    ]
+    assert listed["candidates"][0]["prefetchCommands"] == []
+
+    digest = listed["candidates"][0]["resultDigest"]
+    reserved = MODULE.validation_followup_reserve(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            thread_id="thread-1",
+            result_digest=digest,
+            prefetch_complete=False,
+        )
+    )
+    assert reserved["ok"] is True
+    assert "regression_test_verified" in reserved["prompt"]
+    assert (
+        MODULE.validation_followup_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))[
+            "unresolved"
+        ][0]["resultDigest"]
+        == digest
+    )
+
+    MODULE.validation_followup_commit(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            thread_id="thread-1",
+            result_digest=digest,
+        )
+    )
+    final_list = MODULE.validation_followup_list(
+        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3")
+    )
+    assert final_list["candidates"] == []
+    assert final_list["unresolved"] == []
 
 
 def test_controller_defers_unvalidated_publishable_fix_without_agent_failure(tmp_path):
@@ -1910,6 +1951,55 @@ def test_controller_defers_unvalidated_publishable_fix_without_agent_failure(tmp
         ]
         == "FIX_READY"
     )
+
+
+def test_validation_prefetch_plan_is_lockfile_scoped(tmp_path):
+    worktree = tmp_path / "worktree"
+    result_dir = worktree / ".oss-pr-radar"
+    go_module = worktree / "gateway"
+    result_dir.mkdir(parents=True)
+    go_module.mkdir()
+    (worktree / "Cargo.lock").write_text("# lock\n", encoding="utf-8")
+    (go_module / "go.mod").write_text("module example.com/gateway\n", encoding="utf-8")
+    (go_module / "router.go").write_text("package gateway\n", encoding="utf-8")
+    result = {
+        "changedFiles": ["gateway/router.go"],
+        "tests": [
+            {
+                "command": "CARGO_NET_OFFLINE=true cargo test -p router",
+                "exitCode": 101,
+                "summary": "offline cache lacks locked dependency",
+            },
+            {
+                "command": "GOPROXY=off go test ./...",
+                "exitCode": 1,
+                "summary": "module lookup disabled by GOPROXY=off",
+            },
+        ],
+    }
+    raw = json.dumps(result).encode()
+    result_path = result_dir / "result.json"
+    result_path.write_bytes(raw)
+
+    commands = MODULE._validation_prefetch_commands(
+        {
+            "worktreePath": str(worktree),
+            "resultDigest": hashlib.sha256(raw).hexdigest(),
+        }
+    )
+
+    assert commands == [
+        {
+            "kind": "cargo_locked_fetch",
+            "cwd": str(worktree.resolve()),
+            "argv": ["cargo", "fetch", "--locked"],
+        },
+        {
+            "kind": "go_locked_download",
+            "cwd": str(go_module.resolve()),
+            "argv": ["go", "mod", "download"],
+        },
+    ]
 
 
 def test_privileged_controller_runs_granted_publication_queue(monkeypatch, tmp_path):
