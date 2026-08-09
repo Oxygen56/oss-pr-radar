@@ -1410,11 +1410,11 @@ def test_recovery_accepts_github_project_thread_with_managed_worktree(monkeypatc
         connection.execute(
             """CREATE TABLE threads (
                 id TEXT, archived INTEGER, title TEXT, first_user_message TEXT,
-                cwd TEXT, git_origin_url TEXT, updated_at INTEGER
+                cwd TEXT, git_origin_url TEXT, updated_at INTEGER, rollout_path TEXT
             )"""
         )
         connection.execute(
-            "INSERT INTO threads VALUES (?,?,?,?,?,?,?)",
+            "INSERT INTO threads VALUES (?,?,?,?,?,?,?,?)",
             (
                 "thread-1",
                 0,
@@ -1423,6 +1423,7 @@ def test_recovery_accepts_github_project_thread_with_managed_worktree(monkeypatc
                 str(project_root),
                 None,
                 1,
+                None,
             ),
         )
 
@@ -1452,6 +1453,41 @@ def test_recovery_accepts_github_project_thread_with_managed_worktree(monkeypatc
     assert result["recoverable"][0]["threadId"] == "thread-1"
 
 
+def test_pr_followup_list_defers_recently_active_threads(monkeypatch, tmp_path):
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute("CREATE TABLE threads (id TEXT, updated_at INTEGER)")
+        connection.executemany(
+            "INSERT INTO threads VALUES (?,?)",
+            [
+                ("thread-active", int(datetime.now(UTC).timestamp())),
+                (
+                    "thread-idle",
+                    int((datetime.now(UTC) - timedelta(hours=2)).timestamp()),
+                ),
+            ],
+        )
+
+    class Store:
+        def pr_followup_candidates(self):
+            return [
+                {"key": "a/b#1", "threadId": "thread-active"},
+                {"key": "a/b#2", "threadId": "thread-idle"},
+            ]
+
+        def unresolved_pr_followups(self):
+            return []
+
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+
+    result = MODULE.pr_followup_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert [item["threadId"] for item in result["candidates"]] == ["thread-idle"]
+    assert [item["threadId"] for item in result["activeDeferred"]] == ["thread-active"]
+    assert result["activeDeferred"][0]["reason"] == "thread_recently_active"
+
+
 def test_recovery_skips_a_recently_active_thread(monkeypatch, tmp_path):
     project_root = tmp_path / "github"
     worktree = project_root / ".oss-pr-radar" / "worktrees" / "task" / "b"
@@ -1463,11 +1499,11 @@ def test_recovery_skips_a_recently_active_thread(monkeypatch, tmp_path):
         connection.execute(
             """CREATE TABLE threads (
                 id TEXT, archived INTEGER, title TEXT, first_user_message TEXT,
-                cwd TEXT, git_origin_url TEXT, updated_at INTEGER
+                cwd TEXT, git_origin_url TEXT, updated_at INTEGER, rollout_path TEXT
             )"""
         )
         connection.execute(
-            "INSERT INTO threads VALUES (?,?,?,?,?,?,?)",
+            "INSERT INTO threads VALUES (?,?,?,?,?,?,?,?)",
             (
                 "thread-1",
                 0,
@@ -1476,6 +1512,7 @@ def test_recovery_skips_a_recently_active_thread(monkeypatch, tmp_path):
                 str(project_root),
                 None,
                 int(datetime.now(UTC).timestamp()),
+                None,
             ),
         )
 
@@ -1503,6 +1540,153 @@ def test_recovery_skips_a_recently_active_thread(monkeypatch, tmp_path):
 
     assert result["blocked"] == []
     assert result["recoverable"] == []
+
+
+def test_recovery_immediately_surfaces_a_recent_terminal_desktop_error(monkeypatch, tmp_path):
+    project_root = tmp_path / "github"
+    worktree = project_root / ".oss-pr-radar" / "worktrees" / "task" / "b"
+    worktree.mkdir(parents=True)
+    run_git(worktree, "init")
+    run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
+    rollout = tmp_path / "rollout.jsonl"
+    rollout.write_text(
+        "\n".join(
+            [
+                json.dumps({"type": "turn_context", "payload": {"turn_id": "turn-1"}}),
+                json.dumps(
+                    {
+                        "type": "event_msg",
+                        "payload": {
+                            "type": "task_complete",
+                            "turn_id": "turn-1",
+                            "error": {
+                                "codex_error_info": "cyber_policy",
+                                "message": "try rephrasing",
+                            },
+                        },
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            """CREATE TABLE threads (
+                id TEXT, archived INTEGER, title TEXT, first_user_message TEXT,
+                cwd TEXT, git_origin_url TEXT, updated_at INTEGER, rollout_path TEXT
+            )"""
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?,?,?,?,?,?)",
+            (
+                "thread-1",
+                0,
+                "task",
+                MODULE.issue_prompt("https://github.com/a/b/issues/1"),
+                str(project_root),
+                None,
+                int(datetime.now(UTC).timestamp()),
+                str(rollout),
+            ),
+        )
+
+    class Store:
+        def recovery_candidates(self, **_kwargs):
+            return [
+                {
+                    "key": "a/b#1",
+                    "issueUrl": "https://github.com/a/b/issues/1",
+                    "threadId": "thread-1",
+                    "worktreePath": str(worktree),
+                }
+            ]
+
+        def unresolved_recoveries(self):
+            return []
+
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+
+    result = MODULE.recovery_list(
+        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3", min_age_minutes=90)
+    )
+
+    assert result["blocked"] == []
+    assert result["recoverable"][0]["immediateRecovery"] is True
+    assert result["recoverable"][0]["terminalError"]["code"] == "cyber_policy"
+
+
+def test_latest_terminal_error_ignores_a_failure_before_a_new_turn(tmp_path):
+    rollout = tmp_path / "rollout.jsonl"
+    rollout.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "type": "event_msg",
+                        "payload": {
+                            "type": "task_complete",
+                            "error": {"codex_error_info": "internal_error"},
+                        },
+                    }
+                ),
+                json.dumps({"type": "turn_context", "payload": {"turn_id": "turn-2"}}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert MODULE.latest_terminal_thread_error(str(rollout)) is None
+
+
+def test_recovery_reserve_rephrases_a_benign_policy_false_positive(
+    monkeypatch, tmp_path
+):
+    rollout = tmp_path / "rollout.jsonl"
+    rollout.write_text(
+        json.dumps(
+            {
+                "type": "event_msg",
+                "payload": {
+                    "type": "task_complete",
+                    "error": {"codex_error_info": "cyber_policy"},
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute("CREATE TABLE threads (id TEXT, rollout_path TEXT)")
+        connection.execute("INSERT INTO threads VALUES (?,?)", ("thread-1", str(rollout)))
+
+    class Store:
+        def reserve_recovery(self, **_kwargs):
+            return {
+                "threadId": "thread-1",
+                "issueUrl": "https://github.com/a/b/issues/1",
+                "recoveryNonce": "nonce",
+            }
+
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+
+    result = MODULE.recovery_reserve(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            thread_id="thread-1",
+            recovery_nonce="nonce",
+        )
+    )
+
+    assert result["prompt"] == MODULE.BENIGN_POLICY_RECOVERY_PROMPT
+    assert result["terminalError"]["code"] == "cyber_policy"
 
 
 def test_cleanup_commit_removes_managed_bootstrap_context(monkeypatch, tmp_path):

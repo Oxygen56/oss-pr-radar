@@ -1830,7 +1830,7 @@ class RadarLedger:
 
     def recovery_candidates(self, *, min_age_minutes: int = 90) -> list[dict[str, Any]]:
         cutoff = iso_z(
-            datetime.now(UTC) - timedelta(minutes=max(30, min(int(min_age_minutes), 24 * 60)))
+            datetime.now(UTC) - timedelta(minutes=max(0, min(int(min_age_minutes), 24 * 60)))
         )
         with self.connect() as connection:
             dispatched_rows = connection.execute(
@@ -1945,7 +1945,11 @@ class RadarLedger:
         ]
 
     def reserve_recovery(self, *, thread_id: str, nonce: str) -> dict[str, Any]:
-        candidates = {item["threadId"]: item for item in self.recovery_candidates()}
+        # The bridge may authorize an immediate one-shot recovery after a
+        # terminal desktop error, before the normal stale-task threshold.
+        candidates = {
+            item["threadId"]: item for item in self.recovery_candidates(min_age_minutes=0)
+        }
         candidate = candidates.get(thread_id)
         if not candidate or candidate["recoveryNonce"] != nonce:
             raise LedgerError("recovery authorization is stale or invalid")

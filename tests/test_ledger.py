@@ -1101,6 +1101,25 @@ def test_stalled_dispatch_gets_one_write_ahead_recovery(tmp_path):
     assert store.cleanup_candidates() == []
 
 
+def test_recent_dispatch_can_be_authorized_for_terminal_error_recovery(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+
+    assert store.recovery_candidates(min_age_minutes=90) == []
+    candidate = store.recovery_candidates(min_age_minutes=0)[0]
+    store.reserve_recovery(thread_id="thread-1", nonce=candidate["recoveryNonce"])
+
+    assert store.unresolved_recoveries()[0]["threadId"] == "thread-1"
+
+
 def test_sent_pr_followup_without_a_result_gets_recovery(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(

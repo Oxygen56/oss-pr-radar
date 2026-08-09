@@ -85,6 +85,10 @@ new remote queue but never discards a valid local intent.
 
 Run `pr-followup-list` before dispatching new issues.
 
+Entries under `activeDeferred` are already being handled by a recently active
+task. They are not failures and must not be reserved, resent, or reported as a
+stalled follow-up. Process only `candidates`.
+
 For each candidate, process one transaction at a time:
 
 1. `pr-followup-reserve --thread-id <threadId> --wake-digest <wakeDigest>`
@@ -177,7 +181,10 @@ Run `validation-followup-list`. For each candidate:
 1. Run `recovery-list --min-age-minutes 90`; use one write-ahead recovery only
    for tasks with no recent activity and no structured result. This includes an
    existing-PR follow-up that was sent successfully but never returned its
-   required identity-matched result. Recently active tasks must not be woken.
+   required identity-matched result. Recently active tasks must not be woken,
+   except when the bridge reports `immediateRecovery=true` for a terminal
+   desktop error. In that case reserve and send the returned canonical recovery
+   prompt once; never improvise a retry or send a second recovery.
 2. Run `restore-list`. Unarchive each exact candidate, then use `restore-commit`
    with its nonce. Recheck until empty.
 3. Run `title-reconcile`. This command compares live desktop titles, repairs
@@ -200,7 +207,8 @@ sequence: `orphan-list`, `pr-followup-list`, `context-sync`, `ingest-results`,
 Before reporting success, prove these six queues are empty:
 
 - `orphan-list`
-- `pr-followup-list` candidates, unresolved, and errors
+- `pr-followup-list` candidates, unresolved, and errors (`activeDeferred` may
+  remain while its task is actively working)
 - `validation-followup-list` candidates, unresolved, stale, and errors
 - `restore-list`
 - `title-list`

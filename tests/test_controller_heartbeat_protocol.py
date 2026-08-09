@@ -38,3 +38,14 @@ def test_controller_protocol_preserves_long_running_command_sessions():
     assert "poll that exact ID" in PROTOCOL
     assert "with `write_stdin`" in PROTOCOL
     assert "Empty output accompanied by a session ID means still running" in PROTOCOL
+
+
+def test_controller_protocol_recovers_terminal_desktop_errors_once():
+    assert "immediateRecovery=true" in PROTOCOL
+    assert "canonical recovery" in PROTOCOL
+    assert "never improvise a retry or send a second recovery" in PROTOCOL
+
+
+def test_controller_protocol_does_not_interrupt_active_pr_followups():
+    assert "activeDeferred" in PROTOCOL
+    assert "must not be reserved, resent" in PROTOCOL
