@@ -1894,6 +1894,31 @@
     ],
     "why": "The issue clearly identifies a high-impact bug: workflow watch events duplicate step state, causing OOM on Cloudflare Workers. The root cause is well-documented with code references and measured impact. Existing PR #20661 is open but has failing CI and lacks comprehensive tests, leaving room for a materially better PR with robust regression coverage."
   },
+  "1d85dd82f7d5ed59b3d8f3e1585996320a73a264a2107d83d9baaedffc1c4c49": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "NPU plugin stateful inference handling",
+      "model export or graph transformation for LFM2.5"
+    ],
+    "risks": [
+      "Root cause may be external to OpenVINO core; fix may require hardware-specific changes"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with provided script on NPU; compare with LFM2-2.6B; test with different MAX_PROMPT_LEN and stateful settings; check plugin logs"
+    ],
+    "unknowns": [
+      "Maintainer triage and root cause analysis",
+      "Whether this is a known plugin bug or model-specific issue"
+    ],
+    "why": "Issue reports a runtime crash on NPU for a specific model, but root cause is unconfirmed and likely in the NPU plugin or stateful inference, not a clear algorithm defect. No maintainer confirmation or design direction; requires maintainer investigation."
+  },
   "1e4767ebf91d74d2c2c2c8ef6a038792ffdf547392aef0164f9c77df8e79ef67": {
     "confidence": 0.8,
     "contradictions": [],
@@ -10608,6 +10633,30 @@
     ],
     "why": "Issue reports a clear regression in Dify Cloud MCP with a specific error, and Dosu's comment identifies a likely root cause in session management. However, the issue is Cloud-specific and the fix may require infrastructure changes; no maintainer confirmation or active investigation is present. The existing PRs are merged but lack tests and do not directly reference this issue, so a new PR could be valuable but needs maintainer guidance."
   },
+  "8d0b13f6c7d4e40c1f215fc6214dc7fdbb2ffa6cbbc7681331156fdd2e4e9ba5": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify service_account_dict_to_scheme_credential and service_account_scheme_credential in google/adk-python/src/google/adk/tools/openapi_tool/auth/auth_helpers.py to return OAuth2 clientCredentials scheme instead of HTTPBearer."
+    ],
+    "risks": [
+      "Potential impact on existing consumers expecting HTTPBearer scheme; need to ensure backward compatibility or update dependent code."
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Add a regression test that calls the helper functions and verifies the returned auth_scheme is OAuth2 with clientCredentials flow, and that CredentialManager can retrieve a service account token using the returned scheme."
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred design for auth_scheme handling; whether the contributor's upcoming PR will be sufficient."
+    ],
+    "why": "Issue clearly identifies a bug in auth_scheme generation causing token retrieval failure, with a concrete fix suggestion. However, a contributor has already reproduced and is working on a fix, and the deterministic gate requires HUMAN_REVIEW. The existing PR #5509 is unrelated, so no competition. Actionability is high but maintainer confirmation is needed."
+  },
   "8d0efb2cc63a5bc0fa58f256cb6d94726b91db6ea38584e7b2e47eaf00d2ffa2": {
     "confidence": 0.6,
     "contradictions": [],
@@ -17079,6 +17128,39 @@
     ],
     "why": "The issue identifies a concrete state-machine ordering bug in the LoRA adapter path of verl's engine_workers.py, with a clear root cause: resume('weights') is called before sleep_level is set, causing a KeyError in SGLang's strict set removal. The fix is actionable and testable, and no competing PR exists."
   },
+  "e9bfdd9cbcb0365db984ef2b26abd59b03ffa4df6aa5e01ec859e6fb9edc9eea": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Electron main process environment handling",
+      "Gateway spawn environment construction",
+      "Possibly new settings UI and config model for environment overrides",
+      "Graceful Gateway restart mechanism"
+    ],
+    "risks": [
+      "Implementing the wrong product shape could be rejected by maintainers",
+      "Sourcing shell startup files could execute arbitrary code with side effects",
+      "Changing environment handling could affect security boundaries if exposed via dashboard API"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce the issue by launching the app with a custom PATH in launchctl and verifying the Gateway child lacks it",
+      "Add a regression test that mocks launchctl getenv PATH and asserts the Gateway spawn env includes merged PATH",
+      "If settings UI is added, test persistence and refresh behavior"
+    ],
+    "unknowns": [
+      "Which of the four proposed product shapes the maintainer prefers",
+      "Whether other environment variables beyond PATH are in scope",
+      "Whether a graceful Gateway restart mechanism already exists or needs to be built"
+    ],
+    "why": "The issue provides a clear root cause (macOS GUI apps inherit a minimal PATH, and the Electron app does not merge user environment) and a concrete reproduction. However, the maintainer explicitly routed it to needs-human because the fix is a product-shape decision with multiple viable approaches (launchctl merge, settings UI, refresh action, shell sourcing) that differ in security boundary, lifecycle, and scope. No maintainer approval or design confirmation exists, so starting implementation without that decision risks wasted or rejected work."
+  },
   "e9c137385e21cdbe56da4a5fd42519122bdcf7e76ba8d828f6b93c94a96ebb10": {
     "confidence": 0.8,
     "contradictions": [
@@ -17803,6 +17885,37 @@
       "Exact implementation details for each engine's durable unit invocation points"
     ],
     "why": "The issue identifies a real architectural gap: capability hooks that touch external state run outside durable units, causing duplicate side effects on replay. The proposal is technically sound and references concrete code paths and precedents. However, the deterministic gate requires HUMAN_REVIEW, and the issue explicitly requests design confirmation from maintainers. The proposed API change needs maintainer approval before implementation."
+  },
+  "f1fecc58d9ad1a22f75e3a02c674e39f84615b0f4f56797bde44e7035c9d16fe": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Fix concurrency in single-GPU replay of Z-Image breakable CUDA graphs",
+      "Adjust segment/break-fn machinery or layerwise offload synchronization",
+      "Add regression test for single-GPU Z-Image BCG replay"
+    ],
+    "risks": [
+      "Root cause not fully isolated; may require deep CUDA graph internals",
+      "Fix may affect other model families or TP>1 paths",
+      "Potential performance impact on replay path"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "test_plan": [
+      "Run provided repro command on single GPU to reproduce illegal memory access",
+      "Run with --dit-cpu-offload=false to reproduce hang",
+      "Add a regression test that captures and replays Z-Image BCG on single GPU and asserts no error/hang",
+      "Run existing diffusion BCG tests for SANA/LTX-2/Qwen-Image to ensure no regression"
+    ],
+    "unknowns": [
+      "Exact faulty kernel or synchronization point not identified",
+      "Whether maintainers have a preferred design for BCG replay fixes"
+    ],
+    "why": "Issue provides a clear single-GPU-only BCG replay failure with detailed bisection, repro commands, and evidence pointing to a concurrency bug in Z-Image's breakable graph replay. No competing PR addresses the root cause; related PR #34180 is cleanup only and #34182 is a mitigation. Actionable for a runtime/scheduler fix."
   },
   "f334c270b3d24b2216efdc6401f28fbf57c4c6e89281f2f9c5385bc2157a6fd3": {
     "confidence": 0.7,
