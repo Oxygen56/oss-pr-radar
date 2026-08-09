@@ -112,13 +112,17 @@ def authorize(candidate: dict[str, Any], evidence: EvidenceBundle) -> Authorizat
     if DESIGN_RE.search(text) and not evidence.maintainer_approvals:
         return decision("HOLD", "DESIGN_APPROVAL_REQUIRED", "design")
     review = candidate.get("llm_review") or {}
-    if candidate.get("gate_decision") != "ALLOW_TO_WORK" or candidate.get("auto_spawn") is not True:
-        return decision("HOLD", "SCAN_GATE_NOT_AUTHORIZED")
-    if review.get("status") != "ok" or review.get("decision") not in {
-        "NEW_CLEAN_CANDIDATE",
-        "PR_COMPETITION_OPPORTUNITY",
-    }:
-        return decision("HOLD", "SEMANTIC_REVIEW_NOT_ACTIONABLE")
-    if float(review.get("confidence") or 0.0) < 0.65:
-        return decision("HOLD", "SEMANTIC_CONFIDENCE_LOW")
+    if candidate.get("bound_pr_update") is not True:
+        if (
+            candidate.get("gate_decision") != "ALLOW_TO_WORK"
+            or candidate.get("auto_spawn") is not True
+        ):
+            return decision("HOLD", "SCAN_GATE_NOT_AUTHORIZED")
+        if review.get("status") != "ok" or review.get("decision") not in {
+            "NEW_CLEAN_CANDIDATE",
+            "PR_COMPETITION_OPPORTUNITY",
+        }:
+            return decision("HOLD", "SEMANTIC_REVIEW_NOT_ACTIONABLE")
+        if float(review.get("confidence") or 0.0) < 0.65:
+            return decision("HOLD", "SEMANTIC_CONFIDENCE_LOW")
     return decision("ALLOW", "LIVE_EVIDENCE_PASSED")

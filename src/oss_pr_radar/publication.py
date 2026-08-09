@@ -419,6 +419,7 @@ def audit_publication_request(
         "llm_review": intent.get("llmReview") or {},
         "track": intent.get("track"),
         "algorithm_evidence": intent.get("algorithmEvidence"),
+        "bound_pr_update": publication_kind == "PR_UPDATE",
     }
     verdict = authorize(candidate, authorization_evidence)
     live = {

@@ -319,6 +319,15 @@ def test_broker_allows_bound_update_despite_a_competing_pr(monkeypatch, tmp_path
     )
     pr_url = "https://github.com/example/project/pull/8"
     store.consume_publication_permit(permit["permit_id"], pr_url)
+    recovered_intent = dict(first["request"]["intent"])
+    for field in ("category", "scanGate", "autoSpawn", "llmReview"):
+        recovered_intent.pop(field, None)
+    recovered_intent["recoveredFromTaskContext"] = True
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE intents SET payload_json=? WHERE opportunity_key='example/project#7'",
+            (json.dumps(recovered_intent, sort_keys=True),),
+        )
     worktree = tmp_path / "worktree"
     (worktree / "file.txt").write_text("fixed again\n", encoding="utf-8")
     git("add", "file.txt", cwd=worktree)
@@ -383,6 +392,8 @@ def test_broker_allows_bound_update_despite_a_competing_pr(monkeypatch, tmp_path
     result = broker_publication_request(store, update["request_id"], client=UpdateClient())
 
     assert result["granted"] is True
+    assert update["request"]["intent"]["recoveredFromTaskContext"] is True
+    assert "scanGate" not in update["request"]["intent"]
     assert result["audit"]["evidence"]["publicationKind"] == "PR_UPDATE"
     relations = result["audit"]["evidence"]["evidence"]["pull_relations"]
     assert any(relation["url"].endswith("/pull/9") for relation in relations)
