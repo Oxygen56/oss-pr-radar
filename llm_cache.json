@@ -4038,6 +4038,34 @@
     ],
     "why": "Issue provides a clear root cause and reproduction, but an existing PR (#20690) directly addresses it with tests, yet has failing CI and unresolved maintainer scope decisions. The deterministic gate requires HUMAN_REVIEW, and the presence of a competing PR with gaps makes this a wait-for-maintainer situation."
   },
+  "39b8afea33d4e2af07c50541daf707acfbc5de9d7ccb90352c9967e50458c27c": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "local_browser_watchdog.py cleanup prefix logic",
+      "profile.py user_data_dir resolution"
+    ],
+    "risks": [
+      "Existing PRs may already fix the issue, leading to duplicate work",
+      "Changing cleanup logic could affect user-supplied profiles if not careful"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Run the provided repro script to confirm leak before fix",
+      "Add regression test asserting temp profile is removed after kill",
+      "Run targeted unit tests for BrowserProfile and LocalBrowserWatchdog"
+    ],
+    "unknowns": [
+      "Whether PR #5416 or #5417 already resolves the cleanup gap",
+      "Maintainer preference on approach (prefix broadening vs explicit flag)"
+    ],
+    "why": "Issue provides a clear root cause and repro for a real resource leak, but existing PRs #5416 and #5417 overlap semantically and may already address the fix. The deterministic gate requires HUMAN_REVIEW, and the open PR assessment indicates semantic overlap requiring manual comparison. No maintainer approval or active investigation is present, so starting new work risks duplication."
+  },
   "3a3cbb805e9f805a3e3c7f155aec42a430204f56779a9b332daee80799b6880b": {
     "confidence": 0.8,
     "contradictions": [],
@@ -10169,6 +10197,38 @@
     ],
     "why": "Issue reports a reproducible, high-impact bug in the internal MCP self-connection path, with clear stack trace and root cause hypothesis. No competing PR or issue found. The fix is actionable: adjust URL derivation or error handling in mcp_oauth_store.py."
   },
+  "8e6bd58673a3d663ed2032d03c82548dbc85e3dfb314b97ae17d61b8a961f706": {
+    "confidence": 0.7,
+    "contradictions": [
+      "The original report claims x-record-uuid is observed, but the correction states it is derived from API registry, not measured",
+      "The original report lists UPDATE_JOB_NOTE as affected, but the correction notes that tool does not declare response headers"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify ServiceM8 write response handler to handle empty 2xx bodies without parsing JSON",
+      "Read x-record-uuid header and populate data.record_uuid for tools that declare it"
+    ],
+    "risks": [
+      "The x-record-uuid header may not be present for all tools (UPDATE_JOB_NOTE, UPDATE_JOB_PAYMENT), so record_uuid may remain undefined for those",
+      "Changing response handling could affect other tools if not scoped correctly"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "test_plan": [
+      "Create a mock ServiceM8 response with HTTP 200 and empty body, verify execution reports successful:true",
+      "Create a mock response with x-record-uuid header, verify record_uuid is present in output",
+      "Run existing ServiceM8 integration tests to ensure no regressions"
+    ],
+    "unknowns": [
+      "Maintainer confirmation of the bug and acceptance of the proposed fix",
+      "Exact behavior of ServiceM8 API for all affected tools regarding headers and body"
+    ],
+    "why": "The issue reports a concrete server-side bug in the ServiceM8 toolkit response handler: successful writes return HTTP 200 with empty body, causing response.json() to fail and report successful:false, and record_uuid is never populated. The reporter provides a clear reproduction and a suggested fix. However, the issue is labeled 'support' and the automated triage assigned it to support team, not engineering. The maintainer has not confirmed the bug or the proposed fix, and the reporter's own correction reveals uncertainty about the x-record-uuid header for some tools. This is a user-visible bug with actionable fix, but requires maintainer confirmation to proceed."
+  },
   "8e75fcce7c39680cb514c385d7d274ac36e060ce1b169ae6f9948aaf3573914e": {
     "confidence": 0.8,
     "contradictions": [
@@ -10599,6 +10659,38 @@
       "PR #20690's merge status and whether it fully resolves the issue"
     ],
     "why": "Issue provides a precise root cause (shape mismatch in requestContext user slot) and a verified workaround, but a PR (#20690) already exists and is closed, with maintainer triage ongoing. The deterministic gate requires HUMAN_REVIEW, and the PR's completeness and maintainer scope decisions (e.g., handling two other quiet readers) are unresolved."
+  },
+  "9677b68315c92ab510c2b4fb02c91a500d89172d110b051e9ca2878b373ca539": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body suggests smart quotes as a possible cause, but commenter refutes with byte-for-byte journal check showing ASCII quotes"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify crates/jcode-provider-gemini/src/lib.rs to avoid emitting imitable call-shaped text in the downgrade fallback",
+      "Add dispatcher guard to reject assistant text matching '^\\[previous tool call\\] \\w+\\('",
+      "Possibly root-fix thought_signature replay handling for Antigravity/Gemini→OpenAI-compat path"
+    ],
+    "risks": [
+      "Changing the downgrade fallback may affect recovery behavior for #518; need to ensure bounded retry does not cause infinite loops",
+      "Dispatcher guard may reject legitimate text that happens to match the pattern; need careful regex and context checks"
+    ],
+    "root_cause_clarity": "high",
+    "score": 13,
+    "test_plan": [
+      "Reproduce with the issue's steps: use Gemini 3.6 Flash via Antigravity, enable todo tool, ask for multi-step task, inspect transcript for pseudo-call text",
+      "Add regression tests for sequential calls, malformed JSON, smart quotes, unknown tools, and false completion state",
+      "Test that after the fix, the model does not emit imitated call-shaped text and that tool calls are dispatched correctly"
+    ],
+    "unknowns": [
+      "Exact design decision from maintainer on forced retry vs surfaced error",
+      "Whether #518 fix will be merged first and how it interacts with this issue"
+    ],
+    "why": "Root cause is clearly identified in the comments: the SignaturePolicy::DowngradeToolCallsToText fallback emits call-shaped text that the model imitates, causing inert sessions. The owner has acknowledged the failure path and requested a design decision between forced native-call retry and surfaced provider error. No open PR exists, but the maintainer's explicit need for a decision and the presence of a related issue (#518) make this a WAIT_MAINTAINER situation."
   },
   "976688a9d2c27073cb10b153949b73bb4fe8a9cba1d5af38e05f3826dfee61b6": {
     "confidence": 0.85,
