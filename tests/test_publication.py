@@ -410,7 +410,8 @@ def test_merge_update_files_are_bound_to_exact_two_parent_commit(tmp_path):
         )
 
 
-def test_merge_update_blocks_when_live_pr_base_has_advanced(tmp_path):
+@pytest.mark.parametrize("live_branch_matches", [True, False])
+def test_merge_update_uses_live_repository_base_not_pr_snapshot(tmp_path, live_branch_matches):
     store, request, evidence_path = prepared_request(tmp_path)
     first = store.publication_request(request["request_id"])
     permit = store.grant_publication_request(
@@ -466,8 +467,16 @@ def test_merge_update_blocks_when_live_pr_base_has_advanced(tmp_path):
                     "ref": first["branch"],
                     "repo": {"owner": {"login": "Oxygen56"}},
                 },
-                "base": {"sha": "a" * 40},
+                "base": {
+                    "sha": "d" * 40,
+                    "ref": "main",
+                    "repo": {"full_name": "example/project"},
+                },
             }
+
+        def branch(self, repo, branch):
+            assert (repo, branch) == ("example/project", "main")
+            return {"commit": {"sha": base_sha if live_branch_matches else "a" * 40}}
 
         def pull_files(self, repo, number):
             return [{"filename": "file.txt"}]
@@ -480,8 +489,11 @@ def test_merge_update_blocks_when_live_pr_base_has_advanced(tmp_path):
 
     result = broker_publication_request(store, update["request_id"], client=AdvancedBaseClient())
 
-    assert result["granted"] is False
-    assert result["audit"]["reason"] == "EXISTING_PR_BASE_DRIFT"
+    assert result["granted"] is live_branch_matches
+    if live_branch_matches:
+        assert result["audit"]["reason"] == "LIVE_PUBLICATION_GATES_PASSED"
+    else:
+        assert result["audit"]["reason"] == "EXISTING_PR_BASE_DRIFT"
 
 
 def test_evidence_digest_drift_blocks_publication(monkeypatch, tmp_path):

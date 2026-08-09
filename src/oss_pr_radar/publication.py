@@ -353,7 +353,26 @@ def audit_publication_request(
                 {"existingPrUrl": existing_url, "expectedCommitSha": expected_head},
             )
         if evidence_file.get("handoffMode") == "controller_merge_complete":
-            live_base_sha = str((existing_pr.get("base") or {}).get("sha") or "")
+            base = existing_pr.get("base") or {}
+            base_ref = str(base.get("ref") or "")
+            base_repo = str(((base.get("repo") or {}).get("full_name") or repo))
+            if not base_ref:
+                return PublicationAudit(
+                    "DEFER",
+                    "EXISTING_PR_BASE_UNAVAILABLE",
+                    request_id,
+                    {"existingPrUrl": existing_url},
+                )
+            try:
+                live_base = github.branch(base_repo, base_ref)
+            except GitHubError as exc:
+                return PublicationAudit(
+                    "DEFER",
+                    "EXISTING_PR_BASE_UNAVAILABLE",
+                    request_id,
+                    {"existingPrUrl": existing_url, "error": str(exc)[:200]},
+                )
+            live_base_sha = str((live_base.get("commit") or {}).get("sha") or "")
             if not live_base_sha:
                 return PublicationAudit(
                     "DEFER",
