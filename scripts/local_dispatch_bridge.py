@@ -487,13 +487,20 @@ def _recoverable_published_result(context: dict[str, Any]) -> dict[str, str] | N
         "issueUrl": context.get("issueUrl"),
         "threadId": context.get("threadId"),
         "worktreePath": str(worktree),
-        "contextDigest": context.get("contextDigest"),
     }
     if not isinstance(value, dict):
         raise RuntimeError("published task result must be an object")
     for key, expected_value in expected.items():
         if value.get(key) != expected_value:
             raise RuntimeError(f"published task result mismatch: {key}")
+    if value.get("contextDigest") != context.get("contextDigest"):
+        followup = context.get("prFollowup")
+        wake_digest = (
+            str(followup.get("wakeDigest") or "") if isinstance(followup, dict) else ""
+        )
+        if wake_digest and value.get("followupDigest") != wake_digest:
+            return None
+        raise RuntimeError("published task result mismatch: contextDigest")
 
     commit_sha = str(receipt.get("commitSha") or "")
     if command(["git", "status", "--porcelain"], cwd=worktree):
@@ -2385,15 +2392,15 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
             raw = result_path.read_bytes()
             initial_digest = hashlib.sha256(raw).hexdigest()
             digest_seen = store.task_result_digest_seen(candidate["key"], initial_digest)
+            if digest_seen and candidate["stage"] in PUBLISHED_TASK_STAGES:
+                continue
             value = json.loads(raw)
             if not isinstance(value, dict):
                 raise RuntimeError("task result must be an object")
             context_path = result_path.parent / "task-context.json"
             context = json.loads(context_path.read_text(encoding="utf-8"))
-            if not isinstance(context, dict) or value.get("contextDigest") != context.get(
-                "contextDigest"
-            ):
-                raise RuntimeError("task result context digest mismatch")
+            if not isinstance(context, dict):
+                raise RuntimeError("task result context must be an object")
             expected = {
                 "schemaVersion": TASK_RESULT_SCHEMA,
                 "key": candidate["key"],
@@ -2404,6 +2411,16 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
             for key, expected_value in expected.items():
                 if value.get(key) != expected_value:
                     raise RuntimeError(f"task result mismatch: {key}")
+            context_followup = context.get("prFollowup")
+            current_wake_digest = (
+                str(context_followup.get("wakeDigest") or "")
+                if isinstance(context_followup, dict)
+                else ""
+            )
+            if value.get("contextDigest") != context.get("contextDigest"):
+                if current_wake_digest and value.get("followupDigest") != current_wake_digest:
+                    continue
+                raise RuntimeError("task result context digest mismatch")
             stage = str(value.get("stage") or "")
             quality = value.get("quality")
             policy_followup_exhausted = bool(
@@ -2415,14 +2432,9 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
             )
             if digest_seen and not policy_followup_exhausted:
                 continue
-            context_followup = context.get("prFollowup")
             if candidate["stage"] in {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED"} and (
                 isinstance(context_followup, dict)
-                and value.get("followupDigest")
-                not in {
-                    None,
-                    context_followup.get("wakeDigest"),
-                }
+                and value.get("followupDigest") != context_followup.get("wakeDigest")
             ):
                 raise RuntimeError("task result PR follow-up digest mismatch")
             if stage == "AUDIT_NO_GO":

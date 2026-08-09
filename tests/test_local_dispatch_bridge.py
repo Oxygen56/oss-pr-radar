@@ -641,6 +641,10 @@ def test_clean_pr_followup_result_restores_its_wake_receipt(tmp_path):
     assert recovered["stage"] == "PR_OPEN"
     assert recovered["wakeDigest"] == "wake"
 
+    context["contextDigest"] = "new-context"
+    context["prFollowup"] = {"wakeDigest": "new-wake"}
+    assert MODULE._recoverable_published_result(context) is None
+
 
 def test_prepare_managed_worktree_is_isolated_under_github_project(monkeypatch, tmp_path):
     source = tmp_path / "source"
@@ -1569,6 +1573,50 @@ def test_pr_followup_reserve_refreshes_context_and_uses_canonical_prompt(monkeyp
     assert context["publicationReceipt"]["prUrl"] == pr_url
     assert store.pr_followup_candidates() == []
     assert store.unresolved_pr_followups()
+
+
+def test_ingest_skips_consumed_result_after_followup_context_refresh(tmp_path):
+    store, worktree, _head_sha, _pr_url = _published_followup_store(tmp_path)
+    original_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    original = json.loads(original_path.read_text(encoding="utf-8"))
+    result_path = Path(original["resultPath"])
+    result_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": "radar-task-result-v1",
+                "contextDigest": original["contextDigest"],
+                "key": "a/b#1",
+                "issueUrl": "https://github.com/a/b/issues/1",
+                "threadId": "thread-1",
+                "worktreePath": str(worktree.resolve()),
+                "stage": "FIX_READY",
+            }
+        ),
+        encoding="utf-8",
+    )
+    digest = hashlib.sha256(result_path.read_bytes()).hexdigest()
+    store.record_task_result_ingested("a/b#1", digest=digest, stage="FIX_READY")
+    refreshed_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+        prepared_followup_head="b" * 40,
+    )
+    refreshed = json.loads(refreshed_path.read_text(encoding="utf-8"))
+    assert refreshed["contextDigest"] != original["contextDigest"]
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert result["ok"] is True
+    assert result["ingested"] == []
+    assert result["publicationRequests"] == []
+    assert result["errors"] == []
 
 
 def test_prepare_pr_followup_aligns_worktree_to_exact_live_head(monkeypatch, tmp_path):
