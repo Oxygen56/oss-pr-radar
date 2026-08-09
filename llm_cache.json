@@ -58,6 +58,34 @@
     ],
     "why": "Issue reports a silent no-op for prefix caching on Mamba-2/GDN hybrids, but root cause is not fully confirmed; maintainer comment suggests user error (cache size vs block size), and a related PR was merged that may address the behavior. Open PR lookup failed, so competition status is unknown."
   },
+  "0110a994ce0245b2d28898dcbdd831dd893ac2ab6700c75061938e436dd183b8": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Instrumentation or timeout in the TMEM allocation spin loops in FlashMLA/CUTLASS",
+      "Potential source-level mitigation in the tcgen05.alloc protocol"
+    ],
+    "risks": [
+      "Changes to ptxas-generated loops may not be possible; requires coordination with NVIDIA toolchain",
+      "Incorrect diagnosis could lead to ineffective fixes"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 13,
+    "test_plan": [
+      "Reproduce the wedge with the described burst/idle cycling harness and capture cuda-gdb state",
+      "Add a timeout or diagnostic to the spin loops and verify it triggers on stall"
+    ],
+    "unknowns": [
+      "Root cause of the stall (phase mismatch vs. visibility vs. hardware state)",
+      "Correct owner for the fix (FlashMLA, CUTLASS, or NVIDIA)",
+      "Whether maintainers have seen this issue before"
+    ],
+    "why": "The issue provides deep device-level evidence of a spin loop in the TMEM allocation path of the FlashMLA sparse-decode kernel, but explicitly states it is not a root-cause report and asks for maintainer guidance on the correct owner and diagnostic path. The root cause (phase mismatch, visibility, or hardware state) is undetermined, and the fix likely requires changes in FlashMLA or CUTLASS, not vLLM. The issue is a request for guidance, not a concrete patch proposal."
+  },
   "0267b19c4abd19e443e2f3eeab6be2707ab6c0860b3e08ef6d22f2e39c27ae60": {
     "confidence": 0.7,
     "contradictions": [
@@ -1168,6 +1196,37 @@
       "Maintainer approval for the fix approach is not confirmed; repository requires assignment and AI disclosure, which may block immediate contribution."
     ],
     "why": "Issue clearly identifies a protocol-conformance bug in McpServerSession and McpStatelessAsyncServer where empty Mono completions cause no response, violating JSON-RPC 2.0. Root cause is well-documented with code references and a suggested fix. However, the repository requires assignment and AI disclosure, and the deterministic gate is HUMAN_REVIEW, so work should not start without maintainer confirmation."
+  },
+  "1376c30d4677b96b54ae9410c771b8f9ea8ec0e334f67a1f5303843f1e32786a": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Investigate Quark FP8-to-MXFP4 conversion for invalid weights/scales",
+      "Fix chat template enable_thinking switch",
+      "Investigate FP8 completion length increase"
+    ],
+    "risks": [
+      "Root cause may be in Quark conversion not SGLang",
+      "FP8 length increase may be unrelated to MXFP4 failure"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "test_plan": [
+      "Reproduce MXFP4 repeated '!' generation with single request",
+      "Compare FP8 and MXFP4 outputs on GSM8K with fixed seed",
+      "Numerically validate converted weights/scales against source"
+    ],
+    "unknowns": [
+      "Maintainer confirmation of root cause",
+      "Whether existing PRs address the issue",
+      "Exact SGLang version and hardware details"
+    ],
+    "why": "Issue reports a concrete LLM quantization bug (FP8->MXFP4 conversion) with reproducible symptoms and a clear expected behavior, but root cause is unconfirmed and requires maintainer investigation. Existing PRs overlap semantically but none directly address the issue, and the deterministic gate requires human review."
   },
   "137b8d5608a5a96474472a956ab8c1c32767a7d2e39e397b78cceeb2d862ec12": {
     "confidence": 0.7,
@@ -13320,6 +13379,38 @@
       "Maintainer confirmation of root cause and desired fix approach"
     ],
     "why": "Issue reports deterministic SWA KV position corruption in hierarchical cache for DeepSeek-V4, with kv-canary evidence and a plausible root cause in draft-SWA backup/restore. However, open PR and related issue lookups timed out, and a merged PR #30393 may already address the problem, requiring verification. Maintainer has not confirmed the diagnosis or assigned work."
+  },
+  "c88577243fe2d90b662fa589f31b0f88f870ad880e4736d30d8401b59e0e5b11": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue title mentions tool-availability deltas under system, but the primary fix in PR #7261 only addresses ToolReturnPart role; secondary symptom may be left unresolved"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add 'tool' to Role literal in _otel_messages.py",
+      "Route ToolReturnPart to role 'tool' in messages_to_otel_messages",
+      "Decide handling of ToolAvailabilityDeltaPart (likely separate role or omit)"
+    ],
+    "risks": [
+      "Design ambiguity on how to handle ToolAvailabilityDeltaPart; may require maintainer decision",
+      "Potential breaking changes for consumers relying on current role assignments"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Run the provided minimal reproduction script and assert roles are 'tool' for ToolReturnPart and not 'system' for ToolAvailabilityDeltaPart",
+      "Add unit tests for messages_to_otel_messages covering all part types and role assignments",
+      "Validate against OTel GenAI semconv schema examples"
+    ],
+    "unknowns": [
+      "Maintainer preference on the fix approach (add 'tool' vs restructure grouping)",
+      "Whether the closed PR #7261 will be reopened or superseded"
+    ],
+    "why": "Issue clearly identifies a concrete bug in OTel GenAI message role mapping with a minimal reproduction and root cause in code. However, the track is llm_algorithm and the issue is about telemetry semantics, not a training objective, model mechanism, or numerical method. The existing PR #7261 is closed and technically complete, but the issue explicitly requests design confirmation on the approach, and the repository requires assignment. Thus, maintainer confirmation is needed before starting new work."
   },
   "c8f99d2ae5e49176ef375c4cd7a226e720335077e149d75c66981152dfe3b145": {
     "confidence": 0.95,
