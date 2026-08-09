@@ -493,7 +493,13 @@ def _recoverable_published_result(context: dict[str, Any]) -> dict[str, str] | N
     for key, expected_value in expected.items():
         if value.get(key) != expected_value:
             raise RuntimeError(f"published task result mismatch: {key}")
-    if value.get("contextDigest") != context.get("contextDigest"):
+    stage = str(value.get("stage") or "")
+    if (
+        value.get("contextDigest") != context.get("contextDigest")
+        and stage != "FIX_READY"
+    ):
+        # Context sync may refresh audit evidence long after this clean result
+        # was published. The exact published checkout proves FIX_READY is old.
         followup = context.get("prFollowup")
         wake_digest = (
             str(followup.get("wakeDigest") or "") if isinstance(followup, dict) else ""
@@ -507,7 +513,6 @@ def _recoverable_published_result(context: dict[str, Any]) -> dict[str, str] | N
         return None
     if command(["git", "rev-parse", "HEAD"], cwd=worktree) != commit_sha:
         return None
-    stage = str(value.get("stage") or "")
     recovered = {
         "key": str(context["key"]),
         "digest": hashlib.sha256(raw).hexdigest(),

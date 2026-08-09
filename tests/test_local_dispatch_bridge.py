@@ -645,6 +645,14 @@ def test_clean_pr_followup_result_restores_its_wake_receipt(tmp_path):
     context["prFollowup"] = {"wakeDigest": "new-wake"}
     assert MODULE._recoverable_published_result(context) is None
 
+    stale_fix = json.loads(result_path.read_text(encoding="utf-8"))
+    stale_fix["stage"] = "FIX_READY"
+    stale_fix.pop("followupDigest")
+    result_path.write_text(json.dumps(stale_fix), encoding="utf-8")
+    recovered_fix = MODULE._recoverable_published_result(context)
+    assert recovered_fix is not None
+    assert recovered_fix["stage"] == "FIX_READY"
+
 
 def test_prepare_managed_worktree_is_isolated_under_github_project(monkeypatch, tmp_path):
     source = tmp_path / "source"
