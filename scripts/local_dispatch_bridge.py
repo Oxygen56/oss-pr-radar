@@ -59,6 +59,12 @@ TASK_CONTEXT_SCHEMA = "radar-task-context-v1"
 TASK_RESULT_SCHEMA = "radar-task-result-v1"
 ORPHAN_ABANDON_MIN_AGE_MINUTES = 70
 PR_FOLLOWUP_ACTIVE_DEFERRAL_MINUTES = 30
+VALIDATION_PREFETCH_TIMEOUTS = {
+    "cargo_locked_fetch": 300,
+    "go_locked_download": 300,
+    "uv_locked_sync": 900,
+    "npm_locked_install": 900,
+}
 TITLE_PREFIXES = {
     "GO": "[有价值·GO]",
     "AUDIT_NO_GO": "[无价值]",
@@ -2423,14 +2429,64 @@ def _validation_prefetch_commands(candidate: dict[str, Any]) -> list[dict[str, A
     return commands
 
 
+def _execute_validation_prefetch(
+    candidate: dict[str, Any], commands: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Run only the deterministic lockfile prefetch plan built by this bridge."""
+
+    worktree = Path(candidate["worktreePath"]).resolve()
+    allowed_argv = {
+        "cargo_locked_fetch": ["cargo", "fetch", "--locked"],
+        "go_locked_download": ["go", "mod", "download"],
+        "uv_locked_sync": ["uv", "sync", "--frozen", "--no-install-project"],
+        "npm_locked_install": [
+            "npm",
+            "ci",
+            "--ignore-scripts",
+            "--no-audit",
+            "--no-fund",
+        ],
+    }
+    completed: list[dict[str, Any]] = []
+    for item in commands:
+        kind = item.get("kind")
+        argv = item.get("argv")
+        cwd_value = item.get("cwd")
+        if kind not in allowed_argv or argv != allowed_argv[kind]:
+            raise RuntimeError("validation prefetch command is not allowlisted")
+        if not isinstance(cwd_value, str):
+            raise RuntimeError("validation prefetch cwd is invalid")
+        cwd = Path(cwd_value).resolve()
+        if cwd != worktree and worktree not in cwd.parents:
+            raise RuntimeError("validation prefetch cwd escapes the prepared worktree")
+        if not cwd.is_dir():
+            raise RuntimeError("validation prefetch cwd does not exist")
+        started = monotonic()
+        command(argv, cwd=cwd, timeout=VALIDATION_PREFETCH_TIMEOUTS[kind])
+        completed.append(
+            {
+                "kind": kind,
+                "cwd": str(cwd),
+                "durationMs": round((monotonic() - started) * 1000),
+            }
+        )
+    return completed
+
+
 def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
     candidates: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
     for candidate in store.validation_followup_candidates():
         try:
+            commands = _validation_prefetch_commands(candidate)
             candidates.append(
-                candidate | {"prefetchCommands": _validation_prefetch_commands(candidate)}
+                candidate
+                | {
+                    "prefetchRequired": bool(commands),
+                    "prefetchMode": "bridge_managed" if commands else "none",
+                    "nextOperation": "validation-followup-reserve",
+                }
             )
         except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
             errors.append({"key": candidate["key"], "error": str(exc)[:300]})
@@ -2477,8 +2533,7 @@ def validation_followup_reserve(args: argparse.Namespace) -> dict[str, Any]:
     if candidate is None:
         raise RuntimeError("validation follow-up authorization is stale or invalid")
     enriched = candidate | {"prefetchCommands": _validation_prefetch_commands(candidate)}
-    if enriched["prefetchCommands"] and not args.prefetch_complete:
-        raise RuntimeError("locked dependency prefetch must complete before reservation")
+    prefetch = _execute_validation_prefetch(enriched, enriched["prefetchCommands"])
     context_path = write_task_context(
         store,
         issue_url=enriched["issueUrl"],
@@ -2494,6 +2549,7 @@ def validation_followup_reserve(args: argparse.Namespace) -> dict[str, Any]:
         "threadId": reserved["threadId"],
         "resultDigest": reserved["resultDigest"],
         "contextPath": str(context_path),
+        "prefetch": prefetch,
         "prompt": _validation_followup_prompt(enriched),
     }
 

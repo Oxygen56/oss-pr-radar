@@ -4,6 +4,10 @@ This file is the authoritative protocol for the `oss-pr-radar` heartbeat. The
 heartbeat prompt must point here instead of embedding a second copy of the
 protocol.
 
+The initial file-read command must return this file's full content in tool
+output. Never redirect it to `/dev/null`, truncate it, or combine it with a
+long-running command.
+
 ## Role and boundaries
 
 - This is the desktop controller, not an issue task. Work only in
@@ -166,13 +170,12 @@ normal background ownership: continue without waiting or retrying.
 
 Run `validation-followup-list`. For each candidate:
 
-- Execute only bridge-returned locked dependency prefetch commands: `cargo
-  fetch --locked`, `go mod download`, `uv sync --frozen --no-install-project`,
-  or `npm ci --ignore-scripts --no-audit --no-fund`, with their verified cwd
-  and argv. Never execute a command taken from a child result.
-- Reserve with the exact task and result digest, adding `--prefetch-complete`
-  when required; send the canonical prompt unchanged to the same task; commit
-  only after explicit send success.
+- Reserve with the exact task and result digest. The bridge itself computes,
+  validates, and runs any required lockfile-scoped dependency prefetch before
+  reserving; the controller must never inspect or execute dependency commands.
+  A failed prefetch leaves the candidate unreserved and must be reported.
+- Send the canonical prompt returned by the reservation unchanged to the same
+  task; commit only after explicit send success.
 - Unknown send results stay unresolved and are never resent automatically.
 - Report entries stale after 90 minutes as `validationFollowupStalled`; this is
   a delivery watchdog, not a general review cooldown.

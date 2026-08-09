@@ -162,12 +162,15 @@ receiving their own worktrees.
   `validationDeferred` and settles as non-terminal `VALIDATION_PENDING`. It is
   titled as valuable work awaiting validation, releases dispatch capacity, and
   never enters the no-value cleanup queue. The controller consumes
-  `validation-followup-list`, prefetches only the returned lockfile-scoped Cargo
-  or Go dependencies, reserves the exact result digest, and resumes the same
-  task once. A changed result digest rearms validation without duplicating the
-  previous wake-up. A sent follow-up that remains on the same validation result
-  for 90 minutes is surfaced in the `stale` list as an operational failure; it
-  is not silently treated as healthy or automatically sent again. A later
+  `validation-followup-list` and reserves the exact result digest. During that
+  reservation, the bridge computes, validates, and runs any required
+  lockfile-scoped Cargo, Go, Python, or Node dependency prefetch itself; the
+  controller never interprets or executes dependency commands. It then resumes
+  the same task once. A changed result digest rearms validation without
+  duplicating the previous wake-up. A sent follow-up that remains on the same
+  validation result for 90 minutes is surfaced in the `stale` list as an
+  operational failure; it is not silently treated as healthy or automatically
+  sent again. A later
   result with complete evidence may advance it to `FIX_READY`. A
   policy-blocked fix may settle as local `FIX_READY`
   only when the technical evidence is complete and `policy_verified` is the

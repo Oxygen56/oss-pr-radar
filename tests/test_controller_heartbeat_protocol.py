@@ -7,6 +7,12 @@ PROTOCOL = (
 ).read_text(encoding="utf-8")
 
 
+def test_controller_protocol_requires_visible_complete_read():
+    assert "must return this file's full content" in PROTOCOL
+    assert "output. Never redirect it" in PROTOCOL
+    assert "Never redirect it to `/dev/null`" in PROTOCOL
+
+
 def test_controller_protocol_uses_transactional_title_reconciliation():
     assert "title-reconcile" in PROTOCOL
     assert "Never use" in PROTOCOL
@@ -51,8 +57,8 @@ def test_controller_protocol_does_not_interrupt_active_pr_followups():
     assert "must not be reserved, resent" in PROTOCOL
 
 
-def test_controller_protocol_allows_only_lockfile_scoped_node_prefetch():
-    assert "npm ci --ignore-scripts --no-audit" in PROTOCOL
-    assert "uv sync --frozen --no-install-project" in PROTOCOL
-    assert "Never execute a command" in PROTOCOL
-    assert "from a child result" in PROTOCOL
+def test_controller_protocol_delegates_validation_prefetch_to_bridge():
+    assert "The bridge itself computes" in PROTOCOL
+    assert "lockfile-scoped dependency prefetch" in PROTOCOL
+    assert "must never inspect or execute dependency commands" in PROTOCOL
+    assert "A failed prefetch leaves the candidate unreserved" in PROTOCOL

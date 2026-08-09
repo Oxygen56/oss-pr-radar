@@ -2709,7 +2709,10 @@ def test_controller_defers_blocked_local_fix_with_incomplete_validation(tmp_path
         "regression_test_verified",
         "relevant_tests_green",
     ]
-    assert listed["candidates"][0]["prefetchCommands"] == []
+    assert listed["candidates"][0]["prefetchRequired"] is False
+    assert listed["candidates"][0]["prefetchMode"] == "none"
+    assert listed["candidates"][0]["nextOperation"] == "validation-followup-reserve"
+    assert "prefetchCommands" not in listed["candidates"][0]
 
     digest = listed["candidates"][0]["resultDigest"]
     reserved = MODULE.validation_followup_reserve(
@@ -3000,6 +3003,163 @@ def test_validation_prefetch_plan_is_lockfile_scoped(tmp_path):
             ],
         },
     ]
+
+
+def test_validation_prefetch_execution_enforces_command_and_worktree_boundaries(
+    monkeypatch, tmp_path
+):
+    worktree = tmp_path / "worktree"
+    package = worktree / "ui"
+    package.mkdir(parents=True)
+    calls = []
+
+    def fake_command(args, cwd=None, timeout=300, stdin=None):
+        calls.append((args, cwd, timeout, stdin))
+        return ""
+
+    monkeypatch.setattr(MODULE, "command", fake_command)
+    candidate = {"worktreePath": str(worktree)}
+    commands = [
+        {
+            "kind": "npm_locked_install",
+            "cwd": str(package),
+            "argv": [
+                "npm",
+                "ci",
+                "--ignore-scripts",
+                "--no-audit",
+                "--no-fund",
+            ],
+        }
+    ]
+
+    completed = MODULE._execute_validation_prefetch(candidate, commands)
+
+    assert calls == [
+        (
+            commands[0]["argv"],
+            package.resolve(),
+            MODULE.VALIDATION_PREFETCH_TIMEOUTS["npm_locked_install"],
+            None,
+        )
+    ]
+    assert completed[0]["kind"] == "npm_locked_install"
+    assert completed[0]["cwd"] == str(package.resolve())
+
+    with pytest.raises(RuntimeError, match="not allowlisted"):
+        MODULE._execute_validation_prefetch(
+            candidate,
+            [
+                {
+                    "kind": "npm_locked_install",
+                    "cwd": str(package),
+                    "argv": ["npm", "install"],
+                }
+            ],
+        )
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    with pytest.raises(RuntimeError, match="escapes"):
+        MODULE._execute_validation_prefetch(
+            candidate,
+            [
+                {
+                    "kind": "cargo_locked_fetch",
+                    "cwd": str(outside),
+                    "argv": ["cargo", "fetch", "--locked"],
+                }
+            ],
+        )
+
+
+def test_validation_followup_reserve_runs_prefetch_inside_bridge(monkeypatch, tmp_path):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        missing_quality=("regression_test_verified", "relevant_tests_green"),
+    )
+    ui_root = worktree / "ui"
+    ui_root.mkdir()
+    (ui_root / "package-lock.json").write_text("{}\n", encoding="utf-8")
+    (ui_root / "package.json").write_text("{}\n", encoding="utf-8")
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value["changedFiles"] = ["runtime.py", "ui/app.tsx"]
+    value["tests"] = [
+        {
+            "command": "npm run test",
+            "exitCode": 127,
+            "summary": "Vitest was unavailable because node_modules is absent",
+        }
+    ]
+    raw = json.dumps(value).encode()
+    result_path.write_bytes(raw)
+    digest = hashlib.sha256(raw).hexdigest()
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest=digest,
+        missing=["regression_test_verified", "relevant_tests_green"],
+    )
+    store.record_stage("a/b#1", "VALIDATION_PENDING", evidence={})
+    listed = MODULE.validation_followup_list(
+        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3")
+    )["candidates"][0]
+    assert listed["prefetchRequired"] is True
+    assert listed["prefetchMode"] == "bridge_managed"
+    assert "prefetchCommands" not in listed
+    executed = []
+
+    def fake_execute(candidate, commands):
+        executed.extend(commands)
+        return [{"kind": commands[0]["kind"], "cwd": commands[0]["cwd"], "durationMs": 1}]
+
+    monkeypatch.setattr(MODULE, "_execute_validation_prefetch", fake_execute)
+
+    reserved = MODULE.validation_followup_reserve(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            thread_id="thread-1",
+            result_digest=digest,
+            prefetch_complete=False,
+        )
+    )
+
+    assert [item["kind"] for item in executed] == ["npm_locked_install"]
+    assert reserved["prefetch"][0]["kind"] == "npm_locked_install"
+    assert "已经按锁文件预取缺失依赖" in reserved["prompt"]
+
+
+def test_validation_prefetch_failure_does_not_reserve_followup(monkeypatch, tmp_path):
+    store, _worktree, result_path = _controller_commit_result(
+        tmp_path,
+        missing_quality=("relevant_tests_green",),
+    )
+    raw = result_path.read_bytes()
+    digest = hashlib.sha256(raw).hexdigest()
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest=digest,
+        missing=["relevant_tests_green"],
+    )
+    store.record_stage("a/b#1", "VALIDATION_PENDING", evidence={})
+
+    def fail_prefetch(candidate, commands):
+        raise RuntimeError("prefetch failed")
+
+    monkeypatch.setattr(MODULE, "_execute_validation_prefetch", fail_prefetch)
+
+    with pytest.raises(RuntimeError, match="prefetch failed"):
+        MODULE.validation_followup_reserve(
+            SimpleNamespace(
+                ledger=tmp_path / "ledger.sqlite3",
+                thread_id="thread-1",
+                result_digest=digest,
+                prefetch_complete=True,
+            )
+        )
+
+    assert store.validation_followup_candidates()[0]["resultDigest"] == digest
+    assert store.unresolved_validation_followups() == []
 
 
 def test_privileged_controller_runs_granted_publication_queue(monkeypatch, tmp_path):
