@@ -171,6 +171,8 @@ def test_verified_task_context_rebuilds_publication_and_suppresses_duplicate(tmp
     assert context is not None
     assert context["stage"] == "PR_OPEN"
     assert context["publicationReceipt"]["prUrl"] == "https://github.com/a/b/pull/9"
+    assert store.enqueue(intent(intentId="new-intent", decisionDigest="new")) is False
+    assert store.pending() == []
     assert store.enqueue(intent(intentId="later-intent", decisionDigest="later")) is False
 
     imported = store.import_pr_followups(

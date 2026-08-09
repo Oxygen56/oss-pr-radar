@@ -369,7 +369,7 @@ class RadarLedger:
                 )
                 return False
             existing = connection.execute(
-                """SELECT status,expires_at,lease_until FROM intents
+                """SELECT status,expires_at,lease_until,opportunity_key FROM intents
                    WHERE intent_id=?""",
                 (intent["intentId"],),
             ).fetchone()
@@ -382,6 +382,33 @@ class RadarLedger:
                     "SUPERSEDED",
                 }
                 if renewable and incoming_expiry > datetime.now(UTC):
+                    blocking_task = connection.execute(
+                        """SELECT intent_id FROM intents
+                           WHERE opportunity_key=? AND intent_id<>?
+                             AND (
+                               (status IN ('PENDING','LEASED') AND expires_at>?)
+                               OR status IN ('CREATING','DISPATCHED','COMPLETED')
+                             ) LIMIT 1""",
+                        (key, intent["intentId"], now),
+                    ).fetchone()
+                    if blocking_task is not None:
+                        connection.execute(
+                            """UPDATE intents SET status='SUPERSEDED',lease_owner=NULL,
+                               lease_until=NULL,updated_at=? WHERE intent_id=?""",
+                            (now, intent["intentId"]),
+                        )
+                        self._event(
+                            connection,
+                            key,
+                            "INTENT_RENEWAL_SUPPRESSED",
+                            str(intent["intentId"]),
+                            {
+                                "intentId": intent["intentId"],
+                                "blockingIntentId": blocking_task["intent_id"],
+                            },
+                            now,
+                        )
+                        return False
                     lease_active = bool(
                         existing["status"] == "LEASED"
                         and existing["lease_until"]
