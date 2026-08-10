@@ -226,6 +226,35 @@
     "unknowns": [],
     "why": "The issue is a straightforward authentication header compatibility request for the Anthropic Messages API. It is a small, localized fix in the API layer, not an algorithm or infrastructure change. The track is agent_ai_infra, but the work is ordinary API plumbing and does not meet the llm_algorithm requirement. The issue is actionable but low-value for the radar's purpose."
   },
+  "05b2723286658721bf7dee7c9f672802a8a45df487096f97f7cbc7fc10ae9e49": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify reasoning parser state machine to defer end-token detection until text catches up",
+      "Optionally buffer token IDs in detokenizer to match text buffering",
+      "Add streaming regression tests for stop parameter with reasoning models"
+    ],
+    "risks": [
+      "Potential behavior change for other parsers or non-stop scenarios",
+      "May require coordination with detokenizer changes if approach 2 is chosen"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce with the provided curl example and assert reasoning_content/content split",
+      "Add unit tests for Qwen3 and base parser with simulated stop-buffer desync",
+      "Run existing streaming and reasoning parser test suites"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred fix approach",
+      "Exact current state of PR #45909 and whether it fully addresses the issue"
+    ],
+    "why": "Issue provides a precise root cause: stop-buffer desynchronizes delta_text and delta_token_ids, causing reasoning parsers to misroute content. Existing PRs overlap but are incomplete (missing tests, stale, or not directly linked). A materially better PR with a focused fix and regression tests is plausible."
+  },
   "0611b49e9b5505e5bfdf7607a94c7adb98deb13db4c434a6e499cc84aabfce4f": {
     "confidence": 0.7,
     "contradictions": [
@@ -14571,6 +14600,34 @@
       "Maintainer confirmation on the expected fix approach is missing"
     ],
     "why": "The issue describes a concrete streaming bug in LiteLLM's Anthropic adapter where tool_use is lost during SSE conversion. It provides a clear reproduction and expected behavior, but the root cause is not identified and the track is llm_algorithm, which requires a concrete algorithmic mechanism. The supplied evidence lacks a specific training objective, model mechanism, or numerical method; it is an SDK integration bug. The open PR and related issue lookups failed, so duplicate work cannot be excluded. The gate decision is HUMAN_REVIEW, and the candidate's own category is WAIT_MAINTAINER."
+  },
+  "c1dc244173b9952b8bdbf1bd128c5e14eedf64453160a81817deda0c8f3d60ed": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify createTimeTravelExecutionParams to resolve inputs against recorded graph",
+      "Add deterministic mapping step IDs",
+      "Prevent snapshot overwrite on failed reconstruction"
+    ],
+    "risks": [
+      "Changing time-travel semantics may affect existing workflows",
+      "Deterministic IDs could break existing snapshots"
+    ],
+    "root_cause_clarity": "high",
+    "score": 13,
+    "test_plan": [
+      "Reproduce with provided two-process script and verify snapshot integrity",
+      "Add regression test for step-id divergence and .map() non-determinism"
+    ],
+    "unknowns": [
+      "Maintainer's preferred fix approach and scope"
+    ],
+    "why": "The issue is a well-documented bug with a clear root cause and reproducible data loss, but it is not an LLM algorithm contribution. The track requires concrete algorithmic mechanisms like training objectives or numerical methods; this is a workflow engine bug fix. The maintainer has labeled it for triage and plans a fix, so work should wait for maintainer direction."
   },
   "c2f63253a0272f955ba3a076af4ca5df25b987746fea5e0e112c05e5c59d06a9": {
     "confidence": 0.9,
