@@ -986,6 +986,36 @@
     ],
     "why": "Issue reports a user-visible bug and performance regression, but root cause is unknown and requires maintainer investigation. Open PR and related issue lookups timed out, so duplicate work cannot be excluded. No maintainer approval or design confirmation."
   },
+  "10dadaa8183164ad86a51a26a1c27618e7e9db4809c12901e2e147a1ff3dff34": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Potential duplicate issue #51572 has different title but shared stack signatures"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Investigate shm_broadcast timeout in MTP speculative decoding path",
+      "Identify and fix synchronization or batch-drain edge case in engine core"
+    ],
+    "risks": [
+      "Root cause may be in distributed communication or kernel, requiring multi-GPU testing",
+      "Potential duplicate issue #51572 may already cover this"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 13,
+    "test_plan": [
+      "Reproduce with provided command and sustained load; monitor batch drain to 3 requests",
+      "Add regression test for small-batch MTP speculative decoding with multiple ranks"
+    ],
+    "unknowns": [
+      "Exact root cause and whether maintainers are already investigating",
+      "Whether the issue is a duplicate of #51572 or a distinct bug"
+    ],
+    "why": "The issue reports a deterministic hang in DeepSeek-V4-Flash MTP speculative decoding when batch drains to 3 requests, with no worker traceback. It identifies a reproducible scenario and rules out a related fix, but the root cause is not isolated to a specific algorithm mechanism. The supplied gate decision is HUMAN_REVIEW, and there is a potential duplicate issue #51572 sharing stack signatures. The candidate is not a code contribution but a bug report; actionability requires maintainer investigation and design confirmation."
+  },
   "10fda6b97d010ad84bfd128f8abae13380d94ed19c2c48de668c4b6fcf11b125": {
     "confidence": 0.85,
     "contradictions": [],
@@ -10591,6 +10621,35 @@
     ],
     "why": "Issue reports a reproducible multi-node TP deadlock with strong evidence (NCCL spin signature, py-spy stacks, multiple reproductions) and a plausible root cause (TP divergence in MoE all-reduce). However, the issue is a bug report, not a code contribution; no patch is proposed. The deterministic gate requires HUMAN_REVIEW, and open PR/related issue lookups failed, so duplicate work cannot be excluded. Maintainer involvement is absent, and the root cause is not fully confirmed (NCCL build differences may be a workaround)."
   },
+  "8ae374a23c75ff234ff191864892cfb5b64c851d07c2bb3318b2f318babb73eb": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add a regression test reproducing the lost UntrackedValue on resume",
+      "Modify checkpoint/replay logic to either preserve Send task input with UntrackedValue or detect and skip retry"
+    ],
+    "risks": [
+      "Changing behavior may affect existing checkpoint semantics for UntrackedValue",
+      "Potential overlap with issue #8551 may require coordinated fix"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "test_plan": [
+      "Run the provided minimal reproduction to confirm failure",
+      "Add a regression test that asserts the resource is present on resume or that the task is not retried",
+      "Run targeted unit tests for checkpoint and Send task replay"
+    ],
+    "unknowns": [
+      "Maintainer's intended contract among the three options",
+      "Whether issue #8551 is truly duplicate and should be merged"
+    ],
+    "why": "The issue clearly describes a bug where a failed Send task loses UntrackedValue input on resume, with a minimal reproduction. However, the intended contract is ambiguous (preserve vs. detect vs. document), and the issue explicitly asks maintainers to confirm which behavior is intended. The deterministic gate is HUMAN_REVIEW, and there is a potential duplicate issue #8551 sharing checkpoint/memory signals. No maintainer approval or help-wanted label exists, and the submission policy requires assignment. Therefore, maintainer confirmation is needed before implementation."
+  },
   "8aea60e09083802fb3fd5f35002ade0ff1b1e76a1412745d1f9409a7a94eda42": {
     "confidence": 0.85,
     "contradictions": [],
@@ -16073,6 +16132,37 @@
       "Maintainer preference on fix approach"
     ],
     "why": "The issue reports a user-visible bug in budget alerting for standalone virtual keys, with a plausible code path and reproduction steps. However, the root cause is unconfirmed (cache staleness vs. alert never attempted), and the open PR and related issue lookups timed out, so duplicate work cannot be excluded. The deterministic gate is HUMAN_REVIEW, and the maintainer has not confirmed design or investigation direction."
+  },
+  "da85de896707cae18237a14c499e137814ef5b471f46586a28e7153b00e75e15": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify _calculate_web_search_requests to deduplicate or cap query counts per Google billing rules",
+      "Update cost_calculator.py to consume the corrected count",
+      "Add regression tests for streaming and non-streaming paths"
+    ],
+    "risks": [
+      "Ambiguity in Google's 'unique' definition may lead to incorrect dedup semantics",
+      "Multi-candidate responses may require cross-candidate dedup, changing existing behavior",
+      "Existing PRs may already address the issue, causing merge conflicts or wasted effort"
+    ],
+    "root_cause_clarity": "high",
+    "score": 13,
+    "test_plan": [
+      "Unit tests with synthetic groundingMetadata containing duplicate queries to verify dedup/cap behavior",
+      "Integration test comparing accumulated web_search_requests against GCP billing export for a controlled dataset",
+      "Regression test ensuring per_prompt models remain clamped to 1"
+    ],
+    "unknowns": [
+      "Maintainer decision on dedup vs cap semantics",
+      "Whether existing PRs (e.g., #33310, #36281) already fix this issue",
+      "Exact normalization rule (case, whitespace) for dedup"
+    ],
+    "why": "Issue identifies a concrete over-counting bug in web_search_requests with strong evidence and a clear root cause. However, the issue itself poses open semantic questions (dedup vs cap, normalization, scope) that require maintainer confirmation before implementation. Additionally, multiple open PRs overlap with the same code path and semantics, so a new PR risks duplication without maintainer guidance."
   },
   "dc5bd1280cad71f4cb48021e87e9559fb50ef09979a29738aca70730237ae8d6": {
     "confidence": 0.7,
