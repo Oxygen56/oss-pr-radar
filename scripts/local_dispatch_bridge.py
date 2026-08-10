@@ -2384,7 +2384,19 @@ def _prepare_pr_followup(candidate: dict[str, Any]) -> str:
         )
         fetched_base = command(["git", "rev-parse", base_tracking_ref], cwd=worktree)
         if fetched_base != base_sha:
-            raise RuntimeError("PR base changed while preparing follow-up")
+            fast_forward = (
+                subprocess.run(
+                    ["git", "merge-base", "--is-ancestor", base_sha, fetched_base],
+                    cwd=worktree,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                ).returncode
+                == 0
+            )
+            if evidence.get("baseIntegrationRequired") is True or not fast_forward:
+                raise RuntimeError("PR base changed while preparing follow-up")
     command(
         ["git", "fetch", "--quiet", "--no-tags", remote, f"pull/{number}/head"],
         cwd=worktree,

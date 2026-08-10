@@ -2325,7 +2325,7 @@ def test_ingest_skips_blocked_fix_after_context_refresh(tmp_path):
     assert repeated["errors"] == []
 
 
-def test_prepare_pr_followup_aligns_worktree_to_exact_live_head(monkeypatch, tmp_path):
+def test_prepare_pr_followup_accepts_fast_forwarded_base(monkeypatch, tmp_path):
     worktree = tmp_path / "worktree"
     remote = tmp_path / "remote.git"
     worktree.mkdir()
@@ -2367,7 +2367,7 @@ def test_prepare_pr_followup_aligns_worktree_to_exact_live_head(monkeypatch, tmp
             "evidence": {
                 "mergeConflict": True,
                 "baseRefName": "main",
-                "baseSha": live_base,
+                "baseSha": baseline,
             },
         }
     )
