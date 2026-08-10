@@ -64,6 +64,11 @@ AI_DISCLOSURE_RE = re.compile(
     r"\b(?:provider|model(?: identifier)?|provenance)\b|"
     r"\bpull request body\b.{0,160}\b(?:must|required)\b.{0,160}"
     r"\b(?:contribution provenance|ai assistance|provider/model)\b|"
+    r"\bai assistance\b"
+    r"(?=.{0,1200}\btool(?:\(s\)|s)?\s+used\b)"
+    r"(?=.{0,1200}\bhow you used it\b)"
+    r"(?=.{0,1200}(?:please\s+fill|must\s+(?:fill|complete)|"
+    r"(?:do not|don['’]?t)\s+delete|required))|"
     r"(?:new\s+)?branches?\s+(?:should|must|are required to)\s+use\s+"
     r"(?:the\s+)?[`'\"]?codex/",
     re.I | re.S,

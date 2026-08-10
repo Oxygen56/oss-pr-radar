@@ -88,6 +88,30 @@ provider/model-id values. Human-only work must say so explicitly.
     assert submission_policy_from_text(text) == "ai_disclosure_conflict"
 
 
+def test_required_ai_assistance_fields_are_disclosure_policy():
+    text = """
+## AI assistance
+<!-- DeerFlow is an AI project - most PRs here use AI coding tools, and that's
+     welcome. Disclosing it just helps reviewers calibrate how closely to read
+     the diff. Please fill all three; don't delete the section. -->
+
+**Tool(s) used:** e.g. Claude Code, Cursor, Copilot, none
+
+**How you used it:** e.g. generated the implementation, reviewed suggestions
+
+- [ ] I've read and understand every line of the code in this PR
+"""
+
+    policy = discover_policy(
+        FakeClient({".github/pull_request_template.md": text}),
+        "bytedance/deer-flow",
+    )
+
+    assert policy.status == "AI_POLICY_REVIEW"
+    assert policy.ai_disclosure is True
+    assert submission_policy_from_text(text) == "ai_disclosure_conflict"
+
+
 def test_required_ai_assisted_contribution_provenance_is_detected():
     text = """
 ## Contribution Provenance
