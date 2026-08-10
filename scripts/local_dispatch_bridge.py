@@ -513,7 +513,9 @@ def _verified_shared_task_context(path: Path) -> tuple[dict[str, Any], str]:
     return context, source_updated_at
 
 
-def _recoverable_published_result(context: dict[str, Any]) -> dict[str, str] | None:
+def _recoverable_published_result(
+    context: dict[str, Any], *, store: RadarLedger | None = None
+) -> dict[str, str] | None:
     """Identify a clean result already represented by a published task context."""
 
     if str(context.get("stage") or "") not in PUBLISHED_TASK_STAGES:
@@ -551,6 +553,7 @@ def _recoverable_published_result(context: dict[str, Any]) -> dict[str, str] | N
     for key, expected_value in expected.items():
         if value.get(key) != expected_value:
             raise RuntimeError(f"published task result mismatch: {key}")
+    result_digest = hashlib.sha256(raw).hexdigest()
     stage = str(value.get("stage") or "")
     if value.get("contextDigest") != context.get("contextDigest") and stage != "FIX_READY":
         # Context sync may refresh audit evidence long after this clean result
@@ -558,6 +561,10 @@ def _recoverable_published_result(context: dict[str, Any]) -> dict[str, str] | N
         followup = context.get("prFollowup")
         wake_digest = str(followup.get("wakeDigest") or "") if isinstance(followup, dict) else ""
         if wake_digest and value.get("followupDigest") != wake_digest:
+            return None
+        if store is not None and store.task_result_digest_seen(
+            str(context.get("key") or ""), result_digest
+        ):
             return None
         raise RuntimeError("published task result mismatch: contextDigest")
 
@@ -568,7 +575,7 @@ def _recoverable_published_result(context: dict[str, Any]) -> dict[str, str] | N
         return None
     recovered = {
         "key": str(context["key"]),
-        "digest": hashlib.sha256(raw).hexdigest(),
+        "digest": result_digest,
         "stage": stage,
     }
     if stage == "FIX_READY":
@@ -595,7 +602,7 @@ def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
     for path in sorted(root.glob("*.json")):
         try:
             context, source_updated_at = _verified_shared_task_context(path)
-            result_receipt = _recoverable_published_result(context)
+            result_receipt = _recoverable_published_result(context, store=store)
             restored_context = store.restore_task_context(
                 context, source_updated_at=source_updated_at
             )

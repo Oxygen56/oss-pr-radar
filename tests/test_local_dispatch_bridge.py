@@ -847,6 +847,74 @@ def test_clean_pr_followup_result_restores_its_wake_receipt(tmp_path):
     assert recovered_fix["stage"] == "FIX_READY"
 
 
+def test_context_recovery_ignores_already_ingested_result_from_older_context(tmp_path):
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    run_git(worktree, "init")
+    run_git(worktree, "config", "user.name", "Test Contributor")
+    run_git(worktree, "config", "user.email", "test@example.com")
+    (worktree / "runtime.py").write_text("value = 1\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "-m", "fix: runtime")
+    head_sha = run_git(worktree, "rev-parse", "HEAD")
+    private = worktree / ".oss-pr-radar"
+    private.mkdir()
+    result_path = private / "result.json"
+    context = {
+        "key": "a/b#1",
+        "issueUrl": "https://github.com/a/b/issues/1",
+        "threadId": "thread-1",
+        "worktreePath": str(worktree.resolve()),
+        "resultPath": str(result_path),
+        "contextDigest": "new-context",
+        "stage": "PR_OPEN",
+        "publicationReceipt": {
+            "prUrl": "https://github.com/a/b/pull/2",
+            "commitSha": head_sha,
+        },
+    }
+    result_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": "radar-task-result-v1",
+                "contextDigest": "old-context",
+                "key": "a/b#1",
+                "issueUrl": "https://github.com/a/b/issues/1",
+                "threadId": "thread-1",
+                "worktreePath": str(worktree.resolve()),
+                "stage": "PR_OPEN",
+                "followupDigest": "old-wake",
+            }
+        ),
+        encoding="utf-8",
+    )
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    now = datetime.now(UTC)
+    store.enqueue(
+        {
+            "intentId": "intent-1",
+            "key": "a/b#1",
+            "repo": "a/b",
+            "issueNumber": 1,
+            "issueUrl": "https://github.com/a/b/issues/1",
+            "title": "Runtime bug",
+            "mode": "canary",
+            "category": "NEW_CLEAN_CANDIDATE",
+            "scanGate": "ALLOW_TO_WORK",
+            "autoSpawn": True,
+            "score": 9,
+            "snapshotId": "snapshot",
+            "decisionDigest": "decision",
+            "issuedAt": iso_z(now),
+            "expiresAt": iso_z(now + timedelta(hours=1)),
+        }
+    )
+    digest = hashlib.sha256(result_path.read_bytes()).hexdigest()
+    store.record_task_result_ingested("a/b#1", digest=digest, stage="PR_OPEN")
+
+    assert MODULE._recoverable_published_result(context, store=store) is None
+
+
 def test_prepare_managed_worktree_is_isolated_under_github_project(monkeypatch, tmp_path):
     source = tmp_path / "source"
     source.mkdir()
