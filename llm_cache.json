@@ -8004,6 +8004,38 @@
     ],
     "why": "Issue describes a concrete bug with a clear root cause and proposed fix, but open PR lookup timed out and an existing PR (51343) with semantic overlap was found, requiring maintainer confirmation to avoid duplicate work."
   },
+  "64ef97d62f052a88ad009e0c24cc71adf74e1e98466f716f3b4eb020afa2b0b4": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify persistence logic to skip partial messages",
+      "Trim or relocate large request bodies in api_req_started messages",
+      "Add message size limits before webview rendering",
+      "Clean up orphan .tmp files"
+    ],
+    "risks": [
+      "Changing persistence may affect conversation history integrity",
+      "Trimming request bodies may lose debugging information",
+      "Size limits could truncate legitimate large messages"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Create a synthetic ui_messages.json with partial and oversized messages to reproduce the gray-out",
+      "Verify conversation loads after applying fixes",
+      "Run existing unit tests for message persistence and webview rendering"
+    ],
+    "unknowns": [
+      "Maintainer design preference on persistence and message size handling",
+      "Exact code paths for message writing and webview rendering"
+    ],
+    "why": "Issue provides a detailed root cause and concrete fix suggestions for a user-visible bug in the VS Code extension, but lacks a deterministic reproduction and maintainer confirmation. The suggested fixes involve persistence and message size limits, which are actionable but require design confirmation to avoid breaking existing behavior."
+  },
   "65df70baa60bb014fa5d15be411e3b5a5cab4e541a456a00eaf51e692ebef185": {
     "confidence": 0.7,
     "contradictions": [
@@ -9050,6 +9082,35 @@
       "Whether maintainers have already started work or have design preferences"
     ],
     "why": "The issue reports a clear user-visible bug with a reproducible API behavior, but the root cause is not identified and the related issue audit and open PR lookup failed, leaving uncertainty about duplicates and existing work. The deterministic gate requires HUMAN_REVIEW."
+  },
+  "7180eafb3f5daded788ae121f33f8da2f4cf39fe96b9de1ade59eb72c4a56438": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Browser Mode config validation/repair on startup",
+      "storage-state file handling (seed or skip with warning)",
+      "upgrade path validation for existing configs"
+    ],
+    "risks": [
+      "Changing storage-state handling may affect existing user workflows",
+      "Need to confirm maintainer preference on seed vs. skip approach"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 14,
+    "test_plan": [
+      "Reproduce with missing storage-state file in pre-existing config",
+      "Add regression test for startup with missing storage-state file",
+      "Run targeted unit tests for config loading and browser context creation"
+    ],
+    "unknowns": [
+      "Whether the #2209 fix is present in rc.8",
+      "Maintainer design preference for handling missing storage-state file"
+    ],
+    "why": "Issue reports a user-visible regression in Browser Mode with a clear repro and expected behavior, but the root cause is uncertain (fix not in rc.8 vs. upgrade path gap) and requires maintainer confirmation on design choice (seed vs. skip). No open PR or related issue found, and gate says HUMAN_REVIEW."
   },
   "720dafaa2fe122d41285b9e71ac03cafc7d7259e9d3dedd42a481bc0bf35dbd3": {
     "confidence": 0.7,
@@ -19219,6 +19280,34 @@
       "Whether effect identity approach is acceptable to maintainers"
     ],
     "why": "Issue identifies a real architectural gap: capability hooks run outside durable units causing duplicate side effects on replay. Proposal is concrete and references existing code paths. However, maintainer design confirmation is required, and the comment raises a critical correctness concern about exactly-once semantics that needs resolution."
+  },
+  "fb27f52c5ec6e4e06ca3218a0e2e731e5154863975ac4736cac4b10bcd067442": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Backport guard to release branches",
+      "Investigate tracing context loss after OM buffering"
+    ],
+    "risks": [
+      "Silently skipping client-tool span may hide telemetry gaps",
+      "Backport may conflict with other changes"
+    ],
+    "root_cause_clarity": "high",
+    "score": 15,
+    "test_plan": [
+      "Reproduce with client observability proxy and OM buffering",
+      "Add regression test for missing currentSpan"
+    ],
+    "unknowns": [
+      "Maintainer confirmation on backport priority",
+      "Whether underlying tracing context loss is considered a bug"
+    ],
+    "why": "The issue identifies a clear crash in released versions due to a missing guard that already exists in main, but the fix is a release backport and requires maintainer triage. The underlying tracing-context loss after OM buffering is unresolved and needs design confirmation."
   },
   "fc218c9da843331f587869de20b0af67bc06830cca7f3949c8640984bba7cacf": {
     "confidence": 0.85,
