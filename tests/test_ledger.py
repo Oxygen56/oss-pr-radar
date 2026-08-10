@@ -1679,6 +1679,16 @@ def test_pr_followup_is_bound_to_existing_task_and_sent_once(tmp_path):
         == "b" * 40
     )
 
+    original_wake = candidate["wakeDigest"]
+    assert store.suspend_pr_followups(
+        source_generated_at=now,
+        reason="CLOUD_PR_FOLLOWUP_STATE_STALE",
+    ) == ["a/b#1"]
+    assert store.pr_followup_candidates() == []
+    store.import_pr_followups(state)
+    candidate = store.pr_followup_candidates()[0]
+    assert candidate["wakeDigest"] != original_wake
+
     store.reserve_pr_followup(
         thread_id="thread-1",
         wake_digest=candidate["wakeDigest"],

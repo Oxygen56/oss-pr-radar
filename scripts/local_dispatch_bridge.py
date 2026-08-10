@@ -60,6 +60,7 @@ TASK_RESULT_SCHEMA = "radar-task-result-v1"
 ORPHAN_ABANDON_MIN_AGE_MINUTES = 70
 PR_FOLLOWUP_ACTIVE_DEFERRAL_MINUTES = 30
 PR_FOLLOWUP_ABANDON_MIN_AGE_MINUTES = 90
+CLOUD_PR_FOLLOWUP_MAX_AGE_MINUTES = 150
 VALIDATION_PREFETCH_TIMEOUTS = {
     "cargo_locked_fetch": 300,
     "go_locked_download": 300,
@@ -657,7 +658,29 @@ def sync_queue(path: Path = LEDGER_PATH) -> dict[str, Any]:
     try:
         followup = fetch_cloud_pr_followup()
         if followup.get("version") == "pr_followup_v3":
-            followup_import = {"status": "imported"} | store.import_pr_followups(followup)
+            generated_at = str(followup.get("generatedAt") or "")
+            generated_time = parse_time(generated_at)
+            age = datetime.now(UTC) - generated_time
+            if age < -timedelta(minutes=5):
+                raise RuntimeError("cloud PR follow-up state is from the future")
+            age_minutes = max(0, int(age.total_seconds() // 60))
+            if age > timedelta(minutes=CLOUD_PR_FOLLOWUP_MAX_AGE_MINUTES):
+                suspended = store.suspend_pr_followups(
+                    source_generated_at=generated_at,
+                    reason="CLOUD_PR_FOLLOWUP_STATE_STALE",
+                )
+                followup_import = {
+                    "status": "stale_suspended",
+                    "generatedAt": generated_at,
+                    "ageMinutes": age_minutes,
+                    "suspended": suspended,
+                }
+            else:
+                followup_import = {
+                    "status": "imported",
+                    "generatedAt": generated_at,
+                    "ageMinutes": age_minutes,
+                } | store.import_pr_followups(followup)
         else:
             followup_import = {"status": "awaiting_v3", "version": followup.get("version")}
     except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:

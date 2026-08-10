@@ -3702,6 +3702,42 @@ class RadarLedger:
             "staleHeadSuppressed": stale_head_suppressed,
         }
 
+    def suspend_pr_followups(self, *, source_generated_at: str, reason: str) -> list[str]:
+        """Stop task wakes when their verified cloud snapshot is too old."""
+
+        if not source_generated_at or not reason:
+            raise LedgerError("PR follow-up suspension evidence is incomplete")
+        parse_time(source_generated_at)
+        now = iso_z(datetime.now(UTC))
+        with self.transaction() as connection:
+            rows = connection.execute(
+                """SELECT opportunity_key FROM pr_followups
+                   WHERE followup_required=1
+                   ORDER BY opportunity_key"""
+            ).fetchall()
+            keys = [str(row["opportunity_key"]) for row in rows]
+            if not keys:
+                return []
+            connection.execute(
+                """UPDATE pr_followups
+                   SET followup_required=0,updated_at=?
+                   WHERE followup_required=1""",
+                (now,),
+            )
+            for key in keys:
+                self._event(
+                    connection,
+                    key,
+                    "PR_FOLLOWUP_SOURCE_STALE",
+                    sha256_text(f"{source_generated_at}|{reason}"),
+                    {
+                        "sourceGeneratedAt": source_generated_at,
+                        "reason": reason,
+                    },
+                    now,
+                )
+        return keys
+
     def pr_followup_candidates(self) -> list[dict[str, Any]]:
         with self.connect() as connection:
             rows = connection.execute(

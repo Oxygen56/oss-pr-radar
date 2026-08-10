@@ -94,6 +94,10 @@ new remote queue but never discards a valid local intent.
 
 Run `pr-followup-list` before dispatching new issues.
 
+If `sync` reports `prFollowup.status=stale_suspended`, the verified cloud PR
+snapshot is too old to authorize a task wake. Do not dispatch from an older
+local row or retry the same follow-up manually; fresh cloud state re-arms it.
+
 Entries under `activeDeferred` are already being handled by a recently active
 task. They are not failures and must not be reserved, resent, or reported as a
 stalled follow-up. Process only `candidates`.
