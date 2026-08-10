@@ -2564,6 +2564,34 @@
     ],
     "why": "Issue provides a clear root cause (upsert overwrite via client echo) and a concrete fix direction, but the proposed solution involves API design changes (delta transitions, revision checks) that need maintainer confirmation. No maintainer has approved or commented, and the contributor's offer to PR is pending. The issue is actionable but requires design confirmation before implementation."
   },
+  "2392c69f8890786ac9aa0f3f39a43eace74da5099c676240fcf93e3391841331": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "web/app/components/workflow/block-selector/agent-selector.tsx",
+      "web/app/components/workflow/nodes/agent-v2/components/agent-roster-field.tsx",
+      "possibly agent configure header component"
+    ],
+    "risks": [
+      "Existing PR #37405 may already cover the fix; need to compare implementation boundaries.",
+      "Potential additional call sites in built bundle not identified in source."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add a regression test that renders Agent icon with image type and asserts img src equals icon_url, not raw id.",
+      "Run targeted frontend unit tests for modified components."
+    ],
+    "unknowns": [
+      "Whether PR #37405 actually fixes the icon issue or only validates metadata.",
+      "Exact third call site in the built bundle."
+    ],
+    "why": "Issue provides a precise root cause (web passes raw icon id instead of icon_url) and a minimal fix. Existing PR #37405 overlaps semantically but is stale and not directly linked, leaving room for a better PR."
+  },
   "24574cab4d9b2ab5aec89cba1a427038a851f0dba3ce409dd47eb316fc8f3a64": {
     "confidence": 0.7,
     "contradictions": [],
@@ -10938,6 +10966,35 @@
     ],
     "why": "Issue reports a reproducible multi-node TP deadlock with strong evidence (NCCL spin signature, py-spy stacks, multiple reproductions) and a plausible root cause (TP divergence in MoE all-reduce). However, the issue is a bug report, not a code contribution; no patch is proposed. The deterministic gate requires HUMAN_REVIEW, and open PR/related issue lookups failed, so duplicate work cannot be excluded. Maintainer involvement is absent, and the root cause is not fully confirmed (NCCL build differences may be a workaround)."
   },
+  "8ab1baa9834e96953545c832dfbee21851bdcc417148d48de08294e5406359bc": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "MagenticWorkflowBuilder prompt overrides",
+      "orchestration progress ledger evaluation"
+    ],
+    "risks": [
+      "May be user configuration issue rather than framework bug",
+      "Changing prompt logic could affect existing behavior"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 13,
+    "test_plan": [
+      "Create minimal repro with empty tool results and manager instructions",
+      "Verify terminal condition stops replanning"
+    ],
+    "unknowns": [
+      "Exact manager instructions and minimal repro",
+      "Progress ledger JSON responses",
+      "Maintainer design preference on prompt overrides"
+    ],
+    "why": "Issue reports Magentic orchestration ignoring terminal conditions, but root cause is uncertain; maintainer suggests prompt override and requests more details. No open PR or related issue, but design confirmation and repro are needed."
+  },
   "8ae374a23c75ff234ff191864892cfb5b64c851d07c2bb3318b2f318babb73eb": {
     "confidence": 0.8,
     "contradictions": [],
@@ -18585,6 +18642,43 @@
     ],
     "why": "Issue provides a clear root cause: connection-refused is mapped to retryable NetworkError, and Ollama's generous retry budget causes ~2min delay. Maintainer confirms the behavior and discusses trade-offs, but no PR exists. A focused fix distinguishing permanent connection failures from transient network errors is actionable and testable."
   },
+  "ef021dcb900c76db421e150631f9c7f7fd3d0617e0aa3f9965693d452a4e252d": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Initial root cause (currentSpan guard) contradicted by later comment showing actual crash is in message conversion",
+      "Reporter claims guard is missing in releases, but main has it; later comments show guard did not fix the crash"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Filter undefined content entries in OpenAI-compatible message conversion",
+      "Add defensive null checks in provider converters",
+      "Preserve original stack in error-chunk re-throw",
+      "Backport the currentSpan guard to released versions"
+    ],
+    "risks": [
+      "Changing message conversion may alter behavior for other providers or edge cases",
+      "Defensive filtering might mask underlying issues in observational memory rewriting",
+      "Stack preservation changes may affect error handling in dependent code"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "test_plan": [
+      "Create a minimal reproduction with DurableAgent, observationalMemory auto, and an OpenAI-compatible provider that triggers the malformed content array after a buffering cycle",
+      "Add a unit test for convertToOpenAICompatibleChatMessages with content arrays containing undefined entries",
+      "Add a regression test for error-chunk re-throw preserving the original stack",
+      "Run existing durable agent and model router test suites"
+    ],
+    "unknowns": [
+      "Maintainer's preferred fix approach and whether they will accept a PR without prior design confirmation",
+      "Whether the undefined content entry is caused by a bug in observational memory rewriting that should be fixed at the source",
+      "Exact conditions for the malformed content array beyond the reporter's description"
+    ],
+    "why": "The issue reports a production crash in DurableAgent inference, with a detailed root-cause analysis pointing to a missing guard in released versions and a deeper bug in message conversion after observational-memory buffering. However, the reporter's own follow-up comments reveal that the initial root cause was incorrect and the actual crash originates from an undefined content entry in OpenAI-compatible message conversion. The maintainer has only labeled the issue for triage, and no maintainer has confirmed the design or approved a fix. The proposed fixes are plausible but require maintainer confirmation on the preferred approach (e.g., filtering undefined parts vs. defensive converter changes) and a release plan. The issue is actionable but needs maintainer input to avoid conflicting with existing design decisions."
+  },
   "ef1188aea5cf13d9e35f91a21cbf33c213840ab48c10192b00b3dc1df3b3a641": {
     "confidence": 0.7,
     "contradictions": [],
@@ -19203,6 +19297,39 @@
       "Whether maintainers intend to support the reported CLI usage without --model-type"
     ],
     "why": "Issue reports a CLI argument error for MiniMax-H3 in sglang serve, but comments indicate a workaround (adding --model-type diffusion) and a merged PR (#33365) that may already address the root cause. The open PR lookup timed out, so competition status is unknown. The issue is a user-facing bug with a clear repro, but the fix may already be merged or require maintainer confirmation on intended CLI behavior."
+  },
+  "f759c47b1a678e9098887e15181bb2f15de855fd93cdd408b1f94a4bc172b3fe": {
+    "confidence": 0.7,
+    "contradictions": [
+      "The issue title mentions v0.5.17 but the log shows speculative_algorithm='EAGLE' despite the command using NEXTN; this may be a log artifact or a separate issue."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify ModelSlimConfig.get_moe_scheme to allow FLOAT fallback for MTP layers",
+      "Add handling for mixed quantization (W8A8 main, FP/BF16 MTP) in model loading and inference"
+    ],
+    "risks": [
+      "Potential performance regression if MTP layers are not quantized",
+      "Mixed precision handling may introduce numerical inconsistencies",
+      "Existing PR #28666 may already address this; need to compare before starting"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 13,
+    "test_plan": [
+      "Reproduce with the provided command on NPU with the specified model",
+      "Add a unit test for get_moe_scheme with FLOAT schemes for MTP layers",
+      "Run a small-scale integration test with a tiny ModelSlim model to verify MTP speculative decoding works"
+    ],
+    "unknowns": [
+      "Whether maintainers intend to support mixed quantization for MTP",
+      "Whether PR #28666 actually fixes this issue or is unrelated",
+      "Exact code changes needed in modelslim.py and related files"
+    ],
+    "why": "The issue reports a clear bug: ModelSlim W8A8 main model with FP/BF16 MTP layers fails because get_moe_scheme rejects FLOAT schemes. The root cause is plausible but requires maintainer confirmation on intended mixed quantization support. Existing PR #28666 has semantic overlap but is not directly linked, and its technical completeness is unverified. The deterministic gate is HUMAN_REVIEW, so no upgrade."
   },
   "f75d87c7b36897fce4b17953c9afaf8627e0e3c82cd1be1203b55fb2b2522ef1": {
     "confidence": 0.8,
