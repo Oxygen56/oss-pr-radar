@@ -164,6 +164,10 @@ def test_transient_unknown_mergeability_preserves_known_conflict():
     assert repeated_state["items"][0]["actions"] == ["分支存在合并冲突"]
     assert repeated_state["items"][0]["evidence"]["baseRefName"] == "main"
     assert repeated_state["items"][0]["evidence"]["baseSha"] == "base"
+    assert (
+        repeated_state["items"][0]["evidence"]["mergeConflictPreparationVersion"]
+        == "conflict_files_v1"
+    )
 
 
 def test_new_base_head_rearms_an_existing_merge_conflict():

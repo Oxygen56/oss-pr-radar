@@ -2345,7 +2345,7 @@ def _upstream_remote(worktree: Path, repo: str) -> str:
     raise RuntimeError("managed worktree has no upstream remote")
 
 
-def _prepare_pr_followup(candidate: dict[str, Any]) -> str:
+def _prepare_pr_followup(candidate: dict[str, Any]) -> dict[str, Any]:
     worktree = Path(candidate["worktreePath"]).resolve()
     match = re.fullmatch(r"https://github\.com/([^/]+/[^/]+)/pull/(\d+)", candidate["prUrl"])
     if not match:
@@ -2397,6 +2397,7 @@ def _prepare_pr_followup(candidate: dict[str, Any]) -> str:
             )
             if evidence.get("baseIntegrationRequired") is True or not fast_forward:
                 raise RuntimeError("PR base changed while preparing follow-up")
+            base_sha = fetched_base
     command(
         ["git", "fetch", "--quiet", "--no-tags", remote, f"pull/{number}/head"],
         cwd=worktree,
@@ -2410,8 +2411,36 @@ def _prepare_pr_followup(candidate: dict[str, Any]) -> str:
         command(["git", "switch", "--detach", fetched], cwd=worktree)
         command(["git", "branch", "-f", branch, fetched], cwd=worktree)
         command(["git", "switch", branch], cwd=worktree)
+    prepared = {"preparedHeadSha": fetched}
+    if evidence.get("mergeConflict") is True:
+        completed = subprocess.run(
+            ["git", "merge", "--no-ff", "--no-commit", base_sha],
+            cwd=worktree,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        conflicts = sorted(
+            line
+            for line in command(
+                ["git", "diff", "--name-only", "--diff-filter=U"], cwd=worktree
+            ).splitlines()
+            if line
+        )
+        _optional_command(["git", "merge", "--abort"], cwd=worktree)
+        if completed.returncode != 1 or not conflicts:
+            raise RuntimeError("PR merge conflict no longer reproduces on the prepared base")
+        if command(["git", "rev-parse", "HEAD"], cwd=worktree) != fetched:
+            raise RuntimeError("PR conflict preparation changed the branch head")
+        if command(["git", "status", "--porcelain"], cwd=worktree):
+            raise RuntimeError("PR conflict preparation did not restore a clean worktree")
+        return prepared | {
+            "preparedBaseSha": base_sha,
+            "mergeConflictFiles": conflicts,
+        }
     if evidence.get("baseIntegrationRequired") is not True:
-        return fetched
+        return prepared
 
     ancestor = subprocess.run(
         ["git", "merge-base", "--is-ancestor", base_sha, fetched],
@@ -2422,7 +2451,7 @@ def _prepare_pr_followup(candidate: dict[str, Any]) -> str:
         timeout=30,
     )
     if ancestor.returncode == 0:
-        return fetched
+        return prepared | {"preparedBaseSha": base_sha}
     if ancestor.returncode != 1:
         raise RuntimeError("cannot verify PR base ancestry")
     completed = subprocess.run(
@@ -2441,7 +2470,7 @@ def _prepare_pr_followup(candidate: dict[str, Any]) -> str:
         _optional_command(["git", "rev-parse", "-q", "--verify", "MERGE_HEAD"], cwd=worktree)
         is None
     ):
-        return fetched
+        return prepared | {"preparedBaseSha": base_sha}
     name = command(["git", "config", "user.name"], cwd=worktree)
     email = command(["git", "config", "user.email"], cwd=worktree)
     if not name or not email:
@@ -2462,7 +2491,7 @@ def _prepare_pr_followup(candidate: dict[str, Any]) -> str:
         raise RuntimeError("PR base integration commit parent binding failed")
     if command(["git", "status", "--porcelain"], cwd=worktree):
         raise RuntimeError("PR base integration did not leave a clean worktree")
-    return prepared
+    return {"preparedHeadSha": prepared, "preparedBaseSha": base_sha}
 
 
 def pr_followup_reserve(args: argparse.Namespace) -> dict[str, Any]:
@@ -2477,11 +2506,14 @@ def pr_followup_reserve(args: argparse.Namespace) -> dict[str, Any]:
     )
     if candidate is None:
         raise RuntimeError("PR follow-up authorization is stale or invalid")
-    prepared_head = _prepare_pr_followup(candidate)
+    prepared = _prepare_pr_followup(candidate)
+    prepared_head = str(prepared["preparedHeadSha"])
     reserved = store.reserve_pr_followup(
         thread_id=candidate["threadId"],
         wake_digest=candidate["wakeDigest"],
         prepared_head_sha=prepared_head,
+        prepared_base_sha=prepared.get("preparedBaseSha"),
+        merge_conflict_files=prepared.get("mergeConflictFiles"),
     )
     context_path = write_task_context(
         store,

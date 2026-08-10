@@ -3801,7 +3801,13 @@ class RadarLedger:
         }
 
     def reserve_pr_followup(
-        self, *, thread_id: str, wake_digest: str, prepared_head_sha: str | None = None
+        self,
+        *,
+        thread_id: str,
+        wake_digest: str,
+        prepared_head_sha: str | None = None,
+        prepared_base_sha: str | None = None,
+        merge_conflict_files: list[str] | None = None,
     ) -> dict[str, Any]:
         candidate = next(
             (
@@ -3815,6 +3821,32 @@ class RadarLedger:
             raise LedgerError("PR follow-up authorization is stale or invalid")
         if prepared_head_sha is not None and not re.fullmatch(r"[0-9a-f]{40}", prepared_head_sha):
             raise LedgerError("PR follow-up prepared head is invalid")
+        snapshot_candidate = candidate
+        if prepared_base_sha is not None:
+            if not re.fullmatch(r"[0-9a-f]{40}", prepared_base_sha):
+                raise LedgerError("PR follow-up prepared base is invalid")
+            evidence = dict(candidate["evidence"])
+            original_base_sha = str(evidence.get("baseSha") or "")
+            if evidence.get("mergeConflict") is not True:
+                if prepared_base_sha != original_base_sha:
+                    raise LedgerError("PR follow-up prepared base changed unexpectedly")
+            elif prepared_base_sha != original_base_sha:
+                evidence["baseAdvancedFromSha"] = original_base_sha
+                evidence["baseSha"] = prepared_base_sha
+            if merge_conflict_files is not None:
+                normalized = sorted(set(merge_conflict_files))
+                if not normalized or any(
+                    not isinstance(path, str)
+                    or not path
+                    or Path(path).is_absolute()
+                    or ".." in Path(path).parts
+                    for path in normalized
+                ):
+                    raise LedgerError("PR follow-up conflict files are invalid")
+                evidence["mergeConflictFiles"] = normalized
+            snapshot_candidate = candidate | {"evidence": evidence}
+        elif merge_conflict_files is not None:
+            raise LedgerError("PR follow-up conflict files lack a prepared base")
         with self.transaction() as connection:
             self._event(
                 connection,
@@ -3833,12 +3865,12 @@ class RadarLedger:
                     {
                         "threadId": thread_id,
                         "snapshot": self._pr_followup_snapshot(
-                            candidate, prepared_head_sha=prepared_head_sha
+                            snapshot_candidate, prepared_head_sha=prepared_head_sha
                         ),
                     },
                     iso_z(datetime.now(UTC)),
                 )
-        return candidate
+        return snapshot_candidate
 
     def unbound_pr_followup_preparations(self) -> list[dict[str, Any]]:
         """Return sent follow-ups created before prepared snapshots were durable."""

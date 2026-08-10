@@ -140,9 +140,11 @@ receiving their own worktrees.
   or branch-attributable failed check creates a
   durable wake digest. The controller prepares the exact live PR head, refreshes
   the private task context, and, for conflicts, aligns the signed target-branch
-  head before sending the canonical prompt to the original task. A changed base
-  head creates a new wake digest. The wake receipt is committed only after that
-  send succeeds.
+  head and records the complete conflict-file set from a temporary merge before
+  restoring a clean worktree and sending the canonical prompt to the original
+  task. A fast-forwarding target branch is captured in that prepared snapshot;
+  a divergent or rewritten base is rejected. A changed base head creates a new
+  wake digest. The wake receipt is committed only after that send succeeds.
 - A validated follow-up patch creates a `PR_UPDATE` publication request bound to
   the exact existing PR URL, public branch, and previous remote head. The
   executor permits only a fast-forward push and verifies that the same open PR

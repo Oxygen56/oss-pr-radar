@@ -2094,7 +2094,7 @@ def test_pr_followup_reserve_refreshes_context_and_uses_canonical_prompt(monkeyp
 
     def prepare(value):
         prepared.append(value)
-        return "b" * 40
+        return {"preparedHeadSha": "b" * 40}
 
     monkeypatch.setattr(MODULE, "_prepare_pr_followup", prepare)
 
@@ -2128,6 +2128,53 @@ def test_pr_followup_reserve_refreshes_context_and_uses_canonical_prompt(monkeyp
     assert refreshed["prFollowup"]["preparedHeadSha"] == "b" * 40
     assert refreshed["contextDigest"] == context["contextDigest"]
     assert store.pr_followup_candidates() == []
+
+
+def test_pr_followup_reserve_binds_controller_verified_conflict_files(tmp_path):
+    store, worktree, head_sha, pr_url = _published_followup_store(tmp_path)
+    now = iso_z(datetime.now(UTC))
+    store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": now,
+            "items": [
+                {
+                    "url": pr_url,
+                    "headSha": head_sha,
+                    "actionDigest": "conflict-action",
+                    "taskActionDigest": "conflict-task-action",
+                    "taskFollowupRequired": True,
+                    "taskActions": ["分支存在合并冲突"],
+                    "evidence": {
+                        "mergeConflict": True,
+                        "baseRefName": "main",
+                        "baseSha": "a" * 40,
+                        "mergeConflictPreparationVersion": "conflict_files_v1",
+                    },
+                    "checkedAt": now,
+                }
+            ],
+        }
+    )
+    candidate = store.pr_followup_candidates()[0]
+
+    store.reserve_pr_followup(
+        thread_id="thread-1",
+        wake_digest=candidate["wakeDigest"],
+        prepared_head_sha=head_sha,
+        prepared_base_sha="b" * 40,
+        merge_conflict_files=["src/two.py", "src/one.py"],
+    )
+    context = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+
+    assert context["prFollowup"]["preparedHeadSha"] == head_sha
+    assert context["prFollowup"]["evidence"]["baseAdvancedFromSha"] == "a" * 40
+    assert context["prFollowup"]["evidence"]["baseSha"] == "b" * 40
+    assert context["prFollowup"]["evidence"]["mergeConflictFiles"] == [
+        "src/one.py",
+        "src/two.py",
+    ]
+    assert worktree.is_dir()
     assert store.unresolved_pr_followups()
 
 
@@ -2348,8 +2395,9 @@ def test_prepare_pr_followup_accepts_fast_forwarded_base(monkeypatch, tmp_path):
     run_git(worktree, "push", "origin", "HEAD:refs/heads/fix/1-runtime")
     run_git(remote, "update-ref", "refs/pull/9/head", live_head)
     run_git(worktree, "switch", "--detach", baseline)
+    source.write_text("value = 3\n", encoding="utf-8")
     (worktree / "base.py").write_text("base = 2\n", encoding="utf-8")
-    run_git(worktree, "add", "base.py")
+    run_git(worktree, "add", "runtime.py", "base.py")
     run_git(worktree, "commit", "-m", "chore: advance base")
     live_base = run_git(worktree, "rev-parse", "HEAD")
     run_git(worktree, "push", "origin", f"{live_base}:refs/heads/main")
@@ -2358,7 +2406,7 @@ def test_prepare_pr_followup_accepts_fast_forwarded_base(monkeypatch, tmp_path):
     run_git(worktree, "branch", "-f", "fix/1-runtime", baseline)
     monkeypatch.setattr(MODULE, "_upstream_remote", lambda *_args: "origin")
 
-    MODULE._prepare_pr_followup(
+    prepared = MODULE._prepare_pr_followup(
         {
             "prUrl": "https://github.com/a/b/pull/9",
             "worktreePath": str(worktree),
@@ -2372,6 +2420,11 @@ def test_prepare_pr_followup_accepts_fast_forwarded_base(monkeypatch, tmp_path):
         }
     )
 
+    assert prepared == {
+        "preparedHeadSha": live_head,
+        "preparedBaseSha": live_base,
+        "mergeConflictFiles": ["runtime.py"],
+    }
     assert run_git(worktree, "rev-parse", "HEAD") == live_head
     assert run_git(worktree, "branch", "--show-current") == "fix/1-runtime"
     assert run_git(worktree, "rev-parse", "refs/remotes/origin/main") == live_base
@@ -2428,7 +2481,7 @@ def test_prepare_pr_followup_creates_local_base_integration_commit(monkeypatch, 
     run_git(worktree, "switch", "fix/1-runtime")
     monkeypatch.setattr(MODULE, "_upstream_remote", lambda *_args: "origin")
 
-    prepared = MODULE._prepare_pr_followup(
+    preparation = MODULE._prepare_pr_followup(
         {
             "prUrl": "https://github.com/a/b/pull/9",
             "worktreePath": str(worktree),
@@ -2443,6 +2496,8 @@ def test_prepare_pr_followup_creates_local_base_integration_commit(monkeypatch, 
         }
     )
 
+    prepared = preparation["preparedHeadSha"]
+    assert preparation["preparedBaseSha"] == live_base
     assert prepared == run_git(worktree, "rev-parse", "HEAD")
     assert prepared != live_head
     assert run_git(worktree, "rev-list", "--parents", "-n", "1", "HEAD").split()[1:] == [
