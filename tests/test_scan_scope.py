@@ -18,6 +18,7 @@ def test_fixed_scope_covers_mature_agent_ecosystem_domains():
     assert {
         "google/adk-python",
         "OpenHands/OpenHands",
+        "bytedance/deer-flow",
         "camel-ai/camel",
         "mastra-ai/mastra",
     } <= AGENT_RUNTIME_REPOS

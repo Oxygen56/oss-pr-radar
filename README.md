@@ -59,14 +59,14 @@ discovery quality.
 
 ## Scan Scope
 
-Every hour directly polls 74 mature repositories and also runs bounded dynamic
+Every hour directly polls 75 mature repositories and also runs bounded dynamic
 GitHub searches for Agent/AI-infrastructure and LLM-algorithm repositories outside
 the curated list. The fixed scope is grouped by the code surface it contributes:
 
 ```text
 Agent runtimes:
   LangGraph, PydanticAI, AutoGen, Agent Framework, smolagents, LlamaIndex,
-  Agno, CrewAI, mem0, OpenHands, Letta, Haystack, DSPy, Google ADK
+  Agno, CrewAI, mem0, OpenHands, DeerFlow, Letta, Haystack, DSPy, Google ADK
   (Python/Java/JS), Strands Agents, CAMEL, Mastra, AgentScope, browser-use
 
 Tools, MCP, coding, browser, and realtime agents:
