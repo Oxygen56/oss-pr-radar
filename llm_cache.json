@@ -4657,6 +4657,35 @@
     ],
     "why": "Issue reports a clear user-visible bug with a detailed root cause: delayed registry-to-GUI projection overwrites newly added models. The bug is reproducible and affects key provider configuration paths. No competing PR or issue found, and the maintainer gate allows work."
   },
+  "3c16064f1a321d98c08fac36bc38b14f3c86b52412e72e438a68670d932e9b3f": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Commenter suggests URL fix, reporter says it persists across URL styles"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "LiteLLM proxy /v1/models response format adjustment",
+      "Documentation for VSCode BYOK configuration"
+    ],
+    "risks": [
+      "Changing /v1/models response format may break other clients",
+      "Fix may be in VSCode, not LiteLLM, making it out of scope"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with VSCode BYOK custom endpoint against LiteLLM proxy, capture actual request/response, verify /v1/models returns expected format"
+    ],
+    "unknowns": [
+      "Actual request URL and response body from VSCode logs",
+      "Maintainer's intended fix scope"
+    ],
+    "why": "The issue reports a VSCode BYOK integration failure with LiteLLM proxy, but the root cause is unclear: a commenter suggests a URL configuration issue, while the reporter says it persists across URL styles. The problem may be in VSCode's client behavior or LiteLLM's /v1/models response format, requiring maintainer confirmation of the intended fix scope."
+  },
   "3d0361391570622fede68057f4bb0740c07182310bb67c59a54c55ee87b65870": {
     "confidence": 0.6,
     "contradictions": [],
@@ -6743,6 +6772,34 @@
       "The outcome of the maintainer's investigation into the mutation boundary"
     ],
     "why": "The issue is a real bug with clear user impact, but the maintainer has explicitly linked PR #6582 as the current candidate and requested further investigation. Recent counter-evidence shows the sanitizer fix does not cover all send paths, so the root cause is not fully identified. The maintainer is actively investigating and has not invited a second implementation."
+  },
+  "578c66fb09434b57065fd204306f8025e83dea845103a4157d06a42448d2b5cd": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify timeTravel() to resolve inputs against the recorded graph or refuse on mismatch",
+      "Prevent persisting reconstructed snapshots when predecessor lookups miss"
+    ],
+    "risks": [
+      "Changing timeTravel behavior may break existing retry workflows",
+      "Deterministic mapping IDs could affect workflow identity and scheduling"
+    ],
+    "root_cause_clarity": "high",
+    "score": 16,
+    "test_plan": [
+      "Run the provided minimal reproduction with two processes to confirm snapshot overwrite",
+      "Add regression test for step-id divergence (e.g., renamed step) ensuring snapshot integrity"
+    ],
+    "unknowns": [
+      "Maintainer design preference on fix approach",
+      "Whether this is considered an algorithm issue by the project"
+    ],
+    "why": "The issue describes a clear data-loss bug in timeTravel() with a precise mechanism and reproduction, but it is a workflow engine bug rather than an LLM algorithm issue. The track requires algorithm-specific validation, which is absent. Maintainer triage is pending, and design confirmation is needed for the fix direction."
   },
   "578f9687d69535676d3127f46c044fa6c3f566b6c642291ef3667284300bdf51": {
     "confidence": 0.7,
@@ -15976,6 +16033,31 @@
     ],
     "why": "Issue reports a runtime error with a complex multi-GPU configuration but lacks a clear root cause, minimal reproduction, or maintainer confirmation. The algorithm evidence is superficial (matched terms like 'attention' and 'tensor parallel') and does not establish a concrete algorithmic defect. Open PR and related issue lookups timed out, so duplicate work cannot be excluded."
   },
+  "d774fbf259e56c736ade92b8766dc3baf0e73612ee5e027652c24b41ce2d0535": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Fix missing module import or packaging for agentscope.app._service._download_token",
+      "Add regression test for example agent_service startup"
+    ],
+    "risks": [
+      "Potential maintainer preference on module structure; fix might require broader packaging changes if module is intentionally removed"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "test_plan": [
+      "Run the provided reproduction command (uv python run examples/agent_service/main.py) and confirm the error disappears",
+      "Add a unit test that imports the module or starts the service to prevent regression"
+    ],
+    "unknowns": [
+      "Exact cause of missing module (deleted file, incorrect import, or packaging omission) is not identified in the issue"
+    ],
+    "why": "The issue reports a clear ModuleNotFoundError for 'agentscope.app._service._download_token' when running an example, indicating a missing module or import error in the agent service path. This is a user-visible bug with a concrete reproduction command, and no competing PR or issue exists. The fix is likely a small import or packaging correction, making it actionable."
+  },
   "d7782a7af9fa02faaef68dbc3ec04a0b69a7c5255f744b039b3460a3e9b4f9ff": {
     "confidence": 0.85,
     "contradictions": [],
@@ -17409,6 +17491,34 @@
       "Whether existing PR #33449 can be improved or should be superseded"
     ],
     "why": "Issue provides a clear root cause and reproduction, but the deterministic gate requires HUMAN_REVIEW and the related issue audit timed out. An existing PR (#33449) directly addresses the issue but has failing CI, so maintainer guidance is needed before starting a competing PR."
+  },
+  "e6e87b063d38fd174859437a5da3e3521a1b38850f1ef57170553ee92e3e9725": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Fix FSDP inference sharding/synchronization in fsdp_load.py",
+      "Add regression test for multi-GPU FSDP inference with MiniMax-H3"
+    ],
+    "risks": [
+      "Bug may be hardware-specific (H20) and not reproducible on other GPUs",
+      "Root cause may be in upstream torch FSDP, requiring dependency changes"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "test_plan": [
+      "Reproduce with provided server command and request on 8x H20",
+      "Compare output metrics (mean, std, correlation) between FSDP=true and false",
+      "Add a unit test with small model and synthetic data to verify shard consistency"
+    ],
+    "unknowns": [
+      "Exact root cause (sharding vs reduce_dtype vs checkpoint) not yet identified",
+      "Whether the bug reproduces on other GPU types or with smaller model sizes"
+    ],
+    "why": "Issue reports a silent corruption in FSDP inference for MiniMax-H3, with a clear reproduction and measured symptom differences. The code path is identified (fsdp_load.py, shard_model), and the bug is likely a distributed sharding/synchronization invariant violation. No competing PR addresses this specific bug; existing PRs are unrelated or only keyword-overlap. The track is llm_algorithm with mechanisms distributed_training and numerics_quantization, and the issue supports a reference-vs-implementation test (FSDP=false vs true)."
   },
   "e707f1a08777a6af2c11d3750d0aea71ef11493033361b98eb9989caf994a57d": {
     "confidence": 0.85,
