@@ -7590,6 +7590,32 @@
     ],
     "why": "Issue provides a clear root cause and deterministic repro for a real startup crash, but the deterministic gate is HUMAN_REVIEW and the repo requires AI-use disclosure, blocking autonomous action. Existing PR #41834 overlaps semantically and may already address the root cause, so maintainer comparison is needed before starting new work."
   },
+  "614d6b816b8bca29aa32990d252197fea20edd3027c6766241e2ae37cb16969c": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Comment by Linxiushen suggests URL configuration fix, but reporter AndreasUpb says multiple URL styles fail."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Potential fix in LiteLLM proxy to handle VS Code's model discovery request pattern, or documentation update for correct URL configuration."
+    ],
+    "risks": [
+      "Changing proxy behavior to accommodate VS Code's non-standard request pattern could break other clients or introduce security issues."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Reproduce the issue with a minimal LiteLLM proxy and VS Code custom endpoint configuration, capturing the exact request URL and response body to confirm the failure."
+    ],
+    "unknowns": [
+      "Exact request URL and response body from VS Code when the error occurs; whether the issue is a LiteLLM bug or a VS Code configuration problem; maintainer's intended fix."
+    ],
+    "why": "The issue reports a user-facing bug where VS Code's custom endpoint cannot auto-load models from LiteLLM, but the root cause is unclear: a comment suggests a URL configuration issue, while the reporter says multiple URL styles fail. The issue is a usage/support problem rather than a clear code defect in LiteLLM, and no maintainer has confirmed a desired fix. The track is agent_ai_infra, not llm_algorithm, so algorithm evidence is not required, but the lack of a confirmed root cause and maintainer direction makes actionability low."
+  },
   "615cb814a1e7a188854b34263a5802040c3808520065673c46ed52394f2937d0": {
     "confidence": 0.7,
     "contradictions": [],
@@ -9429,6 +9455,33 @@
     ],
     "why": "The issue describes a concrete bug in the migration logic that can lead to model corruption, with a clear root cause and suggested fix. However, the maintainer's correction reveals that the bug is configuration-dependent and the fix scope is broader than initially stated, requiring design confirmation on how to handle both aria2 and non-aria2 paths."
   },
+  "761acec1881f2f24bef74431156356b1a60b0fc60c5a5f8c05a81f78692b74d6": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify StreamableHttpClientSessionTransport error handling to preserve HTTP status for non-JSON-RPC JSON bodies",
+      "Adjust ConnectAsync fallback logic to catch such cases"
+    ],
+    "risks": [
+      "May conflict with PR #1791; behavior change could affect other error handling paths"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Add regression test with a mock server returning the exact non-JSON-RPC 400 body",
+      "Run existing transport and connection tests"
+    ],
+    "unknowns": [
+      "Exact throw site in the client code",
+      "Whether PR #1791 already fixes this issue"
+    ],
+    "why": "Issue describes a real fallback failure for non-JSON-RPC 400 bodies, but root cause is not pinpointed and existing PR #1791 likely overlaps. Maintainer review is needed to avoid duplicate work."
+  },
   "762cf2305b4b37a8f61882d4c8f68dd26f9a5d1a90456ca0b6e2a011e24c3609": {
     "confidence": 0.8,
     "contradictions": [
@@ -10004,6 +10057,37 @@
       "Exact code path causing the issue"
     ],
     "why": "Issue reports a clear bug: nested Pydantic models in dicts ignore serialize_by_alias=False. No open PR or related issue found, but the repository requires assignment and AI disclosure. Root cause is not yet confirmed; likely in serialization path for nested models."
+  },
+  "811d8589939ea6ca21d9447f4eb0dd7a534f51351d0c5cda2534c5f1ff18a750": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims no solution found but references related issues #32691 and #24863"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Investigate and fix CUDA graph capture/replay or buffer sizing in speculative decoding path",
+      "Add boundary condition handling for context length limits"
+    ],
+    "risks": [
+      "Root cause may be in external CUDA graph or FA3 backend, not easily fixable in SGLang",
+      "Potential duplicate with existing issues requires maintainer triage"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 13,
+    "test_plan": [
+      "Create a minimal synthetic long-context test with NEXTN and CUDA graphs to reproduce the crash",
+      "Run regression tests with and without CUDA graphs to isolate the trigger"
+    ],
+    "unknowns": [
+      "Whether the bug persists on latest main",
+      "Exact root cause and minimal reproducer",
+      "Maintainer confirmation of issue validity and priority"
+    ],
+    "why": "The issue reports a reproducible CUDA illegal memory access near the context boundary with NEXTN and CUDA graphs, but root cause is unconfirmed and may overlap with existing issues #31023 and #33356. The deterministic gate requires HUMAN_REVIEW, and the lack of a minimal reproducer and maintainer confirmation blocks actionable implementation."
   },
   "8121fb423d96200503ac675f71b93e0ac908c68f147d22a6df33fd3ce3d96b75": {
     "confidence": 0.8,
@@ -12531,6 +12615,34 @@
     ],
     "why": "Issue provides a clear root cause and reproduction for a user-visible crash with TP>1, but the deterministic gate requires HUMAN_REVIEW and the related issue audit failed (timeout). A draft PR (#50894) exists with failed CI and incomplete evidence, so a new clean candidate is not appropriate without maintainer confirmation."
   },
+  "a548b9ad454f3bec0917ec7fcb87124bbe88f452d48f1bfeeeb26e3429b39709": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Replace global threading.Lock with contextvars or thread-local storage in openhands/sdk/llm/llm.py",
+      "Ensure litellm.modify_params is safely toggled per-context without race conditions",
+      "Add regression test for concurrent LLM calls to verify no serialization"
+    ],
+    "risks": [
+      "LiteLLM's global modify_params may not be safely used with contextvars if it reads the value in a different thread or context; need to verify LiteLLM internals",
+      "Changing lock behavior might introduce race conditions if other code paths rely on the lock for synchronization"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a test that simulates multiple concurrent LLM calls with a mock or slow provider, asserting that calls overlap in time (e.g., using threading events or asyncio.gather) and that modify_params is correctly set per context",
+      "Run existing unit tests for the LLM module to ensure no regressions"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred solution among the proposed options",
+      "Exact LiteLLM version and behavior of modify_params in async contexts"
+    ],
+    "why": "Issue identifies a clear performance bug: a class-level threading.Lock serializes all LLM calls, causing severe GPU idle time for local models. Root cause is precisely located in code, with concrete proposed solutions and a reproducible scenario. No competing PR or issue found, and the fix is localized and testable."
+  },
   "a57ce1d2ab337e3257aa76c6286e7979a6bb0088294130d9c6e7488a6550d8d0": {
     "confidence": 0.8,
     "contradictions": [
@@ -12587,6 +12699,30 @@
       "Open PR status unknown due to timeout; related issue audit failed; maintainer design preference not confirmed"
     ],
     "why": "The issue reports a user-visible bug with a plausible root cause (Gemini 3.5 API changes) and a concrete repro, but the fix requires design confirmation from maintainers (whether to map reasoning_effort to thinking_summaries or add Interactions API support). The deterministic gate is HUMAN_REVIEW, and open PR/related issue lookup failed, so duplicates cannot be excluded."
+  },
+  "a62ce468b89e46510e0260f69c9eeb85f8143b1a5cf90325fb73fd625d73386e": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add .gitattributes entry for patches/*.patch -text"
+    ],
+    "risks": [
+      "Potential impact on other tools that expect CRLF on Windows; maintainer may prefer a different approach."
+    ],
+    "root_cause_clarity": "high",
+    "score": 5,
+    "test_plan": [
+      "Verify on Windows with core.autocrlf=true that patch files are checked out with LF endings and pnpm install applies patches correctly."
+    ],
+    "unknowns": [
+      "Maintainer preference on .gitattributes vs alternative solutions; whether the repo has existing .gitattributes conventions."
+    ],
+    "why": "The issue identifies a clear root cause (core.autocrlf corrupts patch files) and proposes a concrete fix (.gitattributes entry). However, the deterministic gate requires HUMAN_REVIEW, and the maintainer has not confirmed the fix approach or assigned the issue. The proposed change is a config-only fix, which is low-risk but needs maintainer approval to ensure it aligns with repo conventions."
   },
   "a6ff5f2141ad8ab6215ace197e615b6110ec510ed6080dd2c44cb9ec99fb83e0": {
     "confidence": 0.7,
@@ -14231,6 +14367,31 @@
       "Maintainer preference among fix approaches (A/B/C) is not yet decided."
     ],
     "why": "The issue provides a deterministic reproduction and a fully isolated root cause with a clear failure chain. However, the deterministic gate is HUMAN_REVIEW, and the existing PR #20642 is closed unmerged with mergeable state blocked, indicating maintainer design decisions are pending. The fix requires choosing among vendoring, bundling, or upstream patching, which needs maintainer confirmation."
+  },
+  "c01f14ed1f6cd0ef9100001e55e3f2351e5d3903da38785389966e573828b0e3": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "pydantic_ai_slim/pydantic_ai/models/__init__.py",
+      "pydantic_ai_slim/pydantic_ai/images/_media_type.py"
+    ],
+    "risks": [
+      "Changing shared boundary may affect all model providers; need to ensure non-image URLs remain unchanged."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add regression tests covering honest HTML for .png, spoofed image/png, octet-stream with genuine image, redirects, and unfamiliar image MIME."
+    ],
+    "unknowns": [
+      "Maintainer preference on scope (images only vs all media types) and whether to accept unfamiliar image MIME types."
+    ],
+    "why": "Issue clearly identifies a security-relevant bug in shared download_item path with verified repro and suggested fix direction. However, existing PR #7334 already implements a fix but is auto-closed due to assignment policy; maintainer assignment/confirmation is required to proceed."
   },
   "c0ba76ae47e3750946c1e502ee01758f4b2e8ef175ba29fdd21b606f7296e429": {
     "confidence": 0.7,
@@ -16009,6 +16170,41 @@
       "Whether a narrower retry (only the two named codes) is acceptable without server changes"
     ],
     "why": "Issue describes a real user-visible bug with a concrete repro and expected behavior, but the proposed fix (client-side bounded retry) is undermined by a collaborator's finding that the shared-tier path does not honor clientMessageId, so idempotency is not guaranteed. This requires design confirmation on server-side deduplication or a narrower retry scope before implementation."
+  },
+  "d670f8b9eb6f0a067b371f5892a1b2560c051ac6fbc7ba970acf731461c052fe": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue title mentions vllm0.25 but traceback shows vllm_0.20 paths"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "open_pr_assessment.prs.47258"
+    ],
+    "expected_changes": [
+      "DeepGemm FP8 kernel integration",
+      "torch.compile/cudagraph compatibility",
+      "memory alignment handling"
+    ],
+    "risks": [
+      "PR #47258 may already fix the issue",
+      "Root cause may be in torch.compile not vLLM",
+      "Hardware-specific behavior"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 13,
+    "test_plan": [
+      "Reproduce with Qwen3-VL FP8 under cudagraph and torch.compile",
+      "Run with inductor disabled to confirm workaround",
+      "Compare with PR #47258 changes"
+    ],
+    "unknowns": [
+      "Exact vLLM version and hardware",
+      "Whether PR #47258 resolves the issue",
+      "Maintainer preference for fix approach"
+    ],
+    "why": "Issue reports a CUDA illegal memory access in DeepGemm FP8 kernel under torch.compile/cudagraph, with a hypothesis about TMA layout alignment. Existing PR #47258 overlaps semantically but is stale and lacks direct issue linkage. Maintainer comment suggests workaround, not root-cause fix. Need maintainer confirmation and comparison with PR before starting new work."
   },
   "d6f5c17e0a453451c25fd087020d0c4c4c9d041e8b8ad9a434f049f228f87ef8": {
     "confidence": 0.8,
