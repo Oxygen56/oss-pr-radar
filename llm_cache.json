@@ -25,6 +25,29 @@
     ],
     "why": "Issue reports an unrecognized arguments error for MiniMax-H3, but a comment suggests adding --model-type diffusion resolves it, indicating a usage/documentation gap rather than a clear code bug. The issue is not a PR and lacks maintainer confirmation or root cause analysis. Open PR and related issue lookups timed out, so duplicate work cannot be excluded."
   },
+  "0087d91f9c563fd811d6763cd8fd2f24da759dade2c345c11e6cf1417a2a4345": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "decision": "REJECT",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Streaming response handling in the chat completion API to flush content before tool_calls"
+    ],
+    "risks": [
+      "Potential impact on streaming performance or other response formats"
+    ],
+    "root_cause_clarity": "low",
+    "score": 2,
+    "test_plan": [
+      "Reproduce with the provided curl command and model; verify all content chunks are emitted before tool_calls"
+    ],
+    "unknowns": [
+      "Exact code path causing the truncation is not identified"
+    ],
+    "why": "The issue describes a streaming truncation bug in the chat completion API when both content and tool_calls are present. It is a usage/API behavior issue, not an LLM algorithm mechanism. The suggested fix is to flush pending text tokens before switching to tool calls, which is a streaming logic fix, not a training objective, model mechanism, or numerical method. The track requires concrete algorithm validation, which is absent."
+  },
   "00f07f62f9a6b4fc2a54e30266a227f510f7f3afd14f40118c02b45a31130e0d": {
     "confidence": 0.7,
     "contradictions": [
@@ -2541,6 +2564,38 @@
     ],
     "why": "Issue provides a clear root cause (upsert overwrite via client echo) and a concrete fix direction, but the proposed solution involves API design changes (delta transitions, revision checks) that need maintainer confirmation. No maintainer has approved or commented, and the contributor's offer to PR is pending. The issue is actionable but requires design confirmation before implementation."
   },
+  "24574cab4d9b2ab5aec89cba1a427038a851f0dba3ce409dd47eb316fc8f3a64": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify ModelSlimConfig.get_moe_scheme to allow FLOAT schemes for MTP layers",
+      "Add fallback to normal FP/BF16 MoE implementation for MTP layers",
+      "Possibly adjust quantization config handling for MTP vs main model"
+    ],
+    "risks": [
+      "May introduce performance regression if MTP layers are not quantized",
+      "Need to ensure mixed precision is supported on NPU kernels",
+      "Potential conflict with existing PR #32754 that touches similar code paths"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 13,
+    "test_plan": [
+      "Reproduce with Qwen3.6-35B-A3B-w8a8 on NPU with --speculative-algorithm NEXTN",
+      "Add unit test for get_moe_scheme with FLOAT MTP layers",
+      "Run integration test with MTP enabled to ensure model loads and inference works"
+    ],
+    "unknowns": [
+      "Whether maintainers intend to support mixed quantization for MTP or document as unsupported",
+      "Whether existing PR #32754 already addresses this issue partially",
+      "Exact behavior expected for MTP layers when main model is quantized"
+    ],
+    "why": "Issue reports a clear failure when using ModelSlim W8A8 main model with MTP speculative decoding on NPU, where MTP layers are stored as FLOAT and rejected by get_moe_scheme. The proposed fix (support mixed quantization) is plausible but requires design confirmation on whether MTP layers should fall back to FP/BF16 and how to handle quantization config sharing. Existing PR #32754 has semantic overlap but is not directly linked; maintainer review is needed to avoid duplicate work."
+  },
   "25066b07d1f7cda452b8737faa42d21033e07bc2bfd836691b46bd198f4530fe": {
     "confidence": 0.7,
     "contradictions": [],
@@ -5003,6 +5058,36 @@
       "Whether maintainers prefer a log-only fix or also want an event/frame emitted; whether the forced UserStoppedSpeakingFrame removal is a regression that needs addressing."
     ],
     "why": "The issue precisely identifies a dead code path in BaseInputTransport._audio_task_handler where the TimeoutError branch is empty, causing silent audio stalls. It provides a self-contained repro script and a concrete proposed fix (log once on stall and recovery) that addresses the original noise complaint. No competing PR exists."
+  },
+  "437024288ff99978f0f0cf6668010e47fcce3a43bec5ffa375be89e6208084c5": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify picoschema parser and resolver to parse validation mode as a closed enum/Literal",
+      "Update validator to handle strict/error alias and reject unknown modes at parse time",
+      "Add tests for warn/off/strict/error and unknown mode rejection",
+      "Update docs and runbook to canonical vocabulary"
+    ],
+    "risks": [
+      "Changing schema-definition-time behavior may break existing schemas that rely on silent fallback",
+      "Need to decide whether to accept 'error' as alias or reject it, requiring product input"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a failing test with a schema using validation: error and a missing required field, asserting passed: false and error_count >= 1",
+      "Add a test that an unknown validation mode (e.g., 'banana') raises a parse/definition error",
+      "Run existing picoschema tests to ensure warn/off behaviors are unchanged"
+    ],
+    "unknowns": [
+      "Maintainer preference on whether to accept 'error' as alias or reject it"
+    ],
+    "why": "The issue clearly identifies a stringly-typed validation mode that silently degrades unknown values to 'warn', with specific code locations and a concrete fix direction. The bug is user-visible, affects schema validation correctness, and is reproducible from source. No competing PR or related issue exists, and the maintainer has not yet responded, but the issue is actionable and well-scoped."
   },
   "449fdde3b0c5d7f226516460f4e888e7b2bd478490903a5049911142539c6a64": {
     "confidence": 0.6,
