@@ -1658,6 +1658,36 @@
     ],
     "why": "The issue identifies a deterministic contract mismatch in the live cloud provisioning smoke script: it expects a 202 with jobId while the shared tier returns 200 with no job, and pairing always fails on shared tier. The proposed fix is concrete: align the script with the shared-runtime contract, add fail-closed staging guards, and add regression tests. No competing PR exists, and the maintainer has not yet responded, but the issue is actionable and well-evidenced."
   },
+  "199eeece6509dafa6d3643c1a1ed0572c7dfb71f49fc2fde3ffd8d436aea1762": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue expects `glm-5.2[1m]` to work, but comments suggest it is a Claude Code client-side convention and should be stripped before sending."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Provider-specific model name normalization for Z.AI",
+      "Documentation update for Z.AI Coding Plan model naming"
+    ],
+    "risks": [
+      "Changing model name handling could affect other providers or break existing aliases.",
+      "The fix might be provider-side (Z.AI) rather than LiteLLM, making it out of scope."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 15,
+    "test_plan": [
+      "Add a regression test that sends `zai/glm-5.2[1m]` through the proxy and asserts the request to the provider uses `glm-5.2` (or a documented valid model code).",
+      "Run existing provider test suite for Z.AI and proxy integration tests."
+    ],
+    "unknowns": [
+      "Whether the Z.AI API accepts `glm-5.2[1m]` at all or expects a different model code.",
+      "Whether PR #35217 actually fixes this issue or is unrelated."
+    ],
+    "why": "The issue reports a user-visible bug with a clear repro, but the root cause is ambiguous: the `[1m]` suffix may be a Claude Code client-side convention that should be stripped before sending to the provider, or the provider may reject it. Existing PR #35217 has semantic overlap but is a draft with a large diff and no explicit link to this issue, requiring maintainer review to avoid duplicate work."
+  },
   "1a529736c5274daa720ebf934fbade8a20e08166bed3ceb0958eae778b531109": {
     "confidence": 0.8,
     "contradictions": [],
@@ -15698,6 +15728,21 @@
       "Maintainer preference on approach (spawn vs. lazy CUDA init)"
     ],
     "why": "The issue reports a CUDA fork-safety bug in trl vllm-serve with tensor_parallel_size > 1. The root cause is clear (fork start method with CUDA), but the track is llm_algorithm and the issue is operational/infrastructure rather than an algorithm mechanism. The supplied gate says HUMAN_REVIEW, and there is an existing PR (#6651) by a collaborator that may already address the issue, requiring maintainer comparison."
+  },
+  "d59b7e92a1a962be84395fcb8fa87777d5c825b462cdd58bdf8ce2ddbce54b6c": {
+    "confidence": 0.95,
+    "contradictions": [],
+    "decision": "REJECT",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [],
+    "risks": [],
+    "root_cause_clarity": "high",
+    "score": 1,
+    "test_plan": [],
+    "unknowns": [],
+    "why": "The issue is a straightforward API parameter validation bug (None vs bool) in the /v1/responses endpoint. It is an ordinary API plumbing fix, not an LLM algorithm contribution. The track requires concrete algorithm mechanisms (training objective, kernel, etc.), which are absent. The proposed fix is a simple default value fallback, not a reference-vs-implementation test or numerical regression."
   },
   "d5db1e3ff902d31b217b0739930132e3c6b835582f06ce8323eabb0925c5022a": {
     "confidence": 0.8,

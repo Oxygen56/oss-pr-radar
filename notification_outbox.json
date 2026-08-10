@@ -200,6 +200,14 @@
       "seenAt": "2026-08-09T02:39:28.931722Z",
       "stateId": "c7b7f7c5eb91f895d048dabd5134651c37ed386cd9df5cf6fe84aa85ae20a1e8"
     },
+    "review|BerriAI/litellm#32218": {
+      "category": "WAIT_MAINTAINER",
+      "digest": "1dde42b202c37cf98c41bf0b9cc2e124db6bbdd40be166a09aeec5fc33d205a1",
+      "kind": "review",
+      "scannerVersion": "oss_pr_radar_v42_terminal_feedback_revoke",
+      "seenAt": "2026-08-10T03:49:07.264971Z",
+      "stateId": "54c58ae05aada4f99cf0e323f110953a0a60ce5f79de65054153cce79159e149"
+    },
     "review|BerriAI/litellm#32769": {
       "category": "WAIT_MAINTAINER",
       "digest": "feec4868a558f76a9aa638fa452b006dd1db2ec84e7ed459eec0f10b4beb0694",
@@ -1858,11 +1866,11 @@
     },
     "watch|sgl-project/sglang#30554": {
       "category": "PR_FOLLOWUP",
-      "digest": "aeeb2a369be24fa014b6b1e71c903d255ce82120a2d1805248b46c2a9df3d99d",
+      "digest": "592d1f3f8b3500823185719f467523810c7bb07d53a4a7339c8f7a7b447aa100",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-10T02:40:06.192966Z",
-      "stateId": "7ebc8dfd408bc71090e46b60b3b145ca42a6d0a67713141abd9a2eb97e314c5a"
+      "seenAt": "2026-08-10T03:49:07.942321Z",
+      "stateId": "9eaecf4e6383367492581184a4f9ae356dcafed3b4e8985d181634c78f34e3f1"
     },
     "watch|sgl-project/sglang#33217": {
       "legacy": true,
@@ -1914,11 +1922,11 @@
     },
     "watch|sgl-project/sglang#34138": {
       "category": "PR_FOLLOWUP",
-      "digest": "0f50a66664c3c2356e215ad67fd564a58dcd77c80b0e1da95e585e9a9b30e127",
+      "digest": "ee56b0c630de8b3317982af7f6d6b7d39f7296db69269c11f02ae973071d7178",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-10T02:40:06.192966Z",
-      "stateId": "e508123950e9de719a77233f062cda828e1698d37a1dd164bdd57dde59be763c"
+      "seenAt": "2026-08-10T03:49:07.942321Z",
+      "stateId": "54a743922907c2c787d0ea67f9b33ed861aea5e1684e3c3a19f1c10b6a492061"
     },
     "watch|usekaneo/kaneo#1484": {
       "legacy": true,
@@ -1997,7 +2005,7 @@
       "seenAt": "2026-08-06T10:09:13.778625Z"
     }
   },
-  "digest": "1f0889ab55fd39197d0c6a87d055f595811a510194cd49bcb8a5372f4b7fc941",
+  "digest": "53627e672526d5799830f5f0dc2a6d34b7349d9a280d6c4a312d7d2a3c9f0da1",
   "events": [
     {
       "attempts": 1,
@@ -23219,9 +23227,95 @@
       "runId": "pr-followup-1786329443",
       "sentAt": "2026-08-10T02:40:37.072320Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "BerriAI/litellm#32218"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "1dde42b202c37cf98c41bf0b9cc2e124db6bbdd40be166a09aeec5fc33d205a1",
+          "key": "BerriAI/litellm#32218",
+          "kind": "review",
+          "scannerVersion": "oss_pr_radar_v42_terminal_feedback_revoke",
+          "stateId": "54c58ae05aada4f99cf0e323f110953a0a60ce5f79de65054153cce79159e149"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#32218](https://github.com/BerriAI/litellm/issues/32218) [Bug]: Z.AI Coding Plan docs advertise `glm-5.2[1m]`, but LiteLLM proxy requests return `Unknown Model`**\n建议：WAIT_MAINTAINER | 分数：15\n价值：The issue reports a user-visible bug with a clear repro, but the root cause is ambiguous: the `[1m]` suffix may be a Claude Code client-side convention that should be stripped before sending to the provider, or the provider may reject it. Existing PR #35217 has semantic overlap but is a draft with a large diff and no explicit link to this issue, requiring maintainer review to avoid duplicate work.\n改动：Provider-specific model name normalization for Z.AI；Documentation update for Z.AI Coding Plan model naming\n验证：Add a regression test that sends `zai/glm-5.2[1m]` through the proxy and asserts the request to the provider uses `glm-5.2` (or a documented valid model code).；Run existing provider test suite for Z.AI and proxy integration tests.\n风险：Changing model name handling could affect other providers or break existing aliases.；The fix might be provider-side (Z.AI) rather than LiteLLM, making it out of scope.\n竞争：发现 PR #35217 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 14，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-10T03:49:07.264971Z",
+      "eventId": "3502ba3909fe403ac485e8acb84e9b5f9d5e20c74c133cf9ceba5e290072b44e",
+      "idempotencyKey": "3502ba3909fe403ac485e8acb84e9b5f9d5e20c74c133cf9ce",
+      "kind": "review",
+      "runId": "scan-20260810T034708Z-1d61d0a45cb2",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "sgl-project/sglang#34138"
+      ],
+      "candidateStates": [
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "ee56b0c630de8b3317982af7f6d6b7d39f7296db69269c11f02ae973071d7178",
+          "key": "sgl-project/sglang#34138",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "54a743922907c2c787d0ea67f9b33ed861aea5e1684e3c3a19f1c10b6a492061"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#34138](https://github.com/sgl-project/sglang/pull/34138) Bind streaming abort cleanup to request lifecycle**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-10T03:49:07.942321Z",
+      "eventId": "308aca7c118fd379d2ed99c8be1e47395ced691d92ce5407da39dc686ec27b00",
+      "idempotencyKey": "308aca7c118fd379d2ed99c8be1e47395ced691d92ce5407da",
+      "kind": "watch",
+      "runId": "pr-followup-1786333573",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-10T02:40:06.192966Z",
+  "generatedAt": "2026-08-10T03:49:07.942321Z",
   "newEventCount": 1,
   "version": "notification_outbox_v2"
 }
