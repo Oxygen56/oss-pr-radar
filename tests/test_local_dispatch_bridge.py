@@ -1558,6 +1558,105 @@ def test_pr_followup_list_defers_recently_active_threads(monkeypatch, tmp_path):
     assert result["activeDeferred"][0]["reason"] == "thread_recently_active"
 
 
+def test_pr_followup_abandons_only_when_no_target_turn_materialized(monkeypatch, tmp_path):
+    now = datetime.now(UTC)
+    reserved_at = iso_z(now - timedelta(hours=2))
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute("CREATE TABLE threads (id TEXT, updated_at INTEGER)")
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?)",
+            ("thread-1", int((now - timedelta(hours=3)).timestamp())),
+        )
+
+    class Store:
+        abandoned = None
+
+        def pr_followup_candidates(self):
+            return []
+
+        def unresolved_pr_followups(self):
+            return [
+                {
+                    "key": "a/b#1",
+                    "thread_id": "thread-1",
+                    "pr_url": "https://github.com/a/b/pull/2",
+                    "wake_digest": "a" * 64,
+                    "created_at": reserved_at,
+                }
+            ]
+
+        def abandon_pr_followup_delivery(self, **kwargs):
+            self.abandoned = kwargs
+            return {"replacementWakeDigest": "b" * 64}
+
+    store = Store()
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    args = SimpleNamespace(
+        ledger=tmp_path / "ledger.sqlite3",
+        min_age_minutes=90,
+    )
+    probe = MODULE.pr_followup_list(args)
+    unresolved = probe["unresolved"][0]
+
+    result = MODULE.pr_followup_abandon(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            thread_id="thread-1",
+            wake_digest="a" * 64,
+            abandon_nonce=unresolved["abandonNonce"],
+            reason="TARGET_TURN_NOT_MATERIALIZED",
+            min_age_minutes=90,
+        )
+    )
+
+    assert result["abandoned"] is True
+    assert result["replacementWakeDigest"] == "b" * 64
+    assert store.abandoned == {
+        "thread_id": "thread-1",
+        "wake_digest": "a" * 64,
+        "reason": "TARGET_TURN_NOT_MATERIALIZED",
+        "min_age_minutes": 90,
+    }
+
+
+def test_pr_followup_keeps_unknown_delivery_when_target_thread_updated(monkeypatch, tmp_path):
+    now = datetime.now(UTC)
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute("CREATE TABLE threads (id TEXT, updated_at INTEGER)")
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?)",
+            ("thread-1", int((now - timedelta(minutes=30)).timestamp())),
+        )
+
+    class Store:
+        def pr_followup_candidates(self):
+            return []
+
+        def unresolved_pr_followups(self):
+            return [
+                {
+                    "key": "a/b#1",
+                    "thread_id": "thread-1",
+                    "pr_url": "https://github.com/a/b/pull/2",
+                    "wake_digest": "a" * 64,
+                    "created_at": iso_z(now - timedelta(hours=2)),
+                }
+            ]
+
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+
+    result = MODULE.pr_followup_list(
+        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3", min_age_minutes=90)
+    )
+
+    assert result["unresolved"][0]["targetTurnMaterialized"] is True
+    assert result["unresolved"][0]["abandonable"] is False
+
+
 def test_recovery_skips_a_recently_active_thread(monkeypatch, tmp_path):
     project_root = tmp_path / "github"
     worktree = project_root / ".oss-pr-radar" / "worktrees" / "task" / "b"
@@ -3592,6 +3691,10 @@ def test_privileged_controller_runs_granted_publication_queue(monkeypatch, tmp_p
                 }
             ]
 
+        def prepare_ambiguous_publication_effect(self, _request_id, *, action):
+            assert action == "push"
+            return None
+
         def prepare_post_push_reconciliation(self, _request_id):
             return None
 
@@ -3619,6 +3722,64 @@ def test_privileged_controller_runs_granted_publication_queue(monkeypatch, tmp_p
     assert result["published"][0]["prUrl"] == "https://github.com/a/b/pull/2"
     assert [call[0] for call in calls] == ["push", "create-pr"]
     assert all(call[2] == ledger_path for call in calls)
+
+
+def test_publication_queue_reconciles_interrupted_push_before_pr_confirmation(
+    monkeypatch, tmp_path
+):
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+
+    class Store:
+        def publication_work_items(self):
+            return [
+                {
+                    "request_id": "request-1",
+                    "request": {
+                        "requestId": "request-1",
+                        "opportunityKey": "a/b#1",
+                        "issueUrl": "https://github.com/a/b/issues/1",
+                        "commitSha": "b" * 40,
+                        "branch": "fix-runtime",
+                        "worktreePath": str(worktree),
+                        "publication": {
+                            "headOwner": "Oxygen56",
+                            "baseBranch": "main",
+                            "title": "fix: runtime",
+                            "bodyPath": str(worktree / "body.md"),
+                        },
+                    },
+                }
+            ]
+
+        def prepare_ambiguous_publication_effect(self, _request_id, *, action):
+            assert action == "push"
+            return {"pending": False, "permit": {"permit_id": "permit-1"}}
+
+        def prepare_post_push_reconciliation(self, _request_id):
+            return {"permit_id": "permit-1"}
+
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+    monkeypatch.setattr(MODULE, "ensure_fork_remote", lambda *_args: "radar-fork")
+    monkeypatch.setattr(
+        MODULE,
+        "broker_publication_request",
+        lambda *_args: pytest.fail("reconciliation must not request a new permit first"),
+    )
+    calls = []
+
+    def executor(operation, arguments, *, ledger_path):
+        calls.append(operation)
+        if operation == "push":
+            return {"ok": True, "reconciled": True}
+        return {"ok": True, "prUrl": "https://github.com/a/b/pull/2"}
+
+    monkeypatch.setattr(MODULE, "_executor", executor)
+
+    result = MODULE.run_publication_queue(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert result["ok"] is True
+    assert calls == ["push", "create-pr"]
 
 
 def test_publication_queue_returns_immediately_when_another_executor_holds_lock(
@@ -3999,6 +4160,143 @@ def test_creation_abandon_requires_a_stale_unmatched_bound_request(monkeypatch, 
             "min_age_minutes": 70,
         },
     )
+
+
+def test_creation_abandon_accepts_a_stale_unbound_request(monkeypatch, tmp_path):
+    now = datetime.now(UTC)
+    thread_db = tmp_path / "threads.sqlite3"
+    worktree_root = tmp_path / "worktrees"
+    worktree_root.mkdir()
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            """CREATE TABLE threads (
+                id TEXT, cwd TEXT, title TEXT, first_user_message TEXT,
+                git_origin_url TEXT, archived INTEGER, created_at INTEGER,
+                created_at_ms INTEGER
+            )"""
+        )
+
+    class Store:
+        abandoned = None
+
+        def orphaned_handoffs(self):
+            return [
+                {
+                    "key": "a/b#1",
+                    "issueUrl": "https://github.com/a/b/issues/1",
+                    "title": "Runtime bug",
+                    "intentId": "intent-1",
+                    "intentStatus": "CREATING",
+                    "leaseOwner": "controller",
+                    "leaseStartedAt": iso_z(now - timedelta(hours=2)),
+                    "leaseUntil": iso_z(now - timedelta(hours=1)),
+                    "expiresAt": iso_z(now - timedelta(minutes=30)),
+                    "repo": "a/b",
+                    "creationStartedAt": iso_z(now - timedelta(hours=2)),
+                    "creationToken": "token-1",
+                    "clientThreadId": None,
+                }
+            ]
+
+        def bound_thread_ids(self):
+            return set()
+
+        def abandon_creation(self, intent_id, **kwargs):
+            self.abandoned = (intent_id, kwargs)
+
+    store = Store()
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "WORKTREE_ROOT", worktree_root)
+    probe = MODULE.orphan_list(
+        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3", min_age_minutes=70)
+    )
+    candidate = probe["unmatched"][0]
+
+    result = MODULE.creation_abandon(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            intent_id="intent-1",
+            owner="controller",
+            client_thread_id=None,
+            abandon_nonce=candidate["abandonNonce"],
+            reason="CREATION_NOT_MATERIALIZED",
+            min_age_minutes=70,
+        )
+    )
+
+    assert result["abandoned"] is True
+    assert store.abandoned[1]["client_thread_id"] is None
+
+
+def test_orphan_list_blocks_archived_matching_thread(monkeypatch, tmp_path):
+    now = datetime.now(UTC)
+    thread_db = tmp_path / "threads.sqlite3"
+    worktree_root = tmp_path / "worktrees"
+    cwd = worktree_root / "late" / "repo"
+    cwd.mkdir(parents=True)
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            """CREATE TABLE threads (
+                id TEXT, cwd TEXT, title TEXT, first_user_message TEXT,
+                git_origin_url TEXT, archived INTEGER, created_at INTEGER,
+                created_at_ms INTEGER
+            )"""
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?,?,?,?,?,?)",
+            (
+                "thread-archived",
+                str(cwd),
+                "automatic title",
+                MODULE.issue_prompt("https://github.com/a/b/issues/1"),
+                "https://github.com/a/b.git",
+                1,
+                int(now.timestamp()),
+                int(now.timestamp() * 1000),
+            ),
+        )
+
+    class Store:
+        def orphaned_handoffs(self):
+            return [
+                {
+                    "key": "a/b#1",
+                    "issueUrl": "https://github.com/a/b/issues/1",
+                    "title": "Runtime bug",
+                    "intentId": "intent-1",
+                    "intentStatus": "CREATING",
+                    "leaseOwner": "controller",
+                    "leaseStartedAt": iso_z(now - timedelta(hours=2)),
+                    "leaseUntil": iso_z(now - timedelta(hours=1)),
+                    "expiresAt": iso_z(now - timedelta(minutes=30)),
+                    "repo": "a/b",
+                    "creationStartedAt": iso_z(now - timedelta(hours=2)),
+                    "creationToken": "token-1",
+                    "clientThreadId": None,
+                }
+            ]
+
+        def bound_thread_ids(self):
+            return set()
+
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "WORKTREE_ROOT", worktree_root)
+
+    result = MODULE.orphan_list(
+        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3", min_age_minutes=70)
+    )
+
+    assert result["unmatched"] == []
+    assert result["blocked"] == [
+        {
+            "intentId": "intent-1",
+            "key": "a/b#1",
+            "reason": "matching_thread_archived",
+            "threadIds": ["thread-archived"],
+        }
+    ]
 
 
 def test_orphan_list_matches_late_thread_for_creating_intent(monkeypatch, tmp_path):

@@ -108,6 +108,46 @@ def test_runs_retries_transient_github_api_failure(monkeypatch):
     assert delays == [1.0]
 
 
+def test_github_actions_billing_block_is_detected_from_job_annotation(monkeypatch):
+    workflow_runs = [
+        {
+            "id": 42,
+            "event": "schedule",
+            "conclusion": "failure",
+            "html_url": "https://github.com/a/b/actions/runs/42",
+        }
+    ]
+
+    def fake_json(path):
+        if path.endswith("/jobs"):
+            return {
+                "jobs": [
+                    {
+                        "conclusion": "failure",
+                        "steps": [],
+                        "runner_id": 0,
+                        "check_run_url": "https://api.github.com/repos/a/b/check-runs/99",
+                    }
+                ]
+            }
+        assert path.endswith("/check-runs/99/annotations")
+        return [
+            {
+                "message": (
+                    "The job was not started because recent account payments have failed "
+                    "or your spending limit needs to be increased."
+                )
+            }
+        ]
+
+    monkeypatch.setattr(MODULE, "github_json", fake_json)
+
+    blocker = MODULE.github_actions_external_blocker("a/b", workflow_runs)
+
+    assert blocker["code"] == "GITHUB_ACTIONS_BILLING_BLOCKED"
+    assert blocker["runUrl"].endswith("/42")
+
+
 def test_recent_manual_success_keeps_effective_scan_fresh():
     result = MODULE.effective_scan_freshness(
         [
@@ -203,3 +243,41 @@ def test_main_dispatches_one_fallback_for_stale_effective_scan(monkeypatch):
 
     assert MODULE.main() == 0
     assert dispatched == [("Oxygen56/oss-pr-radar", "main")]
+
+
+def test_main_suppresses_futile_repair_when_actions_billing_is_blocked(monkeypatch, capsys):
+    failed_runs = [
+        {
+            "id": 42,
+            "event": "schedule",
+            "status": "completed",
+            "conclusion": "failure",
+            "created_at": "2026-08-04T01:00:00Z",
+            "updated_at": "2026-08-04T01:01:00Z",
+            "html_url": "https://github.com/a/b/actions/runs/42",
+        }
+    ]
+    dispatched = []
+    monkeypatch.setattr(MODULE, "runs", lambda _repo: failed_runs)
+    monkeypatch.setattr(
+        MODULE,
+        "github_actions_external_blocker",
+        lambda *_args: {
+            "code": "GITHUB_ACTIONS_BILLING_BLOCKED",
+            "runUrl": "https://github.com/a/b/actions/runs/42",
+            "message": "spending limit needs to be increased",
+        },
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "dispatch_scan",
+        lambda repo, ref: dispatched.append((repo, ref)),
+    )
+    monkeypatch.setattr(MODULE.sys, "argv", ["check_workflow_health.py", "--repair"])
+
+    assert MODULE.main() == 2
+    result = json.loads(capsys.readouterr().out)
+    assert dispatched == []
+    assert result["repairTriggered"] is False
+    assert result["repairWouldTrigger"] is False
+    assert result["repairSuppressedReason"] == "GITHUB_ACTIONS_BILLING_BLOCKED"

@@ -59,6 +59,7 @@ TASK_CONTEXT_SCHEMA = "radar-task-context-v1"
 TASK_RESULT_SCHEMA = "radar-task-result-v1"
 ORPHAN_ABANDON_MIN_AGE_MINUTES = 70
 PR_FOLLOWUP_ACTIVE_DEFERRAL_MINUTES = 30
+PR_FOLLOWUP_ABANDON_MIN_AGE_MINUTES = 90
 VALIDATION_PREFETCH_TIMEOUTS = {
     "cargo_locked_fetch": 300,
     "go_locked_download": 300,
@@ -1287,11 +1288,11 @@ def creation_abandon(args: argparse.Namespace) -> dict[str, Any]:
     unmatched = {item["intentId"]: item for item in result["unmatched"]}
     candidate = unmatched.get(args.intent_id)
     if not candidate or not candidate.get("abandonable"):
-        raise RuntimeError("bound creation is not safely abandonable")
+        raise RuntimeError("creation is not safely abandonable")
     if candidate.get("abandonNonce") != args.abandon_nonce:
         raise RuntimeError("creation abandonment authorization is stale or invalid")
     if candidate.get("clientThreadId") != args.client_thread_id:
-        raise RuntimeError("bound client thread id changed")
+        raise RuntimeError("creation client thread id changed")
     store = ledger(args.ledger)
     handoffs = {item["intentId"]: item for item in store.orphaned_handoffs()}
     handoff = handoffs.get(args.intent_id)
@@ -1438,7 +1439,7 @@ def orphan_list(args: argparse.Namespace) -> dict[str, Any]:
         rows = connection.execute(
             """SELECT id,cwd,title,first_user_message,git_origin_url,archived,
                       created_at,created_at_ms
-               FROM threads WHERE archived=0"""
+               FROM threads"""
         ).fetchall()
     finally:
         connection.close()
@@ -1502,10 +1503,7 @@ def orphan_list(args: argparse.Namespace) -> dict[str, Any]:
                         int((now - parse_time(str(creation_started_at)).timestamp()) // 60),
                     )
                     value["creationAgeMinutes"] = creation_age_minutes
-                    value["abandonable"] = bool(
-                        handoff.get("clientThreadId")
-                        and creation_age_minutes >= abandon_min_age_minutes
-                    )
+                    value["abandonable"] = creation_age_minutes >= abandon_min_age_minutes
                     if value["abandonable"]:
                         value["abandonNonce"] = sha256_json(
                             {
@@ -1513,7 +1511,7 @@ def orphan_list(args: argparse.Namespace) -> dict[str, Any]:
                                 "clientThreadId": handoff["clientThreadId"],
                                 "creationStartedAt": creation_started_at,
                                 "creationToken": handoff.get("creationToken"),
-                                "operation": "orphan-creation-abandon-v1",
+                                "operation": "orphan-creation-abandon-v2",
                             }
                         )
                 unmatched.append(value)
@@ -1529,6 +1527,16 @@ def orphan_list(args: argparse.Namespace) -> dict[str, Any]:
             )
             continue
         row = matches[0]
+        if int(row["archived"] or 0) != 0:
+            blocked.append(
+                {
+                    "intentId": handoff["intentId"],
+                    "key": handoff["key"],
+                    "reason": "matching_thread_archived",
+                    "threadIds": [str(row["id"])],
+                }
+            )
+            continue
         thread_cwd = Path(row["cwd"]).resolve()
         managed = thread_cwd == task_project_root
         worktree = (
@@ -2220,12 +2228,16 @@ def sync_task_contexts(args: argparse.Namespace) -> dict[str, Any]:
 def pr_followup_list(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
     candidates = store.pr_followup_candidates()
+    unresolved = store.unresolved_pr_followups()
     recent_cutoff = int(
         (datetime.now(UTC) - timedelta(minutes=PR_FOLLOWUP_ACTIVE_DEFERRAL_MINUTES)).timestamp()
     )
     activity: dict[str, int] = {}
-    if candidates:
-        thread_ids = sorted({str(item["threadId"]) for item in candidates})
+    if candidates or unresolved:
+        thread_ids = sorted(
+            {str(item["threadId"]) for item in candidates}
+            | {str(item["thread_id"]) for item in unresolved if item.get("thread_id")}
+        )
         placeholders = ",".join("?" for _ in thread_ids)
         connection = sqlite3.connect(THREAD_DB)
         try:
@@ -2250,11 +2262,78 @@ def pr_followup_list(args: argparse.Namespace) -> dict[str, Any]:
             )
         else:
             ready.append(candidate)
+    minimum_age_minutes = max(
+        1,
+        int(
+            getattr(
+                args,
+                "min_age_minutes",
+                PR_FOLLOWUP_ABANDON_MIN_AGE_MINUTES,
+            )
+        ),
+    )
+    now = datetime.now(UTC)
+    unresolved_with_recovery: list[dict[str, Any]] = []
+    for item in unresolved:
+        reserved_at = parse_time(str(item["created_at"]))
+        age_minutes = max(0, int((now - reserved_at).total_seconds() // 60))
+        thread_updated_at = activity.get(str(item.get("thread_id") or ""), 0)
+        target_turn_materialized = thread_updated_at >= int(reserved_at.timestamp())
+        abandonable = age_minutes >= minimum_age_minutes and not target_turn_materialized
+        value = item | {
+            "ageMinutes": age_minutes,
+            "threadUpdatedAt": thread_updated_at,
+            "targetTurnMaterialized": target_turn_materialized,
+            "abandonable": abandonable,
+        }
+        if abandonable:
+            value["abandonNonce"] = sha256_json(
+                {
+                    "threadId": item.get("thread_id"),
+                    "wakeDigest": item.get("wake_digest"),
+                    "reservedAt": item.get("created_at"),
+                    "threadUpdatedAt": thread_updated_at,
+                    "operation": "pr-followup-delivery-abandon-v1",
+                }
+            )
+        unresolved_with_recovery.append(value)
     return {
-        "ok": not store.unresolved_pr_followups(),
+        "ok": not unresolved_with_recovery,
         "candidates": ready,
         "activeDeferred": active_deferred,
-        "unresolved": store.unresolved_pr_followups(),
+        "unresolved": unresolved_with_recovery,
+    }
+
+
+def pr_followup_abandon(args: argparse.Namespace) -> dict[str, Any]:
+    if not re.fullmatch(r"[A-Z][A-Z0-9_]{2,80}", args.reason):
+        raise RuntimeError("abandon reason must be machine-readable")
+    result = pr_followup_list(args)
+    candidate = next(
+        (
+            item
+            for item in result["unresolved"]
+            if item.get("thread_id") == args.thread_id
+            and item.get("wake_digest") == args.wake_digest
+        ),
+        None,
+    )
+    if not candidate or not candidate.get("abandonable"):
+        raise RuntimeError("PR follow-up delivery is not safely abandonable")
+    if candidate.get("abandonNonce") != args.abandon_nonce:
+        raise RuntimeError("PR follow-up abandonment authorization is stale or invalid")
+    replacement = ledger(args.ledger).abandon_pr_followup_delivery(
+        thread_id=args.thread_id,
+        wake_digest=args.wake_digest,
+        reason=args.reason,
+        min_age_minutes=args.min_age_minutes,
+    )
+    return {
+        "ok": True,
+        "threadId": args.thread_id,
+        "wakeDigest": args.wake_digest,
+        "replacementWakeDigest": replacement["replacementWakeDigest"],
+        "abandoned": True,
     }
 
 
@@ -3010,8 +3089,24 @@ def _run_publication_queue_unlocked(args: argparse.Namespace) -> dict[str, Any]:
         request_id = str(item["request_id"])
         request = item["request"]
         try:
-            permit = store.prepare_post_push_reconciliation(request_id)
-            post_push_reconciliation = permit is not None
+            ambiguous_push = store.prepare_ambiguous_publication_effect(
+                request_id,
+                action="push",
+            )
+            if ambiguous_push and ambiguous_push.get("pending"):
+                pending.append(
+                    {
+                        "requestId": request_id,
+                        "reason": "PUBLICATION_EFFECT_STILL_ACTIVE",
+                    }
+                )
+                continue
+            recovering_push = ambiguous_push is not None
+            permit = ambiguous_push.get("permit") if ambiguous_push else None
+            post_push_reconciliation = False
+            if permit is None:
+                permit = store.prepare_post_push_reconciliation(request_id)
+                post_push_reconciliation = permit is not None
             if permit is None:
                 broker = broker_publication_request(store, request_id)
                 if broker.get("pending"):
@@ -3062,6 +3157,11 @@ def _run_publication_queue_unlocked(args: argparse.Namespace) -> dict[str, Any]:
                     ledger_path=args.ledger,
                 )
             )
+            if recovering_push:
+                reconciled_permit = store.prepare_post_push_reconciliation(request_id)
+                if reconciled_permit is None:
+                    raise RuntimeError("reconciled push did not reactivate PR confirmation")
+                permit = reconciled_permit
             pr_result = _executor(
                 "create-pr",
                 [
@@ -3762,7 +3862,7 @@ def main() -> int:
     creation_abandon_parser = subparsers.add_parser("creation-abandon")
     creation_abandon_parser.add_argument("--intent-id", required=True)
     creation_abandon_parser.add_argument("--owner")
-    creation_abandon_parser.add_argument("--client-thread-id", required=True)
+    creation_abandon_parser.add_argument("--client-thread-id")
     creation_abandon_parser.add_argument("--abandon-nonce", required=True)
     creation_abandon_parser.add_argument("--reason", required=True)
     creation_abandon_parser.add_argument(
@@ -3798,13 +3898,28 @@ def main() -> int:
     subparsers.add_parser("cleanup-list")
     subparsers.add_parser("context-recover")
     subparsers.add_parser("context-sync")
-    subparsers.add_parser("pr-followup-list")
+    pr_followup_list_parser = subparsers.add_parser("pr-followup-list")
+    pr_followup_list_parser.add_argument(
+        "--min-age-minutes",
+        type=int,
+        default=PR_FOLLOWUP_ABANDON_MIN_AGE_MINUTES,
+    )
     pr_followup_reserve_parser = subparsers.add_parser("pr-followup-reserve")
     pr_followup_reserve_parser.add_argument("--thread-id", required=True)
     pr_followup_reserve_parser.add_argument("--wake-digest", required=True)
     pr_followup_commit_parser = subparsers.add_parser("pr-followup-commit")
     pr_followup_commit_parser.add_argument("--thread-id", required=True)
     pr_followup_commit_parser.add_argument("--wake-digest", required=True)
+    pr_followup_abandon_parser = subparsers.add_parser("pr-followup-abandon")
+    pr_followup_abandon_parser.add_argument("--thread-id", required=True)
+    pr_followup_abandon_parser.add_argument("--wake-digest", required=True)
+    pr_followup_abandon_parser.add_argument("--abandon-nonce", required=True)
+    pr_followup_abandon_parser.add_argument("--reason", required=True)
+    pr_followup_abandon_parser.add_argument(
+        "--min-age-minutes",
+        type=int,
+        default=PR_FOLLOWUP_ABANDON_MIN_AGE_MINUTES,
+    )
     validation_followup_list_parser = subparsers.add_parser("validation-followup-list")
     validation_followup_list_parser.add_argument("--min-age-minutes", type=int, default=90)
     validation_followup_reserve_parser = subparsers.add_parser("validation-followup-reserve")
@@ -3898,6 +4013,8 @@ def main() -> int:
         result = pr_followup_reserve(args)
     elif args.operation == "pr-followup-commit":
         result = pr_followup_commit(args)
+    elif args.operation == "pr-followup-abandon":
+        result = pr_followup_abandon(args)
     elif args.operation == "validation-followup-list":
         result = validation_followup_list(args)
     elif args.operation == "validation-followup-reserve":

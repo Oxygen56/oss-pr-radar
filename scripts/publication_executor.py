@@ -276,8 +276,6 @@ def push(args: argparse.Namespace, store: RadarLedger) -> dict[str, Any]:
         result = {"ok": True, "reconciled": True, "remoteSha": current}
         store.complete_publication_effect(effect["effect_id"], status="SUCCEEDED", result=result)
         return result
-    if state == "reconcile_only":
-        raise RuntimeError("previous push attempt is not visible on the exact remote branch")
     if current and publication_request.get("publicationKind") == "PR_UPDATE":
         previous_commit = str(publication_request.get("previousCommitSha") or "")
         found = existing_pr(upstream_repo, args.head_owner, args.branch)
@@ -315,6 +313,26 @@ def push(args: argparse.Namespace, store: RadarLedger) -> dict[str, Any]:
         result = {"ok": False, "reason": "REMOTE_BRANCH_CONFLICT", "remoteSha": current}
         store.complete_publication_effect(effect["effect_id"], status="FAILED", result=result)
         raise RuntimeError("remote branch already points to a different commit")
+    if state == "reconcile_only":
+        expected_head = (
+            current if publication_request.get("publicationKind") == "PR_UPDATE" else None
+        )
+        audit = audit_publication_request(
+            store,
+            permit["request_id"],
+            expected_existing_pr_head=expected_head,
+        )
+        if audit.status != "ALLOW":
+            raise RuntimeError(f"live publication retry recheck failed: {audit.reason}")
+        permit = store.retry_publication_effect_after_noop(
+            effect_id=effect["effect_id"],
+            permit_id=args.permit_id,
+            evidence={
+                "remoteSha": current,
+                "expectedPreviousSha": publication_request.get("previousCommitSha"),
+                "auditReason": audit.reason,
+            },
+        )
     proc = run(
         ["git", "push", args.remote, f"{args.commit_sha}:refs/heads/{args.branch}"],
         cwd=worktree,

@@ -1232,11 +1232,11 @@ class RadarLedger:
         *,
         owner: str,
         creation_token: str,
-        client_thread_id: str,
+        client_thread_id: str | None,
         reason: str,
         min_age_minutes: int = 70,
     ) -> None:
-        """Release a bound async creation after the desktop task never materialized."""
+        """Release a stale creation after the desktop task never materialized."""
 
         now_dt = datetime.now(UTC)
         now = iso_z(now_dt)
@@ -1249,7 +1249,7 @@ class RadarLedger:
             if row["lease_owner"] != owner or row["creation_token"] != creation_token:
                 raise LedgerError("task creation authorization mismatch")
             if row["client_thread_id"] != client_thread_id:
-                raise LedgerError("bound client thread id changed")
+                raise LedgerError("creation client thread id changed")
             if row["thread_id"]:
                 raise LedgerError("materialized task creation cannot be abandoned")
             if not row["creation_started_at"]:
@@ -3290,6 +3290,155 @@ class RadarLedger:
                 "created": True,
             }
 
+    def prepare_ambiguous_publication_effect(
+        self,
+        request_id: str,
+        *,
+        action: str,
+        min_age_minutes: int = 5,
+    ) -> dict[str, Any] | None:
+        """Expose an interrupted effect only after its writer has gone stale."""
+
+        current = datetime.now(UTC)
+        now = iso_z(current)
+        with self.transaction() as connection:
+            row = connection.execute(
+                """SELECT p.*,e.effect_id,e.action AS effect_action,
+                          e.status AS effect_status,e.created_at AS effect_created_at,
+                          e.updated_at AS effect_updated_at,
+                          e.result_json AS effect_result_json
+                   FROM publication_permits p
+                   JOIN publication_effects e ON e.permit_id=p.permit_id
+                   WHERE p.request_id=? AND e.action=?
+                     AND e.status IN ('ATTEMPTED','RECONCILE_REQUIRED')
+                   ORDER BY e.updated_at DESC LIMIT 1""",
+                (request_id, action),
+            ).fetchone()
+            if row is None:
+                return None
+            age = current - parse_time(row["effect_updated_at"])
+            if row["effect_status"] == "ATTEMPTED" and age < timedelta(
+                minutes=max(1, min_age_minutes)
+            ):
+                return {
+                    "pending": True,
+                    "action": action,
+                    "effectId": row["effect_id"],
+                    "ageMinutes": max(0, int(age.total_seconds() // 60)),
+                }
+            if row["effect_status"] == "ATTEMPTED":
+                connection.execute(
+                    """UPDATE publication_effects
+                       SET status='RECONCILE_REQUIRED',result_json=?,updated_at=?
+                       WHERE effect_id=? AND status='ATTEMPTED'""",
+                    (
+                        canonical_json(
+                            {
+                                "ok": False,
+                                "reason": "INTERRUPTED_EFFECT_STALE",
+                                "previousResult": json.loads(row["effect_result_json"]),
+                            }
+                        ),
+                        now,
+                        row["effect_id"],
+                    ),
+                )
+                self._event(
+                    connection,
+                    connection.execute(
+                        "SELECT opportunity_key FROM publication_requests WHERE request_id=?",
+                        (request_id,),
+                    ).fetchone()["opportunity_key"],
+                    "PUBLICATION_EFFECT_RECONCILIATION_REQUIRED",
+                    row["effect_id"],
+                    {
+                        "requestId": request_id,
+                        "effectId": row["effect_id"],
+                        "action": action,
+                    },
+                    now,
+                )
+            permit = {key: row[key] for key in row.keys() if not key.startswith("effect_")}
+            return {
+                "pending": False,
+                "action": action,
+                "effectId": row["effect_id"],
+                "permit": permit,
+            }
+
+    def retry_publication_effect_after_noop(
+        self,
+        *,
+        effect_id: str,
+        permit_id: str,
+        evidence: dict[str, Any],
+        ttl_minutes: int = 10,
+    ) -> dict[str, Any]:
+        """Reauthorize an exact effect after live state proves it did not happen."""
+
+        current = datetime.now(UTC)
+        now = iso_z(current)
+        expires_at = iso_z(current + timedelta(minutes=max(1, min(ttl_minutes, 15))))
+        with self.transaction() as connection:
+            effect = connection.execute(
+                "SELECT * FROM publication_effects WHERE effect_id=?",
+                (effect_id,),
+            ).fetchone()
+            permit = connection.execute(
+                "SELECT * FROM publication_permits WHERE permit_id=?",
+                (permit_id,),
+            ).fetchone()
+            if effect is None or permit is None or effect["permit_id"] != permit_id:
+                raise LedgerError("publication retry binding mismatch")
+            if effect["status"] != "RECONCILE_REQUIRED":
+                raise LedgerError("publication effect is not awaiting reconciliation")
+            if effect["action"] != "push":
+                raise LedgerError("only an idempotent push effect may be retried")
+            if permit["status"] not in {"ACTIVE", "EXPIRED"}:
+                raise LedgerError("publication permit is not retryable")
+            connection.execute(
+                """UPDATE publication_permits
+                   SET status='ACTIVE',expires_at=?,updated_at=? WHERE permit_id=?""",
+                (expires_at, now, permit_id),
+            )
+            connection.execute(
+                """UPDATE publication_effects
+                   SET status='ATTEMPTED',result_json=?,updated_at=? WHERE effect_id=?""",
+                (
+                    canonical_json(
+                        {
+                            "ok": False,
+                            "reason": "RETRY_AFTER_CONFIRMED_NO_EFFECT",
+                            "evidence": evidence,
+                        }
+                    ),
+                    now,
+                    effect_id,
+                ),
+            )
+            connection.execute(
+                """UPDATE publication_requests
+                   SET status='GRANTED',reason='RETRY_AFTER_CONFIRMED_NO_EFFECT',updated_at=?
+                   WHERE request_id=?""",
+                (now, permit["request_id"]),
+            )
+            self._event(
+                connection,
+                connection.execute(
+                    "SELECT opportunity_key FROM publication_requests WHERE request_id=?",
+                    (permit["request_id"],),
+                ).fetchone()["opportunity_key"],
+                "PUBLICATION_EFFECT_RETRY_AUTHORIZED",
+                sha256_json({"effectId": effect_id, "authorizedAt": now}),
+                {"effectId": effect_id, "permitId": permit_id, "evidence": evidence},
+                now,
+            )
+            refreshed = connection.execute(
+                "SELECT * FROM publication_permits WHERE permit_id=?",
+                (permit_id,),
+            ).fetchone()
+        return dict(refreshed)
+
     def publication_action_succeeded(self, request_id: str, *, action: str) -> bool:
         with self.connect() as connection:
             row = connection.execute(
@@ -3574,10 +3723,22 @@ class RadarLedger:
                      AND p.status='CONSUMED' AND p.pr_url=f.pr_url
                      AND NOT EXISTS (
                        SELECT 1 FROM events e WHERE e.opportunity_key=o.key
-                         AND e.event_type IN (
-                           'PR_FOLLOWUP_RESERVED','PR_FOLLOWUP_RESULT_INGESTED'
-                         )
+                         AND e.event_type='PR_FOLLOWUP_RESULT_INGESTED'
                          AND e.dedupe_key=f.wake_digest
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events reserved
+                       WHERE reserved.opportunity_key=o.key
+                         AND reserved.event_type='PR_FOLLOWUP_RESERVED'
+                         AND reserved.dedupe_key=f.wake_digest
+                         AND NOT EXISTS (
+                           SELECT 1 FROM events abandoned
+                           WHERE abandoned.opportunity_key=reserved.opportunity_key
+                             AND abandoned.event_type='PR_FOLLOWUP_DELIVERY_ABANDONED'
+                             AND json_extract(abandoned.payload_json,'$.wakeDigest')=
+                                 reserved.dedupe_key
+                             AND abandoned.id>reserved.id
+                         )
                      )
                      AND NOT EXISTS (
                        SELECT 1 FROM events active
@@ -3588,6 +3749,14 @@ class RadarLedger:
                            WHERE finished.opportunity_key=active.opportunity_key
                              AND finished.event_type='PR_FOLLOWUP_RESULT_INGESTED'
                              AND finished.dedupe_key=active.dedupe_key
+                         )
+                         AND NOT EXISTS (
+                           SELECT 1 FROM events abandoned
+                           WHERE abandoned.opportunity_key=active.opportunity_key
+                             AND abandoned.event_type='PR_FOLLOWUP_DELIVERY_ABANDONED'
+                             AND json_extract(abandoned.payload_json,'$.wakeDigest')=
+                                 active.dedupe_key
+                             AND abandoned.id>active.id
                          )
                      )
                    ORDER BY f.checked_at,r.updated_at DESC"""
@@ -3707,6 +3876,13 @@ class RadarLedger:
                          AND x.event_type='PR_FOLLOWUP_RESULT_INGESTED'
                          AND x.dedupe_key=r.dedupe_key
                      )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events abandoned
+                       WHERE abandoned.opportunity_key=o.key
+                         AND abandoned.event_type='PR_FOLLOWUP_DELIVERY_ABANDONED'
+                         AND json_extract(abandoned.payload_json,'$.wakeDigest')=r.dedupe_key
+                         AND abandoned.id>r.id
+                     )
                    ORDER BY r.created_at"""
             ).fetchall()
         return [
@@ -3801,6 +3977,11 @@ class RadarLedger:
             "x.opportunity_key=b.opportunity_key "
             "AND x.event_type='PR_FOLLOWUP_RESULT_INGESTED' "
             "AND x.dedupe_key=b.dedupe_key)",
+            "NOT EXISTS (SELECT 1 FROM events abandoned WHERE "
+            "abandoned.opportunity_key=b.opportunity_key "
+            "AND abandoned.event_type='PR_FOLLOWUP_DELIVERY_ABANDONED' "
+            "AND json_extract(abandoned.payload_json,'$.wakeDigest')=b.dedupe_key "
+            "AND abandoned.id>b.id)",
         ]
         params: list[Any] = [key]
         if thread_id is not None:
@@ -3887,6 +4068,13 @@ class RadarLedger:
                        SELECT 1 FROM events s WHERE s.opportunity_key=r.opportunity_key
                          AND s.event_type='PR_FOLLOWUP_SENT'
                          AND s.dedupe_key=r.dedupe_key
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events abandoned
+                       WHERE abandoned.opportunity_key=r.opportunity_key
+                         AND abandoned.event_type='PR_FOLLOWUP_DELIVERY_ABANDONED'
+                         AND json_extract(abandoned.payload_json,'$.wakeDigest')=r.dedupe_key
+                         AND abandoned.id>r.id
                      )""",
                 (thread_id, wake_digest),
             ).fetchone()
@@ -3901,6 +4089,81 @@ class RadarLedger:
                 now,
             )
 
+    def abandon_pr_followup_delivery(
+        self,
+        *,
+        thread_id: str,
+        wake_digest: str,
+        reason: str,
+        min_age_minutes: int = 90,
+    ) -> dict[str, str]:
+        """Retire an old reservation when no target task turn materialized."""
+
+        current = datetime.now(UTC)
+        now = iso_z(current)
+        with self.transaction() as connection:
+            row = connection.execute(
+                """SELECT r.id,r.opportunity_key AS key,r.created_at
+                   FROM events r
+                   WHERE r.event_type='PR_FOLLOWUP_RESERVED'
+                     AND json_extract(r.payload_json,'$.threadId')=?
+                     AND r.dedupe_key=?
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events sent
+                       WHERE sent.opportunity_key=r.opportunity_key
+                         AND sent.event_type='PR_FOLLOWUP_SENT'
+                         AND sent.dedupe_key=r.dedupe_key
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events finished
+                       WHERE finished.opportunity_key=r.opportunity_key
+                         AND finished.event_type='PR_FOLLOWUP_RESULT_INGESTED'
+                         AND finished.dedupe_key=r.dedupe_key
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events abandoned
+                       WHERE abandoned.opportunity_key=r.opportunity_key
+                         AND abandoned.event_type='PR_FOLLOWUP_DELIVERY_ABANDONED'
+                         AND json_extract(abandoned.payload_json,'$.wakeDigest')=r.dedupe_key
+                         AND abandoned.id>r.id
+                     )
+                   ORDER BY r.id DESC LIMIT 1""",
+                (thread_id, wake_digest),
+            ).fetchone()
+            if row is None:
+                raise LedgerError("PR follow-up delivery is not abandonable")
+            minimum_age = timedelta(minutes=max(1, min_age_minutes))
+            if parse_time(row["created_at"]) + minimum_age > current:
+                raise LedgerError("PR follow-up delivery is not old enough to abandon")
+            self._event(
+                connection,
+                row["key"],
+                "PR_FOLLOWUP_DELIVERY_ABANDONED",
+                sha256_text(f"{thread_id}|{wake_digest}|{row['created_at']}"),
+                {
+                    "threadId": thread_id,
+                    "wakeDigest": wake_digest,
+                    "reservedAt": row["created_at"],
+                    "reason": reason,
+                    "minimumAgeMinutes": max(1, min_age_minutes),
+                },
+                now,
+            )
+            replacement_wake_digest = sha256_json(
+                {
+                    "previousWakeDigest": wake_digest,
+                    "reservedAt": row["created_at"],
+                    "abandonedAt": now,
+                    "operation": "pr-followup-delivery-retry-v1",
+                }
+            )
+            connection.execute(
+                """UPDATE pr_followups SET wake_digest=?,updated_at=?
+                   WHERE opportunity_key=? AND wake_digest=? AND followup_required=1""",
+                (replacement_wake_digest, now, row["key"], wake_digest),
+            )
+            return {"replacementWakeDigest": replacement_wake_digest}
+
     def unresolved_pr_followups(self) -> list[dict[str, Any]]:
         with self.connect() as connection:
             rows = connection.execute(
@@ -3912,6 +4175,13 @@ class RadarLedger:
                      SELECT 1 FROM events s WHERE s.opportunity_key=r.opportunity_key
                        AND s.event_type='PR_FOLLOWUP_SENT'
                        AND s.dedupe_key=r.dedupe_key
+                   )
+                     AND NOT EXISTS (
+                     SELECT 1 FROM events abandoned
+                     WHERE abandoned.opportunity_key=r.opportunity_key
+                       AND abandoned.event_type='PR_FOLLOWUP_DELIVERY_ABANDONED'
+                       AND json_extract(abandoned.payload_json,'$.wakeDigest')=r.dedupe_key
+                       AND abandoned.id>r.id
                    ) ORDER BY r.created_at"""
             ).fetchall()
         return [

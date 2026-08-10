@@ -318,6 +318,87 @@ def test_push_allows_only_fast_forward_update_of_exact_existing_pr(monkeypatch, 
     ] in calls
 
 
+def test_push_retries_stale_ambiguous_effect_after_remote_noop_proof(monkeypatch, tmp_path):
+    args = pr_args(tmp_path)
+    args.remote = "radar-fork"
+    args.commit_sha = "b" * 40
+    previous_head = "a" * 40
+
+    class Store(ReconcileStore):
+        def __init__(self):
+            super().__init__()
+            self.completed = []
+            self.retried = []
+
+        def complete_publication_effect(self, effect_id, *, status, result):
+            self.completed.append((effect_id, status, result))
+
+        def retry_publication_effect_after_noop(self, **kwargs):
+            self.retried.append(kwargs)
+            return {"status": "ACTIVE", "request_id": "request-1"}
+
+    store = Store()
+    monkeypatch.setattr(
+        MODULE,
+        "ensure_permit",
+        lambda *_args, **_kwargs: {"status": "EXPIRED", "request_id": "request-1"},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "permit_publication",
+        lambda _permit: {"headOwner": args.head_owner},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "permit_request",
+        lambda *_args: {
+            "publicationKind": "PR_UPDATE",
+            "existingPrUrl": "https://github.com/example/project/pull/2",
+            "previousCommitSha": previous_head,
+        },
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "audit_publication_request",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            status="ALLOW", reason="LIVE_PUBLICATION_GATES_PASSED"
+        ),
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "existing_pr",
+        lambda *_args: {
+            "url": "https://github.com/example/project/pull/2",
+            "state": "OPEN",
+            "headRefOid": previous_head,
+        },
+    )
+    remote_heads = iter([previous_head, args.commit_sha])
+    monkeypatch.setattr(MODULE, "remote_head", lambda *_args: next(remote_heads))
+    calls = []
+
+    def fake_run(command, **_kwargs):
+        calls.append(command)
+        if command[:4] == ["git", "remote", "get-url", args.remote]:
+            return subprocess.CompletedProcess(
+                command, 0, "git@github.com:Oxygen56/project.git\n", ""
+            )
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(MODULE, "run", fake_run)
+
+    result = MODULE.push(args, store)
+
+    assert result["remoteSha"] == args.commit_sha
+    assert store.retried[0]["effect_id"] == "effect-1"
+    assert [
+        "git",
+        "push",
+        args.remote,
+        f"{args.commit_sha}:refs/heads/{args.branch}",
+    ] in calls
+
+
 def test_push_rearms_original_task_when_existing_pr_head_drifted(monkeypatch, tmp_path):
     args = pr_args(tmp_path)
     args.remote = "radar-fork"

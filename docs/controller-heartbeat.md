@@ -50,7 +50,10 @@ session. Empty output accompanied by a session ID means still running, never
    idempotent repair, not a user-maintenance request.
 2. Run `scripts/check_workflow_health.py --max-effective-age-minutes 65
    --repair`. Record `operationalHealthy`, `githubNaturalScheduleHealthy`,
-   `repairTriggered`, `recentActive`, and `fallback`.
+   `repairTriggered`, `repairSuppressedReason`, `recentActive`, and `fallback`.
+   `GITHUB_ACTIONS_BILLING_BLOCKED` is an external account blocker: do not
+   dispatch more repair workflows while it is present, and report the billing
+   action once instead of treating repeated zero-step jobs as code failures.
 3. Never wait for GitHub Actions. If a remote scan is active, skip only the
    remote `sync` step and continue consuming valid local queues.
 
@@ -67,9 +70,11 @@ Run `orphan-list` before `sync`.
 - Report `blocked` entries exactly and do not guess a binding.
 - Preserve unmatched `CREATING` entries while `abandonable=false`.
 - If `abandonable=true`, first prove that neither `list_threads` nor local
-  session storage contains the task, then use the returned `abandonNonce` with
-  `creation-abandon`. Let the signed queue decide whether to enqueue again; do
-  not create a replacement directly.
+  session storage, including archived tasks, contains the task, then use the
+  returned `abandonNonce` with `creation-abandon`. `clientThreadId` may be
+  absent when creation was reserved before the desktop API was called. Let the
+  signed queue decide whether to enqueue again; do not create a replacement
+  directly.
 
 ## 3. Refresh controller state
 
@@ -102,9 +107,14 @@ For each candidate, process one transaction at a time:
    thread and wake digest.
 
 If sending times out or has an unknown result, leave the reservation unresolved
-and stop that item. Never resend automatically. Report all unresolved entries
-with exact task, PR URL, and wake digest. Cancellation-only checks, aggregate
-checks, and failures unrelated to branch files are not actionable candidates.
+and stop that item. Never resend the same unresolved reservation directly. If
+`pr-followup-list` later reports `abandonable=true`, use `read_thread` to prove
+that the target task has no turn at or after `created_at`, then call
+`pr-followup-abandon` with the returned nonce. Only the newly eligible signed
+candidate may then be reserved and sent again. Preserve ambiguous deliveries
+when the target task did update. Report all remaining unresolved entries with
+exact task, PR URL, and wake digest. Cancellation-only checks, aggregate checks,
+and failures unrelated to branch files are not actionable candidates.
 
 ## 5. Dispatch new issue tasks
 
@@ -126,8 +136,10 @@ For a successful claim:
 - Require `createThreadRequest` to be exactly the bridge-provided request for
   that project. Pass it unchanged to `create_thread`; add no model, thinking,
   cwd, worktree, or top-level project fields.
-- Before creation, run `creation-start` and retain its token. Bind any returned
-  task or client ID immediately with `creation-bind`.
+- Only after project resolution has completed and `createThreadRequest` has
+  been validated, run `creation-start` immediately before `create_thread` and
+  retain its token. Never reserve creation while `list_projects` is pending.
+  Bind any returned task or client ID immediately with `creation-bind`.
 - An explicit create rejection with no ID may use `creation-cancel`. Timeout,
   disconnect, or unknown result must remain `CREATING` for orphan recovery.
 - A client-ID-only result may be reconciled for at most 90 seconds using
@@ -170,6 +182,11 @@ fresh `PR_OPEN` result with the exact follow-up digest; prose alone is not a
 completed handoff. `publication-run` independently rechecks the permit and live
 GitHub state, then may fork, push, and open or update the PR. `busy=true` is
 normal background ownership: continue without waiting or retrying.
+An interrupted publication effect remains write-ahead recorded. After its
+writer is stale, `publication-run` reconciles the exact remote branch and PR.
+It may retry an idempotent push only when live state proves the earlier attempt
+had no effect and still matches the permitted previous head; otherwise it
+preserves the reconciliation block.
 
 Run `validation-followup-list`. For each candidate:
 

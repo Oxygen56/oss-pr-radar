@@ -19,7 +19,7 @@ from oss_pr_radar.notifier import FeishuClient  # noqa: E402
 from oss_pr_radar.util import parse_time, sha256_json  # noqa: E402
 
 
-def runs(repo: str) -> list[dict]:
+def github_json(path: str) -> object:
     last_error = "unknown GitHub API failure"
     for delay in (0.0, 1.0, 3.0):
         if delay:
@@ -31,9 +31,7 @@ def runs(repo: str) -> list[dict]:
                     "api",
                     "-X",
                     "GET",
-                    f"repos/{repo}/actions/workflows/radar.yml/runs",
-                    "-f",
-                    "per_page=100",
+                    path,
                 ],
                 check=False,
                 capture_output=True,
@@ -41,11 +39,60 @@ def runs(repo: str) -> list[dict]:
                 timeout=30,
             )
             if completed.returncode == 0:
-                return json.loads(completed.stdout).get("workflow_runs") or []
+                return json.loads(completed.stdout)
             last_error = (completed.stderr or completed.stdout or last_error)[:300]
         except (json.JSONDecodeError, OSError, subprocess.SubprocessError) as exc:
             last_error = f"{type(exc).__name__}:{str(exc)[:240]}"
     raise RuntimeError(last_error)
+
+
+def runs(repo: str) -> list[dict]:
+    value = github_json(f"repos/{repo}/actions/workflows/radar.yml/runs?per_page=100")
+    if not isinstance(value, dict):
+        return []
+    return value.get("workflow_runs") or []
+
+
+def github_actions_external_blocker(repo: str, workflow_runs: list[dict]) -> dict | None:
+    failed = next(
+        (
+            item
+            for item in workflow_runs
+            if item.get("event") in {"schedule", "workflow_dispatch"}
+            and item.get("conclusion") == "failure"
+            and item.get("id")
+        ),
+        None,
+    )
+    if failed is None:
+        return None
+    try:
+        jobs_value = github_json(f"repos/{repo}/actions/runs/{failed['id']}/jobs")
+        jobs = jobs_value.get("jobs") or [] if isinstance(jobs_value, dict) else []
+        for job in jobs:
+            if (
+                job.get("conclusion") != "failure"
+                or job.get("steps")
+                or job.get("runner_id") not in {0, None}
+            ):
+                continue
+            check_url = str(job.get("check_run_url") or "")
+            check_id = check_url.rsplit("/", 1)[-1]
+            if not check_id.isdigit():
+                continue
+            annotations = github_json(f"repos/{repo}/check-runs/{check_id}/annotations")
+            for annotation in annotations if isinstance(annotations, list) else []:
+                message = str(annotation.get("message") or "")
+                normalized = message.casefold()
+                if "payments have failed" in normalized or "spending limit" in normalized:
+                    return {
+                        "code": "GITHUB_ACTIONS_BILLING_BLOCKED",
+                        "runUrl": failed.get("html_url"),
+                        "message": message,
+                    }
+    except (RuntimeError, TypeError, ValueError):
+        return None
+    return None
 
 
 def health(workflow_runs: list[dict], *, now: datetime | None = None) -> dict:
@@ -191,6 +238,17 @@ def main() -> int:
     args = parser.parse_args()
     workflow_runs = runs(args.repo)
     result = health(workflow_runs)
+    external_blocker = github_actions_external_blocker(args.repo, workflow_runs)
+    if external_blocker:
+        code = str(external_blocker["code"])
+        if code not in result["issues"]:
+            result["issues"].append(code)
+        result["healthy"] = False
+        result["githubNaturalScheduleHealthy"] = False
+        result["githubNaturalScheduleIssues"] = result["issues"]
+        result["naturalScheduleHealthy"] = False
+        result["naturalScheduleIssues"] = result["issues"]
+    result["githubActionsExternalBlocker"] = external_blocker
     effective = effective_scan_freshness(
         workflow_runs,
         max_age=timedelta(minutes=max(15, args.max_effective_age_minutes)),
@@ -198,7 +256,10 @@ def main() -> int:
     repair_triggered = False
     repair_would_trigger = False
     repair_error = None
-    if args.repair and not effective["fresh"]:
+    repair_suppressed_reason = None
+    if args.repair and not effective["fresh"] and external_blocker:
+        repair_suppressed_reason = external_blocker["code"]
+    elif args.repair and not effective["fresh"]:
         repair_would_trigger = True
         if not args.dry_run_repair:
             try:
@@ -210,6 +271,7 @@ def main() -> int:
     result["repairTriggered"] = repair_triggered
     result["repairWouldTrigger"] = repair_would_trigger
     result["repairError"] = repair_error
+    result["repairSuppressedReason"] = repair_suppressed_reason
     result["operationalHealthy"] = effective["fresh"] or repair_triggered
     if args.notify and (repair_would_trigger or repair_error):
         app_id = os.environ.get("FEISHU_APP_ID")

@@ -5,7 +5,7 @@ import pytest
 
 from oss_pr_radar.ledger import LedgerError, RadarLedger
 from oss_pr_radar.metrics import QUALITY_FIELDS, assess_submit_ready, rolling_quality
-from oss_pr_radar.util import iso_z
+from oss_pr_radar.util import iso_z, parse_time
 
 
 def intent(**updates):
@@ -449,6 +449,36 @@ def test_stale_bound_creation_can_be_abandoned_and_renewed(tmp_path):
     renewed_expiry = iso_z(datetime.now(UTC) + timedelta(hours=2))
     assert store.enqueue(intent(expiresAt=renewed_expiry)) is False
     assert store.pending()[0]["ledgerStatus"] == "PENDING"
+
+
+def test_stale_unbound_creation_can_be_abandoned(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "controller")
+    creation = store.reserve_creation("intent-1", owner="controller")
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE intents SET creation_started_at=? WHERE intent_id='intent-1'",
+            (iso_z(datetime.now(UTC) - timedelta(hours=2)),),
+        )
+
+    store.abandon_creation(
+        "intent-1",
+        owner="controller",
+        creation_token=creation["creationToken"],
+        client_thread_id=None,
+        reason="CREATION_NOT_MATERIALIZED",
+    )
+
+    with store.connect() as connection:
+        row = connection.execute(
+            "SELECT status,client_thread_id,creation_token FROM intents WHERE intent_id='intent-1'"
+        ).fetchone()
+    assert dict(row) == {
+        "status": "SUPERSEDED",
+        "client_thread_id": None,
+        "creation_token": None,
+    }
 
 
 def test_expired_pending_intent_does_not_block_a_fresh_snapshot(tmp_path):
@@ -1661,6 +1691,28 @@ def test_pr_followup_is_bound_to_existing_task_and_sent_once(tmp_path):
     ]
     assert bound["headSha"] == "b" * 40
     assert bound["preparedHeadSha"] == "d" * 40
+    with store.connect() as connection:
+        connection.execute(
+            """UPDATE events SET created_at=?
+               WHERE event_type='PR_FOLLOWUP_RESERVED' AND dedupe_key=?""",
+            (
+                iso_z(datetime.now(UTC) - timedelta(hours=2)),
+                candidate["wakeDigest"],
+            ),
+        )
+    replacement = store.abandon_pr_followup_delivery(
+        thread_id="thread-1",
+        wake_digest=candidate["wakeDigest"],
+        reason="TARGET_TURN_NOT_MATERIALIZED",
+    )
+    assert store.unresolved_pr_followups() == []
+    candidate = store.pr_followup_candidates()[0]
+    assert candidate["wakeDigest"] == replacement["replacementWakeDigest"]
+    store.reserve_pr_followup(
+        thread_id="thread-1",
+        wake_digest=candidate["wakeDigest"],
+        prepared_head_sha="d" * 40,
+    )
     store.commit_pr_followup(thread_id="thread-1", wake_digest=candidate["wakeDigest"])
     assert store.unresolved_pr_followups() == []
 
@@ -1802,7 +1854,6 @@ def test_post_push_confirmation_recovers_legacy_head_drift_failure(tmp_path):
         request_digest="confirmation-request",
     )
     assert effect["status"] == "RECONCILE_REQUIRED"
-
     store.succeed_pull_request_effect(
         effect_id=effect["effect_id"],
         permit_id=permit_id,
@@ -1812,3 +1863,67 @@ def test_post_push_confirmation_recovers_legacy_head_drift_failure(tmp_path):
     consumed = store.publication_request(request_id)
     assert consumed["status"] == "CONSUMED"
     assert consumed["reason"] is None
+
+
+def test_interrupted_push_effect_can_retry_after_confirmed_noop(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    old = iso_z(datetime.now(UTC) - timedelta(minutes=10))
+    now = iso_z(datetime.now(UTC))
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO publication_requests
+               (request_id,opportunity_key,thread_id,commit_sha,branch,worktree_path,
+                evidence_digest,status,request_json,created_at,updated_at)
+               VALUES ('request-1','a/b#1','thread-1',?,'fix/runtime','/tmp/worktree',
+                       'evidence','GRANTED','{}',?,?)""",
+            ("b" * 40, old, old),
+        )
+        connection.execute(
+            """INSERT INTO publication_permits
+               (permit_id,request_id,issue_url,commit_sha,branch,status,expires_at,
+                evidence_json,created_at,updated_at)
+               VALUES ('permit-1','request-1','https://github.com/a/b/issues/1',?,
+                       'fix/runtime','EXPIRED',?,'{}',?,?)""",
+            ("b" * 40, old, old, old),
+        )
+        connection.execute(
+            """INSERT INTO publication_effects
+               (effect_id,permit_id,action,request_digest,status,result_json,created_at,updated_at)
+               VALUES ('effect-1','permit-1','push','digest','ATTEMPTED','{}',?,?)""",
+            (old, old),
+        )
+
+    prepared = store.prepare_ambiguous_publication_effect(
+        "request-1",
+        action="push",
+    )
+
+    assert prepared["pending"] is False
+    assert prepared["effectId"] == "effect-1"
+    with store.connect() as connection:
+        status = connection.execute(
+            "SELECT status FROM publication_effects WHERE effect_id='effect-1'"
+        ).fetchone()["status"]
+    assert status == "RECONCILE_REQUIRED"
+
+    permit = store.retry_publication_effect_after_noop(
+        effect_id="effect-1",
+        permit_id="permit-1",
+        evidence={"remoteSha": "a" * 40},
+    )
+
+    assert permit["status"] == "ACTIVE"
+    assert parse_time(permit["expires_at"]) > parse_time(now)
+    with store.connect() as connection:
+        effect = connection.execute(
+            "SELECT status,result_json FROM publication_effects WHERE effect_id='effect-1'"
+        ).fetchone()
+    assert effect["status"] == "ATTEMPTED"
+    assert json.loads(effect["result_json"])["reason"] == "RETRY_AFTER_CONFIRMED_NO_EFFECT"
+
+    pending = store.prepare_ambiguous_publication_effect(
+        "request-1",
+        action="push",
+    )
+    assert pending["pending"] is True
