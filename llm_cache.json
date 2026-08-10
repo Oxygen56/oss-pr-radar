@@ -18292,6 +18292,35 @@
     ],
     "why": "Issue provides a clear single-GPU-only BCG replay failure with detailed bisection, repro commands, and evidence pointing to a concurrency bug in Z-Image's breakable graph replay. No competing PR addresses the root cause; related PR #34180 is cleanup only and #34182 is a mitigation. Actionable for a runtime/scheduler fix."
   },
+  "f275a7d5a039c5d2a19b7a068fa8184f08a6509d08dc6cb22bbc34172b97c70f": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Add a wait-for-tui-idle step before sending preamble",
+      "Retry Enter only if preamble is already in composer",
+      "Handle timeout by keeping preamble pending and not auto-resending"
+    ],
+    "risks": [
+      "May introduce delays or change behavior for existing workflows",
+      "Requires coordination with Codex CLI version requirements"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Create a minimal reproduction script that starts Codex with MCP loading and sends preamble immediately, then verify the user turn is not submitted",
+      "Add integration test for the new wait-for-idle and retry logic"
+    ],
+    "unknowns": [
+      "No public reproduction steps or test script provided",
+      "No maintainer response or approval",
+      "Exact Orca code path for terminal send and wait is not identified"
+    ],
+    "why": "The issue describes a race condition in Orca's terminal automation when sending a preamble to Codex before the TUI is ready. The suggested fix is plausible but lacks a concrete reproduction, maintainer confirmation, and evidence of the exact Orca code path. The track is agent_ai_infra, not llm_algorithm, so no algorithmic validation is required, but the fix is still actionable only after maintainer design confirmation."
+  },
   "f334c270b3d24b2216efdc6401f28fbf57c4c6e89281f2f9c5385bc2157a6fd3": {
     "confidence": 0.7,
     "contradictions": [
