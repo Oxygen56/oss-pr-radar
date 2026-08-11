@@ -3067,6 +3067,38 @@
     ],
     "why": "Issue reports a concrete LLM quantization bug (FP8->MXFP4 conversion) with reproducible failure and a second FP8 length regression. It is algorithmically relevant and testable, but the root cause is unconfirmed and an existing PR (#33182) overlaps semantically, requiring manual comparison."
   },
+  "26fa077733609bdc7b9a834c6bcff699e84ab42d7669dac0495444e4dc510964": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify CUDA Graph keying/selection to include request-slot geometry (e.g., (token_tier, slot_tier))",
+      "Adjust ragged capture slot calculation to ensure geometry compatibility",
+      "Possibly update DSV4 metadata/attention/compressor/indexer to handle zero-length padded slots"
+    ],
+    "risks": [
+      "Changing graph keying may increase graph capture count and memory usage",
+      "Supporting zero-length padded slots may introduce complexity in attention kernels and metadata paths",
+      "Diagnostic fix (uniform slot capture) may cause eager fallback for high-request-count low-fraction batches"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce with provided command and configuration on commit ee464fed",
+      "Run control matrix (graph lists [1,32,192] and [1,32,256]) to confirm failure",
+      "After fix, run same workload and verify repeated decode steps succeed",
+      "Add regression test that captures a large graph then replays a smaller batch with same token tier but different slot geometry"
+    ],
+    "unknowns": [
+      "No maintainer confirmation or assignment; but repository does not require assignment",
+      "No existing PR directly addresses this issue; PR #30762 is only keyword overlap"
+    ],
+    "why": "The issue precisely identifies a deterministic CUDA Graph replay failure caused by mismatched request-slot geometry for the same token tier in DSpark compact ragged verification. It provides a minimal reproduction, a control matrix isolating the failure, and a diagnostic validation. The proposed fixes (keying graphs by both token and slot tiers, or supporting zero-length padded slots) are concrete and testable."
+  },
   "26ff7708f5b625ad856c3e9a337f274ae95f9a1050eca7f9a556ffd900616279": {
     "confidence": 0.7,
     "contradictions": [],
@@ -9987,6 +10019,31 @@
     ],
     "why": "Issue clearly describes a user-visible bug during rolling upgrades due to codec mismatch between v1.4 frontend and v1.2 workers. Existing PR #12658 is a draft with no tests and failing CI, leaving room for a stronger, well-tested fix."
   },
+  "7880bebb8bfab06abfa35696c2a4a4cdd88dcd998dd9bde05ec6d4b73dbaaa01": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify Gemma4UnifiedMultimodalEmbedder.__init__ to use mm_embed_dim for vision and audio_embed_dim for audio as in_features, with fallback and error handling."
+    ],
+    "risks": [
+      "Potential edge cases where configs lack mm_embed_dim or audio_embed_dim; need to ensure fallback logic doesn't break other models.",
+      "The related model_patch_size issue is mentioned but not addressed; may need separate fix."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add a unit test that constructs the embedder with mock configs (vision and audio) and asserts the Linear layer's in_features matches expected dims.",
+      "Run existing model loading tests for gemma4_unified to ensure no regression."
+    ],
+    "unknowns": [
+      "Whether maintainers have already started work on this or have design preferences; but no evidence of that."
+    ],
+    "why": "Issue identifies a concrete bug in Gemma4UnifiedMultimodalEmbedder where output_proj_dims is incorrectly used as input dimension for audio, causing weight-loading AssertionError. Root cause is clear, fix is minimal and verified by reporter. No competing PR or related issue found."
+  },
   "7961bfa2c611b105779cfe8d2912ba32de7af3014aaaf313926c3d8ebbf5a3f2": {
     "confidence": 0.8,
     "contradictions": [],
@@ -15302,6 +15359,33 @@
     ],
     "why": "The issue provides a detailed root cause and concrete fix suggestions for a real bug in the Datadog callback, but the deterministic gate requires HUMAN_REVIEW and open PR/related issue lookups timed out, so we cannot rule out existing implementations or maintainer preferences."
   },
+  "c5358ce901a947636ef43fccc9ad0a57d61d0ef37aea846066feb261095cfa44": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/cli: add dot:true to archive.glob in zipOutput and zipOutput2",
+      "possibly adjust Dockerfile generation to fail loudly when .npmrc is expected"
+    ],
+    "risks": [
+      "Including all dotfiles may inadvertently include sensitive files like .env; need to ensure only intended dotfiles are archived",
+      "Changing archive behavior could affect other deployments that rely on excluding dotfiles"
+    ],
+    "root_cause_clarity": "high",
+    "score": 15,
+    "test_plan": [
+      "Create a minimal reproduction with a private registry dependency and .npmrc, run mastra build and deploy, verify .npmrc is included in the archive and install succeeds",
+      "Add a unit test for zipOutput/zipOutput2 verifying dotfiles are included when dot:true is set"
+    ],
+    "unknowns": [
+      "Maintainer confirmation on the proposed fix and whether they prefer a more targeted inclusion of .npmrc rather than all dotfiles"
+    ],
+    "why": "Issue clearly identifies a bug in mastra deploy where .npmrc is excluded from the archive due to missing dot:true, causing private registry installs to fail. Root cause is well-diagnosed with a suggested fix. However, the deterministic gate requires HUMAN_REVIEW, and the maintainer has only labeled for triage without confirming the fix approach. The suggested fix is simple but needs maintainer confirmation to avoid unintended inclusion of other dotfiles."
+  },
   "c56177479bbdd33732b662bc286fd7c766afcbbcfbe7fdddb7f89a24c4879e23": {
     "confidence": 0.7,
     "contradictions": [
@@ -19510,6 +19594,36 @@
     ],
     "why": "Issue clearly describes a stale-fact retrieval bug in mem0 v3 ADD-only extraction, with concrete scenario and community reproduction. However, multiple closed PRs (#5240, #4969, #4965) already attempt fixes, and the deterministic gate requires HUMAN_REVIEW. No open PR or maintainer direction confirmed, so starting new work risks duplication."
   },
+  "f429df40641962ea641722b7221e875fdd479837938f38e7e872b26dee76ae57": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify playground client registry selection to route models requiring /v1/responses for tool use to the Responses client",
+      "Adjust parameter building to correctly map reasoning_effort for Responses API",
+      "Add regression test for tools + reasoning_effort combination"
+    ],
+    "risks": [
+      "Changing client selection might affect other models or capabilities; need to confirm scope (all reasoning models vs only those requiring Responses)",
+      "Potential behavior change if reasoning_effort is dropped or normalized; must preserve semantics"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a failing test that reproduces the 400 by invoking the preview with a model like gpt-5.6-luna and tools + reasoning_effort",
+      "Assert that the request is routed to /v1/responses and that reasoning_effort is encoded as reasoning: {effort: ...}",
+      "Run existing playground client tests to ensure no regressions"
+    ],
+    "unknowns": [
+      "Whether server-side online eval execution shares the same code path and needs a fix",
+      "Maintainer preference on routing vs dropping reasoning_effort; but issue asks to decide and record rationale"
+    ],
+    "why": "Issue reports a clear user-facing 400 error with a concrete repro and acceptance criteria. A comment provides a detailed root-cause analysis identifying the exact client-selection logic and parameter mapping mismatch, making the fix actionable and localized."
+  },
   "f45c6fcbaca825d50f87627a5719ad5bdca321bbc991bf8e57a1910f6c4a2729": {
     "confidence": 0.7,
     "contradictions": [],
@@ -20311,6 +20425,31 @@
       "whether the MCP issue is a configuration problem rather than a code bug"
     ],
     "why": "Issue reports two user-visible failures but lacks a concrete root cause or minimal reproducer. The suggested investigation is speculative and the candidate's expected changes are vague. No maintainer confirmation or design direction exists, and the open PRs are only keyword-overlapping, not competing implementations."
+  },
+  "ff621c4d4ea95504d04ba212856c8aa8980b1f1838ec3e746571651040a75a8d": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify fused grouped MLP to handle FP8 backward format correctly, likely by declining fusion for non-E4M3 formats or adding proper conversion."
+    ],
+    "risks": [
+      "Potential performance regression if fusion is disabled for HYBRID.",
+      "Need to coordinate with existing PRs to avoid duplicate work."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Run existing grouped MLP tests with MXFP8 HYBRID format on sm100 to reproduce failure.",
+      "Add regression test for HYBRID format gradient correctness."
+    ],
+    "unknowns": [
+      "Whether existing PRs already fix this issue; maintainer preference on approach."
+    ],
+    "why": "Issue identifies a concrete numerical bug in fused grouped MLP under MXFP8 HYBRID format, with a clear root cause (reinterpreting E5M2 as E4M3) and a reproducible test. However, the deterministic gate is HUMAN_REVIEW, and existing PRs overlap semantically, requiring maintainer comparison before new work."
   },
   "ff96a113bae9bfad3d62142f9a88b24fee8a4eb645a50a6ea08b836f733534c2": {
     "confidence": 0.9,
