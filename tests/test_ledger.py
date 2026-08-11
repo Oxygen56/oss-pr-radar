@@ -1462,9 +1462,7 @@ def test_validation_followup_unknown_delivery_can_be_safely_abandoned(tmp_path):
         missing=["relevant_tests_green"],
     )
     store.record_stage("a/b#1", "VALIDATION_PENDING")
-    store.reserve_validation_followup(
-        thread_id="thread-1", result_digest="result-digest-1"
-    )
+    store.reserve_validation_followup(thread_id="thread-1", result_digest="result-digest-1")
     with store.connect() as connection:
         connection.execute(
             """UPDATE events SET created_at=?

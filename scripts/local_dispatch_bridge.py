@@ -2788,9 +2788,7 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
     minimum_age_minutes = max(1, int(getattr(args, "min_age_minutes", 90)))
     activity: dict[str, int] = {}
     if unresolved:
-        thread_ids = sorted(
-            {str(item["threadId"]) for item in unresolved if item.get("threadId")}
-        )
+        thread_ids = sorted({str(item["threadId"]) for item in unresolved if item.get("threadId")})
         placeholders = ",".join("?" for _ in thread_ids)
         connection = sqlite3.connect(THREAD_DB)
         try:
@@ -4112,9 +4110,7 @@ def main() -> int:
     validation_followup_abandon_parser.add_argument("--result-digest", required=True)
     validation_followup_abandon_parser.add_argument("--abandon-nonce", required=True)
     validation_followup_abandon_parser.add_argument("--reason", required=True)
-    validation_followup_abandon_parser.add_argument(
-        "--min-age-minutes", type=int, default=90
-    )
+    validation_followup_abandon_parser.add_argument("--min-age-minutes", type=int, default=90)
     subparsers.add_parser("ingest-results")
     subparsers.add_parser("publication-run")
     publication_retry_parser = subparsers.add_parser("publication-retry")

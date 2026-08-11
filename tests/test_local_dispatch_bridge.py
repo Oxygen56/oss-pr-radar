@@ -3385,9 +3385,7 @@ def test_validation_followup_list_reconciles_and_reports_unchanged_gap(tmp_path)
     assert listed["blockedNoProgress"][0]["missing"] == ["relevant_tests_green"]
 
 
-def test_validation_followup_abandons_only_when_no_target_turn_materialized(
-    monkeypatch, tmp_path
-):
+def test_validation_followup_abandons_only_when_no_target_turn_materialized(monkeypatch, tmp_path):
     now = datetime.now(UTC)
     reserved_at = iso_z(now - timedelta(hours=2))
     thread_db = tmp_path / "threads.sqlite3"
@@ -3725,16 +3723,11 @@ def test_validation_followup_blocks_missing_python_dependencies_without_lockfile
     )
     store.record_stage("a/b#1", "VALIDATION_PENDING", evidence={})
 
-    listed = MODULE.validation_followup_list(
-        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3")
-    )
+    listed = MODULE.validation_followup_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
 
     assert listed["candidates"] == []
     assert listed["environmentBlocked"][0]["key"] == "a/b#1"
-    assert (
-        listed["environmentBlocked"][0]["reason"]
-        == "DEPENDENCY_ENVIRONMENT_UNAVAILABLE"
-    )
+    assert listed["environmentBlocked"][0]["reason"] == "DEPENDENCY_ENVIRONMENT_UNAVAILABLE"
 
 
 def test_validation_prefetch_execution_enforces_command_and_worktree_boundaries(
