@@ -2,7 +2,7 @@ name: Radar Health Watchdog
 
 on:
   schedule:
-    - cron: "55 * * * *"
+    - cron: "*/15 * * * *"
       timezone: "Asia/Shanghai"
   workflow_dispatch:
 

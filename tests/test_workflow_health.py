@@ -148,6 +148,34 @@ def test_github_actions_billing_block_is_detected_from_job_annotation(monkeypatc
     assert blocker["runUrl"].endswith("/42")
 
 
+def test_historical_billing_block_is_cleared_by_a_later_success(monkeypatch):
+    workflow_runs = [
+        {
+            "id": 43,
+            "event": "schedule",
+            "conclusion": "success",
+            "created_at": "2026-08-04T02:00:00Z",
+            "updated_at": "2026-08-04T02:10:00Z",
+            "html_url": "https://github.com/a/b/actions/runs/43",
+        },
+        {
+            "id": 42,
+            "event": "schedule",
+            "conclusion": "failure",
+            "created_at": "2026-08-04T01:00:00Z",
+            "updated_at": "2026-08-04T01:01:00Z",
+            "html_url": "https://github.com/a/b/actions/runs/42",
+        },
+    ]
+    monkeypatch.setattr(
+        MODULE,
+        "github_json",
+        lambda _path: (_ for _ in ()).throw(AssertionError("stale run must not be queried")),
+    )
+
+    assert MODULE.github_actions_external_blocker("a/b", workflow_runs) is None
+
+
 def test_recent_manual_success_keeps_effective_scan_fresh():
     result = MODULE.effective_scan_freshness(
         [

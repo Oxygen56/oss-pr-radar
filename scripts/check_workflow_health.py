@@ -54,6 +54,16 @@ def runs(repo: str) -> list[dict]:
 
 
 def github_actions_external_blocker(repo: str, workflow_runs: list[dict]) -> dict | None:
+    latest_success_at = max(
+        (
+            parse_time(str(item.get("updated_at") or item.get("created_at")))
+            for item in workflow_runs
+            if item.get("event") in {"schedule", "workflow_dispatch"}
+            and item.get("conclusion") == "success"
+            and (item.get("updated_at") or item.get("created_at"))
+        ),
+        default=None,
+    )
     failed = next(
         (
             item
@@ -61,6 +71,12 @@ def github_actions_external_blocker(repo: str, workflow_runs: list[dict]) -> dic
             if item.get("event") in {"schedule", "workflow_dispatch"}
             and item.get("conclusion") == "failure"
             and item.get("id")
+            and (
+                latest_success_at is None
+                or not (item.get("updated_at") or item.get("created_at"))
+                or parse_time(str(item.get("updated_at") or item.get("created_at")))
+                > latest_success_at
+            )
         ),
         None,
     )
