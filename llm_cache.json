@@ -16194,6 +16194,37 @@
     ],
     "why": "The issue clearly describes a bug in MCP client session ID handling with a concrete reproduction and proposed fix. However, the deterministic gate requires HUMAN_REVIEW, and the open PR and related issue lookups timed out, so duplicate work cannot be excluded. Maintainer approval is absent, and design confirmation is needed for the session lifecycle behavior."
   },
+  "d40ed3dc6b269c208044adf7c894c571bc8b90b7587878480248e05852656ba1": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add subgraphs parameter to StateGraph.add_node",
+      "Thread subgraphs through StateNodeSpec to PregelNode",
+      "Update get_subgraphs and checkpoint namespace resolution to use declared subgraphs"
+    ],
+    "risks": [
+      "API design may change after maintainer review",
+      "Potential interaction with existing source inference logic",
+      "Cross-repo changes (langchain, deepagents) may be needed for full coverage"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add regression test using the provided Router example, asserting get_subgraphs returns the child and xray shows the child node",
+      "Test checkpoint namespace lookup with declared subgraph",
+      "Run existing LangGraph test suite to ensure backward compatibility"
+    ],
+    "unknowns": [
+      "Maintainer preference on API shape (add_node parameter vs node protocol)",
+      "Whether maintainers will accept a PR without prior assignment"
+    ],
+    "why": "Issue identifies a real observability gap in LangGraph: dynamically invoked subgraphs are invisible to get_subgraphs, xray, and checkpoint namespace lookup. The proposed add_node(subgraphs=...) API is concrete and backward-compatible, with a clear propagation path through StateNodeSpec to PregelNode. However, the deterministic gate requires HUMAN_REVIEW, and the maintainer has not confirmed the API design or assignment. The issue is actionable but needs maintainer sign-off before implementation."
+  },
   "d41963711d07b75e1ed2c72b232f87019498a392781e481eee0dbe38985a3cb2": {
     "confidence": 0.8,
     "contradictions": [],
