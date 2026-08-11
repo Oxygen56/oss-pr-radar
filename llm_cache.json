@@ -4381,6 +4381,40 @@
     ],
     "why": "Issue clearly identifies a user-visible bug: API accepts arbitrary IDs but silently filters them, caused by a regression in #1684. Acceptance criteria are concrete and testable, and no competing PR exists. The fix is actionable and aligns with the repo's focus."
   },
+  "36e8df776583866334a2ece28641ead0b14bff97a6309a961cc68905e90b83d6": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims no crash but related issues share illegal memory access signatures",
+      "PR #50617 is about FP8_PB layers, not directly NVFP4"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Investigate NVFP4 quantization path and TP8 distributed inference for silent logits corruption",
+      "Add regression test for NVFP4 with TP8 on B300"
+    ],
+    "risks": [
+      "Hardware-specific (B300) and requires large GPU resources",
+      "Potential duplicate issue #48043 and related issues may already cover similar failures",
+      "Root cause may be in external dependencies (FlashInfer, Triton) not vLLM code"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 13,
+    "test_plan": [
+      "Reproduce with v0.27.0 on 8xB300 using provided flags and a simple prompt; compare output to nightly build",
+      "Run with single GPU and TP1 to isolate distributed vs quantization issue",
+      "Add unit test for NVFP4 dequantization and TP8 logits consistency"
+    ],
+    "unknowns": [
+      "Exact root cause not identified",
+      "Whether PR #50617 fixes this issue",
+      "Whether maintainers are aware or investigating"
+    ],
+    "why": "Issue reports a silent degenerate output on v0.27.0 with NVFP4 and TP8, but lacks a reproducible environment (collect_env not run on affected build) and has no maintainer confirmation. Existing PR #50617 overlaps semantically but is not linked and may not address the root cause. Gate requires HUMAN_REVIEW."
+  },
   "373480ac81319d094f38682b2e1c173541a9fba7870b7dacafd5f06748dfd9e0": {
     "confidence": 0.7,
     "contradictions": [
@@ -5073,6 +5107,39 @@
       "Maintainer preference between applying settings vs. Omit from type"
     ],
     "why": "Issue provides a precise bug report with a minimal reproduction and clear root cause: WorkflowAgent.stream() omits maxRetries and abortSignal when applying prepareCall results. However, the deterministic gate requires HUMAN_REVIEW, and open PR/related issue lookups timed out, so duplicate work cannot be excluded. Maintainer design preference on whether to apply the settings or Omit them from the type is unresolved."
+  },
+  "3f1d934ce36a78d34144cb4dfbcfc04575bd1e5394ee74387c8bac34fe682b71": {
+    "confidence": 0.9,
+    "contradictions": [
+      "mastra-platform[bot] comment appears unrelated to this issue"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add atomic claim/CAS for resume ownership in WorkflowsStorage",
+      "Update storage adapters to support atomic transition",
+      "Return deterministic conflict to losing resume callers"
+    ],
+    "risks": [
+      "Storage adapter compatibility and migration",
+      "Potential API behavior change for resume semantics",
+      "Multi-instance consistency requires storage-level atomicity"
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Use provided minimal repro to create failing test",
+      "Add regression test for concurrent resume calls",
+      "Test with InMemoryStore and a storage adapter supporting CAS"
+    ],
+    "unknowns": [
+      "Maintainer decision on fix direction (option 1 vs 2)",
+      "Whether existing PR #20512 will be reworked or replaced"
+    ],
+    "why": "Issue clearly identifies a race condition in workflow resume with public repro and production evidence, but the deterministic gate requires HUMAN_REVIEW and the maintainer has not confirmed the preferred fix direction (storage-backed CAS vs in-process mitigation)."
   },
   "3f597ac95aaf33ecf4d648bc051a96234a9b8d70fa47f39849ec13c6d93d485c": {
     "confidence": 0.7,
@@ -8227,6 +8294,36 @@
     ],
     "why": "The issue clearly identifies a bug in the 3.x branch where the expected audience for private_key_jwt has a doubled slash, causing all such clients to be rejected. A backport PR (#4783) already exists and is technically complete, but was auto-closed due to a missing issue link. The deterministic gate requires HUMAN_REVIEW, and the existing PR needs maintainer action to reopen/merge. This is not a new candidate but a duplicate of an existing PR that requires maintainer intervention."
   },
+  "63307b5fcd9b4954f3fcc7b3e1445811139e0fdfdff080f3969d58827c617dd3": {
+    "confidence": 0.8,
+    "contradictions": [
+      "The issue requests new features, but the factory bot classified it as a feature and split it; no contradiction with supplied facts."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "stream-level retry option or onError retry signal",
+      "normalized mid-stream provider error types"
+    ],
+    "risks": [
+      "API design changes may conflict with maintainer preferences or existing roadmap.",
+      "Implementing both split features in one PR may be too broad; focus on one."
+    ],
+    "root_cause_clarity": "high",
+    "score": 14,
+    "test_plan": [
+      "Create a failing test that simulates a provider SSE error event mid-stream and asserts retry behavior or typed error classification.",
+      "Run existing streaming and retry unit tests in the ai package."
+    ],
+    "unknowns": [
+      "Whether maintainers have already assigned or prioritized the split issues.",
+      "Whether the split issues already have open PRs or active work."
+    ],
+    "why": "Issue clearly describes a real gap: mid-stream provider errors bypass retry and are unclassifiable, with concrete repro and production evidence. However, the issue is a feature request that has already been split into two sub-issues (#18668, #18669) by the factory bot, and the deterministic gate is HUMAN_REVIEW. No maintainer approval or design confirmation is present, and the proposed solutions (stream-level retry, onError retry signal, typed errors) require design decisions. The split issues likely already cover the work, so starting a new PR would duplicate effort."
+  },
   "6334a243ebd880e82940cc8b07aa749f28a1c261b0eae4a4343d86c7c2071b2c": {
     "confidence": 0.7,
     "contradictions": [
@@ -10354,6 +10451,35 @@
       "Whether maintainers will accept a source-level mitigation"
     ],
     "why": "The issue is a detailed evidence dump of a rare device-side wedge in a TMEM allocation spin loop, but it explicitly asks for maintainer guidance on the correct owner and diagnostic path, not a code change. The root cause is undetermined (phase mismatch vs. visibility vs. hardware state), and the reporter lacks a reliable reproducer. The request is for instrumentation advice, not an actionable patch. The deterministic gate is ALLOW_PRIVATE_WORK, but the issue is not a clear implementation candidate; it requires maintainer input to proceed."
+  },
+  "7d854d2a836d3c25b7e8423a0921e67f77f445f63e7ac6ec2d228733d60de1e2": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "src/mcp/client/streamable_http.py: drain SSE response to EOF before closing to allow connection reuse",
+      "add regression test asserting connection reuse across serial JSON-RPC exchanges"
+    ],
+    "risks": [
+      "Changing close behavior may affect error handling or resource cleanup in edge cases",
+      "Potential interaction with server-side SSE framing or protocol version differences"
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Run the provided repro script against current SDK to confirm failure",
+      "Add a unit/integration test that counts distinct network_stream ids across multiple exchanges and asserts a single connection",
+      "Run existing streamable HTTP test suite and CI checks"
+    ],
+    "unknowns": [
+      "Maintainer preference on the drain-to-EOF approach vs alternative fixes",
+      "Whether assignment is required before work can be accepted"
+    ],
+    "why": "Issue provides a deterministic reproduction and clear root cause for connection-per-exchange in legacy streamable HTTP mode, but the repository requires assignment and AI disclosure, and the gate decision is HUMAN_REVIEW. Existing PR #2712 directly addresses the same root cause but lacks tests and is stale; a materially better PR is plausible, but maintainer confirmation is needed before starting."
   },
   "7e0323a343bc8266d4643b31ccce59c4ac80a2c62a6471b4f765c2a416b10e14": {
     "confidence": 0.7,
@@ -19979,6 +20105,36 @@
       "Whether maintainers plan to merge or revise PR #25387; whether backfill is acceptable or requires migration; exact CI failure causes."
     ],
     "why": "Issue clearly identifies a bug where max_end_user_budget_id is not persisted to DB, causing budget reset to fail. However, an existing PR (#25387) directly addresses this issue but is closed with missing tests and CI failures, requiring maintainer review to determine if it can be revived or if a new PR is needed."
+  },
+  "f79e44a2960f65e5e83900378076a2cfe45e1e342b32f63041c20fc7b89ec833": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Add structured usage output variable to Agent node",
+      "Expose token usage from LLM provider in Agent runtime",
+      "Possibly include per-tool-call breakdown and reasoning tokens"
+    ],
+    "risks": [
+      "API design changes may affect existing workflows",
+      "Per-tool-call breakdown may require significant runtime changes",
+      "AI disclosure policy may block public contribution"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "test_plan": [
+      "Create a workflow using the new Agent node and verify output variables include usage fields",
+      "Run a minimal Agent invocation and assert token usage matches provider-reported values"
+    ],
+    "unknowns": [
+      "Maintainer design preferences for exposing usage data",
+      "Whether per-tool-call breakdown is in scope",
+      "Exact runtime path where token usage is available"
+    ],
+    "why": "The issue requests exposing LLM token usage from the new Agent node output. It identifies a clear gap but lacks a concrete root cause or design confirmation. The track is agent_ai_infra, not llm_algorithm, so algorithm evidence is not required. However, the issue is a feature request with no maintainer approval or design confirmation, and the submission policy indicates a conflict with AI disclosure requirements. The expected changes are plausible but require maintainer input on API design and scope."
   },
   "f7cad12f924f80210d13dd60c3696419b55c0426c329d1515eaf4f4b10e3bd18": {
     "confidence": 0.8,
