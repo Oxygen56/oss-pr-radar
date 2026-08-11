@@ -2550,6 +2550,31 @@
     ],
     "why": "Issue reports a concrete regression in Buzz's SDK-ts harness where permissionMode defaults to 'dontAsk', overriding the CLI flag and denying all tool calls. Multiple users confirm the symptom. However, the root cause is inferred from user analysis, not confirmed by maintainers, and the open PR/related issue lookup timed out, so duplicate work cannot be excluded. The deterministic gate is HUMAN_REVIEW, and the track is agent_ai_infra, not llm_algorithm, so the algorithm evidence requirement does not apply."
   },
+  "22355f19eb9136e702528c93193209f90055ebe15317909e8aa4ea004b7a5de5": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "pydantic_ai_slim/pydantic_ai/models/__init__.py",
+      "pydantic_ai_slim/pydantic_ai/images/_media_type.py"
+    ],
+    "risks": [
+      "Changing shared boundary may affect all media types; need to avoid breaking legitimate non-image flows."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add regression tests for honest HTML, spoofed image/png, octet-stream with genuine image, redirects, and unfamiliar image MIME."
+    ],
+    "unknowns": [
+      "Maintainer preference on scope (images only vs all media types) and whether to allow unfamiliar image MIME types."
+    ],
+    "why": "Issue clearly identifies a security-relevant bug in shared download path with verified repro and suggested fix direction. However, existing PR #7334 is closed pending assignment and repository requires assignment, so maintainer action is needed before new work."
+  },
   "22cec6b71fe5192a3d5124e1f2ed1d6aa47907424bf0acbe89de6d75c06604de": {
     "confidence": 0.7,
     "contradictions": [
@@ -5122,6 +5147,35 @@
     ],
     "why": "Issue reports a clear user-visible bug with a detailed root cause: delayed registry-to-GUI projection overwrites newly added models. The bug is reproducible and affects key provider configuration paths. No competing PR or issue found, and the maintainer gate allows work."
   },
+  "3b6ddf0ef7fe4f4bd739981d1f2c5581cc7270b78729f5c0ebdfbc19d12b8d33": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Workflow engine selection logic in @mastra/core",
+      "EventedExecutionEngine fallback or error when no event processor is available",
+      "Serverless deployer integration for event processor lifecycle"
+    ],
+    "risks": [
+      "Changing engine selection may affect scheduler behavior and existing users relying on evented engine for scheduled runs.",
+      "Adding a loud error could break existing serverless deployments that currently hang but are not monitored."
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Add a regression test that creates a workflow with schedule and runs it via createRun/start without an event processor, expecting either in-process execution or a loud error.",
+      "Run existing workflow and deployer test suites, especially for Vercel serverless."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the engine decoupling approach (PR #18876) or the serverless-specific fix (PR #18878).",
+      "Whether the closed PRs are superseded or will be reopened."
+    ],
+    "why": "Issue describes a clear bug with high impact and a concrete reproduction, but the deterministic gate requires HUMAN_REVIEW and existing PRs (#18876, #18878) are closed without confirmed merge. Maintainer has acknowledged the issue and labeled it for triage, so assignment/design confirmation is needed before starting new work."
+  },
   "3ba03c31b073140338babe61017db028459c63e903dacc1389c6df74b5ccccd8": {
     "confidence": 0.85,
     "contradictions": [],
@@ -6566,6 +6620,38 @@
       "Maintainer preference on the fix approach (e.g., whether to change cache validation or add a separate check)."
     ],
     "why": "The issue identifies a concrete bug in the cache-first fast path of maybe_download_model() in hf_diffusers_utils.py, with a clear root cause (metadata-only snapshot treated as complete) and a public reproduction. However, the deterministic gate requires HUMAN_REVIEW, and the open PR and related issue lookups timed out, so duplicate work cannot be excluded. Maintainer design preference is also unconfirmed."
+  },
+  "4d6d3d938173b1f2b96c929c1b96fba3cd7d83c70e1e069edb6ae2fb779350c0": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims v1.82.3 regression, but comments indicate issue persists in v1.92.0 and is related to #25553"
+    ],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add regression test reproducing budget bypass with stale key object",
+      "Fix budget check to read fresh spend/budget state or invalidate cached key object on update",
+      "Ensure fail-closed behavior when spend lookup fails"
+    ],
+    "risks": [
+      "May overlap with existing PRs; maintainer design preference unknown",
+      "Changing cache invalidation could impact performance",
+      "Root cause may involve multiple paths requiring broader fix"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "test_plan": [
+      "Create key with max_budget, exceed budget, assert BudgetExceededError",
+      "Simulate stale cache by updating key budget while traffic in flight, assert enforcement",
+      "Run existing proxy budget tests and CI"
+    ],
+    "unknowns": [
+      "Exact code path causing stale key object; whether maintainers prefer a specific fix approach"
+    ],
+    "why": "Issue reports budget enforcement bypass in v1.82.3 with clear repro and evidence of stale cached key objects; existing PR #29179 is stale and lacks root-cause coverage, while newer PRs are incomplete. A materially better PR with a failing test and minimal fix is plausible."
   },
   "4d7883194b5d9b6c505daef55aa11f0eef27e7175f23992759144a5e5df51ab2": {
     "confidence": 0.7,
@@ -10662,6 +10748,34 @@
     ],
     "why": "The issue provides strong evidence of a server-side forwarding bug (leading space in model name) with reproducible steps and cross-client verification. However, the deterministic gate requires HUMAN_REVIEW, and the open PR and related issue lookups timed out, so duplicate work cannot be excluded. The root cause is plausible but not yet confirmed by maintainers."
   },
+  "7c027f17da0ba67beabaab3c4abae3bc113b6f8be741c12caef11798d4974632": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Change logger.debug to logger.warning in _ArchiveEntryLoader refusal paths in python/packages/core/agent_framework/_skills.py",
+      "Optionally add a summary log line at end of discovery with advertised vs loaded counts"
+    ],
+    "risks": [
+      "Potential log noise if many skills fail; maintainer may prefer summary approach",
+      "Need to verify .NET port has same issue and decide on paired fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "test_plan": [
+      "Add regression test that creates MCPSkillsSource with mock client serving an archive with name mismatch, asserts WARNING is emitted",
+      "Run existing test suite for python/packages/core"
+    ],
+    "unknowns": [
+      "Maintainer preference on per-path WARNING vs summary line",
+      "Whether .NET port has same behavior and requires paired fix"
+    ],
+    "why": "Issue clearly identifies a logging-level bug in MCPSkillsSource where refusal paths use DEBUG instead of WARNING, causing silent skill drops. The fix is straightforward (change log levels or add summary), but the deterministic gate requires HUMAN_REVIEW and maintainer design confirmation is needed for the preferred approach (per-path WARNING vs summary line)."
+  },
   "7c25fd8985de9c0ccd34b23f3137551c2d7f01dbee64cc0a86ea78dce32f10c3": {
     "confidence": 0.7,
     "contradictions": [],
@@ -11945,6 +12059,36 @@
       "Status of PR #7604's failed CI checks and whether maintainer will merge or request changes."
     ],
     "why": "Issue provides a clear root cause and repro, but a maintainer (roboomp) is actively investigating and has already submitted PR #7604 with a fix and regression tests. The PR has failed CI checks, so it may be weak, but the maintainer's involvement and existing PR make a new candidate premature until the PR is reviewed or closed."
+  },
+  "8b34c6eceb4ddfd84d331d4200fe87cd491a42144e6fb5e7ed6363bf5fd13c0c": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue says regression but recent working date is after current version"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Investigate timeout handling in agent runtime",
+      "Investigate tool output propagation in shell command execution"
+    ],
+    "risks": [
+      "Provider-side issues may not be fixable in Warp",
+      "Environment-specific behavior may not reproduce consistently"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with provided log and specific prompts",
+      "Add integration tests for provider timeout and tool output handling"
+    ],
+    "unknowns": [
+      "Exact code path causing the errors",
+      "Whether maintainers have prioritized this issue"
+    ],
+    "why": "Issue reports two distinct provider errors (Fireworks 504 timeout and OpenAI missing tool output) with no clear root cause; likely environment-specific (works on laptop) and may involve provider-side issues. No maintainer confirmation or design direction."
   },
   "8b6931d63178165a01655721004fdd844b81d100016a2e8ce5506bd5e5136674": {
     "confidence": 0.7,
