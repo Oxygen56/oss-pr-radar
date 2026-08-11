@@ -2501,6 +2501,35 @@
     ],
     "why": "The issue describes a concrete bug in message history persistence with a clear root cause (incoming duplicate IDs win upsert), but the track requires an LLM algorithm contribution. The described mechanism is message deduplication and persistence, not a training objective, model mechanism, or numerical method. The algorithm_evidence is weak and the issue lacks a reference-vs-implementation test or numerical regression path. The candidate is a bug fix in an application framework, not an algorithm contribution."
   },
+  "21a031fef4f849318371f3a071e2de07143b89abd124b36248a1c3ab7011b7f1": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify mem0/llms/base.py to conditionally omit or translate max_tokens for models that do not support it, likely based on model name or provider capabilities.",
+      "Add a regression test that simulates a Gemma model call and asserts max_tokens is not sent or is mapped to max_output_tokens."
+    ],
+    "risks": [
+      "Changing default behavior for all models could break existing users who rely on max_tokens; need to ensure only affected models are modified.",
+      "Model name detection may be fragile if model aliases vary; need a robust mapping or configuration option."
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "test_plan": [
+      "Create a unit test that mocks the LLM client and verifies that for a Gemma model, the request does not include max_tokens or includes max_output_tokens instead.",
+      "Run existing test suite for mem0/llms to ensure no regressions."
+    ],
+    "unknowns": [
+      "Maintainer preference on whether to omit max_tokens or map to max_output_tokens for Gemma models.",
+      "Whether the fix should be generic for all Bedrock models or specific to Gemma.",
+      "Exact list of models that reject max_tokens; only Gemma is mentioned."
+    ],
+    "why": "Issue clearly identifies a bug: mem0's default max_tokens is sent to Gemma models via Bedrock Mantle, which rejects it. The code path is in mem0/llms/base.py where only GPT-5 models are guarded. However, the fix requires design decisions about model-specific parameter mapping (e.g., max_output_tokens) and maintainer confirmation on the intended approach. No open PR directly addresses this issue; the existing PR #5278 is closed and only adds GPT-5 models to a whitelist, not a general fix."
+  },
   "21ad298e38e58cffac8e72b201250ae086eadda22c92d16e7e8a1dab8fd35f90": {
     "confidence": 0.85,
     "contradictions": [],
@@ -11811,6 +11840,37 @@
     ],
     "why": "Issue reports a watchdog timeout with a complex reproduction command but no root cause analysis. Related issue and open PR lookups timed out, so duplicate work cannot be excluded. Maintainer input is needed to confirm priority and design direction."
   },
+  "871598ca2c382e296de994fbc08de68de4755825ae6c11e89dafa3226bdb6f6e": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue initially claims transient, but comment corrects to non-transient"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Workflow checkout step to fetch tags or sufficient depth",
+      "Possibly promote pre-warm warning to error in workflow"
+    ],
+    "risks": [
+      "Changing checkout depth may increase CI time or bandwidth",
+      "Promoting warning to error could break other workflows that tolerate pre-warm failure"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce by running the workflow on a branch without reachable release tags",
+      "Verify that fetching tags resolves the uv resolution error",
+      "Add a regression test or CI check to ensure tags are fetched"
+    ],
+    "unknowns": [
+      "Maintainer preference on whether to fix via checkout depth or error promotion",
+      "Exact workflow file and checkout configuration details"
+    ],
+    "why": "Issue identifies a real intermittent CI failure with a clear root cause (uv resolution due to missing git tags) and a proposed fix (fetch tags or promote pre-warm warning to error). However, the deterministic gate requires HUMAN_REVIEW, and the issue is a bug report without maintainer confirmation or assignment. Existing PRs are merged but do not address the root cause, so a new PR could be valuable, but maintainer direction is needed."
+  },
   "876796a1a618c1db1ce49b697c874572c5d839c54c7896344c6245c7e1cab21c": {
     "confidence": 0.7,
     "contradictions": [],
@@ -13842,6 +13902,40 @@
       "Maintainer design preference for suspension identity vs simpler path fix"
     ],
     "why": "Issue reports three concrete correctness defects in createInngestAgent resume() with clear code paths and expected behavior. No competing PR or issue found. Maintainer labeled for triage, indicating interest. The proposed changes are actionable and testable."
+  },
+  "a2606998dd2b41811eb2a78e41d91f2716e44cced715c67fe284a4c612af1be3": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue states no fallback attempted, but recent comment says error handling improved in #33222, though fallback still missing"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Wrap streaming iterator in fallback-aware wrapper for anthropic_messages route",
+      "Catch exceptions raised from iterator and SSE error events",
+      "Re-enter fallback logic on mid-stream errors"
+    ],
+    "risks": [
+      "Potential state leak in pending_error_event handling",
+      "Behavior change might affect existing streaming semantics",
+      "Need to align with maintainer design preferences"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "test_plan": [
+      "Create failing test simulating SSE error event mid-stream and assert fallback is attempted",
+      "Add test for transport-level mid-stream drop (e.g., incomplete chunked body) and verify fallback",
+      "Run existing streaming tests for chat and responses paths to ensure no regression"
+    ],
+    "unknowns": [
+      "Maintainer confirmation on direction and design",
+      "Whether existing PR #29205 can be revived or superseded",
+      "Exact implementation details for wrapper to handle both exception and SSE event cases"
+    ],
+    "why": "Issue clearly identifies missing fallback wrapper for anthropic_messages streaming, with root cause and reproduction. However, recent comment indicates maintainer direction is needed and existing PRs are stale or incomplete. The comment proposes a rebased PR following a new precedent, but requires maintainer confirmation."
   },
   "a2a0a797b0c66403c697818514176d1f490fa980a895cc2a523295fd626eb5d0": {
     "confidence": 0.7,
@@ -21330,6 +21424,38 @@
       "Whether maintainers have a preferred design for merging vs. overwriting"
     ],
     "why": "Issue provides a clear, reproducible bug with detailed logs and root cause analysis: a delayed registry-to-GUI projection overwrites newly added models. No competing PR or issue exists, and the fix is localized to synchronization logic."
+  },
+  "f8952447ed80bf24583db4eed8f998d1d0c2576dda16bba0c2e87ba5bdc9d446": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Comment by creativehelm suggests env var not passed by Claude Desktop, while sstklen suggests npx shell issue; root cause may be multi-faceted"
+    ],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "src/memory/index.ts: robustly resolve MEMORY_FILE_PATH, handle relative paths, ensure directory creation, and possibly warn if path is in npx cache",
+      "Add tests for env var handling, relative path resolution, and directory creation"
+    ],
+    "risks": [
+      "Potential maintainer preference for a different fix (e.g., deprecating env var in favor of CLI arg)",
+      "Changing path resolution could break existing users relying on default behavior",
+      "Need to ensure compatibility with different OS path handling"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce issue by setting MEMORY_FILE_PATH to a custom absolute path and launching via npx; verify memory.json is created there",
+      "Add unit tests for path resolution logic (absolute, relative, missing env var)",
+      "Add integration test simulating npx environment to ensure env var is respected"
+    ],
+    "unknowns": [
+      "Exact mechanism of env var loss in npx (whether it's a Claude Desktop config issue or npx behavior)",
+      "Whether maintainers have a preferred design for storage path configuration"
+    ],
+    "why": "Issue #692 documents a clear, reproducible bug: MEMORY_FILE_PATH is ignored when launching via npx, causing data loss in temp directories. Root cause is identified in comments (env var not forwarded through npx) and a working patch exists. Existing PR #4327 is stale (>30 days) and lacks robust tests, leaving room for a materially better PR with comprehensive tests and a robust fix."
   },
   "f9388995937b1e55bd8977335851a0e9859696c4056b203c018e1a8a6a848547": {
     "confidence": 0.8,
