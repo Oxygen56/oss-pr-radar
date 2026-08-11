@@ -16,6 +16,22 @@ from .util import iso_z, parse_time, sha256_json
 WATCHLIST_VERSION = "opportunity_watchlist_v1"
 
 
+def _inspection_priority(item: dict[str, Any]) -> tuple[int, str, str]:
+    """Revalidate dispatchable work before lower-value historical watches."""
+
+    status = str(item.get("status") or "WATCHING")
+    priority = {
+        "QUEUED": 0,
+        "RESCAN_REQUIRED": 1,
+        "POLICY_CHANGED": 1,
+        "WATCHING": 2,
+        "DATA_HOLD": 3,
+        "COVERED": 4,
+        "CLOSED": 4,
+    }.get(status, 3)
+    return priority, str(item.get("lastCheckedAt") or ""), str(item.get("key") or "")
+
+
 def build_watchlist(
     report: dict[str, Any],
     existing: dict[str, Any] | None = None,
@@ -98,7 +114,7 @@ def recheck_watchlist(
         raise ValueError("unsupported opportunity watchlist")
     current = (now or datetime.now(UTC)).astimezone(UTC)
     items = [item for item in watchlist.get("items") or [] if isinstance(item, dict)]
-    items.sort(key=lambda item: str(item.get("lastCheckedAt") or ""))
+    items.sort(key=_inspection_priority)
     updates: list[dict[str, Any]] = []
     pending_rechecks: dict[str, Any] = {}
     selected = items[: max(0, limit)]

@@ -120,6 +120,33 @@ def test_queued_candidate_without_changes_stays_queued():
     assert report["pending_rechecks"] == {}
 
 
+def test_queued_candidates_are_rechecked_before_historical_items():
+    watchlist = build_watchlist(
+        {
+            "candidate_details": [
+                held_candidate(num=1, title="Old held item"),
+                held_candidate(
+                    num=2,
+                    url="https://github.com/a/b/issues/2",
+                    title="Queued item",
+                    auto_spawn=True,
+                    gate_decision="ALLOW_TO_WORK",
+                    category="NEW_CLEAN_CANDIDATE",
+                ),
+            ]
+        },
+        now=NOW,
+    )
+    watchlist["items"][0]["lastCheckedAt"] = None
+    watchlist["items"][1]["lastCheckedAt"] = "2026-08-03T00:00:00Z"
+
+    updated, _ = recheck_watchlist(watchlist, NoChangeClient(), now=NOW, limit=1)
+
+    by_key = {item["key"]: item for item in updated["items"]}
+    assert by_key["a/b#2"]["lastCheckedAt"] == "2026-08-04T00:00:00Z"
+    assert by_key["a/b#1"]["lastCheckedAt"] is None
+
+
 def test_queued_candidate_ownership_change_forces_rescan():
     class AssignedClient(NoChangeClient):
         def issue(self, repo, number):
