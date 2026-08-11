@@ -917,6 +917,37 @@
     ],
     "why": "Issue provides strong evidence of MRv2 memory profiler over-reporting available KV cache due to insufficient CUDA graph capture headroom, leading to OOM under load. However, root cause is not fully isolated (eager residual unexplained), and an existing draft PR #49233 attempts a fix but is incomplete with failed CI. Maintainer direction is unclear, and the issue is still open without explicit approval."
   },
+  "0e098b5bc7a4419c24019e327e30777126dcba1c796cc1f7d80d1888b462cde9": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Algorithm evidence claims high depth but issue is a usage bug report without algorithm details"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Investigate chat template and reasoning parser behavior for multi-turn tool calls",
+      "Potentially fix reasoning parsing or template handling in vLLM"
+    ],
+    "risks": [
+      "Root cause may be model-side or expected behavior, not a vLLM bug",
+      "Requires access to specific model and hardware to reproduce"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with provided script on vLLM 0.26.0 with DeepSeek-V4-Flash-0731",
+      "Compare reasoning presence across turns with different request parameters",
+      "Add regression test for multi-turn tool-calling reasoning consistency"
+    ],
+    "unknowns": [
+      "Maintainer confirmation of bug vs expected behavior",
+      "Exact root cause in vLLM code path",
+      "Whether a fix is desired or feasible"
+    ],
+    "why": "Issue reports intermittent missing reasoning in multi-turn tool calls for DeepSeek-V4-Flash-0731, but root cause is unclear: could be chat-template handling, reasoning parser, or model behavior. No maintainer confirmation or design direction. The supplied algorithm evidence is inflated by keyword matches (block size, fp8, tensor parallel) that are not central to the reported bug. The issue is a usage/bug report without a concrete algorithm mechanism or validation path."
+  },
   "0f3d1f5102ea8fde2428e32a4807062b069511a426173083d5ad88051c0741d5": {
     "confidence": 0.85,
     "contradictions": [],
@@ -2074,6 +2105,37 @@
       "Whether this is a known plugin bug or model-specific issue"
     ],
     "why": "Issue reports a runtime crash on NPU for a specific model, but root cause is unconfirmed and likely in the NPU plugin or stateful inference, not a clear algorithm defect. No maintainer confirmation or design direction; requires maintainer investigation."
+  },
+  "1e41f8cdda3a655395b14f2b3be58dae87d677fbc358d75317125176530f583d": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Issue claims part.reasoning is wrong, but comments show part.text carries the value",
+      "Issue suggests fix changes behavior, but test shows it is a no-op"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Shared helper for text extraction in emitAiSdkEvents",
+      "Potential investigation into turn failure after reasoning-only content"
+    ],
+    "risks": [
+      "Proposed fix is a no-op and may not address the real failure",
+      "Failure may not reproduce on latest main due to code changes"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Run existing regression test from #12257 against current main",
+      "Capture raw HTTP/SSE response to determine if tool call is in reasoning_content or content"
+    ],
+    "unknowns": [
+      "Whether the turn failure reproduces on current main",
+      "Whether the model emitted a tool call that was misfiled into reasoning_content"
+    ],
+    "why": "The issue's proposed root cause (wrong field name) was disproven by contributor analysis and a regression test showing the change is a no-op; the actual failure remains unexplained and may not reproduce on current main. Existing PR #12257 already implements the suggested cleanup but is closed, and the issue is not confirmed actionable."
   },
   "1e4767ebf91d74d2c2c2c8ef6a038792ffdf547392aef0164f9c77df8e79ef67": {
     "confidence": 0.8,
@@ -4410,6 +4472,35 @@
     ],
     "why": "The issue reports a concrete LLM quantization bug (FP8-to-MXFP4 conversion producing invalid output) and a separate FP8 completion-length regression. It includes a reproducible Quark conversion script and observed metrics, satisfying the llm_algorithm track. However, the supplied gate decision is HUMAN_REVIEW, and the open PR assessment flags semantic overlap with PR #33182 and potential duplicate issue #33800, requiring maintainer comparison before creating a new task."
   },
+  "37b332f335bf6a7813116166f1b44b0d74a01d3c16846c131dcdf0c3bff13ad5": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Add circuit breaker to recovery loop",
+      "Implement GBK/UTF-8 transcoding for subprocess output",
+      "Cleanup orphan lock files"
+    ],
+    "risks": [
+      "Changing recovery behavior may affect existing recovery semantics",
+      "Transcoding may have platform-specific edge cases"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "test_plan": [
+      "Create a Windows test that simulates GBK output from bash tool and verifies no JSON truncation",
+      "Unit test recovery loop with forced failures to ensure circuit breaker triggers"
+    ],
+    "unknowns": [
+      "No maintainer response or assignment",
+      "No minimal reproducible code snippet",
+      "Exact code paths for serialization and recovery not identified"
+    ],
+    "why": "Issue describes a plausible encoding mismatch and recovery loop, but lacks a minimal code-level reproduction and maintainer confirmation. The suggested fixes are broad and may require design decisions."
+  },
   "3822ab7d77b5cdb1d1bc748b0a29dfcf70784ed8639fbfcfb787c743b4ccac34": {
     "confidence": 0.8,
     "contradictions": [],
@@ -4440,6 +4531,21 @@
       "Maintainer preference for fix approach (native vs documentation only)"
     ],
     "why": "Issue provides a clear root cause (Windows Job Object kills nohup backgrounded process) and actionable fix suggestions. Existing PR #2606 is weak: it only adds a warning and has failing CI, leaving room for a better PR that implements native Windows backgrounding and a startup self-check."
+  },
+  "382403ba39c5eadcd679d44b328863ace52c2200309efddc88348a54c2fd0d0d": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "decision": "REJECT",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [],
+    "risks": [],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "test_plan": [],
+    "unknowns": [],
+    "why": "The issue is a GitHub Actions workflow bug with a clear one-line fix, but it is infrastructure/CI configuration work, not an algorithm or core agent behavior. The track is agent_ai_infra, which requires algorithm-level contributions; this is ordinary API/plumbing work and thus not actionable for this radar."
   },
   "382c7099cc7c3363aa22dc9e9bc238dd24191def296be5eba37e4091c306a35c": {
     "confidence": 0.7,
@@ -12722,6 +12828,37 @@
       "Whether maintainers have already identified a fix or have design preferences"
     ],
     "why": "Issue reports a concrete authentication failure in Azure OpenAI evaluator metrics when using service principal auth, with a clear tenant mismatch error and a minimal repro config. The root cause is likely that evaluator metric calls do not reuse the same Azure AD auth flow as the main providers, leading to a tenant mismatch. This is a bug in the provider integration path, actionable without design changes."
+  },
+  "a1fae642cfc48256d87540e0ca37584f1f4b81d4b68d4a1fa008656185c4af8b": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue expects `glm-5.2[1m]` to work, but comments indicate API rejects it and plain `glm-5.2` works"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Possibly update Z.AI provider docs to clarify model naming",
+      "Possibly add model alias handling in LiteLLM proxy"
+    ],
+    "risks": [
+      "Changing model name handling could affect other providers",
+      "Docs-only fix may not satisfy users expecting code change"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with provided config and curl commands",
+      "Verify plain `glm-5.2` works on coding endpoint",
+      "If code fix, add regression test for model name normalization"
+    ],
+    "unknowns": [
+      "Maintainer's preferred resolution: code fix vs docs update",
+      "Whether Z.AI API truly rejects `[1m]` suffix or LiteLLM mishandles it"
+    ],
+    "why": "The issue reports a user-facing bug where the documented model name `glm-5.2[1m]` is rejected by the Z.AI API. However, comments indicate the `[1m]` suffix is a documentation convention and the API expects the plain model name, suggesting the fix may be documentation or config guidance rather than a code change. The deterministic gate is HUMAN_REVIEW, and maintainer confirmation is needed to decide between code fix and docs update."
   },
   "a22e945711d65d24dfcd284409b0c4556ec1cce02f81ccb5fe9b633892a1ead9": {
     "confidence": 0.7,
