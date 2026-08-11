@@ -1646,7 +1646,10 @@ def duplicate_task_list(args: argparse.Namespace) -> dict[str, Any]:
         if binding is None or str(binding["threadId"]) == thread_id:
             continue
         title = str(row["title"] or "")
-        if not title.startswith("<codex_delegation>"):
+        if not (
+            title.startswith("<codex_delegation>")
+            or title.startswith("[无价值·重复任务]")
+        ):
             continue
         created = datetime.fromtimestamp(int(row["created_at"] or 0), tz=UTC).astimezone()
         desired_title = (

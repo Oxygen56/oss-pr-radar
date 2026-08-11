@@ -4198,6 +4198,16 @@ def test_duplicate_task_list_only_returns_stale_unbound_raw_tasks(monkeypatch, t
     assert result["duplicates"][0]["canonicalThreadId"] == "canonical"
     assert result["duplicates"][0]["desiredTitle"].startswith("[无价值·重复任务]")
 
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "UPDATE threads SET title=? WHERE id=?",
+            (result["duplicates"][0]["desiredTitle"], "duplicate"),
+        )
+    after_rename = MODULE.duplicate_task_list(
+        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3", min_age_minutes=30)
+    )
+    assert [item["threadId"] for item in after_rename["duplicates"]] == ["duplicate"]
+
 
 def test_orphan_list_recovers_thread_created_in_github_project(monkeypatch, tmp_path):
     now = datetime.now(UTC)
