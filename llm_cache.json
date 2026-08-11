@@ -7860,6 +7860,32 @@
     ],
     "why": "Issue clearly identifies a validation-before-middleware ordering problem in FunctionTool.invoke, with concrete production examples and a minimal reproduction. However, the proposed fixes (coercion or pre-validation hook) require design confirmation from maintainers, and the deterministic gate is HUMAN_REVIEW."
   },
+  "59d15a3247a7bb496205ef093328f5ee525ca92e11a475ebe26d343370876c69": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Restore output processor pass on error terminals in @mastra/core agent runtime",
+      "or add a positive signal (e.g., event/flag) when the write pass is skipped"
+    ],
+    "risks": [
+      "Changing behavior may affect error handling semantics; need to ensure no unintended side effects on other terminal types"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 15,
+    "test_plan": [
+      "Add a regression test using the provided throwing model to assert output processor runs on error terminal",
+      "Run targeted unit tests for agent stream handling and output processors"
+    ],
+    "unknowns": [
+      "Maintainer's preferred fix direction (restore vs. signal) is not yet confirmed"
+    ],
+    "why": "The issue reports a clear regression in output processor execution on provider errors, with a minimal reproduction and bisect evidence. However, the maintainer has only acknowledged triage, and the issue requires design confirmation on whether to restore the old behavior or add a positive signal for skipped writes. The deterministic gate is HUMAN_REVIEW, so we must wait for maintainer direction."
+  },
   "59d8d15af87f333e2a0b9cc214dd240ad387204e6a4258d3653a6baa77a0a2cb": {
     "confidence": 0.7,
     "contradictions": [],
@@ -10387,6 +10413,34 @@
     ],
     "why": "The issue reports a plausible bug in the output processor's messages argument being empty, but the root cause is inferred from behavior, not confirmed. The maintainer has labeled it for triage but no design confirmation or assignment has been made. The issue asks for clarification on expected behavior and API support, indicating design questions that need maintainer input."
   },
+  "745079e0e14acfe695f0717fca08c99bef4d14152cfe74f7c56bb08dd48d8305": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Update workflow overloads in runEvals to accept ScorerEntry[] and gates",
+      "Possibly thread ScorerEntry through WorkflowScorerConfig and normalizeScorerEntries"
+    ],
+    "risks": [
+      "Potential API design preference for how thresholds are exposed in config shape",
+      "Risk of breaking existing type expectations if overloads are changed incorrectly"
+    ],
+    "root_cause_clarity": "high",
+    "score": 14,
+    "test_plan": [
+      "Add a TypeScript compile test using the provided repro to ensure no TS2769",
+      "Add a runtime test verifying verdict/gateResults/thresholdResults for workflow targets"
+    ],
+    "unknowns": [
+      "Maintainer design confirmation on whether to extend WorkflowScorerConfig or only flat array",
+      "Whether there is an existing PR or branch addressing this issue (open_pr_assessment says none)"
+    ],
+    "why": "The issue clearly identifies a TypeScript overload gap where workflow targets cannot use gates or threshold scorers despite runtime support. The provided repro and runtime proof are strong evidence. However, the deterministic gate is HUMAN_REVIEW and the issue is labeled 'needs triage' with no maintainer approval or design confirmation. The fix is straightforward but requires maintainer assignment to proceed."
+  },
   "746c29f9b63ead5e6ba0ae81b53ae8195e7e58338c14c5ca04475675668d1a9f": {
     "confidence": 0.85,
     "contradictions": [],
@@ -10828,6 +10882,29 @@
       "Maintainer preference on whether to modify the NVIDIA path or add a new platform package; whether a PR would be accepted."
     ],
     "why": "Issue clearly identifies a platform-conditional bug in MiniMAXGemmaRMSNorm with a concrete reproduction and a suggested fix. However, a maintainer comment indicates the NVIDIA model is intentionally CUDA-only and expects platform-specific implementations, conflicting with the issue's proposal to modify the shared NVIDIA path. This design disagreement requires maintainer confirmation before implementation."
+  },
+  "7aa644878ca18a33a4e7eb691ce7364ed91e88d3fd2280698b872f3758874cf1": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Add `project` parameter to `google.STT` constructor and pass it to `_create_client` to set `_project_id` when credentials lack project info."
+    ],
+    "risks": [
+      "Potential API compatibility if parameter name conflicts with existing kwargs; need to ensure backward compatibility."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a unit test using impersonated credentials without project_id/quota_project_id, instantiate google.STT with project='test-project', and verify _project_id is set and _get_recognizer uses it."
+    ],
+    "unknowns": [
+      "Maintainer design preference for parameter naming or whether they prefer automatic resolution from credentials; but this is not blocking as the issue is clear."
+    ],
+    "why": "The issue clearly identifies a missing `project` parameter in `google.STT` that prevents in-memory credentials (e.g., impersonated) from working, with a precise code path and workaround. No competing PR or issue exists, and the fix is a minimal API addition."
   },
   "7ab32ae82a3f39286a4cee7fbf5cfafa1d094ceb263bf8600a3d5173c56e673c": {
     "confidence": 0.85,
@@ -16520,6 +16597,33 @@
     ],
     "why": "Issue clearly describes a silent truncation bug in RemoteA2aAgent when A2A stream ends before terminal state, with reproduction steps and expected fixes. However, the deterministic gate requires HUMAN_REVIEW, and the submission policy needs assignment, so work should wait for maintainer confirmation."
   },
+  "c4216ecaecf18c02b813e4ad049b170bc4b95e44e6c0c4e75846b7ec1afb2719": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify `parseGitRemoteUrl` in `src/utils/parse-git-remote-url.ts` to strip leading and trailing slashes before applying `.git` suffix removal.",
+      "Add regression test for HTTPS URL ending in `.git/` in `__tests__/utils/parse-git-remote-url.test.ts`."
+    ],
+    "risks": [
+      "Potential unintended behavior change if other callers rely on the trailing slash being preserved, though the documented contract suggests normalization is correct.",
+      "The fix must not break parsing of URLs with multiple trailing slashes or unusual path structures."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Run the provided failing test: `npm exec vitest run __tests__/utils/parse-git-remote-url.test.ts`.",
+      "Run the full test suite for the utility to ensure existing SSH, SCP-style, self-hosted, and Azure DevOps cases still pass."
+    ],
+    "unknowns": [
+      "No maintainer confirmation or assignment is present, but the repository does not require assignment and the fix is straightforward."
+    ],
+    "why": "The issue provides a precise root cause: `stripGitSuffix` only removes `.git` at the absolute end, so a trailing slash prevents normalization. A minimal fix is proposed and a failing test is supplied. No competing PR or issue exists, and the change is localized to a utility function with clear regression coverage."
+  },
   "c42c06ebec1d1c076d1708384630eef5ee9e5d3700d48dc6a9023458559b57a1": {
     "confidence": 0.9,
     "contradictions": [],
@@ -17440,6 +17544,33 @@
       "Whether there is an existing open PR (lookup failed due to rate limit)"
     ],
     "why": "Issue reports a concrete bug: server-level enable/disable does not emit ToolListChangedNotification, causing stale tool lists in connected clients. The code path is identified and a clear fix is plausible. However, the deterministic gate is HUMAN_REVIEW, and open PR lookup failed due to rate limit, so duplicate work cannot be excluded. Maintainer design preferences are unknown."
+  },
+  "d0358ee7631e4d8463f0a00b7c3c5924579aab037b07bd137eef1219771124f9": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "pydantic_ai_slim/pydantic_ai/_agent_graph.py",
+      "pydantic_ai_slim/pydantic_ai/agent/__init__.py"
+    ],
+    "risks": [
+      "May conflict with #7053 hook-contract rework if implemented independently.",
+      "Existing PR #7345 may already address the root cause; need to compare implementation boundaries."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add regression tests: (1) ctx.cancel() from a for_run hook should not raise UserError and should cancel the run; (2) a pre-cancelled cancellation_token should prevent setup hooks from running or interrupt a blocking for_run."
+    ],
+    "unknowns": [
+      "Maintainer design preference on whether setup hooks should observe/trigger cancellation.",
+      "Whether PR #7345 or other open PRs already fix the issue."
+    ],
+    "why": "Issue clearly identifies two cancellation wiring gaps in setup-phase hooks with precise fix directions, but explicitly defers resolution to a hook-contract rework (#7053) and requires design confirmation. Existing PR #7345 overlaps semantically but is a draft and not linked to this issue, so a new PR would risk duplicating or conflicting with ongoing work."
   },
   "d03becb25b1186162801fddd0598a5ce352b81e94da4f59faab43c642b8a0a5d": {
     "confidence": 0.7,
