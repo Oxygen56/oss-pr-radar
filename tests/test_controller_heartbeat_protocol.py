@@ -68,3 +68,8 @@ def test_controller_protocol_delegates_validation_prefetch_to_bridge():
     assert "lockfile-scoped dependency prefetch" in PROTOCOL
     assert "must never inspect or execute dependency commands" in PROTOCOL
     assert "A failed prefetch leaves the candidate unreserved" in PROTOCOL
+
+
+def test_controller_protocol_does_not_repeat_environment_blocked_validation():
+    assert "environmentBlocked" in PROTOCOL
+    assert "do not send a validation continuation" in PROTOCOL

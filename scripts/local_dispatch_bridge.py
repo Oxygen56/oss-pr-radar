@@ -2580,7 +2580,30 @@ def _nearest_manifest_root(path: Path, *, stop: Path, manifest: str) -> Path | N
     return None
 
 
-def _validation_prefetch_commands(candidate: dict[str, Any]) -> list[dict[str, Any]]:
+VALIDATION_DEPENDENCY_FAILURE_MARKERS = (
+    "offline",
+    "not cached",
+    "lacks locked dependency",
+    "module lookup disabled",
+    "goproxy=off",
+    "node_modules",
+    "vitest was unavailable",
+    "prettier was unavailable",
+    "eslint was unavailable",
+    "next.js was unavailable",
+    "pytest is not installed",
+    "no module named pytest",
+    "no module named",
+    "is not installed",
+    "missing numpy",
+    "missing torch",
+    "executable is unavailable",
+)
+
+
+def _validation_prefetch_plan(
+    candidate: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     worktree = Path(candidate["worktreePath"]).resolve()
     result_path = worktree / ".oss-pr-radar" / "result.json"
     raw = result_path.read_bytes()
@@ -2589,7 +2612,7 @@ def _validation_prefetch_commands(candidate: dict[str, Any]) -> list[dict[str, A
     result = json.loads(raw)
     tests = result.get("tests") if isinstance(result, dict) else None
     if not isinstance(tests, list):
-        return []
+        return [], []
     failed = [
         item for item in tests if isinstance(item, dict) and item.get("exitCode") not in {None, 0}
     ]
@@ -2598,24 +2621,11 @@ def _validation_prefetch_commands(candidate: dict[str, Any]) -> list[dict[str, A
         for item in failed
         if any(
             marker in f"{item.get('command', '')}\n{item.get('summary', '')}".casefold()
-            for marker in (
-                "offline",
-                "not cached",
-                "lacks locked dependency",
-                "module lookup disabled",
-                "goproxy=off",
-                "node_modules",
-                "vitest was unavailable",
-                "prettier was unavailable",
-                "eslint was unavailable",
-                "next.js was unavailable",
-                "pytest is not installed",
-                "no module named pytest",
-            )
+            for marker in VALIDATION_DEPENDENCY_FAILURE_MARKERS
         )
     ]
     if not dependency_failures:
-        return []
+        return [], []
 
     commands: list[dict[str, Any]] = []
     combined = "\n".join(str(item.get("command") or "") for item in dependency_failures)
@@ -2688,6 +2698,11 @@ def _validation_prefetch_commands(candidate: dict[str, Any]) -> list[dict[str, A
                     ],
                 }
             )
+    return commands, dependency_failures
+
+
+def _validation_prefetch_commands(candidate: dict[str, Any]) -> list[dict[str, Any]]:
+    commands, _dependency_failures = _validation_prefetch_plan(candidate)
     return commands
 
 
@@ -2739,10 +2754,26 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
     reconciled_no_progress = store.reconcile_validation_no_progress()
     candidates: list[dict[str, Any]] = []
+    environment_blocked: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
     for candidate in store.validation_followup_candidates():
         try:
-            commands = _validation_prefetch_commands(candidate)
+            commands, dependency_failures = _validation_prefetch_plan(candidate)
+            if dependency_failures and not commands:
+                environment_blocked.append(
+                    candidate
+                    | {
+                        "reason": "DEPENDENCY_ENVIRONMENT_UNAVAILABLE",
+                        "dependencyFailures": [
+                            {
+                                "command": str(item.get("command") or "")[:300],
+                                "summary": str(item.get("summary") or "")[:300],
+                            }
+                            for item in dependency_failures
+                        ],
+                    }
+                )
+                continue
             candidates.append(
                 candidate
                 | {
@@ -2759,6 +2790,7 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "ok": not errors and not unresolved and not stale,
         "candidates": candidates,
+        "environmentBlocked": environment_blocked,
         "unresolved": unresolved,
         "stale": stale,
         "blockedNoProgress": blocked_no_progress,

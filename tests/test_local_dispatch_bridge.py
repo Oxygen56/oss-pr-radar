@@ -3631,6 +3631,44 @@ def test_validation_prefetch_plan_is_lockfile_scoped(tmp_path):
     ]
 
 
+def test_validation_followup_blocks_missing_python_dependencies_without_lockfile(
+    tmp_path,
+):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        missing_quality=("relevant_tests_green",),
+    )
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value["tests"] = [
+        {
+            "command": "python3 -m pytest test_runtime.py",
+            "exitCode": 1,
+            "summary": "Collection blocked: NumPy is not installed and torch is missing.",
+        }
+    ]
+    raw = json.dumps(value).encode()
+    result_path.write_bytes(raw)
+    digest = hashlib.sha256(raw).hexdigest()
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest=digest,
+        missing=["relevant_tests_green"],
+    )
+    store.record_stage("a/b#1", "VALIDATION_PENDING", evidence={})
+
+    listed = MODULE.validation_followup_list(
+        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3")
+    )
+
+    assert listed["candidates"] == []
+    assert listed["environmentBlocked"][0]["key"] == "a/b#1"
+    assert (
+        listed["environmentBlocked"][0]["reason"]
+        == "DEPENDENCY_ENVIRONMENT_UNAVAILABLE"
+    )
+
+
 def test_validation_prefetch_execution_enforces_command_and_worktree_boundaries(
     monkeypatch, tmp_path
 ):

@@ -203,6 +203,10 @@ Run `validation-followup-list`. For each candidate:
 - Unknown send results stay unresolved and are never resent automatically.
 - Report entries stale after 90 minutes as `validationFollowupStalled`; this is
   a delivery watchdog, not a general review cooldown.
+- Entries under `environmentBlocked` have a real dependency failure but no
+  deterministic lockfile-scoped preparation path. Report the exact task and
+  reason, but do not send a validation continuation that cannot change the
+  evidence.
 - `blockedNoProgress` means the same task completed a continuation but returned
   exactly the same missing evidence. Do not resend it automatically. Report the
   key and unchanged gap as an environment/no-progress block. A changed or
