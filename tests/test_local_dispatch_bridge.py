@@ -4163,7 +4163,16 @@ def test_duplicate_task_list_only_returns_stale_unbound_raw_tasks(monkeypatch, t
             ("duplicate", str(project_root), "<codex_delegation>raw", prompt, 0, -240, -60, "app"),
             ("recent", str(project_root), "<codex_delegation>raw", prompt, 0, -20, -5, "app"),
             ("archived", str(project_root), "<codex_delegation>raw", prompt, 1, -240, -60, "app"),
-            ("helper", str(project_root), "<codex_delegation>raw", prompt, 0, -240, -60, "subagent"),
+            (
+                "helper",
+                str(project_root),
+                "<codex_delegation>raw",
+                prompt,
+                0,
+                -240,
+                -60,
+                "subagent",
+            ),
         ]
         for row in rows:
             connection.execute(
