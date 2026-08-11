@@ -13503,6 +13503,65 @@
     ],
     "why": "Issue clearly identifies a mypy overload chain break caused by interleaved string literals, with a minimal repro and a suggested fix. However, an existing PR (#4774) directly addresses the issue but is closed and lacks regression tests, requiring maintainer review to decide whether to reopen or accept a new PR."
   },
+  "9ed41ee46f2bb9856794228543909cf13d9abe9798db33cee69fb2f18b0d1e50": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify llama-index-embeddings-bedrock base.py to merge additional_kwargs into Cohere request body",
+      "Add regression test for Cohere output_dimension forwarding"
+    ],
+    "risks": [
+      "Potential API behavior change if additional_kwargs conflict with reserved keys",
+      "Need to confirm correct kwarg naming for Cohere Bedrock API"
+    ],
+    "root_cause_clarity": "high",
+    "score": 13,
+    "test_plan": [
+      "Add unit test mocking Bedrock client to assert request body includes output_dimension when additional_kwargs provided",
+      "Run existing embedding integration tests for Bedrock"
+    ],
+    "unknowns": [
+      "Maintainer preference on whether to forward all additional_kwargs or whitelist specific ones"
+    ],
+    "why": "Issue clearly identifies a bug in BedrockEmbedding where additional_kwargs are ignored for Cohere models, with a concrete repro and root cause in _get_request_body. However, the deterministic gate requires HUMAN_REVIEW and design confirmation is needed, so work should wait for maintainer guidance."
+  },
+  "9f2d7396821a06a6cd983a52d1ec95a4cdccc7ceccfcd54a4997ad4d2173c254": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue suggests both add_node and protocol variants; maintainer recommends splitting and scoping to single subgraph first"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "StateGraph.add_node accepts subgraphs parameter",
+      "StateNodeSpec carries subgraphs to PregelNode",
+      "Regression tests for single-subgraph declaration"
+    ],
+    "risks": [
+      "Multi-subgraph declaration can produce wrong state snapshots; must be explicitly rejected or documented",
+      "API change touches all add_node overloads; backward compatibility needed"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "test_plan": [
+      "Reproduce issue with Router example; assert get_subgraphs and xray see declared child",
+      "Test checkpoint namespace lookup for declared subgraph",
+      "Run existing LangGraph test suite for state graph compilation"
+    ],
+    "unknowns": [
+      "Maintainer preference on API shape (add_node vs protocol)",
+      "Whether multi-subgraph namespace redesign is in scope"
+    ],
+    "why": "Issue identifies a real observability gap: dynamic subgraph invocation is invisible to static analysis, and PregelNode already supports explicit subgraphs but StateGraph does not thread it through. A contributor confirms the diagnosis and proposes a scoped fix, but a maintainer-level contributor shows the multi-subgraph case is broken and recommends splitting the work. The single-subgraph fix is actionable, but the motivating deepagents case requires a namespace design change. Maintainer confirmation is needed before implementation."
+  },
   "9f56014d00bc17e68f460b2d1b643185db72b637b6cff4202360ce6076790957": {
     "confidence": 0.85,
     "contradictions": [
@@ -14594,6 +14653,34 @@
       "Run targeted AG-UI SDK tests and the package's existing streaming regression suite"
     ],
     "why": "The issue gives a precise root cause (snapshot assigns fresh ids to re-factored tool-call messages, breaking the client's id-keyed merge and causing ordering displacement) and proposes a concrete fix. However, maintainer triage is required: the gate says HUMAN_REVIEW, there are overlapping open PRs (#7423, #7479) that touch AG-UI snapshot/support paths, and a potential duplicate issue #7490 with shared behavior signals. The fix may also involve design choices about message identity that need maintainer confirmation."
+  },
+  "ae89e6f9369d1cdbb22b702619da4e6608bf738e30cd016ea758340f731e26ee": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify attachMcpCallToolContent to propagate _meta and expose content enumerably or add a public accessor",
+      "Possibly add a client.callTool() or getLastToolResult() method"
+    ],
+    "risks": [
+      "Changing property enumerability could affect existing consumers relying on non-enumerable Symbol",
+      "Adding new public API may require broader design review"
+    ],
+    "root_cause_clarity": "high",
+    "score": 15,
+    "test_plan": [
+      "Create a failing test using the provided minimal repro to assert output._meta.ui.resourceUri is accessible and output.content is enumerable",
+      "Run targeted unit tests for @mastra/mcp package"
+    ],
+    "unknowns": [
+      "Maintainer preference on the fix approach (option 1 vs option 2) is not confirmed",
+      "Exact version and API signature details need verification"
+    ],
+    "why": "The issue clearly identifies a bug in MCPClient.execute() where _meta is dropped and content is hidden on a non-enumerable Symbol, breaking UI host detection. However, the gate decision is HUMAN_REVIEW and the issue requires design confirmation on the preferred fix approach (propagate _meta vs. expose raw CallToolResult). No maintainer approval or active investigation is present, and the fix may involve API behavior changes."
   },
   "aec3914e518f72f930560b4e67a2899354e12aa4996efb8f96366f5c1019aea4": {
     "confidence": 0.8,
@@ -19975,6 +20062,35 @@
     ],
     "why": "The issue provides a detailed root cause: Dynamo's kimi_k2 parser lacks a structural tag builder, causing tool_choice='required' to fall back to a JSON-array grammar that conflicts with Kimi's native envelope, leading to whitespace generation and token exhaustion. The fix likely lives in an external crate (frontend-crates), and an existing PR (#9752) overlaps semantically but is a draft with CI failures and no tests. Given the external dependency and existing PR, maintainer guidance is needed to avoid duplicate or conflicting work."
   },
+  "eb07aaf244db2a11f56df0b57fd4650c553a5cad6f2533ceb61b643574e85046": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Correlate provider-executed tool results back to tool calls in createLLMExecutionStep",
+      "Modify agentic loop fallback to preserve real output",
+      "Possibly adjust client-side merge logic in AI SDK"
+    ],
+    "risks": [
+      "Potential API behavior change if client-side merge logic is altered",
+      "Existing PR #13903 may be revived or superseded"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Add regression test using Anthropic code_execution_20260120 to assert ToolUIPart.output contains real stdout/stderr",
+      "Run targeted unit tests for agent stream and tool result correlation"
+    ],
+    "unknowns": [
+      "Maintainer design preference for fixing client-side overwrite vs provider-side correlation",
+      "Whether PR #13903 is considered a competing implementation or abandoned"
+    ],
+    "why": "Issue provides a detailed root cause and a public reproduction, but the deterministic gate requires HUMAN_REVIEW and an existing PR (#13903) is closed with gaps (no tests, stale). Maintainer has not confirmed design or assignment, so work should wait for maintainer direction."
+  },
   "ec9f83ed4bdeb5e8eef46a9e2a7e580cb4a6c448e892d97006784fb336a77bc3": {
     "confidence": 0.7,
     "contradictions": [
@@ -20443,6 +20559,35 @@
       "Whether the expected behavior includes showing the file in the Files tab or only informing the agent"
     ],
     "why": "The issue describes a user-visible bug in the cloud canvas file upload flow: the agent is not informed of the uploaded file's path. The root cause is plausible (missing event or context propagation) but not confirmed. No maintainer assignment, design confirmation, or explicit help-wanted signal. The track is agent_ai_infra, not llm_algorithm, so the algorithm-specific requirement does not apply. The issue is actionable in principle, but the lack of maintainer signal and the need to confirm the intended behavior (e.g., whether the file should appear in Files tab) make it safer to wait for maintainer input."
+  },
+  "ef77f8295c787bf49e33f63bad38fb6def781bb5c23f4d175598a105d026949d": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify Mastra.shutdown() to drain/settle in-flight durable executions before closing storage",
+      "Make deployer shutdown timeout configurable",
+      "Harden post-terminal cleanup to skip when storage is closed"
+    ],
+    "risks": [
+      "Existing PR #21255 may already address the root cause; need to compare implementation boundaries",
+      "Changing shutdown semantics could affect other workflows or introduce regressions"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a failing test that simulates SIGTERM during an in-flight durable run and asserts the run suspends with a resumable snapshot",
+      "Run targeted unit tests for shutdown ordering and durable agent recovery"
+    ],
+    "unknowns": [
+      "Whether PR #21255 actually fixes this issue or only overlaps semantically",
+      "Maintainer design preferences for shutdown ordering and timeout configuration"
+    ],
+    "why": "Issue describes a clear shutdown-ordering bug with a verified causal chain and a concrete expected behavior. However, the deterministic gate is HUMAN_REVIEW, and an existing PR (#21255) has semantic overlap that requires maintainer comparison before starting new work."
   },
   "f051fc2b0529efd5a7799e65bae45196c9d09d8ef7eaac187dc388f7efc7d577": {
     "confidence": 0.6,
