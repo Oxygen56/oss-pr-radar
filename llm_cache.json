@@ -7666,6 +7666,30 @@
     ],
     "why": "Issue provides a detailed root cause analysis and a suggested fix, but the deterministic gate requires HUMAN_REVIEW and maintainer confirmation is pending. The issue is labeled 'needs triage' and the only comment is a triage acknowledgment. No maintainer has approved the proposed design or confirmed the fix approach."
   },
+  "58432ee726779e730bca028b0d840c7293d504653f9419436ede553626de6041": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/mcp/src/server/server.ts: modify tools/call result builder to include _meta from tool spec or execute() return, preserving both nested and flat keys"
+    ],
+    "risks": [
+      "Potential conflict with existing PR #20931; risk of unintended API behavior changes if _meta handling is broadened without maintainer approval."
+    ],
+    "root_cause_clarity": "high",
+    "score": 15,
+    "test_plan": [
+      "Add a regression test that registers a tool with _meta.ui.resourceUri, invokes tools/call, and asserts _meta is present in the result; run targeted package tests."
+    ],
+    "unknowns": [
+      "Whether PR #20931 already fixes this issue or requires different changes; maintainer design preferences on _meta propagation."
+    ],
+    "why": "Issue clearly identifies a bug in MCPServer where tools/call omits _meta, with a concrete code path and expected behavior. However, the supplied gate decision is HUMAN_REVIEW, and an existing PR (#20931) has semantic overlap with the same code path, requiring maintainer comparison before new work. The issue is not yet triaged and needs design confirmation."
+  },
   "586eaf6b21103c7d6f23544acd4b5c3e4ec6df55a491a4031ea5657e59f508f4": {
     "confidence": 0.7,
     "contradictions": [
@@ -10214,6 +10238,35 @@
     ],
     "why": "Issue clearly identifies a silent suppression of Cache-DiT when breakable CUDA graphs are enabled, with a concrete code path and suggested warning behavior. However, existing PR #33569 (maintainer-owned) semantically overlaps the same code path and may already address the root cause, requiring human comparison before creating a new task."
   },
+  "73e4f1f91cb58dabd7f4fedb4f61454e7a07c388613c23d782a6732bba4980cd": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix the timing of response tagging so messages are populated in processOutputResult",
+      "Add public API for reading turn messages in output processors"
+    ],
+    "risks": [
+      "Changing the timing of response tagging may affect other parts of the runtime",
+      "Adding public API may require deprecation or compatibility considerations"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "test_plan": [
+      "Create a minimal reproduction with a base Agent and outputProcessors streamed over HTTP, asserting that messages argument is non-empty",
+      "Add a regression test that verifies the processor receives the assistant message"
+    ],
+    "unknowns": [
+      "Whether the empty messages argument is expected behavior or a bug",
+      "The intended supported way for processors to access turn messages",
+      "Maintainer's design preference for fixing this issue"
+    ],
+    "why": "The issue reports a plausible bug in the output processor's messages argument being empty, but the root cause is inferred from behavior, not confirmed. The maintainer has labeled it for triage but no design confirmation or assignment has been made. The issue asks for clarification on expected behavior and API support, indicating design questions that need maintainer input."
+  },
   "746c29f9b63ead5e6ba0ae81b53ae8195e7e58338c14c5ca04475675668d1a9f": {
     "confidence": 0.85,
     "contradictions": [],
@@ -10551,6 +10604,29 @@
       "Whether maintainers have already started work on this or have design preferences; but no evidence of that."
     ],
     "why": "Issue identifies a concrete bug in Gemma4UnifiedMultimodalEmbedder where output_proj_dims is incorrectly used as input dimension for audio, causing weight-loading AssertionError. Root cause is clear, fix is minimal and verified by reporter. No competing PR or related issue found."
+  },
+  "78ed9a73717aa1e59093588fdb18eb3fa1c08168a8b831260d205b2d9b5f2df4": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Dependency version constraints in packaging metadata"
+    ],
+    "risks": [
+      "Changing constraints may break other extras or require upstream coordination"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with pip install nvidia-nat[eval,langchain] and verify resolution succeeds"
+    ],
+    "unknowns": [
+      "Exact conflicting package versions and maintainer preferred resolution"
+    ],
+    "why": "Issue reports dependency conflicts when installing eval and langchain extras together, but root cause is unclear (likely botocore version pinning). No maintainer triage or design confirmation; gate requires HUMAN_REVIEW."
   },
   "7961bfa2c611b105779cfe8d2912ba32de7af3014aaaf313926c3d8ebbf5a3f2": {
     "confidence": 0.8,
@@ -14706,6 +14782,36 @@
     ],
     "why": "The issue reports a memory leak on NPU with dynamic chunking and radix cache, but lacks a minimal reproducer and root cause analysis. The deterministic gate is HUMAN_REVIEW, and open PR/related issue lookups failed, so duplicate work cannot be excluded."
   },
+  "b27928fa806e85c22b3b95c3c9cbfb239ab7e6695ff692005a8bf899be4b8497": {
+    "confidence": 0.7,
+    "contradictions": [
+      "PR #47023 is stale but PR #49805 is merged and may already address the issue"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix weight_loader attribute overwrite in cutlass.py process_weights_after_loading",
+      "Ensure tensor-parallel weight loading does not re-set weight_loader"
+    ],
+    "risks": [
+      "May be duplicate of issue #51181 or already fixed by PR #49805",
+      "Hardware-specific (Blackwell) may not be available in CI"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 13,
+    "test_plan": [
+      "Reproduce with FP8 model on 2x RTX 5090 with tensor-parallel-size 2",
+      "Run existing unit tests for cutlass.py and add regression test for weight_loader overwrite"
+    ],
+    "unknowns": [
+      "Whether PR #47023 or #49805 fully resolves this issue",
+      "Exact root cause of the weight_loader overwrite in tensor-parallel context"
+    ],
+    "why": "The issue reports a concrete FP8 tensor-parallel weight_loader overwrite assertion, but the root cause is not fully diagnosed and an existing PR (#47023) directly targets the same code path with a fix, though it is stale and has CI failures. The deterministic gate requires HUMAN_REVIEW, and the repository has an AI disclosure conflict that blocks automated action."
+  },
   "b2c0f1ff5f29667d3c450a163140e78d1c3a86071ccbfe9c8fdc571e98b60d8a": {
     "confidence": 0.6,
     "contradictions": [],
@@ -15232,6 +15338,32 @@
     ],
     "why": "Issue reports a clear bug: llm_as_a_judge guardrail fails when judge model is proxy-registered (vllm/openai-compatible) because it calls litellm.acompletion directly without router resolution. Contributor comment identifies root cause and proposes fix: pass llm_router to guardrail initializer and use router.acompletion. However, open PR and related issue lookup failed (timeout), so duplicate implementation cannot be excluded. Also, maintainer approval/design confirmation is absent, and the fix touches guardrail registry API, requiring maintainer input."
   },
+  "ba37fa9b8ba7b85c8ddf7dfa633d0d87cf75335fd7b2f4d0d393d1ced8c91641": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "decision": "REJECT",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Improve error detection and messaging in docker_sandbox_service.py",
+      "Add webhook target identity check"
+    ],
+    "risks": [
+      "Potential false positives in identity checks",
+      "Changes may be considered maintainer preference"
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "test_plan": [
+      "Reproduce with ufw blocking docker0 and verify clear error message",
+      "Test port conflict scenario to ensure identity check triggers"
+    ],
+    "unknowns": [
+      "No maintainer confirmation or open PR assessment; but not blocking for REJECT"
+    ],
+    "why": "Issue is a bug report with a clear root cause and workaround, but the proposed changes are diagnostic messaging and identity checks, not a core algorithm or infrastructure fix. Track is agent_ai_infra, not llm_algorithm, and the work is local configuration/plumbing, not a novel algorithmic contribution."
+  },
   "ba469bd5c94418bd3fdf7ff2f217e4cac4ca0cb69587f3c0ea186546a5cf99b6": {
     "confidence": 0.82,
     "decision": "WAIT_MAINTAINER",
@@ -15632,6 +15764,34 @@
       "Maintainer preference on which inference_mode alignment option to adopt"
     ],
     "why": "Issue identifies a clear inconsistency in inference_mode usage between warmup/autotune and real forward, with a concrete failure mode and reproduction. However, open PR lookup timed out and related issue audit failed, so duplicate implementation cannot be excluded. Maintainer comment raises design question about aligning modes, requiring maintainer decision."
+  },
+  "bf92ff09e16802658e6cbc813ea4f0612f93390e5799a7df783bd2ec88b51b8b": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix logging/UI serialization to include tool schema in hidden_params",
+      "Add regression test for tool schema visibility in UI logs"
+    ],
+    "risks": [
+      "Potential change to logging behavior may affect performance or privacy",
+      "UI fix may require frontend changes beyond backend logging"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with provided config and request, verify schema missing in UI log",
+      "Add unit test for hidden_params serialization with tools"
+    ],
+    "unknowns": [
+      "Exact code path where schema is dropped",
+      "Maintainer preference on fix location (backend vs UI)"
+    ],
+    "why": "The issue reports a UI display bug where the tool schema is missing from hidden_params in the LiteLLM dashboard, despite being sent to Ollama. The root cause is unclear: it could be a serialization/redaction issue in the logging path or a UI rendering issue. No maintainer confirmation or design direction exists, and the track is agent_ai_infra, not llm_algorithm, so the required algorithm evidence is absent. The candidate is actionable but needs maintainer input to confirm the intended fix location."
   },
   "bfe527fa914c87544191b88b5776b9a65a0e50b78e840c792851ac86b99c5b3c": {
     "confidence": 0.9,
