@@ -5254,6 +5254,40 @@
     ],
     "why": "Issue provides a precise root cause and a concrete fix for a user-visible bug in vLLM's Inkling parser, with a no-GPU repro. However, the deterministic gate requires HUMAN_REVIEW, and the open PR/related issue lookup failed, so we cannot rule out duplicate work. Maintainer design confirmation is also absent."
   },
+  "40f80e72d59499de5f318f6d99c6da6cf3de0653807c9e2e0694e4b56b280365": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue says no errors but output degenerate; comment suggests KV-cache dtype change did not fix"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Identify regression commit between nightly and v0.27.0",
+      "Fix attention/MoE/quantization path causing degenerate output",
+      "Add regression test for silent inference corruption"
+    ],
+    "risks": [
+      "Root cause may be in upstream dependency (torch, FlashInfer) not vLLM code",
+      "Hardware-specific (B300) may be hard to reproduce",
+      "Existing PR #50617 may already fix it, requiring coordination"
+    ],
+    "root_cause_clarity": "low",
+    "score": 12,
+    "test_plan": [
+      "Reproduce with fixed prompt and capture token/logprob diff between nightly and v0.27.0",
+      "Bisect commits to isolate regression",
+      "Run small-model numerical regression with fixed seed and tolerance"
+    ],
+    "unknowns": [
+      "Exact commit range and dependency changes between nightly and v0.27.0",
+      "Whether PR #50617 addresses the root cause",
+      "Maintainer interest and assignment"
+    ],
+    "why": "Issue reports a silent regression in v0.27.0 for Kimi-K3-NVFP4 on 8xB300, but root cause is unknown; cross-model report suggests a release-level issue. Existing PR #50617 has semantic overlap but does not reference the issue, and its scope (FP8_PB layers) may not address the root cause. No maintainer confirmation or design direction."
+  },
   "4117ad056d3fac0da06f26f9a77522786340251d5aff44dff2e0e715c904fbf9": {
     "confidence": 0.7,
     "contradictions": [],
@@ -6112,6 +6146,37 @@
       "Whether existing PR #12658 will be updated with tests"
     ],
     "why": "Issue clearly describes a version-skew bug during rolling updates: v1.4 frontend sends MsgPack to v1.2 workers that only accept JSON. Existing PR #12658 is a draft with no tests and failing CI, leaving room for a more complete fix with regression tests."
+  },
+  "4b13cfdafb207ea363c82ca594e0f04339675321305d2d789d1e734911b43a9e": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue title says 1.17.0-preview.260804.1 but Package Versions section lists 1.17.0-preview.260722.1"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix port binding conflict in Microsoft.Agents.AI.Foundry.Hosting",
+      "Add regression test for container startup with ASPNETCORE_URLS"
+    ],
+    "risks": [
+      "Existing PR #7370 may already address root cause; need to compare implementation",
+      "Potential maintainer design preferences for hosting configuration"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 14,
+    "test_plan": [
+      "Reproduce with provided minimal repro and package version 1.17.0-preview.260804.1",
+      "Run targeted unit tests for hosting startup and port binding"
+    ],
+    "unknowns": [
+      "Root cause of port conflict not identified",
+      "Whether PR #7370 fixes this issue",
+      "Maintainer confirmation on desired fix approach"
+    ],
+    "why": "Issue reports a clear regression in Microsoft.Agents.AI.Foundry.Hosting causing port binding conflict, but root cause is not identified. Existing PR #7370 has semantic overlap but is draft and not linked to this issue. Maintainer triage and design confirmation are needed before starting work."
   },
   "4b2bf95f7cd87f7b2ed8eee7edbf36b4d9b99edfd96ecbb04029cbfcd66540d6": {
     "confidence": 0.7,
@@ -13093,6 +13158,29 @@
     ],
     "why": "The issue clearly identifies a user-visible bug in the Azure Responses path where empty namespace descriptions are forwarded unchanged, causing Azure to reject requests. The root cause is localized to the transform function, and the issue provides a concrete reproduction and expected behavior. No existing PR directly addresses this specific failure, and the issue is actionable with a clear code path."
   },
+  "a1699a59cd4149a3041b4fc141d76c4011b34c515734205b73546ee1f93d8d25": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify _handle_upserts and _ahandle_upserts in llama_index/core/ingestion/pipeline.py to defer docstore/vector_store deletions until after transformations succeed, or add rollback on failure."
+    ],
+    "risks": [
+      "Changing deletion timing may affect memory usage or consistency in concurrent ingestion scenarios; need to preserve existing semantics for successful runs."
+    ],
+    "root_cause_clarity": "high",
+    "score": 14,
+    "test_plan": [
+      "Add a regression test using the provided minimal reproducer that asserts old vectors and docstore entries remain after a transformation failure."
+    ],
+    "unknowns": [
+      "Maintainer preference on whether to defer deletions or implement rollback; no maintainer approval or help-wanted signal."
+    ],
+    "why": "Issue provides a clear, reproducible bug with a concrete code path and expected behavior, but the deterministic gate requires HUMAN_REVIEW and design confirmation is needed before implementation."
+  },
   "a1f569cd7ebfb2922f7aa3cadce4713ea7e0eab80fef503843a8334fcbe58acc": {
     "confidence": 0.8,
     "contradictions": [],
@@ -14847,6 +14935,34 @@
     ],
     "why": "Issue provides a clear root cause and repro, but the deterministic gate requires HUMAN_REVIEW and an existing PR (#7598) already addresses it with failing CI. Competition is possible only if the PR's gaps are filled, but maintainer confirmation is needed."
   },
+  "bb969417320867a56e708368f9ad6c86947b5a393d52bdf55fdc94dd838f66bd": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify converse_transformation.py to avoid injecting conflicting tool_choice into additionalModelRequestFields when toolConfig.toolChoice is set",
+      "Add regression test for forced tool_choice with parallel_tool_calls"
+    ],
+    "risks": [
+      "May conflict with existing PRs; need to compare implementations",
+      "Potential behavior change for other models using parallel_tool_use_config"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Use the provided curl repro to assert no 400 and correct request body",
+      "Run existing Bedrock transformation unit tests"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a specific fix approach",
+      "Exact status of existing PRs relative to this issue"
+    ],
+    "why": "Issue provides a clear root cause and reproducible 400 error for forced tool_choice with parallel_tool_calls on Bedrock Converse. Existing PRs #32605 and #34888 overlap semantically but are incomplete and not linked to this issue, leaving room for a more complete fix."
+  },
   "bbbf838fe0e08004deeb70b057a3b71b8a9c6e1d35baab6dd86f3bf7d9310080": {
     "confidence": 0.8,
     "contradictions": [],
@@ -15864,6 +15980,36 @@
       "Full details of related issues #39049 and #39407 due to lookup timeout"
     ],
     "why": "Issue reports a high-context correctness bug in Gemma 4 31B with a clear reproduction path and maintainer-requested ablation data. However, the deterministic gate is HUMAN_REVIEW, and the related issue audit failed due to timeout, leaving uncertainty about existing coverage. An open PR #40391 may address a related KV cache alignment issue but lacks strong semantic overlap and is stale."
+  },
+  "c79265cd74f58fd3616c936048256a0bc83299a3cdb96b0478ff836484c301b4": {
+    "confidence": 0.7,
+    "contradictions": [
+      "The issue suggests upgrading plugin-daemon to 0.0.18, but the bot says the current codebase pairs with 0.6.10, indicating version pairing complexity"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add 'structured-output' to the ModelFeature enum in api/core/plugin/entities/plugin_daemon.py",
+      "Possibly update plugin-daemon version references or compatibility checks"
+    ],
+    "risks": [
+      "Changing the enum may affect other components expecting a fixed set of features",
+      "Version mismatch may require coordinated updates across Dify API and plugin-daemon, increasing scope"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Create a unit test that constructs a PluginDaemonBasicResponse with a manifest containing 'structured-output' and verify it parses successfully",
+      "Run existing plugin-related tests in the API package"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred approach for handling backward compatibility of feature enums",
+      "Exact plugin-daemon version that should be paired with Dify 1.2.0"
+    ],
+    "why": "The issue is a user-facing bug caused by a version mismatch between Dify API and plugin-daemon, where the Pydantic enum in the API does not recognize 'structured-output'. The root cause is clear (missing enum value in the API's ModelFeature), but the fix requires updating the enum and ensuring compatibility with the daemon version. The repository has a policy requiring AI disclosure, which conflicts with automated public actions, and the deterministic gate is ALLOW_PRIVATE_WORK, not a full green light. No maintainer confirmation or design approval exists, and the fix may involve cross-component version alignment."
   },
   "c7c1358212b35db2acdd661439794bb0cb407f4bd7c8aea16a8b55e59fa08ec9": {
     "confidence": 0.7,
@@ -18877,6 +19023,32 @@
       "Maintainer decision on whether to prioritize this niche bug; whether existing PR #51123 will be merged or needs competition."
     ],
     "why": "Issue provides a detailed root cause and repro for a real crash, but the deterministic gate requires HUMAN_REVIEW and a maintainer has questioned the niche value, so assignment/design confirmation is needed."
+  },
+  "e933632dee1bcda43172421d2f843355f8f3e07fb37db7a8b9195ce1f0e402f6": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Add results branch to _set_observation_output in langfuse_otel.py",
+      "Possibly update otel mapper for rerank output"
+    ],
+    "risks": [
+      "May need to align with maintainer preferences on attribute naming or serialization",
+      "Potential overlap with newer otel mapper path"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Use provided fake-span script to assert output attribute is set for RerankResponse",
+      "Add regression test for /v1/rerank with langfuse_otel callback"
+    ],
+    "unknowns": [
+      "Maintainer confirmation on preferred fix location (legacy vs new mapper)"
+    ],
+    "why": "Issue provides a precise root cause: langfuse_otel output setters ignore RerankResponse, with a minimal repro and suggested fix. No competing PR or issue found. The fix is small and testable."
   },
   "e978276646fcd0104adc6abd64f55fb72a84bb630a2686a4b3ecf85be9527b09": {
     "confidence": 0.85,
