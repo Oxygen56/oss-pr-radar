@@ -4964,6 +4964,31 @@
     ],
     "why": "Issue reports a clear user-visible bug with a detailed root cause: delayed registry-to-GUI projection overwrites newly added models. The bug is reproducible and affects key provider configuration paths. No competing PR or issue found, and the maintainer gate allows work."
   },
+  "3ba03c31b073140338babe61017db028459c63e903dacc1389c6df74b5ccccd8": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Set supports_required_and_named = False in Step3p5ToolParser",
+      "Add regression test for named/required tool_choice with step3p5 parser"
+    ],
+    "risks": [
+      "Potential behavior change for users relying on raw XML output; but this is a bug fix aligning with other XML parsers"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce with provided example: send chat completion with tool_choice named and step3p5 parser, assert arguments are JSON not raw XML",
+      "Run existing tool parser tests and add new test case"
+    ],
+    "unknowns": [
+      "No maintainer confirmation or assignment; but repository does not require assignment and issue is clear"
+    ],
+    "why": "Issue identifies a concrete bug: Step3p5ToolParser inherits supports_required_and_named=True, causing named/required tool_choice to bypass XML parsing and return raw XML as arguments. Root cause is clear and fix is minimal (set flag to False). No competing PR addresses this issue; existing PRs are unrelated or lack tests. Actionable and valuable."
+  },
   "3c16064f1a321d98c08fac36bc38b14f3c86b52412e72e438a68670d932e9b3f": {
     "confidence": 0.7,
     "contradictions": [
@@ -20434,6 +20459,32 @@
       "Maintainer preference on the productionization approach (async_sessionmaker injection) is not confirmed, but the issue already suggests it; no blocking unknown."
     ],
     "why": "Issue identifies a concrete atomicity bug in RemoteSandboxService read paths that commit the shared request-scoped session, risking premature commits of sibling writes. The fix pattern is already proven in get_sandbox, and the issue provides a clear scope list, productionization guidance, and a regression test approach. No competing PR exists."
+  },
+  "fc56e97763ec0eed50fb81f4a1cbd9e49f956c418d8ae8f02b369a85b34dac43": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue #51801 shares stack signatures but has different title and behavior; semantic overlap may be coincidental."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify MooncakeStoreConnector's process_tokens to handle token_len_chunk exceeding block_hashes length, possibly by aligning token counts or deferring hash computation."
+    ],
+    "risks": [
+      "Potential duplicate issue #51801; root cause may be in scheduler token tracking rather than connector; fix may affect performance or correctness of KV transfer."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 13,
+    "test_plan": [
+      "Reproduce with MTP speculative decoding and MooncakeStoreConnector in disaggregated setup; add regression test with synthetic token sequences to verify assertion no longer fails."
+    ],
+    "unknowns": [
+      "Whether maintainers have acknowledged the issue; whether the duplicate issue is truly related; exact interaction between MTP and block hash computation."
+    ],
+    "why": "The issue describes a concrete assertion failure in MooncakeStoreConnector when MTP speculative decoding advances token_len faster than block hashes are computed. The root cause is plausible but not fully verified; the deterministic gate requires HUMAN_REVIEW, and there is a potential duplicate issue #51801 sharing stack signatures. The candidate is technically actionable but needs maintainer confirmation and duplicate resolution."
   },
   "fc80669976f3106de3801abb0100beab48a741a6abf2e52079d4e83bd217c5a7": {
     "confidence": 0.85,
