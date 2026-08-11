@@ -3435,6 +3435,36 @@
     ],
     "why": "The issue reports a crash in embedding_service.py due to a vector count mismatch, but the root cause is not fully confirmed; the bot suggests possible causes in the OpenAI-compatible adapter but no maintainer has confirmed or assigned. The deterministic gate is HUMAN_REVIEW, and related issue lookup failed due to timeout, so actionability is uncertain."
   },
+  "2b1e28ee916d47d6b50b0056a8e891455aee4f3308fc0a007229609651e11118": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Maintainer comment says fix should be an option, while issue reporter expects default behavior change."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "llama-index-core/llama_index/core/chat_engine/condense_plus_context.py",
+      "llama-index-core/llama_index/core/response_synthesizers/base.py"
+    ],
+    "risks": [
+      "Changing default behavior could break strict RAG expectations; must be behind an opt-in option.",
+      "Existing closed PRs may be revived or superseded, requiring coordination."
+    ],
+    "root_cause_clarity": "high",
+    "score": 14,
+    "test_plan": [
+      "Add a regression test that creates an empty index, calls astream_chat, and asserts the LLM is invoked with empty context when the new option is enabled.",
+      "Run existing chat engine and synthesizer unit tests to ensure no regressions."
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred design for the option (name, default, scope).",
+      "Whether any open PR or branch is actively addressing this with maintainer approval."
+    ],
+    "why": "Issue clearly describes a user-visible bug in CondensePlusContextChatEngine.astream_chat when retriever returns 0 nodes, with a minimal repro and root cause in the synthesizer short-circuit. However, a maintainer explicitly stated the fix must be an option on the chat engine, not default behavior, and multiple PRs exist but are closed/stale. This requires design confirmation and maintainer direction before a new PR is worthwhile."
+  },
   "2b314d5633f0a51030f778a41fcbb266854ceacd768d02208d1ee3c7cb264d6d": {
     "confidence": 0.7,
     "contradictions": [],
@@ -5807,6 +5837,30 @@
     ],
     "why": "Issue and comments identify a concrete bug: fast mode silently excludes 'scripts/' via hardcoded FAST_SKIP_DIRS in discover.c, with reproduction and root cause. However, the track is llm_algorithm, and the issue is about repository indexing behavior, not an LLM algorithm mechanism. The candidate's algorithm_evidence is inflated (matched terms 'adapter' and 'zero' are coincidental), and there is no training objective, model mechanism, or numerical method. The deterministic gate is ALLOW_TO_WORK, but the track requirement is not met. Maintainer has acknowledged the bug and routed it, so work is actionable, but the track mismatch and lack of algorithm validation path make it unsuitable for NEW_CLEAN_CANDIDATE. The issue is a clear bug fix opportunity, but per track rules it should be rejected or wait for maintainer clarification. Given the maintainer's active response and the need for design confirmation on the fix (e.g., whether to remove 'scripts' or make list configurable), WAIT_MAINTAINER is appropriate."
   },
+  "484b6568a8377f36a201c8b8c308f71f9acd5522b179801e3ff3cee732bf1d63": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Original report says thought blocks overflow, but comment says it's text/code blocks; another comment says it's different from code block wrapping issue"
+    ],
+    "decision": "REJECT",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Duplicate work if #13055 already addresses it",
+      "UI fix may require design decisions from maintainers"
+    ],
+    "root_cause_clarity": "low",
+    "score": 2,
+    "test_plan": [],
+    "unknowns": [
+      "Whether #13055 is already being fixed",
+      "Exact CSS/layout root cause"
+    ],
+    "why": "Issue is a UI bug with a workaround (enable 'Wrap Codeblocks') and likely duplicates #13055. No code path or algorithm evidence; track is agent_ai_infra but no concrete implementation details. Low value and not actionable without maintainer direction."
+  },
   "484d5a0874da5493734601768132e67170006b2cbd4b8100f3dff9e4c6e9b35e": {
     "confidence": 0.7,
     "contradictions": [],
@@ -6965,6 +7019,31 @@
       "Maintainer preference for fix approach"
     ],
     "why": "Issue provides a clear root cause (AOT cache key ignores multimodal config) and a reproducible crash. Existing PR #50908 addresses the issue but has failed CI checks and may be incomplete. A materially better PR with comprehensive tests and a robust fix is plausible."
+  },
+  "54f500e1c103575dbd2371679d1842416df165e1cbe3fe56abd07dce40f5378f": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "litellm/proxy/proxy_server.py",
+      "litellm/constants.py"
+    ],
+    "risks": [
+      "Existing PR #36250 may already address the root cause; overlapping changes could cause merge conflicts."
+    ],
+    "root_cause_clarity": "high",
+    "score": 15,
+    "test_plan": [
+      "Add regression test that starts proxy with DB-stored max_budget and verifies /global/spend reflects DB value after restart."
+    ],
+    "unknowns": [
+      "Maintainer's intended behavior for DB-stored max_budget override; whether PR #36250 actually fixes this issue."
+    ],
+    "why": "Issue provides a detailed root cause and reproducible bug, but the supplied gate requires HUMAN_REVIEW and the existing PR #36250 has semantic overlap that needs maintainer comparison. The issue explicitly asks for design confirmation on intended behavior, making it premature to start work without maintainer input."
   },
   "5572bd2f0341b616ddf17cd8cd4790ea217afa4fd7e15541e2a20413a897ba27": {
     "confidence": 0.7,
@@ -11790,6 +11869,35 @@
       "Exact code location of transformResponse and whether maintainers have a preferred error handling pattern"
     ],
     "why": "The issue clearly identifies a failing CI integration due to an external endpoint returning HTTP 500, and promptfoo's error handling incorrectly assumes an OpenAI-style payload, causing a null dereference. This is a concrete bug with a reproducible curl command and a clear code path (transformResponse). No competing PR or issue exists, and the fix is actionable: improve error handling for non-OpenAI responses."
+  },
+  "8d3bc0daa5fdd6a6f487db5c4b0b91f45df029089f34bb68adaa5c9554ff0a44": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "stream-level retry option",
+      "onError retry signal",
+      "normalized mid-stream error types"
+    ],
+    "risks": [
+      "API design changes may conflict with existing maintainer preferences",
+      "Potential overlap with open PRs #18671 and #18672"
+    ],
+    "root_cause_clarity": "high",
+    "score": 14,
+    "test_plan": [
+      "Create a failing test using the repro sketch with a mock SSE error event mid-stream",
+      "Verify retry behavior and error classification via unit tests"
+    ],
+    "unknowns": [
+      "Maintainer design preference on stream-level retry vs. error normalization",
+      "Whether existing PRs will be merged or superseded"
+    ],
+    "why": "Issue clearly describes mid-stream provider errors bypassing retries and being unclassifiable, with concrete repro and production evidence. However, the deterministic gate is HUMAN_REVIEW, and the issue has been split into two sub-issues (#18668, #18669) requiring design confirmation. Two open PRs (#18671, #18672) exist with overlapping intent but are not directly linked, so maintainer guidance is needed to avoid duplicate or conflicting work."
   },
   "8de24e9cd4380f38ab3035a84d8d3a14faa714b0c6be8d60048aec77da22cfdf": {
     "confidence": 0.85,

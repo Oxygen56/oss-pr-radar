@@ -312,6 +312,14 @@
       "seenAt": "2026-08-11T06:10:45.943734Z",
       "stateId": "24d752185119a1ed02e8a34e1013e5614faeaa47a03ce2f5075c81f5c6b83b2f"
     },
+    "review|BerriAI/litellm#36533": {
+      "category": "WAIT_MAINTAINER",
+      "digest": "c8a945d42edd9dc4a4c19d34b8d60a4ec129e165b5bfc3a77c1f794c1dd9a369",
+      "kind": "review",
+      "scannerVersion": "oss_pr_radar_v42_terminal_feedback_revoke",
+      "seenAt": "2026-08-11T12:04:28.178023Z",
+      "stateId": "2eb5bb1bee48051a4ee27634c6315fe6558d2dfd7e9cd7c608a76aa19dfa2315"
+    },
     "review|ComposioHQ/composio#4101": {
       "category": "WAIT_MAINTAINER",
       "digest": "a681ed47fd76182aa294aa10dfcad155ea1879af4205d154b0193601a719d716",
@@ -1176,6 +1184,14 @@
       "legacy": true,
       "seenAt": "2026-08-05T21:41:10.562886Z"
     },
+    "review|run-llama/llama_index#20894": {
+      "category": "WAIT_MAINTAINER",
+      "digest": "ff75528c460c70fc70832f12ae900b4de476312fecd6ce089731e89881f72347",
+      "kind": "review",
+      "scannerVersion": "oss_pr_radar_v42_terminal_feedback_revoke",
+      "seenAt": "2026-08-11T12:04:28.178023Z",
+      "stateId": "9c3b28c11d42ee5f42845383f42bcc309430a1a1e2df4e4cf7bfe2ac89cdd241"
+    },
     "review|sgl-project/sglang#29149": {
       "legacy": true,
       "seenAt": "2026-08-05T15:37:32.099127Z"
@@ -1394,11 +1410,11 @@
     },
     "review|vercel/ai#18667": {
       "category": "WAIT_MAINTAINER",
-      "digest": "5bfc10a2ac2e2f37560aaee786ebc9a0f0509e7ab03f0e50cdd396ba4e8c923f",
+      "digest": "03fc5770bb875096c8c977fe2079ae8c8bf114dd40a50dc8d1d6003bd4be7cee",
       "kind": "review",
       "scannerVersion": "oss_pr_radar_v42_terminal_feedback_revoke",
-      "seenAt": "2026-08-11T10:20:38.077957Z",
-      "stateId": "743fa61b5aa0b85d141cd8a26d056ad8a4742722fe7a6b56289e03398d452fa4"
+      "seenAt": "2026-08-11T12:04:28.178023Z",
+      "stateId": "3d3788a566ba06874afd2566199684b857ab63630e7f3d94c001b63d0bb304d6"
     },
     "review|vllm-project/vllm#34948": {
       "legacy": true,
@@ -2165,179 +2181,8 @@
       "seenAt": "2026-08-06T10:09:13.778625Z"
     }
   },
-  "digest": "bd6964b3f976b33ba1379cab47330a0e77a82c6c199df5f16580071122e4e627",
+  "digest": "4f9aac90b9cd0474563fca714b15110a281d890ca93346345231b4b9f273681a",
   "events": [
-    {
-      "attempts": 1,
-      "candidateKeys": [
-        "DeusData/codebase-memory-mcp#1339",
-        "vllm-project/vllm#50159",
-        "PrefectHQ/fastmcp#4744"
-      ],
-      "card": {
-        "config": {
-          "wide_screen_mode": true
-        },
-        "elements": [
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[DeusData/codebase-memory-mcp#1339](https://github.com/DeusData/codebase-memory-mcp/issues/1339) Graph not updated when the working tree returns to clean (revert leaves false negatives)**\n建议：WAIT_MAINTAINER | 分数：11\n价值：The issue is a well-documented bug with independent reproductions and a clear root cause: the watcher fails to re-index on the dirty-to-clean transition. However, the maintainer has already routed it as a high-priority RC regression case and requested verification on RC1, which has been provided. The fix appears to be already implemented in v0.9.1-rc.1, and the issue is awaiting maintainer verification. Starting a new PR would duplicate existing work and conflict with the maintainer's active investigation.\n改动：No new code changes expected; the fix is already in v0.9.1-rc.1.\n验证：No new tests needed; the existing reproduction steps serve as regression tests.\n风险：Potential duplicate PR if work starts without maintainer confirmation.\n竞争：未发现相关 open PR\n下一步：按正常流程实现并验证；如要求 DCO 则自动 sign-off，PR 创建后报告 CLA 状态。\n证据：复现信号 2，根因信号 True",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[vllm-project/vllm#50159](https://github.com/vllm-project/vllm/issues/50159) [Bug]: Model Runner V2 + Gemma-4: memory profiler reports ~0.9 GiB more \"available KV\" than MRv1 → no runtime headroom → CUDA OOM under saturating load (no spec involved); with EAGLE it crashes earlier at cudagraph capture (stable-ABI aten::empty)**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue provides strong evidence of MRv2 memory profiler over-reporting available KV cache due to insufficient CUDA graph capture headroom, leading to OOM under load. However, root cause is not fully isolated (eager residual unexplained), and an existing draft PR #49233 attempts a fix but is incomplete with failed CI. Maintainer direction is unclear, and the issue is still open without explicit approval.\n改动：Fix MRv2 CUDA graph memory reservation in model runner；Adjust memory profiler to account for capture headroom；Possibly add validation for speculative decoding memory\n验证：Reproduce OOM with provided Gemma-4 config and saturating load；Run A/B test with MRv1 vs MRv2 on small and large models with CUDA graphs enabled；Verify eager mode delta is negligible or explain residual；Test draft PR #49233 on the reported rig to see if it resolves the OOM\n风险：Changing memory reservation may reduce available KV cache and impact performance；Fix may conflict with extensible KV cache direction (#47363)；Incomplete understanding of eager residual could lead to incomplete fix\n竞争：已有直接关联但证据不完整的 PR #49233：存在失败 CI/check; 仍是 draft；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 7，根因信号 False",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[PrefectHQ/fastmcp#4744](https://github.com/PrefectHQ/fastmcp/issues/4744) serialize_by_alias=False ignored for nested Pydantic models**\n建议：WAIT_MAINTAINER | 分数：10\n价值：Issue reports a clear bug: nested Pydantic models in dicts ignore serialize_by_alias=False. The root cause is likely in FastMCP's serialization path, but not yet confirmed. No open PR or related issue found, and no maintainer input. The gate decision is HUMAN_REVIEW, so we must wait for maintainer guidance.\n改动：Add failing test for nested model serialization；Fix serialization logic to respect serialize_by_alias for nested models\n验证：Reproduce with provided minimal example；Add regression test asserting nested model uses real_name not alias_name\n风险：Potential impact on existing serialization behavior；Need to ensure fix doesn't break other serialization cases\n竞争：未发现相关 open PR\n下一步：先请求维护者分配/确认方案，获批后再开 PR。\n证据：复现信号 2，根因信号 False",
-              "tag": "lark_md"
-            }
-          }
-        ],
-        "header": {
-          "template": "yellow",
-          "title": {
-            "content": "OSS PR Radar: 需要确认",
-            "tag": "plain_text"
-          }
-        }
-      },
-      "createdAt": "2026-08-04T11:50:00.674900Z",
-      "eventId": "e28e44308e0702f0a9640d23122cb063b4dff40d4fa092ad75ebcf7ed635dc36",
-      "idempotencyKey": "e28e44308e0702f0a9640d23122cb063b4dff40d4fa092ad75",
-      "kind": "review",
-      "lastAttemptAt": "2026-08-04T11:50:31.841892Z",
-      "messageId": "om_x100b68296e6898a4b3900877c2b251d",
-      "runId": "scan-20260804T114702Z-5d68b2b6eedf",
-      "sentAt": "2026-08-04T11:50:34.780995Z",
-      "status": "SENT"
-    },
-    {
-      "attempts": 1,
-      "candidateKeys": [
-        "areal-project/AReaL#1565",
-        "pydantic/pydantic-ai#7108",
-        "sgl-project/sglang#33408",
-        "sgl-project/sglang#33470",
-        "sgl-project/sglang#33483",
-        "vllm-project/vllm#50891",
-        "vllm-project/vllm#50959",
-        "BerriAI/litellm#35711"
-      ],
-      "card": {
-        "config": {
-          "wide_screen_mode": true
-        },
-        "elements": [
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[areal-project/AReaL#1565](https://github.com/areal-project/AReaL/issues/1565) [BUG][v2] Teardown leaves an orphan process after torch-memory-saver CUDA free errors**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[pydantic/pydantic-ai#7108](https://github.com/pydantic/pydantic-ai/issues/7108) `include_binary_content=False` is not honored for tool returns, `final_result`, or output-function arguments**\n建议：WAIT_MAINTAINER\n价值：OWNERSHIP_CHANGED\n验证：重新运行完整扫描和贡献规则检查",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[sgl-project/sglang#33408](https://github.com/sgl-project/sglang/issues/33408) [Bug] Unlimited-OCR: server crashes when batching images with different gundam tile counts**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[sgl-project/sglang#33470](https://github.com/sgl-project/sglang/issues/33470) inference_mode mismatch can break lazy buffers**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[sgl-project/sglang#33483](https://github.com/sgl-project/sglang/issues/33483) [Bug] Default decode CUDA Graph coverage causes a sharp performance cliff when batch size exceeds 32**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[vllm-project/vllm#50891](https://github.com/vllm-project/vllm/issues/50891) [Bug]: AOT compile cache key ignores limit_mm_per_prompt, so image:0 and image:1 runs collide and crash with AttributeError: 'NoneType' object has no attribute 'size'**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[vllm-project/vllm#50959](https://github.com/vllm-project/vllm/issues/50959) [Bug] fastsafetensors ParallelLoader broadcasts on group.WORLD; PP-scoped draft loads deadlock**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[BerriAI/litellm#35711](https://github.com/BerriAI/litellm/issues/35711) [Bug]: `ollama/` streaming never reconstructs tool calls — tool call arrives as plain `delta.content` text with `finish_reason: \"stop\"`, while the non-streaming path reconstructs it correctly**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
-              "tag": "lark_md"
-            }
-          }
-        ],
-        "header": {
-          "template": "yellow",
-          "title": {
-            "content": "OSS PR Radar: 状态更新",
-            "tag": "plain_text"
-          }
-        }
-      },
-      "createdAt": "2026-08-04T11:50:00.766246Z",
-      "eventId": "2711f230417af5ab32b3907c5906d391f30e18e470832b02adbd7c87dd6cacbf",
-      "idempotencyKey": "2711f230417af5ab32b3907c5906d391f30e18e470832b02ad",
-      "kind": "watch",
-      "lastAttemptAt": "2026-08-04T11:50:34.781024Z",
-      "messageId": "om_x100b68296e7464a0b106518e24a0803",
-      "runId": "watch-1785843970",
-      "sentAt": "2026-08-04T11:50:36.072602Z",
-      "status": "SENT"
-    },
     {
       "attempts": 1,
       "candidateKeys": [
@@ -21785,9 +21630,90 @@
       "runId": "pr-followup-1786446580",
       "sentAt": "2026-08-11T11:14:20.164159Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "BerriAI/litellm#36533",
+        "run-llama/llama_index#20894",
+        "vercel/ai#18667"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "c8a945d42edd9dc4a4c19d34b8d60a4ec129e165b5bfc3a77c1f794c1dd9a369",
+          "key": "BerriAI/litellm#36533",
+          "kind": "review",
+          "scannerVersion": "oss_pr_radar_v42_terminal_feedback_revoke",
+          "stateId": "2eb5bb1bee48051a4ee27634c6315fe6558d2dfd7e9cd7c608a76aa19dfa2315"
+        },
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "ff75528c460c70fc70832f12ae900b4de476312fecd6ce089731e89881f72347",
+          "key": "run-llama/llama_index#20894",
+          "kind": "review",
+          "scannerVersion": "oss_pr_radar_v42_terminal_feedback_revoke",
+          "stateId": "9c3b28c11d42ee5f42845383f42bcc309430a1a1e2df4e4cf7bfe2ac89cdd241"
+        },
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "03fc5770bb875096c8c977fe2079ae8c8bf114dd40a50dc8d1d6003bd4be7cee",
+          "key": "vercel/ai#18667",
+          "kind": "review",
+          "scannerVersion": "oss_pr_radar_v42_terminal_feedback_revoke",
+          "stateId": "3d3788a566ba06874afd2566199684b857ab63630e7f3d94c001b63d0bb304d6"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#36533](https://github.com/BerriAI/litellm/issues/36533) [Bug]: DB-stored litellm_settings.max_budget is not applied after a proxy restart**\n建议：WAIT_MAINTAINER | 分数：15\n价值：Issue provides a detailed root cause and reproducible bug, but the supplied gate requires HUMAN_REVIEW and the existing PR #36250 has semantic overlap that needs maintainer comparison. The issue explicitly asks for design confirmation on intended behavior, making it premature to start work without maintainer input.\n改动：litellm/proxy/proxy_server.py；litellm/constants.py\n验证：Add regression test that starts proxy with DB-stored max_budget and verifies /global/spend reflects DB value after restart.\n风险：Existing PR #36250 may already address the root cause; overlapping changes could cause merge conflicts.\n竞争：发现 PR #36250 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 19，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[run-llama/llama_index#20894](https://github.com/run-llama/llama_index/issues/20894) [Bug]: CondensePlusContextChatEngine.astream_chat silently aborts generation and yields 'Empty Response' when Retriever returns 0 nodes**\n建议：WAIT_MAINTAINER | 分数：14\n价值：Issue clearly describes a user-visible bug in CondensePlusContextChatEngine.astream_chat when retriever returns 0 nodes, with a minimal repro and root cause in the synthesizer short-circuit. However, a maintainer explicitly stated the fix must be an option on the chat engine, not default behavior, and multiple PRs exist but are closed/stale. This requires design confirmation and maintainer direction before a new PR is worthwhile.\n改动：llama-index-core/llama_index/core/chat_engine/condense_plus_context.py；llama-index-core/llama_index/core/response_synthesizers/base.py\n验证：Add a regression test that creates an empty index, calls astream_chat, and asserts the LLM is invoked with empty context when the new option is enabled.；Run existing chat engine and synthesizer unit tests to ensure no regressions.\n风险：Changing default behavior could break strict RAG expectations; must be behind an opt-in option.；Existing closed PRs may be revived or superseded, requiring coordination.\n竞争：发现关键词相关 PR，但未确认直接覆盖：#21047；需人工核对\n下一步：已有 PR 但强度不足；先看维护者规则和 issue 讨论，必要时先请求确认方案或分配。\n证据：复现信号 5，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vercel/ai#18667](https://github.com/vercel/ai/issues/18667) Mid-stream provider errors bypass maxRetries and are unclassifiable, discarding a completed generation**\n建议：WAIT_MAINTAINER | 分数：14\n价值：Issue clearly describes mid-stream provider errors bypassing retries and being unclassifiable, with concrete repro and production evidence. However, the deterministic gate is HUMAN_REVIEW, and the issue has been split into two sub-issues (#18668, #18669) requiring design confirmation. Two open PRs (#18671, #18672) exist with overlapping intent but are not directly linked, so maintainer guidance is needed to avoid duplicate or conflicting work.\n改动：stream-level retry option；onError retry signal；normalized mid-stream error types\n验证：Create a failing test using the repro sketch with a mock SSE error event mid-stream；Verify retry behavior and error classification via unit tests\n风险：API design changes may conflict with existing maintainer preferences；Potential overlap with open PRs #18671 and #18672\n竞争：仅发现未直接关联、无代码路径或强机制重合的 PR #18672；保留为搜索上下文，不阻止实现\n下一步：先在 issue 下请求分配/确认方案，获批后再开 PR。\n证据：复现信号 4，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-11T12:04:28.178023Z",
+      "eventId": "2ecd28ca2ec6b3f5da16014fb89d569dc2622643e2815d70446235ded69d1035",
+      "idempotencyKey": "2ecd28ca2ec6b3f5da16014fb89d569dc2622643e2815d7044",
+      "kind": "review",
+      "runId": "scan-20260811T120055Z-717d6c634bcb",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-11T11:13:49.371945Z",
-  "newEventCount": 1,
+  "generatedAt": "2026-08-11T12:04:28.530057Z",
+  "newEventCount": 0,
   "version": "notification_outbox_v2"
 }
