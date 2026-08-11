@@ -590,6 +590,14 @@ class RadarLedger:
                 raise LedgerError("active task context has an unexpected publication receipt")
             current_stage = str(current.get("stage") or "")
             if current_stage != stage:
+                if current_stage == "AUDIT_NO_GO":
+                    return {
+                        "key": key,
+                        "stage": current_stage,
+                        "intentRestored": False,
+                        "publicationRestored": False,
+                        "supersededActiveMirror": True,
+                    }
                 if current_stage not in RECOVERABLE_CONTEXT_STAGES:
                     raise LedgerError("active task context disagrees with the ledger")
                 return {

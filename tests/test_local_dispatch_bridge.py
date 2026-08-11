@@ -647,6 +647,38 @@ def test_shared_context_recovery_accepts_a_superseded_dispatched_mirror(monkeypa
     ]
 
 
+def test_shared_context_recovery_accepts_a_terminal_no_go_over_dispatched_mirror(
+    monkeypatch, tmp_path
+):
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, _ = registered_store(tmp_path / "original", worktree=worktree)
+    run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
+    MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    store.record_stage("a/b#1", "AUDIT_NO_GO", evidence={}, reason="DUPLICATE")
+
+    verified = MODULE.recover_shared_task_contexts(store)
+
+    assert verified["verified"] == 1
+    assert verified["errors"] == []
+    assert verified["restored"] == [
+        {
+            "key": "a/b#1",
+            "stage": "AUDIT_NO_GO",
+            "intentRestored": False,
+            "publicationRestored": False,
+            "supersededActiveMirror": True,
+            "resultReceiptRestored": False,
+        }
+    ]
+
+
 def test_shared_context_recovery_does_not_rebuild_a_dispatched_task(monkeypatch, tmp_path):
     project_root = tmp_path / "github"
     monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
