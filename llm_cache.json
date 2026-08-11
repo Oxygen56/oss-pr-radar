@@ -4458,6 +4458,37 @@
     ],
     "why": "The issue identifies a concrete bug in vLLM's attention backend probe: only ImportError is caught, causing other exceptions to crash engine init. The fix is clear and testable. However, the supplied gate decision is HUMAN_REVIEW, and there is a potential duplicate issue #51593 with shared stack signatures, requiring maintainer confirmation before proceeding."
   },
+  "36286eadb37df4052246c1ee3125bff942c8c95e2ca233326955b817908760c1": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify Mxfp4MoEMethod to keep quantized weights in the module's state_dict or register them as buffers",
+      "Update ShardedStateLoader to include quant-method helper tensors in save/load and missing-key checks",
+      "Add regression test for gpt-oss-20b with TP=2 verifying expert weights are preserved"
+    ],
+    "risks": [
+      "Existing PR #32796 may already fix the issue; need to compare implementation details",
+      "Changes to state_dict may affect other load formats or quantization methods",
+      "Large model test may be resource-intensive; use smaller model for CI"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Run the provided repro script on a small model with TP=2 and compare safetensors sizes before/after",
+      "Add unit test that loads a model, applies process_weights_after_loading, saves with sharded_state, reloads, and asserts expert weights are non-zero",
+      "Verify no missing-key warnings and numerical equivalence of outputs"
+    ],
+    "unknowns": [
+      "Whether PR #32796 already addresses the root cause; requires manual comparison",
+      "Exact maintainer preference for fixing in loader vs quantization method"
+    ],
+    "why": "Issue provides a precise, reproducible bug in mxfp4 + sharded_state loading that silently drops expert weights, with a clear root cause in the quantization method and loader interaction. Existing PR #32796 overlaps semantically and touches the same mxfp4.py path but is not linked to this issue and lacks a targeted fix, leaving room for a materially better PR."
+  },
   "3635835ec2fe6988fac7d72ac6fe01542b1a715e35c839104084725bb7aff9d1": {
     "confidence": 0.7,
     "contradictions": [],
@@ -8247,6 +8278,35 @@
     ],
     "why": "Issue clearly identifies a recurring bug: new Claude models fail because temperature is deprecated and the code has a hardcoded exclusion list. The desired behavior is a forward-compatible fix. No open PR or issue addresses this, and the issue provides a concrete reproduction and prior related PRs."
   },
+  "5f4ce8575b041cb98fc6ef62549143b490f591c4e627ad7c8b72f02522221e4e": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Investigate MLX model packaging/chat-template for muse-glimmer:30b-mlx",
+      "Fix token leakage and schema handling in MLX build"
+    ],
+    "risks": [
+      "May be duplicate of #17656",
+      "Root cause may be in external model artifact, not Ollama code"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "test_plan": [
+      "Reproduce with provided curl commands and assert JSON schema compliance",
+      "Add regression test for MLX model structured output"
+    ],
+    "unknowns": [
+      "Maintainer confirmation of issue validity",
+      "Whether root cause is in Ollama or model packaging",
+      "Exact code path responsible for token leakage"
+    ],
+    "why": "Issue reports a concrete bug with clear reproduction and controls, but root cause is not identified and likely involves model packaging/chat-template specifics. No maintainer confirmation or design direction. Potential duplicate issue #17656 exists, and an open PR #17679 is unrelated. Actionability is limited without maintainer guidance."
+  },
   "5f6db578cb2705ef667fbf10317f0504acece5256cad2ae1b5e59c0eb5ae92b3": {
     "confidence": 0.85,
     "contradictions": [],
@@ -9270,6 +9330,37 @@
       "Whether the model emission is due to model behavior or detokenization; but parser fix is still valid"
     ],
     "why": "Issue provides a detailed root cause and reproduction, but the deterministic gate is HUMAN_REVIEW and an existing PR (#51075) directly addresses the same bug with a plausible fix, though it lacks tests. The candidate is actionable but requires maintainer confirmation and competition assessment."
+  },
+  "68ad2f1f891552ce66b390fec41b7a1c389d1652badf0ba8dbd8d0f29256b417": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims no existing PR covers it, but PR #36184 semantically overlaps"
+    ],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "litellm/llms/bedrock_mantle/responses/transformation.py",
+      "Add bidirectional namespace rename for 'functions'",
+      "Add regression tests for request/response mapping"
+    ],
+    "risks": [
+      "Potential conflict with existing PR #36184; maintainer preference unknown",
+      "Bidirectional rename may affect call attribution if not handled carefully"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce with provided JSON payload and assert 200 after fix",
+      "Test response tool call mapping back to original namespace",
+      "Run existing bedrock_mantle tests and lint"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer rename vs fail-fast; exact implementation details of existing PR"
+    ],
+    "why": "Issue clearly identifies a reserved namespace collision in bedrock_mantle that breaks Codex 0.147. Existing PR #36184 overlaps but lacks bidirectional rename and has CI failures; a stronger PR with proper mapping and tests is plausible."
   },
   "68c2888be696321cd2321d0fccfd08aeddd7a30bdae02ec845e32a28b3bac952": {
     "confidence": 0.8,
@@ -14886,6 +14977,37 @@
     ],
     "why": "The issue requests a UI feature to collapse AI work details by default. The deterministic gate is HUMAN_REVIEW, and the open PR and related issue lookups failed due to timeouts, so duplicate implementations cannot be ruled out. The bot comments suggest possible duplicates (#35193, #14511) and a related comment link, but these are not fully verified. No maintainer approval or design confirmation is present."
   },
+  "b0b15ca84081da9279a79f70a3fe6de5b086346f7abbe5532dc25b5ce61c4b2b": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix multipart encoding for /v1/videos and /v1/videos/edits",
+      "Support file upload variant in video edit endpoint",
+      "Preserve extra_body and provider-specific params in image edits",
+      "Fix pass-through to keep multipart when no files"
+    ],
+    "risks": [
+      "Potential maintainer design preferences on API behavior changes",
+      "Existing PR #33227 may already address some root causes, requiring coordination"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Add regression tests for each bug using the provided curl repros",
+      "Verify SDK compatibility with openai python SDK for video endpoints",
+      "Run existing test suite for affected modules"
+    ],
+    "unknowns": [
+      "Whether maintainers have already assigned or are investigating",
+      "Exact overlap between PR #33227 and the issue's code paths"
+    ],
+    "why": "Issue details four concrete spec-compliance bugs in LiteLLM's image/video routes with clear repros and expected behavior. However, the deterministic gate requires HUMAN_REVIEW, and existing PR #33227 has semantic overlap in the same code paths, requiring manual comparison before starting new work."
+  },
   "b0b5ee5b3ad3642813780b9ebecd82b71a976f0e2a89c12771dfb8ea806f0a30": {
     "confidence": 0.85,
     "contradictions": [],
@@ -14910,6 +15032,35 @@
       "No explicit maintainer approval or design confirmation, but the fix is straightforward and the issue is a clear bug; absence of assignment is not blocking."
     ],
     "why": "Issue identifies a clear bug in Agent V2 where non-image attachments are dropped for non-vision models due to a faulty condition in chat-conversation.tsx. The proposed fix is minimal and well-scoped, with a concrete reproduction path and expected behavior. No competing PR or related issue found, and the repository does not require assignment."
+  },
+  "b0ba23bd2a27dc166f99e4ccf34a0b3668b0afe303cc7a78d4965d7d3485b918": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "OffloadingConnectorScheduler._build_store_jobs",
+      "CPUOffloadingManager.prepare_store/complete_store",
+      "lookup boundary handling"
+    ],
+    "risks": [
+      "Proposed fix may alter decode-step behavior if not carefully anchored; risk of stale block reads.",
+      "Maintainer may have different design preference; premature PR could be rejected."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "test_plan": [
+      "Construct a unit test with the described 5-group geometry and 30,208-token prompt to assert 30,144 restored tokens and C4 chunks 7,534/7,535 resident.",
+      "Run existing offloading scheduler/manager tests for regressions."
+    ],
+    "unknowns": [
+      "Exact code path and data structures not fully specified; no minimal reproducer provided.",
+      "Maintainer's intended fix approach unknown; assignment suggests they will implement."
+    ],
+    "why": "Issue describes a specific KV offload bug with a concrete reproduction geometry and a fix concept, but lacks a minimal code-level reproducer and maintainer confirmation of the proposed design. The maintainer has assigned themselves, indicating active investigation, so private work may duplicate or conflict."
   },
   "b0d0dd1aae319e2a2001c18848aeb947d38cc1af85b93df92ba505f062d39d70": {
     "confidence": 0.8,
@@ -17463,6 +17614,34 @@
       "Whether the fix should be gated by provider predicate or applied universally."
     ],
     "why": "The issue is a well-evidenced provider compatibility bug with a clear root cause (interleaved developer message between function_call and function_call_output) and a proposed fix (ordering normalization in the adapter). However, the maintainer has explicitly stated they will pick it up and requested additional wire-level evidence, indicating active maintainer involvement and a need for design confirmation on blast radius and semantic impact. This is not a clean new candidate for external work."
+  },
+  "d1860ad83e044a143fc4f182d8b07c248f0134f0b095aa7336676cc9a6e861ae": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify RequestContext type definitions to accept undeclared string keys typed as unknown",
+      "Adjust Agent type parameter variance or defaults to preserve assignability"
+    ],
+    "risks": [
+      "Potential breaking changes to type inference for existing users",
+      "Maintainer may prefer a different design for handling runtime-only keys"
+    ],
+    "root_cause_clarity": "high",
+    "score": 15,
+    "test_plan": [
+      "Create a TypeScript regression test using the provided repro snippet to assert compilation succeeds",
+      "Run existing type tests in @mastra/core"
+    ],
+    "unknowns": [
+      "Maintainer design preference for the type fix",
+      "Whether the issue is accepted as a bug to fix in the current release cycle"
+    ],
+    "why": "Issue clearly describes a type-level bug with runtime mismatch and provides a minimal repro. However, the deterministic gate requires HUMAN_REVIEW, and the issue is labeled 'needs triage' with maintainer confirmation pending. The proposed fix involves API design choices (variance and type widening) that need maintainer input."
   },
   "d1e4c1f40649172f728aafd3439cb993ef0c841076f8a72f9b1010210d1b5151": {
     "confidence": 0.7,
