@@ -3234,6 +3234,36 @@
     ],
     "why": "Issue clearly identifies a recurring bug: new Claude models fail because temperature is deprecated, and the fix requires a robust approach rather than per-model additions. No open PR or issue addresses this, and the issue provides a concrete reproduction."
   },
+  "28efce9ffad17f04e861f43afc50476ea5eedad4cf19e4493f565f0d3af3e1ca": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Bot claims fix is complete, but maintainer has not confirmed merge"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Remove console.error statements from src/memory/index.ts",
+      "Update tests in src/memory/__tests__/file-path.test.ts"
+    ],
+    "risks": [
+      "Fix may not address all cases if stderr interference persists",
+      "Removing console.error may reduce logging for debugging"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Run existing test suite to ensure 42 tests pass",
+      "Reproduce the issue on Windows with cmd /c npx and verify fix resolves JSON parsing error"
+    ],
+    "unknowns": [
+      "Whether the fix has been merged or is still pending review",
+      "Whether the root cause is fully validated by maintainers"
+    ],
+    "why": "The issue reports a JSON parsing error in the Memory MCP server, and a bot comment claims a fix was made by removing console.error statements. However, the fix is not yet merged, and the root cause is not fully confirmed by maintainers. The issue is actionable but requires maintainer review and merge."
+  },
   "28f9cfb3f978b1ffb0926613f82ac59f5fcf4b8957d023e0f1c7620b034da945": {
     "confidence": 0.8,
     "contradictions": [
@@ -10709,6 +10739,34 @@
     ],
     "why": "Issue provides a clear root cause and repro, but maintainer comment questions the desired behavior (retry vs fast fail) and suggests possible UX mitigation, indicating design confirmation is needed before implementation."
   },
+  "7ee9071c510ccf2eee1957b8087078dea24ffdd1da42f004b4f25610551a1753": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "litellm/llms/bedrock_mantle/responses/transformation.py",
+      "error handling for upstream 4xx in bedrock_mantle"
+    ],
+    "risks": [
+      "Existing PR #36530 may already cover part of the fix; need to compare implementation boundaries.",
+      "Changing error masking may affect retry behavior and client expectations; maintainer design preference needed."
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Add regression tests for each rejected input type (function_call with encrypted_function_args, compaction, local_shell_call, tool_search_call/output) asserting normalization or pass-through.",
+      "Add test that upstream 400 surfaces as BadRequestError and is not retried."
+    ],
+    "unknowns": [
+      "Whether maintainers intend to merge PR #36530 and whether it will be extended to cover the additional item types.",
+      "Whether the error-masking change is acceptable to maintainers."
+    ],
+    "why": "Issue clearly identifies missing input-item normalization and 4xx masking in bedrock_mantle, with a concrete repro. However, an open PR #36530 already overlaps the same code path and semantics, and the deterministic gate requires HUMAN_REVIEW. Need maintainer confirmation on PR scope and design before starting new work."
+  },
   "7f30220f40e9b114741477edd63a3b1ff0dd062173703670e00220da32b7a2d5": {
     "confidence": 0.85,
     "contradictions": [],
@@ -11678,6 +11736,34 @@
       "Whether the root cause is in vLLM code or NCCL build/environment"
     ],
     "why": "Issue reports a reproducible multi-node TP deadlock with strong evidence (NCCL spin signature, py-spy stacks, multiple reproductions) and a plausible root cause (TP divergence in MoE all-reduce). However, the issue is a bug report, not a code contribution; no patch is proposed. The deterministic gate requires HUMAN_REVIEW, and open PR/related issue lookups failed, so duplicate work cannot be excluded. Maintainer involvement is absent, and the root cause is not fully confirmed (NCCL build differences may be a workaround)."
+  },
+  "8a36eb37fdc00616e03c91f1381b8e46ccf085947540edbc3f8add9e5377f973": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify bedrock_mantle transformation to rename reserved 'functions' namespace to a safe name on request and map back on response",
+      "Add regression test for namespace collision"
+    ],
+    "risks": [
+      "Potential maintainer preference for fail-fast over rename",
+      "Existing PR may already address root cause; need to compare implementation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Use the provided JSON payload to reproduce 500, then verify 200 after fix",
+      "Add unit test for bidirectional rename in transformation.py"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer rename vs fail-fast",
+      "Exact implementation details of existing PR #36184"
+    ],
+    "why": "Issue identifies a concrete, reproducible bug: Codex 0.147 sends a reserved 'functions' namespace that Mantle rejects, breaking all requests. Existing PR #36184 overlaps semantically but lacks explicit issue linkage and has CI failures; a cleaner PR with bidirectional rename and tests is plausible."
   },
   "8ab1baa9834e96953545c832dfbee21851bdcc417148d48de08294e5406359bc": {
     "confidence": 0.7,
@@ -16358,6 +16444,37 @@
     ],
     "why": "Issue reports a critical CUDA illegal memory access in GDN kernel with multiple reproductions, but root cause is unclear and may involve multiple components (FlashInfer, Triton, custom allreduce). Open PR and related issue lookups failed, so duplicate work cannot be excluded. Maintainer input is needed to prioritize and confirm scope."
   },
+  "cd5b5161345eb0f9ba2d3231d207396f21b2ef7f788a8931edfe074635919ca7": {
+    "confidence": 0.7,
+    "contradictions": [
+      "None found"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify attention backend selection logic to account for FA-version fallback when determining supported KV cache dtypes",
+      "Possibly adjust FlashAttentionBackend.supported_kv_cache_dtypes or selection order"
+    ],
+    "risks": [
+      "Existing PRs may already fix this; need to compare implementations",
+      "Potential overlap with issue #51758; ensure not duplicating",
+      "Changes to backend selection could affect other models/configurations"
+    ],
+    "root_cause_clarity": "high",
+    "score": 13,
+    "test_plan": [
+      "Reproduce with nvidia/Gemma-4-31B-IT-NVFP4 on Blackwell (SM100/SM103) using v0.27.0 and verify FLASH_ATTN is not selected",
+      "Add regression test that simulates head_dim=256 with sliding-window attention and fp8 KV cache to ensure backend selection falls back to TRITON_ATTN"
+    ],
+    "unknowns": [
+      "Whether any of the open PRs (e.g., #46963, #46329) already fix this exact issue",
+      "Maintainer preference on whether to fix selection logic vs. rely on workarounds"
+    ],
+    "why": "The issue clearly identifies a regression in vLLM's attention backend selection for FP8 KV cache on Blackwell, with a precise root cause: eligibility check includes fp8 but FA-version fallback to FA2 cannot serve it. However, the deterministic gate requires HUMAN_REVIEW, and there are multiple open PRs with semantic overlap (e.g., #46963, #46329) that may already address the root cause. The issue is actionable but requires maintainer confirmation to avoid duplicate work."
+  },
   "ce2f1d7934773197fae948ede5aa4ca42d3be52f7342950b1a9ef233f6933fce": {
     "confidence": 0.8,
     "contradictions": [
@@ -18038,6 +18155,37 @@
       "No explicit maintainer design confirmation, but issue is labeled for trio-tb and acknowledged; absence of assignment is not blocking"
     ],
     "why": "The issue precisely identifies a user-visible bug: oversized Inngest Realtime events are truncated, causing durable agent streams to hang indefinitely. Root cause is clearly traced to InngestPubSub's handling of oversized messages and the stream adapter's reliance on terminal events. The proposed fix (reduce live event payload, salvage truncated terminal events) is concrete and testable."
+  },
+  "df25b328385604cd9a9a671112659a9e909375daf8a00e2b9604adc2ada5aeef": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Comments suggest root cause is npx env forwarding, but code inspection shows path logic may be correct; actual root cause may be in how env vars are passed."
+    ],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "open_pr_assessment"
+    ],
+    "expected_changes": [
+      "src/memory/index.ts",
+      "test files for memory server"
+    ],
+    "risks": [
+      "Potential maintainer preference for a different fix approach.",
+      "Need to ensure compatibility with existing PR #4327 to avoid duplication."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce by setting MEMORY_FILE_PATH to a custom path and verifying memory.json is created there, not in npx temp dir.",
+      "Add regression test that mocks process.env and checks file path resolution."
+    ],
+    "unknowns": [
+      "Exact mechanism of env var loss in npx subprocess.",
+      "Whether maintainers have a preferred solution or are actively working on it."
+    ],
+    "why": "Issue #692 reports a clear bug: MEMORY_FILE_PATH env var is ignored, causing data loss in npx temp dir. Root cause is likely env var not forwarded through npx or path resolution issue. Existing PR #4327 is open but stale (>30 days) and lacks strong evidence, leaving room for a better PR with comprehensive fix and tests."
   },
   "df2e1b0c53e546c0693e76a70bbed1d980a2af664f02ee8cf9557a36d8583f56": {
     "confidence": 0.7,
