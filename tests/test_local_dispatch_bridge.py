@@ -3385,6 +3385,74 @@ def test_validation_followup_list_reconciles_and_reports_unchanged_gap(tmp_path)
     assert listed["blockedNoProgress"][0]["missing"] == ["relevant_tests_green"]
 
 
+def test_validation_followup_abandons_only_when_no_target_turn_materialized(
+    monkeypatch, tmp_path
+):
+    now = datetime.now(UTC)
+    reserved_at = iso_z(now - timedelta(hours=2))
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute("CREATE TABLE threads (id TEXT, updated_at INTEGER)")
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?)",
+            ("thread-1", int((now - timedelta(hours=3)).timestamp())),
+        )
+
+    class Store:
+        abandoned = None
+
+        def reconcile_validation_no_progress(self):
+            return 0
+
+        def validation_followup_candidates(self):
+            return []
+
+        def unresolved_validation_followups(self):
+            return [
+                {
+                    "key": "a/b#1",
+                    "threadId": "thread-1",
+                    "resultDigest": "a" * 64,
+                    "missing": ["relevant_tests_green"],
+                    "reservedAt": reserved_at,
+                }
+            ]
+
+        def stale_validation_followups(self, **_kwargs):
+            return []
+
+        def validation_no_progress(self):
+            return []
+
+        def abandon_validation_followup_delivery(self, **kwargs):
+            self.abandoned = kwargs
+
+    store = Store()
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    args = SimpleNamespace(ledger=tmp_path / "ledger.sqlite3", min_age_minutes=90)
+    unresolved = MODULE.validation_followup_list(args)["unresolved"][0]
+
+    result = MODULE.validation_followup_abandon(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            thread_id="thread-1",
+            result_digest="a" * 64,
+            abandon_nonce=unresolved["abandonNonce"],
+            reason="TARGET_TURN_NOT_MATERIALIZED",
+            min_age_minutes=90,
+        )
+    )
+
+    assert result["abandoned"] is True
+    assert store.abandoned == {
+        "thread_id": "thread-1",
+        "result_digest": "a" * 64,
+        "reason": "TARGET_TURN_NOT_MATERIALIZED",
+        "min_age_minutes": 90,
+    }
+
+
 def test_controller_defers_unvalidated_publishable_fix_without_agent_failure(tmp_path):
     store, worktree, result_path = _controller_commit_result(
         tmp_path,

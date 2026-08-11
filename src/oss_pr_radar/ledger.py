@@ -2163,6 +2163,13 @@ class RadarLedger:
                        SELECT 1 FROM events r WHERE r.opportunity_key=o.key
                          AND r.event_type='VALIDATION_FOLLOWUP_RESERVED'
                          AND r.dedupe_key=json_extract(d.payload_json,'$.resultDigest')
+                         AND NOT EXISTS (
+                           SELECT 1 FROM events abandoned
+                           WHERE abandoned.opportunity_key=r.opportunity_key
+                             AND abandoned.event_type='VALIDATION_FOLLOWUP_DELIVERY_ABANDONED'
+                             AND json_extract(abandoned.payload_json,'$.resultDigest')=r.dedupe_key
+                             AND abandoned.id>r.id
+                         )
                      )
                      AND NOT EXISTS (
                        SELECT 1 FROM events n WHERE n.opportunity_key=o.key
@@ -2282,7 +2289,15 @@ class RadarLedger:
                        SELECT 1 FROM events s WHERE s.opportunity_key=o.key
                          AND s.event_type='VALIDATION_FOLLOWUP_SENT'
                          AND s.dedupe_key=?
-                     )""",
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events abandoned
+                       WHERE abandoned.opportunity_key=r.opportunity_key
+                         AND abandoned.event_type='VALIDATION_FOLLOWUP_DELIVERY_ABANDONED'
+                         AND json_extract(abandoned.payload_json,'$.resultDigest')=r.dedupe_key
+                         AND abandoned.id>r.id
+                     )
+                   ORDER BY r.id DESC LIMIT 1""",
                 (result_digest, thread_id, result_digest),
             ).fetchone()
             if row is None:
@@ -2309,7 +2324,14 @@ class RadarLedger:
                      SELECT 1 FROM events s WHERE s.opportunity_key=o.key
                        AND s.event_type='VALIDATION_FOLLOWUP_SENT'
                        AND s.dedupe_key=r.dedupe_key
-                   ) ORDER BY r.created_at"""
+                   )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events abandoned
+                       WHERE abandoned.opportunity_key=r.opportunity_key
+                         AND abandoned.event_type='VALIDATION_FOLLOWUP_DELIVERY_ABANDONED'
+                         AND json_extract(abandoned.payload_json,'$.resultDigest')=r.dedupe_key
+                         AND abandoned.id>r.id
+                     ) ORDER BY r.created_at"""
             ).fetchall()
         return [
             {
@@ -2321,6 +2343,61 @@ class RadarLedger:
             }
             for row in rows
         ]
+
+    def abandon_validation_followup_delivery(
+        self,
+        *,
+        thread_id: str,
+        result_digest: str,
+        reason: str,
+        min_age_minutes: int = 90,
+    ) -> None:
+        """Retire an old reservation when no target task turn materialized."""
+
+        current = datetime.now(UTC)
+        now = iso_z(current)
+        with self.transaction() as connection:
+            row = connection.execute(
+                """SELECT r.id,r.opportunity_key AS key,r.created_at
+                   FROM events r
+                   WHERE r.event_type='VALIDATION_FOLLOWUP_RESERVED'
+                     AND json_extract(r.payload_json,'$.threadId')=?
+                     AND r.dedupe_key=?
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events sent
+                       WHERE sent.opportunity_key=r.opportunity_key
+                         AND sent.event_type='VALIDATION_FOLLOWUP_SENT'
+                         AND sent.dedupe_key=r.dedupe_key
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events abandoned
+                       WHERE abandoned.opportunity_key=r.opportunity_key
+                         AND abandoned.event_type='VALIDATION_FOLLOWUP_DELIVERY_ABANDONED'
+                         AND json_extract(abandoned.payload_json,'$.resultDigest')=r.dedupe_key
+                         AND abandoned.id>r.id
+                     )
+                   ORDER BY r.id DESC LIMIT 1""",
+                (thread_id, result_digest),
+            ).fetchone()
+            if row is None:
+                raise LedgerError("validation follow-up delivery is not abandonable")
+            minimum_age = timedelta(minutes=max(1, min_age_minutes))
+            if parse_time(row["created_at"]) + minimum_age > current:
+                raise LedgerError("validation follow-up delivery is not old enough to abandon")
+            self._event(
+                connection,
+                row["key"],
+                "VALIDATION_FOLLOWUP_DELIVERY_ABANDONED",
+                sha256_text(f"{thread_id}|{result_digest}|{row['created_at']}"),
+                {
+                    "threadId": thread_id,
+                    "resultDigest": result_digest,
+                    "reservedAt": row["created_at"],
+                    "reason": reason,
+                    "minimumAgeMinutes": max(1, min_age_minutes),
+                },
+                now,
+            )
 
     def stale_validation_followups(self, *, min_age_minutes: int = 90) -> list[dict[str, Any]]:
         cutoff = iso_z(

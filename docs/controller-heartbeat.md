@@ -200,7 +200,11 @@ Run `validation-followup-list`. For each candidate:
   A failed prefetch leaves the candidate unreserved and must be reported.
 - Send the canonical prompt returned by the reservation unchanged to the same
   task; commit only after explicit send success.
-- Unknown send results stay unresolved and are never resent automatically.
+- Unknown send results stay unresolved and are never resent automatically. If
+  `validation-followup-list` later reports `abandonable=true`, use `read_thread`
+  to prove that the target task has no turn at or after `reservedAt`, then call
+  `validation-followup-abandon` with the returned nonce. Re-list the queue; the
+  same result may be reconsidered only through the newly authorized state.
 - Report entries stale after 90 minutes as `validationFollowupStalled`; this is
   a delivery watchdog, not a general review cooldown.
 - Entries under `environmentBlocked` have a real dependency failure but no

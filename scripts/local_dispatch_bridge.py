@@ -2785,17 +2785,89 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
         except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
             errors.append({"key": candidate["key"], "error": str(exc)[:300]})
     unresolved = store.unresolved_validation_followups()
+    minimum_age_minutes = max(1, int(getattr(args, "min_age_minutes", 90)))
+    activity: dict[str, int] = {}
+    if unresolved:
+        thread_ids = sorted(
+            {str(item["threadId"]) for item in unresolved if item.get("threadId")}
+        )
+        placeholders = ",".join("?" for _ in thread_ids)
+        connection = sqlite3.connect(THREAD_DB)
+        try:
+            rows = connection.execute(
+                f"SELECT id,updated_at FROM threads WHERE id IN ({placeholders})",
+                thread_ids,
+            ).fetchall()
+            activity = {str(row[0]): int(row[1] or 0) for row in rows}
+        finally:
+            connection.close()
+    now = datetime.now(UTC)
+    unresolved_with_recovery: list[dict[str, Any]] = []
+    for item in unresolved:
+        reserved_at = parse_time(str(item["reservedAt"]))
+        age_minutes = max(0, int((now - reserved_at).total_seconds() // 60))
+        thread_updated_at = activity.get(str(item.get("threadId") or ""), 0)
+        target_turn_materialized = thread_updated_at >= int(reserved_at.timestamp())
+        abandonable = age_minutes >= minimum_age_minutes and not target_turn_materialized
+        value = item | {
+            "ageMinutes": age_minutes,
+            "threadUpdatedAt": thread_updated_at,
+            "targetTurnMaterialized": target_turn_materialized,
+            "abandonable": abandonable,
+        }
+        if abandonable:
+            value["abandonNonce"] = sha256_json(
+                {
+                    "threadId": item.get("threadId"),
+                    "resultDigest": item.get("resultDigest"),
+                    "reservedAt": item.get("reservedAt"),
+                    "threadUpdatedAt": thread_updated_at,
+                    "operation": "validation-followup-delivery-abandon-v1",
+                }
+            )
+        unresolved_with_recovery.append(value)
     stale = store.stale_validation_followups(min_age_minutes=getattr(args, "min_age_minutes", 90))
     blocked_no_progress = store.validation_no_progress()
     return {
-        "ok": not errors and not unresolved and not stale,
+        "ok": not errors and not unresolved_with_recovery and not stale,
         "candidates": candidates,
         "environmentBlocked": environment_blocked,
-        "unresolved": unresolved,
+        "unresolved": unresolved_with_recovery,
         "stale": stale,
         "blockedNoProgress": blocked_no_progress,
         "reconciledNoProgress": reconciled_no_progress,
         "errors": errors,
+    }
+
+
+def validation_followup_abandon(args: argparse.Namespace) -> dict[str, Any]:
+    if not re.fullmatch(r"[A-Z][A-Z0-9_]{2,80}", args.reason):
+        raise RuntimeError("abandon reason must be machine-readable")
+    result = validation_followup_list(args)
+    candidate = next(
+        (
+            item
+            for item in result["unresolved"]
+            if item.get("threadId") == args.thread_id
+            and item.get("resultDigest") == args.result_digest
+        ),
+        None,
+    )
+    if not candidate or not candidate.get("abandonable"):
+        raise RuntimeError("validation follow-up delivery is not safely abandonable")
+    if candidate.get("abandonNonce") != args.abandon_nonce:
+        raise RuntimeError("validation follow-up abandonment authorization is stale or invalid")
+    ledger(args.ledger).abandon_validation_followup_delivery(
+        thread_id=args.thread_id,
+        result_digest=args.result_digest,
+        reason=args.reason,
+        min_age_minutes=args.min_age_minutes,
+    )
+    return {
+        "ok": True,
+        "threadId": args.thread_id,
+        "resultDigest": args.result_digest,
+        "abandoned": True,
     }
 
 
@@ -4035,6 +4107,14 @@ def main() -> int:
     validation_followup_commit_parser = subparsers.add_parser("validation-followup-commit")
     validation_followup_commit_parser.add_argument("--thread-id", required=True)
     validation_followup_commit_parser.add_argument("--result-digest", required=True)
+    validation_followup_abandon_parser = subparsers.add_parser("validation-followup-abandon")
+    validation_followup_abandon_parser.add_argument("--thread-id", required=True)
+    validation_followup_abandon_parser.add_argument("--result-digest", required=True)
+    validation_followup_abandon_parser.add_argument("--abandon-nonce", required=True)
+    validation_followup_abandon_parser.add_argument("--reason", required=True)
+    validation_followup_abandon_parser.add_argument(
+        "--min-age-minutes", type=int, default=90
+    )
     subparsers.add_parser("ingest-results")
     subparsers.add_parser("publication-run")
     publication_retry_parser = subparsers.add_parser("publication-retry")
@@ -4127,6 +4207,8 @@ def main() -> int:
         result = validation_followup_reserve(args)
     elif args.operation == "validation-followup-commit":
         result = validation_followup_commit(args)
+    elif args.operation == "validation-followup-abandon":
+        result = validation_followup_abandon(args)
     elif args.operation == "ingest-results":
         result = ingest_task_results(args)
     elif args.operation == "publication-run":

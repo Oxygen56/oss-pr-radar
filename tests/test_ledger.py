@@ -1444,6 +1444,45 @@ def test_validation_followup_is_write_ahead_and_rearms_for_a_new_result(tmp_path
     assert store.validation_followup_was_sent(thread_id="missing-thread") is False
 
 
+def test_validation_followup_unknown_delivery_can_be_safely_abandoned(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest="result-digest-1",
+        missing=["relevant_tests_green"],
+    )
+    store.record_stage("a/b#1", "VALIDATION_PENDING")
+    store.reserve_validation_followup(
+        thread_id="thread-1", result_digest="result-digest-1"
+    )
+    with store.connect() as connection:
+        connection.execute(
+            """UPDATE events SET created_at=?
+               WHERE event_type='VALIDATION_FOLLOWUP_RESERVED'""",
+            (iso_z(datetime.now(UTC) - timedelta(hours=2)),),
+        )
+
+    store.abandon_validation_followup_delivery(
+        thread_id="thread-1",
+        result_digest="result-digest-1",
+        reason="TARGET_TURN_NOT_MATERIALIZED",
+        min_age_minutes=90,
+    )
+
+    assert store.unresolved_validation_followups() == []
+    assert store.validation_followup_candidates()[0]["resultDigest"] == "result-digest-1"
+
+
 def test_validation_followup_stops_when_a_new_result_has_the_same_gap(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(intent())
