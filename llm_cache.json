@@ -2880,6 +2880,36 @@
     ],
     "why": "The issue reports a deterministic null-pointer GPU fault in NVFP4 MoE path on GB10, with multiple independent reproductions and detailed device-level evidence. However, the root cause is not confirmed; comments suggest possible GDN kernel involvement and third-party kernel packages. The deterministic gate is HUMAN_REVIEW, and open PR/related issue lookups failed, so duplicate work cannot be excluded."
   },
+  "262c67f4c44af4c0ddc325a06e834a7466f287ff004ed5f276f46bdaa2d01119": {
+    "confidence": 0.6,
+    "contradictions": [
+      "algorithm_evidence.score=8 vs. issue body showing a configuration/validation bug"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Adjust longlive2_i2v testcase num_frames to a multiple of num_frames_per_block",
+      "Or modify LongLive2 pipeline to round/pad num_frames with warning"
+    ],
+    "risks": [
+      "Changing testcase num_frames may affect expected output or performance",
+      "Rounding/padding may alter denoising behavior and require validation"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with the provided serve command and request",
+      "Verify the divisibility guard passes after fix",
+      "Run the existing CI testcase to ensure no regression"
+    ],
+    "unknowns": [
+      "Whether the maintainers consider this an algorithm bug or a test configuration issue",
+      "Exact num_frames_per_block value and current testcase num_frames"
+    ],
+    "why": "The issue identifies a clear divisibility bug in a diffusion pipeline's causal DMD denoising stage, with a concrete repro and suggested fixes. However, the track is llm_algorithm, which requires a concrete training objective, model mechanism, distributed-training invariant, quantization/numerical method, kernel algorithm, or evaluation methodology. The reported bug is a configuration/validation issue in a pipeline stage, not a core algorithm mechanism. The suggested fixes (adjust testcase num_frames or round/pad) are operational and do not involve a reference-vs-implementation test or numerical regression. The algorithm_evidence score is 8 but the mechanisms listed (distributed_training, kernel_algorithm) are not substantiated by the issue body; the matched terms 'block size' and 'shard' are generic. The issue lacks a clear algorithmic root cause and validation path, making it not actionable as an llm_algorithm candidate. Maintainer confirmation is needed to determine if this is a valid algorithm bug or a test configuration issue."
+  },
   "26463d29b7da8ffae14fccdc6b617a389bf70c3a05e6a1f69fb681e17d86f366": {
     "confidence": 0.85,
     "contradictions": [
@@ -8913,6 +8943,35 @@
     ],
     "why": "Issue provides a clear root cause (TYPE_UNSTABLE_JOIN from split-KV path) and a minimal repro, but the deterministic gate is HUMAN_REVIEW and open PR lookup failed, so we cannot rule out existing work. Maintainer input is needed to confirm the preferred fix (pin bump vs kernel patch) and avoid duplicate effort."
   },
+  "6c606a5c5da73ff69c2abe455b426813bbf21184891b9be426dd6aa3e12820c6": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Identify kernel selection or scheduler change causing regression",
+      "Add regression test for output-token throughput"
+    ],
+    "risks": [
+      "Regression may be environment-specific or require specific hardware",
+      "Fix may involve complex kernel or scheduler changes"
+    ],
+    "root_cause_clarity": "low",
+    "score": 14,
+    "test_plan": [
+      "Reproduce with provided config and model on v0.23.0 vs v0.24.0",
+      "Profile with nsight or vLLM metrics to isolate bottleneck"
+    ],
+    "unknowns": [
+      "Root cause not identified",
+      "No maintainer confirmation of issue validity or design direction",
+      "No minimal reproducer or profiling data"
+    ],
+    "why": "Issue reports a significant throughput regression between vLLM versions but lacks root cause analysis, profiling data, or a minimal reproducer. The only comment is a non-maintainer saying 'Closely looking at it,' indicating active investigation but no confirmed cause. The candidate is a bug report with no proposed code path, and the deterministic gate requires HUMAN_REVIEW due to design confirmation needs and AI disclosure conflict."
+  },
   "6c8f10a04ab386a229a4c98323ae8fe36422aabb093efa84860c263e52f34c58": {
     "confidence": 0.7,
     "contradictions": [
@@ -13150,6 +13209,33 @@
     ],
     "why": "The issue reports a crash in FLASHMLA_SPARSE_DSV4 backend on SM12x, but the root cause is that FlashMLA-sparse kernels are unsupported on SM12x. The proposed fix is a fail-fast error message, not a functional backend. The issue is already being investigated by a contributor, and the user is satisfied with waiting. No competing implementation exists, but the work is not actionable as a new algorithm contribution."
   },
+  "aa807a846ae766af80addfd956d9e867d8f2523a76832cd963b319b737fe8e30": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify Gemini/Vertex provider cache_control handling to skip cachedContents discovery when cache is valid",
+      "Add caching state tracking for explicit cache reuse"
+    ],
+    "risks": [
+      "Cache invalidation semantics may vary; skipping discovery could use stale cache",
+      "Provider API changes may affect behavior"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "test_plan": [
+      "Create a regression test that mocks Vertex API responses and asserts cachedContents discovery is not called on repeated identical requests",
+      "Run existing provider test suite for Gemini/Vertex"
+    ],
+    "unknowns": [
+      "Exact code path and root cause not identified",
+      "Maintainer preference on caching strategy not confirmed"
+    ],
+    "why": "The issue describes a performance bug with clear repro and latency data, but lacks root-cause analysis and maintainer confirmation. Existing PRs are keyword-overlap only and not direct competition. The track is agent_ai_infra, not llm_algorithm, so algorithm evidence is not required. However, the fix likely involves provider-specific caching behavior and may need design confirmation."
+  },
   "aa9313a01d7976467910f3969bdb17e27ddfddd7246bf5bd278c74fb2d35abb0": {
     "confidence": 0.85,
     "contradictions": [],
@@ -15375,6 +15461,33 @@
     "test_plan": [],
     "unknowns": [],
     "why": "Issue is a promotional sharing of an external project, not a bug report or feature request for the Letta repository. No actionable code path or root cause is identified."
+  },
+  "c912360dfd55a59bf163d9c7fbada4536e04d58dd0bc812c721935162e93b6a4": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "ImageEncodingStage forward to pass mm_token_type_ids from processor output",
+      "possibly other Qwen3-VL encoder call sites"
+    ],
+    "risks": [
+      "Existing PR #33569 may already address the root cause; overlapping changes could conflict",
+      "API drift may require version-specific handling"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Add regression test using joyai_image_edit_ti2i repro to assert successful warmup and output",
+      "Run existing diffusion tests and static checks"
+    ],
+    "unknowns": [
+      "Whether PR #33569 already fixes this exact issue",
+      "Maintainer preference on approach"
+    ],
+    "why": "Issue identifies a clear transformers-API drift causing Qwen3-VL text encoder failure in ImageEncodingStage, with a concrete repro and suggested fix. However, the deterministic gate is HUMAN_REVIEW and existing PR #33569 has semantic overlap on Qwen3-VL paths, requiring maintainer comparison before creating a new task."
   },
   "c998e2e23395bea890e86932adcd2a03fd4beacc85b9c67017a830139e667254": {
     "confidence": 0.8,
