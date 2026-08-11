@@ -4793,6 +4793,30 @@
     ],
     "why": "Issue provides a clear root cause and reproduction, but an existing PR (#20690) directly addresses it with tests, yet has failing CI and unresolved maintainer scope decisions. The deterministic gate requires HUMAN_REVIEW, and the presence of a competing PR with gaps makes this a wait-for-maintainer situation."
   },
+  "38ecd70ac82290be1cf168a706eb5c9717a7b3f49acb46c4bdfaf85460af1559": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix unreferenced asyncio tasks in mesh_api.py, multi_tokenizer_mixin.py, tokenizer_manager.py"
+    ],
+    "risks": [
+      "Potential overlap with open PR #33048; changes may affect async task lifecycle and require careful review."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Add a regression test that creates a task, drops the reference, and verifies it completes (e.g., using a short-lived event loop or gc.collect())."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a single PR covering all files or incremental fixes; whether the existing PR will be extended."
+    ],
+    "why": "The issue identifies specific unreferenced asyncio tasks in multiple files, but lacks a concrete reproduction or test. An existing PR #33048 partially addresses the same pattern and is open, so a new PR may duplicate or conflict. Maintainer confirmation is needed."
+  },
   "39b8afea33d4e2af07c50541daf707acfbc5de9d7ccb90352c9967e50458c27c": {
     "confidence": 0.7,
     "contradictions": [],
@@ -8926,6 +8950,34 @@
     ],
     "why": "The issue describes a concrete bug in message history persistence with a clear root cause (incoming duplicate IDs win upsert) and a proposed authority-resolution design. However, the track is llm_algorithm and the supplied evidence does not demonstrate a concrete training objective, model mechanism, distributed-training invariant, quantization/numerical method, kernel algorithm, or evaluation methodology. The matched term 'adapter' and formula/experiment signals appear spurious; the issue is about message storage semantics, not PEFT. The proposed fix is a design change requiring maintainer confirmation, and the commenter's detailed proposal is not an official maintainer decision. Therefore, work should wait for maintainer assignment or design confirmation."
   },
+  "683299118fcf08738596f524968be4862b417d9fa3cfa212733d7f7d043f4607": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Investigate Agent Engine streaming proxy behavior",
+      "Fix event delivery or artifact creation ordering in streaming path"
+    ],
+    "risks": [
+      "May require changes in external Agent Engine service, not just adk-python",
+      "Potential API behavior changes need maintainer approval"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "test_plan": [
+      "Create minimal repro against deployed Agent Engine to capture event sequence",
+      "Add regression test for streaming completion events and artifact append semantics"
+    ],
+    "unknowns": [
+      "Exact root cause location (adk-python vs Agent Engine proxy)",
+      "Maintainer awareness and willingness to fix",
+      "Whether a minimal repro repo is available"
+    ],
+    "why": "Issue reports a clear streaming truncation and artifact append error against deployed Agent Engine, with local server working. Root cause likely in Agent Engine proxy layer, not in adk-python code. No maintainer confirmation or design direction; requires investigation and possibly maintainer assignment."
+  },
   "684ee8688f348de5ece7552a2b00443acc5faca9c330f44ba30d645a0f0e2374": {
     "confidence": 0.7,
     "contradictions": [
@@ -12868,6 +12920,35 @@
       "Maintainer preference on fixing vs retiring the script"
     ],
     "why": "Issue identifies a deterministic contract mismatch in a live smoke script, with detailed evidence and proposed fixes. However, the gate decision is HUMAN_REVIEW and open PR lookup failed, so duplicate work cannot be excluded. Maintainer approval is absent, and the issue is a bug report rather than a direct code contribution."
+  },
+  "9a1d3922359df42df141f9bd969988ebe3add0e642ef3ddcb5923727ab1ffb21": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify session ID generation in local_eval_service.py to use allowed characters",
+      "Update _SESSION_ID_PATTERN in VertexAiSessionService to match Agent Engine restrictions",
+      "Add regression test for eval session creation with VertexAiSessionService"
+    ],
+    "risks": [
+      "Changing session ID format may affect existing eval session references or logs",
+      "Potential need to handle backward compatibility for existing sessions"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Reproduce with provided minimal code and assert failure",
+      "Add unit test for session ID validation pattern",
+      "Run eval integration test with VertexAiSessionService mock"
+    ],
+    "unknowns": [
+      "Maintainer preference on session ID format or validation approach",
+      "Whether there is an existing PR or design for this fix"
+    ],
+    "why": "Issue clearly identifies a bug: ADK-generated eval session IDs violate Vertex AI Agent Engine constraints, causing eval failures. Root cause is in local_eval_service.py and validation mismatch in VertexAiSessionService. However, the deterministic gate says HUMAN_REVIEW, and there is no maintainer approval or design confirmation, so work should wait for maintainer direction."
   },
   "9b6186d41b23dc14e8161eec43190a7a17d066425808168fb276f0416a5fd6c6": {
     "confidence": 0.85,
