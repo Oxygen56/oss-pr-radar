@@ -73,3 +73,9 @@ def test_controller_protocol_delegates_validation_prefetch_to_bridge():
 def test_controller_protocol_does_not_repeat_environment_blocked_validation():
     assert "environmentBlocked" in PROTOCOL
     assert "do not send a validation continuation" in PROTOCOL
+
+
+def test_controller_protocol_does_not_confuse_historical_coverage_with_freshness():
+    assert "historical coverage" in PROTOCOL
+    assert "operationalHealthy=true" in PROTOCOL
+    assert "historical coverage flags" in PROTOCOL

@@ -56,6 +56,10 @@ session. Empty output accompanied by a session ID means still running, never
    action once instead of treating repeated zero-step jobs as code failures.
 3. Never wait for GitHub Actions. If a remote scan is active, skip only the
    remote `sync` step and continue consuming valid local queues.
+4. `githubNaturalScheduleHealthy=false` may describe historical coverage while
+   `operationalHealthy=true` confirms a fresh effective scan. In that case,
+   `sync` is required whenever `recentActive=false`; historical coverage flags
+   must never suppress ingestion of the current signed cloud queue.
 
 ## 2. Reconcile interrupted creation
 
@@ -81,7 +85,7 @@ Run `orphan-list` before `sync`.
 Run in this order:
 
 1. `publish-terminal-feedback`
-2. `sync` only when operational health permits it
+2. `sync` whenever `operationalHealthy=true` and `recentActive=false`
 3. `refresh-prs`
 4. `list`
 5. `alerts --min-age-minutes 70 --notify`
