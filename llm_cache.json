@@ -7384,6 +7384,33 @@
     ],
     "why": "Issue provides a detailed root cause and reproducible bug, but the supplied gate requires HUMAN_REVIEW and the existing PR #36250 has semantic overlap that needs maintainer comparison. The issue explicitly asks for design confirmation on intended behavior, making it premature to start work without maintainer input."
   },
+  "5555692e98bfb824463d95c4d2a35de31e603a149859264d976fc32d436840c1": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify parse-git-remote-url.ts to strip leading/trailing slashes before applying .git suffix removal",
+      "Add regression test for HTTPS remote ending in .git/"
+    ],
+    "risks": [
+      "Potential unintended changes to parsing of URLs with trailing slashes in other contexts",
+      "Maintainer may have design preferences for URL normalization"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add the provided failing test to __tests__/utils/parse-git-remote-url.test.ts",
+      "Run vitest on the test file to confirm the fix",
+      "Run existing test suite to ensure no regressions in SSH, SCP-style, self-hosted, and Azure DevOps cases"
+    ],
+    "unknowns": [
+      "No open PR or related issue found; maintainer approval not confirmed but not required for private work"
+    ],
+    "why": "The issue provides a precise root cause, a failing test case, and a minimal fix direction for a user-visible bug in URL normalization. The fix is localized and low-risk, with clear acceptance criteria and regression coverage."
+  },
   "5572bd2f0341b616ddf17cd8cd4790ea217afa4fd7e15541e2a20413a897ba27": {
     "confidence": 0.7,
     "contradictions": [],
@@ -7996,6 +8023,39 @@
       "Maintainer's design preference for fix not known"
     ],
     "why": "Issue reports a clear bug: nested Pydantic models in dicts ignore serialize_by_alias=False. Repro is provided, but root cause is not identified and no maintainer confirmation exists. The gate decision is HUMAN_REVIEW, so we must wait for maintainer input."
+  },
+  "5ae7c392b8464dde7f4295b7e9f0df8c9037e1bac69845b11d93345f84294c3d": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix invokeSkill signal delivery race (deliver vs wake after agent_end)",
+      "Align resource_id semantics between subscription writer and delivery resolver",
+      "Add poison-pill handling to prevent queue blocking",
+      "Possibly fix LocalSandbox snapshot and approval-gate UI rehydration"
+    ],
+    "risks": [
+      "Changing signal delivery semantics may affect existing workflows",
+      "Resource_id contract change could break other integrations",
+      "Scope creep from minor issues may delay core fix"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 15,
+    "test_plan": [
+      "Reproduce Bug 1B with provided repro sketch and add regression test for signal delivery when run is finishing",
+      "Reproduce Bug 2 by creating PR subscription and verifying delivery resolves with correct resource_id",
+      "Add unit test for subscription resource_id mapping and queue retry behavior"
+    ],
+    "unknowns": [
+      "Exact code path for signal delivery race (needs maintainer confirmation)",
+      "Whether maintainers prefer specific fix approach (e.g., re-queue vs delivery confirmation)",
+      "Whether minor issues are in scope for this issue"
+    ],
+    "why": "Issue reports two concrete reliability bugs in factory pipeline with detailed evidence and repro sketch, but root causes are partially inferred (e.g., provider stream error, race condition) and require maintainer design confirmation on signal delivery semantics and resource_id contract. No open PR competition; maintainer has labeled for triage but not confirmed approach."
   },
   "5b879069d2527d463daa0af86afbbcace94eb1f1d446a0e4da736f1a3e9fd111": {
     "confidence": 0.85,
@@ -8982,6 +9042,36 @@
       "Whether the user confirmed the suggested configuration works; open PR/related issue status unknown due to lookup failures."
     ],
     "why": "The issue is a user configuration problem, not a LiteLLM bug. A commenter identified that VS Code appends '/models' to the configured URL, so the user should set the base URL instead. No code change in LiteLLM is needed. The deterministic gate is HUMAN_REVIEW, and open PR/related issue lookups failed, so we cannot rule out duplicates. Maintainer confirmation is required before any action."
+  },
+  "64cc70c942f8fe6a88061b32a08632c4ca6375755cc173c16c930fc203e7e0e9": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Coordinated host-registration transaction across TP ranks",
+      "Policy decision for fallback (all-unpinned or require_pinned)",
+      "Potential unregister-on-failure logic"
+    ],
+    "risks": [
+      "Changing failure behavior may break valid deployments",
+      "Need to avoid interfering with CUDA error-drain ownership in #50070"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "test_plan": [
+      "Reproduce mixed state with TP=2 and forced registration failure on one rank",
+      "Verify all ranks pinned or all unpinned after fix",
+      "Test fallback policy behavior with large regions that cannot be pinned"
+    ],
+    "unknowns": [
+      "Maintainer preference on fallback policy",
+      "Exact code path for host registration and TP group initialization",
+      "Whether a public repro is available"
+    ],
+    "why": "The issue clearly identifies a mixed pinned/unpinned TP rank bug with a concrete invariant and policy question, but the fix requires a maintainer decision on fallback policy (all-unpinned vs require_pinned) and coordination with existing issues #51080 and #50070. No public repro or maintainer approval is present, and the track is agent_ai_infra, not llm_algorithm, so the algorithm evidence gate is not applicable."
   },
   "64e98591ac66df5d217bde2f6194dfab76df6611e41ba5a02eca8f708f266a96": {
     "confidence": 0.7,
@@ -11280,6 +11370,34 @@
       "Exact API changes needed for InstallWithHome signature"
     ],
     "why": "The issue clearly describes a user-visible bug where CodeGraph configuration ignores the user's agent selection and modifies unselected agents' configs. It provides a concrete reproduction, traces the root cause to specific functions (InstallWithHome, detectedCodeGraphTargets, InjectCodeGraphGuidance) that use DiscoverInstalled instead of the selected AgentIDs, and suggests acceptance criteria. No competing PR or related issue exists, and the gate allows work. The fix is actionable: pass resolved AgentIDs through the installation flow and scope all CodeGraph operations to selected agents."
+  },
+  "7ff3d7edf6c856f5baf89c00f67bff7318cbdf790bdc79300a0ccb4b60f2ded0": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Model packaging/chat template fix for MLX build",
+      "Possibly structured output handling for MLX"
+    ],
+    "risks": [
+      "Root cause may be in external model artifact, not Ollama code",
+      "Potential duplicate issue #17656 needs triage"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "test_plan": [
+      "Reproduce with provided curl commands and assert JSON schema conformance",
+      "Add regression test for MLX model with response_format"
+    ],
+    "unknowns": [
+      "Whether maintainers have confirmed root cause or assigned work",
+      "Whether issue #17656 is truly duplicate and blocks this"
+    ],
+    "why": "Issue reports a concrete bug with clear reproduction and controls, but root cause is unconfirmed and likely in model packaging/chat template, not core engine. Existing PR #17679 is unrelated. Maintainer comment only references another issue, no assignment or design confirmation."
   },
   "7ffc092f6097897ffb61cc4818a501139b39891f7517ecdc84cad0e0b33b9ad3": {
     "confidence": 0.7,
@@ -22125,6 +22243,33 @@
       "Maintainer preference on the fix approach"
     ],
     "why": "Issue clearly identifies a real bug with a minimal repro and root cause in messages.py, but an open PR (#7053) has semantic overlap and may already address the same code paths. The deterministic gate requires HUMAN_REVIEW, and the overlap must be manually compared before creating a new task."
+  },
+  "feacb19b7cf392f775baf197c9c83a1b3750f61bca8020cf5aff7308ae69be1a": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify context-window-ring.tsx to use a track color that contrasts with hover fill and surface across themes",
+      "Possibly introduce a new design token or derive track from foreground",
+      "Align trigger hover treatment with shared chatInputIconButtonClassName"
+    ],
+    "risks": [
+      "Changing design tokens may affect other components using --oh-border",
+      "Deriving track from foreground may reduce contrast between arc and track at low usage"
+    ],
+    "root_cause_clarity": "high",
+    "score": 5,
+    "test_plan": [
+      "Add a visual regression test or unit test that checks computed styles for ring track and hover fill across themes",
+      "Manual verification on openhands-neutral, deepsea, and neo themes at rest and hover"
+    ],
+    "unknowns": [
+      "Maintainer preference on design token approach; whether a new token is acceptable"
+    ],
+    "why": "The issue provides a precise root cause (token collision between --oh-border and --oh-interactive-hover) and a clear acceptance criteria, but the proposed fix requires design-system decisions (e.g., deriving track from foreground) that need maintainer confirmation. The issue explicitly defers to maintainers: 'the design system is yours.' No competing PR exists, but the fix is not purely mechanical and may involve design token changes."
   },
   "feb1951522419742c1fcf71a6b9913989534043e31232f089d1dad1c197c2f76": {
     "confidence": 0.7,
