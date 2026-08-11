@@ -65,16 +65,19 @@ session. Empty output accompanied by a session ID means still running, never
 
 Run `orphan-list` before `sync`.
 
-- Use `list_threads` with a limit from 1 through 50 and filter locally. Do not
-  pass a query.
+- `orphan-list` is the authoritative reconciliation query. It reads the local
+  desktop task index, including archived tasks, and compares exact prompts,
+  project roots, creation windows, and existing ledger bindings. Do not call
+  the global `list_threads` API; it is unnecessary and can stall on a large
+  task history.
 - A unique match must agree on intent, exact first prompt, GitHub project,
   prepared worktree, and thread identity.
 - For a unique match, run `orphan-commit`. It applies and verifies the desired
   title itself; do not call `set_thread_title`.
 - Report `blocked` entries exactly and do not guess a binding.
 - Preserve unmatched `CREATING` entries while `abandonable=false`.
-- If `abandonable=true`, first prove that neither `list_threads` nor local
-  session storage, including archived tasks, contains the task, then use the
+- If `abandonable=true`, the bridge has already proved that local session
+  storage, including archived tasks, contains no matching task. Use the
   returned `abandonNonce` with `creation-abandon`. `clientThreadId` may be
   absent when creation was reserved before the desktop API was called. Let the
   signed queue decide whether to enqueue again; do not create a replacement
@@ -116,13 +119,14 @@ For each candidate, process one transaction at a time:
 
 If sending times out or has an unknown result, leave the reservation unresolved
 and stop that item. Never resend the same unresolved reservation directly. If
-`pr-followup-list` later reports `abandonable=true`, use `read_thread` to prove
-that the target task has no turn at or after `created_at`, then call
-`pr-followup-abandon` with the returned nonce. Only the newly eligible signed
-candidate may then be reserved and sent again. Preserve ambiguous deliveries
-when the target task did update. Report all remaining unresolved entries with
-exact task, PR URL, and wake digest. Cancellation-only checks, aggregate checks,
-and failures unrelated to branch files are not actionable candidates.
+`pr-followup-list` later reports `abandonable=true`, its local task-index check
+has already proved that the target task had no turn at or after `created_at`;
+call `pr-followup-abandon` with the returned nonce. Only the newly eligible
+signed candidate may then be reserved and sent again. Preserve ambiguous
+deliveries when the target task did update. Report all remaining unresolved
+entries with exact task, PR URL, and wake digest. Cancellation-only checks,
+aggregate checks, and failures unrelated to branch files are not actionable
+candidates.
 
 ## 5. Dispatch new issue tasks
 
@@ -150,8 +154,8 @@ For a successful claim:
   Bind any returned task or client ID immediately with `creation-bind`.
 - An explicit create rejection with no ID may use `creation-cancel`. Timeout,
   disconnect, or unknown result must remain `CREATING` for orphan recovery.
-- A client-ID-only result may be reconciled for at most 90 seconds using
-  `list_threads` and `orphan-list`, then completed with `orphan-commit`.
+- A client-ID-only result may be reconciled for at most 90 seconds using only
+  `orphan-list`, then completed with `orphan-commit`.
 - A real task ID is completed with `commit` using the exact project, project
   cwd, prepared worktree, source repository, and `titleTime` returned by claim.
   `commit` applies and verifies the desired title itself; do not call
@@ -205,10 +209,11 @@ Run `validation-followup-list`. For each candidate:
 - Send the canonical prompt returned by the reservation unchanged to the same
   task; commit only after explicit send success.
 - Unknown send results stay unresolved and are never resent automatically. If
-  `validation-followup-list` later reports `abandonable=true`, use `read_thread`
-  to prove that the target task has no turn at or after `reservedAt`, then call
-  `validation-followup-abandon` with the returned nonce. Re-list the queue; the
-  same result may be reconsidered only through the newly authorized state.
+  `validation-followup-list` later reports `abandonable=true`, its local
+  task-index check has already proved that the target task had no turn at or
+  after `reservedAt`; call `validation-followup-abandon` with the returned
+  nonce. Re-list the queue; the same result may be reconsidered only through
+  the newly authorized state.
 - Report entries stale after 90 minutes as `validationFollowupStalled`; this is
   a delivery watchdog, not a general review cooldown.
 - Entries under `environmentBlocked` have a real dependency failure but no
@@ -238,6 +243,12 @@ Run `validation-followup-list`. For each candidate:
 4. Run `cleanup-list`. Archive only exact `[无价值]` `AUDIT_NO_GO` candidates,
    then run `cleanup-commit`. Recheck until empty. Never archive valuable,
    active, unknown, fix-ready, publication, open-PR, or merged tasks.
+5. Run `duplicate-task-title-reconcile --min-age-minutes 30`, then
+   `duplicate-task-list --min-age-minutes 30`. Every returned item is a stale,
+   unbound raw task whose exact issue prompt already has a different
+   ledger-bound canonical task. Archive each exact returned `threadId`, then
+   re-run both commands until the duplicate list is empty. Never archive the
+   returned `canonicalThreadId`.
 
 ## 8. Final fixed-point gate
 
@@ -246,7 +257,8 @@ sequence: `orphan-list`, `pr-followup-list`, `context-sync`, `ingest-results`,
 `validation-followup-list`, `publish-terminal-feedback`, `publication-run`,
 `context-sync`, `dispatch-notifications --notify`, `list`, `alerts`,
 `recovery-list`, `restore-list`, `title-reconcile`, `title-list`, and
-`cleanup-list`.
+`cleanup-list`, followed by duplicate title reconciliation and
+`duplicate-task-list --min-age-minutes 30`.
 
 Before reporting success, prove these six queues are empty:
 
@@ -259,6 +271,7 @@ Before reporting success, prove these six queues are empty:
 - `restore-list`
 - `title-list`
 - `cleanup-list`
+- `duplicate-task-list`
 
 Also prove that every completed task result has passed through `ingest-results`.
 If any gate remains nonempty, report the exact failing stage rather than a

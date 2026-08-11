@@ -29,8 +29,21 @@ def test_controller_protocol_keeps_fixed_point_queues_explicit():
         "restore-list",
         "title-list",
         "cleanup-list",
+        "duplicate-task-list",
     ):
         assert operation in PROTOCOL
+
+
+def test_controller_protocol_avoids_global_thread_queries():
+    assert "Do not call\n  the global `list_threads` API" in PROTOCOL
+    assert "using only\n  `orphan-list`" in PROTOCOL
+    assert "use `read_thread`" not in PROTOCOL
+
+
+def test_controller_protocol_cleans_only_unbound_duplicate_tasks():
+    assert "duplicate-task-title-reconcile" in PROTOCOL
+    assert "ledger-bound canonical task" in PROTOCOL
+    assert "Never archive the\n   returned `canonicalThreadId`" in PROTOCOL
 
 
 def test_controller_protocol_requires_structured_no_code_followup_result():

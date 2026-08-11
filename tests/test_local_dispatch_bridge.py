@@ -4144,6 +4144,61 @@ def test_orphan_list_recovers_unique_async_worktree_task(monkeypatch, tmp_path):
     assert result["candidates"][0]["desiredTitle"].startswith("[有价值·GO]")
 
 
+def test_duplicate_task_list_only_returns_stale_unbound_raw_tasks(monkeypatch, tmp_path):
+    now = datetime.now(UTC)
+    project_root = tmp_path / "github"
+    project_root.mkdir()
+    thread_db = tmp_path / "threads.sqlite3"
+    prompt = MODULE.issue_prompt("https://github.com/a/b/issues/1")
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            """CREATE TABLE threads (
+                id TEXT, cwd TEXT, title TEXT, first_user_message TEXT,
+                archived INTEGER, created_at INTEGER, updated_at INTEGER
+            )"""
+        )
+        rows = [
+            ("canonical", str(project_root), "[有价值]", prompt, 0, -300, -60),
+            ("duplicate", str(project_root), "<codex_delegation>raw", prompt, 0, -240, -60),
+            ("recent", str(project_root), "<codex_delegation>raw", prompt, 0, -20, -5),
+            ("archived", str(project_root), "<codex_delegation>raw", prompt, 1, -240, -60),
+        ]
+        for row in rows:
+            connection.execute(
+                "INSERT INTO threads VALUES (?,?,?,?,?,?,?)",
+                row[:5]
+                + (
+                    int((now + timedelta(minutes=row[5])).timestamp()),
+                    int((now + timedelta(minutes=row[6])).timestamp()),
+                ),
+            )
+
+    class Store:
+        def task_context_candidates(self):
+            return [
+                {
+                    "key": "a/b#1",
+                    "issueUrl": "https://github.com/a/b/issues/1",
+                    "threadId": "canonical",
+                }
+            ]
+
+        def bound_thread_ids(self):
+            return {"canonical"}
+
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+
+    result = MODULE.duplicate_task_list(
+        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3", min_age_minutes=30)
+    )
+
+    assert [item["threadId"] for item in result["duplicates"]] == ["duplicate"]
+    assert result["duplicates"][0]["canonicalThreadId"] == "canonical"
+    assert result["duplicates"][0]["desiredTitle"].startswith("[无价值·重复任务]")
+
+
 def test_orphan_list_recovers_thread_created_in_github_project(monkeypatch, tmp_path):
     now = datetime.now(UTC)
     project_root = tmp_path / "github"

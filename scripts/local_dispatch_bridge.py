@@ -1609,6 +1609,105 @@ def orphan_list(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def duplicate_task_list(args: argparse.Namespace) -> dict[str, Any]:
+    """List stale, unbound desktop tasks shadowing a ledger-bound issue task."""
+
+    store = ledger(args.ledger)
+    bindings = {
+        canonical_prompt(issue_prompt(str(item["issueUrl"]))): item
+        for item in store.task_context_candidates()
+        if item.get("threadId") and item.get("issueUrl")
+    }
+    if not bindings or not THREAD_DB.is_file():
+        return {"ok": True, "duplicates": []}
+    bound_thread_ids = store.bound_thread_ids()
+    cutoff = int(
+        (
+            datetime.now(UTC)
+            - timedelta(minutes=max(30, int(getattr(args, "min_age_minutes", 30))))
+        ).timestamp()
+    )
+    connection = sqlite3.connect(THREAD_DB)
+    connection.row_factory = sqlite3.Row
+    try:
+        rows = connection.execute(
+            """SELECT id,title,first_user_message,archived,created_at,updated_at
+               FROM threads WHERE cwd=? AND archived=0 AND updated_at<=?""",
+            (str(GITHUB_ROOT.resolve()), cutoff),
+        ).fetchall()
+    finally:
+        connection.close()
+    duplicates: list[dict[str, Any]] = []
+    for row in rows:
+        thread_id = str(row["id"])
+        if thread_id in bound_thread_ids:
+            continue
+        binding = bindings.get(canonical_prompt(row["first_user_message"] or ""))
+        if binding is None or str(binding["threadId"]) == thread_id:
+            continue
+        title = str(row["title"] or "")
+        if not title.startswith("<codex_delegation>"):
+            continue
+        created = datetime.fromtimestamp(int(row["created_at"] or 0), tz=UTC).astimezone()
+        desired_title = (
+            f"[无价值·重复任务] {created:%m-%d %H:%M} "
+            f"{binding['key']}"
+        )
+        duplicates.append(
+            {
+                "threadId": thread_id,
+                "canonicalThreadId": str(binding["threadId"]),
+                "key": str(binding["key"]),
+                "issueUrl": str(binding["issueUrl"]),
+                "currentTitle": title,
+                "desiredTitle": desired_title,
+                "createdAt": int(row["created_at"] or 0),
+                "updatedAt": int(row["updated_at"] or 0),
+            }
+        )
+    duplicates.sort(key=lambda item: (item["createdAt"], item["threadId"]))
+    return {"ok": True, "duplicates": duplicates}
+
+
+def duplicate_task_title_reconcile(args: argparse.Namespace) -> dict[str, Any]:
+    candidates = duplicate_task_list(args)["duplicates"]
+    if not candidates:
+        return {"ok": True, "renamed": [], "errors": []}
+    results = _set_desktop_thread_titles(candidates)
+    connection = sqlite3.connect(THREAD_DB)
+    try:
+        current = {
+            str(row[0]): str(row[1] or "")
+            for row in connection.execute(
+                f"SELECT id,title FROM threads WHERE id IN ({','.join('?' for _ in candidates)})",
+                [item["threadId"] for item in candidates],
+            ).fetchall()
+        }
+    finally:
+        connection.close()
+    renamed: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    for candidate in candidates:
+        thread_id = candidate["threadId"]
+        if current.get(thread_id) == candidate["desiredTitle"]:
+            renamed.append(
+                {
+                    "threadId": thread_id,
+                    "key": candidate["key"],
+                    "title": candidate["desiredTitle"],
+                }
+            )
+        else:
+            errors.append(
+                {
+                    "threadId": thread_id,
+                    "key": candidate["key"],
+                    "error": results.get(thread_id) or "thread title was not applied",
+                }
+            )
+    return {"ok": not errors, "renamed": renamed, "errors": errors}
+
+
 def orphan_commit(args: argparse.Namespace) -> dict[str, Any]:
     result = orphan_list(args)
     candidates = {item["intentId"]: item for item in result["candidates"]}
@@ -4061,6 +4160,10 @@ def main() -> int:
     orphan_commit_parser.add_argument("--source-repo", required=True)
     orphan_commit_parser.add_argument("--desired-title", required=True)
     orphan_commit_parser.add_argument("--orphan-nonce", required=True)
+    duplicate_list_parser = subparsers.add_parser("duplicate-task-list")
+    duplicate_list_parser.add_argument("--min-age-minutes", type=int, default=30)
+    duplicate_title_parser = subparsers.add_parser("duplicate-task-title-reconcile")
+    duplicate_title_parser.add_argument("--min-age-minutes", type=int, default=30)
     outcome = subparsers.add_parser("outcome")
     outcome.add_argument("--key", required=True)
     outcome.add_argument("--stage", required=True)
@@ -4183,6 +4286,10 @@ def main() -> int:
         result = orphan_list(args)
     elif args.operation == "orphan-commit":
         result = orphan_commit(args)
+    elif args.operation == "duplicate-task-list":
+        result = duplicate_task_list(args)
+    elif args.operation == "duplicate-task-title-reconcile":
+        result = duplicate_task_title_reconcile(args)
     elif args.operation == "outcome":
         result = record_outcome(args)
     elif args.operation == "request-publication":
