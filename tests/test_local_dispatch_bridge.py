@@ -4154,22 +4154,25 @@ def test_duplicate_task_list_only_returns_stale_unbound_raw_tasks(monkeypatch, t
         connection.execute(
             """CREATE TABLE threads (
                 id TEXT, cwd TEXT, title TEXT, first_user_message TEXT,
-                archived INTEGER, created_at INTEGER, updated_at INTEGER
+                archived INTEGER, created_at INTEGER, updated_at INTEGER,
+                thread_source TEXT
             )"""
         )
         rows = [
-            ("canonical", str(project_root), "[有价值]", prompt, 0, -300, -60),
-            ("duplicate", str(project_root), "<codex_delegation>raw", prompt, 0, -240, -60),
-            ("recent", str(project_root), "<codex_delegation>raw", prompt, 0, -20, -5),
-            ("archived", str(project_root), "<codex_delegation>raw", prompt, 1, -240, -60),
+            ("canonical", str(project_root), "[有价值]", prompt, 0, -300, -60, "app"),
+            ("duplicate", str(project_root), "<codex_delegation>raw", prompt, 0, -240, -60, "app"),
+            ("recent", str(project_root), "<codex_delegation>raw", prompt, 0, -20, -5, "app"),
+            ("archived", str(project_root), "<codex_delegation>raw", prompt, 1, -240, -60, "app"),
+            ("helper", str(project_root), "<codex_delegation>raw", prompt, 0, -240, -60, "subagent"),
         ]
         for row in rows:
             connection.execute(
-                "INSERT INTO threads VALUES (?,?,?,?,?,?,?)",
+                "INSERT INTO threads VALUES (?,?,?,?,?,?,?,?)",
                 row[:5]
                 + (
                     int((now + timedelta(minutes=row[5])).timestamp()),
                     int((now + timedelta(minutes=row[6])).timestamp()),
+                    row[7],
                 ),
             )
 

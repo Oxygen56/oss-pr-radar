@@ -1631,7 +1631,8 @@ def duplicate_task_list(args: argparse.Namespace) -> dict[str, Any]:
     connection.row_factory = sqlite3.Row
     try:
         rows = connection.execute(
-            """SELECT id,title,first_user_message,archived,created_at,updated_at
+            """SELECT id,title,first_user_message,archived,created_at,updated_at,
+                      thread_source
                FROM threads WHERE cwd=? AND archived=0 AND updated_at<=?""",
             (str(GITHUB_ROOT.resolve()), cutoff),
         ).fetchall()
@@ -1641,6 +1642,8 @@ def duplicate_task_list(args: argparse.Namespace) -> dict[str, Any]:
     for row in rows:
         thread_id = str(row["id"])
         if thread_id in bound_thread_ids:
+            continue
+        if str(row["thread_source"] or "").casefold() == "subagent":
             continue
         binding = bindings.get(canonical_prompt(row["first_user_message"] or ""))
         if binding is None or str(binding["threadId"]) == thread_id:
