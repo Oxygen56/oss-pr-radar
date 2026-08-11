@@ -2787,7 +2787,8 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
     unresolved = store.unresolved_validation_followups()
     minimum_age_minutes = max(1, int(getattr(args, "min_age_minutes", 90)))
     activity: dict[str, int] = {}
-    if unresolved:
+    activity_available = THREAD_DB.is_file()
+    if unresolved and activity_available:
         thread_ids = sorted({str(item["threadId"]) for item in unresolved if item.get("threadId")})
         placeholders = ",".join("?" for _ in thread_ids)
         connection = sqlite3.connect(THREAD_DB)
@@ -2806,11 +2807,16 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
         age_minutes = max(0, int((now - reserved_at).total_seconds() // 60))
         thread_updated_at = activity.get(str(item.get("threadId") or ""), 0)
         target_turn_materialized = thread_updated_at >= int(reserved_at.timestamp())
-        abandonable = age_minutes >= minimum_age_minutes and not target_turn_materialized
+        abandonable = (
+            activity_available
+            and age_minutes >= minimum_age_minutes
+            and not target_turn_materialized
+        )
         value = item | {
             "ageMinutes": age_minutes,
             "threadUpdatedAt": thread_updated_at,
             "targetTurnMaterialized": target_turn_materialized,
+            "threadActivityAvailable": activity_available,
             "abandonable": abandonable,
         }
         if abandonable:
