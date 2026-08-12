@@ -8303,6 +8303,34 @@
     ],
     "why": "The issue clearly identifies a recurring bug: new Claude models fail because temperature is deprecated, and the fix requires a maintainable approach rather than adding each model to an exclusion list. No open PR or issue addresses this, and the issue provides a concrete reproduction and expected behavior."
   },
+  "5970c19431318491f1876d8c1efe12f736ae140813f5ce4363371f618cf2b4eb": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify askUserQuestion.ts to capture and surface cancelMessage from the confirmation payload",
+      "Update coreToolScheduler.test.ts to reflect new behavior",
+      "Possibly distinguish between no approval surface, auto-cancelled, and user declined cases"
+    ],
+    "risks": [
+      "Some auto-cancel paths do not provide a cancelMessage, so the fix may not cover all cases without additional changes to those producers",
+      "Changing the fallback message could affect downstream consumers that rely on the exact string"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add a regression test that simulates a cancellation with a cancelMessage and asserts the tool returns that message instead of the generic decline text",
+      "Run existing coreToolScheduler tests to ensure no breakage"
+    ],
+    "unknowns": [
+      "Exact auto-cancel path in the reporter's session is not confirmed; may require additional investigation to ensure complete coverage"
+    ],
+    "why": "Issue identifies a clear bug in askUserQuestion.ts where cancellation reasons are dropped and replaced with a misleading generic message. The triage bot confirms the root cause and suggests a concrete fix direction. No competing PR exists, and the repo welcomes PRs."
+  },
   "59802e04bcad3c806fd559db19ab9246d3e71347abfac9b2ea6d868336a0d514": {
     "confidence": 0.7,
     "contradictions": [],
@@ -19994,6 +20022,41 @@
     ],
     "why": "Issue identifies a concrete over-counting bug in web_search_requests with strong evidence and a clear root cause. However, the issue itself poses open semantic questions (dedup vs cap, normalization, scope) that require maintainer confirmation before implementation. Additionally, multiple open PRs overlap with the same code path and semantics, so a new PR risks duplication without maintainer guidance."
   },
+  "db8f5cb996e9231163dd2916904fd4055e3932480f55fc9b862615300b40cf77": {
+    "confidence": 0.9,
+    "contradictions": [
+      "The mastra-platform[bot] comment appears to be about a different issue (tool title) and is irrelevant to this bug."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add atomic claim/CAS in workflow resume path",
+      "Introduce suspension-lifecycle identity/version in storage",
+      "Implement loser conflict semantics or idempotent join",
+      "Update storage adapters for atomic operations"
+    ],
+    "risks": [
+      "Storage adapter compatibility and performance impact",
+      "Potential API changes for resume conflict semantics",
+      "Scope creep if design confirmation expands beyond the core fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Use the provided minimal reproduction to create a failing test for concurrent resume calls",
+      "Add regression test for multi-instance scenario using a mock storage adapter",
+      "Run existing workflow tests to ensure no regressions"
+    ],
+    "unknowns": [
+      "Maintainer preference on storage-backed vs in-process mitigation",
+      "Exact contract for WorkflowsStorage atomic operations",
+      "Whether existing storage adapters can support CAS without breaking changes"
+    ],
+    "why": "The issue is a well-documented concurrency bug with a public minimal reproduction and real production impact. The root cause is clearly identified: lack of atomic claim/CAS in the resume path. However, the deterministic gate requires HUMAN_REVIEW, and the maintainer has not yet confirmed the preferred design (in-process vs storage-backed). The existing PR #20512 is closed and incomplete for multi-instance scenarios. Thus, maintainer guidance is needed before implementation."
+  },
   "dc5bd1280cad71f4cb48021e87e9559fb50ef09979a29738aca70730237ae8d6": {
     "confidence": 0.7,
     "contradictions": [
@@ -20019,6 +20082,34 @@
       "Whether maintainer wants code changes or considers it a usage issue; open PR status due to timeout"
     ],
     "why": "Issue reports q4_0 KV cache causing degenerate output on specific small models, but maintainer could not reproduce on multiple backends and attributes it to model unsuitability. No code change proposed; likely a usage/config issue. Open PR lookup failed, so duplicate work cannot be excluded."
+  },
+  "dce7cfc8bee1655008e21d4ead2902ed8c265397eafd36072f0658b1ed203d09": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Decouple workflow schedule from engine selection",
+      "Add runtime check for event processor availability"
+    ],
+    "risks": [
+      "Potential API behavior change if engine selection is altered",
+      "Existing PRs may conflict or be incomplete"
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Reproduce with serverless deployer and scheduled workflow",
+      "Add regression test for HTTP-triggered runs with schedule"
+    ],
+    "unknowns": [
+      "Whether existing PRs fully resolve the issue",
+      "Maintainer preference on design approach"
+    ],
+    "why": "Issue describes a clear bug with high impact and a concrete reproduction, but the deterministic gate requires HUMAN_REVIEW and existing PRs (#18876, #18878) may already address it, requiring maintainer confirmation."
   },
   "dd04934e6154bd198e5450f21a77ef757634956e833e7dbf5448cadfab34c265": {
     "confidence": 0.7,
