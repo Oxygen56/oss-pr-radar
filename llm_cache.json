@@ -11194,6 +11194,39 @@
     ],
     "why": "The issue reports a clear user-visible bug with a reproducible API behavior, but the root cause is not identified and the related issue audit and open PR lookup failed, leaving uncertainty about duplicates and existing work. The deterministic gate requires HUMAN_REVIEW."
   },
+  "70b2e340af4b4bda2f7c599f1b98e6435e5dd891df30b17b530b80d913ebc5ce": {
+    "confidence": 0.7,
+    "contradictions": [
+      "The issue requests a feature but the candidate is categorized as LOCAL_FIX_ONLY, suggesting a private fix rather than a public PR"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add zero-tool-call detection in fc_agent_runner.py",
+      "Introduce a configurable enforcement flag (e.g., require_tool_call)",
+      "Implement retry or error path for missing tool calls"
+    ],
+    "risks": [
+      "Design ambiguity: retry count, scope, and error surface need maintainer decision",
+      "Potential breaking change for agents where plain-text terminal answers are intentional",
+      "AI disclosure policy may block public PR submission"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "test_plan": [
+      "Create a failing test that simulates a model response with no tool calls when tools are available",
+      "Verify the runner raises a typed error or retries with tool_choice='required'",
+      "Run existing agent runner unit tests to ensure no regressions"
+    ],
+    "unknowns": [
+      "Maintainer preference on the design questions (retry vs error, scope, error surface)",
+      "Whether the repository requires assignment or maintainer approval for new features"
+    ],
+    "why": "The issue precisely identifies a missing zero-tool-call guard in fc_agent_runner.py, with clear code references and a concrete detection signal. However, the proposed fix requires design decisions (retry vs error, per-tool vs per-agent flag, error surface) that need maintainer input, and the repository's AI disclosure policy conflicts with automated public contribution. The issue is an enhancement request without maintainer approval or help-wanted label, and the candidate is categorized as LOCAL_FIX_ONLY with ALLOW_PRIVATE_WORK, indicating private work is permitted but public PR submission is blocked."
+  },
   "7180eafb3f5daded788ae121f33f8da2f4cf39fe96b9de1ade59eb72c4a56438": {
     "confidence": 0.7,
     "contradictions": [],
@@ -20430,6 +20463,34 @@
       "Exact FlashInfer API behavior across versions for plan() parameters"
     ],
     "why": "The issue provides a precise root cause: FlashInfer's logits_soft_cap is a compile-time parameter that must be passed to plan(), not forward(), and the SGLang backend passes it to forward(), silently dropping it. The issue includes a minimal reproduction with cosine similarity evidence and a model-level comparison. However, the deterministic gate is HUMAN_REVIEW, and the open PR and related issue lookups timed out, so we cannot rule out existing duplicate work. The fix is clear but requires maintainer confirmation on the intended design (e.g., planning per cap value)."
+  },
+  "d836701ae2f697fd1928df83add0e74039aaa48cfa24489081ffbd96690df112": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "MTP runtime path",
+      "scheduler or attention kernel"
+    ],
+    "risks": [
+      "Performance issue may be environment-specific (e.g., GPU topology, library versions).",
+      "Fix may require maintainer design decisions."
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Create a minimal reproduction script with a specific model and context length to demonstrate the slowdown.",
+      "Profile the MTP execution to identify bottleneck (e.g., kernel, memory, scheduling)."
+    ],
+    "unknowns": [
+      "Minimal reproduction steps",
+      "Profiling data",
+      "Maintainer acknowledgment or design preference"
+    ],
+    "why": "Issue reports performance degradation with MTP at high context but lacks a minimal reproduction, profiling data, or a clear root cause. No maintainer confirmation or design direction. The track is agent_ai_infra, not llm_algorithm, so algorithm evidence is not required, but the lack of actionable technical detail and maintainer input blocks a clean start."
   },
   "d83cb699561986b97604b82baceae1d6070c1f219cf70192e1f4ef3f1102349a": {
     "confidence": 0.8,
