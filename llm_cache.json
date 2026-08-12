@@ -11707,6 +11707,32 @@
     ],
     "why": "Issue clearly describes a user-visible bug during rolling upgrades due to codec mismatch between v1.4 frontend and v1.2 workers. Existing PR #12658 is a draft with no tests and failing CI, leaving room for a stronger, well-tested fix."
   },
+  "77f2e86ec3af198cd6f11a86cb7bd5bb010b7b7638d6c5ca01be475aa1fca8a5": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify Cohere embedding request builder to detect mixed-content input objects and use 'inputs' field instead of 'texts'",
+      "Add handling for provider-specific 'inputs' parameter or auto-detect based on input structure"
+    ],
+    "risks": [
+      "Potential impact on existing text-only embedding requests if the detection logic is too broad",
+      "Need to ensure backward compatibility with current 'texts' field usage for string inputs"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add a regression test that mocks the Cohere API and verifies the request payload uses 'inputs' for mixed content",
+      "Run the provided reproduction script against a mock or live API to confirm the fix"
+    ],
+    "unknowns": [
+      "No maintainer confirmation or design preference on whether to use auto-detection or a new parameter; but this is not blocking as the fix is straightforward."
+    ],
+    "why": "The issue provides a clear, reproducible bug: LiteLLM sends Cohere Embed v4 mixed text/image inputs in the 'texts' field instead of 'inputs', causing a provider validation error. The direct API call succeeds, confirming the root cause. The fix is a targeted change in the Cohere embedding transformation logic, with a concrete reproduction script and expected behavior."
+  },
   "7880bebb8bfab06abfa35696c2a4a4cdd88dcd998dd9bde05ec6d4b73dbaaa01": {
     "confidence": 0.85,
     "contradictions": [],
@@ -19723,6 +19749,23 @@
       "Maintainer's preferred fix direction"
     ],
     "why": "Issue reports CLI argument parsing failure for MiniMax-H3, but comments indicate a workaround (--model-type diffusion) and a merged PR #33365 may already address related local-path detection. Open PR lookup timed out, so competition cannot be fully assessed."
+  },
+  "d43e69c273ecbc78e3705b2e820c0d8d4b1fde97f1113bab1f19a536e7f39913": {
+    "confidence": 0.95,
+    "contradictions": [],
+    "decision": "REJECT",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [],
+    "risks": [],
+    "root_cause_clarity": "low",
+    "score": 1,
+    "test_plan": [],
+    "unknowns": [
+      "Actual root cause of engine core initialization failure; environment details beyond provided logs."
+    ],
+    "why": "The issue is a usage/support request for a runtime initialization failure, not a concrete algorithm bug. It lacks a clear root cause, minimal reproduction, or actionable code path. The track requires a concrete algorithm mechanism and validation path, which are absent."
   },
   "d4ccf82713410fd1d27a196f14591ed86ce9b70af698f8a2729553f628ce3887": {
     "confidence": 0.6,
