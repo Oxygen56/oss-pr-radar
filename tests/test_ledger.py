@@ -783,6 +783,33 @@ def test_policy_migration_reopens_only_matching_undispatched_terminal(tmp_path):
         )
 
 
+def test_task_context_recovers_disclosure_policy_from_live_audit(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent(autoSubmitAuthorized=False, publicSubmissionAllowed=False))
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+    store.record_audit_snapshot(
+        "a/b#1",
+        evidence={
+            "liveAudit": {
+                "evidence": {"policy": {"ai_disclosure": True}},
+            }
+        },
+        dedupe_key="disclosure-audit",
+    )
+
+    context = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+
+    assert context["submissionPolicy"] == "ai_disclosure_conflict"
+    assert context["publicSubmissionAllowed"] is False
+
+
 def test_no_go_requires_title_sync_before_cleanup(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(intent())

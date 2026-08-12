@@ -2568,6 +2568,13 @@ class RadarLedger:
             return None
         payload = json.loads(row["payload_json"])
         audit_payload = json.loads(audit_row["payload_json"]) if audit_row else {}
+        audit_policy = ((audit_payload.get("liveAudit") or {}).get("evidence") or {}).get(
+            "policy"
+        ) or {}
+        submission_policy = payload.get("submissionPolicy")
+        if not submission_policy and audit_policy.get("ai_disclosure") is True:
+            submission_policy = "ai_disclosure_conflict"
+        submission_policy = submission_policy or "normal"
         authorization_active = row["status"] != "REJECTED" and row["stage"] != "AUDIT_NO_GO"
         publication_receipt = None
         if publication_row is not None:
@@ -2629,6 +2636,7 @@ class RadarLedger:
                 authorization_active and payload.get("autoSubmitAuthorized") is True
             ),
             "publicationMode": payload.get("publicationMode"),
+            "submissionPolicy": submission_policy,
             "publicSubmissionAllowed": (
                 authorization_active and payload.get("publicSubmissionAllowed") is True
             ),
