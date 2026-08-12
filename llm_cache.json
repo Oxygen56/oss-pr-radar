@@ -7041,6 +7041,33 @@
     ],
     "why": "Issue clearly identifies a correctness bug from inconsistent inference_mode usage, with reproduction and maintainer discussion. However, open PR lookup timed out and related issue audit failed, so duplicate implementation cannot be excluded. Maintainer comments indicate design decision pending (align to no_grad vs no_grad+inference_mode), requiring maintainer confirmation before implementation."
   },
+  "4d90623b6bb948f1d5b84365865c8cf0ce1c86bbfff8fee115daf0c8868d2242": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Bedrock streaming error handling: propagate upstream 4xx as SSE error/HTTP error and log it",
+      "Thinking format translation: map enabled+budget_tokens to adaptive+effort for adaptive-only Bedrock models across all budgets"
+    ],
+    "risks": [
+      "Changing error propagation may affect existing streaming behavior for other providers; need careful scoping",
+      "Translation logic may need model-specific capability detection; risk of incorrect mapping for models that support both formats"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add regression test mocking Bedrock streaming to return ValidationException and assert client receives error event and logs error",
+      "Add integration test with budget_tokens=20000 against Bedrock Opus 4.8 (or mock) verifying successful stream or proper error"
+    ],
+    "unknowns": [
+      "Exact code path in LiteLLM where the exception is swallowed; requires code inspection",
+      "Whether maintainers have a preferred design for error propagation in streaming"
+    ],
+    "why": "Issue provides a precise, reproducible bug with clear root cause: LiteLLM's Bedrock streaming path swallows upstream ValidationException, causing infinite zero-byte hang. Expected behavior is well-defined: translate thinking format for adaptive-only models and surface upstream errors. No competing PR addresses this; existing PRs are unrelated."
+  },
   "4d9a1b4bcf278a04f973785a8f69eaa2ca6b1e4190849cae36fdc254f5252d5f": {
     "confidence": 0.7,
     "contradictions": [
@@ -11320,6 +11347,35 @@
     ],
     "why": "Issue reports a concrete authentication failure in Azure OpenAI evaluator metrics with service principal auth, providing a minimal repro config and clear error. No competing PR or issue found. The root cause is likely a tenant mismatch in the auth flow for evaluator calls, but exact code path is unconfirmed."
   },
+  "7751fad09dde653e243bea3752e07d7a9d072ba6b580e2bdf24c074bc3880788": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Identify regression-introducing commit between v0.23.0 and v0.24.0",
+      "Fix kernel selection, block size, or data layout affecting Qwen3.6-35B-A3B-FP8 decode throughput"
+    ],
+    "risks": [
+      "Performance regression may be workload-specific and hard to reproduce",
+      "Fix may require maintainer design decisions on scheduler or model runner"
+    ],
+    "root_cause_clarity": "low",
+    "score": 14,
+    "test_plan": [
+      "Reproduce with v0.23.0 vs v0.24.0 on same hardware and workload",
+      "Add regression test measuring output-token throughput for the specific model"
+    ],
+    "unknowns": [
+      "Exact root cause of throughput regression",
+      "Maintainer acknowledgment or investigation status",
+      "Whether a fix is already in progress"
+    ],
+    "why": "Issue reports a significant throughput regression between vLLM versions but lacks root cause evidence; no maintainer confirmation or design direction; requires maintainer investigation to identify the responsible change."
+  },
   "776e5cdbcf96ef1c0401e0a7c2b551ab64f45dffd6e0586b8e6f48b2c827fb17": {
     "confidence": 0.85,
     "contradictions": [],
@@ -12688,6 +12744,33 @@
       "Root cause of the watchdog timeout"
     ],
     "why": "Issue reports a watchdog timeout with a complex reproduction command but no root cause analysis. Related issue and open PR lookups timed out, so duplicate work cannot be excluded. Maintainer input is needed to confirm priority and design direction."
+  },
+  "86d1d25dbe978fc2e8945a108b7612f49a8087929aa6339cc6d7c3e456cb8124": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Fix cache_control block ordering in proxy request construction",
+      "Add regression test for mixed TTL cache_control blocks"
+    ],
+    "risks": [
+      "Potential maintainer design preferences on cache_control handling",
+      "Risk of unintended behavior changes in proxy request formatting"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "test_plan": [
+      "Reproduce the issue with the provided /btw command and assert no 400 error",
+      "Add unit test for cache_control block ordering in the proxy module"
+    ],
+    "unknowns": [
+      "Exact code path responsible for cache_control ordering",
+      "Whether maintainers have already started work on this issue"
+    ],
+    "why": "Issue reports a concrete user-facing bug: cache_control blocks are ordered incorrectly, causing API 400 errors. The bug is reproducible and likely in the proxy's cache_control handling. No competing PR directly addresses this issue; PR #2771 is related but not a direct fix. The issue is actionable with a clear test path."
   },
   "871598ca2c382e296de994fbc08de68de4755825ae6c11e89dafa3226bdb6f6e": {
     "confidence": 0.8,
@@ -16883,6 +16966,38 @@
     ],
     "why": "Issue reports a severe hang in dsv4/DSPARK at long context with TP=8, but lacks deterministic reproducer and root cause. Open PR and related issue lookups timed out, so duplicate work cannot be excluded. Maintainer input needed for design and bisection guidance."
   },
+  "bd5a73de009425adbcd42771b7624589266513c2a0f2ec130e58a7729635a813": {
+    "confidence": 0.7,
+    "contradictions": [
+      "PR #49805 is merged and may already fix the issue, but it does not reference this issue"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix weight_loader attribute overwrite in cutlass.py process_weights_after_loading",
+      "Ensure tensor-parallel weight loading does not duplicate attribute setting"
+    ],
+    "risks": [
+      "May duplicate existing PR #47023 or merged PR #49805",
+      "Requires GPU hardware for reproduction",
+      "Root cause may be in broader weight loading logic"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 13,
+    "test_plan": [
+      "Reproduce with FP8 model on 2x RTX 5090 with tensor-parallel-size 2",
+      "Run existing unit tests for cutlass FP8 weight loader",
+      "Add regression test for multi-GPU weight loading with FP8"
+    ],
+    "unknowns": [
+      "Whether PR #47023 or #49805 fully resolves the issue",
+      "Maintainer confirmation of root cause and desired fix"
+    ],
+    "why": "The issue reports a concrete FP8 tensor-parallel weight_loader assertion, but the root cause is not fully diagnosed; an existing PR #47023 directly targets the same code path but is stale and lacks maintainer approval, and a merged PR #49805 may already address related weight_loader logic. The deterministic gate requires HUMAN_REVIEW, and the AI disclosure conflict blocks automated action."
+  },
   "bd91d191c4b48ce87015155df29e14d97bf08132893259fdffcd8529d1dae77f": {
     "confidence": 0.7,
     "contradictions": [],
@@ -17256,6 +17371,32 @@
       "Maintainer confirmation of bug and desired fix approach"
     ],
     "why": "The issue reports a reproducible MTP speculative decoding corruption at concurrency >=4, with multiple user confirmations and a plausible root cause in mixed-batch indexing. However, the deterministic gate is HUMAN_REVIEW, and the related-issue lookup failed due to rate limiting, leaving unknown whether existing PRs or fixes already address this. The candidate is technically valuable but requires maintainer confirmation and evidence of no competing implementation."
+  },
+  "c13dd1a353af3d07bc2bbda70c45b870106951abcd7fe3166083b3da368efb6a": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify the backend route handler for /tool-provider/builtin/{provider}/credential/info to return a proper 404 or handle MCP identifiers gracefully",
+      "Adjust the frontend Agent configuration to use MCP-specific endpoints for MCP tools instead of builtin credential-info"
+    ],
+    "risks": [
+      "Potential behavior change if the endpoint is used by other clients expecting a 500 for unknown providers",
+      "Frontend changes might affect other tool configuration flows if not scoped correctly"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add a regression test that creates an MCP provider with no corresponding builtin provider and calls the credential-info endpoint, expecting a non-500 response",
+      "Add a frontend test or integration test verifying that Agent configuration for MCP tools does not request the builtin credential-info endpoint"
+    ],
+    "unknowns": [
+      "Exact code path in the frontend that triggers the request is not fully detailed, but the issue provides enough to start"
+    ],
+    "why": "The issue clearly identifies a user-visible 500 error caused by the Agent configuration UI incorrectly querying the builtin credential endpoint for MCP providers. The root cause is well described: the route resolves via ToolManager.get_builtin_provider, which fails for MCP server identifiers. No competing PR addresses this specific bug, and the fix is localized to the credential-info route and UI request logic."
   },
   "c1cc22b223081a242f8b3ddfbf3d9264c802dbdcd2052af99d74af8fb2269a59": {
     "confidence": 0.7,
@@ -20609,6 +20750,36 @@
     ],
     "why": "Issue provides a deterministic OOM repro and strong evidence that MRv2 under-reserves CUDA graph capture memory, matching known issue #49224 and draft PR #49233. However, the PR is draft with failing CI, and maintainer direction is unclear; a new PR would compete with an existing weak attempt."
   },
+  "e145435e4551b8688356e282f72608ac8c09b42222e4e19da381fb85ceb318a6": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue says all MCP plugins fail, but comment reports local httpStream works while remote http fails"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "MCP engine scan/startup logic",
+      "remote MCP tool registration flow"
+    ],
+    "risks": [
+      "Fix may be complex and require maintainer design decisions",
+      "Potential overlap with existing issue #907"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with provided config and device; add regression test for restart_mcp_with_logs returning zero plugins",
+      "Verify remote MCP tools appear after successful handshake"
+    ],
+    "unknowns": [
+      "Exact root cause and whether maintainer has acknowledged the bug",
+      "Whether a fix is already in progress or planned"
+    ],
+    "why": "Issue reports a user-visible MCP engine failure with detailed repro and logs, but root cause is unclear and multiple related reports (#907, comments) suggest a broader regression. No maintainer confirmation or active investigation, and the fix path is uncertain."
+  },
   "e232997a7c90f76a8b8810c43a449c7a6e1bd3497a8a1f0cbdfdebe3c0740886": {
     "confidence": 0.7,
     "contradictions": [],
@@ -22353,6 +22524,36 @@
       "Exact implementation details for each engine's durable unit invocation points"
     ],
     "why": "The issue identifies a real architectural gap: capability hooks that touch external state run outside durable units, causing duplicate side effects on replay. The proposal is technically sound and references concrete code paths and precedents. However, the deterministic gate requires HUMAN_REVIEW, and the issue explicitly requests design confirmation from maintainers. The proposed API change needs maintainer approval before implementation."
+  },
+  "f19ec0bd084818ee67383681d16450b4ba221973be97d6084d4de48412a00cca": {
+    "confidence": 0.7,
+    "contradictions": [
+      "PR #4821 and #4822 are closed but may not be merged; their status is unclear."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify warning logic in server visibility key validation to detect keys that match nothing after rule application, not just missing '@' delimiter.",
+      "Add regression test for resource URI containing '@' without trailing delimiter."
+    ],
+    "risks": [
+      "Potential overlap with existing PRs #4821 and #4822; need to check if they are merged or superseded.",
+      "Changing warning logic may affect other valid keys; ensure no false positives."
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Use the provided repro script to confirm no warning and resource remains visible.",
+      "Add a test case in tests/server/transforms/test_visibility.py for a key like 'resource:data://user@example.com/profile' expecting a UserWarning.",
+      "Run targeted unit tests for visibility transforms."
+    ],
+    "unknowns": [
+      "Whether the existing PRs are merged or superseded, and maintainer's preferred fix approach."
+    ],
+    "why": "Issue clearly identifies a bug in malformed-key warning logic for resource URIs containing '@', with a concrete repro and expected behavior. However, two PRs (#4821, #4822) already reference the issue and are closed, indicating potential competition or maintainer action. The deterministic gate requires HUMAN_REVIEW, and assignment is requested, so maintainer confirmation is needed before starting work."
   },
   "f1fecc58d9ad1a22f75e3a02c674e39f84615b0f4f56797bde44e7035c9d16fe": {
     "confidence": 0.8,
