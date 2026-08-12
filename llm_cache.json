@@ -20328,6 +20328,37 @@
     ],
     "why": "The issue reports a flaky CI failure in a CUDA graph capture path, but the root cause is unknown and the failure is not reproducible in isolation. A contributor's comment indicates the specific config passes 6/6 on H100, suggesting cross-test GPU state or hardware-specific behavior. The issue is a bug report without a clear code path or proposed fix, and the track requires a concrete algorithm mechanism. The candidate is not actionable without maintainer investigation or a reproducible root cause."
   },
+  "d99e970298d95978969fdb8514f34bde2a1c1cc9d04ad9e5ae0ab873c0d7977a": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify Mastra.shutdown to drain/settle in-flight durable executions before closing storage",
+      "Make deployer shutdown timeout configurable and aligned with platform grace period",
+      "Harden post-terminal cleanup to skip when storage is closed"
+    ],
+    "risks": [
+      "Draining in-flight runs may increase shutdown latency; need a deadline to avoid hanging",
+      "Changing shutdown semantics could affect other components relying on immediate pool close",
+      "Potential race conditions if new drain logic interacts with existing worker stop and observability flush"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a test that starts a durable agent run, triggers SIGTERM during an in-flight step, and verifies the run suspends and can recover after restart",
+      "Add unit test for shutdown ordering ensuring storage.close is called after workflow execution promises settle",
+      "Integration test with PG storage to confirm no 'Cannot use a pool after calling end' error on shutdown"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred design for draining (e.g., signal-based vs. waiting on promises)",
+      "Exact behavior of globalRunRegistry across all execution engines and edge cases (e.g., runs in remote workers)"
+    ],
+    "why": "Issue describes a clear shutdown-ordering bug in durable agent execution: SIGTERM closes the PG pool before in-flight runs can persist snapshots, causing failures instead of suspend-and-recover. Root cause is traced to specific code paths (deployer SIGTERM handler, Mastra.shutdown, storage.close) and the globalRunRegistry provides a natural hook for draining. No competing PR exists; the only open PR is unrelated and draft. The issue is actionable with a concrete fix direction and testable via a shutdown-during-run scenario."
+  },
   "d9b2dea9ec4a04817c3fddee1e4ec999361926ba0075c802a84dc5dea712c64c": {
     "confidence": 0.85,
     "contradictions": [],
