@@ -7647,6 +7647,36 @@
     ],
     "why": "Issue reports a clear performance bug: every step re-saves the entire conversation, causing 135 MB Postgres and 1.2 GB Redis bloat. Root cause is evident from the description. However, the deterministic gate requires HUMAN_REVIEW, and the issue is labeled for maintainer investigation (trio-tnt). The related PR #20548 is closed and unrelated, so no competition. Actionability is high but maintainer assignment and design confirmation are needed."
   },
+  "54b4cc8a242353b51585e087e8d0ad06915444032d4808cc9af6d50e69342233": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Docs originally said fallback, but comment says docs were corrected to match override behavior"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "litellm/proxy/common_request_processing.py",
+      "litellm/proxy/pass_through_endpoints/pass_through_endpoints.py"
+    ],
+    "risks": [
+      "Changing behavior may break users relying on current override semantics",
+      "Need to align with maintainer's intended design (fallback vs override)"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Add regression test that sends request with explicit model and verifies it is used instead of completion_model",
+      "Run existing proxy unit tests and lint"
+    ],
+    "unknowns": [
+      "Maintainer's intended behavior for completion_model",
+      "Whether existing PRs are considered sufficient or need improvement"
+    ],
+    "why": "Issue clearly identifies a bug with root cause and reproduction, but existing PRs (#21578, #21652, #21903) already attempt fixes, with #21903 being technically complete but closed. Maintainer decision on intended behavior is needed, as docs were corrected to match current implementation, indicating a design choice. No open PR or maintainer approval, so work should wait for maintainer guidance."
+  },
   "54b76b2e1cde101b88c0c18c5da20cad436b0fcfdfe9d54a1c5a1c2d07778c0f": {
     "confidence": 0.7,
     "contradictions": [
@@ -10348,6 +10378,33 @@
       "Whether PR #7104 already addresses this issue or requires coordination"
     ],
     "why": "Issue provides a clear, reproducible bug with a well-defined root cause and a suggested fix. However, the deterministic gate requires HUMAN_REVIEW, and there is an open PR (#7104) with semantic overlap that needs maintainer comparison before starting new work."
+  },
+  "6d36a6c65f3e6f31ed34ae20c75f284c684c3c7f9ae1ad17bca04df42977bde5": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify CheckBatchCost to distinguish permanent vs transient failures and retire permanent ones",
+      "Add handling for provider 404 errors to mark rows as processed",
+      "Possibly add a metric or log for retired rows"
+    ],
+    "risks": [
+      "Risk of incorrectly retiring rows that could become billable, leading to lost spend",
+      "Potential behavior change in reconciliation that might affect existing users"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce the stall by seeding unroutable rows and a provider 404 row, then verify the queue advances after the fix",
+      "Add unit tests for the routing failure classification and 404 handling"
+    ],
+    "unknowns": [
+      "No explicit maintainer approval or design confirmation, but the issue is well-specified and the fix is clear"
+    ],
+    "why": "The issue provides a detailed root cause analysis with two distinct defects causing a permanent stall in batch cost reconciliation. It includes a reproducible test scenario with clear evidence of the bug and a proposed fix direction. The fix is actionable and testable."
   },
   "6d72ecbd052e2f464a50a83414e06798ddfde8f7546dde6aa07ee7fa60a20349": {
     "confidence": 0.7,

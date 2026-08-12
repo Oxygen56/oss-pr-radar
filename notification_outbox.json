@@ -32,10 +32,6 @@
       "legacy": true,
       "seenAt": "2026-08-06T08:26:18.893825Z"
     },
-    "immediate|affaan-m/ECC#2489": {
-      "legacy": true,
-      "seenAt": "2026-08-05T06:50:34.593240Z"
-    },
     "immediate|ai-dynamo/dynamo#12657": {
       "legacy": true,
       "seenAt": "2026-08-06T03:47:41.982796Z"
@@ -175,10 +171,6 @@
     "review|BerriAI/litellm#35800": {
       "legacy": true,
       "seenAt": "2026-08-05T15:37:32.099127Z"
-    },
-    "review|BerriAI/litellm#35808": {
-      "legacy": true,
-      "seenAt": "2026-08-05T06:50:34.721886Z"
     },
     "review|BerriAI/litellm#35823": {
       "legacy": true,
@@ -779,10 +771,6 @@
       "scannerVersion": "oss_pr_radar_v42_terminal_feedback_revoke",
       "seenAt": "2026-08-11T19:32:49.564927Z",
       "stateId": "422a8411e978dabd800e92378c73b4fb05ab2ae196bbbf9a0233eb0839c74d7b"
-    },
-    "review|langgenius/dify#40003": {
-      "legacy": true,
-      "seenAt": "2026-08-05T08:01:13.969221Z"
     },
     "review|langgenius/dify#40007": {
       "legacy": true,
@@ -1636,10 +1624,6 @@
       "seenAt": "2026-08-09T00:49:34.284609Z",
       "stateId": "efcce984649f686c6b13b69c9fff38842792f8427de7a634922aaa1b77441055"
     },
-    "review|vllm-project/vllm#51016": {
-      "legacy": true,
-      "seenAt": "2026-08-05T08:01:13.969221Z"
-    },
     "review|vllm-project/vllm#51035": {
       "legacy": true,
       "seenAt": "2026-08-05T17:52:51.969063Z"
@@ -1647,10 +1631,6 @@
     "review|vllm-project/vllm#51073": {
       "legacy": true,
       "seenAt": "2026-08-05T13:53:11.860565Z"
-    },
-    "review|vllm-project/vllm#51080": {
-      "legacy": true,
-      "seenAt": "2026-08-05T06:50:34.721886Z"
     },
     "review|vllm-project/vllm#51106": {
       "legacy": true,
@@ -2218,11 +2198,11 @@
     },
     "watch|sgl-project/sglang#30554": {
       "category": "PR_FOLLOWUP",
-      "digest": "d352b8ab450403b9060b785c9c7bef564107fe56419e50af33e03f5c6b3c659e",
+      "digest": "0d18f90d56301defdf11dbb4369d1a7b48df815a85c39dabd67f47feb864e268",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-12T06:49:02.661038Z",
-      "stateId": "0f0d266fd3e3a83cc5a976818770fb16d2c5222627f9685b00a6123c9bf6ed64"
+      "seenAt": "2026-08-12T08:45:40.801913Z",
+      "stateId": "79c5c11cdc7847f9a1f0aa62904d7b451912e0e67e5b61cf11211f15ddc37f7d"
     },
     "watch|sgl-project/sglang#33408": {
       "legacy": true,
@@ -2270,11 +2250,11 @@
     },
     "watch|sgl-project/sglang#34138": {
       "category": "PR_FOLLOWUP",
-      "digest": "ecdd849c02beb6457a7f8bce24472730037ece73d82310a8bfb261989fbc7353",
+      "digest": "60df77a0252a84593f4003c8a7122c12b979f8fad12b40d99eb50a118699752c",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-12T06:36:41.456420Z",
-      "stateId": "cb26df03354761df338f9f1c52b402dd3914df18ca77fc568e29188cea3a9b5d"
+      "seenAt": "2026-08-12T08:45:40.801913Z",
+      "stateId": "454ab6180992a99d6c39a10e6b7892d26fbaa58f75726fa3cc73ea87b51e7708"
     },
     "watch|usekaneo/kaneo#1484": {
       "legacy": true,
@@ -2345,466 +2325,8 @@
       "seenAt": "2026-08-06T10:09:13.778625Z"
     }
   },
-  "digest": "5cf3127147587df22fce21f0c3091592c7226bc4a279399dd76fb3577570701c",
+  "digest": "94d33d669286e9791e4f0e6e2cfa714aa0323dad46c6b16411a2ef5d28f1dd71",
   "events": [
-    {
-      "attempts": 1,
-      "candidateKeys": [
-        "affaan-m/ECC#2489"
-      ],
-      "card": {
-        "config": {
-          "wide_screen_mode": true
-        },
-        "elements": [
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[affaan-m/ECC#2489](https://github.com/affaan-m/ECC/issues/2489) continuous-learning-v2 observer daemon does not survive on native Windows (Git Bash nohup/& reaped immediately)**\n建议：PR_COMPETITION_OPPORTUNITY | 分数：11\n价值：Issue provides a clear root cause (Windows Job Object kills nohup backgrounded process) and actionable fix suggestions. Existing PR #2606 is weak: it only adds a warning and has failing CI, leaving room for a better PR that implements native Windows backgrounding and a startup self-check.\n改动：Replace nohup backgrounding in agents/start-observer.sh with Windows-native detach (e.g., powershell Start-Process)；Add startup self-check in observe.sh to verify observer persistence；Update documentation to note Windows limitation\n验证：Reproduce on Windows Git Bash: trigger tool call, verify observer process dies; after fix, verify it survives；Add regression test simulating Windows Job Object kill and checking process persistence；Run existing observer tests on Linux/macOS to ensure no regression\n风险：PowerShell Start-Process may have quoting/path issues with complex arguments；Changing backgrounding mechanism could affect non-Windows platforms if not guarded；Existing PR #2606 may be merged, making competition moot\n竞争：已有直接关联但证据不完整的 PR #2606：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：先复现 issue，再逐项对比已有 PR 的缺口；只有能提供更小改动、更强测试或更完整边界覆盖时才开 PR。\n证据：复现信号 2，根因信号 True",
-              "tag": "lark_md"
-            }
-          }
-        ],
-        "header": {
-          "template": "green",
-          "title": {
-            "content": "OSS PR Radar: 可立即执行",
-            "tag": "plain_text"
-          }
-        }
-      },
-      "createdAt": "2026-08-05T06:50:34.593240Z",
-      "eventId": "2af815aa63a45c65d13b201988984abc229deabbb952bdcd39eb84fbb2b3a6a3",
-      "idempotencyKey": "2af815aa63a45c65d13b201988984abc229deabbb952bdcd39",
-      "kind": "immediate",
-      "lastAttemptAt": "2026-08-05T06:51:07.109996Z",
-      "messageId": "om_x100b68199b0428a8c4a3cb603cd3d2f",
-      "runId": "scan-20260805T064601Z-13286f9e9f4d",
-      "sentAt": "2026-08-05T06:51:09.149523Z",
-      "status": "SENT"
-    },
-    {
-      "attempts": 1,
-      "candidateKeys": [
-        "pydantic/pydantic-ai#7147",
-        "BerriAI/litellm#35823",
-        "BerriAI/litellm#35808",
-        "vllm-project/vllm#51073",
-        "vllm-project/vllm#51080",
-        "pydantic/pydantic-ai#7146",
-        "mem0ai/mem0#6783"
-      ],
-      "card": {
-        "config": {
-          "wide_screen_mode": true
-        },
-        "elements": [
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[pydantic/pydantic-ai#7147](https://github.com/pydantic/pydantic-ai/issues/7147) Capability-contributed local tools drop their token usage from `RunUsage` and `UsageLimits`**\n建议：WAIT_MAINTAINER | 分数：10\n价值：Issue clearly identifies a real bug with a verified repro and a precise two-statement fix, but it is explicitly gated on #6886 which awaits a maintainer design decision on the return channel for usage under durable execution. The fix must be coordinated across three paths and must not silently fail under Temporal. Existing PRs overlap semantically but none directly address this issue, so a new PR could be valuable, but the design dependency and need for maintainer confirmation make it premature to start.\n改动：Modify common_tools/image_generation.py, common_tools/x_search.py, and capabilities/image_generation.py to accrue nested agent usage into ctx.usage, including incrementing requests.；Possibly adjust RunUsage.incr or call sites to handle requests increment correctly.\n验证：Add a regression test using FunctionModel with distinct token counts for outer and subagent runs, asserting RunUsage reflects subagent spend and UsageLimits triggers correctly.；Test all three local tool paths.；Verify behavior under Temporal if possible, or at least document the limitation.\n风险：Changing tool signatures (e.g., _DirectImageGenerationTool) may break existing callers.；Accruing usage may double-count if not carefully coordinated with existing user opt-in patterns.；Fix may be incomplete or incorrect under durable execution if not aligned with #6886 design.\n竞争：发现 PR #6324 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 4，根因信号 True",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[BerriAI/litellm#35823](https://github.com/BerriAI/litellm/issues/35823) [Bug]: Databricks AI Gateway - Failure when using M2M auth.**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue identifies a clear root cause in _get_oauth_m2m_token's URL derivation, with a concrete reproduction. However, the deterministic gate requires HUMAN_REVIEW, and open PR/related issue lookups timed out, so we cannot rule out existing work. Maintainer design preference is unconfirmed.\n改动：Modify _get_oauth_m2m_token to correctly derive workspace URL for AI Gateway paths；Add regression test for non-/serving-endpoints api_base\n验证：Reproduce with provided code and env vars；Add unit test for token URL construction with /ai-gateway/mlflow/v1 base\n风险：Potential impact on existing /serving-endpoints behavior；Unknown maintainer preference for URL parsing approach\n竞争：open PR 检索不完整，禁止将未知当成无重复实现\n下一步：恢复 open PR 检索并确认没有直接或语义重叠实现后，才能创建 issue 会话或进入实现。\n证据：复现信号 5，根因信号 True",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[BerriAI/litellm#35808](https://github.com/BerriAI/litellm/issues/35808) [Bug]: explicit `additionalProperties: true` is forwarded to Anthropic `output_format.schema` and 400s (filter only fills in when absent)**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue provides a precise root cause and minimal repro; existing PR #35811 is weak due to failed CI, leaving room for a stronger PR with comprehensive tests and coverage.\n改动：Modify filter_anthropic_output_schema to coerce explicit additionalProperties to false recursively；Add unit tests for top-level, nested, array items, and dict sub-schema forms\n验证：Run the provided minimal unit-level reproduction script to verify all cases leak no non-false additionalProperties；Add regression tests covering all nesting scenarios and ensure existing tests pass\n风险：Potential behavior change for schemas that intentionally use additionalProperties as a schema; need to confirm Anthropic's strict requirement；May affect other providers if the function is shared; ensure only Anthropic path is changed\n竞争：已有直接关联但证据不完整的 PR #35811：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 14，根因信号 True",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[vllm-project/vllm#51073](https://github.com/vllm-project/vllm/issues/51073) [Bug]: MinimaxM3ToolParser (Rust) fails on MiniMaxAI/MiniMax-M3-MXFP8 tool output; raw markup + ']<]minimax[>[' special token leaks into content**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue provides a detailed root cause and reproduction, but the deterministic gate is HUMAN_REVIEW and an existing PR (#51075) is open with gaps (no tests, failing CI). The candidate is actionable but requires maintainer confirmation and competition assessment.\n改动：Rust grammar in rust/src/parser/src/tool/minimax_m3.rs to tolerate elided first-parameter opening tag；Python bridge fallback to strip sentinel markup on parse failure\n验证：Add regression test with the provided curl reproduction and captured output；Run Rust unit tests and Python tool parser tests for minimax_m3\n风险：Potential conflict with existing PR #51075；Need to confirm maintainer design preference for tolerant parsing\n竞争：已有直接关联但证据不完整的 PR #51075：缺少测试文件; 存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 11，根因信号 True",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[vllm-project/vllm#51080](https://github.com/vllm-project/vllm/issues/51080) [Bug]: CPU offload cannot pin regions of 512 GiB or more (single cudaHostRegister call)**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue reports a clear, reproducible bug with a specific root cause (single cudaHostRegister call fails for >=512 GiB) and a workaround. However, an existing PR #51081 directly addresses this issue but has failed CI checks, and the issue audit timed out, leaving uncertainty about maintainer preferences and the PR's viability. The deterministic gate requires HUMAN_REVIEW.\n改动：Modify vllm/v1/kv_offload/cpu/gpu_worker.py to register offload regions in chunks, likely with a loop over sub-regions.；Add or update tests to cover large region registration, possibly in test files related to kv_offload.\n验证：Reproduce the issue with the provided standalone script or a minimal test that attempts to register a region >=512 GiB and expects success.；Run existing kv_offload tests to ensure no regression.\n风险：Chunked registration may introduce performance overhead or subtle alignment issues.；The existing PR #51081 may already implement a similar fix; competing could be redundant unless it is clearly weak.\n竞争：已有直接关联但证据不完整的 PR #51081：存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 2，根因信号 False",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[pydantic/pydantic-ai#7146](https://github.com/pydantic/pydantic-ai/issues/7146) `download_item` trusts the response `Content-Type` for every `FileUrl`, so spoofed or mismatched bytes are forwarded to providers**\n建议：WAIT_MAINTAINER | 分数：10\n价值：Issue clearly identifies a security-relevant bug in shared download path with verified repro and suggested fix direction. However, existing PR #7162 is closed and weak, and repository requires assignment; maintainer design confirmation is needed for scope (which URL types to validate).\n改动：pydantic_ai_slim/pydantic_ai/models/__init__.py: validate downloaded bytes against media type；possibly reuse image_media_type_from_bytes sniffer\n验证：Add regression tests for honest HTML with .png, spoofed image/png with HTML bytes, octet-stream with genuine image, redirects, and unfamiliar image MIME\n风险：May break legitimate use cases where servers misreport content-type；Scope creep if extending to audio/document/video without maintainer input\n竞争：已有 PR 但强度不足，且仓库通常需要先分配/确认：#7162 score=51\n下一步：已有 PR 但强度不足；先看维护者规则和 issue 讨论，必要时先请求确认方案或分配。\n证据：复现信号 3，根因信号 True",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[mem0ai/mem0#6783](https://github.com/mem0ai/mem0/issues/6783) [Codex plugin] Exported MEM0_API_KEY is filtered before MCP startup in managed environments**\n建议：WAIT_MAINTAINER | 分数：15\n价值：Issue clearly identifies root cause: Codex filters env vars matching *KEY*, *SECRET*, *TOKEN* before MCP startup, and the plugin hardcodes MEM0_API_KEY. However, maintainers explicitly request a design decision between renaming the variable or documenting a narrow allowlist, and no PR has been accepted. Existing PR #6792 lacks tests and has failing CI, so a better PR is possible but requires maintainer direction.\n改动：integrations/mem0-plugin/.codex-mcp.json；docs/integrations/codex.mdx\n验证：Add a test that verifies the plugin manifest uses a non-filtered env var name or that documentation provides a narrow allowlist configuration.；Run existing plugin tests and static checks.\n风险：Breaking change if renaming MEM0_API_KEY; migration needed.；Documentation-only fix may not satisfy users needing a configurable option.\n竞争：已有直接关联但证据不完整的 PR #6792：缺少测试文件; 存在失败 CI/check；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：仅完成本地复现、修复、测试和私有提交包；由用户自行决定公开提交。\n证据：复现信号 13，根因信号 True",
-              "tag": "lark_md"
-            }
-          }
-        ],
-        "header": {
-          "template": "yellow",
-          "title": {
-            "content": "OSS PR Radar: 需要确认",
-            "tag": "plain_text"
-          }
-        }
-      },
-      "createdAt": "2026-08-05T06:50:34.721886Z",
-      "eventId": "fb568549d301b77f4ec0921dbbfb6f4161072300435ec248f86fffc7a75c6a9e",
-      "idempotencyKey": "fb568549d301b77f4ec0921dbbfb6f4161072300435ec248f8",
-      "kind": "review",
-      "lastAttemptAt": "2026-08-05T06:51:09.149548Z",
-      "messageId": "om_x100b68199b27d4b4c27de71c9d1c1dc",
-      "runId": "scan-20260805T064601Z-13286f9e9f4d",
-      "sentAt": "2026-08-05T06:51:11.546888Z",
-      "status": "SENT"
-    },
-    {
-      "attempts": 1,
-      "candidateKeys": [
-        "microsoft/agent-framework#7490",
-        "microsoft/agent-framework#7491",
-        "modelcontextprotocol/inspector#1858",
-        "modelcontextprotocol/inspector#1859",
-        "BerriAI/litellm#35780",
-        "BerriAI/litellm#35786",
-        "DeusData/codebase-memory-mcp#1416",
-        "PrefectHQ/fastmcp#4744",
-        "PrefectHQ/fastmcp#4748",
-        "aaif-goose/goose#10751"
-      ],
-      "card": {
-        "config": {
-          "wide_screen_mode": true
-        },
-        "elements": [
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[microsoft/agent-framework#7490](https://github.com/microsoft/agent-framework/issues/7490) Python: [Bug]: with `predict_state_config` set, EVERY tool result emits a full `StateSnapshotEvent` — including for tools the config never names**\n建议：WAIT_MAINTAINER\n价值：OWNERSHIP_CHANGED\n验证：重新运行完整扫描和贡献规则检查",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[microsoft/agent-framework#7491](https://github.com/microsoft/agent-framework/issues/7491) Python: [Bug]: AG-UI `MESSAGES_SNAPSHOT` re-factors streamed messages under fresh ids — the reference `@ag-ui/client` merge then renders every mid-run tool call after the final text**\n建议：WAIT_MAINTAINER\n价值：OWNERSHIP_CHANGED\n验证：重新运行完整扫描和贡献规则检查",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[modelcontextprotocol/inspector#1858](https://github.com/modelcontextprotocol/inspector/issues/1858) v2 hangs silently when connecting to streamable-http**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[modelcontextprotocol/inspector#1859](https://github.com/modelcontextprotocol/inspector/issues/1859) Sanbox not loaded: ENOENT: no such file or directory, open ..../@modelcontextprotocol/inspector/clients/web/static/sandbox_proxy.html**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[BerriAI/litellm#35780](https://github.com/BerriAI/litellm/issues/35780) [Bug]: Responses API sends metadata to a strict OpenAI-compatible upstream although the client does not pass metadata**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[BerriAI/litellm#35786](https://github.com/BerriAI/litellm/issues/35786) [Bug]: datadog_llm_observability callback: tool_calls and cache tokens sent in meta.metadata instead of their designated API fields (meta.output.messages[].tool_calls and span metrics)**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[DeusData/codebase-memory-mcp#1416](https://github.com/DeusData/codebase-memory-mcp/issues/1416) Windows: install/uninstall/doctor all fail with \"active CBM sessions and operations could not be stopped safely\"**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[PrefectHQ/fastmcp#4744](https://github.com/PrefectHQ/fastmcp/issues/4744) serialize_by_alias=False ignored for nested Pydantic models**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[PrefectHQ/fastmcp#4748](https://github.com/PrefectHQ/fastmcp/issues/4748) OAuth consent cookie is rejected behind Azure Functions**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[aaif-goose/goose#10751](https://github.com/aaif-goose/goose/issues/10751) ACP WebSocket silently drops connection on oversized session/prompt (no JSON-RPC error, no log)**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
-              "tag": "lark_md"
-            }
-          }
-        ],
-        "header": {
-          "template": "yellow",
-          "title": {
-            "content": "OSS PR Radar: 状态更新",
-            "tag": "plain_text"
-          }
-        }
-      },
-      "createdAt": "2026-08-05T06:50:34.902389Z",
-      "eventId": "338eee615685fdc3e3043bff5d26e9f15ad53283e3a73789211270eaa1b12ae7",
-      "idempotencyKey": "338eee615685fdc3e3043bff5d26e9f15ad53283e3a7378921",
-      "kind": "watch",
-      "lastAttemptAt": "2026-08-05T06:51:11.546912Z",
-      "messageId": "om_x100b681998c75ca0c2a76ad2c137368",
-      "runId": "watch-1785912314",
-      "sentAt": "2026-08-05T06:51:13.150803Z",
-      "status": "SENT"
-    },
-    {
-      "attempts": 1,
-      "candidateKeys": [
-        "promptfoo/promptfoo#10298",
-        "microsoft/semantic-kernel#14265"
-      ],
-      "card": {
-        "config": {
-          "wide_screen_mode": true
-        },
-        "elements": [
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[promptfoo/promptfoo#10298](https://github.com/promptfoo/promptfoo/issues/10298) Azure OpenAI evaluator metrics fail with service principal authentication due to tenant mismatch**\n建议：NEW_CLEAN_CANDIDATE | 分数：11\n价值：Issue reports a concrete authentication failure in Azure OpenAI evaluator metrics with service principal auth, providing a minimal repro config and clear error. No competing PR or issue found. The root cause is likely a tenant mismatch in the auth flow for evaluator calls, but exact code path is unconfirmed.\n改动：Add regression test for Azure OpenAI service principal auth in evaluator metrics；Fix tenant handling in Azure OpenAI provider auth flow for evaluator calls\n验证：Create a test using the provided sample config and mock Azure OpenAI responses to reproduce the tenant mismatch error；Run existing Azure OpenAI provider tests and new regression test\n风险：May require maintainer design input on auth flow changes；Potential impact on existing Azure OpenAI authentication behavior\n竞争：未发现相关 open PR\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 2，根因信号 True",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[microsoft/semantic-kernel#14265](https://github.com/microsoft/semantic-kernel/issues/14265) Bug: VertexAIEmbeddingGenerator hardcodes :predict, unusable with gemini-embedding models that only serve :embedContent**\n建议：PR_COMPETITION_OPPORTUNITY | 分数：11\n价值：Issue clearly identifies a hardcoded :predict endpoint causing 400 errors for gemini-embedding-2 models. Existing PR #14266 addresses the same root cause but lacks regression tests, leaving room for a materially better PR with tests and minimal fix.\n改动：Modify VertexAIEmbeddingClient to select :embedContent endpoint for gemini-embedding models；Add regression test for gemini-embedding-2 model\n验证：Create a unit test that mocks HTTP responses to verify correct endpoint selection；Run existing connector tests and static analysis\n风险：Potential maintainer preference for a different design；Risk of overlapping with existing PR if not coordinated\n竞争：已有直接关联但证据不完整的 PR #14266：缺少测试文件；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：先复现 issue，再逐项对比已有 PR 的缺口；只有能提供更小改动、更强测试或更完整边界覆盖时才开 PR。\n证据：复现信号 3，根因信号 False",
-              "tag": "lark_md"
-            }
-          }
-        ],
-        "header": {
-          "template": "green",
-          "title": {
-            "content": "OSS PR Radar: 可立即执行",
-            "tag": "plain_text"
-          }
-        }
-      },
-      "createdAt": "2026-08-05T08:01:13.842447Z",
-      "eventId": "1657f744e396e4c7de52627fc0ffb9aa9f917f513b5d467fa3d49cce98a9fd8a",
-      "idempotencyKey": "1657f744e396e4c7de52627fc0ffb9aa9f917f513b5d467fa3",
-      "kind": "immediate",
-      "lastAttemptAt": "2026-08-05T08:01:42.846481Z",
-      "messageId": "om_x100b681a905088acc3d2a552a1da588",
-      "runId": "scan-20260805T075614Z-29e5f864ceb6",
-      "sentAt": "2026-08-05T08:01:46.320187Z",
-      "status": "SENT"
-    },
-    {
-      "attempts": 1,
-      "candidateKeys": [
-        "langgenius/dify#40003",
-        "vllm-project/vllm#51016"
-      ],
-      "card": {
-        "config": {
-          "wide_screen_mode": true
-        },
-        "elements": [
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[langgenius/dify#40003](https://github.com/langgenius/dify/issues/40003) AgentV2 (dify-agent) sends empty-content system prompts and empty tool descriptions to Bedrock, causing ValidationException**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue clearly identifies two bugs in dify-agent model.py: empty system prompts and empty tool descriptions causing Bedrock ValidationException. However, existing PR #39704 already covers the system prompt filtering, and the tool description fix is not covered. The gate decision is HUMAN_REVIEW, and there is potential duplicate issue #37628. Need maintainer confirmation on preferred approach and whether to proceed with a new PR for the tool description fix.\n改动：dify-agent/src/dify_agent/adapters/llm/model.py: add content.strip() guard for SystemPromptPart；dify-agent/src/dify_agent/adapters/llm/model.py: fallback for tool description to non-empty value\n验证：Add unit test for empty system prompt filtering in _map_model_request_to_prompt_messages；Add unit test for empty tool description fallback in _map_tool_definitions_to_prompt_tools；Run existing dify-agent test suite\n风险：Potential overlap with PR #39704 and issue #37628；Maintainer may prefer a different fallback for tool description\n竞争：发现 PR #39704 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 5，根因信号 True",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[vllm-project/vllm#51016](https://github.com/vllm-project/vllm/issues/51016) [Bug]: extract_hidden_states fails with TP>1 when KV page size < hidden-state per-token cost**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue reports a clear crash with root cause and repro, but the supplied deterministic gate says HUMAN_REVIEW and the related issue audit timed out. An existing draft PR (#50894) directly addresses the issue but is incomplete (draft, pre-run-check failure).\n改动：Fix KV cache page size alignment for hidden-state extraction with TP>1；Add regression test for TP>1 with hidden-state per-token cost exceeding common page\n验证：Reproduce with the provided command on TP=4 and assert no crash；Run existing KV cache and hidden-state extraction unit tests\n风险：May conflict with maintainer design preferences for KV cache sizing；Potential performance impact if block sizes are scaled too aggressively\n竞争：已有直接关联但证据不完整的 PR #50894：仍是 draft；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 4，根因信号 True",
-              "tag": "lark_md"
-            }
-          }
-        ],
-        "header": {
-          "template": "yellow",
-          "title": {
-            "content": "OSS PR Radar: 需要确认",
-            "tag": "plain_text"
-          }
-        }
-      },
-      "createdAt": "2026-08-05T08:01:13.969221Z",
-      "eventId": "9bfed5a24039b2ed445e4fa9d61d4629a2e934d14be49cd6f484cc8df9406a07",
-      "idempotencyKey": "9bfed5a24039b2ed445e4fa9d61d4629a2e934d14be49cd6f4",
-      "kind": "review",
-      "lastAttemptAt": "2026-08-05T08:01:46.320215Z",
-      "messageId": "om_x100b681a9078f4bcdd12f8434e2bb72",
-      "runId": "scan-20260805T075614Z-29e5f864ceb6",
-      "sentAt": "2026-08-05T08:01:47.878830Z",
-      "status": "SENT"
-    },
-    {
-      "attempts": 1,
-      "candidateKeys": [
-        "can1357/oh-my-pi#7597",
-        "mastra-ai/mastra#20688",
-        "modelcontextprotocol/servers#4545",
-        "sgl-project/sglang#33493",
-        "sgl-project/sglang#33504",
-        "sgl-project/sglang#33549"
-      ],
-      "card": {
-        "config": {
-          "wide_screen_mode": true
-        },
-        "elements": [
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[can1357/oh-my-pi#7597](https://github.com/can1357/oh-my-pi/issues/7597) grep/glob: semicolon multipath silently collapses to one literal path when the joined string is ENAMETOOLONG**\n建议：WAIT_MAINTAINER\n价值：ISSUE_NOT_OPEN\n验证：重新运行完整扫描和贡献规则检查",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[mastra-ai/mastra#20688](https://github.com/mastra-ai/mastra/issues/20688) Factory: workspace factory reads the raw better-auth user shape, so every session becomes 'not available to the current user' after a restart**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[modelcontextprotocol/servers#4545](https://github.com/modelcontextprotocol/servers/issues/4545) server-filesystem >=2025.11.25 (registerTool/outputSchema rewrite): 100% tool-call failure on Claude Desktop 1.24012.1 Windows — calls never dispatched to server**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[sgl-project/sglang#33493](https://github.com/sgl-project/sglang/issues/33493) [Bug] DSPARK retrieves wrong key \"acc_linear_penalities\" from sampling_info**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[sgl-project/sglang#33504](https://github.com/sgl-project/sglang/issues/33504) Title: Inconsistent error response format with OpenAI standard for non-streaming requests**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[sgl-project/sglang#33549](https://github.com/sgl-project/sglang/issues/33549) [Bug] DeepSeek-V4 (dsv4 backend + DSPARK) TP=8 on 8×H20: decode forward hangs indefinitely at ~245K context — all GPUs spin at 100% util / low power, watchdog kills server**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
-              "tag": "lark_md"
-            }
-          }
-        ],
-        "header": {
-          "template": "yellow",
-          "title": {
-            "content": "OSS PR Radar: 状态更新",
-            "tag": "plain_text"
-          }
-        }
-      },
-      "createdAt": "2026-08-05T08:01:14.100963Z",
-      "eventId": "730a64414be43009e54cd73ccf4d828f61b72507fdbd971e5df0358272290a72",
-      "idempotencyKey": "730a64414be43009e54cd73ccf4d828f61b72507fdbd971e5d",
-      "kind": "watch",
-      "lastAttemptAt": "2026-08-05T08:01:47.878856Z",
-      "messageId": "om_x100b681a9003bca8c0b974bfd86a62c",
-      "runId": "watch-1785916531",
-      "sentAt": "2026-08-05T08:01:49.398649Z",
-      "status": "SENT"
-    },
     {
       "attempts": 1,
       "candidateKeys": [
@@ -21870,9 +21392,71 @@
       "runId": "pr-followup-1786517144",
       "sentAt": "2026-08-12T06:49:32.558031Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "sgl-project/sglang#30554",
+        "sgl-project/sglang#34138"
+      ],
+      "candidateStates": [
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "0d18f90d56301defdf11dbb4369d1a7b48df815a85c39dabd67f47feb864e268",
+          "key": "sgl-project/sglang#30554",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "79c5c11cdc7847f9a1f0aa62904d7b451912e0e67e5b61cf11211f15ddc37f7d"
+        },
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "60df77a0252a84593f4003c8a7122c12b979f8fad12b40d99eb50a118699752c",
+          "key": "sgl-project/sglang#34138",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "454ab6180992a99d6c39a10e6b7892d26fbaa58f75726fa3cc73ea87b51e7708"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#30554](https://github.com/sgl-project/sglang/pull/30554) [Spec] Size shared logits buffer for adaptive candidates**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#34138](https://github.com/sgl-project/sglang/pull/34138) Bind streaming abort cleanup to request lifecycle**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-12T08:45:40.801913Z",
+      "eventId": "16f25383f761f2baad7f4e250f408f05bb1d409006d3e44197c56d1f2e74424a",
+      "idempotencyKey": "16f25383f761f2baad7f4e250f408f05bb1d409006d3e44197",
+      "kind": "watch",
+      "runId": "pr-followup-1786524091",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-12T06:49:02.661038Z",
+  "generatedAt": "2026-08-12T08:45:40.801913Z",
   "newEventCount": 1,
   "version": "notification_outbox_v2"
 }
