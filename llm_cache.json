@@ -7207,6 +7207,36 @@
     ],
     "why": "Issue describes a deterministic deadlock with clear root cause (WORLD-group broadcast in fastsafetensors loader when only PP-last-stage ranks load draft model). However, the supplied gate decision is HUMAN_REVIEW, and the related issue audit failed (timeout), leaving uncertainty about maintainer awareness and existing design preferences. The open PR #50514 is related but has failing CI and does not directly fix the loader issue."
   },
+  "50c26ffde7a7860e82bba6ce69b84887706f151ef750acb35b27df5475a1c7ab": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Adjust default residual_diff_threshold for MiniMax-H3",
+      "Document interaction between RDT and MC",
+      "Possibly add audio quality metric"
+    ],
+    "risks": [
+      "Changing defaults may affect other models",
+      "Single-run measurements may not be statistically significant"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "test_plan": [
+      "Reproduce the reported sweep on B200 with same setup",
+      "Add regression test for default threshold behavior",
+      "Evaluate audio SNR metric integration"
+    ],
+    "unknowns": [
+      "Maintainer preference on default changes",
+      "Whether audio metric is in scope",
+      "Statistical significance of measurements"
+    ],
+    "why": "The issue reports empirical observations about DBCache defaults and quality metrics, but lacks a concrete code-level root cause or a specific implementation proposal. It is more of a tuning/benchmark report than an actionable algorithm change. The track is agent_ai_infra, not llm_algorithm, so the algorithm evidence requirement is relaxed, but the issue still needs maintainer confirmation on desired defaults and metric additions."
+  },
   "51d87afaf092458d78b1ac07988e63149990bf661331435205153c8cb9da853f": {
     "confidence": 0.7,
     "contradictions": [],
@@ -12141,6 +12171,37 @@
     ],
     "why": "Issue clearly identifies a detached promise in Agent#executeOnFinish causing title loss on serverless runtimes, with a minimal repro and a contributor asking for design direction. However, the deterministic gate is HUMAN_REVIEW and the contributor explicitly requests maintainer preference on whether to await title persistence or use a background hook, which changes latency and durability semantics. Existing PRs have semantic overlap but none directly address this issue, so a new PR could be viable but requires design confirmation."
   },
+  "8556eeb81671e336a19d7392e0053167d83306c7a76847e035f4945ad1c0e8cb": {
+    "confidence": 0.8,
+    "contradictions": [
+      "PR #51397 is closed despite being technically complete and recently active, conflicting with its potential as a fix"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/config/vllm.py: add weight offloading to unsupported features for V2 runner",
+      "vllm/v1/worker/gpu/model_runner.py: wire set_offloader and post_init for feature parity",
+      "tests: add end-to-end test for cpu_offload_gb with V2 runner"
+    ],
+    "risks": [
+      "Feature parity fix may introduce regressions in V2 capture/replay with UVA views",
+      "Changing default runner selection may affect performance for models that default to V2"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce with DeepSeek-V2-Lite and cpu_offload_gb=12 on V2 runner, assert offload log appears and no OOM",
+      "Add unit test for _get_v2_model_runner_unsupported_features to include offloading",
+      "Run existing offload-related tests and V2 runner tests"
+    ],
+    "unknowns": [
+      "Maintainer preference on minimal fail-safe vs full feature parity",
+      "Why PR #51397 was closed and whether it will be reopened or superseded"
+    ],
+    "why": "Issue clearly identifies a silent no-op bug in V2 model runner with root cause and empirical evidence. However, an existing PR (#51397) directly addresses the issue by disabling V2 when offloading is enabled, but it is closed and has CI failures. The issue suggests both a minimal fail-safe fix and a feature-parity fix, requiring maintainer direction on preferred scope. The deterministic gate is HUMAN_REVIEW, and the repository has an AI disclosure conflict that blocks automated action."
+  },
   "8571b4f5d107e53e6f6b3192d617a20ec15745d4a71c99fb2bf037450e817e92": {
     "confidence": 0.7,
     "contradictions": [],
@@ -12393,6 +12454,39 @@
       "Whether maintainers have a preferred design for handling provider-reported usage fields across other providers."
     ],
     "why": "The issue identifies a concrete bug in Anthropic usage calculation where provider-reported thinking_tokens are ignored, leading to incorrect reasoning_tokens. The root cause is clearly located in calculate_usage, and a minimal fix is proposed. No competing PR or issue exists, and the fix is actionable with a clear test path."
+  },
+  "88306db1867555542276642382f52aded724336fd11ac879745f43ca10f2efa1": {
+    "confidence": 0.85,
+    "contradictions": [
+      "No contradictions found"
+    ],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify CUDA Graph keying/selection to include both token tier and request-slot geometry (e.g., (token_tier, slot_tier))",
+      "Adjust _ragged_capture_slots to compute capture slots based on both num_tokens and max_bs per request geometry",
+      "Ensure DSV4 metadata/attention/compressor/indexer path safely handles zero-length padded request slots if keeping token-keyed graphs"
+    ],
+    "risks": [
+      "Changing graph keying may increase graph capture count and memory usage",
+      "Fixing geometry mismatch may cause fallback to eager execution for some batches, impacting performance",
+      "DSV4 metadata path changes could introduce subtle correctness issues with zero-length slots"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce with the provided command and workload on the pinned commit; verify CUDA illegal memory access occurs",
+      "Apply fix and rerun the same workload; assert successful replay for repeated decode steps",
+      "Run the control matrix (graph lists [1,8,16,32], [1,32,192], [1,32,256], [1,192]) to ensure all pass",
+      "Add a regression test that captures a large graph then replays a smaller batch with same token tier but different slot geometry, checking for no illegal memory access"
+    ],
+    "unknowns": [
+      "Whether the issue still reproduces on the latest main after recent ragged CUDA Graph changes; maintainer requested confirmation but no response yet"
+    ],
+    "why": "The issue precisely identifies a deterministic CUDA Graph replay failure caused by mismatched request-slot geometry for the same token tier in DSpark compact ragged verify mode. It provides a clear root cause (capture slots computed as min(num_tokens, max_bs) without considering per-request token count), a minimal repro with exact commit and commands, a control matrix isolating the failure, and diagnostic evidence. This is a concrete LLM inference kernel/algorithm bug with a clear code path and validation path."
   },
   "88c096b7f8c22009704716bddb4b16dfff510e656b430d130d02d031e27179e7": {
     "confidence": 0.7,

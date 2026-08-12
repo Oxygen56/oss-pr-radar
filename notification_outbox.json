@@ -1706,11 +1706,11 @@
     },
     "review|vllm-project/vllm#51396": {
       "category": "WAIT_MAINTAINER",
-      "digest": "7d1174c36971e3f04bb79682e6afab3bcbdbb38d60c88685d06bb426bfd973ab",
+      "digest": "df27390df642091a3d9bf16544bbf5002cb2ada87bf0cdcd9fae7ed30783204a",
       "kind": "review",
-      "scannerVersion": "oss_pr_radar_v41_no_code_action_gate",
-      "seenAt": "2026-08-09T02:45:07.090488Z",
-      "stateId": "f799098ba930357c722fcbf88c5174bfa6a9349904984672988a484692c34268"
+      "scannerVersion": "oss_pr_radar_v44_disclosure_tasks_resolve_uncertainty",
+      "seenAt": "2026-08-12T03:32:21.625640Z",
+      "stateId": "0c3db0a3152b0c9e5c145ea0a2c668119f8a05be1f753ff56102a1d712e1a828"
     },
     "review|vllm-project/vllm#51401": {
       "category": "WAIT_MAINTAINER",
@@ -1973,7 +1973,7 @@
       "digest": "6939d9ee365ac187fb28d08e2a6f250c9dcb81d70a50b1f3456cab61a68a90ac",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-12T03:20:29.324878Z",
+      "seenAt": "2026-08-12T02:51:40.175012Z",
       "stateId": "5447d28794871488955c98ce83e13bbb0c5beddf1bf3a5e7d9b4172150379ae2"
     },
     "watch|ai-dynamo/dynamo#12630": {
@@ -1985,7 +1985,7 @@
       "digest": "34c5006168ea2be5ef212113029018db3a3058a375acfd018fc6f32abbc0755d",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-12T03:20:29.324878Z",
+      "seenAt": "2026-08-11T10:20:38.429654Z",
       "stateId": "cdb941722d98c91af61721f4ab28123733d7e2cf18370e82b7efa8f3879b7f67"
     },
     "watch|anthropics/skills#1231": {
@@ -2021,7 +2021,7 @@
       "digest": "7f14cac481365f5da20ad3ffbd56f3af0f77ff2d7e387502183229684cd76519",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-12T03:20:29.324878Z",
+      "seenAt": "2026-08-12T01:34:05.545351Z",
       "stateId": "7e03f640f8521c5566ed356bd9b575e33ed983a2810305cb9e43cc66be451de4"
     },
     "watch|cline/cline#12913": {
@@ -2266,11 +2266,11 @@
     },
     "watch|sgl-project/sglang#34138": {
       "category": "PR_FOLLOWUP",
-      "digest": "ef55c0672e05f7dac15c0b56787c02f819f644a094ff99545a093c2ea2798abc",
+      "digest": "2ebdfb2f620e0b514cab3d95f13ac320200ed09d5a7618b860f7d822460dc284",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-12T02:51:40.175012Z",
-      "stateId": "a7a1b32688cbdf33aefc908ad0339f54f8e5b53db68c64e60f9f789d57f4271c"
+      "seenAt": "2026-08-12T03:32:21.964748Z",
+      "stateId": "001c2d9ce1594a3397ab51a01d942fd68c9cc1a6484597cb7c339617a177e1c3"
     },
     "watch|usekaneo/kaneo#1484": {
       "legacy": true,
@@ -2341,7 +2341,7 @@
       "seenAt": "2026-08-06T10:09:13.778625Z"
     }
   },
-  "digest": "66a2cef165a0bc85d073676921f0fdc0334de4ece24baf0a3a6b14d23b11b1e3",
+  "digest": "dd24dcfa8f4d8801bd47931f29bf832e7fc65d92a2c85a9ab8bd2ce10eac6083",
   "events": [
     {
       "attempts": 1,
@@ -21723,9 +21723,95 @@
       "runId": "pr-followup-1786504472",
       "sentAt": "2026-08-12T03:20:54.731692Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "vllm-project/vllm#51396"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "df27390df642091a3d9bf16544bbf5002cb2ada87bf0cdcd9fae7ed30783204a",
+          "key": "vllm-project/vllm#51396",
+          "kind": "review",
+          "scannerVersion": "oss_pr_radar_v44_disclosure_tasks_resolve_uncertainty",
+          "stateId": "0c3db0a3152b0c9e5c145ea0a2c668119f8a05be1f753ff56102a1d712e1a828"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#51396](https://github.com/vllm-project/vllm/issues/51396) [Bug]: cpu_offload_gb silently no-ops on Model Runner V2 — offloader never installed, model loads fully on-GPU with no warning**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue clearly identifies a silent no-op bug in V2 model runner with root cause and empirical evidence. However, an existing PR (#51397) directly addresses the issue by disabling V2 when offloading is enabled, but it is closed and has CI failures. The issue suggests both a minimal fail-safe fix and a feature-parity fix, requiring maintainer direction on preferred scope. The deterministic gate is HUMAN_REVIEW, and the repository has an AI disclosure conflict that blocks automated action.\n改动：vllm/config/vllm.py: add weight offloading to unsupported features for V2 runner；vllm/v1/worker/gpu/model_runner.py: wire set_offloader and post_init for feature parity；tests: add end-to-end test for cpu_offload_gb with V2 runner\n验证：Reproduce with DeepSeek-V2-Lite and cpu_offload_gb=12 on V2 runner, assert offload log appears and no OOM；Add unit test for _get_v2_model_runner_unsupported_features to include offloading；Run existing offload-related tests and V2 runner tests\n风险：Feature parity fix may introduce regressions in V2 capture/replay with UVA views；Changing default runner selection may affect performance for models that default to V2\n竞争：发现关键词相关 PR，但未确认直接覆盖：#51397；需人工核对\n下一步：已有 PR 但强度不足；先看维护者规则和 issue 讨论，必要时先请求确认方案或分配。\n证据：复现信号 1，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-12T03:32:21.625640Z",
+      "eventId": "47e0491eea1cd696d409830e3ebeb935ea39a6a66cd47776bb9c5c95e0e5bbbc",
+      "idempotencyKey": "47e0491eea1cd696d409830e3ebeb935ea39a6a66cd47776bb",
+      "kind": "review",
+      "runId": "scan-20260812T032940Z-82876adebde2",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "sgl-project/sglang#34138"
+      ],
+      "candidateStates": [
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "2ebdfb2f620e0b514cab3d95f13ac320200ed09d5a7618b860f7d822460dc284",
+          "key": "sgl-project/sglang#34138",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "001c2d9ce1594a3397ab51a01d942fd68c9cc1a6484597cb7c339617a177e1c3"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#34138](https://github.com/sgl-project/sglang/pull/34138) Bind streaming abort cleanup to request lifecycle**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-12T03:32:21.964748Z",
+      "eventId": "0152c8ff7e2571a97a3dacdf9416d646b295cbc2bfcdad9aaaf5c27fcac3bc1b",
+      "idempotencyKey": "0152c8ff7e2571a97a3dacdf9416d646b295cbc2bfcdad9aaa",
+      "kind": "watch",
+      "runId": "pr-followup-1786505271",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-12T03:20:29.324878Z",
+  "generatedAt": "2026-08-12T03:32:21.964748Z",
   "newEventCount": 1,
   "version": "notification_outbox_v2"
 }
