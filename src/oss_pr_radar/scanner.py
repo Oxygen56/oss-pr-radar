@@ -176,6 +176,35 @@ KNOWN_REPOS = [
     "allenai/open-instruct",
     "Hiyouga/LLaMA-Factory",
     "modelscope/ms-swift",
+    "modelscope/modelscope",
+    "modelscope/ms-agent",
+    "modelscope/evalscope",
+    "modelscope/mcore-bridge",
+    "QwenLM/Qwen-Agent",
+    "QwenLM/qwen-code",
+    "QwenLM/open-computer-use",
+    "higress-group/higress",
+    "alibaba/rtp-llm",
+    "alibaba/tair-kvcache",
+    "alibaba/ROLL",
+    "alibaba/page-agent",
+    "alibaba/spring-ai-alibaba",
+    "bytedance/trae-agent",
+    "bytedance/UI-TARS-desktop",
+    "bytedance/SandboxFusion",
+    "ByteDance-Seed/VeOmni",
+    "TencentCloudADP/youtu-agent",
+    "Tencent/WeKnora",
+    "MoonshotAI/kimi-cli",
+    "MoonshotAI/kimi-code",
+    "MoonshotAI/kimi-agent-sdk",
+    "MoonshotAI/checkpoint-engine",
+    "MiniMax-AI/Mini-Agent",
+    "MiniMax-AI/OpenRoom",
+    "MiniMax-AI/MiniMax-MCP",
+    "PaddlePaddle/FastDeploy",
+    "PaddlePaddle/PaddleNLP",
+    "deepseek-ai/FlashMLA",
     "axolotl-ai-cloud/axolotl",
     "Lightning-AI/litgpt",
     "NVIDIA/Megatron-LM",
@@ -210,6 +239,19 @@ AGENT_RUNTIME_REPOS = {
     "camel-ai/camel",
     "mastra-ai/mastra",
     "agentscope-ai/agentscope",
+    "QwenLM/Qwen-Agent",
+    "QwenLM/qwen-code",
+    "bytedance/trae-agent",
+    "bytedance/UI-TARS-desktop",
+    "alibaba/page-agent",
+    "alibaba/spring-ai-alibaba",
+    "modelscope/ms-agent",
+    "TencentCloudADP/youtu-agent",
+    "MoonshotAI/kimi-cli",
+    "MoonshotAI/kimi-code",
+    "MoonshotAI/kimi-agent-sdk",
+    "MiniMax-AI/Mini-Agent",
+    "MiniMax-AI/OpenRoom",
 }
 
 AGENT_TOOLING_REPOS = {
@@ -231,6 +273,9 @@ AGENT_TOOLING_REPOS = {
     "aaif-goose/goose",
     "anomalyco/opencode",
     "cline/cline",
+    "QwenLM/open-computer-use",
+    "bytedance/SandboxFusion",
+    "MiniMax-AI/MiniMax-MCP",
 }
 
 AGENT_PLATFORM_REPOS = {
@@ -244,12 +289,20 @@ AGENT_PLATFORM_REPOS = {
     "FlowiseAI/Flowise",
     "infiniflow/ragflow",
     "NVIDIA/NeMo-Agent-Toolkit",
+    "modelscope/modelscope",
+    "higress-group/higress",
+    "Tencent/WeKnora",
+    "modelscope/evalscope",
 }
 
 INFERENCE_SERVING_REPOS = {
     "vllm-project/vllm",
     "sgl-project/sglang",
     "ai-dynamo/dynamo",
+    "alibaba/rtp-llm",
+    "alibaba/tair-kvcache",
+    "MoonshotAI/checkpoint-engine",
+    "PaddlePaddle/FastDeploy",
 }
 
 LLM_POST_TRAINING_REPOS = {
@@ -257,6 +310,7 @@ LLM_POST_TRAINING_REPOS = {
     "verl-project/verl",
     "OpenRLHF/OpenRLHF",
     "allenai/open-instruct",
+    "alibaba/ROLL",
 }
 
 LLM_MODELING_PEFT_REPOS = {
@@ -270,6 +324,9 @@ LLM_MODELING_PEFT_REPOS = {
     "facebookresearch/xformers",
     "deepseek-ai/DeepSeek-V3",
     "deepseek-ai/DeepGEMM",
+    "modelscope/mcore-bridge",
+    "PaddlePaddle/PaddleNLP",
+    "deepseek-ai/FlashMLA",
 }
 
 LLM_DISTRIBUTED_TRAINING_REPOS = {
@@ -279,6 +336,7 @@ LLM_DISTRIBUTED_TRAINING_REPOS = {
     "huggingface/accelerate",
     "bitsandbytes-foundation/bitsandbytes",
     "deepseek-ai/DeepEP",
+    "ByteDance-Seed/VeOmni",
 }
 
 LLM_EVALUATION_REPOS = {
@@ -3757,13 +3815,15 @@ class Radar:
                 scored["bucket"] = "conflict"
                 scored["category"] = "LOCAL_FIX_ONLY"
                 scored["gate_decision"] = "ALLOW_PRIVATE_WORK"
-                scored["auto_spawn"] = False
+                # Private implementation is still useful. Publication remains
+                # separately gated on user-approved disclosure wording.
+                scored["auto_spawn"] = True
                 scored["public_submission_allowed"] = False
                 scored["risk"] = (
                     f"{scored['risk']}；仓库要求公开 AI 使用披露，自动公开动作被硬禁用。"
                 )
                 scored["next_step"] = (
-                    "仅完成本地复现、修复、测试和私有提交包；由用户自行决定公开提交。"
+                    "创建项目任务并完成本地复现、修复、测试和私有提交包；公开提交前等待用户确认披露措辞。"
                 )
             if policy == "policy_unknown":
                 defer_evidence_lookup(base, issue, "policy_lookup_failed")

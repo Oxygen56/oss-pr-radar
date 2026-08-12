@@ -21,6 +21,14 @@ def test_fixed_scope_covers_mature_agent_ecosystem_domains():
         "bytedance/deer-flow",
         "camel-ai/camel",
         "mastra-ai/mastra",
+        "QwenLM/Qwen-Agent",
+        "QwenLM/qwen-code",
+        "bytedance/trae-agent",
+        "bytedance/UI-TARS-desktop",
+        "modelscope/ms-agent",
+        "TencentCloudADP/youtu-agent",
+        "MoonshotAI/kimi-cli",
+        "MiniMax-AI/Mini-Agent",
     } <= AGENT_RUNTIME_REPOS
     assert {
         "modelcontextprotocol/inspector",
@@ -33,14 +41,20 @@ def test_fixed_scope_covers_mature_agent_ecosystem_domains():
         "langfuse/langfuse",
         "Arize-ai/phoenix",
         "promptfoo/promptfoo",
+        "modelscope/modelscope",
+        "higress-group/higress",
+        "Tencent/WeKnora",
+        "modelscope/evalscope",
     } <= AGENT_PLATFORM_REPOS
     assert len(LLM_ALGORITHM_SCAN_REPOS) >= 19
     assert len(ALL_SCAN_REPOS) == len(set(AGENT_INFRA_SCAN_REPOS) | set(LLM_ALGORITHM_SCAN_REPOS))
     assert {"huggingface/trl", "verl-project/verl", "OpenRLHF/OpenRLHF"} <= (
         LLM_POST_TRAINING_REPOS
     )
+    assert "alibaba/ROLL" in LLM_POST_TRAINING_REPOS
     assert {"huggingface/peft", "huggingface/transformers"} <= LLM_MODELING_PEFT_REPOS
     assert {"NVIDIA/Megatron-LM", "pytorch/torchtitan"} <= LLM_DISTRIBUTED_TRAINING_REPOS
+    assert "ByteDance-Seed/VeOmni" in LLM_DISTRIBUTED_TRAINING_REPOS
     assert {"EleutherAI/lm-evaluation-harness", "huggingface/lighteval"} <= (LLM_EVALUATION_REPOS)
 
 

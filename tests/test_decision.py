@@ -117,3 +117,23 @@ def test_live_gate_blocks_nonstandard_contribution_agreement():
 
     assert result.status == "BLOCK"
     assert result.reason_code == "NONSTANDARD_CONTRIBUTION_AGREEMENT"
+
+
+def test_live_gate_allows_ai_disclosure_candidate_for_private_work_only():
+    current = evidence("A normal runtime bug report.")
+    value = EvidenceBundle(
+        **{
+            **current.__dict__,
+            "policy": current.policy | {"ai_disclosure": True},
+        }
+    )
+    private_candidate = candidate() | {
+        "category": "LOCAL_FIX_ONLY",
+        "gate_decision": "ALLOW_PRIVATE_WORK",
+        "public_submission_allowed": False,
+    }
+
+    result = authorize(private_candidate, value)
+
+    assert result.status == "ALLOW"
+    assert result.reason_code == "AI_DISCLOSURE_PRIVATE_WORK_ALLOWED"

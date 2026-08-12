@@ -143,15 +143,15 @@ For a successful claim:
 - Require `taskProjectPath=PROJECT_PATH`, a worktree below
   `PROJECT_PATH/.oss-pr-radar/worktrees/`, and a source origin matching the
   issue repository.
-- Resolve the project at most three times and accept only `PROJECT_ID` at
-  `PROJECT_PATH`.
-- Require `createThreadRequest` to be exactly the bridge-provided request for
-  that project. Pass it unchanged to `create_thread`; add no model, thinking,
-  cwd, worktree, or top-level project fields.
-- Only after project resolution has completed and `createThreadRequest` has
-  been validated, run `creation-start` immediately before `create_thread` and
-  retain its token. Never reserve creation while `list_projects` is pending.
-  Bind any returned task or client ID immediately with `creation-bind`.
+- Do not call `create_thread`: from an automation controller it creates a
+  delegated subagent that is not a user-visible GitHub project task.
+- Run `creation-start` immediately before `root-task-create`, then pass the
+  claim's exact intent, project, source repository, worktree, and title time
+  together with the creation token. The bridge uses the desktop app-server to
+  create an `appServer` root task at `PROJECT_PATH`, persists its exact two-line
+  prompt, binds the worktree, and starts the skill turn.
+- Treat `root-task-create` success as the completed creation receipt. It must
+  return a real task ID; do not separately call `creation-bind` or `commit`.
 - An explicit create rejection with no ID may use `creation-cancel`. Timeout,
   disconnect, or unknown result must remain `CREATING` for orphan recovery.
 - A client-ID-only result may be reconciled for at most 90 seconds using only

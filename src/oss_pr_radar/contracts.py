@@ -103,7 +103,15 @@ def validate_candidate(candidate: dict[str, Any]) -> None:
     review = candidate.get("llm_review")
     _require(isinstance(review, dict), "candidate.llm_review is required")
     if candidate["auto_spawn"]:
-        _require(candidate["gate_decision"] == "ALLOW_TO_WORK", "auto spawn requires ALLOW_TO_WORK")
+        private_disclosure_work = bool(
+            candidate.get("gate_decision") == "ALLOW_PRIVATE_WORK"
+            and str(candidate.get("submission_policy") or "").startswith("ai_disclosure")
+            and candidate.get("public_submission_allowed") is False
+        )
+        _require(
+            candidate["gate_decision"] == "ALLOW_TO_WORK" or private_disclosure_work,
+            "auto spawn requires authorized work",
+        )
         _require(review.get("status") == "ok", "auto spawn requires successful LLM review")
         _require(
             review.get("decision") in {"NEW_CLEAN_CANDIDATE", "PR_COMPETITION_OPPORTUNITY"},

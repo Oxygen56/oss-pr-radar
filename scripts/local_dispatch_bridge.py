@@ -1344,6 +1344,247 @@ def creation_abandon(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def _app_server_request_worker(args: argparse.Namespace) -> dict[str, Any]:
+    """Create a project-root task without the delegated subagent API."""
+
+    store = ledger(args.ledger)
+    pending = {item["intentId"]: item for item in store.pending()}
+    intent = pending.get(args.intent_id)
+    if not intent:
+        raise RuntimeError("intent is not pending")
+    prompt = issue_prompt(intent["issueUrl"])
+    executable = shutil.which("codex")
+    if not executable:
+        raise RuntimeError("codex executable is unavailable")
+    process = subprocess.Popen(
+        [
+            executable,
+            "app-server",
+            "--disable",
+            "recommended_plugins",
+            "--disable",
+            "remote_plugin",
+            "--stdio",
+        ],
+        cwd=GITHUB_ROOT,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        bufsize=0,
+    )
+    thread_id = ""
+    turn_id = ""
+    try:
+        if process.stdin is None or process.stdout is None:
+            raise RuntimeError("app server pipes are unavailable")
+        requests = [
+            {
+                "id": 0,
+                "method": "initialize",
+                "params": {
+                    "clientInfo": {"name": "oss-pr-radar", "version": "1.0"},
+                    "capabilities": {"experimentalApi": True},
+                },
+            },
+            {
+                "id": 1,
+                "method": "thread/start",
+                "params": {
+                    "cwd": str(GITHUB_ROOT.resolve()),
+                    "sandbox": "danger-full-access",
+                    "approvalPolicy": "never",
+                    "threadSource": "appServer",
+                },
+            },
+        ]
+        process.stdin.write(
+            b"".join((json.dumps(item) + "\n").encode("utf-8") for item in requests)
+        )
+        process.stdin.flush()
+        buffer = b""
+        deadline = monotonic() + 30
+        with selectors.DefaultSelector() as selector:
+            selector.register(process.stdout, selectors.EVENT_READ)
+            while monotonic() < deadline and not thread_id:
+                ready = selector.select(max(0.0, deadline - monotonic()))
+                if not ready:
+                    break
+                chunk = os.read(process.stdout.fileno(), 65536)
+                if not chunk:
+                    break
+                buffer += chunk
+                while b"\n" in buffer:
+                    raw, buffer = buffer.split(b"\n", 1)
+                    try:
+                        message = json.loads(raw)
+                    except json.JSONDecodeError:
+                        continue
+                    if message.get("id") == 1:
+                        thread_id = str(
+                            ((message.get("result") or {}).get("thread") or {}).get("id") or ""
+                        )
+                        break
+            if not thread_id:
+                raise RuntimeError("app server did not create a root task")
+            store.bind_creation_client(
+                args.intent_id,
+                owner=_active_owner(store, args),
+                creation_token=args.creation_token,
+                client_thread_id=thread_id,
+            )
+            process.stdin.write(
+                (
+                    json.dumps(
+                        {
+                            "id": 2,
+                            "method": "turn/start",
+                            "params": {
+                                "threadId": thread_id,
+                                "cwd": str(GITHUB_ROOT.resolve()),
+                                "input": [{"type": "text", "text": prompt, "text_elements": []}],
+                                "approvalPolicy": "never",
+                                "sandboxPolicy": {"type": "dangerFullAccess"},
+                                "summary": "auto",
+                            },
+                        },
+                        ensure_ascii=False,
+                    )
+                    + "\n"
+                ).encode("utf-8")
+            )
+            process.stdin.flush()
+            deadline = monotonic() + 45
+            while monotonic() < deadline and not turn_id:
+                ready = selector.select(max(0.0, deadline - monotonic()))
+                if not ready:
+                    break
+                chunk = os.read(process.stdout.fileno(), 65536)
+                if not chunk:
+                    break
+                buffer += chunk
+                while b"\n" in buffer:
+                    raw, buffer = buffer.split(b"\n", 1)
+                    try:
+                        message = json.loads(raw)
+                    except json.JSONDecodeError:
+                        continue
+                    if message.get("id") == 2:
+                        turn_id = str(
+                            ((message.get("result") or {}).get("turn") or {}).get("id") or ""
+                        )
+                        break
+            if not turn_id:
+                raise RuntimeError("app server did not start the root task turn")
+
+            deadline = monotonic() + 30
+            while monotonic() < deadline:
+                connection = sqlite3.connect(THREAD_DB)
+                try:
+                    row = connection.execute(
+                        "SELECT first_user_message FROM threads WHERE id=?", (thread_id,)
+                    ).fetchone()
+                finally:
+                    connection.close()
+                if row and canonical_prompt(str(row[0] or "")) == prompt:
+                    break
+                sleep(0.25)
+            else:
+                raise RuntimeError("root task was not persisted in the desktop index")
+
+            receipt = commit_receipt(
+                argparse.Namespace(
+                    ledger=args.ledger,
+                    intent_id=args.intent_id,
+                    owner=_active_owner(store, args),
+                    thread_id=thread_id,
+                    project_id=args.project_id,
+                    cwd=str(GITHUB_ROOT.resolve()),
+                    worktree=args.worktree,
+                    source_repo=args.source_repo,
+                    title_time=args.title_time,
+                )
+            )
+            _atomic_json(Path(args.receipt), {"ok": True, "turnId": turn_id} | receipt)
+
+            # Keep the stdio owner alive until the task turn completes.
+            while process.poll() is None:
+                ready = selector.select(60)
+                if not ready:
+                    continue
+                chunk = os.read(process.stdout.fileno(), 65536)
+                if not chunk:
+                    break
+                buffer += chunk
+                while b"\n" in buffer:
+                    raw, buffer = buffer.split(b"\n", 1)
+                    try:
+                        message = json.loads(raw)
+                    except json.JSONDecodeError:
+                        continue
+                    if (
+                        message.get("method") == "turn/completed"
+                        and str((message.get("params") or {}).get("threadId") or "") == thread_id
+                    ):
+                        return {"ok": True, "threadId": thread_id, "turnId": turn_id}
+            return {"ok": True, "threadId": thread_id, "turnId": turn_id}
+    except Exception as exc:
+        receipt_path = Path(args.receipt)
+        if not receipt_path.exists():
+            _atomic_json(
+                receipt_path,
+                {"ok": False, "error": f"{type(exc).__name__}:{str(exc)[:300]}"},
+            )
+        raise
+    finally:
+        if process.poll() is None:
+            process.terminate()
+
+
+def root_task_create(args: argparse.Namespace) -> dict[str, Any]:
+    receipt = STATE / "root_task_receipts" / f"{args.creation_token}.json"
+    receipt.unlink(missing_ok=True)
+    log = STATE / "root_task_receipts" / f"{args.creation_token}.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    with log.open("ab") as handle:
+        subprocess.Popen(
+            [
+                sys.executable,
+                str(Path(__file__).resolve()),
+                "--ledger",
+                str(args.ledger),
+                "root-task-worker",
+                "--intent-id",
+                args.intent_id,
+                "--creation-token",
+                args.creation_token,
+                "--project-id",
+                args.project_id,
+                "--source-repo",
+                args.source_repo,
+                "--worktree",
+                args.worktree,
+                "--title-time",
+                args.title_time,
+                "--receipt",
+                str(receipt),
+            ],
+            cwd=ROOT,
+            stdin=subprocess.DEVNULL,
+            stdout=handle,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    deadline = monotonic() + 60
+    while monotonic() < deadline:
+        if receipt.exists():
+            result = read_json(receipt, {})
+            if not result.get("ok"):
+                raise RuntimeError(str(result.get("error") or "root task creation failed"))
+            return result
+        sleep(0.25)
+    raise RuntimeError("root task creation result is unknown; orphan reconciliation required")
+
+
 def commit_receipt(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
     pending = {item["intentId"]: item for item in store.pending()}
@@ -1365,8 +1606,13 @@ def commit_receipt(args: argparse.Namespace) -> dict[str, Any]:
     connection = sqlite3.connect(THREAD_DB)
     connection.row_factory = sqlite3.Row
     try:
+        columns = {
+            str(item[1])
+            for item in connection.execute("PRAGMA table_info(threads)").fetchall()
+        }
+        source_projection = "thread_source" if "thread_source" in columns else "'appServer'"
         row = connection.execute(
-            "SELECT cwd,title,first_user_message,git_origin_url,archived FROM threads WHERE id=?",
+            f"SELECT cwd,title,first_user_message,git_origin_url,archived,{source_projection} AS thread_source FROM threads WHERE id=?",
             (args.thread_id,),
         ).fetchone()
     finally:
@@ -1374,6 +1620,8 @@ def commit_receipt(args: argparse.Namespace) -> dict[str, Any]:
     expected_title = lifecycle_title("GO", args.title_time, intent["key"], intent["title"])
     if row is None or int(row["archived"] or 0) != 0:
         raise RuntimeError("thread is missing or archived")
+    if str(row["thread_source"] or "") != "appServer":
+        raise RuntimeError("thread is not a project-root app-server task")
     if Path(row["cwd"]).resolve() != thread_cwd:
         raise RuntimeError("thread cwd mismatch")
     if canonical_prompt(row["first_user_message"] or "") != issue_prompt(intent["issueUrl"]):
@@ -4149,6 +4397,21 @@ def main() -> int:
     creation_abandon_parser.add_argument(
         "--min-age-minutes", type=int, default=ORPHAN_ABANDON_MIN_AGE_MINUTES
     )
+    root_task_create_parser = subparsers.add_parser("root-task-create")
+    root_task_create_parser.add_argument("--intent-id", required=True)
+    root_task_create_parser.add_argument("--creation-token", required=True)
+    root_task_create_parser.add_argument("--project-id", required=True)
+    root_task_create_parser.add_argument("--source-repo", required=True)
+    root_task_create_parser.add_argument("--worktree", required=True)
+    root_task_create_parser.add_argument("--title-time", required=True)
+    root_task_worker_parser = subparsers.add_parser("root-task-worker")
+    root_task_worker_parser.add_argument("--intent-id", required=True)
+    root_task_worker_parser.add_argument("--creation-token", required=True)
+    root_task_worker_parser.add_argument("--project-id", required=True)
+    root_task_worker_parser.add_argument("--source-repo", required=True)
+    root_task_worker_parser.add_argument("--worktree", required=True)
+    root_task_worker_parser.add_argument("--title-time", required=True)
+    root_task_worker_parser.add_argument("--receipt", required=True)
     orphan_list_parser = subparsers.add_parser("orphan-list")
     orphan_list_parser.add_argument(
         "--min-age-minutes", type=int, default=ORPHAN_ABANDON_MIN_AGE_MINUTES
@@ -4282,6 +4545,10 @@ def main() -> int:
         result = creation_cancel(args)
     elif args.operation == "creation-abandon":
         result = creation_abandon(args)
+    elif args.operation == "root-task-create":
+        result = root_task_create(args)
+    elif args.operation == "root-task-worker":
+        result = _app_server_request_worker(args)
     elif args.operation == "orphan-list":
         result = orphan_list(args)
     elif args.operation == "orphan-commit":

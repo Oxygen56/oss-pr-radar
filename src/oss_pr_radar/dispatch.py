@@ -83,9 +83,17 @@ class DispatchSigner:
 
 def _eligible(candidate: dict[str, Any]) -> bool:
     review = candidate.get("llm_review") or {}
+    private_disclosure_work = bool(
+        candidate.get("gate_decision") == "ALLOW_PRIVATE_WORK"
+        and str(candidate.get("submission_policy") or "").startswith("ai_disclosure")
+        and candidate.get("public_submission_allowed") is False
+    )
     return bool(
         candidate.get("auto_spawn") is True
-        and candidate.get("gate_decision") == "ALLOW_TO_WORK"
+        and (
+            candidate.get("gate_decision") == "ALLOW_TO_WORK"
+            or private_disclosure_work
+        )
         and review.get("status") == "ok"
         and review.get("decision") in ACTIONABLE_DECISIONS
     )

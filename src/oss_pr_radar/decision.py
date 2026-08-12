@@ -77,7 +77,13 @@ def authorize(candidate: dict[str, Any], evidence: EvidenceBundle) -> Authorizat
         return decision("BLOCK", "NONSTANDARD_CONTRIBUTION_AGREEMENT", "policy")
     if policy.get("ai_prohibited"):
         return decision("BLOCK", "AI_USE_PROHIBITED", "policy")
-    if policy.get("ai_disclosure"):
+    private_disclosure_work = bool(
+        policy.get("ai_disclosure")
+        and candidate.get("gate_decision") == "ALLOW_PRIVATE_WORK"
+        and candidate.get("auto_spawn") is True
+        and candidate.get("public_submission_allowed") is False
+    )
+    if policy.get("ai_disclosure") and not private_disclosure_work:
         return decision("HOLD", "AI_DISCLOSURE_REQUIRES_USER", "policy")
     if policy.get("status") == "UNKNOWN":
         return decision("HOLD", "POLICY_UNKNOWN", "policy")
@@ -114,7 +120,7 @@ def authorize(candidate: dict[str, Any], evidence: EvidenceBundle) -> Authorizat
     review = candidate.get("llm_review") or {}
     if candidate.get("bound_pr_update") is not True:
         if (
-            candidate.get("gate_decision") != "ALLOW_TO_WORK"
+            candidate.get("gate_decision") not in {"ALLOW_TO_WORK", "ALLOW_PRIVATE_WORK"}
             or candidate.get("auto_spawn") is not True
         ):
             return decision("HOLD", "SCAN_GATE_NOT_AUTHORIZED")
@@ -125,4 +131,8 @@ def authorize(candidate: dict[str, Any], evidence: EvidenceBundle) -> Authorizat
             return decision("HOLD", "SEMANTIC_REVIEW_NOT_ACTIONABLE")
         if float(review.get("confidence") or 0.0) < 0.65:
             return decision("HOLD", "SEMANTIC_CONFIDENCE_LOW")
-    return decision("ALLOW", "LIVE_EVIDENCE_PASSED")
+    return decision(
+        "ALLOW",
+        "AI_DISCLOSURE_PRIVATE_WORK_ALLOWED" if private_disclosure_work else "LIVE_EVIDENCE_PASSED",
+        "policy" if private_disclosure_work else None,
+    )
