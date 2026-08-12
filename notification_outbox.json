@@ -518,11 +518,11 @@
     },
     "review|ai-dynamo/dynamo#12910": {
       "category": "WAIT_MAINTAINER",
-      "digest": "3d48a5661c8a6e19dba50ab1cee2efa2ec62381748f0a64c61012fc73dee8a29",
+      "digest": "6a9b62c984ac4fdc159fe58efffd9290628b5f5d63e4731b4200a377e1964e69",
       "kind": "review",
-      "scannerVersion": "oss_pr_radar_v42_terminal_feedback_revoke",
-      "seenAt": "2026-08-11T13:50:43.431859Z",
-      "stateId": "47470291a03b88eb4c3963692003ca8498431276416079dc0b3349312be1155f"
+      "scannerVersion": "oss_pr_radar_v44_disclosure_tasks_resolve_uncertainty",
+      "seenAt": "2026-08-12T13:55:30.126133Z",
+      "stateId": "dd6c69e83d7e17013d6bf2ddfb6db2b88ef7b6986b8d6602eee87361b0f5693f"
     },
     "review|anomalyco/opencode#41120": {
       "category": "WAIT_MAINTAINER",
@@ -1196,10 +1196,6 @@
       "seenAt": "2026-08-11T10:20:38.077957Z",
       "stateId": "9519b6199fbd2ed09e81feef842a9b76f35ebfbf9f9a575f2eecaf4ac9b4353a"
     },
-    "review|modelcontextprotocol/servers#4545": {
-      "legacy": true,
-      "seenAt": "2026-08-05T13:53:11.860565Z"
-    },
     "review|modelcontextprotocol/typescript-sdk#2628": {
       "category": "WAIT_MAINTAINER",
       "digest": "7402510ef933dac41e6162584f8a75f6a0fa2d6408e0db344c07233165e0eb6c",
@@ -1359,10 +1355,6 @@
     "review|sgl-project/sglang#33505": {
       "legacy": true,
       "seenAt": "2026-08-05T19:24:11.033036Z"
-    },
-    "review|sgl-project/sglang#33577": {
-      "legacy": true,
-      "seenAt": "2026-08-05T13:53:11.860565Z"
     },
     "review|sgl-project/sglang#33783": {
       "legacy": true,
@@ -1607,14 +1599,6 @@
     "review|vllm-project/vllm#51035": {
       "legacy": true,
       "seenAt": "2026-08-05T17:52:51.969063Z"
-    },
-    "review|vllm-project/vllm#51073": {
-      "legacy": true,
-      "seenAt": "2026-08-05T13:53:11.860565Z"
-    },
-    "review|vllm-project/vllm#51122": {
-      "legacy": true,
-      "seenAt": "2026-08-05T13:53:11.860565Z"
     },
     "review|vllm-project/vllm#51140": {
       "legacy": true,
@@ -2281,245 +2265,8 @@
       "seenAt": "2026-08-06T10:09:13.778625Z"
     }
   },
-  "digest": "8bf21664c7869af18027093fe2df6a11351ea469509ba431770e5e5c28a1530a",
+  "digest": "23aec700be5b0c7813b56473a4fd6a009655a5e5e36fc88bf1a345f5d0206360",
   "events": [
-    {
-      "attempts": 1,
-      "candidateKeys": [
-        "modelcontextprotocol/servers#4545",
-        "sgl-project/sglang#33577",
-        "vllm-project/vllm#51073",
-        "vllm-project/vllm#51122"
-      ],
-      "card": {
-        "config": {
-          "wide_screen_mode": true
-        },
-        "elements": [
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[modelcontextprotocol/servers#4545](https://github.com/modelcontextprotocol/servers/issues/4545) server-filesystem >=2025.11.25 (registerTool/outputSchema rewrite): 100% tool-call failure on Claude Desktop 1.24012.1 Windows — calls never dispatched to server**\n建议：WAIT_MAINTAINER | 分数：10\n价值：Issue reports a severe 100% tool-call failure in Claude Desktop after server-filesystem update, with strong evidence of client-side rejection of outputSchema/structuredContent. However, root cause is not fully confirmed; a maintainer fix in Claude Desktop 1.24012.9 is reported, and the issue is in modelcontextprotocol/servers repo, not the client. The candidate lacks a clear code path in this repo and requires maintainer direction.\n改动：Potential server-side workaround to avoid outputSchema/structuredContent in tools/list；Add compatibility tests for older clients\n验证：Reproduce with Claude Desktop 1.24012.1 and server-filesystem >=2025.11.25, verify tools/call never dispatched；Test server with sanitized tools/list (removing outputSchema) to confirm dispatch restored\n风险：Changing server schema may break newer clients；Maintainer may prefer client-side fix, not server-side\n竞争：仅发现未直接关联、无代码路径或强机制重合的 PR #3580；保留为搜索上下文，不阻止实现\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 1，根因信号 False",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[sgl-project/sglang#33577](https://github.com/sgl-project/sglang/issues/33577) [Bug] DCP a2a backend NCCL crash at conc=64 (​unhandled cuda error​)**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue reports two concrete bugs with root cause hypotheses, but the supplied gate decision is HUMAN_REVIEW and related issue audit timed out. Existing PR #33592 is open but lacks tests and has CI failures, so competition is possible but not clearly superior. Maintainer confirmation is needed before starting work.\n改动：Fix _all_to_all_single to enable pynccl state；Adjust symmetric memory pool allocation to account for preallocated memory\n验证：Reproduce NCCL crash with conc=64 and eager decode; add regression test for pynccl enablement；Add startup OOM test with --enable-symm-mem and memory budget verification\n风险：Existing PR #33592 may already address the issue; need to avoid duplicate work；NCCL version-specific behavior may not be reproducible in CI\n竞争：已有直接关联但证据不完整的 PR #33592：缺少测试文件；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 3，根因信号 True",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[vllm-project/vllm#51073](https://github.com/vllm-project/vllm/issues/51073) [Bug]: MinimaxM3ToolParser (Rust) fails on MiniMaxAI/MiniMax-M3-MXFP8 tool output; raw markup + ']<]minimax[>[' special token leaks into content**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue provides a detailed root cause and reproduction, but the deterministic gate is HUMAN_REVIEW and an existing PR (#51075) directly addresses the same bug with a plausible fix, though it lacks tests. The candidate is actionable but requires maintainer confirmation and competition assessment.\n改动：Rust parser minimax_m3.rs: tolerate elided first-parameter opening tag；Python bridge rust_tool_parser.py: strip sentinel markup on parse failure\n验证：Add regression test with the provided reproduction to the Rust parser unit tests and Python tool parser tests；Run targeted tests for minimax_m3 parser and tool parser integration\n风险：Potential conflict with existing PR #51075; need to ensure fix is compatible and tests are added；Changing parser tolerance may affect other edge cases; need to verify no regressions\n竞争：已有直接关联但证据不完整的 PR #51075：缺少测试文件；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 11，根因信号 True",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[vllm-project/vllm#51122](https://github.com/vllm-project/vllm/issues/51122) [Bug]: `enable_prompt_embeds` + `enable_lora` on Llama crashes with `illegal memory access` under concurrency**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue provides a detailed root cause and repro for a real crash, but the deterministic gate requires HUMAN_REVIEW and a maintainer has questioned the niche value, so assignment/design confirmation is needed.\n改动：vllm/v1/worker/gpu_model_runner.py；vllm/lora/layers/vocal_parallel_embedding.py\n验证：Add a regression test using the provided repro script to verify no illegal memory access with enable_prompt_embeds and enable_lora on Llama.\n风险：Potential maintainer preference against fixing niche bug; risk of changing LoRA embedding behavior affecting other models.\n竞争：已有直接关联但证据不完整的 PR #51123：缺少测试文件；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：相关 issue 审计失败；恢复审计并确认无重复后再进入实现。\n证据：复现信号 21，根因信号 True",
-              "tag": "lark_md"
-            }
-          }
-        ],
-        "header": {
-          "template": "yellow",
-          "title": {
-            "content": "OSS PR Radar: 需要确认",
-            "tag": "plain_text"
-          }
-        }
-      },
-      "createdAt": "2026-08-05T13:53:11.860565Z",
-      "eventId": "1b2cfde2de8b6700dd733e27d98f96a5138f530065663b83a96ff30961636b32",
-      "idempotencyKey": "1b2cfde2de8b6700dd733e27d98f96a5138f530065663b83a9",
-      "kind": "review",
-      "lastAttemptAt": "2026-08-05T13:53:39.696429Z",
-      "messageId": "om_x100b6800489534a0dde67a48d9a375b",
-      "runId": "scan-20260805T134829Z-c19145448e36",
-      "sentAt": "2026-08-05T13:53:41.952180Z",
-      "status": "SENT"
-    },
-    {
-      "attempts": 1,
-      "candidateKeys": [
-        "sgl-project/sglang#33493",
-        "sgl-project/sglang#33504",
-        "sgl-project/sglang#33505",
-        "sgl-project/sglang#33549",
-        "BerriAI/litellm#35711",
-        "BerriAI/litellm#35789",
-        "BerriAI/litellm#35797",
-        "cline/cline#12913",
-        "crewAIInc/crewAI#6788",
-        "fastmachinelearning/hls4ml#1515",
-        "google/adk-python#6584",
-        "langgenius/dify#40003",
-        "maka-agent/maka-agent#2074"
-      ],
-      "card": {
-        "config": {
-          "wide_screen_mode": true
-        },
-        "elements": [
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[sgl-project/sglang#33493](https://github.com/sgl-project/sglang/issues/33493) [Bug] DSPARK retrieves wrong key \"acc_linear_penalities\" from sampling_info**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[sgl-project/sglang#33504](https://github.com/sgl-project/sglang/issues/33504) Title: Inconsistent error response format with OpenAI standard for non-streaming requests**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[sgl-project/sglang#33505](https://github.com/sgl-project/sglang/issues/33505) [Bug] The --json-model-override-args  does not  recursively update the model configuration.**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[sgl-project/sglang#33549](https://github.com/sgl-project/sglang/issues/33549) [Bug] DeepSeek-V4 (dsv4 backend + DSPARK) TP=8 on 8×H20: decode forward hangs indefinitely at ~245K context — all GPUs spin at 100% util / low power, watchdog kills server**\n建议：WAIT_MAINTAINER\n价值：NO_ACTIONABLE_CHANGE\n验证：重新运行完整扫描和贡献规则检查",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[BerriAI/litellm#35711](https://github.com/BerriAI/litellm/issues/35711) [Bug]: `ollama/` streaming never reconstructs tool calls — tool call arrives as plain `delta.content` text with `finish_reason: \"stop\"`, while the non-streaming path reconstructs it correctly**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[BerriAI/litellm#35789](https://github.com/BerriAI/litellm/issues/35789) [Bug]: Expired UI session tokens pollute SpendLogs — dashboard info-route 401s are recorded as failed LLM requests**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[BerriAI/litellm#35797](https://github.com/BerriAI/litellm/issues/35797) [Bug]: Grace periode during key rotation not working `TypeError: Litellm_VerificationTokenView` object**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[cline/cline#12913](https://github.com/cline/cline/issues/12913) Bedrock prompt caching never engages: routing layer emits anthropic cache_control but @ai-sdk/amazon-bedrock only reads providerMetadata.bedrock.cachePoint (zero writers in binary)**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[crewAIInc/crewAI#6788](https://github.com/crewAIInc/crewAI/issues/6788) [BUG] total_tokens omits cache reads and writes on the native Anthropic provider**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[fastmachinelearning/hls4ml#1515](https://github.com/fastmachinelearning/hls4ml/issues/1515) profiling.numerical() fails for multi-input models**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[google/adk-python#6584](https://github.com/google/adk-python/issues/6584) RemoteA2aAgent: a terminal A2A task carrying tool activity fails is_final_response(), so the turn cannot be detected as finished (non-streaming peer)**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[langgenius/dify#40003](https://github.com/langgenius/dify/issues/40003) AgentV2 (dify-agent) sends empty-content system prompts and empty tool descriptions to Bedrock, causing ValidationException**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[maka-agent/maka-agent#2074](https://github.com/maka-agent/maka-agent/issues/2074) bug(runtime): a stopped run parked on AskUserQuestion never lands a terminal fact, and prior-run context then silently drops the whole turn**\n建议：WAIT_MAINTAINER\n价值：EVIDENCE_INCOMPLETE\n验证：重新运行完整扫描和贡献规则检查",
-              "tag": "lark_md"
-            }
-          }
-        ],
-        "header": {
-          "template": "yellow",
-          "title": {
-            "content": "OSS PR Radar: 状态更新",
-            "tag": "plain_text"
-          }
-        }
-      },
-      "createdAt": "2026-08-05T13:53:12.015753Z",
-      "eventId": "9d3ab0c95b4162be7f46da757571acd643b9ab260824392a80fe1d97590830aa",
-      "idempotencyKey": "9d3ab0c95b4162be7f46da757571acd643b9ab260824392a80",
-      "kind": "watch",
-      "lastAttemptAt": "2026-08-05T13:53:41.952210Z",
-      "messageId": "om_x100b680048bcbca4c439f5da29054f1",
-      "runId": "watch-1785937652",
-      "sentAt": "2026-08-05T13:53:43.473001Z",
-      "status": "SENT"
-    },
     {
       "attempts": 1,
       "candidateKeys": [
@@ -20957,9 +20704,52 @@
       "runId": "pr-followup-1786541489",
       "sentAt": "2026-08-12T13:36:01.707349Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "ai-dynamo/dynamo#12910"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "6a9b62c984ac4fdc159fe58efffd9290628b5f5d63e4731b4200a377e1964e69",
+          "key": "ai-dynamo/dynamo#12910",
+          "kind": "review",
+          "scannerVersion": "oss_pr_radar_v44_disclosure_tasks_resolve_uncertainty",
+          "stateId": "dd6c69e83d7e17013d6bf2ddfb6db2b88ef7b6986b8d6602eee87361b0f5693f"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[ai-dynamo/dynamo#12910](https://github.com/ai-dynamo/dynamo/issues/12910) [BUG]: Kimi K2 tool_choice=\"required\" returns no tool call and exhausts max_tokens (parity gap vs native vLLM)**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue provides a precise root cause (missing structural tag for kimi_k2 parser forces JSON-array grammar, unbounded whitespace) and a clear regression test (test_kimi_k2_tool_choice_required_pins_current_behavior). However, the deterministic gate is HUMAN_REVIEW, and existing PR #9752 overlaps semantically with the code path (handlers.py) and key terms (max_tokens, tool_choice), requiring maintainer comparison before new work. Also, potential duplicate issue #12876 and external crate dependency (dynamo-parsers) add uncertainty.\n改动：lib/llm/src/preprocessor/tool_choice.rs；lib/llm/src/protocols/openai/tools.rs；components/src/dynamo/vllm/handlers.py；external dynamo-parsers crate (parsers/v1/src/tool_calling/config.rs)\n验证：Run existing test_kimi_k2_tool_choice_required_pins_current_behavior and flip assertion after fix；Add regression test comparing Dynamo vs native vLLM for tool_choice=required with kimi_k2 parser；Test with small model and fixed seed to ensure deterministic whitespace bounding\n风险：Existing PR #9752 may already address the issue; need to compare implementation；Fix may require changes in external crate (dynamo-parsers) complicating coordination；Potential duplicate issue #12876 may already track this\n竞争：发现 PR #9752 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 12，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-12T13:55:30.126133Z",
+      "eventId": "7d8241a366fb7cb4b008858e78e132afd297e33a7786a307956daf7e3897a3b8",
+      "idempotencyKey": "7d8241a366fb7cb4b008858e78e132afd297e33a7786a30795",
+      "kind": "review",
+      "runId": "scan-20260812T135216Z-97dfdb8092b4",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-12T13:35:25.927978Z",
-  "newEventCount": 1,
+  "generatedAt": "2026-08-12T13:55:30.457067Z",
+  "newEventCount": 0,
   "version": "notification_outbox_v2"
 }
