@@ -1577,7 +1577,7 @@ def root_task_create(args: argparse.Namespace) -> dict[str, Any]:
     deadline = monotonic() + 60
     while monotonic() < deadline:
         if receipt.exists():
-            result = read_json(receipt, {})
+            result = read_json(receipt, missing={})
             if not result.get("ok"):
                 raise RuntimeError(str(result.get("error") or "root task creation failed"))
             return result
