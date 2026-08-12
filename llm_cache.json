@@ -16555,6 +16555,39 @@
     ],
     "why": "Issue provides a clear user-visible bug with detailed reproduction steps, logs, and a specific root cause (registry-to-GUI projection overwrites newly added models). No competing PR or issue found. The fix is localized and actionable."
   },
+  "bd16fa6543025bd6e070c62faf33f5c43b5d15c9729c875c43b6b745771465d4": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue title mentions vllm 0.25 but traceback paths show vllm_0.20",
+      "Issue body starts with 'Duplicate of #' but no target issue number"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "open_pr_assessment.prs.0"
+    ],
+    "expected_changes": [
+      "DeepGemm FP8 kernel selection or alignment handling",
+      "torch.compile/cudagraph integration for FP8 scaled MM"
+    ],
+    "risks": [
+      "Root cause may be in upstream DeepGemm or torch inductor, not vLLM",
+      "Existing PR may be incomplete or abandoned"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 13,
+    "test_plan": [
+      "Reproduce with Qwen3-VL FP8 under cudagraph and torch.compile; compare eager vs compiled",
+      "Run existing DeepGemm unit tests with and without inductor"
+    ],
+    "unknowns": [
+      "Exact vLLM version and configuration",
+      "Whether PR #47258 fixes this issue",
+      "Minimal reproducer and hardware details"
+    ],
+    "why": "Issue reports a CUDA illegal memory access in DeepGemm FP8 kernel under torch.compile/cudagraph, with a plausible root cause (TMA layout alignment) but no minimal reproducer. Existing PR #47258 overlaps semantically and may already address the issue, but it is stale and lacks maintainer review. The deterministic gate is HUMAN_REVIEW, and the issue is a duplicate with incomplete details."
+  },
   "bd2168b96864ba519fd5a894e41ab9a0b3d77a50912b5b7c10e5bb78317716ce": {
     "confidence": 0.7,
     "contradictions": [],
@@ -18470,6 +18503,31 @@
       "Whether the issue is accepted as a bug to fix in the current release cycle"
     ],
     "why": "Issue clearly describes a type-level bug with runtime mismatch and provides a minimal repro. However, the deterministic gate requires HUMAN_REVIEW, and the issue is labeled 'needs triage' with maintainer confirmation pending. The proposed fix involves API design choices (variance and type widening) that need maintainer input."
+  },
+  "d1de8bfdfb28024aadf23ac1f1d53c6cfe597e11643250bf0ec05a2e1c2fdd69": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "pydantic_ai_slim/pydantic_ai/models/__init__.py",
+      "pydantic_ai_slim/pydantic_ai/images/_media_type.py"
+    ],
+    "risks": [
+      "Changing shared boundary may affect all media types; need to avoid breaking legitimate use cases."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add regression tests covering honest HTML for .png, spoofed image/png header, octet-stream with genuine image, redirects, and unfamiliar image MIME."
+    ],
+    "unknowns": [
+      "Maintainer preference on scope (images only vs all media types) and whether to allow unfamiliar image MIME types."
+    ],
+    "why": "Issue clearly identifies a security-relevant bug in shared download path with verified repro and suggested fix direction. However, existing PR #7334 is closed pending assignment and repository requires assignment, so maintainer action is needed before new work."
   },
   "d1e4c1f40649172f728aafd3439cb993ef0c841076f8a72f9b1010210d1b5151": {
     "confidence": 0.7,
@@ -22819,6 +22877,40 @@
       "Maintainer preference on whether to repair or retire the script is not yet confirmed."
     ],
     "why": "The issue identifies a deterministic contract mismatch in the live provisioning smoke script: it expects HTTP 202 with a jobId while the shared tier returns HTTP 200 with no job, and pairing always fails with 503. The fix is well-scoped: update the script to handle the shared contract, add a fail-closed staging guard, and add regression tests. No competing PR exists, and the maintainer has not yet responded, but the technical path is clear and actionable."
+  },
+  "fa44130cba492a1c14238b766237b6923d84224d03958faac2f0e9422f7e733e": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue mentions #32691 as potentially relevant but not confirmed",
+      "PR #30967 has semantic overlap but does not reference issue"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix speculative target-verify CUDA graph memory access or context-boundary buffer sizing",
+      "Add regression test for long-context NEXTN decode with CUDA graph and overlap"
+    ],
+    "risks": [
+      "Root cause may be in existing PRs, leading to duplicate work",
+      "Floating-point or nondeterministic behavior may complicate reproduction",
+      "Fix may require multi-GPU testing not available in CI"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 13,
+    "test_plan": [
+      "Reproduce with provided server args on H800 TP8, monitor #full token near 262144, capture crash logs",
+      "Run with --disable-decode-cuda-graph and --disable-overlap-schedule to confirm mitigation",
+      "Compare against PR #30967 and #32691 to see if fix already exists"
+    ],
+    "unknowns": [
+      "Whether latest main already fixes the issue",
+      "Exact root cause (CUDA graph capture, buffer sizing, or distributed sync)",
+      "Whether PR #30967 or #32691 resolves this specific failure"
+    ],
+    "why": "Issue reports a reproducible CUDA illegal memory access near context boundary with NEXTN on Qwen3.5-397B, but root cause is unconfirmed and may relate to existing PR #32691 or #30967. The supplied gate says HUMAN_REVIEW, and open PRs overlap semantically, requiring maintainer comparison before new work."
   },
   "fa690750e608582b140c647f3d5d43def007906101080fabe9bacab22bfd36cf": {
     "confidence": 0.85,

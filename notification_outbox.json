@@ -1498,11 +1498,11 @@
     },
     "review|sgl-project/sglang#34239": {
       "category": "WAIT_MAINTAINER",
-      "digest": "8b38e01599e32dfe534e9c8755eb78fd07380b0beccbbb20968f5ce2a7b60b8d",
+      "digest": "d726ede9ebdda5da17540b8a77e76ae10881e16036bd825f6aed6c4617c55a2c",
       "kind": "review",
-      "scannerVersion": "oss_pr_radar_v42_terminal_feedback_revoke",
-      "seenAt": "2026-08-10T08:41:11.881106Z",
-      "stateId": "d7a2921f1330c328475c917e88ae4eb090658963bdec370bda0763a80964ddd8"
+      "scannerVersion": "oss_pr_radar_v44_disclosure_tasks_resolve_uncertainty",
+      "seenAt": "2026-08-12T05:11:55.625645Z",
+      "stateId": "a1c932d4be71a2801faf6b6d3261ea976fb242f75e07d986a3633ca8bcdb29c7"
     },
     "review|sgl-project/sglang#34366": {
       "category": "WAIT_MAINTAINER",
@@ -2349,7 +2349,7 @@
       "seenAt": "2026-08-06T10:09:13.778625Z"
     }
   },
-  "digest": "e12a2b579ad2f809ede15703d03c6c0958a2aac811dfa1ba9f0205ac259bad9c",
+  "digest": "e5d4d43d35bbc7e0614688ac76537d5f00c8af5d168f4ddd51d571a618c534ba",
   "events": [
     {
       "attempts": 1,
@@ -21826,9 +21826,52 @@
       "runId": "pr-followup-1786510688",
       "sentAt": "2026-08-12T05:02:51.496809Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "sgl-project/sglang#34239"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "d726ede9ebdda5da17540b8a77e76ae10881e16036bd825f6aed6c4617c55a2c",
+          "key": "sgl-project/sglang#34239",
+          "kind": "review",
+          "scannerVersion": "oss_pr_radar_v44_disclosure_tasks_resolve_uncertainty",
+          "stateId": "a1c932d4be71a2801faf6b6d3261ea976fb242f75e07d986a3633ca8bcdb29c7"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#34239](https://github.com/sgl-project/sglang/issues/34239) [Bug] Qwen3.5-397B + NEXTN crashes with CUDA illegal memory access near 262144 context boundary on v0.5.16 (H800 TP8)**\n建议：WAIT_MAINTAINER | 分数：13\n价值：Issue reports a reproducible CUDA illegal memory access near context boundary with NEXTN on Qwen3.5-397B, but root cause is unconfirmed and may relate to existing PR #32691 or #30967. The supplied gate says HUMAN_REVIEW, and open PRs overlap semantically, requiring maintainer comparison before new work.\n改动：Fix speculative target-verify CUDA graph memory access or context-boundary buffer sizing；Add regression test for long-context NEXTN decode with CUDA graph and overlap\n验证：Reproduce with provided server args on H800 TP8, monitor #full token near 262144, capture crash logs；Run with --disable-decode-cuda-graph and --disable-overlap-schedule to confirm mitigation；Compare against PR #30967 and #32691 to see if fix already exists\n风险：Root cause may be in existing PRs, leading to duplicate work；Floating-point or nondeterministic behavior may complicate reproduction；Fix may require multi-GPU testing not available in CI\n竞争：发现 PR #30967 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 18，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-12T05:11:55.625645Z",
+      "eventId": "e26190bf46a86dddb0a811cde9fa0a9c15dc742a9ed003d08906e6dfbb7e9c1d",
+      "idempotencyKey": "e26190bf46a86dddb0a811cde9fa0a9c15dc742a9ed003d089",
+      "kind": "review",
+      "runId": "scan-20260812T050830Z-5e0b2529f29e",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-12T05:02:15.675020Z",
-  "newEventCount": 1,
+  "generatedAt": "2026-08-12T05:11:55.963028Z",
+  "newEventCount": 0,
   "version": "notification_outbox_v2"
 }
