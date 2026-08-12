@@ -993,6 +993,8 @@ def _candidate(intent: dict[str, Any]) -> dict[str, Any]:
         "category": intent["category"],
         "gate_decision": intent.get("scanGate"),
         "auto_spawn": intent.get("autoSpawn") is True,
+        "submission_policy": intent.get("submissionPolicy") or "normal",
+        "public_submission_allowed": intent.get("publicSubmissionAllowed") is True,
         "llm_review": intent.get("llmReview") or {},
         "actionability_evidence": intent.get("actionabilityEvidence") or {},
         "algorithm_evidence": intent.get("algorithmEvidence"),

@@ -203,6 +203,7 @@ def build_queue(
             "score": candidate.get("score"),
             "scanGate": candidate.get("gate_decision"),
             "autoSpawn": candidate.get("auto_spawn") is True,
+            "submissionPolicy": candidate.get("submission_policy") or "normal",
             "publicSubmissionAllowed": candidate.get("public_submission_allowed") is True,
             "autoSubmitAuthorized": (
                 mode in {"canary", "active"} and candidate.get("public_submission_allowed") is True

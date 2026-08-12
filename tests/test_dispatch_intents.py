@@ -141,6 +141,7 @@ def test_ai_disclosure_candidate_is_dispatched_for_private_work_only():
     )
     assert len(result["intents"]) == 1
     assert result["intents"][0]["autoSubmitAuthorized"] is False
+    assert result["intents"][0]["submissionPolicy"] == "ai_disclosure_conflict"
 
 
 def test_ai_disclosure_review_uncertainty_still_dispatches_private_task():
