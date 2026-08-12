@@ -90,10 +90,7 @@ def _eligible(candidate: dict[str, Any]) -> bool:
     )
     return bool(
         candidate.get("auto_spawn") is True
-        and (
-            candidate.get("gate_decision") == "ALLOW_TO_WORK"
-            or private_disclosure_work
-        )
+        and (candidate.get("gate_decision") == "ALLOW_TO_WORK" or private_disclosure_work)
         and review.get("status") == "ok"
         and review.get("decision") in ACTIONABLE_DECISIONS
     )

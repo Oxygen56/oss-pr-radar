@@ -1607,8 +1607,7 @@ def commit_receipt(args: argparse.Namespace) -> dict[str, Any]:
     connection.row_factory = sqlite3.Row
     try:
         columns = {
-            str(item[1])
-            for item in connection.execute("PRAGMA table_info(threads)").fetchall()
+            str(item[1]) for item in connection.execute("PRAGMA table_info(threads)").fetchall()
         }
         source_projection = "thread_source" if "thread_source" in columns else "'appServer'"
         row = connection.execute(
