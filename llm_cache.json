@@ -341,6 +341,41 @@
     ],
     "why": "The issue provides a clear root cause: workflow watch events spread prior step results into start/result payloads, causing duplicate state and OOM on Cloudflare Workers. Existing PR #20661 is open but has failing CI and lacks comprehensive tests, leaving room for a materially better PR with focused watch-payload tests and a minimal fix."
   },
+  "06d630b92acdc84dd04013f99fef9ffe86e5dc26a919942791d77644a4673c52": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix check_budget.sh to distinguish 'could not measure' from 'exceeded' and SKIP appropriately",
+      "Strip CR when generating .shards to fix resume on Windows",
+      "Record --device or codebook hash in oracle fixture sidecar and check it",
+      "Make diskbench.c build on Windows using platform.h abstractions",
+      "Raise working set before VirtualLock or detect quota up front in WASTE_MLOCK"
+    ],
+    "risks": [
+      "Changes to test infrastructure may not be prioritized by maintainer",
+      "Fixes may require platform-specific code that could introduce regressions on other platforms",
+      "The issue is not a code contribution; a PR may be needed to implement fixes"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Run tests/run.sh on Windows with real container to verify budget check SKIPs instead of FAIL",
+      "Simulate interrupted download and resume on Windows to confirm CRLF fix",
+      "Generate oracle fixture on CPU and compare with shipped fixture to verify sidecar check catches device mismatch",
+      "Compile diskbench.c on Windows and verify it reports correct bypass status",
+      "Run with WASTE_MLOCK on Windows and verify no excessive failed syscalls"
+    ],
+    "unknowns": [
+      "Whether the maintainer expects external contributors to implement fixes or will do so themselves",
+      "Whether the repository has a formal contribution process for such issues"
+    ],
+    "why": "The issue provides a detailed, verified report of five gaps in the warp repository, with root causes identified for each (e.g., CRLF mismatch, missing --device in sidecar, POSIX-only syscalls). The maintainer has acknowledged the report and confirmed gap 3, indicating active engagement. However, the issue is a bug report and feature request, not a concrete code contribution. The track is llm_algorithm, but the gaps are primarily platform-specific build/test infrastructure issues, not algorithm changes. The maintainer's response suggests they will handle fixes, and there is no explicit request for external contribution. The deterministic gate is ALLOW_TO_WORK, but the maintainer's active involvement and the nature of the issues (infrastructure, not algorithm) make it prudent to wait for maintainer direction or a specific PR."
+  },
   "06df565d02dfed67b5b190a75650e95bf6714b7b4cadcddf9a607828a28f5cdb": {
     "confidence": 0.7,
     "contradictions": [
@@ -1147,6 +1182,38 @@
       "Exact implementation details for merging transitions"
     ],
     "why": "The issue describes a concrete bug in message history persistence with a clear root cause (incoming duplicate IDs win upsert) and a proposed fix direction. However, the track is llm_algorithm, which requires a concrete training objective, model mechanism, or numerical method. This issue is about application-level message persistence logic, not an LLM algorithm. The algorithm_evidence is weak (only 'adapter' matched, no real PEFT mechanism). The proposed fix is a design change requiring maintainer confirmation, and the issue is not assigned or approved. Thus, it is not a clean candidate for algorithmic work."
+  },
+  "103f0c85331ffb3c79b13f5fd2e130f77509da3ca4606cfa3301dbf7747d2dee": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Bot comment suggests chunkTimeout may be a contributing factor, while issue author attributes hang to Responses API streaming; user workaround confirms API routing matters but root cause remains unclear"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Azure provider configuration to allow forcing Chat Completions API",
+      "Potential default routing logic for Azure models to use chat completions when Responses API streaming is unreliable"
+    ],
+    "risks": [
+      "Changing default API routing may affect other Azure models or break existing behavior",
+      "Potential overlap with existing PR #40010 or issue #37580 requiring coordination"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Reproduce hang with azure/gpt-5.6-luna using default settings",
+      "Verify workaround with useCompletionUrls: true resolves hang",
+      "Add integration test for Azure provider streaming with large models"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred design for Azure provider routing",
+      "Whether existing PR #40010 already addresses this issue or is a competing implementation",
+      "Exact mechanism of hang in Responses API streaming for large models"
+    ],
+    "why": "Issue reports Azure large models hang via Responses API streaming, with a user-confirmed workaround (useCompletionUrls: true). However, the root cause is not definitively established; a bot comment suggests a possible related SSE/chunkTimeout issue (#37580). The proposed fixes (default to chat completions or expose option) are configuration/plumbing changes, not algorithm work. Existing PR #40010 'recover stalled model streams' may overlap but is not confirmed to address this issue. Maintainer design confirmation is needed before implementation."
   },
   "10481a097cdb4aa6d2c02a48d6e0c07e59833f3592da13b27de12372d3a43a2a": {
     "confidence": 0.8,
@@ -5294,6 +5361,30 @@
     ],
     "why": "Issue provides a clear root cause and repro for a real resource leak, but existing PRs #5416 and #5417 overlap semantically and may already address the fix. The deterministic gate requires HUMAN_REVIEW, and the open PR assessment indicates semantic overlap requiring manual comparison. No maintainer approval or active investigation is present, so starting new work risks duplication."
   },
+  "3a3200715a179e3fb66c57614d719443eb1e631b0ee64c9dd39ac5f0c96fc6ef": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add validation in FC agent runner to detect zero tool calls when a tool call was expected, and either error or retry."
+    ],
+    "risks": [
+      "Potential behavior change may affect legitimate cases where the model intentionally skips tool calls."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Create a regression test using the issue's reproduction steps to verify that fabricated success without tool calls is detected."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a specific fix approach (error vs retry) and whether PR #40000 already addresses the root cause."
+    ],
+    "why": "The issue describes a probabilistic agent behavior where the model fabricates success without tool calls, and the root cause is identified as missing validation in the FC agent runner. However, the deterministic gate requires HUMAN_REVIEW, and the existing PR #40000 overlaps semantically with the same code path, requiring maintainer comparison. The issue is a bug report with strong evidence but no maintainer confirmation or design approval."
+  },
   "3a34274325afeb4a12a8acaa33138cdab1dd8359a0d82aee360348fcb362db74": {
     "confidence": 0.7,
     "contradictions": [
@@ -6318,6 +6409,36 @@
       "Whether an existing PR or fix already addresses this issue"
     ],
     "why": "Issue reports a user-visible bug with a clear repro, but root cause is ambiguous: the `[1m]` suffix may be invalid upstream or mishandled by LiteLLM. Open PR and related issue lookups timed out, so duplicate work cannot be excluded. Maintainer confirmation is needed before implementation."
+  },
+  "45c51892d3ea8839e32398457955dabfe756c996ca719662ed66f48463a9abab": {
+    "confidence": 0.7,
+    "contradictions": [
+      "The issue proposes a per-tool or per-agent flag, but bobleer argues for a caller-owned contract; these are not fully reconciled."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "fc_agent_runner.py loop logic",
+      "agent configuration schema",
+      "error handling in agent runtime"
+    ],
+    "risks": [
+      "Changing runner behavior may break existing agents that intentionally return plain text without tool calls; need opt-in flag to avoid regression.",
+      "Retry logic could duplicate destructive operations if not carefully designed; must ensure idempotency or explicit user confirmation."
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "test_plan": [
+      "Reproduce the zero-tool-call fabrication with a minimal agent config and mock model response; assert that a terminal answer without tool call raises a typed error or triggers retry when enforcement is enabled."
+    ],
+    "unknowns": [
+      "Maintainer design preference on enforcement semantics (per-tool vs per-agent, retry vs error, hard error vs silent retry).",
+      "Whether the repository requires assignment or has a contribution process that needs maintainer sign-off."
+    ],
+    "why": "The issue precisely identifies a runner-level gap in fc_agent_runner.py where zero tool calls with non-empty text is accepted as final answer, and proposes a structural fix with a configurable enforcement flag. However, the design is not finalized: maintainer approval is absent, and the recent comment by bobleer raises a critical design concern that the guard must be caller-owned (declared required tool/effect contract) rather than merely 'tools were available'. This requires maintainer input on scope and semantics before implementation."
   },
   "45dad8c03af1650e32e34151b53788cbedfba96362944a4855c429be75858c81": {
     "confidence": 0.7,
@@ -20634,6 +20755,32 @@
     ],
     "why": "Issue reports q4_0 KV cache causing degenerate output on specific small models, but maintainer could not reproduce on multiple backends and attributes it to model unsuitability. No code change proposed; likely a usage/config issue. Open PR lookup failed, so duplicate work cannot be excluded."
   },
+  "dc675eeb8795e89e126848632397c3869f4e643721927b37558c6b1ad51ab983": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify litellm/llms/bedrock/chat/converse_transformation.py to avoid injecting auto tool_choice when toolConfig.toolChoice is forced",
+      "Add regression test for forced tool_choice + parallel_tool_calls"
+    ],
+    "risks": [
+      "Potential behavior change for parallel_tool_calls handling with forced tools",
+      "Need to ensure compatibility with Anthropic-style tool_choice emission"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Use the provided curl repro to assert no conflicting fields in the Converse request body",
+      "Run existing Bedrock transformation unit tests"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a specific fix approach; existing PRs may already be close to a solution"
+    ],
+    "why": "Issue provides a clear root cause and deterministic repro for a Bedrock Converse 400 when forced tool_choice and parallel_tool_calls are combined. Existing PRs #32605 and #34888 overlap semantically but are stale and do not reference this issue; a materially better PR could address the forced-tool conflict and add regression tests."
+  },
   "dce7cfc8bee1655008e21d4ead2902ed8c265397eafd36072f0658b1ed203d09": {
     "confidence": 0.9,
     "contradictions": [],
@@ -24350,6 +24497,37 @@
       "Whether maintainers want additional changes beyond the merged PR"
     ],
     "why": "The issue reports a real bug in prefix caching for hybrid Mamba models, but the root cause is already addressed by merged PR #46384, and the issue itself contains a detailed resolution comment. The candidate's proposed work overlaps with existing PRs (#39559, #42792, #48970) and requires maintainer confirmation on whether further action is needed."
+  },
+  "fce3098af3266f4f055e0cbc5023b229e2dbcf5a78d09eb94f1823412b92f7d2": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix guardrail creation endpoint to accept MCP security on_violation actions",
+      "Update policy template to match API schema",
+      "Add regression test for creating guardrail from MCP template"
+    ],
+    "risks": [
+      "Potential API schema changes may affect other guardrail types",
+      "Maintainer may have design preferences for template handling"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "test_plan": [
+      "Reproduce issue by following steps in issue body",
+      "Run existing test suite for guardrails and policy templates",
+      "Add a test that POSTs the MCP template payload and expects 200"
+    ],
+    "unknowns": [
+      "Exact root cause of 422 error",
+      "Maintainer's preferred fix approach",
+      "Whether PR #30975 is still active or abandoned"
+    ],
+    "why": "Issue reports a reproducible UI bug (422 on guardrail creation from MCP template) with clear repro steps and logs. Existing PR #30975 is draft, stale (>30 days), and lacks root-cause analysis and robust tests, leaving room for a materially better PR. However, root cause is not yet identified and maintainer feedback is pending."
   },
   "fd47108caeda7314532797a09655a868ff9cb7e4c7f7a2cc8922ebb520281895": {
     "confidence": 0.7,
