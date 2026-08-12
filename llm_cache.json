@@ -6691,6 +6691,36 @@
     ],
     "why": "Issue reports a deterministic hang in EAGLE verify on DSA decode, with detailed stack and reproduction. However, it is an internal fork (feat-mooncache) with custom flags, and the root cause (CUDA driver deadlock vs missing warmup) is unconfirmed. Open PR and related issue lookups timed out, so duplicate work cannot be excluded."
   },
+  "4a981572e1e2f20048bdfb5572df8d54071f2807a60093e950ced20293559de7": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix multipart encoding in video creation and edits endpoints",
+      "Add extra_body passthrough for image edits",
+      "Fix multipart handling in pass-through endpoints",
+      "Handle URL input_reference in video transforms"
+    ],
+    "risks": [
+      "Changing API behavior may break existing clients",
+      "Potential conflicts with existing PRs addressing similar issues"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Reproduce each bug with provided curl commands and assert corrected behavior",
+      "Add regression tests for multipart encoding, extra_body forwarding, and URL input_reference handling"
+    ],
+    "unknowns": [
+      "Maintainer preference on splitting into multiple issues or PRs",
+      "Whether existing PRs (e.g., #36632) overlap with these fixes"
+    ],
+    "why": "The issue details four concrete, reproducible bugs in LiteLLM's image/video routes for OpenAI-compatible backends, with clear root causes and expected behavior. However, the track is agent_ai_infra, not llm_algorithm, and the candidate lacks maintainer approval or explicit design confirmation. The presence of multiple related PRs and the need for maintainer input on API behavior changes warrant a wait decision."
+  },
   "4afef72f7faab589c64235738ae45e53d02e3da49950703caefc8301617da865": {
     "confidence": 0.9,
     "contradictions": [
@@ -7466,6 +7496,37 @@
       "Statistical significance of measurements"
     ],
     "why": "The issue reports empirical observations about DBCache defaults and quality metrics, but lacks a concrete code-level root cause or a specific implementation proposal. It is more of a tuning/benchmark report than an actionable algorithm change. The track is agent_ai_infra, not llm_algorithm, so the algorithm evidence requirement is relaxed, but the issue still needs maintainer confirmation on desired defaults and metric additions."
+  },
+  "5136ffeab45de80a89f012d72bf41262e9efd142937ffac65e96026cf5d71562": {
+    "confidence": 0.8,
+    "contradictions": [
+      "User expects file access via Chat Completions API, but HostedCodeInterpreterTool is Responses API feature"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Clarify correct API usage (Responses vs Chat Completions) in samples/docs",
+      "If framework bug confirmed, fix serialization of file IDs in HostedCodeInterpreterTool"
+    ],
+    "risks": [
+      "Potential API misuse by user rather than framework bug",
+      "Changing framework behavior could break existing users"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 14,
+    "test_plan": [
+      "Reproduce with provided code using Chat Completions API to confirm failure",
+      "Switch to Responses API per maintainer suggestion and verify file access works",
+      "If framework bug persists, add integration test for HostedCodeInterpreterTool with uploaded file"
+    ],
+    "unknowns": [
+      "Whether user's actual code uses Responses API correctly",
+      "Exact framework version and minimal repro after API correction"
+    ],
+    "why": "Issue reports a user-visible bug in .NET agent framework where HostedCodeInterpreterTool cannot access uploaded files. However, maintainer comment suggests the code sample uses Chat Completions API instead of Responses API, which is likely the root cause. No confirmed framework defect, no maintainer approval, and design confirmation is needed."
   },
   "51d87afaf092458d78b1ac07988e63149990bf661331435205153c8cb9da853f": {
     "confidence": 0.7,
@@ -19727,6 +19788,33 @@
       "Maintainer confirmation on desired fix approach"
     ],
     "why": "The issue reports a crash in vLLM's metrics logger when CPU offloading is enabled, with a clear stack trace pointing to a negative counter increment. A commenter provides a detailed reproducer and suggests it may be a duplicate of #36755. However, the open PR and related issue lookups timed out, so duplicate implementations cannot be ruled out. The deterministic gate requires HUMAN_REVIEW, and the repository's AI disclosure policy conflicts with automated action."
+  },
+  "d52ace46a124558a03645a031d05d0451816631fb033f482b24c24e70edaafdb": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Add validation in HonchoConfig.from_backend_config() to reject non-positive message_char_limit and max_injection_chars, and non-finite/non-positive timeouts.",
+      "Add corresponding unit tests for validation and slicing behavior."
+    ],
+    "risks": [
+      "Potential maintainer preference on validation location or error message format.",
+      "Changing validation might break existing configs that rely on lenient behavior, though defaults are valid."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a failing test that instantiates HonchoConfig with message_char_limit=0 or -1 and expects ValueError.",
+      "Add tests for max_injection_chars and timeout values (0, negative, NaN, Inf).",
+      "Run existing test suite for the honcho backend to ensure no regressions."
+    ],
+    "unknowns": [
+      "No explicit maintainer approval or design confirmation, but repository does not require assignment; issue is clear and actionable."
+    ],
+    "why": "Issue clearly identifies a concrete correctness bug in Honcho backend config validation: non-positive message_char_limit causes silent data corruption via Python slicing. Root cause is missing validation in from_backend_config(). No competing PR or issue found. The fix is localized and testable."
   },
   "d5619453a101ef3ef74b0a606cc1f4fc02c31d32ab3901f0b06a149cf972dd0c": {
     "confidence": 0.7,
