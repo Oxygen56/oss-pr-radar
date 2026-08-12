@@ -3844,6 +3844,34 @@
     ],
     "why": "Issue provides a precise root cause (initialValues missing env_json, stdio save defaults to {}) with code references and a runnable PoC. A second user independently confirms the bug and adds a second affected code path. No competing PR or issue exists, and the fix is a minimal UI change with a clear regression test."
   },
+  "2d048185be5c349e516ff4c46d856642a1aed757d628b637bc611f675d4eff8a": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify RewardLoopWorker.compute_score_disrm to return reward_extra_info",
+      "Update docs/advance/reward_loop.rst example",
+      "Add CPU regression tests for vLLM and SGLang response formats"
+    ],
+    "risks": [
+      "Potential impact on other consumers expecting one-field return",
+      "Need to ensure empty dict is acceptable across all paths"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Run provided reproducer to confirm KeyError before fix and success after",
+      "Add unit tests for compute_score_disrm with vLLM and SGLang response formats",
+      "Run existing reward loop tests to ensure no regression"
+    ],
+    "unknowns": [
+      "Maintainer confirmation on preferred fix approach"
+    ],
+    "why": "Issue provides a deterministic CPU reproducer, exact root cause (missing reward_extra_info key in DisRM return), and a minimal fix. The change is a concrete algorithm-contract fix in the reward path, with clear regression test path."
+  },
   "2d20737835a18cacdd71192fb6a9764a1288bc51cb6e33179e270463ebe10767": {
     "confidence": 0.85,
     "contradictions": [
@@ -17228,6 +17256,35 @@
     ],
     "why": "Issue clearly identifies a concrete bug in OTel GenAI message role mapping with a minimal reproduction and root cause in code. However, the track is llm_algorithm and the issue is about telemetry semantics, not a training objective, model mechanism, or numerical method. The existing PR #7261 is closed and technically complete, but the issue explicitly requests design confirmation on the approach, and the repository requires assignment. Thus, maintainer confirmation is needed before starting new work."
   },
+  "c8e60bc08a9ea1005684372bdec910c9a694f09383da9799a75c88404a7eccb2": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix invokeSkill signal delivery to ensure signals are persisted or re-queued when target run is finishing",
+      "Align resource_id semantics between subscription writer and delivery resolver",
+      "Add poison-pill handling to prevent repository event queue from blocking indefinitely"
+    ],
+    "risks": [
+      "Changing signal delivery semantics may affect existing workflows and require careful coordination with agent lifecycle",
+      "Fixing resource_id mismatch may require migration or compatibility handling for existing subscriptions"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 12,
+    "test_plan": [
+      "Reproduce Bug 1B with the provided repro sketch and add a regression test that verifies a skill kickoff during a finishing run is either persisted or triggers a new run",
+      "Reproduce Bug 2 by creating a PR subscription with mismatched resource_id and verify delivery succeeds after fix; add a test that a failed delivery does not block subsequent events"
+    ],
+    "unknowns": [
+      "Maintainer's preferred fix approach for Bug 1 delivery semantics",
+      "Whether the resource_id mismatch is in the writer or resolver and if a migration is needed"
+    ],
+    "why": "The issue describes two distinct bugs with detailed evidence and a repro sketch, but the root causes are not fully isolated: Bug 1 has two variants with different mechanisms, and Bug 2's resource_id mismatch is clear but the fix location (writer vs resolver) is undecided. Maintainer has labeled for trio-tb and is investigating, so assignment is in progress. No competing PR exists, but design confirmation is needed for the delivery semantics and queue poisoning fix."
+  },
   "c8f99d2ae5e49176ef375c4cd7a226e720335077e149d75c66981152dfe3b145": {
     "confidence": 0.95,
     "contradictions": [],
@@ -19895,6 +19952,22 @@
       "Whether PR #41834 already addresses this issue or is a different change"
     ],
     "why": "Issue provides a clear root cause and a minimal repro for a deterministic compile failure in FA4 SM100 split-KV kernels, with a suggested fix (bump nvidia-cutlass-dsl pin and/or defensive initialization). However, the deterministic gate is HUMAN_REVIEW, and there is an existing PR (#41834) with semantic overlap that needs maintainer comparison. Also, the issue is a bug report, not a code contribution; actionability depends on maintainer assignment or confirmation."
+  },
+  "e40e4703c17027f9a3e3e1c6387ace666bf41a00cb3dbd7bad91e3d81cb8da30": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "decision": "REJECT",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [],
+    "risks": [],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "test_plan": [],
+    "unknowns": [],
+    "why": "The issue is a user bug report about WebSocket failures. The root cause is already identified and fixed by merged PRs #39587 and #39424. The reported error message is a harmless debug log from redis-py. No new actionable code work remains."
   },
   "e424f4ebec0915a61bdc2a0b8aba5c7e2e997268d45e0d65dbc3329dc3af303c": {
     "confidence": 0.8,
