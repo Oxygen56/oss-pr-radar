@@ -19954,6 +19954,34 @@
     ],
     "why": "Issue identifies a clear typo in attribute name causing min_tokens to be ignored in DSPARK. Existing PR #33531 addresses the same files but has failed CI/checks and lacks complete evidence. A new PR with a minimal fix and robust tests could be materially better."
   },
+  "e490af9ce720ec0bc50c18608c2d955da6aa252317f07c841e707bdf64c7407e": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify withBackendSelectionParams in src/api/backend-registry/url-selection.ts to split and preserve URL fragment before query parsing, then reconstruct as pathname?query#fragment.",
+      "Add regression tests for query-plus-fragment and fragment-only paths."
+    ],
+    "risks": [
+      "Potential edge cases with multiple '#' or encoded fragments; ensure only the first '#' is treated as fragment delimiter.",
+      "If the helper is used elsewhere with fragment-containing paths, behavior change could affect callers, though current call sites are fragment-free."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add the provided failing test to __tests__/api/backend-registry/url-selection.test.ts and run vitest.",
+      "Add a fragment-only test case (e.g., /conversations/abc#details) to ensure reconstruction as /conversations/abc?backend=local-1#details.",
+      "Run existing test suite for the module to confirm no regressions."
+    ],
+    "unknowns": [
+      "No maintainer confirmation or assignment, but repository does not require assignment; issue is clear and actionable."
+    ],
+    "why": "Issue provides a precise root cause, a failing test, and acceptance criteria for a deterministic URL reconstruction bug in a helper used for backend-pinned links. No competing PR or related issue exists, and the fix is localized and testable."
+  },
   "e50476dd7fb544c08c3afe3c784235163af4ce54291601de1140082a58905f91": {
     "confidence": 0.85,
     "contradictions": [],
