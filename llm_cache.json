@@ -5902,6 +5902,35 @@
     ],
     "why": "Issue provides a clear, reproducible bug with root cause in discriminator bypassing narrow_type, but gate_decision is HUMAN_REVIEW and open PR #7104 has semantic overlap requiring manual comparison. No maintainer approval or assignment confirmation."
   },
+  "44d92b22e3dcb7bf902639c3510ff06fca1e450508ff1bf569aad558724156ac": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Deduplicate suspended step entries in getWorkflowRunSteps",
+      "Reset suspendPayload/suspendedAt on step re-entry or terminal status",
+      "Align nested step identity between REST snapshot and watch stream"
+    ],
+    "risks": [
+      "Changing step identity may break existing clients relying on dotted keys",
+      "Resetting suspend fields could affect resume logic if not carefully scoped"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Run the provided repro script against the fix to verify only one suspended step entry",
+      "Add regression tests for stale suspend fields and timestamp inversion",
+      "Add tests for identity consistency between getWorkflowRunById and watch events"
+    ],
+    "unknowns": [
+      "Exact maintainer preference for identity scheme (dotted vs plain) not confirmed"
+    ],
+    "why": "Issue provides a self-contained repro script and detailed root-cause analysis for a high-impact data-quality bug in nested workflow suspend/resume. The maintainer triage confirms the bug and suggests concrete fix locations. No competing PR exists, and the fix is well-scoped to core workflow state handling."
+  },
   "44e40295ec80bba4ec088320d33d4758b2ac9b04f13e68736d1d27b4e6b1fcda": {
     "confidence": 0.7,
     "contradictions": [
@@ -22205,6 +22234,32 @@
       "Whether effect identity approach is acceptable to maintainers"
     ],
     "why": "Issue identifies a real architectural gap: capability hooks run outside durable units causing duplicate side effects on replay. Proposal is concrete and references existing code paths. However, maintainer design confirmation is required, and the comment raises a critical correctness concern about exactly-once semantics that needs resolution."
+  },
+  "fb12208e14ebb932c0291e4798ceeb0e83e099586391915a89e6a1e2e421fbf5": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims q4_0 is too lossy, but maintainer suggests model may be unsuitable; no code change identified"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Potential per-model KV cache configuration or improved quantization handling"
+    ],
+    "risks": [
+      "May be a model-specific issue not fixable in Ollama; changing default quantization could impact performance"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with specific models and q4_0 KV cache; compare outputs across quantization levels; add regression test if code change is proposed"
+    ],
+    "unknowns": [
+      "Whether maintainers consider this a bug requiring code change; exact root cause in quantization implementation"
+    ],
+    "why": "Issue reports user-visible quality degradation with q4_0 KV cache, but root cause is not definitively established; maintainer comments suggest it may be model-specific and not a code bug. No concrete algorithm or code path identified, and no maintainer approval or help-wanted signal."
   },
   "fb27f52c5ec6e4e06ca3218a0e2e731e5154863975ac4736cac4b10bcd067442": {
     "confidence": 0.8,
