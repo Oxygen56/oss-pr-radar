@@ -369,6 +369,39 @@
     ],
     "why": "Issue provides a precise root cause and a deterministic repro, but a recent comment reveals a second, deeper bug (remaining_list never reaches the provider) that invalidates the proposed fix's sufficiency. Existing PR #29288 is stale and incomplete. Maintainer confirmation is needed to align on the correct fix scope."
   },
+  "07009529dbb8298a44c4cbfcd69ef4fc87986a273db47f150bb7b4e5bd491721": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims no fallback for anthropic_messages, but comment notes #33222 fixed error handling; fallback still missing"
+    ],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add fallback-aware wrapper for anthropic_messages streaming in router.py",
+      "Catch MidStreamFallbackError and SSE error events",
+      "Re-enter fallback logic on mid-stream failures"
+    ],
+    "risks": [
+      "Potential state leak in pending_error_event handling",
+      "Behavior change may affect existing streaming consumers",
+      "Need to avoid duplicating or conflicting with existing PR #29205"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a failing test that simulates SSE error events mid-stream and asserts fallback is attempted",
+      "Add a regression test for transport-level mid-stream drops (e.g., httpx.ReadError) on /v1/messages",
+      "Run existing streaming and fallback unit tests"
+    ],
+    "unknowns": [
+      "Maintainer confirmation on design direction is not yet obtained",
+      "Exact implementation details of the wrapper may need alignment with existing patterns"
+    ],
+    "why": "Issue clearly identifies a missing fallback wrapper for anthropic_messages streaming, with a concrete root cause and reproduction. Existing PR #29205 is weak (no tests, stale), and a materially better PR is plausible by following the in-tree precedent of _aresponses_streaming_iterator."
+  },
   "071cc772b86525081c574dcfcbf9b29e5079373611d8519630e5c4705b121ab6": {
     "confidence": 0.85,
     "contradictions": [],
@@ -8823,6 +8856,31 @@
     ],
     "why": "Issue provides a detailed root cause and a working fix, but the deterministic gate requires HUMAN_REVIEW and the related issue audit timed out. Existing PR #50882 is weak (draft, no tests, failing CI), but a materially better PR is plausible. However, the lack of maintainer confirmation and the unresolved audit block actionability."
   },
+  "5ed1a9a59311fd439bf4ae59626fc69aee6b2913b77311feeb9e1c081c8c3b61": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify scheduler admission path to validate assigned_worker_id against current worker snapshot",
+      "Clear stale assignment and reselect from available workers when pinned worker is absent"
+    ],
+    "risks": [
+      "Potential behavior change in session affinity; need to ensure no unintended session resets when worker is temporarily unavailable"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add regression test reproducing the scenario: assign session to worker, remove worker, add replacement, verify session recovers and uses new worker",
+      "Run focused ThunderAgent scheduler test suite"
+    ],
+    "unknowns": [
+      "Exact code location and maintainer design preferences for session affinity handling"
+    ],
+    "why": "Issue describes a clear user-visible bug with a concrete root cause: scheduler returns stale assigned_worker_id without checking current worker discovery. Reproduction steps and expected behavior are explicit, and a draft fix exists. No competing PR or issue found."
+  },
   "5f225779e17c986d138bc4d049860f192656ad81c161a597de915b541fa4c3f6": {
     "confidence": 0.8,
     "contradictions": [],
@@ -10279,6 +10337,38 @@
     ],
     "why": "Issue clearly identifies a root cause (resolved_model gating) and proposes a concrete fix with a test plan. However, the deterministic gate is HUMAN_REVIEW and existing PRs (#10621, #10462) overlap semantically, requiring maintainer comparison before new work."
   },
+  "6ad6c596fe1a0c9829e2d0bcd964846970d450ebbb64de0b75b2f8fca46c5391": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Scheduler session creation to set schedule_id",
+      "Recipe-level goose_mode handling",
+      "Lock recovery on interrupted runs",
+      "Headless session approval mode handling"
+    ],
+    "risks": [
+      "Existing PR #11110 may be merged first, reducing scope",
+      "Maintainer may have design preferences for scheduler behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce each bug with provided steps and add regression tests",
+      "Test schedule sessions returns sessions with schedule_id",
+      "Test interrupted run-now clears lock",
+      "Test recipe goose_mode overrides global mode"
+    ],
+    "unknowns": [
+      "Whether maintainers have already started work on these issues",
+      "Exact code paths for scheduler and session creation"
+    ],
+    "why": "Issue reports four concrete scheduler defects with clear repro steps and evidence. Existing PR #11110 partially addresses one defect (run-now failure reporting) but lacks regression tests and does not cover the other three bugs. A materially better PR could fix all four issues with proper tests."
+  },
   "6af1a1a9e70126951b2dad20617a16b6730177325ea47704a542ead31ef00483": {
     "confidence": 0.8,
     "contradictions": [],
@@ -10892,6 +10982,37 @@
     ],
     "why": "Issue reports a user-visible regression in Browser Mode with a clear repro and expected behavior, but the root cause is uncertain (fix not in rc.8 vs. upgrade path gap) and requires maintainer confirmation on design choice (seed vs. skip). No open PR or related issue found, and gate says HUMAN_REVIEW."
   },
+  "7199a06e62c88bb56d13dc0935dbcef92cccb46576fa7b7c22413957ed47a98f": {
+    "confidence": 0.7,
+    "contradictions": [
+      "The issue claims no way to run Kimi K3 on CPU, but PR #51855 may provide support; however, it is not directly linked to this issue."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify CPU platform logic to not force-disable prefix caching/chunked prefill when model requires mamba cache mode 'align'",
+      "Add validation to fail fast with clear error if KimiLinearForCausalLM is unsupported on CPU",
+      "Respect --hf-overrides use_mla=false before CPU platform check"
+    ],
+    "risks": [
+      "Changing CPU platform behavior may affect other models that rely on MLA detection",
+      "Potential conflict with existing PR #51855 which may already address the root cause"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 12,
+    "test_plan": [
+      "Reproduce the issue with the provided steps on a CPU build",
+      "Add a regression test that runs the model with --enable-prefix-caching --enable-chunked-prefill on CPU and expects either successful startup or a clear error",
+      "Test that --hf-overrides use_mla=false is respected before CPU platform check"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred fix direction or if PR #51855 already resolves the issue",
+      "Exact interaction between MLA detection and mamba cache mode 'align' on CPU"
+    ],
+    "why": "The issue describes a clear user-facing bug on CPU with conflicting validation logic, but the supplied gate requires HUMAN_REVIEW and the open PR #51855 has semantic overlap with the same code path, needing maintainer comparison before new work. The root cause is partially clear but requires design confirmation on how to handle MLA detection and mamba cache mode on CPU."
+  },
   "720dafaa2fe122d41285b9e71ac03cafc7d7259e9d3dedd42a481bc0bf35dbd3": {
     "confidence": 0.7,
     "contradictions": [],
@@ -11412,6 +11533,33 @@
       "Whether maintainers have already started work or have design preferences"
     ],
     "why": "Issue reports a concrete authentication failure in Azure OpenAI evaluator metrics with service principal auth, providing a minimal repro config and clear error. No competing PR or issue found. The root cause is likely a tenant mismatch in the auth flow for evaluator calls, but exact code path is unconfirmed."
+  },
+  "76b5c7c494964a6b044d1a2dc434e4bccf6ebbfc0123dd8ab67d992d87438234": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/core/src/tools/askUserQuestion.ts",
+      "auto-cancel producers in coreToolScheduler.ts and related"
+    ],
+    "risks": [
+      "Behavior change may affect existing tests and user expectations",
+      "Incomplete coverage if producers don't attach cancelMessage"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "test_plan": [
+      "Update coreToolScheduler.test.ts 'plan mode with ask_user_question' to expect cancelMessage",
+      "Add regression test simulating auto-cancel with cancelMessage"
+    ],
+    "unknowns": [
+      "Exact auto-cancel path in reporter's session (missing /about output, CLI version, launch method)"
+    ],
+    "why": "Issue is a well-diagnosed bug with clear root cause and maintainer confirmation, but maintainer explicitly requires sign-off on behavior split before landing; no PR competition."
   },
   "7751fad09dde653e243bea3752e07d7a9d072ba6b580e2bdf24c074bc3880788": {
     "confidence": 0.7,
@@ -17441,6 +17589,35 @@
     ],
     "why": "The issue provides a deterministic reproduction and a fully isolated root cause with a clear failure chain. However, the deterministic gate is HUMAN_REVIEW, and the existing PR #20642 is closed unmerged with mergeable state blocked, indicating maintainer design decisions are pending. The fix requires choosing among vendoring, bundling, or upstream patching, which needs maintainer confirmation."
   },
+  "c01732eb70a4057aa379888deca4dd9c277c1de40952f96e007559269415f31d": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify src/google/adk/cli/api_server.py to conditionally register in-memory exporters or bound their retention",
+      "Possibly expose an opt-out parameter on get_fast_api_app()",
+      "Add regression test for memory retention"
+    ],
+    "risks": [
+      "Changing exporter registration may affect DevServer trace UI functionality",
+      "Opt-out parameter may alter public API surface"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Use the provided minimal reproduction to assert that memory_exporter._spans length does not grow unboundedly after many requests",
+      "Run existing unit tests for api_server and fast_api modules"
+    ],
+    "unknowns": [
+      "Maintainer preference on whether to move exporters to DevServer only or add opt-out parameter",
+      "Whether assignment is required for contribution in this repository"
+    ],
+    "why": "Issue clearly identifies an unbounded memory leak in ApiServer.get_fast_api_app() due to unconditional registration of in-memory span exporters, with a concrete reproduction and proposed fixes. However, the deterministic gate requires HUMAN_REVIEW, and the submission policy needs assignment, so maintainer confirmation is required before implementation."
+  },
   "c01f14ed1f6cd0ef9100001e55e3f2351e5d3903da38785389966e573828b0e3": {
     "confidence": 0.8,
     "contradictions": [],
@@ -19185,6 +19362,29 @@
       "Maintainer's preference on implementation approach (resolver vs CLI-only)"
     ],
     "why": "The issue clearly identifies a missing MCP tool enumeration in the CLI, with a concrete code path and proposed design. However, the triage bot's comment indicates an implementation is already in progress, and the issue lacks explicit maintainer approval or design confirmation. The proposed change is a user-facing feature enhancement, not a critical bug fix, and the existing PR may already address it."
+  },
+  "d263202a3e9e5df804fd39db9530ac59585d0321d052cfb57691402c5845a076": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Fix session reload/append logic in DatabaseSessionService or workflow runner when compaction events are written mid-run."
+    ],
+    "risks": [
+      "Potential design changes to session event handling may affect other session services or compaction behavior."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "test_plan": [
+      "Create a regression test using the provided reproducer with a mock or in-memory DB to simulate compaction mid-workflow and assert no session-modified error."
+    ],
+    "unknowns": [
+      "Exact code path causing the stale session error; maintainer's preferred fix approach."
+    ],
+    "why": "Issue reports a reproducible crash when context compaction occurs mid-workflow with DatabaseSessionService, but root cause is not identified and no maintainer confirmation exists. The supplied gate decision is HUMAN_REVIEW, so a new candidate cannot be started without maintainer input."
   },
   "d2a2d09e56657388c24334de2fc6cb8c9eda1fe7a695ee7ca0250fc621460717": {
     "confidence": 0.7,
