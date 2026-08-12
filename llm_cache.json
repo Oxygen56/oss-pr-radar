@@ -10509,6 +10509,34 @@
     ],
     "why": "The issue reports a server-side forwarding bug with strong reproduction evidence, but the root cause is not identified in the codebase and the fix path is unclear. The bot flags a possible duplicate (#41300), and there is no maintainer confirmation or design direction. The track is agent_ai_infra, not llm_algorithm, so algorithm evidence is not required, but the lack of a concrete code-level root cause and the duplicate flag make immediate action risky."
   },
+  "7057df55bbf9160940e8f467b3f36babb514c682390f79fe14e6fdde100d2afa": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add default index on mastra_workflow_snapshot (workflow_name, \"createdAt\" DESC) in WorkflowsPG.getDefaultIndexDefinitions()",
+      "Consider keyset pagination for listWorkflowRuns to avoid COUNT(*) seq scan"
+    ],
+    "risks": [
+      "Existing PR #20186 may already address the issue; need to compare implementation boundaries",
+      "Adding index may affect write performance or migration paths"
+    ],
+    "root_cause_clarity": "high",
+    "score": 15,
+    "test_plan": [
+      "Run the public repro (petrchiriboga/mastra-pg-workflow-runs-fullscan-repro) to confirm seq scan before and index scan after",
+      "Add regression test in stores/pg verifying default index definitions include the new index"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred design for index definitions or pagination changes",
+      "Whether PR #20186 actually fixes this issue or is unrelated"
+    ],
+    "why": "The issue provides a clear root cause (missing default index on mastra_workflow_snapshot) and a public repro, but the deterministic gate requires HUMAN_REVIEW and the existing PR #20186 has semantic overlap with the same code paths, requiring maintainer comparison before new work starts."
+  },
   "7064df3b525479e3d19215ef46074fec08ad5384af52536831c99ae029864eba": {
     "confidence": 0.7,
     "contradictions": [
@@ -17412,6 +17440,35 @@
     ],
     "why": "The issue reports a CUDA illegal memory access in the GDN kernel with multiple reproductions, but the root cause is not yet identified. Existing PRs (e.g., #51508) target the GDN path but do not reference this issue, and a maintainer has not confirmed the fix direction. The deterministic gate requires HUMAN_REVIEW, and the open PR assessment indicates semantic overlap requiring manual comparison."
   },
+  "c57a11e7b85512cff9def08a0d83758e0481c40b31020444ed228dfc08e39c59": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Investigate rmcp upgrade impact on OAuth flow",
+      "Fix MCP client initialization to handle 401 responses correctly"
+    ],
+    "risks": [
+      "Potential API behavior changes in rmcp upgrade",
+      "Need maintainer confirmation on intended OAuth flow"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "test_plan": [
+      "Reproduce with Datadog MCP server using v1.45.0",
+      "Add regression test for OAuth MCP connection with mocked 401 response"
+    ],
+    "unknowns": [
+      "Exact root cause of 401 during initialize",
+      "Maintainer's preferred fix approach",
+      "Whether issue is marked Ready on project board"
+    ],
+    "why": "Issue reports a user-visible OAuth MCP connection regression after upgrading to v1.45.0, with a clear repro and a suspected rmcp version bump. However, the root cause is not confirmed, and the issue explicitly instructs not to begin implementation until it reaches Ready on the project board. The deterministic gate is HUMAN_REVIEW, and there is no maintainer approval or design confirmation."
+  },
   "c59cd4dbdc685c2589947ab1e731c1d5afafc71289870fec9d837e2acfe8f47a": {
     "confidence": 0.7,
     "contradictions": [
@@ -20840,6 +20897,34 @@
     ],
     "why": "The issue describes a real session-breaking bug with a plausible fix, but the maintainer's comment indicates the root cause is capability selection policy for unknown models, not the serializer. A user confirms a config workaround exists, so the remaining work is a policy decision on default image support for unknown models. This requires maintainer design confirmation before implementation."
   },
+  "e8e5b4b3df9d3bedf0ab764fd9669a3605e8257e9169436f16ac2f72d8efc9dd": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "nixl/worker.py rank normalization",
+      "KV transfer handshake logic"
+    ],
+    "risks": [
+      "Fix may be specific to NIXL backend and not generalize",
+      "Potential interaction with existing KV cache layout changes"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 13,
+    "test_plan": [
+      "Reproduce with pTP2+dTP4 on 8 GPUs, verify handshake succeeds",
+      "Add regression test for asymmetric TP block count scaling"
+    ],
+    "unknowns": [
+      "Whether maintainers have approved the proposed fix approach",
+      "Exact code path for block count scaling in NIXL handshake"
+    ],
+    "why": "The issue reports a concrete NIXL handshake failure in asymmetric TP PD disaggregation, with a plausible root cause (block count mismatch) and a commenter claiming to work on a fix. However, the track requires a concrete LLM algorithm mechanism; the evidence only shows distributed training invariants at medium depth, and the fix is likely a local normalization in NIXL worker code, not a novel algorithm. The presence of an active contributor and lack of maintainer confirmation suggest waiting for assignment or design confirmation."
+  },
   "e90336b81d5c388b203def18fbc782d832d7f606ab07d3677dbf11cd19c6a5ce": {
     "confidence": 0.7,
     "contradictions": [
@@ -21738,6 +21823,38 @@
       "Maintainer design preferences for shutdown ordering and timeout configuration"
     ],
     "why": "Issue describes a clear shutdown-ordering bug with a verified causal chain and a concrete expected behavior. However, the deterministic gate is HUMAN_REVIEW, and an existing PR (#21255) has semantic overlap that requires maintainer comparison before starting new work."
+  },
+  "f03b441336acba5d6c6c4e393c8728b3ba9ad9efee85db887344cff58a148298": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims no matching report, but related issue #8458 shares checkpoint/memory signals"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix in langgraph runtime/scheduler to preserve or detect untracked Send input on resume",
+      "Add regression test for UntrackedValue in Send tasks with checkpoint resume"
+    ],
+    "risks": [
+      "Potential duplicate with issue #8458 and related PRs",
+      "Existing PR #8584 is closed with failed CI; may need to be reopened or superseded",
+      "Changing retry behavior for untracked inputs could affect other use cases"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "test_plan": [
+      "Run the provided repro script to confirm failure",
+      "Add a regression test that reproduces the issue and passes after fix",
+      "Run targeted unit tests for checkpoint and Send task handling"
+    ],
+    "unknowns": [
+      "Maintainer intent on which contract (preserve, detect, or document) is preferred",
+      "Whether existing PR #8584 can be revived or if a new PR is needed"
+    ],
+    "why": "Issue clearly describes a checkpoint resume bug where UntrackedValue input to a failed Send task is lost, with a minimal repro. However, the deterministic gate requires HUMAN_REVIEW, and there is an existing PR (#8584) that is closed and has failed CI checks, plus potential overlap with issue #8458. Maintainer confirmation is needed to decide intended contract and avoid duplicate work."
   },
   "f051fc2b0529efd5a7799e65bae45196c9d09d8ef7eaac187dc388f7efc7d577": {
     "confidence": 0.6,
