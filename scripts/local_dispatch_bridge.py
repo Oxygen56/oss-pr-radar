@@ -1053,7 +1053,7 @@ def claim_intent(args: argparse.Namespace) -> dict[str, Any]:
     if not intent:
         raise RuntimeError("intent is not pending")
     evidence, verdict = _audit_intent(intent)
-    if verdict.status != "ALLOW":
+    if verdict.status == "BLOCK":
         store.record_stage(
             intent["key"],
             "AUDIT_NO_GO",
@@ -1065,6 +1065,13 @@ def claim_intent(args: argparse.Namespace) -> dict[str, Any]:
             dedupe_key=f"{intent['intentId']}:{evidence.digest}",
         )
         return {"ok": True, "authorized": False, "decision": verdict.as_dict()}
+    if verdict.status != "ALLOW":
+        return {
+            "ok": True,
+            "authorized": False,
+            "held": True,
+            "decision": verdict.as_dict(),
+        }
     store.record_stage(
         intent["key"],
         "AUDIT_PASS",
@@ -1161,6 +1168,34 @@ def release_claim(args: argparse.Namespace) -> dict[str, Any]:
     if not released:
         raise RuntimeError("claim release authorization is stale or invalid")
     return {"ok": True, "intentId": args.intent_id, "released": True}
+
+
+def reopen_false_terminal(args: argparse.Namespace) -> dict[str, Any]:
+    allowed = {"AI_DISCLOSURE_REQUIRES_USER"}
+    if args.expected_reason not in allowed:
+        raise RuntimeError("terminal reason is not eligible for policy migration")
+    store = ledger(args.ledger)
+    store.reopen_false_terminal(
+        args.key,
+        expected_reason=args.expected_reason,
+        migration_reason=args.migration_reason,
+    )
+    published, attempts = _publish_controller_feedback_updates(
+        {
+            args.key: {
+                "status": "policy_migration_pending",
+                "terminal_reason": args.migration_reason,
+                "scanner_version": SCANNER_DECISION_REVISION,
+                "analyzed": iso_z(datetime.now(UTC)),
+            }
+        }
+    )
+    return {
+        "ok": True,
+        "key": args.key,
+        "stateChanged": published,
+        "publishAttempts": attempts,
+    }
 
 
 def git_path(*args: str, cwd: Path) -> Path:
@@ -4364,6 +4399,10 @@ def main() -> int:
     claim_release.add_argument("--intent-id", required=True)
     claim_release.add_argument("--owner")
     claim_release.add_argument("--reason", required=True)
+    reopen_parser = subparsers.add_parser("reopen-false-terminal")
+    reopen_parser.add_argument("--key", required=True)
+    reopen_parser.add_argument("--expected-reason", required=True)
+    reopen_parser.add_argument("--migration-reason", required=True)
     commit = subparsers.add_parser("commit")
     commit.add_argument("--intent-id", required=True)
     commit.add_argument("--owner")
@@ -4534,6 +4573,8 @@ def main() -> int:
         result = claim_intent(args)
     elif args.operation == "claim-release":
         result = release_claim(args)
+    elif args.operation == "reopen-false-terminal":
+        result = reopen_false_terminal(args)
     elif args.operation == "commit":
         result = commit_receipt(args)
     elif args.operation == "retry-dispatch":

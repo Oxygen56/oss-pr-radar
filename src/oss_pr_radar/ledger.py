@@ -1746,6 +1746,52 @@ class RadarLedger:
                     ),
                 )
 
+    def reopen_false_terminal(
+        self,
+        key: str,
+        *,
+        expected_reason: str,
+        migration_reason: str,
+    ) -> None:
+        """Reopen a pre-dispatch terminal produced by an obsolete policy gate."""
+
+        now = iso_z(datetime.now(UTC))
+        with self.transaction() as connection:
+            row = connection.execute(
+                "SELECT stage,terminal_reason FROM opportunities WHERE key=?", (key,)
+            ).fetchone()
+            if row is None:
+                raise LedgerError("opportunity not found")
+            if row["stage"] != "AUDIT_NO_GO" or row["terminal_reason"] != expected_reason:
+                raise LedgerError("terminal migration authorization is stale")
+            dispatched = connection.execute(
+                "SELECT 1 FROM intents WHERE opportunity_key=? AND thread_id IS NOT NULL LIMIT 1",
+                (key,),
+            ).fetchone()
+            if dispatched is not None:
+                raise LedgerError("a dispatched task cannot be reopened by policy migration")
+            connection.execute(
+                "UPDATE opportunities SET stage='QUALIFIED',terminal_reason=NULL,updated_at=? WHERE key=?",
+                (now, key),
+            )
+            connection.execute(
+                """UPDATE intents SET status='EXPIRED',lease_owner=NULL,lease_until=NULL,
+                   updated_at=? WHERE opportunity_key=? AND status='REJECTED'
+                   AND thread_id IS NULL""",
+                (now, key),
+            )
+            self._event(
+                connection,
+                key,
+                "QUALIFIED",
+                f"policy-migration:{migration_reason}",
+                {
+                    "previousReason": expected_reason,
+                    "migrationReason": migration_reason,
+                },
+                now,
+            )
+
     def pending(self) -> list[dict[str, Any]]:
         now_dt = datetime.now(UTC)
         now = iso_z(now_dt)

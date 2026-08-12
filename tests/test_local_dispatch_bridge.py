@@ -1173,6 +1173,56 @@ def test_private_task_dispatch_is_not_limited_by_publication_canary(monkeypatch,
     assert json.loads(audit["payload_json"])["liveAudit"]["evidence"]["digest"] == ("evidence-2")
 
 
+def test_claim_hold_does_not_terminalize_candidate(monkeypatch, tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(
+        intent := {
+            "intentId": "intent-hold",
+            "key": "a/b#1",
+            "repo": "a/b",
+            "issueNumber": 1,
+            "issueUrl": "https://github.com/a/b/issues/1",
+            "title": "Runtime bug",
+            "mode": "canary",
+            "score": 9,
+            "snapshotId": "snapshot",
+            "decisionDigest": "decision",
+            "issuedAt": iso_z(datetime.now(UTC)),
+            "expiresAt": iso_z(datetime.now(UTC) + timedelta(hours=1)),
+        }
+    )
+    evidence = SimpleNamespace(digest="evidence", as_dict=lambda: {"digest": "evidence"})
+    verdict = SimpleNamespace(
+        status="HOLD",
+        reason_code="MAINTAINER_REVIEW_PENDING",
+        as_dict=lambda: {
+            "status": "HOLD",
+            "reasonCode": "MAINTAINER_REVIEW_PENDING",
+        },
+    )
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    monkeypatch.setattr(MODULE, "_audit_intent", lambda _intent: (evidence, verdict))
+
+    result = MODULE.claim_intent(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            intent_id=intent["intentId"],
+            owner="controller",
+            lease_minutes=15,
+            prepare=False,
+        )
+    )
+
+    assert result["authorized"] is False
+    assert result["held"] is True
+    assert store.pending()[0]["ledgerStatus"] == "PENDING"
+    with store.connect() as connection:
+        stage = connection.execute("SELECT stage FROM opportunities WHERE key='a/b#1'").fetchone()[
+            "stage"
+        ]
+    assert stage == "QUALIFIED"
+
+
 def test_dispatch_notification_receipt_is_per_created_thread(tmp_path):
     store, _worktree = registered_store(tmp_path)
 

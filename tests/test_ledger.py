@@ -746,6 +746,43 @@ def test_post_publication_no_go_audit_does_not_downgrade_lifecycle(tmp_path):
     assert json.loads(ignored["payload_json"])["reason"] == "ISSUE_CLOSED"
 
 
+def test_policy_migration_reopens_only_matching_undispatched_terminal(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    original = intent()
+    store.enqueue(original)
+    store.record_stage("a/b#1", "AUDIT_NO_GO", reason="AI_DISCLOSURE_REQUIRES_USER")
+
+    store.reopen_false_terminal(
+        "a/b#1",
+        expected_reason="AI_DISCLOSURE_REQUIRES_USER",
+        migration_reason="PRIVATE_DISCLOSURE_DISPATCH_ENABLED",
+    )
+
+    with store.connect() as connection:
+        opportunity = connection.execute(
+            "SELECT stage,terminal_reason FROM opportunities WHERE key='a/b#1'"
+        ).fetchone()
+        status = connection.execute(
+            "SELECT status FROM intents WHERE intent_id='intent-1'"
+        ).fetchone()["status"]
+    assert dict(opportunity) == {"stage": "QUALIFIED", "terminal_reason": None}
+    assert status == "EXPIRED"
+
+    refreshed = original | {
+        "expiresAt": iso_z(datetime.now(UTC) + timedelta(hours=2)),
+        "submissionPolicy": "REQUIRE_USER_DISCLOSURE_APPROVAL",
+    }
+    assert store.enqueue(refreshed) is False
+    assert store.pending()[0]["submissionPolicy"] == "REQUIRE_USER_DISCLOSURE_APPROVAL"
+
+    with pytest.raises(LedgerError, match="authorization is stale"):
+        store.reopen_false_terminal(
+            "a/b#1",
+            expected_reason="AI_DISCLOSURE_REQUIRES_USER",
+            migration_reason="PRIVATE_DISCLOSURE_DISPATCH_ENABLED",
+        )
+
+
 def test_no_go_requires_title_sync_before_cleanup(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(intent())
