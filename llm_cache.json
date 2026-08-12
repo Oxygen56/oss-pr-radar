@@ -5777,6 +5777,35 @@
     ],
     "why": "Issue reports a systemic D-side stall in Mooncake remote KV transfer with clear logs and reproduction outline, but root cause is unconfirmed and an existing PR #50984 is weak (no tests, failing CI). Maintainer design confirmation is needed before starting a competing PR."
   },
+  "424d199098a0eb5c38cce467fa9ce91bb3cd9659710c54b5f647ddf1119adf85": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "internal/acp/service.go: stopReason handling and error propagation",
+      "internal/acp/types.go: SessionPromptResult schema (optional reason field or JSON-RPC error carrier)",
+      "internal/acp/status.go: ensure error logging at ACP boundary"
+    ],
+    "risks": [
+      "Changing stopReason value may affect clients relying on 'error' (though spec-invalid)",
+      "Adding a reason field may require schema extension approval"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add a unit test that simulates runErr and verifies stopReason is spec-valid and error cause is present in response or JSON-RPC error",
+      "Add a regression test with a strict ACP v1 deserializer to ensure no Parse error on error paths",
+      "Run existing ACP package tests and static checks"
+    ],
+    "unknowns": [
+      "Exact ACP v1 schema extension policy for adding a reason field; maintainer preference on JSON-RPC error vs result field"
+    ],
+    "why": "The issue identifies a concrete bug in the ACP session/prompt error path: runErr is dropped and an invalid stopReason 'error' is emitted, causing strict clients to fail parsing. Root cause is precisely located in internal/acp/service.go, with a clear suggested fix and community-confirmed spec violation. No competing PR or issue exists, and the fix is actionable."
+  },
   "425201c50d1722eaa153369d747757895aad8de1c66148f5d7acbec17fbd92df": {
     "confidence": 0.8,
     "contradictions": [],
@@ -8632,6 +8661,36 @@
       "Whether the maintainers intend to support DSpark on this image or expect a fixed checkpoint; this affects whether the fix is accepted, but does not block implementation"
     ],
     "why": "The issue identifies a concrete, reproducible crash in the DSpark speculative decoding path, with a clear root cause: a NoneType dereference in the embedding-sharing dimension check in llm_base_proposer.py. The fix is a small, well-scoped guard that can be validated by reproducing the exact worker invocation and verifying the engine loads. No competing implementation exists; the only related PR is a draft with no code overlap."
+  },
+  "5f6ec5496392d61b7e5a556e658fcd0a261ff6b0d8cb582ed22bfcfd048a1ca0": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue reports error, but comments indicate adding --model-type diffusion or updating to latest version fixes it"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "CLI argument validation for diffusion models",
+      "Documentation for MiniMax-H3 deployment"
+    ],
+    "risks": [
+      "Potential duplicate of merged PR #33365",
+      "Low value if issue is already resolved by version update"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with the exact Docker command and latest sglang version to verify if the error persists",
+      "Add a regression test for CLI argument parsing with --model-type diffusion"
+    ],
+    "unknowns": [
+      "Whether the issue persists in the latest version after the merged PR",
+      "Maintainer's intent on whether this is a bug or usage error"
+    ],
+    "why": "The issue reports a CLI argument error for MiniMax-H3, but comments indicate the problem is resolved by adding --model-type diffusion or updating to the latest version. The root cause is unclear and may be a version mismatch or documentation gap rather than a code bug. The referenced PR #33365 was merged and may already address the issue, but it does not reference this issue. No maintainer confirmation or design direction exists."
   },
   "602ffadc5009d1d939d921c6cef24c451087f7a3cb999bfa1737c780dd9ed33a": {
     "confidence": 0.8,
@@ -12487,6 +12546,36 @@
       "Whether the issue still reproduces on the latest main after recent ragged CUDA Graph changes; maintainer requested confirmation but no response yet"
     ],
     "why": "The issue precisely identifies a deterministic CUDA Graph replay failure caused by mismatched request-slot geometry for the same token tier in DSpark compact ragged verify mode. It provides a clear root cause (capture slots computed as min(num_tokens, max_bs) without considering per-request token count), a minimal repro with exact commit and commands, a control matrix isolating the failure, and diagnostic evidence. This is a concrete LLM inference kernel/algorithm bug with a clear code path and validation path."
+  },
+  "883973763512f32ccc94bf65148c121218070bf8db14433db7d62e31f7b71fa8": {
+    "confidence": 0.7,
+    "contradictions": [
+      "PR #20548 is unrelated despite referencing the issue"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "storage layer",
+      "workflow runtime"
+    ],
+    "risks": [
+      "existing PR #21068 may overlap",
+      "design changes may be required"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 11,
+    "test_plan": [
+      "reproduce with the 57-step video run and measure Postgres/Redis sizes",
+      "add regression test for incremental saves"
+    ],
+    "unknowns": [
+      "whether maintainers prefer a specific fix approach",
+      "exact code path causing full re-saves"
+    ],
+    "why": "Issue reports a high-impact performance bug with clear repro signals, but the deterministic gate is HUMAN_REVIEW and the open PR #21068 may partially address it. The root cause is not fully isolated, and maintainer confirmation is needed before starting work."
   },
   "88c096b7f8c22009704716bddb4b16dfff510e656b430d130d02d031e27179e7": {
     "confidence": 0.7,
@@ -21679,6 +21768,36 @@
       "Whether a related PR exists (none found)"
     ],
     "why": "Issue reports a user-visible bug in the code-explorer subagent but lacks root cause, logs, or a minimal repro. No maintainer confirmation or design direction. The track is agent_ai_infra, not llm_algorithm, so algorithm evidence is not required, but the bug is not actionable without more investigation."
+  },
+  "f069c995f7efcf95338ec9dd8eab1a95c13bd8f124b237b891d9f5bdd876ad42": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims validate_credentials has no effect, but typings say it should validate only for API Key Auth scheme"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Backend connected_accounts create logic to honor validate_credentials for static schemes",
+      "Possibly update API typings or docs"
+    ],
+    "risks": [
+      "Changing validation behavior may break existing integrations that rely on lenient creation",
+      "Vendor API validation may be unreliable or rate-limited"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with raw HTTP POST using invalid API_KEY and validate_credentials:true, assert non-ACTIVE status",
+      "Add regression test for API_KEY validation in connected account creation"
+    ],
+    "unknowns": [
+      "Whether maintainers have already decided on the intended behavior",
+      "Backend code location and whether a PR would be accepted without prior discussion"
+    ],
+    "why": "The issue reports a server-side bug where validate_credentials is ignored for API_KEY, with a clear repro and data. However, the repo is ComposioHQ/composio (agent_ai_infra), and the issue is labeled 'support' with an automated triage note deferring to support team. No maintainer confirmation or design decision is present, and the fix likely requires backend changes beyond a simple PR. The candidate is actionable but needs maintainer assignment or confirmation."
   },
   "f0de309411bf797fea9f94c5b698250563f23c83efe3fb49d7255a787e77fb1e": {
     "confidence": 0.85,

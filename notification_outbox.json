@@ -902,11 +902,11 @@
     },
     "review|mastra-ai/mastra#20747": {
       "category": "WAIT_MAINTAINER",
-      "digest": "734db8ee7cb614b24d606e48eec72a22896ae45ef7f9023fbafcfe73f881d124",
+      "digest": "b3f081a50eb4f714edcbaaf0736e5ea0820a9bc1511e2bba989fd7387de50fd0",
       "kind": "review",
-      "scannerVersion": "oss_pr_radar_v42_terminal_feedback_revoke",
-      "seenAt": "2026-08-09T09:09:28.988461Z",
-      "stateId": "5a1293cc74c5aa2d2308e9d8642afed1e8ea9f2b12ae2669def8645ec9315893"
+      "scannerVersion": "oss_pr_radar_v44_disclosure_tasks_resolve_uncertainty",
+      "seenAt": "2026-08-12T03:46:02.301325Z",
+      "stateId": "af93809388ec5e6e60aae26836df1fc2e16c9d82c2b36ce407922c8d92bc43aa"
     },
     "review|mastra-ai/mastra#20765": {
       "legacy": true,
@@ -2214,11 +2214,11 @@
     },
     "watch|sgl-project/sglang#30554": {
       "category": "PR_FOLLOWUP",
-      "digest": "552d55c4a42f033b95077644d292bfef1b7bd1dc55f35e53de4bb710e0cfee34",
+      "digest": "488f917aa4fa4e811d5e6797c73866045a36fc0ed9dc9f889244d253d26c2947",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-12T03:20:29.324878Z",
-      "stateId": "e17e88e988f9786b4146f56e77bcb11a3b38810971b554f52973d71d15610929"
+      "seenAt": "2026-08-12T03:46:02.657191Z",
+      "stateId": "0ef808bc1158f712147960458989ddda1cfe5abca5ff1901872439c4a5d46627"
     },
     "watch|sgl-project/sglang#33408": {
       "legacy": true,
@@ -2266,11 +2266,11 @@
     },
     "watch|sgl-project/sglang#34138": {
       "category": "PR_FOLLOWUP",
-      "digest": "2ebdfb2f620e0b514cab3d95f13ac320200ed09d5a7618b860f7d822460dc284",
+      "digest": "4c09c7c6024f78325c80d6ef4d49b742914cb711a3a2e155df6adbc8c8ebeee8",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-12T03:32:21.964748Z",
-      "stateId": "001c2d9ce1594a3397ab51a01d942fd68c9cc1a6484597cb7c339617a177e1c3"
+      "seenAt": "2026-08-12T03:46:02.657191Z",
+      "stateId": "092a3f6716d003cb063fd535bf370b2a6a47aac49631edc29f272685ac02dd35"
     },
     "watch|usekaneo/kaneo#1484": {
       "legacy": true,
@@ -2341,7 +2341,7 @@
       "seenAt": "2026-08-06T10:09:13.778625Z"
     }
   },
-  "digest": "b7f4161a4303742c0b19bcd6c8a7f1219bc5fb43c213631a6a19cda9cf6a694a",
+  "digest": "279b5471aac1b16ffdeaf54c804a4019a6c15008a81da26baaf73a1ef9ba4067",
   "events": [
     {
       "attempts": 1,
@@ -21815,9 +21815,114 @@
       "runId": "pr-followup-1786505271",
       "sentAt": "2026-08-12T03:32:57.988415Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "mastra-ai/mastra#20747"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "b3f081a50eb4f714edcbaaf0736e5ea0820a9bc1511e2bba989fd7387de50fd0",
+          "key": "mastra-ai/mastra#20747",
+          "kind": "review",
+          "scannerVersion": "oss_pr_radar_v44_disclosure_tasks_resolve_uncertainty",
+          "stateId": "af93809388ec5e6e60aae26836df1fc2e16c9d82c2b36ce407922c8d92bc43aa"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[mastra-ai/mastra#20747](https://github.com/mastra-ai/mastra/issues/20747) Every step re-saves the entire conversation — in Postgres and Redis**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue reports a high-impact performance bug with clear repro signals, but the deterministic gate is HUMAN_REVIEW and the open PR #21068 may partially address it. The root cause is not fully isolated, and maintainer confirmation is needed before starting work.\n改动：storage layer；workflow runtime\n验证：reproduce with the 57-step video run and measure Postgres/Redis sizes；add regression test for incremental saves\n风险：existing PR #21068 may overlap；design changes may be required\n竞争：发现关键词相关 PR，但未确认直接覆盖：#20548；需人工核对\n下一步：已有 PR 但强度不足；先看维护者规则和 issue 讨论，必要时先请求确认方案或分配。\n证据：复现信号 2，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-12T03:46:02.301325Z",
+      "eventId": "0fcfd73402c57ecd3a5b6d6368aed739b0d695abb0f37ebbc3cc591a75f24201",
+      "idempotencyKey": "0fcfd73402c57ecd3a5b6d6368aed739b0d695abb0f37ebbc3",
+      "kind": "review",
+      "runId": "scan-20260812T034334Z-c22317023deb",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "sgl-project/sglang#30554",
+        "sgl-project/sglang#34138"
+      ],
+      "candidateStates": [
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "488f917aa4fa4e811d5e6797c73866045a36fc0ed9dc9f889244d253d26c2947",
+          "key": "sgl-project/sglang#30554",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "0ef808bc1158f712147960458989ddda1cfe5abca5ff1901872439c4a5d46627"
+        },
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "4c09c7c6024f78325c80d6ef4d49b742914cb711a3a2e155df6adbc8c8ebeee8",
+          "key": "sgl-project/sglang#34138",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "092a3f6716d003cb063fd535bf370b2a6a47aac49631edc29f272685ac02dd35"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#30554](https://github.com/sgl-project/sglang/pull/30554) [Spec] Size shared logits buffer for adaptive candidates**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#34138](https://github.com/sgl-project/sglang/pull/34138) Bind streaming abort cleanup to request lifecycle**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-12T03:46:02.657191Z",
+      "eventId": "4d9a9e607392d211b78d326b780fe8bcbfa25a672a097646db2bfcc6a541fd8f",
+      "idempotencyKey": "4d9a9e607392d211b78d326b780fe8bcbfa25a672a097646db",
+      "kind": "watch",
+      "runId": "pr-followup-1786506163",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-12T03:32:21.964748Z",
+  "generatedAt": "2026-08-12T03:46:02.657191Z",
   "newEventCount": 1,
   "version": "notification_outbox_v2"
 }
