@@ -6888,6 +6888,35 @@
     ],
     "why": "Issue provides a clear, reproducible bug with root cause traced to missing timing/tps tracking in the non-MLLM scheduler path. No competing PR or issue exists. The fix is localized and actionable."
   },
+  "4fbd9ee4e90f7bd75c43d1bdda36c28ad0c32124535ad1fb50b2cfdce6bb3296": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Investigate video/audio pipeline for Minimax H3",
+      "Potential fixes in sampling, VAE decoding, or audio encoding"
+    ],
+    "risks": [
+      "May be user error or model quality issue, not a code bug",
+      "Fixing could require significant refactoring without clear benefit"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Create minimal reproducible case with fixed seed and reduced frames",
+      "Compare output quality against reference implementation or known-good version"
+    ],
+    "unknowns": [
+      "Root cause of quality degradation",
+      "Maintainer interest or design preference",
+      "Whether issue is reproducible with minimal settings"
+    ],
+    "why": "Issue reports poor video/audio quality with Minimax H3 but lacks root cause analysis, minimal repro, or maintainer confirmation. The only follow-up comment suggests workarounds (more steps, no lora) without identifying a code defect. No open PR or related issue exists, and the track is agent_ai_infra, not llm_algorithm, so algorithm evidence is absent. Actionability is blocked by unclear root cause and missing maintainer direction."
+  },
   "4fe546c268dd6a331756c1dd6061ec14320e0f3c61d4a6608c2120af719c3407": {
     "confidence": 0.8,
     "contradictions": [
