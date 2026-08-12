@@ -85,6 +85,34 @@ def test_llm_cannot_upgrade_human_review(tmp_path, monkeypatch):
     assert result[0]["auto_spawn"] is False
 
 
+def test_disclosure_candidate_keeps_private_work_gate_when_review_wants_confirmation(
+    tmp_path, monkeypatch
+):
+    instance = evaluator(tmp_path)
+    monkeypatch.setattr(
+        instance,
+        "_request",
+        lambda payload: {
+            "decision": "WAIT_MAINTAINER",
+            "score": 7,
+            "confidence": 0.7,
+        },
+    )
+    result = instance.evaluate_candidates(
+        [
+            candidate(
+                gate_decision="ALLOW_PRIVATE_WORK",
+                category="LOCAL_FIX_ONLY",
+                submission_policy="ai_disclosure_conflict",
+                public_submission_allowed=False,
+            )
+        ]
+    )
+    assert result[0]["gate_decision"] == "ALLOW_PRIVATE_WORK"
+    assert result[0]["category"] == "LOCAL_FIX_ONLY"
+    assert result[0]["auto_spawn"] is True
+
+
 def test_api_failure_fails_closed(tmp_path, monkeypatch):
     instance = evaluator(tmp_path)
 

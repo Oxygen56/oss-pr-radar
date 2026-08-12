@@ -113,10 +113,11 @@ def validate_candidate(candidate: dict[str, Any]) -> None:
             "auto spawn requires authorized work",
         )
         _require(review.get("status") == "ok", "auto spawn requires successful LLM review")
-        _require(
-            review.get("decision") in {"NEW_CLEAN_CANDIDATE", "PR_COMPETITION_OPPORTUNITY"},
-            "auto spawn requires an actionable LLM decision",
-        )
+        review_actionable = review.get("decision") in {
+            "NEW_CLEAN_CANDIDATE",
+            "PR_COMPETITION_OPPORTUNITY",
+        } or (private_disclosure_work and review.get("decision") == "WAIT_MAINTAINER")
+        _require(review_actionable, "auto spawn requires an actionable LLM decision")
 
 
 @dataclass(frozen=True)

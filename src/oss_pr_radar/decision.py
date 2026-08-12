@@ -124,10 +124,11 @@ def authorize(candidate: dict[str, Any], evidence: EvidenceBundle) -> Authorizat
             or candidate.get("auto_spawn") is not True
         ):
             return decision("HOLD", "SCAN_GATE_NOT_AUTHORIZED")
-        if review.get("status") != "ok" or review.get("decision") not in {
+        review_actionable = review.get("decision") in {
             "NEW_CLEAN_CANDIDATE",
             "PR_COMPETITION_OPPORTUNITY",
-        }:
+        } or (private_disclosure_work and review.get("decision") == "WAIT_MAINTAINER")
+        if review.get("status") != "ok" or not review_actionable:
             return decision("HOLD", "SEMANTIC_REVIEW_NOT_ACTIONABLE")
         if float(review.get("confidence") or 0.0) < 0.65:
             return decision("HOLD", "SEMANTIC_CONFIDENCE_LOW")

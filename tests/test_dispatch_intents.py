@@ -143,6 +143,30 @@ def test_ai_disclosure_candidate_is_dispatched_for_private_work_only():
     assert result["intents"][0]["autoSubmitAuthorized"] is False
 
 
+def test_ai_disclosure_review_uncertainty_still_dispatches_private_task():
+    result = MODULE.build(
+        report(
+            candidate(
+                category="LOCAL_FIX_ONLY",
+                gate_decision="ALLOW_PRIVATE_WORK",
+                submission_policy="ai_disclosure_conflict",
+                public_submission_allowed=False,
+                llm_review={
+                    "status": "ok",
+                    "decision": "WAIT_MAINTAINER",
+                    "confidence": 0.7,
+                    "model": "deepseek-v4-flash",
+                },
+            )
+        ),
+        signing_key=KEY,
+        now=NOW,
+        mode="canary",
+    )
+    assert len(result["intents"]) == 1
+    assert result["intents"][0]["autoSubmitAuthorized"] is False
+
+
 def test_existing_unconsumed_intent_survives_unobserved_scan_and_is_renewed():
     existing = MODULE.build(report(candidate()), signing_key=KEY, now=NOW)
     result = MODULE.build(report(), existing, signing_key=KEY, now=NOW + timedelta(minutes=30))

@@ -303,7 +303,16 @@ class DeepSeekEvaluator:
         original_gate = candidate.get("gate_decision")
         decision = review["decision"]
         low_confidence = review["confidence"] < 0.65
-        if original_gate == "HUMAN_REVIEW" or decision == "WAIT_MAINTAINER" or low_confidence:
+        private_disclosure_work = bool(
+            original_gate == "ALLOW_PRIVATE_WORK"
+            and str(candidate.get("submission_policy") or "").startswith("ai_disclosure")
+            and candidate.get("public_submission_allowed") is False
+        )
+        if private_disclosure_work:
+            candidate["category"] = "LOCAL_FIX_ONLY"
+            candidate["gate_decision"] = "ALLOW_PRIVATE_WORK"
+            candidate["auto_spawn"] = True
+        elif original_gate == "HUMAN_REVIEW" or decision == "WAIT_MAINTAINER" or low_confidence:
             candidate["category"] = "WAIT_MAINTAINER"
             candidate["gate_decision"] = "HUMAN_REVIEW"
             candidate["auto_spawn"] = False
