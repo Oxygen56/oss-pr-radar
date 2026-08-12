@@ -1263,6 +1263,32 @@
     ],
     "why": "Issue reports a clear bug with root cause and minimal repro, but the deterministic gate requires HUMAN_REVIEW and the repository has an AI disclosure policy that blocks automated action. Existing PR #50955 is weak (failed CI) and may be a competition opportunity, but maintainer confirmation is needed."
   },
+  "119bf7534e5c355339b9092314897a492800df9955a909d1a304878b167d28bd": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Provider translation adapter for Anthropic computer use tool",
+      "Schema mapping for display_width_px/display_height_px in Bedrock/Vertex fallback paths"
+    ],
+    "risks": [
+      "Potential maintainer design preferences on schema mapping; avoid unintended API behavior changes"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add a regression test using the provided curl payload to assert successful translation and 200 response",
+      "Run targeted unit tests for the translation adapter and provider fallback logic"
+    ],
+    "unknowns": [
+      "Exact code location of the translation adapter; maintainer confirmation on desired mapping approach"
+    ],
+    "why": "The issue describes a concrete bug in the AI Gateway's provider translation layer: valid Anthropic computer use tool fields are not mapped correctly for Bedrock/Vertex fallbacks, causing HTTP 400 errors. A public reproduction via curl is provided, and no competing PR or issue exists. The fix is a targeted schema mapping correction in the translation adapter."
+  },
   "11e07a0613c6c48288a2a775dcf259cd06be93aa039df21fcf6f6af2c9e362d6": {
     "confidence": 0.8,
     "contradictions": [],
