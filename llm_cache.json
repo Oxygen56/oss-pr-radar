@@ -6023,6 +6023,32 @@
     ],
     "why": "The issue reports a VSCode BYOK integration failure with LiteLLM proxy, but the root cause is unclear: a commenter suggests a URL configuration issue, while the reporter says it persists across URL styles. The problem may be in VSCode's client behavior or LiteLLM's /v1/models response format, requiring maintainer confirmation of the intended fix scope."
   },
+  "3ccfec3428609455656a0ac379dba06b5a74ee6fac829f573253607b8b7104db": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Register document-parsed image handles in the resources table during parsing",
+      "Ensure CreateAccessGrant can resolve these handles to public /r/<token> URLs"
+    ],
+    "risks": [
+      "Potential impact on existing resource lifecycle or access control if registration is not done carefully",
+      "May require changes to document parsing pipeline and resource management modules"
+    ],
+    "root_cause_clarity": "high",
+    "score": 15,
+    "test_plan": [
+      "Create a failing test that uploads a docx/PDF with embedded images, queries with resource_urls=public, and asserts the returned URLs are http(s)://",
+      "Verify database resources table contains the handle after parsing"
+    ],
+    "unknowns": [
+      "Maintainer design preference for resource registration timing and access grant behavior"
+    ],
+    "why": "The issue describes a clear regression in v0.7.2 where document-parsed images are not registered in the resources table, causing resource:// handles to remain unresolved. The root cause is well identified and a concrete fix path exists. However, the deterministic gate requires HUMAN_REVIEW, and the issue lacks maintainer confirmation or design approval, so work should not start without maintainer input."
+  },
   "3d0361391570622fede68057f4bb0740c07182310bb67c59a54c55ee87b65870": {
     "confidence": 0.6,
     "contradictions": [],
@@ -17946,6 +17972,34 @@
     ],
     "why": "The issue describes a clear user-visible bug with a minimal reproduction, but the root cause is not fully diagnosed and the fix may require design decisions about session lifecycle and error recovery. The deterministic gate requires HUMAN_REVIEW, and there is no maintainer approval or explicit help-wanted signal."
   },
+  "b7c004e699feba973f3134a58a452542e9042d9c616ce4100284750d34d8a1c8": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify workspace path resolution to preserve all roots in SDK controller, helper functions, activation, and skills/plugins/rules resolution",
+      "Ensure getRoots() and multi-root search receive the full list of workspace folders"
+    ],
+    "risks": [
+      "Potential behavior changes for single-root workspaces if not carefully guarded",
+      "May require coordination with SDK bundle updates"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a failing test that simulates a multi-root workspace with multiple folders and verifies that @-mentions, add-file, and cwd operations include all roots",
+      "Run existing unit tests for workspace service and related providers"
+    ],
+    "unknowns": [
+      "Exact code structure in the source repository (issue references minified bundle)",
+      "Maintainer design preferences for multi-root support"
+    ],
+    "why": "Issue provides a detailed root cause analysis with specific code locations in the shipped extension bundle, a clear multi-root workspace scenario, and reproducible steps. The bug is in the agent's workspace path handling, which is core to agent infrastructure. No competing PR or issue found, and the gate allows work."
+  },
   "b8133a2661a9e9af8a3267fc2547c0bd80c412a716a798af6e93281c631b15fc": {
     "confidence": 0.7,
     "contradictions": [],
@@ -25774,6 +25828,27 @@
       "Maintainer preference on the fix approach"
     ],
     "why": "Issue clearly identifies a real bug with a minimal repro and root cause in messages.py, but an open PR (#7053) has semantic overlap and may already address the same code paths. The deterministic gate requires HUMAN_REVIEW, and the overlap must be manually compared before creating a new task."
+  },
+  "fd6068bb2a1d8fe75b0f717f0d2dc9926ce9a2d8c12e40705e355397659b7745": {
+    "confidence": 0.95,
+    "contradictions": [],
+    "decision": "REJECT",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Remove or make optional the decord import in lmms-eval"
+    ],
+    "risks": [
+      "Potential loss of video decoding functionality if decord is removed entirely"
+    ],
+    "root_cause_clarity": "high",
+    "score": 1,
+    "test_plan": [
+      "Run the provided reproduction command to confirm segfault disappears after removing decord"
+    ],
+    "unknowns": [],
+    "why": "The issue is a dependency-related segfault caused by decord's global symbol override, not an LLM algorithm defect. The proposed fix (making decord optional or removing it) is operational dependency management, not a training objective, model mechanism, or numerical method. It lacks a reference-vs-implementation test or controlled experiment for algorithm validation."
   },
   "feacb19b7cf392f775baf197c9c83a1b3750f61bca8020cf5aff7308ae69be1a": {
     "confidence": 0.7,
