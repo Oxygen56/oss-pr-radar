@@ -8365,6 +8365,31 @@
     ],
     "why": "The issue reports a performance bug with clear reproduction steps and measurable latency impact, but the root cause is not identified and no maintainer confirmation or design direction exists. The fix likely involves caching or conditional logic in the Vertex/Gemini provider, but the exact code path is unknown."
   },
+  "5254bb5f5127ae4d203711d07640a0715a7a0c57e6c1b277561d982f5ca8b479": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "src/google/adk/models/lite_llm.py streaming accumulator",
+      "tool-call argument finalization"
+    ],
+    "risks": [
+      "PR #6632 may already fix the issue; overlapping changes could conflict"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 11,
+    "test_plan": [
+      "Reproduce with SSE streaming and transfer_to_agent; add regression test for partial argument chunks"
+    ],
+    "unknowns": [
+      "Whether PR #6632 resolves the issue; maintainer design preference; root cause not yet identified"
+    ],
+    "why": "Issue reports a high-impact streaming tool-call truncation bug with a clear repro, but root cause is not isolated. Existing PR #6632 likely addresses the same code path but is not linked to the issue and lacks maintainer confirmation. Gate requires HUMAN_REVIEW."
+  },
   "52d78111c08f090705537e5d962c3063816ee8415d104e7d20f61a61684da72d": {
     "confidence": 0.7,
     "contradictions": [
@@ -17622,6 +17647,35 @@
       "Maintainer's design intent and acceptance criteria"
     ],
     "why": "The issue requests a UI feature to collapse AI work details by default. The deterministic gate is HUMAN_REVIEW, and the open PR and related issue lookups failed due to timeouts, so duplicate implementations cannot be ruled out. The bot comments suggest possible duplicates (#35193, #14511) and a related comment link, but these are not fully verified. No maintainer approval or design confirmation is present."
+  },
+  "aff05de05cc99c57d067b82541f635102013f8a2b14c46290679574f2d75842e": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Adjust max_tokens calculation or model catalog limits for DeepInfra models",
+      "Possibly add provider-specific max_tokens validation or fallback"
+    ],
+    "risks": [
+      "Changing max_tokens globally may affect other models/providers",
+      "Provider limits may change dynamically, requiring runtime fetching"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with the reported model and provider to confirm the error",
+      "Add a unit test for max_tokens clamping based on upstream model limits"
+    ],
+    "unknowns": [
+      "Whether the 32000 value is hardcoded in the gateway or derived from catalog",
+      "Maintainer preference for handling provider-specific limits",
+      "Exact code path where max_tokens is set"
+    ],
+    "why": "The issue reports a max_tokens mismatch for a specific model on DeepInfra, but the root cause is unclear: whether it's a gateway default, model catalog misconfiguration, or upstream limit change. No maintainer confirmation or design direction exists, and the fix could involve provider-specific logic or configuration changes."
   },
   "b0b15ca84081da9279a79f70a3fe6de5b086346f7abbe5532dc25b5ce61c4b2b": {
     "confidence": 0.7,

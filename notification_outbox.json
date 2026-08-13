@@ -622,6 +622,14 @@
       "seenAt": "2026-08-12T15:21:33.126839Z",
       "stateId": "a27a20dfd7078f5f2efb0fed0208836244c38c2bcdb39d306fc891679096f1c2"
     },
+    "review|google/adk-python#6716": {
+      "category": "WAIT_MAINTAINER",
+      "digest": "fd3b269ddaf3e8033fe6fb2b10ecc2e27ef1ede06affb6825112db489d0f9899",
+      "kind": "review",
+      "scannerVersion": "oss_pr_radar_v44_disclosure_tasks_resolve_uncertainty",
+      "seenAt": "2026-08-13T19:32:42.629723Z",
+      "stateId": "c310b7f812b7fc33ae1e65020547f133c867e551324aa7db504e8b29de822b58"
+    },
     "review|huggingface/trl#6683": {
       "category": "WAIT_MAINTAINER",
       "digest": "ebc5633819f2fb60f3f8d3d5575747db283f05b289227bd6a77c880fe9d06389",
@@ -1740,11 +1748,11 @@
     },
     "watch|BerriAI/litellm#36791": {
       "category": "PR_FOLLOWUP",
-      "digest": "ab9136653baae59b6f96de8d4f1722aa7dc03668a5146ab693b5dfde6b04ce56",
+      "digest": "06d37d5ff05c74713ba7113516f4c1b86beca997600eb88016f00dfcc50e2a1b",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-13T18:16:25.087563Z",
-      "stateId": "c04f8288e88ec34604d24ae3cbe78b0e9c94faecb151c8667f25faa9b20e0ffe"
+      "seenAt": "2026-08-13T19:32:43.136518Z",
+      "stateId": "0940a99700d47f8535031a6629b2cea7c21cf30715b1734aad60f0872d5d90cf"
     },
     "watch|SWE-bench/SWE-bench#593": {
       "category": "PR_FOLLOWUP",
@@ -1868,22 +1876,22 @@
     },
     "watch|sgl-project/sglang#30554": {
       "category": "PR_FOLLOWUP",
-      "digest": "b0fdc44923162f61ceaf19f3177163ff83728e7d641dd34bfefc3511f4b1f700",
+      "digest": "b1581c6d287700bcca34230802032c00c8572d7bd25933cf6bd902c0aa65ef6e",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-13T18:16:25.087563Z",
-      "stateId": "c65b011ffeb7ff9dd75af12243c4f0ba56ed92df0d44c663a2211b63da478477"
+      "seenAt": "2026-08-13T19:32:43.136518Z",
+      "stateId": "fdf83e3b4e261325cee6f8c8c149ce42bd96530f67fea03f6ec0d0cde34b59e7"
     },
     "watch|sgl-project/sglang#34138": {
       "category": "PR_FOLLOWUP",
-      "digest": "b6463bccd750b156fc8383fb016c43e13d876e5333710cc6cd1edee879662179",
+      "digest": "08f0478b7f64ccd70cf0508da91853e2cce30bab217e97cd5569d1fd8653830d",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-13T18:16:25.087563Z",
-      "stateId": "c81cbc74791f04169904f53507f18cb8fa5e036f324007d6c9c04dc7d063fc95"
+      "seenAt": "2026-08-13T19:32:43.136518Z",
+      "stateId": "2e37f17163148e46025ba4fc26d8514096d8d35261e6e7855b7d3225d89f0780"
     }
   },
-  "digest": "66cb5b52befa750628dda1ce6929df592ee9340edc209eec4dbdc73240926521",
+  "digest": "6f428fe1a5b55922290b05bc038d66ff1fdefae6d39d2b9aad53fd6fe388c438",
   "events": [
     {
       "attempts": 1,
@@ -19540,9 +19548,133 @@
       "runId": "pr-followup-1786644746",
       "sentAt": "2026-08-13T18:16:55.182030Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "google/adk-python#6716"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "fd3b269ddaf3e8033fe6fb2b10ecc2e27ef1ede06affb6825112db489d0f9899",
+          "key": "google/adk-python#6716",
+          "kind": "review",
+          "scannerVersion": "oss_pr_radar_v44_disclosure_tasks_resolve_uncertainty",
+          "stateId": "c310b7f812b7fc33ae1e65020547f133c867e551324aa7db504e8b29de822b58"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[google/adk-python#6716](https://github.com/google/adk-python/issues/6716) Streamed LiteLLM tool-call arguments truncated after the key — transfer_to_agent fails ~90% of turns on 2.5.0, 0% on 2.4.0**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue reports a high-impact streaming tool-call truncation bug with a clear repro, but root cause is not isolated. Existing PR #6632 likely addresses the same code path but is not linked to the issue and lacks maintainer confirmation. Gate requires HUMAN_REVIEW.\n改动：src/google/adk/models/lite_llm.py streaming accumulator；tool-call argument finalization\n验证：Reproduce with SSE streaming and transfer_to_agent; add regression test for partial argument chunks\n风险：PR #6632 may already fix the issue; overlapping changes could conflict\n竞争：发现 PR #6632 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 9，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-13T19:32:42.629723Z",
+      "eventId": "e1558c39a0d0e34b0eaa69dfde2ae288595f9a78ab14f8271f2ae86e39e73a90",
+      "idempotencyKey": "e1558c39a0d0e34b0eaa69dfde2ae288595f9a78ab14f8271f",
+      "kind": "review",
+      "runId": "scan-20260813T193003Z-61a09492ca30",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "BerriAI/litellm#36791",
+        "sgl-project/sglang#30554",
+        "sgl-project/sglang#34138"
+      ],
+      "candidateStates": [
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "06d37d5ff05c74713ba7113516f4c1b86beca997600eb88016f00dfcc50e2a1b",
+          "key": "BerriAI/litellm#36791",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "0940a99700d47f8535031a6629b2cea7c21cf30715b1734aad60f0872d5d90cf"
+        },
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "b1581c6d287700bcca34230802032c00c8572d7bd25933cf6bd902c0aa65ef6e",
+          "key": "sgl-project/sglang#30554",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "fdf83e3b4e261325cee6f8c8c149ce42bd96530f67fea03f6ec0d0cde34b59e7"
+        },
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "08f0478b7f64ccd70cf0508da91853e2cce30bab217e97cd5569d1fd8653830d",
+          "key": "sgl-project/sglang#34138",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "2e37f17163148e46025ba4fc26d8514096d8d35261e6e7855b7d3225d89f0780"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#36791](https://github.com/BerriAI/litellm/pull/36791) fix(router): support anthropic messages streaming fallback**\n建议：PR_FOLLOWUP\n价值：当前分支检查失败；存在未解决审查线程\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#30554](https://github.com/sgl-project/sglang/pull/30554) [Spec] Size shared logits buffer for adaptive candidates**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#34138](https://github.com/sgl-project/sglang/pull/34138) Bind streaming abort cleanup to request lifecycle**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-13T19:32:43.136518Z",
+      "eventId": "3c17997193a3e4ce128f4bdb13286fc312d08f714b0cf51dd9069970cd2500ae",
+      "idempotencyKey": "3c17997193a3e4ce128f4bdb13286fc312d08f714b0cf51dd9",
+      "kind": "watch",
+      "runId": "pr-followup-1786649356",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-13T18:16:25.087563Z",
+  "generatedAt": "2026-08-13T19:32:43.136518Z",
   "newEventCount": 1,
   "version": "notification_outbox_v2"
 }
