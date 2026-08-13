@@ -8057,6 +8057,37 @@
     ],
     "why": "The issue reports multiple structured-output backend failures with Kimi-K2.6 + EAGLE3, including a likely xgrammar bitmask desync under speculative decoding and an outlines compile-thread leak. The report is detailed and reproducible, but the root cause of the xgrammar desync is not confirmed; it may be a pre-existing bug in EAGLE3 interaction rather than a new algorithm defect. The outlines thread leak is a concrete bug but is more of an infrastructure/error-handling issue than a core LLM algorithm. The issue lacks maintainer confirmation and a clear reference implementation for validation."
   },
+  "4f2937b4e858e2ae22edefca3ae80e225d19325119bb46f3b1140d9cf558bc4e": {
+    "confidence": 0.7,
+    "contradictions": [
+      "None"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Startup validation to reject incompatible flag combination",
+      "or upstream vLLM fix for prefix caching across NIXL for Mamba-hybrid models"
+    ],
+    "risks": [
+      "Potential duplicate with #12198; upstream dependency may delay fix",
+      "Fix may require coordination with vLLM maintainers"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 13,
+    "test_plan": [
+      "Reproduce with provided config and model; verify crash occurs",
+      "After fix, run same config and confirm either clean startup error or successful prefix-cache hit across NIXL"
+    ],
+    "unknowns": [
+      "Whether upstream vLLM will support prefix caching for Mamba-hybrid over NIXL",
+      "Whether maintainers will choose fail-fast guard or full support",
+      "Exact code path and fix location in vLLM"
+    ],
+    "why": "Issue reports a crash in vLLM's NixlConnector when prefix caching is enabled for Mamba-hybrid models, with a clear repro and a maintainer triage comment requesting upstream linkage and path decision. The root cause is acknowledged in source comments but no fix is proposed; the requested outcome (support vs. fail-fast) is unresolved."
+  },
   "4f5e2d859dcfd656ce47760ad45f3e0b098c4367c0e794db93d63d03603d585a": {
     "confidence": 0.85,
     "contradictions": [],
@@ -9916,6 +9947,29 @@
       "Maintainer's intent on whether this is a bug or usage error"
     ],
     "why": "The issue reports a CLI argument error for MiniMax-H3, but comments indicate the problem is resolved by adding --model-type diffusion or updating to the latest version. The root cause is unclear and may be a version mismatch or documentation gap rather than a code bug. The referenced PR #33365 was merged and may already address the issue, but it does not reference this issue. No maintainer confirmation or design direction exists."
+  },
+  "5fefcfafa9805475b802a674c9ea4f2465fbad4cbad1be54dff6505ac28672eb": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify transcript-window.ts and kimi-tui.ts to preserve assistant message text in a recoverable way, e.g., by making StepSummaryComponent expandable or by not disposing assistant components."
+    ],
+    "risks": [
+      "Potential memory usage increase if assistant messages are kept in the component tree; need to balance with the existing folding optimization."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a minimal reproduction with 3+ assistant messages in one turn, complete the turn, and verify that Ctrl+O expands the folded summary to show the hidden assistant text. Add a unit test for foldCurrentTurnContent to ensure assistant messages are not disposed or are recoverable."
+    ],
+    "unknowns": [
+      "Maintainer preference on whether to expand the summary line or exclude assistant text from folding; no maintainer response yet."
+    ],
+    "why": "The issue clearly identifies a user-visible bug in the TUI where folded assistant messages are disposed and unrecoverable, with a detailed source investigation pointing to specific files and functions. The expected behavior is well-defined and the fix is actionable: either make the summary line expandable or exclude assistant text from folding. No competing PR or issue exists, and the maintainer has not yet responded, but the bug is concrete and reproducible."
   },
   "602ffadc5009d1d939d921c6cef24c451087f7a3cb999bfa1737c780dd9ed33a": {
     "confidence": 0.8,
