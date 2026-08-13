@@ -2416,6 +2416,29 @@
     ],
     "why": "The issue clearly identifies an unbounded linked_memory_ids metadata array causing Chroma compaction failures, with a concrete reproducer and expected behavior. However, the supplied gate decision is HUMAN_REVIEW, and the open PR assessment indicates semantic overlap with PR #5497 that requires manual comparison. The track is llm_algorithm but the issue is primarily a data-structure/backend integration bug, not an algorithm mechanism; the algorithm evidence is weak (matched terms 'adapter' and 'sharding' are not central). Actionability is blocked by the need to compare with existing PRs and confirm design direction."
   },
+  "1c29c8f7c77e5baad1dea1341a1beb0eb1d72dc394531f00f270c11a4a5a1045": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "DeepSpeed launcher or distributed initialization path"
+    ],
+    "risks": [
+      "Root cause may be external (PyTorch/NCCL version) or environment-specific; fix may be non-algorithmic"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with minimal DeepSpeed launch script on single GPU; compare with 0.17.2; add regression test for NCCL group init under DeepSpeed launcher"
+    ],
+    "unknowns": [
+      "Exact DeepSpeed version causing issue; ds_report output; maintainer acknowledgment; whether issue is reproducible on other environments"
+    ],
+    "why": "Issue reports a regression in DeepSpeed launcher causing NCCL CUDA error 600 during process-group init, but root cause is unconfirmed; no maintainer investigation or design confirmation. Track requires concrete algorithm mechanism; this is a runtime/launcher bug with no clear algorithmic invariant or reference implementation."
+  },
   "1cd4685b3e7aa1b7a8303d1283ef65a854a8263628728a78cf43b1c7658d0199": {
     "confidence": 0.85,
     "contradictions": [],
@@ -16983,6 +17006,31 @@
     ],
     "why": "The issue clearly identifies a stale tenant_embd_id causing empty api_key and a missing validation in get_model_config_by_id. However, the deterministic gate requires HUMAN_REVIEW and the candidate is a bug report without an implementation. Existing merged PRs partially address related resolution but not the execution-time stale cache scenario, so a new PR could be valuable, but design confirmation is needed."
   },
+  "ae346b25f311dbd21f829ebe68f2e29c80a6db6c82c657170988b33d4209f4ce": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Add 'send' to useEffect dependency array in src/hooks/use-handle-ws-events.ts",
+      "Optionally use a ref to stabilize send and avoid unnecessary effect re-runs"
+    ],
+    "risks": [
+      "Adding 'send' to deps may cause the effect to re-run more often if send is not stable, potentially leading to duplicate sends or performance issues"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Write a regression test that simulates a WebSocket reconnect and verifies that AgentState.PAUSED is sent after the reconnect",
+      "Run existing frontend unit tests for the hook"
+    ],
+    "unknowns": [
+      "Whether 'send' is already stable via useCallback, which affects the best fix approach"
+    ],
+    "why": "The issue identifies a clear stale closure bug in a React hook, with a concrete failure scenario and a minimal fix. It is a user-visible bug in a critical path (agent state handling) and is actionable without requiring design confirmation."
+  },
   "ae5841585ce6e1f648a203913ce6a20911d34f6c9f855023e8553450f23109a4": {
     "confidence": 0.8,
     "decision": "WAIT_MAINTAINER",
@@ -17955,6 +18003,32 @@
       "Run the existing ag-ui test suite and static checks to ensure no regression in valid snapshot emission cases."
     ],
     "why": "The issue provides a precise root cause, a deterministic no-LLM repro, production impact metrics, and a concrete suggested fix. However, the deterministic gate requires HUMAN_REVIEW, and maintainer triage is needed to confirm design preferences (e.g., whether to use pending-updates check vs. tool-name filter, and whether to introduce StateDeltaEvent at the boundary) and to disambiguate potential overlap with issue #7491."
+  },
+  "bb516bcf522aade73c2d9d1088435c11443264d36d9601497381a4ef6f7d3e06": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Fix exception propagation in error_handler flow for parallel nodes and streaming modes",
+      "Add regression tests for stream_mode custom/messages/subgraphs and parallel supersteps"
+    ],
+    "risks": [
+      "Potential design changes in error handling semantics may require maintainer approval",
+      "Fix may affect other streaming or parallel execution paths"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "test_plan": [
+      "Run the provided reproduction script to confirm failing cases",
+      "Add unit tests covering each failing configuration (parallel invoke, stream custom, messages, subgraphs) asserting handler runs and no exception escapes"
+    ],
+    "unknowns": [
+      "Root cause not yet identified; maintainer has not confirmed bug or desired fix approach"
+    ],
+    "why": "Issue provides a clear, reproducible bug with a detailed matrix of failing configurations, but root cause is not identified and no maintainer confirmation exists. The candidate offers to fix, but the deterministic gate requires HUMAN_REVIEW."
   },
   "bb536a2e30a50f411c88d1e8342aded54731436d9889f6b1e5458a12e7eeb5bd": {
     "confidence": 0.7,
