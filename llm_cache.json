@@ -2496,6 +2496,35 @@
     ],
     "why": "Issue provides a clear root cause: Triton persistent matmul kernel config exceeds SM89 shared memory, with multiple independent reproductions and local mitigations. However, open PR lookup failed due to rate limit, so duplicate implementation cannot be excluded. Maintainer has not confirmed fix direction; contributor suggests arch-aware config selection or fallback, while another commenter warns against simple device-limit gating due to arch-specific codegen. Requires maintainer decision on robust fix approach."
   },
+  "1cf64149698722c033f05142f575e6ebf909eec30e28443d8d40153aeae1f402": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify detectFileType() in packages/core/src/utils/fileUtils.ts to sniff magic bytes for media types instead of trusting extension",
+      "Modify processSingleFileContent() to fall back to text read or recoverable tool error on extension/content mismatch",
+      "Add regression test for non-image content with .png extension"
+    ],
+    "risks": [
+      "Changing media detection may affect legitimate image handling; need to ensure valid images still work",
+      "Fallback to text may expose binary content as text; need to guard with looksLikeText()"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a text file with .png extension containing JSON, call read_file, assert no API 400 and tool result is text or recoverable error",
+      "Run existing unit tests for fileUtils and binary-content",
+      "Add unit test for sniffFileKind() with JSON content"
+    ],
+    "unknowns": [
+      "No live end-to-end reproduction executed in CI, but repro steps are clear and source inspection confirms root cause"
+    ],
+    "why": "Issue provides a clear, reproducible bug with root cause confirmed by source inspection: extension-only image detection in detectFileType() and raw byte forwarding in processSingleFileContent() cause a turn-aborting API 400. Fix direction is concrete: sniff magic bytes before encoding as image, fall back to text or recoverable tool error. No competing PR exists; the only open PR is unrelated. Maintainer triage confirms root cause and fix direction, making this actionable."
+  },
   "1cf9e126e4eb8756e973dfc4e93dafa14dab8e227d2b2e88dc9719fc39392f54": {
     "confidence": 0.85,
     "contradictions": [
@@ -5143,6 +5172,33 @@
       "Exact rate policy and Redis key schema expected by maintainers"
     ],
     "why": "Issue clearly identifies a user-visible bug: API accepts arbitrary IDs but silently filters them, caused by a regression in #1684. Acceptance criteria are concrete and testable, and no competing PR exists. The fix is actionable and aligns with the repo's focus."
+  },
+  "36deb033ef9614205ee9f7418c95e5cf93e2a3121cf5e7f9c0e087e5d8aec869": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add save_lora_only to actor.yaml checkpoint config",
+      "Add regression test verifying resolved config includes the field and override works"
+    ],
+    "risks": [
+      "Potential overlap with PR #7388; need to compare and possibly supersede",
+      "Config schema changes may affect other configs if not isolated"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Run main_ppo --cfg all --resolve and assert save_lora_only present",
+      "Attempt override without + and verify no Hydra error"
+    ],
+    "unknowns": [
+      "Whether PR #7388 is acceptable to maintainers or will be merged soon"
+    ],
+    "why": "Issue identifies a concrete config schema bug: actor.yaml omits save_lora_only, causing Hydra override errors. Existing PR #7388 adds the field but lacks tests and does not reference the issue, leaving room for a more complete PR with regression tests."
   },
   "36e8df776583866334a2ece28641ead0b14bff97a6309a961cc68905e90b83d6": {
     "confidence": 0.7,
@@ -16230,6 +16286,33 @@
     ],
     "why": "Issue clearly identifies a user-visible bug in mem0 v3: ADD-only extraction causes stale/contradictory facts to accumulate, with a concrete reproduction scenario. However, the deterministic gate requires HUMAN_REVIEW, and multiple PRs already attempt to address this issue (#4969, #4965, #5240), all closed without merge. Maintainer design direction is still being clarified (append-only vs CRUD), as seen in comments. This requires maintainer confirmation before new work."
   },
+  "a40fcf451b2a351f160f05141e4b361fa3027f8dd5a39dd75afb2aceaa747789": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify litellm/integrations/opentelemetry.py to filter metadata based on redact_user_api_key_info",
+      "Add regression test verifying sensitive fields are omitted from OTEL spans when redaction is enabled"
+    ],
+    "risks": [
+      "Potential over-redaction if pattern matching is too broad, removing non-sensitive metadata",
+      "Need to ensure redaction logic aligns with existing redaction behavior in other logging integrations"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Set up minimal LiteLLM proxy with redact_user_api_key_info: true and otel callback",
+      "Send a test request and inspect OTEL span attributes to confirm no metadata.user_api_key_* fields appear",
+      "Run existing OTEL integration tests and add a new unit test for the redaction logic"
+    ],
+    "unknowns": [
+      "Exact maintainer preference for redaction patterns and whether existing redaction utilities should be reused"
+    ],
+    "why": "Issue provides a clear, reproducible bug: redact_user_api_key_info is not applied to OpenTelemetry span attributes, leaking sensitive metadata. Root cause is identified in code path and a concrete fix is suggested. No competing PR exists."
+  },
   "a4284d967a499038b2f0cef8c6aaec18012a110ca1e74ab24fbe2d1a4873dc62": {
     "confidence": 0.7,
     "contradictions": [],
@@ -19838,6 +19921,32 @@
       "Maintainer approval for the specific implementation approach"
     ],
     "why": "Issue identifies a concrete bug: fast mode silently excludes scripts/ via hardcoded FAST_SKIP_DIRS in discover.c, with reproduction and maintainer acknowledgment. However, the deterministic gate requires HUMAN_REVIEW, and the issue lacks explicit maintainer approval or design confirmation for the fix approach. The competing PRs do not address this specific bug, so a new PR is plausible, but maintainer direction is needed."
+  },
+  "ce9058e48eacde75fbea02430b723f2c8d6cf4c4c73b484b0def8c8847db5771": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify user_bot_latency_observer.py to handle UserStoppedSpeakingFrame as a fallback when VAD frames are absent",
+      "Add regression test for TranscriptionUserTurnStartStrategy path"
+    ],
+    "risks": [
+      "Potential timing inaccuracies in latency measurement when using fallback time",
+      "May affect existing behavior for VAD-based turns if not carefully guarded"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a unit test that simulates a turn started by TranscriptionUserTurnStartStrategy (no VAD frames) and verifies on_latency_measured is emitted",
+      "Run existing test suite for the observer and related turn strategies"
+    ],
+    "unknowns": [
+      "Exact maintainer preference on whether to use fallback timing or a different approach"
+    ],
+    "why": "The issue clearly identifies a real bug in UserBotLatencyObserver where turns started by TranscriptionUserTurnStartStrategy are silently dropped from latency tracking. It provides a concrete reproduction scenario, root cause analysis with code references, and a minimal proposed fix. No competing PR or issue exists, and the fix is localized and testable."
   },
   "ce9e38cea38c7b4779980d9809c560c933e7b0ebda729bb7be50d56461e2fc21": {
     "confidence": 0.85,
@@ -24598,6 +24707,30 @@
     ],
     "why": "The issue is a clear UI bug, but a maintainer explicitly requested a mockup before code, and an existing PR (#16105) has failed CI. The candidate lacks root cause analysis and design confirmation, making it premature to start work."
   },
+  "f64a43bc8daf41a5dc577100056f8e72c2b4ee99ad33119c56bf633cfdd74e3b": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "litellm/integrations/opentelemetry.py: guard gen_ai.system in metrics and events paths"
+    ],
+    "risks": [
+      "Existing PR may already fix the issue; need to compare implementation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Add unit test with provider=None to assert no exception and empty string attribute"
+    ],
+    "unknowns": [
+      "Whether PR #36595 already addresses the missing guard; maintainer preference on approach"
+    ],
+    "why": "Issue clearly identifies missing None-guard in two OTel code paths causing log spam and cost; however, existing PR #36595 overlaps semantically and requires maintainer comparison to avoid duplicate work."
+  },
   "f64e781df445ffc0fe388c653f4d2a94263b5d0e1b7c103261b579f848c1427d": {
     "confidence": 0.85,
     "contradictions": [],
@@ -25151,6 +25284,45 @@
       "Whether maintainers consider this a bug requiring code change; exact root cause in quantization implementation"
     ],
     "why": "Issue reports user-visible quality degradation with q4_0 KV cache, but root cause is not definitively established; maintainer comments suggest it may be model-specific and not a code bug. No concrete algorithm or code path identified, and no maintainer approval or help-wanted signal."
+  },
+  "fb1c85d6e8ede62907a74edbf8e572f6b23e549e81d4a6ebf6b3a46539a49fda": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue claims SessionArtifactStore resolves against session cwd, but triage bot states it resolves against workspace root; the split happens at record time. This does not change the fix direction."
+    ],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Extract a whitelist-free path canonicalizer from getRecordArtifactWorkspacePath and share with record_artifact",
+      "Modify record_artifact to resolve, stat, and canonicalize paths, accepting absolute-inside-cwd and rejecting missing/out-of-bound/dir/unsafe-symlink",
+      "Align SessionArtifactStore.getWorkspaceStatus with workspace root resolution (already aligned per triage, but verify)",
+      "Add cross-layer tests for shell-produced csv/xlsx, worktree round trip, and same-named file at root",
+      "P1: schema additionalProperties:false, structured tool receipt, Web Shell Open button disabled for missing workspace artifacts"
+    ],
+    "risks": [
+      "Changing record_artifact behavior may break existing workflows that rely on permissive path handling",
+      "Canonicalizer extraction must preserve worktree-root semantics to avoid regressing #7429/#7434",
+      "UI changes to disable Open button may require design confirmation",
+      "Potential migration of persisted wrong paths is deferred to P2 and should be handled carefully"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add failing test for record_artifact with a cwd-relative path in a worktree session that currently stores a wrong root-relative path",
+      "Add test for absolute path inside cwd accepted and canonicalized",
+      "Add test for wrong guess like 'w/agent/report.csv' failing the tool call",
+      "Add cross-layer round-trip test: shell-produced csv/xlsx recorded, status available, GET /file returns correct content",
+      "Add regression test ensuring same-named file at root is not returned for worktree artifact"
+    ],
+    "unknowns": [
+      "Whether maintainers have already assigned or plan to implement this issue",
+      "Exact current behavior of bridge.ts in worktree sessions (what workspaceCwd is passed) needs confirmation",
+      "Whether the proposed P1 UI changes are desired by maintainers"
+    ],
+    "why": "Issue identifies a concrete user-visible bug with a clear root cause: record_artifact does not canonicalize/verify paths, and the store's status check may disagree with GET /file in worktree sessions. The issue provides a detailed proposed contract, code pointers, and a suggested split into P0/P1/P2. No open PR addresses this issue; existing merged PRs (#7429, #7434) are related but incomplete. The triage bot confirms the bug on current main and corrects a minor detail, strengthening the analysis."
   },
   "fb27f52c5ec6e4e06ca3218a0e2e731e5154863975ac4736cac4b10bcd067442": {
     "confidence": 0.8,
