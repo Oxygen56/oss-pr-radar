@@ -19856,6 +19856,34 @@
     ],
     "why": "Issue reports a reproducible crash when context compaction occurs mid-workflow with DatabaseSessionService, but root cause is not identified and no maintainer confirmation exists. The supplied gate decision is HUMAN_REVIEW, so a new candidate cannot be started without maintainer input."
   },
+  "d2867ddc8f955404c7dbceaa8c4e4e62b7893071f83cdc8ef99ddc26bfeb14f8": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Optimize legacy bundle's scheduleAssistantPresentation to avoid full re-parse per chunk",
+      "Possibly add regression test for long streamed responses"
+    ],
+    "risks": [
+      "Legacy bundle may be deprecated; fix may be unnecessary if next is the target",
+      "Changing parsing logic could affect rendering correctness"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "test_plan": [
+      "Reproduce with a long streamed response in legacy bundle and assert no log flood and UI responsiveness",
+      "Run existing unit tests for the affected module"
+    ],
+    "unknowns": [
+      "Maintainer's intent on legacy bundle support",
+      "Whether a PR would be accepted without explicit maintainer approval"
+    ],
+    "why": "Issue provides a clear root cause (O(n²) re-parse in legacy bundle) and a workaround, but the maintainer has not confirmed the fix direction and the legacy bundle may be deprecated. The issue is actionable but requires maintainer confirmation on whether to fix legacy or focus on next."
+  },
   "d2a2d09e56657388c24334de2fc6cb8c9eda1fe7a695ee7ca0250fc621460717": {
     "confidence": 0.7,
     "contradictions": [
@@ -24560,6 +24588,35 @@
       "Whether underlying tracing context loss is considered a bug"
     ],
     "why": "The issue identifies a clear crash in released versions due to a missing guard that already exists in main, but the fix is a release backport and requires maintainer triage. The underlying tracing-context loss after OM buffering is unresolved and needs design confirmation."
+  },
+  "fb4b1ed8e7c5b617ddaecb50553947bf1d3c76b1c8ab552086818039c605989a": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Set next_decode_eligible_step in base scheduler",
+      "Add config-time rejection for speculative_config + PP > 1 + --no-async-scheduling",
+      "Add regression test for PP+speculative decoding with async scheduling disabled"
+    ],
+    "risks": [
+      "Changing base scheduler cadence may affect non-speculative PP performance or behavior",
+      "Rejecting the config may break existing users who rely on the current (buggy) behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Run existing speculative decoding tests with --no-async-scheduling and PP=2 on a small model, assert correct output and no CUDA faults",
+      "Add a unit test verifying next_decode_eligible_step is updated in base scheduler",
+      "Add a config validation test for the rejection path"
+    ],
+    "unknowns": [
+      "Exact maintainer preference for fix approach (set cadence vs reject config) is not confirmed, but the issue suggests options and a collaborator asked for a PR, indicating openness."
+    ],
+    "why": "Issue identifies a precise root cause: next_decode_eligible_step is never set in the base scheduler, breaking the pp_size cadence guard under --no-async-scheduling, leading to out-of-bounds accesses and wrong output. The fix is a small, well-scoped change in the scheduler or config validation, with clear reproduction steps and controls."
   },
   "fbf0275f8c8d9b2d4de82667b2e7615ad53e91748f395b874a2ae327d082d6c2": {
     "confidence": 0.7,
