@@ -882,6 +882,36 @@
     ],
     "why": "Issue reports a tool call error when switching moe-runner-backend from marlin to flashinfer_mxfp4, but lacks a minimal reproduction and root cause analysis. Open PR lookup timed out, and related PRs may overlap. Maintainer input needed."
   },
+  "0c4f0b2de15d2116505fb050cc35db70311810f38fe2e12c49a3b33a194ba76f": {
+    "confidence": 0.7,
+    "contradictions": [
+      "PR #52097 title is spec-decode but overlaps scheduler path; unclear if it fixes this issue"
+    ],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify sparse_mla_attention.py to avoid calling unimplemented base forward_mha when topk_tokens >= chunk size",
+      "Add regression test for chunked prefill with low max-num-batched-tokens"
+    ],
+    "risks": [
+      "May conflict with existing PR #52097 if it addresses the same root cause",
+      "Need to ensure fix doesn't break dense or masked paths"
+    ],
+    "root_cause_clarity": "high",
+    "score": 13,
+    "test_plan": [
+      "Reproduce with GLM-5.2 and max-num-batched-tokens=2048, long prompt, TP=4",
+      "Verify no NotImplementedError and correct output",
+      "Add unit test for sparse_mla_attention branch condition"
+    ],
+    "unknowns": [
+      "Whether PR #52097 actually fixes the sparse_mla_attention bug",
+      "Exact topk_tokens value and model configuration for reproduction"
+    ],
+    "why": "Issue identifies a concrete algorithmic bug in sparse_mla_attention where chunked prefill routes to an unimplemented base-class forward_mha, causing a scheduler KeyError. Existing PR #52097 overlaps semantically but is a spec-decode change with CI failures and no direct issue link, leaving room for a focused fix with regression tests."
+  },
   "0c6595d4b6b57875f779b99953feb2ba1757665b5d4705acf6f963cd79ad575a": {
     "confidence": 0.8,
     "contradictions": [
@@ -4084,6 +4114,32 @@
       "Whether maintainers have already started work on this issue"
     ],
     "why": "The issue clearly identifies a bug in the Grove pathway: it fails to set DYN_NAMESPACE_WORKER_SUFFIX, causing old and new worker generations to share the same runtime namespace and be rejected by the frontend due to MDC checksum mismatch. This is a concrete, user-visible bug with a clear reproduction path and expected behavior. No competing PR or issue exists, and the gate allows work."
+  },
+  "2b463782157bcbf33927564b9f5a9a71c4a4edf0fb5e8a574b7720d0d828613e": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify realtime client_secrets flow to prioritize Router-resolved model over synthesized session.model",
+      "Adjust _prepare_client_secret_session to avoid writing alias into session.model",
+      "Update or add tests for model group/alias resolution"
+    ],
+    "risks": [
+      "Potential conflict with existing test intent for session.model priority; need careful handling to preserve direct SDK behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add regression test using the provided YAML config and POST /v1/realtime/client_secrets with model group name",
+      "Run existing realtime_api tests to ensure no breakage"
+    ],
+    "unknowns": [
+      "Maintainer design preference on session.model priority; whether a minimal fix is acceptable without broader refactor"
+    ],
+    "why": "Issue provides a precise root cause in three code paths, a minimal reproduction, and a clear regression from a recent commit. No competing PR or issue exists, and the fix is well-scoped."
   },
   "2b581163a854ce6537510a34a30a8eb859e42c637fd868c2510927b6a5a2403a": {
     "confidence": 0.85,
@@ -19915,6 +19971,32 @@
       "Whether the issue is accepted as a bug to fix in the current release cycle"
     ],
     "why": "Issue clearly describes a type-level bug with runtime mismatch and provides a minimal repro. However, the deterministic gate requires HUMAN_REVIEW, and the issue is labeled 'needs triage' with maintainer confirmation pending. The proposed fix involves API design choices (variance and type widening) that need maintainer input."
+  },
+  "d1a530494b9c64a007001dfdf45d3e78aed9bad14d936088b31c367f38f1dde9": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify ACP adapter to maintain a session-lifetime event subscription independent of in-flight prompts",
+      "Forward internally-triggered turn events as session/update notifications"
+    ],
+    "risks": [
+      "Potential performance impact of long-lived subscriptions",
+      "Risk of duplicate notifications if not carefully coordinated with existing per-turn subscriptions"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a failing test that starts a cron/background task while an ACP client is connected and asserts session/update notifications are emitted",
+      "Run existing ACP adapter unit tests and integration tests for session/load replay"
+    ],
+    "unknowns": [
+      "Maintainer design preferences for event subscription lifecycle"
+    ],
+    "why": "The issue precisely identifies a missing session-lifetime event subscription in the ACP adapter, with concrete code pointers and a reproducible scenario. It is a clear bug in the agent infrastructure that affects ACP clients, and no competing PR or issue exists."
   },
   "d1de8bfdfb28024aadf23ac1f1d53c6cfe597e11643250bf0ec05a2e1c2fdd69": {
     "confidence": 0.9,
