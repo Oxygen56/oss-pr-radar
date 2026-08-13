@@ -5112,6 +5112,32 @@
     ],
     "why": "The issue identifies a concrete bug in vLLM's attention backend probe: only ImportError is caught, causing other exceptions to crash engine init. The fix is clear and testable. However, the supplied gate decision is HUMAN_REVIEW, and there is a potential duplicate issue #51593 with shared stack signatures, requiring maintainer confirmation before proceeding."
   },
+  "35a70c95f5369b89f4a990e6dbee9a1001de98642deba1ed2a9b112274d8be9a": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Rust frontend tool-call parsing/routing logic",
+      "Possibly agent runtime state machine for tool_choice handling"
+    ],
+    "risks": [
+      "Changing tool_choice behavior may affect other tool-calling paths; need to avoid breaking existing functionality"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with the provided curl commands and model; add a regression test in Rust frontend tests for tool_choice='auto' with qwen3_coder parser"
+    ],
+    "unknowns": [
+      "Root cause of the missing tool_calls",
+      "Whether maintainers intend 'auto' to work without frontend --enable-auto-tool-choice",
+      "Exact code path in Rust frontend responsible for tool_choice handling"
+    ],
+    "why": "The issue reports a user-visible bug in tool_choice='auto' handling on the Rust frontend path, with a clear reproduction and expected behavior. However, the root cause is not identified, and the issue itself asks a design question about whether 'auto' should work without frontend --enable-auto-tool-choice. The deterministic gate is HUMAN_REVIEW, and there is no maintainer confirmation or active investigation. The open PRs are not directly competing, but the lack of root cause clarity and design confirmation makes this a WAIT_MAINTAINER."
+  },
   "36286eadb37df4052246c1ee3125bff942c8c95e2ca233326955b817908760c1": {
     "confidence": 0.7,
     "contradictions": [],
@@ -19866,6 +19892,29 @@
       "Exact internal structure of activations_hlsmodel and how model.trace expects input; maintainer preference on handling multi-input profiling."
     ],
     "why": "The issue clearly identifies a bug in profiling.numerical() for multi-input models, with a reproducible traceback showing np.ascontiguousarray(X) fails on a list of arrays with different shapes. The fix is localized to the profiling code path, and no competing PR exists."
+  },
+  "ca135e4e909adc9515585f89c7720fa67ac5b04452219ecef5111f0d49667fcf": {
+    "confidence": 0.95,
+    "contradictions": [],
+    "decision": "REJECT",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Update xxhash call to encode string before hashing",
+      "Add xxhash as direct dependency"
+    ],
+    "risks": [
+      "Potential behavior change if encoding is not consistent with previous hashes"
+    ],
+    "root_cause_clarity": "high",
+    "score": 1,
+    "test_plan": [
+      "Run the provided reproducer to confirm the fix",
+      "Add a unit test for DetailsLogger.log with a string query"
+    ],
+    "unknowns": [],
+    "why": "The issue is a dependency compatibility bug: xxhash 4.0 requires encoded bytes, while lighteval passes a string. This is a straightforward API usage fix, not an LLM algorithm contribution. The track requires concrete algorithmic mechanisms and validation paths, which are absent."
   },
   "ca42484156817d96d22dadd6c3338a476df322576ca5368384fb7d071dea5830": {
     "confidence": 0.8,
