@@ -2492,6 +2492,32 @@
     ],
     "why": "Issue provides a precise root cause (relative signed URL bypassing apiUrl() in Tauri) with code references and a one-line fix mirroring an existing RAG fix. High user impact, clear reproduction steps, and no competing PR."
   },
+  "1cd9cbc557bfef030dcbcb72faa76e44f298916cc68213cacd84c63f82847b3a": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify update_server in api/v2/mcp.py to not commit a transaction it does not own, or have init_mcp_servers use a separate session.",
+      "Move create_api_key call in projects_mcp_helpers.py to after the operation that can fail, preventing orphaned credentials."
+    ],
+    "risks": [
+      "Changing transaction ownership may affect other callers of update_server; need to ensure request-path behavior remains correct.",
+      "Moving create_api_key could alter expected behavior if key creation is intentionally side-effectful before validation."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce by upgrading a 1.11.0-created database to 1.11.3 with AUTO_LOGIN=false and at least one project; verify no tracebacks and no new apikey rows after restart.",
+      "Add a regression test that simulates the savepoint context and asserts no commit is issued by update_server, and that create_api_key is not called on failure."
+    ],
+    "unknowns": [
+      "No maintainer confirmation or explicit help-wanted label; however, the issue is actionable and the fix is clear."
+    ],
+    "why": "Issue provides a precise root cause (transaction ownership conflict between begin_nested and session.commit) with exact file/line references, a clear upgrade-triggered regression, and a concrete security leak (unbounded API key creation). No competing PR or related issue exists, and the fix is well-scoped: adjust transaction handling and move create_api_key after the fallible operation."
+  },
   "1ceb950426fd0b40590b4932e0103460c63e23808f75550b1e51d8537ef15f5a": {
     "confidence": 0.7,
     "contradictions": [
