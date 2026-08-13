@@ -2618,6 +2618,36 @@
     ],
     "why": "The issue clearly describes a user-visible bug: files uploaded via canvas in cloud are not surfaced to the agent or Files tab, despite being placed in the sandbox. The root cause is likely a missing notification or event propagation from the upload handler to the agent and file index. This is actionable and no competing PR exists."
   },
+  "1ebeb46d4c7f39910e33296bfcc1d34912ac92dfed604d8da99044d38c17661c": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Preserve original tool schema in logged optional_params",
+      "Fix provider transformation to avoid mutating input",
+      "Add regression test for schema preservation in ollama_chat logs"
+    ],
+    "risks": [
+      "Potential impact on other providers if transformation logic is shared",
+      "Need to ensure fix does not break existing tool-calling behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce with provided model config and request, assert schema appears in hidden_params",
+      "Add unit test for ollama_chat transformation ensuring input tools are not mutated",
+      "Run existing test suite for ollama_chat and logging"
+    ],
+    "unknowns": [
+      "No maintainer confirmation or design preference",
+      "Exact code location and root cause not yet confirmed by maintainer"
+    ],
+    "why": "Issue reports a concrete bug: tool schema is present in the request but missing from logged hidden_params in the UI for ollama_chat. A commenter claims reproduction and identifies provider transformation mutating logged optional_params. This is a clear, actionable bug with a specific code path and a proposed fix direction."
+  },
   "1f53e9b99d0be3dbe80ef80533a54c160e03b984ec185bf1f5c81187df7d0cd8": {
     "confidence": 0.7,
     "contradictions": [],
@@ -6006,6 +6036,35 @@
       "Whether existing PR #20512 will be reworked or replaced"
     ],
     "why": "Issue clearly identifies a race condition in workflow resume with public repro and production evidence, but the deterministic gate requires HUMAN_REVIEW and the maintainer has not confirmed the preferred fix direction (storage-backed CAS vs in-process mitigation)."
+  },
+  "3f1f155c0e59675a89bbd87076a70d6566372f24b30d04a3e6ad079926d51d4f": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Investigate MCP handshake with Antigravity",
+      "Possibly adjust server startup or configuration handling"
+    ],
+    "risks": [
+      "May require Antigravity-specific behavior changes",
+      "Security-sensitive path jail warning may need careful handling"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with Antigravity using provided steps",
+      "Capture full terminal output and logs",
+      "Add integration test for MCP initialization with Antigravity if feasible"
+    ],
+    "unknowns": [
+      "Full error output and logs",
+      "Whether maintainer is aware or has preferences",
+      "Exact cause of EOF during initialize"
+    ],
+    "why": "Issue reports an MCP startup error with Antigravity but lacks terminal output and root cause. No maintainer confirmation or design direction. Track is agent_ai_infra, not llm_algorithm, so algorithm evidence is not required, but actionability is limited by missing repro details."
   },
   "3f597ac95aaf33ecf4d648bc051a96234a9b8d70fa47f39849ec13c6d93d485c": {
     "confidence": 0.7,
@@ -11054,6 +11113,31 @@
     ],
     "why": "Issue provides a clear, reproducible bug with a well-defined root cause and a suggested fix. However, the deterministic gate requires HUMAN_REVIEW, and there is an open PR (#7104) with semantic overlap that needs maintainer comparison before starting new work."
   },
+  "6d2c8872ba327a37172ec8e7e6ecd132995a5b9256e538a42ec2eae8782f7c70": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify legacy bundle's text chunk handler to avoid full re-parse per chunk, e.g., incremental parse or debounce scheduling."
+    ],
+    "risks": [
+      "Changing parsing behavior may affect rendering correctness; need to ensure incremental parsing matches full parse output."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a regression test that streams a large text (e.g., 73KB) and asserts no O(n²) behavior (e.g., time or log count).",
+      "Run existing unit tests for the affected module."
+    ],
+    "unknowns": [
+      "Exact implementation details of the legacy bundle's parsing logic; maintainer preference for fixing legacy vs. deprecating it."
+    ],
+    "why": "Issue provides a clear root cause (O(n²) re-parse per chunk in legacy bundle) with code snippet and a workaround (next bundle). No competing PR or issue found. The fix is localized and testable."
+  },
   "6d36a6c65f3e6f31ed34ae20c75f284c684c3c7f9ae1ad17bca04df42977bde5": {
     "confidence": 0.85,
     "contradictions": [],
@@ -15058,6 +15142,34 @@
       "Whether there are other related issues or PRs not captured due to timeout"
     ],
     "why": "The issue provides a detailed root cause and reproduction for a bug in picture parsing where empty chunks are marked as success when OCR text is short and no image2text model is configured. However, the deterministic gate requires HUMAN_REVIEW, and the related issue audit failed due to timeout, leaving potential duplicate or related work unverified. The candidate is actionable but requires maintainer confirmation and further investigation."
+  },
+  "9841b6038466baa5557296a8b35d85a17d0c1da529f15f346a6df241e98822b2": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify Mastra.shutdown() to await in-flight durable workflow executions (via globalRunRegistry) before closing storage",
+      "Make deployer shutdown timeout configurable and aligned with platform grace period",
+      "Skip post-terminal cleanup when storage is already closed"
+    ],
+    "risks": [
+      "Potential behavior change in shutdown semantics may affect other workflows",
+      "Deadline configuration may require platform coordination"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a failing test that simulates SIGTERM during an in-flight durable agent run and asserts the run suspends/recoverable instead of failing",
+      "Run existing durable agent and shutdown-related unit tests"
+    ],
+    "unknowns": [
+      "Exact implementation details of drain mechanism and whether maintainers prefer a specific approach"
+    ],
+    "why": "Issue describes a clear shutdown-ordering bug with a verified causal chain and a concrete fix direction: drain in-flight durable executions before closing storage. No competing PR exists, and the maintainer triage confirms the root cause and suggests a plan."
   },
   "9858ffbb886031775210de367ef30f973a68ee5a20e813d8a8c639a680ea9608": {
     "confidence": 0.7,
