@@ -1448,6 +1448,14 @@
       "seenAt": "2026-08-11T12:04:28.178023Z",
       "stateId": "3d3788a566ba06874afd2566199684b857ab63630e7f3d94c001b63d0bb304d6"
     },
+    "review|verl-project/verl#7368": {
+      "category": "WAIT_MAINTAINER",
+      "digest": "b64a9cde6a107f716324add22d1bbdbeed2149abce7363199d79eabdaf39841b",
+      "kind": "review",
+      "scannerVersion": "oss_pr_radar_v44_disclosure_tasks_resolve_uncertainty",
+      "seenAt": "2026-08-13T05:14:36.142911Z",
+      "stateId": "4f3f73497af74df19f9daa886839d1b7895c27c5b804c837181b85ac46713bd2"
+    },
     "review|vllm-project/vllm#34948": {
       "legacy": true,
       "seenAt": "2026-08-06T10:09:13.598229Z"
@@ -1934,11 +1942,11 @@
     },
     "watch|multica-ai/multica#4163": {
       "category": "PR_FOLLOWUP",
-      "digest": "344b8c47d2f2bf34fa84c40f75df70b4f90609496aa01ca85f088622233c2d42",
+      "digest": "7e2c062d12ccedb2aab5296cbae95149f57843790f6f508edae23f56f27b2ac1",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-13T04:34:36.563286Z",
-      "stateId": "60662cb20620bbcd6b4e44d2b4867f11315704edb93e6d227347f8c71f6ba130"
+      "seenAt": "2026-08-13T05:14:36.450721Z",
+      "stateId": "9abd527944a6df185e840626223d9934610f67a1d168f7bfaf7eef363fb3b5c1"
     },
     "watch|ollama/ollama#17356": {
       "category": "PR_FOLLOWUP",
@@ -1970,11 +1978,11 @@
     },
     "watch|sgl-project/sglang#30554": {
       "category": "PR_FOLLOWUP",
-      "digest": "deb57eebe617893801656f62aace7f68f2bdb1138102e7cf2933c12483291517",
+      "digest": "f6f8fe9377210d79d8ea626650c6984936b9ab422a0f75318c3fab85a55d789e",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-13T04:34:36.563286Z",
-      "stateId": "e1d665887c33f50a87cdab34c63b6790b65912047ad8c00f2dc6ba1721506d4c"
+      "seenAt": "2026-08-13T05:14:36.450721Z",
+      "stateId": "08790b7ffe607d7d1822f9083f489e580f94cd78ee4bb263834191059488d76e"
     },
     "watch|sgl-project/sglang#33408": {
       "legacy": true,
@@ -1986,11 +1994,11 @@
     },
     "watch|sgl-project/sglang#34138": {
       "category": "PR_FOLLOWUP",
-      "digest": "383e58326890c335ff724b0f3208fdcc20603757fbf422abc7979c1a346beb4a",
+      "digest": "eb30f3a87c395aec612de58b72c8e1d6e03698aaf212966dc75782f6bb8ecf4d",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-13T04:34:36.563286Z",
-      "stateId": "96ec30cfac28b1995966bc8972cd63a86e5d4eb63f654ac8d6693baf59e7bb6d"
+      "seenAt": "2026-08-13T05:14:36.450721Z",
+      "stateId": "471e29441495934917657aad2a59954d6fd253bcace88d1ea94e11e518ba01d0"
     },
     "watch|usekaneo/kaneo#1484": {
       "legacy": true,
@@ -2021,7 +2029,7 @@
       "seenAt": "2026-08-06T10:09:13.778625Z"
     }
   },
-  "digest": "e0396f00ead1b623329b55973ca8313f57aac4bf6a75afb799bc69b4ee06a12e",
+  "digest": "a215e7e84a32e91a6b82e73dcb5e460d1cd722c7b80cb5a5bded26bf57a38b14",
   "events": [
     {
       "attempts": 1,
@@ -19223,9 +19231,133 @@
       "runId": "pr-followup-1786595481",
       "sentAt": "2026-08-13T04:35:07.654844Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "verl-project/verl#7368"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "b64a9cde6a107f716324add22d1bbdbeed2149abce7363199d79eabdaf39841b",
+          "key": "verl-project/verl#7368",
+          "kind": "review",
+          "scannerVersion": "oss_pr_radar_v44_disclosure_tasks_resolve_uncertainty",
+          "stateId": "4f3f73497af74df19f9daa886839d1b7895c27c5b804c837181b85ac46713bd2"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[verl-project/verl#7368](https://github.com/verl-project/verl/issues/7368) Standalone DisRM crashes async agent reward scoring when reward_extra_info is missing**\n建议：WAIT_MAINTAINER | 分数：12\n价值：The issue provides a clear root cause and a minimal fix for a deterministic crash in the standalone DisRM reward path. However, the supplied open PR #7151 directly targets the same reward_extra_info contract and is still open, creating potential competition. The issue is not assigned and no maintainer has confirmed the fix approach, so maintainer input is needed to avoid duplicate work.\n改动：Modify RewardLoopWorker.compute_score_disrm to return reward_extra_info as empty dict；Update docs/advance/reward_loop.rst example；Add CPU regression tests for vLLM and SGLang response formats\n验证：Run the provided reproducer to confirm KeyError before fix and success after；Add unit tests for compute_score_disrm with vLLM and SGLang response formats；Run existing reward loop and agent loop tests to ensure no regression\n风险：Potential overlap with open PR #7151 which may already address the contract；Changing the return contract could affect other consumers if they expect missing key to be an error\n竞争：仅发现未直接关联、无代码路径或强机制重合的 PR #7151；保留为搜索上下文，不阻止实现\n下一步：按正常流程实现并验证；如要求 DCO 则自动 sign-off，PR 创建后报告 CLA 状态。\n证据：复现信号 14，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-13T05:14:36.142911Z",
+      "eventId": "ba151725dce996fb7f0507dd809ef5c36a54c8ac422fb86a2bee73f36a614f94",
+      "idempotencyKey": "ba151725dce996fb7f0507dd809ef5c36a54c8ac422fb86a2b",
+      "kind": "review",
+      "runId": "scan-20260813T051135Z-58079efcb52d",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "multica-ai/multica#4163",
+        "sgl-project/sglang#30554",
+        "sgl-project/sglang#34138"
+      ],
+      "candidateStates": [
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "7e2c062d12ccedb2aab5296cbae95149f57843790f6f508edae23f56f27b2ac1",
+          "key": "multica-ai/multica#4163",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "9abd527944a6df185e840626223d9934610f67a1d168f7bfaf7eef363fb3b5c1"
+        },
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "f6f8fe9377210d79d8ea626650c6984936b9ab422a0f75318c3fab85a55d789e",
+          "key": "sgl-project/sglang#30554",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "08790b7ffe607d7d1822f9083f489e580f94cd78ee4bb263834191059488d76e"
+        },
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "eb30f3a87c395aec612de58b72c8e1d6e03698aaf212966dc75782f6bb8ecf4d",
+          "key": "sgl-project/sglang#34138",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "471e29441495934917657aad2a59954d6fd253bcace88d1ea94e11e518ba01d0"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[multica-ai/multica#4163](https://github.com/multica-ai/multica/pull/4163) fix(codex): add Windows blind-run warning and detection for upstream openai/codex#20874 [MUL-4291]**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#30554](https://github.com/sgl-project/sglang/pull/30554) [Spec] Size shared logits buffer for adaptive candidates**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#34138](https://github.com/sgl-project/sglang/pull/34138) Bind streaming abort cleanup to request lifecycle**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-13T05:14:36.450721Z",
+      "eventId": "4bf7b63d62fc53f2521a19d4db72bd756389df42e4ac9de67f3cb2dfe0696ead",
+      "idempotencyKey": "4bf7b63d62fc53f2521a19d4db72bd756389df42e4ac9de67f",
+      "kind": "watch",
+      "runId": "pr-followup-1786597849",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-13T04:34:36.563286Z",
+  "generatedAt": "2026-08-13T05:14:36.450721Z",
   "newEventCount": 1,
   "version": "notification_outbox_v2"
 }

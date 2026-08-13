@@ -624,6 +624,31 @@
     ],
     "why": "Issue provides a clear root cause (WORLD-group broadcast deadlock in fastsafetensors under PP-scoped draft loads) and a concrete repro, but the deterministic gate requires HUMAN_REVIEW and the related issue audit timed out. Existing PR #50514 is directly related but has failing CI and incomplete evidence, so a new PR may be premature until maintainer confirms design direction."
   },
+  "07da49e3704dca7d9cc83e82a76c74fd414f70a19f45fd874e847c2a5b5a5c3a": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify MilvusVectorStore._parse_output to convert distance to similarity for COSINE and other distance metrics, e.g., score = max(0.0, 1.0 - raw_distance), while preserving higher-is-better for BM25 keyword search."
+    ],
+    "risks": [
+      "Potential impact on keyword_search scoring if not branched correctly; need to ensure BM25 scores remain unchanged.",
+      "May require maintainer confirmation on metric handling for other distance metrics."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add a regression test in test_milvus.py that inserts an exact match with COSINE metric and asserts search returns it with high score and correct ranking.",
+      "Run existing Milvus vector store tests to ensure no breakage."
+    ],
+    "unknowns": [
+      "No open PR or related issue found; maintainer preference unknown but not blocking."
+    ],
+    "why": "Issue identifies a concrete bug in MilvusVectorStore._parse_output where cosine distance is returned as score, violating the VectorStoreBase contract and causing inverted ranking and dropped matches. The fix is localized and mirrors existing pgvector implementation, with clear reproduction steps."
+  },
   "0800a641e3c341c34ef31972486da3cbd6daefda89121fc39392dff8b6644106": {
     "confidence": 0.7,
     "contradictions": [
@@ -5043,6 +5068,34 @@
       "Whether maintainers are aware or investigating"
     ],
     "why": "Issue reports a silent degenerate output on v0.27.0 with NVFP4 and TP8, but lacks a reproducible environment (collect_env not run on affected build) and has no maintainer confirmation. Existing PR #50617 overlaps semantically but is not linked and may not address the root cause. Gate requires HUMAN_REVIEW."
+  },
+  "371bd7d8923c04d107cda4908dc63f384bcdc32d233d78eda29cab32d634bc51": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify revert_padding_free() to use explicit sequence boundary information (e.g., cu_seq_lens_q) or preserve sequence lengths during packing_row()",
+      "Add regression test for 1-token sequences in padding-free embedding training"
+    ],
+    "risks": [
+      "Changing boundary detection may affect multimodal position ids, mRoPE, sequence parallel, and other scenarios with repeated position ids; need to ensure no regression",
+      "Potential performance impact if using explicit boundary info requires additional data passing"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a unit test with position_ids = [0,1,2,0,0,1,2] and assert detected_seq_count == 3",
+      "Run embedding training with padding_free=true and a batch containing 1-token sequences, verify sentence embeddings count matches logical sequences",
+      "Compare InfoNCE loss and labels alignment before/after fix on a fixed seed and small model"
+    ],
+    "unknowns": [
+      "Exact implementation details of revert_padding_free() and packing_row() in the codebase",
+      "Whether cu_seq_lens_q is readily available at the revert point"
+    ],
+    "why": "Issue provides a precise root cause: revert_padding_free() uses strict decrease in position_ids to detect sequence boundaries, failing when a 1-token sequence is followed by another sequence (0->0). This leads to silent merging of sequences, causing InfoNCE sample misalignment and zero negative errors. The issue includes a minimal reproduction and suggests using explicit boundary info like cu_seq_lens_q. This is a concrete algorithmic bug in distributed training/kernel path with clear validation path."
   },
   "373480ac81319d094f38682b2e1c173541a9fba7870b7dacafd5f06748dfd9e0": {
     "confidence": 0.7,
@@ -17122,6 +17175,37 @@
     ],
     "why": "Issue clearly identifies root cause: Codex filters env vars matching *KEY*, *SECRET*, *TOKEN* before MCP startup, and the plugin hardcodes MEM0_API_KEY. However, maintainers explicitly request a design decision between renaming the variable or documenting a narrow allowlist, and no PR has been accepted. Existing PR #6792 lacks tests and has failing CI, so a better PR is possible but requires maintainer direction."
   },
+  "b3e2e92851db034a879006923f6f53df535e28e68fcd2fda9c1433279330732e": {
+    "confidence": 0.7,
+    "contradictions": [
+      "PR #7151 is open and semantically overlaps on reward_extra_info, but issue claims no existing fix"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify RewardLoopWorker.compute_score_disrm to return reward_extra_info as empty dict",
+      "Update docs/advance/reward_loop.rst example",
+      "Add CPU regression tests for vLLM and SGLang response formats"
+    ],
+    "risks": [
+      "Potential overlap with open PR #7151 which may already address the contract",
+      "Changing the return contract could affect other consumers if they expect missing key to be an error"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Run the provided reproducer to confirm KeyError before fix and success after",
+      "Add unit tests for compute_score_disrm with vLLM and SGLang response formats",
+      "Run existing reward loop and agent loop tests to ensure no regression"
+    ],
+    "unknowns": [
+      "Whether PR #7151 actually fixes this exact crash or only aligns sparse keys",
+      "Maintainer preference on whether to keep strict indexing or use .get()"
+    ],
+    "why": "The issue provides a clear root cause and a minimal fix for a deterministic crash in the standalone DisRM reward path. However, the supplied open PR #7151 directly targets the same reward_extra_info contract and is still open, creating potential competition. The issue is not assigned and no maintainer has confirmed the fix approach, so maintainer input is needed to avoid duplicate work."
+  },
   "b41796eff7f932a8b8ed4776b8da6dd71f2a9bed41388168b9efcc590a5555cd": {
     "confidence": 0.6,
     "contradictions": [
@@ -24456,6 +24540,41 @@
       "Whether maintainers have a preferred design for storage path configuration"
     ],
     "why": "Issue #692 documents a clear, reproducible bug: MEMORY_FILE_PATH is ignored when launching via npx, causing data loss in temp directories. Root cause is identified in comments (env var not forwarded through npx) and a working patch exists. Existing PR #4327 is stale (>30 days) and lacks robust tests, leaving room for a materially better PR with comprehensive tests and a robust fix."
+  },
+  "f8bea4fc01937d5fcf73f7945e548cede4a9c5e8ff74faa724b3d615a8a48e26": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue title focuses on zero-tool-call detection, but comments reveal a second failure mode (wrong parameter on genuine tool call) that may require result-receipt validation, expanding scope"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify fc_agent_runner.py to detect zero-tool-call terminal answers when a tool call is expected",
+      "Add configuration flag (e.g., require_tool_call or tool_call_enforcement) to agent settings",
+      "Introduce a typed error or retry path for zero-tool-call detection",
+      "Add tests for the new guard in agent runtime"
+    ],
+    "risks": [
+      "Design ambiguity: per-tool vs per-agent flag, retry vs immediate error, error surface (hard error vs silent retry) could lead to rework",
+      "Risk of breaking existing agents that legitimately return plain text without tool calls; must be opt-in",
+      "Blind retry could duplicate destructive side-effects; needs careful handling"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "test_plan": [
+      "Create a failing test using the issue's minimal reproduction: configure an agent with a tool, mock model to return plain text without tool calls, assert the runner raises an error or retries instead of returning final_answer",
+      "Run existing fc_agent_runner unit tests to ensure no regression",
+      "Add integration test for the new configuration flag behavior"
+    ],
+    "unknowns": [
+      "Maintainer design preference on configuration flag scope and retry behavior",
+      "Whether the repository requires assignment or design approval before PR submission",
+      "Exact handling of the AI disclosure policy conflict for public contribution"
+    ],
+    "why": "The issue precisely identifies a runner-level gap in fc_agent_runner.py where zero tool calls with plain-text terminal answers are accepted as success, and the signal (tool_responses empty, function_call_state False) is available. However, the proposed fix requires design decisions (per-tool vs per-agent flag, retry vs error, error surface) that need maintainer input, and the repository's AI disclosure policy conflicts with automated public contribution. The issue is a feature request with no maintainer approval or help-wanted signal, and the discussion reveals a second failure mode (wrong parameter on genuine tool call) that broadens scope. Actionability is high technically but blocked by design confirmation and policy constraints."
   },
   "f9388995937b1e55bd8977335851a0e9859696c4056b203c018e1a8a6a848547": {
     "confidence": 0.8,
