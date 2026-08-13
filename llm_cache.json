@@ -309,6 +309,29 @@
     ],
     "why": "The issue reports a CUDA illegal memory access in the GDN linear attention kernel, with multiple reproductions across different hardware and versions. The root cause is not yet identified; one comment isolates it to the FlashInfer MNNVL fuse_allreduce_rms pass, but this is not confirmed. The deterministic gate is HUMAN_REVIEW, and open PR and related issue lookups failed, so duplicate work cannot be excluded."
   },
+  "063ce2a3f90a7ab2eadefc9320656b31f0db007bbe3f3830e3a785039a6d618e": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify DeepSeek-V4 encoder logic to restore previous default reasoning effort or add a warning/config option"
+    ],
+    "risks": [
+      "Changing default behavior may break users relying on new behavior; need maintainer guidance on intended design"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Create a test that verifies default reasoning effort for DSV4-Pro matches previous behavior, or that a warning is emitted when default changes"
+    ],
+    "unknowns": [
+      "Maintainer preference on whether to revert or add warning; whether a config option is desired"
+    ],
+    "why": "The issue reports a user-visible behavior change in DeepSeek-V4-Pro default reasoning effort caused by a merged PR. The root cause is identified (PR #50580 changed default behavior), but the desired fix is ambiguous: whether to revert, add a warning, or make the behavior configurable. No maintainer input or design confirmation exists, and the issue is a bug report without a clear code path."
+  },
   "06ace7f6fffd197c1ce3374ba52258c5cdd6b872439fd902349836decf9483f8": {
     "confidence": 0.7,
     "contradictions": [],
@@ -13734,6 +13757,36 @@
       "Whether the root cause is in vLLM code or NCCL build/environment"
     ],
     "why": "Issue reports a reproducible multi-node TP deadlock with strong evidence (NCCL spin signature, py-spy stacks, multiple reproductions) and a plausible root cause (TP divergence in MoE all-reduce). However, the issue is a bug report, not a code contribution; no patch is proposed. The deterministic gate requires HUMAN_REVIEW, and open PR/related issue lookups failed, so duplicate work cannot be excluded. Maintainer involvement is absent, and the root cause is not fully confirmed (NCCL build differences may be a workaround)."
+  },
+  "8a2043c91b11c0ec4b592938bd7b7f91a7865cda4410597111280d2a77e24a7d": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims SDK ignores flags, maintainer suggests dashboard gating on otel data"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix observability configuration handling in session.start()",
+      "Ensure each record flag independently controls its data type"
+    ],
+    "risks": [
+      "May be dashboard-side issue, not SDK",
+      "Changing behavior could break existing users relying on current behavior"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Create integration test with partial record config and verify captured data matches flags",
+      "Reproduce with audio only and check no logs/traces/transcript captured"
+    ],
+    "unknowns": [
+      "Exact root cause: SDK vs dashboard",
+      "Maintainer's investigation outcome"
+    ],
+    "why": "Issue reports partial observability settings not respected, but maintainer comment suggests dashboard gating on otel data availability, not necessarily SDK bug. Root cause unclear and maintainer is actively investigating."
   },
   "8a36eb37fdc00616e03c91f1381b8e46ccf085947540edbc3f8add9e5377f973": {
     "confidence": 0.7,
