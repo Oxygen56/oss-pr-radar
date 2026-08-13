@@ -11511,6 +11511,36 @@
     ],
     "why": "The issue identifies a concrete bug in MatMul4Bit's autograd implementation: storing B and quant_state as plain ctx attributes instead of using save_for_backward, which breaks gradient checkpointing when weights are re-materialized. The root cause is clearly explained with code references and a minimal reproducer that demonstrates incorrect gradients. The fix is well-scoped: route tensor fields through save_for_backward and rebuild QuantState in backward. This is a kernel/autograd correctness issue with a clear validation path via the provided reproducer."
   },
+  "737a860f71e6986010804dc507e38f392286d19d35dfd798409d808911c11a5f": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue claims V2-specific leak but TranslateGemma stable under V2; potential duplicate #37035 shares stack signatures."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "V2 request lifecycle cleanup",
+      "prefix caching metadata management",
+      "scheduler state retention"
+    ],
+    "risks": [
+      "Memory leak may be environment-specific (CUDA 13, PyTorch 2.11) or due to user workload; distinguishing from expected caching behavior is difficult."
+    ],
+    "root_cause_clarity": "low",
+    "score": 13,
+    "test_plan": [
+      "Reproduce with Qwen3-14B-FP8 under V2 Runner with prefix caching and chunked prefill, monitor host memory over long-running workload; compare with V1 and TranslateGemma; use memory profiling to identify retained objects."
+    ],
+    "unknowns": [
+      "Exact component responsible for memory growth",
+      "Maintainer confirmation or assignment",
+      "Whether issue is duplicate of #37035"
+    ],
+    "why": "Issue reports a V2 Runner host memory leak with Qwen3 models, but root cause is unconfirmed and the deterministic gate requires HUMAN_REVIEW. The issue is a bug report without a concrete algorithm mechanism or validation path; the algorithm evidence is speculative (fp8, tensor parallel) and not tied to a specific code path. Potential duplicate #37035 and no maintainer confirmation further block actionability."
+  },
   "739e4b807980426887f0de757309aece574180f69532865c1f18022efc628f81": {
     "confidence": 0.7,
     "contradictions": [
@@ -18621,6 +18651,40 @@
     ],
     "why": "The issue describes a tool-result wrapping and wrong-content substitution bug in an agent framework, but the root cause is unconfirmed and the report is intermittent without a deterministic repro. The supplied algorithm evidence (PEFT, distributed training) is not supported by the issue content, which is about tool-result serialization and cross-contamination. The deterministic gate is HUMAN_REVIEW, and open PR/related issue lookups failed, so duplicate work cannot be excluded."
   },
+  "c4c00397bcf6fdfa382539ccf6318622e25c26cacc8363b8c5cfe6527d677cae": {
+    "confidence": 0.7,
+    "contradictions": [
+      "PR #19523 is open and semantically overlaps but does not reference this issue; its CI has failures that are not yet attributed"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Deduplicate suspended step entries in getWorkflowRunSteps",
+      "Reset suspendPayload/suspendedAt on step re-entry or terminal status",
+      "Align nested step identity between REST snapshot and watch stream"
+    ],
+    "risks": [
+      "Existing PR #19523 may already address part of the issue; need to compare implementation boundaries",
+      "Changing step identity could break clients relying on current dotted keys",
+      "Clearing suspend fields might affect resume logic if not scoped correctly"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Run the provided repro script against current main to confirm the three data-quality problems",
+      "Add regression tests for double suspended entries, stale suspend fields, and timestamp inversion",
+      "Verify identity consistency between getWorkflowRunById and workflow.events.v2 stream"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer fixing in core vs Studio",
+      "Whether PR #19523 will be merged or superseded",
+      "Exact scope of changes needed for identity unification across transports"
+    ],
+    "why": "The issue provides a detailed, reproducible bug with clear root cause and a high-impact user-facing effect. However, the deterministic gate is HUMAN_REVIEW, and an existing PR (#19523) has semantic overlap with the same code path, requiring maintainer comparison before new work starts."
+  },
   "c4f897c3cf20199280d93bdf5aa30f06e2ad4416253578341b0357386cbe8812": {
     "confidence": 0.7,
     "contradictions": [],
@@ -21420,6 +21484,36 @@
       "Actual requested URL and response body from VSCode logs; whether the suggested base URL configuration resolves the issue; open PR status due to timeout"
     ],
     "why": "The issue reports a VSCode BYOK integration failure with LiteLLM, but the root cause is likely a VSCode configuration misunderstanding (URL should be base, not /v1) rather than a LiteLLM bug. The reporter has not confirmed the suggested fix, and the deterministic gate requires HUMAN_REVIEW. Open PR and related issue lookups timed out, so duplicate work cannot be excluded."
+  },
+  "decfb4af480007e3c20f6277590b404625d330845775556fd7c93370356cc750": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add CREATE_NO_WINDOW to runtime spawn in packages/desktop-shell/src-tauri/src/runtime.rs via command-group builder",
+      "Optionally add same flag to powershell spawn in local_control.rs",
+      "Add CSS rule to center .brand in reduced-motion starting state in bootstrap/index.html"
+    ],
+    "risks": [
+      "CREATE_NO_WINDOW may affect runtime behavior if it relies on console interaction, though stdio is piped/null",
+      "CSS change could have unintended layout effects on other states if not scoped correctly"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "On Windows, launch desktop and verify no terminal window appears; close any unrelated terminal and confirm runtime stays alive",
+      "Enable reduced motion in Windows settings, launch app, and verify logo and status text are horizontally centered",
+      "Run existing desktop-shell unit tests and static checks"
+    ],
+    "unknowns": [
+      "Exact command-group version and API details not verified in repo",
+      "No explicit maintainer approval beyond triage bot and collaborator comment"
+    ],
+    "why": "Issue reports two concrete Windows desktop bugs with clear root causes confirmed by maintainer analysis: missing CREATE_NO_WINDOW flag causing visible terminal and runtime termination, and CSS misalignment under reduced motion. Both fixes are small, independent, and actionable with no competing PR."
   },
   "dee6e0f1baeb50e53cb188cae92dcc22f986a8436891d7e0232f4e8bbe0413df": {
     "confidence": 0.85,
