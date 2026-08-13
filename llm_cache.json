@@ -940,6 +940,31 @@
     ],
     "why": "Issue identifies a concrete algorithmic bug in sparse_mla_attention where chunked prefill routes to an unimplemented base-class forward_mha, causing a scheduler KeyError. Existing PR #52097 overlaps semantically but is a spec-decode change with CI failures and no direct issue link, leaving room for a focused fix with regression tests."
   },
+  "0c5f5f81af1ee9fe15028ed57ea88455416079f5c13cf8a1c3300e5f4bd045a8": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "config.set path binding to session profile_home",
+      "regression tests for worker-profile config writes"
+    ],
+    "risks": [
+      "Potential behavior change for no-session config.set; need to preserve launch-profile behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce with session.create(profile='worker') then config.set busy/verbose/cwd; assert worker config.yaml updated and default unchanged",
+      "Run existing config-related unit tests"
+    ],
+    "unknowns": [
+      "Exact code path and maintainer design preferences for config scoping"
+    ],
+    "why": "Issue provides a clear, reproducible bug with root cause and proposed fix. No competing PR directly addresses it. The fix is scoped to config.set profile_home binding, with regression tests specified."
+  },
   "0c6595d4b6b57875f779b99953feb2ba1757665b5d4705acf6f963cd79ad575a": {
     "confidence": 0.8,
     "contradictions": [
@@ -11405,6 +11430,39 @@
     ],
     "why": "Issue clearly identifies a security-relevant bug in a shared download path, with a verified repro and suggested fix direction. However, the deterministic gate requires HUMAN_REVIEW, and the existing PR #7162 is closed with CI failures, so maintainer confirmation is needed before starting new work."
   },
+  "6b727f9b899e3d7e789d9a0a799dc527f10dded6728697c24852b84489c0c6c7": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims bug 3 caused by interrupted run-now; comments show it is due to long-lived scheduler not clearing state",
+      "Issue claims goose_mode is a recipe setting; comments show it is not supported"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify scheduler::execute_job to resolve goose_provider, goose_model, temperature, and max_turns from recipe settings before global config",
+      "Keep GooseMode::Auto for unattended runs",
+      "Possibly add validation for unknown recipe settings like goose_mode"
+    ],
+    "risks": [
+      "Scope expansion beyond bounded recipe-settings change may delay merge",
+      "Existing PR #11110 may partially overlap and require coordination"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Add regression test for scheduled run using recipe settings overriding global config",
+      "Test that scheduled run with GooseMode::Auto does not hang on tool call",
+      "Test that interrupted run-now clears currently_running on next scheduler start"
+    ],
+    "unknowns": [
+      "Maintainer decision on whether to honor recipe settings and reject unknown settings",
+      "Whether existing PR #11110 will be updated to include tests and reference the issue"
+    ],
+    "why": "Issue identifies four scheduler defects with detailed reproduction and root-cause analysis; comments confirm bugs 1 and 4 fixed in v1.46, bug 3 partially addressed, and remaining bounded defect is recipe settings ignored in scheduled runs. Existing PR #11110 overlaps scheduler code but lacks tests and does not reference the issue. Maintainer design confirmation is pending for scope of recipe settings and unknown-setting validation."
+  },
   "6b961b275a157be66a33e66cd7f64fa662951a2080065574169db7e555ee4736": {
     "confidence": 0.7,
     "contradictions": [],
@@ -13512,6 +13570,32 @@
       "Maintainer's preferred fix approach"
     ],
     "why": "Issue reports MCP SSE authorization failure with clear stack trace, but root cause is ambiguous: server disconnect may be due to server behavior, proxy, or client handling. Dosu suggests upgrade and URL path checks, indicating possible existing fixes. No maintainer confirmation or design direction."
+  },
+  "81473befa666b5a8eb4a6f5842d6dd7daf36a20a68628ef347e651cb520704c7": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Comment suggests switching ggml variant resolves issue, but original reporter uses precompiled binaries"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Investigate and fix video/audio quality degradation in Minimax H3 generation path"
+    ],
+    "risks": [
+      "Potential dependency or model-specific issue not fixable in this repo"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with provided command and model files; compare outputs across ggml variants and frame counts"
+    ],
+    "unknowns": [
+      "Exact root cause; maintainer priority; whether issue is reproducible in current master"
+    ],
+    "why": "Issue reports poor video/audio quality with Minimax H3, but root cause is unclear; comments suggest possible dependency mismatch (ggml variant), step count, or frame-length degradation. No maintainer confirmation or design direction."
   },
   "8154f1f59516e43ef0d551cb427ca5d86ed2a5247c44b45eaac41763d1e85f31": {
     "confidence": 0.7,
@@ -18732,6 +18816,33 @@
       "Maintainer preferences on design approach"
     ],
     "why": "Issue provides a clear user-visible bug with detailed reproduction steps, logs, and a specific root cause (registry-to-GUI projection overwrites newly added models). No competing PR or issue found. The fix is localized and actionable."
+  },
+  "bbc973b29f9cc210831fefce62226c9841e4cef940346e9caf0787a5ed6135de": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Add regression test for lazy pandas import in async instrumented context",
+      "Possibly patch blockbuster's file_read_exclude to catch AttributeError",
+      "Possibly warm lazy imports in conftest"
+    ],
+    "risks": [
+      "Upstream fix may not be accepted quickly",
+      "Warming imports may mask other lazy import issues"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "test_plan": [
+      "Add the provided minimal test to tests/test_probe.py and run it",
+      "Run the existing test_tool_search.py -k tool_search_eval to confirm fix"
+    ],
+    "unknowns": [
+      "Maintainer preference on whether to patch upstream or workaround locally"
+    ],
+    "why": "Issue provides a clear root cause and minimal reproducer, but the fix requires coordination with upstream blockbuster and maintainer preference on test ordering vs. upstream patch. No existing PR, but the deterministic gate says HUMAN_REVIEW, so we wait for maintainer direction."
   },
   "bd16fa6543025bd6e070c62faf33f5c43b5d15c9729c875c43b6b745771465d4": {
     "confidence": 0.7,
