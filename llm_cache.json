@@ -7246,6 +7246,38 @@
     ],
     "why": "Issue provides a precise, reproducible bug with clear root cause in the streaming path of the ollama/ provider, but the deterministic gate requires HUMAN_REVIEW and open PR/related issue lookups timed out, so duplicate work cannot be excluded."
   },
+  "481ab1efdd4bc763df9caf7515bcccb4d1ceb77282b497c9ab34b4659640fe40": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue title mentions mcp-server-fetch but error is in mcp-proxy",
+      "PRs #4611 and #4563 have same title but different scores and ages"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Dependency version cap in mcp-proxy or mcp-server-fetch",
+      "Potential code update to use new mcp API if request_ctx is removed"
+    ],
+    "risks": [
+      "Dependency cap may be temporary and not address future mcp API changes",
+      "Existing PRs may conflict or be incomplete"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Reproduce the ImportError with fresh install and mcp>=2",
+      "Verify that capping mcp<2.0 resolves the error",
+      "Run existing tests for mcp-proxy and mcp-server-fetch"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a dependency cap or a code fix",
+      "Whether existing PRs are technically complete and acceptable"
+    ],
+    "why": "Issue reports a dependency incompatibility (mcp-proxy with mcp>=2) causing ImportError. Existing PRs #4611 and #4563 propose capping mcp<2.0, but they are not linked to this issue and may not fully address the root cause (mcp-proxy's use of removed request_ctx). The deterministic gate is HUMAN_REVIEW, and the open PR assessment indicates semantic overlap requiring manual comparison. The issue is a usage/support problem with a workaround, and the fix is a dependency pin, which is low-value and not a clear algorithm contribution."
+  },
   "481c470289a94b9a7fab6d32f87daa6fe22d2456eb0291a4d9157ce69af1ef4f": {
     "confidence": 0.7,
     "contradictions": [
@@ -10567,6 +10599,32 @@
       "Whether maintainers prefer a different default retention value or a more comprehensive fix (e.g., offloading glob to thread pool) before merging."
     ],
     "why": "Issue provides a clear root cause (synchronous glob on event loop, unbounded directory) with profiling evidence and a concrete, minimal fix (enable retention via env var). No competing PR or issue found. The fix is actionable and testable."
+  },
+  "640c0847bfed799f543f90552c8e159668a065e70a6d81594aeffd9317cef07c": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify monitor_instance_source task lifecycle to tie cancellation to client generation ownership",
+      "Possibly share routing state at endpoint scope to avoid multiplication of tasks"
+    ],
+    "risks": [
+      "Changing task cancellation semantics may affect discovery updates or introduce race conditions",
+      "Sharing routing state at endpoint scope could alter concurrency behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Write a regression test that creates a client, drops it, and verifies the reconciliation task exits and weak references to routing state fail to upgrade",
+      "Run existing unit tests for the runtime component module"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred design (per-client cancellation vs endpoint-scoped sharing)"
+    ],
+    "why": "The issue identifies a concrete resource leak in the Rust runtime: each Endpoint::client() call spawns a reconciliation task that retains a clone of the Client, preventing garbage collection of per-client routing state. The root cause is clearly traced to monitor_instance_source_with_cancellation using primary_token() and cloning the Client. The expected behavior and reproduction steps are specific, and the fix is actionable without requiring design confirmation."
   },
   "64422d1cae521529ca82d68f348875dbb4f0450393cd30cf3db2667d46a7b876": {
     "confidence": 0.85,
@@ -15722,6 +15780,34 @@
       "Whether issue #4838 is truly duplicate"
     ],
     "why": "Issue is a real bug with clear root cause and workaround, but an open PR #5742 already addresses it with a proposed fix. The PR has failing CI and lacks complete evidence, so a better PR could be competitive, but maintainer review is needed to confirm direction and avoid duplicate work."
+  },
+  "97ec112b5446f06fde429a8a1fd884175dd822eb1d2c30a31e4078133f506b72": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "StreamableHTTPClientTransport._send and _handleSseStream to thread originating request id",
+      "Transport.onmessage signature to accept extra info",
+      "Protocol request handler context to expose relatedRequestId"
+    ],
+    "risks": [
+      "API change to onmessage may affect other consumers",
+      "Potential ambiguity when multiple requests share a stream (though spec suggests one-to-one)"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "test_plan": [
+      "Create a failing test with two concurrent tool calls and a server-initiated elicitation on one stream, asserting the client can attribute it",
+      "Run existing transport unit tests and integration tests for Streamable HTTP"
+    ],
+    "unknowns": [
+      "Maintainer design preference for the surface (transport-level vs handler-level)",
+      "Whether assignment is required in this repo"
+    ],
+    "why": "The issue clearly identifies a client-side provenance loss in StreamableHTTPClientTransport and proposes a concrete fix, but the deterministic gate requires HUMAN_REVIEW and the submission policy needs assignment. No competing PR exists, but maintainer confirmation is needed before implementation."
   },
   "97fbde2b290a85970f57496c532ef65e266e8ba926d61adefdf49198a8420b21": {
     "confidence": 0.8,
@@ -21966,6 +22052,33 @@
       "Whether existing PR #10942 will be updated with tests, which could reduce competition opportunity"
     ],
     "why": "The issue provides a clear root cause (mandatory `choices` field in `StreamingChunk` causes abort on metadata-only frames) and a detailed reproducer. Existing PR #10942 addresses it but lacks regression tests, leaving room for a materially better PR with tests and a more robust fix (Option-based skip vs serde default)."
+  },
+  "d84081c841dddf3a1f06f976a84eecf7885f70cde955a0c3f3ccffc2699a2bda": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "litellm/proxy/guardrails/guardrail_hooks/headroom/headroom.py",
+      "tests for CCR marker extraction and tool injection"
+    ],
+    "risks": [
+      "Existing PRs may already fix the issue; new PR could conflict",
+      "Regex change may affect other marker formats"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "test_plan": [
+      "Add unit tests for legacy hash= and <<ccr:...>> marker variants",
+      "Integration test for Chat Completions and Responses tool injection"
+    ],
+    "unknowns": [
+      "Whether existing PRs fully resolve the issue and are mergeable"
+    ],
+    "why": "Issue clearly identifies a regex mismatch causing headroom_retrieve not injected. However, two open PRs (#36245, #36581) already target the same headroom.py path and marker semantics, requiring maintainer comparison to avoid duplicate work."
   },
   "d89f4a7b39b7a43715f1e9e96b359f2915f673bb39e90e609fee9f510165daf4": {
     "confidence": 0.8,
