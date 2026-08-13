@@ -2955,6 +2955,33 @@
     ],
     "why": "Issue identifies a clear regression from PR #31499 with a proposed fix and reproduction steps, but open PR lookup timed out and related issue audit failed, so duplicate/competing work cannot be excluded. Maintainer approval or design confirmation is absent, and the fix touches core request processing paths."
   },
+  "204dfffbb2a264c700eea6663bb5db29b4be7294f904bd704b2e151639b41e5d": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "lib/mocker/src/scheduler/sglang/prefill.rs",
+      "lib/mocker/src/scheduler/sglang/request.rs",
+      "lib/mocker/src/scheduler/sglang/kv_manager/sglang_backend.rs"
+    ],
+    "risks": [
+      "Potential overlap with PR #13155 requires careful comparison to avoid duplicate work.",
+      "Changing cache lookup order may affect other scheduler behaviors; need to ensure no regressions in vLLM path."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add a regression test replaying two identical long prompts (e.g., 16K tokens) with engine_type=sglang and assert reused tokens equal full prompt length, not chunked_prefill_size.",
+      "Run existing mocker unit tests and clippy for the affected crate."
+    ],
+    "unknowns": [
+      "Whether PR #13155 already implements the fix or only refactors related code; needs manual comparison."
+    ],
+    "why": "Issue provides a precise root cause (chunk-then-match vs match-then-chunk) with code references and a clear repro table. Existing PR #13155 overlaps semantically but lacks direct issue linkage and may not fully address the fix; a focused PR with regression tests is plausible."
+  },
   "206fa77bfe85b635c2123c2ec9b213affd6e4ebe6dc0bbbd22ce5f22af815a64": {
     "confidence": 0.7,
     "contradictions": [],
@@ -10753,6 +10780,36 @@
     ],
     "why": "The issue describes a concrete bug in message history persistence with a clear root cause (incoming duplicate IDs win upsert) and a proposed authority-resolution design. However, the track is llm_algorithm and the supplied evidence does not demonstrate a concrete training objective, model mechanism, distributed-training invariant, quantization/numerical method, kernel algorithm, or evaluation methodology. The matched term 'adapter' and formula/experiment signals appear spurious; the issue is about message storage semantics, not PEFT. The proposed fix is a design change requiring maintainer confirmation, and the commenter's detailed proposal is not an official maintainer decision. Therefore, work should wait for maintainer assignment or design confirmation."
   },
+  "67a461b8fa2b95b4436266f820d32363f8dc9fb289cffa61003e9f2391540d26": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "AppendLogStore error handling",
+      "session runtime degradation logic",
+      "error surfacing UX"
+    ],
+    "risks": [
+      "Changing error handling may mask other storage errors",
+      "Read-only mode may cause data loss or inconsistency",
+      "UX change may be out of scope"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "test_plan": [
+      "Reproduce by filling disk and triggering append; assert session does not crash and surfaces storage.disk_full",
+      "Unit test for isDiskFullError and transitionToReadOnly"
+    ],
+    "unknowns": [
+      "Source code location and current implementation of AppendLogStore",
+      "Maintainer preference on degradation semantics",
+      "Whether a PR is already in progress"
+    ],
+    "why": "Issue reports a real crash on ENOSPC in AppendLogStore, but the suggested fix is a code sketch without a concrete implementation path. No maintainer confirmation or design decision on degradation semantics. The proposed behavior (read-only mode, buffer flush, resume) needs design confirmation. Also, the issue is in a compiled dist file, not source, so the actual code path is unclear."
+  },
   "683299118fcf08738596f524968be4862b417d9fa3cfa212733d7f7d043f4607": {
     "confidence": 0.7,
     "contradictions": [],
@@ -13103,6 +13160,40 @@
       "Exact desired timeout or UX approach"
     ],
     "why": "Issue provides a clear root cause and repro, but maintainer comment questions the desired behavior (retry vs fast fail) and suggests possible UX mitigation, indicating design confirmation is needed before implementation."
+  },
+  "7e899af95aa2fbf9b319b5d63467b3e8c9f63aceabcc9c0135785b4d6f9160b6": {
+    "confidence": 0.8,
+    "contradictions": [
+      "The mastra-platform bot comment describes a feature request for teardownCommand, which is unrelated to the issue's storage problem, indicating possible mislabeling or confusion."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Storage layer: implement incremental or delta-based persistence for conversation state",
+      "Runtime: avoid full snapshot writes on each step, especially in non-durable mode",
+      "Possibly adjust Redis/Postgres write patterns to reduce duplication"
+    ],
+    "risks": [
+      "Changing persistence semantics may affect durability guarantees and resume behavior",
+      "Potential API or schema changes could impact existing integrations",
+      "Performance improvements might introduce complexity in evented vs non-durable paths"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a minimal reproduction with a large conversation and measure storage size and write latency before/after",
+      "Add regression test verifying that intermediate steps do not rewrite the entire conversation",
+      "Run existing storage and workflow tests to ensure no behavioral regressions"
+    ],
+    "unknowns": [
+      "Whether PR #21068 actually fixes this issue or is a related but distinct change",
+      "Maintainer's preferred design for incremental persistence",
+      "Exact code paths responsible for the full snapshot writes"
+    ],
+    "why": "Issue reports a clear performance bug: full conversation snapshots are re-saved on every step, causing excessive storage and latency. Root cause is evident from the issue body, and the maintainer has labeled it for trio-tnt, indicating active triage. However, the deterministic gate requires HUMAN_REVIEW, and the open PR #21068 may partially address the issue but lacks explicit linkage and has requested changes. Thus, maintainer confirmation is needed before starting work."
   },
   "7ee9071c510ccf2eee1957b8087078dea24ffdd1da42f004b4f25610551a1753": {
     "confidence": 0.7,
@@ -22243,6 +22334,32 @@
       "No maintainer confirmation or design preference, but the fix is minimal and aligns with existing env merging code"
     ],
     "why": "The issue clearly identifies a security bug where a session API key is exposed via process command line arguments, with specific file locations and a suggested fix. The fix is straightforward and testable, and no competing PR exists."
+  },
+  "de0e9ff6f6891282926195858a2518296cf5603e8990c60935f873df642bea44": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "TTS audio post-processing or API parameter handling in MiniMax-MCP"
+    ],
+    "risks": [
+      "Fix may require server-side changes outside repo; adding opt-out parameter may be rejected by maintainers."
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Obtain a sample audio file and verify beep presence via spectral analysis; create a regression test that checks for absence of end-of-audio tone."
+    ],
+    "unknowns": [
+      "Root cause location (client vs server)",
+      "Maintainer design preference for fix",
+      "Exact MCP server version and model used"
+    ],
+    "why": "Issue reports a user-visible TTS regression (end-of-audio beep) but lacks root cause, trace IDs, and reproducible code path. No maintainer confirmation or design decision on fix approach. The repo is an MCP integration, and the bug may be server-side, not in the MCP code. Requires maintainer investigation and confirmation before actionable work."
   },
   "de458e1b82831b70f40bf74227d09a62c9482f7f9ce4818d8dcd4843c78c17be": {
     "confidence": 0.8,
