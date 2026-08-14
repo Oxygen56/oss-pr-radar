@@ -7717,6 +7717,32 @@
     ],
     "why": "Issue identifies a clear bug with root cause and MRE, but an existing PR (#4783) directly backports the fix and was auto-closed only for lack of linked issue. The issue asks to reopen/merge that PR, so work is not cleanly actionable without maintainer action."
   },
+  "49d822363c3667447a5396234eac968ac1a66e7b43eb129090fc00d109aadb1a": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "pydantic_ai_slim/pydantic_ai/models/__init__.py",
+      "pydantic_ai_slim/pydantic_ai/images/_media_type.py"
+    ],
+    "risks": [
+      "Scope decisions on Audio/Document/Video validation remain open; potential behavior change for legitimate non-image types"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add regression tests covering honest HTML for .png, spoofed image/png, octet-stream with genuine image, redirects, unfamiliar image MIME, missing/messy Content-Type"
+    ],
+    "unknowns": [
+      "Maintainer preference on scope and validation approach; whether #7334 will be reopened or new PR needed"
+    ],
+    "wait_reason": "ASSIGNMENT",
+    "why": "Issue clearly identifies a security-relevant bug in shared download_item path with verified repro and suggested fix direction. Existing PR #7334 claims complete fix but was auto-closed due to lack of assignment; needs maintainer assignment to proceed. No competing strong PR."
+  },
   "4a1ebf25473d5efaed65a6f2a2f89d9f121de661e7977933522cd137215a613a": {
     "confidence": 0.85,
     "contradictions": [],
@@ -21030,6 +21056,37 @@
     ],
     "why": "The issue identifies a clear dependency pin that breaks Python 3.14 installs in air-gapped environments, with a minimal fix (relaxing the upper bound) and verified API compatibility. This is a concrete, actionable bug fix with high user impact."
   },
+  "c72ebf196b8f56830404aef6dc504ca85f7b17a79548323f04fd9dcfb2336143": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Add a failing regression test for direct POST initialize without SSE session",
+      "Harden mcp-server filter to handle out-of-order MCP requests with controlled 4xx/5xx",
+      "Investigate and bound background Nacos refresh workers to prevent memory growth"
+    ],
+    "risks": [
+      "Changing filter behavior may affect valid MCP flows",
+      "Root cause may be in Envoy or Go runtime, requiring upstream fixes"
+    ],
+    "root_cause_clarity": "low",
+    "score": 12,
+    "test_plan": [
+      "Reproduce with provided curl and config in a test environment; capture heap profile before crash",
+      "Run existing mcp-server unit tests and add a test for direct initialize without SSE",
+      "Stress test with repeated failed Nacos refreshes to check memory growth"
+    ],
+    "unknowns": [
+      "Whether the source-derived nacos-mcp-registry config is officially supported",
+      "Whether direct POST initialize without GET /sse is a supported input",
+      "Exact memory growth point (filter vs background workers)"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "Issue reports a single OOM/SIGABRT crash on a non-documented configuration path; root cause is unconfirmed (three hypotheses), no maintainer confirmation of supported config, and no reproducible test yet. The crash is severe but the exact code path and expected behavior need maintainer input."
+  },
   "c74a4eb85404456b99bf73d7b7a84eac965c9126bb21e851fd659687b1f0d428": {
     "confidence": 0.7,
     "contradictions": [
@@ -26859,6 +26916,37 @@
     ],
     "why": "The issue requests exposing LLM token usage from the new Agent node output. It identifies a clear gap but lacks a concrete root cause or design confirmation. The track is agent_ai_infra, not llm_algorithm, so algorithm evidence is not required. However, the issue is a feature request with no maintainer approval or design confirmation, and the submission policy indicates a conflict with AI disclosure requirements. The expected changes are plausible but require maintainer input on API design and scope."
   },
+  "f7c0fccaa0d4ec3a8de1c66c557875df837297c446ce9c5501dcb7736bb49e75": {
+    "confidence": 0.7,
+    "contradictions": [
+      "PR #2997 is about chunked prefill, not directly about repeated newlines"
+    ],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix chat-template or generation path for enable_thinking:false with video input",
+      "Add regression test for repeated-newline output with video and enable_thinking:false"
+    ],
+    "risks": [
+      "Root cause may be in model weights or external tooling, not vLLM code",
+      "Hardware-specific (Ascend NPU) may not reproduce on other platforms"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "test_plan": [
+      "Reproduce with provided server command and request on 4 NPUs",
+      "Run with enable_thinking:false and video input, assert no repeated newline output",
+      "Run with enable_thinking:true as control to confirm trigger"
+    ],
+    "unknowns": [
+      "Exact root cause and whether existing PR #2997 already fixes it"
+    ],
+    "wait_reason": null,
+    "why": "Issue reports a reproducible Qwen3-Omni video generation bug (repeated newlines) with a clear trigger (enable_thinking:false) and a concrete reproduction path. Existing PR #2997 overlaps semantically but is not linked and lacks a confirmed root-cause fix, leaving room for a materially better PR that isolates the bug and adds a regression test."
+  },
   "f7cad12f924f80210d13dd60c3696419b55c0426c329d1515eaf4f4b10e3bd18": {
     "confidence": 0.8,
     "contradictions": [
@@ -27710,6 +27798,35 @@
       "Whether existing PRs already fix this issue; maintainer preference on approach."
     ],
     "why": "Issue identifies a concrete numerical bug in fused grouped MLP under MXFP8 HYBRID format, with a clear root cause (reinterpreting E5M2 as E4M3) and a reproducible test. However, the deterministic gate is HUMAN_REVIEW, and existing PRs overlap semantically, requiring maintainer comparison before new work."
+  },
+  "ff6d7f2ab9b8fe3298dd7e99135eb82417f4bae93b4d116057e77d74a65c9400": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "xgrammar FSM handling under EAGLE3 speculative decoding",
+      "outlines compile timeout thread cancellation"
+    ],
+    "risks": [
+      "Fixing xgrammar desync may require deep changes to speculative decoding integration",
+      "Thread cancellation in Rust may be unsafe; need careful design"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 13,
+    "test_plan": [
+      "Reproduce xgrammar FSM desync with provided schema and EAGLE3; add regression test for draft-token masking",
+      "Reproduce outlines compile timeout thread leak; add test ensuring worker threads are terminated on timeout"
+    ],
+    "unknowns": [
+      "Exact root cause of xgrammar bitmask desync",
+      "Maintainer interest or planned fix",
+      "Whether a PR would be accepted without prior design discussion"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "The issue reports multiple structured-output backend failures with Kimi-K2.6+EAGLE3, but the core bug (xgrammar bitmask desync under speculative decoding) lacks a concrete root-cause analysis or proposed fix. The outlines thread-leak is a separate actionable bug, but the issue is a bug report without implementation details. No maintainer confirmation or design direction exists."
   },
   "ff96a113bae9bfad3d62142f9a88b24fee8a4eb645a50a6ea08b836f733534c2": {
     "confidence": 0.9,
