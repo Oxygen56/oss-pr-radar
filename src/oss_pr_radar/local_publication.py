@@ -13,6 +13,8 @@ from typing import Any, Callable
 
 LAUNCH_AGENT_LABEL = "com.oss-pr-radar.local-publication"
 SERVICE_PATH = (
+    "/Applications/ChatGPT.app/Contents/Resources:"
+    "/Applications/Codex.app/Contents/Resources:"
     "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:"
     "/usr/sbin:/sbin:/Library/Apple/usr/bin"
 )

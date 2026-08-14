@@ -196,6 +196,10 @@ def test_launch_agent_uses_local_venv_and_contains_no_credentials(tmp_path):
     assert spec["StartInterval"] == 15
     assert spec["ProgramArguments"][0:2] == ["/usr/bin/env", "-i"]
     assert str(python) in spec["ProgramArguments"]
+    assert any(
+        "/Applications/ChatGPT.app/Contents/Resources" in argument
+        for argument in spec["ProgramArguments"]
+    )
     assert spec["WorkingDirectory"] == str(root.resolve())
     assert "FEISHU" not in str(spec)
     assert "DEEPSEEK" not in str(spec)
