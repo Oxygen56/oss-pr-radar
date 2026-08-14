@@ -2877,7 +2877,7 @@ def test_app_server_watchdog_uses_independent_terminal_probe_when_read_stalls(mo
     assert json.loads(process.stdin.writes[0])["method"] == "thread/read"
 
 
-def test_app_server_watchdog_uses_independent_probe_when_owner_view_is_stale(monkeypatch):
+def test_app_server_watchdog_does_not_override_responsive_owner_view(monkeypatch):
     class FakeStdin:
         def __init__(self):
             self.writes: list[bytes] = []
@@ -2907,33 +2907,29 @@ def test_app_server_watchdog_uses_independent_probe_when_owner_view_is_stale(mon
         def select(_timeout):
             return [(object(), None)]
 
-    class StepClock:
-        def __init__(self):
-            self.value = -1.0
-
-        def __call__(self):
-            self.value += 1.0
-            return self.value
-
-    owner_view = (
-        b'{"id":3,"result":{"thread":{"id":"thread-1","turns":'
-        b'[{"id":"turn-1","status":"inProgress"}]}}}\n'
+    owner_views = iter(
+        [
+            (
+                b'{"id":3,"result":{"thread":{"id":"thread-1","turns":'
+                b'[{"id":"turn-1","status":"inProgress"}]}}}\n'
+            ),
+            (
+                b'{"id":4,"result":{"thread":{"id":"thread-1","turns":'
+                b'[{"id":"turn-1","status":"completed"}]}}}\n'
+            ),
+        ]
     )
-    monkeypatch.setattr(MODULE, "monotonic", StepClock())
+    monkeypatch.setattr(MODULE, "monotonic", lambda: 0.0)
     monkeypatch.setattr(MODULE, "APP_SERVER_WATCHDOG_INTERVAL_SECONDS", 0.0)
-    monkeypatch.setattr(MODULE, "APP_SERVER_WATCHDOG_EXTERNAL_PROBE_SECONDS", 3.0)
-    monkeypatch.setattr(MODULE.os, "read", lambda _fd, _size: owner_view)
+    monkeypatch.setattr(MODULE, "APP_SERVER_WATCHDOG_STALE_SECONDS", 15.0)
+    monkeypatch.setattr(MODULE, "APP_SERVER_WATCHDOG_EXTERNAL_PROBE_SECONDS", 0.0)
+    monkeypatch.setattr(MODULE.os, "read", lambda _fd, _size: next(owner_views))
     monkeypatch.setattr(
         MODULE,
         "live_thread_turn_states",
-        lambda _thread_ids: {
-            "thread-1": {
-                "turnId": "turn-1",
-                "status": "interrupted",
-                "code": "turn_interrupted",
-                "message": "interrupted",
-            }
-        },
+        lambda _thread_ids: (_ for _ in ()).throw(
+            AssertionError("independent view must not override a responsive owner")
+        ),
     )
     process = FakeProcess()
 
@@ -2945,8 +2941,8 @@ def test_app_server_watchdog_uses_independent_probe_when_owner_view_is_stale(mon
         turn_id="turn-1",
     )
 
-    assert result == {"turnId": "turn-1", "status": "interrupted", "error": None}
-    assert json.loads(process.stdin.writes[0])["method"] == "thread/read"
+    assert result == {"turnId": "turn-1", "status": "completed", "error": None}
+    assert [json.loads(item)["id"] for item in process.stdin.writes] == [3, 4]
 
 
 def test_active_root_task_worker_owns_the_first_turn(monkeypatch, tmp_path):

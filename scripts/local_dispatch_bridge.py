@@ -1817,7 +1817,7 @@ def _wait_for_app_server_terminal_turn(
             and read_requested_at is not None
             and now - read_requested_at >= APP_SERVER_WATCHDOG_STALE_SECONDS
         )
-        if now >= next_external_probe_at:
+        if request_stale and now >= next_external_probe_at:
             independently_observed = live_thread_turn_states({thread_id}).get(thread_id)
             next_external_probe_at = monotonic() + APP_SERVER_WATCHDOG_EXTERNAL_PROBE_SECONDS
             if (
