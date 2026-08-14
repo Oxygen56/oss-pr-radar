@@ -63,6 +63,7 @@ PR_FOLLOWUP_ABANDON_MIN_AGE_MINUTES = 90
 CLOUD_PR_FOLLOWUP_MAX_AGE_MINUTES = 150
 APP_SERVER_WATCHDOG_INTERVAL_SECONDS = 5.0
 APP_SERVER_WATCHDOG_STALE_SECONDS = 15.0
+APP_SERVER_WATCHDOG_EXTERNAL_PROBE_SECONDS = 30.0
 APP_SERVER_EVENT_DRAIN_SLICE_SECONDS = 1.0
 VALIDATION_PREFETCH_TIMEOUTS = {
     "cargo_locked_fetch": 300,
@@ -1808,6 +1809,7 @@ def _wait_for_app_server_terminal_turn(
     read_request_id: int | None = None
     read_requested_at: float | None = None
     next_read_at = monotonic() + APP_SERVER_WATCHDOG_INTERVAL_SECONDS
+    next_external_probe_at = monotonic() + APP_SERVER_WATCHDOG_EXTERNAL_PROBE_SECONDS
     while process.poll() is None:
         now = monotonic()
         request_stale = (
@@ -1815,6 +1817,19 @@ def _wait_for_app_server_terminal_turn(
             and read_requested_at is not None
             and now - read_requested_at >= APP_SERVER_WATCHDOG_STALE_SECONDS
         )
+        if request_stale and now >= next_external_probe_at:
+            independently_observed = live_thread_turn_states({thread_id}).get(thread_id)
+            next_external_probe_at = monotonic() + APP_SERVER_WATCHDOG_EXTERNAL_PROBE_SECONDS
+            if (
+                independently_observed
+                and independently_observed.get("turnId") == turn_id
+                and independently_observed.get("status") in {"completed", "interrupted", "failed"}
+            ):
+                return {
+                    "turnId": turn_id,
+                    "status": independently_observed["status"],
+                    "error": independently_observed.get("error"),
+                }
         if now >= next_read_at and (read_request_id is None or request_stale):
             read_request_id = next_request_id
             next_request_id += 1
@@ -2174,6 +2189,15 @@ def _task_turn_prompt(delivery_kind: str, candidate: dict[str, Any]) -> str:
     if delivery_kind == "validation-followup":
         return _validation_followup_prompt(candidate)
     if delivery_kind == "recovery":
+        recovery_kind = str(
+            candidate.get("recoveryKind")
+            or (candidate.get("reservation") or {}).get("recoveryKind")
+            or ""
+        )
+        if recovery_kind == "VALIDATION_FOLLOWUP_RESULT":
+            return VALIDATION_RECOVERY_PROMPT
+        if recovery_kind == "PR_FOLLOWUP_RESULT":
+            return _pr_followup_prompt({"issueUrl": issue_url})
         connection = sqlite3.connect(THREAD_DB)
         try:
             row = connection.execute(
@@ -2526,6 +2550,37 @@ def active_root_task_worker(thread_id: str) -> dict[str, Any] | None:
             "startedAt": launch.get("startedAt"),
         }
     return None
+
+
+def retryable_negative_task_turn_receipt(
+    *,
+    delivery_kind: str,
+    thread_id: str,
+    delivery_token: str,
+) -> dict[str, Any] | None:
+    """Return proof that a failed delivery started no target turn."""
+
+    receipt_key = sha256_json(
+        {
+            "deliveryKind": delivery_kind,
+            "threadId": thread_id,
+            "deliveryToken": delivery_token,
+        }
+    )
+    receipt_root = STATE / "task_turn_receipts"
+    receipt_path = receipt_root / f"{receipt_key}.json"
+    if not receipt_path.is_file():
+        return None
+    receipt = read_json(receipt_path, missing={})
+    if receipt.get("ok") or receipt.get("turnStarted"):
+        return None
+    if active_task_turn_worker(thread_id) is not None:
+        return None
+    return {
+        "retryable": True,
+        "retryReason": "NEGATIVE_RECEIPT_NO_TURN_STARTED",
+        "deliveryError": str(receipt.get("error") or "task-turn delivery failed")[:300],
+    }
 
 
 def task_turn_deliver(args: argparse.Namespace) -> dict[str, Any]:
@@ -3800,6 +3855,14 @@ def pr_followup_list(args: argparse.Namespace) -> dict[str, Any]:
             "commitReady": target_turn_materialized,
             "abandonable": False,
         }
+        if not target_turn_materialized:
+            retry = retryable_negative_task_turn_receipt(
+                delivery_kind="pr-followup",
+                thread_id=str(item.get("thread_id") or ""),
+                delivery_token=str(item.get("wake_digest") or ""),
+            )
+            if retry:
+                value |= retry
         unresolved_with_recovery.append(value)
     return {
         "ok": not unresolved_with_recovery and not blocked,
@@ -4385,6 +4448,14 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
             "commitReady": target_turn_materialized,
             "abandonable": False,
         }
+        if not target_turn_materialized:
+            retry = retryable_negative_task_turn_receipt(
+                delivery_kind="validation-followup",
+                thread_id=str(item.get("threadId") or ""),
+                delivery_token=str(item.get("resultDigest") or ""),
+            )
+            if retry:
+                value |= retry
         unresolved_with_recovery.append(value)
     stale = store.stale_validation_followups(min_age_minutes=getattr(args, "min_age_minutes", 90))
     blocked_no_progress = store.validation_no_progress()
@@ -5599,6 +5670,14 @@ def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
                 "commitReady": materialized,
                 "abandonable": False,
             }
+            if not materialized:
+                retry = retryable_negative_task_turn_receipt(
+                    delivery_kind="recovery",
+                    thread_id=str(item.get("threadId") or ""),
+                    delivery_token=str(item.get("recoveryNonce") or ""),
+                )
+                if retry:
+                    value |= retry
             unresolved_with_recovery.append(value)
     finally:
         connection.close()

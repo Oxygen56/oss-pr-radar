@@ -2359,6 +2359,57 @@ def test_recovery_immediately_resumes_an_interrupted_validation_followup(monkeyp
     assert reserved["prompt"] == MODULE.VALIDATION_RECOVERY_PROMPT
 
 
+def test_new_validation_followup_is_not_blocked_by_prior_sent_recovery(tmp_path):
+    store, _worktree = registered_store(tmp_path)
+    store.record_stage("a/b#1", "VALIDATION_PENDING")
+
+    first_digest = "result-digest-1"
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest=first_digest,
+        missing=["relevant_tests_green"],
+    )
+    store.reserve_validation_followup(thread_id="thread-1", result_digest=first_digest)
+    store.commit_validation_followup(thread_id="thread-1", result_digest=first_digest)
+    first_recovery = store.recovery_candidates(min_age_minutes=0)[0]
+    store.reserve_recovery(thread_id="thread-1", nonce=first_recovery["recoveryNonce"])
+    store.commit_recovery(thread_id="thread-1", nonce=first_recovery["recoveryNonce"])
+
+    second_digest = "result-digest-2"
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest=second_digest,
+        missing=["independent_review_passed"],
+    )
+    store.reserve_validation_followup(thread_id="thread-1", result_digest=second_digest)
+    store.commit_validation_followup(thread_id="thread-1", result_digest=second_digest)
+
+    second_recovery = store.recovery_candidates(min_age_minutes=0)[0]
+
+    assert second_recovery["recoveryKind"] == "VALIDATION_FOLLOWUP_RESULT"
+    assert second_recovery["followupDigest"] == second_digest
+    assert second_recovery["recoveryNonce"] != first_recovery["recoveryNonce"]
+    store.reserve_recovery(thread_id="thread-1", nonce=second_recovery["recoveryNonce"])
+    reservation = store.unresolved_recoveries()[0]["reservation"]
+    assert reservation["recoveryKind"] == "VALIDATION_FOLLOWUP_RESULT"
+    assert reservation["followupDigest"] == second_digest
+
+
+def test_recovery_delivery_preserves_validation_followup_prompt():
+    prompt = MODULE._task_turn_prompt(
+        "recovery",
+        {
+            "issueUrl": "https://github.com/a/b/issues/1",
+            "threadId": "thread-1",
+            "reservation": {"recoveryKind": "VALIDATION_FOLLOWUP_RESULT"},
+        },
+    )
+
+    assert prompt == MODULE.VALIDATION_RECOVERY_PROMPT
+
+
 def test_recovery_serializes_multiple_terminal_failures(monkeypatch, tmp_path):
     project_root = tmp_path / "github"
     thread_db = tmp_path / "threads.sqlite3"
@@ -2754,6 +2805,70 @@ def test_app_server_watchdog_polls_on_wall_clock_despite_continuous_events(monke
     }
 
 
+def test_app_server_watchdog_uses_independent_terminal_probe_when_read_stalls(monkeypatch):
+    class FakeStdin:
+        def __init__(self):
+            self.writes: list[bytes] = []
+
+        def write(self, value: bytes) -> None:
+            self.writes.append(value)
+
+        def flush(self) -> None:
+            return None
+
+    class FakeStdout:
+        @staticmethod
+        def fileno() -> int:
+            return 123
+
+    class FakeProcess:
+        def __init__(self):
+            self.stdin = FakeStdin()
+            self.stdout = FakeStdout()
+
+        @staticmethod
+        def poll():
+            return None
+
+    class NeverReadySelector:
+        @staticmethod
+        def select(_timeout):
+            return []
+
+    monkeypatch.setattr(MODULE, "monotonic", lambda: 0.0)
+    monkeypatch.setattr(MODULE, "APP_SERVER_WATCHDOG_INTERVAL_SECONDS", 0.0)
+    monkeypatch.setattr(MODULE, "APP_SERVER_WATCHDOG_STALE_SECONDS", 0.0)
+    monkeypatch.setattr(MODULE, "APP_SERVER_WATCHDOG_EXTERNAL_PROBE_SECONDS", 0.0)
+    monkeypatch.setattr(
+        MODULE,
+        "live_thread_turn_states",
+        lambda thread_ids: (
+            {
+                "thread-1": {
+                    "turnId": "turn-1",
+                    "status": "interrupted",
+                    "code": "turn_interrupted",
+                    "message": "interrupted",
+                }
+            }
+            if "thread-1" in thread_ids
+            else {}
+        ),
+    )
+    process = FakeProcess()
+
+    result = MODULE._wait_for_app_server_terminal_turn(
+        process,
+        NeverReadySelector(),
+        b"",
+        thread_id="thread-1",
+        turn_id="turn-1",
+    )
+
+    assert result == {"turnId": "turn-1", "status": "interrupted", "error": None}
+    assert json.loads(process.stdin.writes[0])["method"] == "thread/read"
+
+
 def test_active_root_task_worker_owns_the_first_turn(monkeypatch, tmp_path):
     receipt_root = tmp_path / "root_task_receipts"
     receipt_root.mkdir()
@@ -2945,6 +3060,44 @@ def test_task_turn_worker_setup_failure_writes_a_negative_receipt(monkeypatch, t
         "turnStarted": False,
         "turnId": None,
         "error": "RuntimeError:setup failed",
+    }
+
+
+def test_negative_task_turn_receipt_is_retryable_after_worker_exit(monkeypatch, tmp_path):
+    state = tmp_path / "state"
+    receipt_root = state / "task_turn_receipts"
+    receipt_root.mkdir(parents=True)
+    delivery_token = "a" * 64
+    receipt_key = MODULE.sha256_json(
+        {
+            "deliveryKind": "validation-followup",
+            "threadId": "thread-1",
+            "deliveryToken": delivery_token,
+        }
+    )
+    (receipt_root / f"{receipt_key}.json").write_text(
+        json.dumps(
+            {
+                "ok": False,
+                "turnStarted": False,
+                "turnId": None,
+                "error": "RuntimeError:app server could not resume the task",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(MODULE, "STATE", state)
+
+    result = MODULE.retryable_negative_task_turn_receipt(
+        delivery_kind="validation-followup",
+        thread_id="thread-1",
+        delivery_token=delivery_token,
+    )
+
+    assert result == {
+        "retryable": True,
+        "retryReason": "NEGATIVE_RECEIPT_NO_TURN_STARTED",
+        "deliveryError": "RuntimeError:app server could not resume the task",
     }
 
 
@@ -4618,6 +4771,7 @@ def test_validation_followup_never_abandons_an_unreceipted_delivery(monkeypatch,
 
     assert unresolved["abandonable"] is False
     assert unresolved["commitReady"] is False
+    assert "retryable" not in unresolved
     assert "abandonNonce" not in unresolved
     with pytest.raises(RuntimeError, match="not safely abandonable"):
         MODULE.validation_followup_abandon(
@@ -4630,6 +4784,76 @@ def test_validation_followup_never_abandons_an_unreceipted_delivery(monkeypatch,
                 min_age_minutes=90,
             )
         )
+
+
+def test_validation_followup_retries_an_explicit_no_turn_receipt(monkeypatch, tmp_path):
+    now = datetime.now(UTC)
+    reserved_at = iso_z(now - timedelta(hours=2))
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute("CREATE TABLE threads (id TEXT, updated_at INTEGER, rollout_path TEXT)")
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?)",
+            ("thread-1", int((now - timedelta(hours=3)).timestamp()), None),
+        )
+
+    class Store:
+        def reconcile_validation_no_progress(self):
+            return 0
+
+        def validation_followup_candidates(self):
+            return []
+
+        def unresolved_validation_followups(self):
+            return [
+                {
+                    "key": "a/b#1",
+                    "threadId": "thread-1",
+                    "resultDigest": "a" * 64,
+                    "missing": ["independent_review_passed"],
+                    "reservedAt": reserved_at,
+                }
+            ]
+
+        def stale_validation_followups(self, **_kwargs):
+            return []
+
+        def validation_no_progress(self):
+            return []
+
+    state = tmp_path / "state"
+    receipt_root = state / "task_turn_receipts"
+    receipt_root.mkdir(parents=True)
+    receipt_key = MODULE.sha256_json(
+        {
+            "deliveryKind": "validation-followup",
+            "threadId": "thread-1",
+            "deliveryToken": "a" * 64,
+        }
+    )
+    (receipt_root / f"{receipt_key}.json").write_text(
+        json.dumps(
+            {
+                "ok": False,
+                "turnStarted": False,
+                "turnId": None,
+                "error": "RuntimeError:app server could not resume the task",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(MODULE, "STATE", state)
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+
+    unresolved = MODULE.validation_followup_list(
+        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3", min_age_minutes=90)
+    )["unresolved"][0]
+
+    assert unresolved["retryable"] is True
+    assert unresolved["retryReason"] == "NEGATIVE_RECEIPT_NO_TURN_STARTED"
+    assert unresolved["commitReady"] is False
+    assert unresolved["abandonable"] is False
 
 
 def test_controller_defers_unvalidated_publishable_fix_without_agent_failure(tmp_path):

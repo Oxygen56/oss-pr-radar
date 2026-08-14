@@ -2043,6 +2043,7 @@ class RadarLedger:
                          AND (
                            (e.event_type='THREAD_RECOVERY_RESERVED'
                             AND json_extract(e.payload_json,'$.threadId')=i.thread_id
+                            AND e.created_at>=d.created_at
                             AND NOT EXISTS (
                               SELECT 1 FROM events abandoned
                               WHERE abandoned.opportunity_key=e.opportunity_key
@@ -2088,10 +2089,11 @@ class RadarLedger:
                      )
                      AND NOT EXISTS (
                        SELECT 1 FROM events recovery
-                       WHERE recovery.opportunity_key=o.key
-                         AND recovery.event_type='THREAD_RECOVERY_RESERVED'
-                         AND json_extract(recovery.payload_json,'$.threadId')=i.thread_id
-                         AND NOT EXISTS (
+                         WHERE recovery.opportunity_key=o.key
+                           AND recovery.event_type='THREAD_RECOVERY_RESERVED'
+                           AND json_extract(recovery.payload_json,'$.threadId')=i.thread_id
+                           AND recovery.created_at>=s.created_at
+                           AND NOT EXISTS (
                            SELECT 1 FROM events abandoned
                            WHERE abandoned.opportunity_key=recovery.opportunity_key
                              AND abandoned.event_type='THREAD_RECOVERY_DELIVERY_ABANDONED'
@@ -2137,10 +2139,11 @@ class RadarLedger:
                      )
                      AND NOT EXISTS (
                        SELECT 1 FROM events recovery
-                       WHERE recovery.opportunity_key=o.key
-                         AND recovery.event_type='THREAD_RECOVERY_RESERVED'
-                         AND json_extract(recovery.payload_json,'$.threadId')=i.thread_id
-                         AND NOT EXISTS (
+                         WHERE recovery.opportunity_key=o.key
+                           AND recovery.event_type='THREAD_RECOVERY_RESERVED'
+                           AND json_extract(recovery.payload_json,'$.threadId')=i.thread_id
+                           AND recovery.created_at>=s.created_at
+                           AND NOT EXISTS (
                            SELECT 1 FROM events abandoned
                            WHERE abandoned.opportunity_key=recovery.opportunity_key
                              AND abandoned.event_type='THREAD_RECOVERY_DELIVERY_ABANDONED'
@@ -2246,6 +2249,7 @@ class RadarLedger:
                 """SELECT 1 FROM events reserved WHERE opportunity_key=?
                    AND event_type='THREAD_RECOVERY_RESERVED'
                    AND json_extract(payload_json,'$.threadId')=?
+                   AND reserved.created_at>=?
                    AND NOT EXISTS (
                      SELECT 1 FROM events abandoned
                      WHERE abandoned.opportunity_key=reserved.opportunity_key
@@ -2255,7 +2259,7 @@ class RadarLedger:
                            )=reserved.dedupe_key
                        AND abandoned.id>reserved.id
                    )""",
-                (candidate["key"], thread_id),
+                (candidate["key"], thread_id, candidate["dispatchedAt"]),
             ).fetchone()
             if existing:
                 raise LedgerError("recovery is already reserved")
@@ -2264,7 +2268,12 @@ class RadarLedger:
                 candidate["key"],
                 "THREAD_RECOVERY_RESERVED",
                 nonce,
-                {"threadId": thread_id, "recoveryNonce": nonce},
+                {
+                    "threadId": thread_id,
+                    "recoveryNonce": nonce,
+                    "recoveryKind": candidate["recoveryKind"],
+                    "followupDigest": candidate.get("followupDigest"),
+                },
                 now,
             )
         return candidate

@@ -141,10 +141,12 @@ For each candidate, process one transaction at a time:
 
 An unknown worker outcome remains frozen and is never released by elapsed time.
 If `commitReady=true`, rerun `pr-followup-deliver`; it reconciles the already
-materialized target turn without starting another one. Report any remaining
-unresolved entry with its exact task, PR URL, and wake digest. Cancellation-only
-checks, aggregate checks, and failures unrelated to branch files are not
-actionable candidates.
+materialized target turn without starting another one. If `retryable=true`, an
+exact negative worker receipt proves that no target turn started; rerun
+`pr-followup-deliver` with the same wake digest so the bridge can replace that
+failed attempt safely. Report any remaining unresolved entry with its exact
+task, PR URL, and wake digest. Cancellation-only checks, aggregate checks, and
+failures unrelated to branch files are not actionable candidates.
 
 ## 5. Dispatch new issue tasks
 
@@ -248,7 +250,9 @@ PR-follow-up work. Do not reserve or send them until they return under
   app-server receipts the exact new turn.
 - Unknown worker outcomes remain unresolved and are never released or resent
   by age. If `commitReady=true`, rerun `validation-followup-deliver` to commit
-  the already materialized turn without creating another one.
+  the already materialized turn without creating another one. If
+  `retryable=true`, an exact negative worker receipt proves that no target turn
+  started; rerun the same delivery safely instead of freezing the queue.
 - Report entries stale after 90 minutes as `validationFollowupStalled`; this is
   a delivery watchdog, not a general review cooldown.
 - A validation turn that the independent desktop view marks `interrupted` may
@@ -275,9 +279,10 @@ PR-follow-up work. Do not reserve or send them until they return under
    delivery is receipted. After `recovery-reserve`, run `recovery-deliver` with
    the same task and recovery nonce. If `commitReady=true`, rerun
    `recovery-deliver`; it commits the already materialized turn without
-   creating another one. Unknown worker outcomes remain frozen and are never
-   abandoned by age. Never send the next queued item while a delivery result is
-   unknown. Use one write-ahead
+   creating another one. If `retryable=true`, an exact negative worker receipt
+   proves that no target turn started; rerun `recovery-deliver` with the same
+   nonce. Unknown worker outcomes remain frozen and are never abandoned by age.
+   Never send the next queued item while a delivery result is unknown. Use one write-ahead
    recovery only for tasks with no recent activity and no structured result. This includes an
    existing-PR follow-up that was sent successfully but never returned its
    required identity-matched result. Recently active tasks must not be woken,
