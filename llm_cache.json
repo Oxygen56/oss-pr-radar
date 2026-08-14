@@ -25441,6 +25441,35 @@
     ],
     "why": "Issue clearly identifies a stale tenant_embd_id causing empty api_key in queued tasks, with a concrete code path and suggested fix. However, open PR lookup failed due to rate limit, and existing merged PRs (#17176, #14923) partially address related tenant_embd_id resolution but not execution-time fallback. Need to confirm no competing implementation and maintainer design preference before starting work."
   },
+  "e5e7fdfb3f6e7d62799b04bde19557ad698baa2d29c520e1c8ed75ab1629dd6e": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Add Codex-compatible /models response shape or route",
+      "Include base_instructions per model in Codex response"
+    ],
+    "risks": [
+      "Changing response shape may affect other clients",
+      "Large base_instructions payloads may impact performance"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "test_plan": [
+      "Capture actual Codex request and create integration test against proxy",
+      "Verify Codex model discovery succeeds with mocked OpenAI-compatible response"
+    ],
+    "unknowns": [
+      "Exact request headers/path Codex sends",
+      "Maintainer preference on response shape vs separate route",
+      "Whether base_instructions are available in LiteLLM model metadata"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "Issue describes a real compatibility gap but lacks a concrete reproduction, exact request details, and maintainer confirmation. The proposed fix (alternate response shape or Codex-specific route) has design ambiguity and requires handling large base_instructions payloads, so implementation details are not yet actionable."
+  },
   "e5ea3167f2aa19a46867a35b21e2e57413caca7752954fc886ac541997ab9110": {
     "confidence": 0.8,
     "contradictions": [
