@@ -22,6 +22,11 @@ timing are external labels, not the north-star metric.
    competing PR without a material root-cause, critical-path, or test gap.
 3. **Decision** applies hard gates first. DeepSeek may reject, downgrade, or
    classify semantic competition; it cannot produce a positive authorization.
+   A missing, malformed, timed-out, or unavailable model response becomes a
+   typed semantic-review retry and never masquerades as maintainer approval or
+   a usable candidate. The scanner and signed intent expose one canonical
+   outcome for the issue; model review cannot leave a contradictory second
+   status behind.
    `llm_algorithm` is a separate track whose snapshot must bind concrete
    mechanism evidence and a reference, numerical, or controlled-experiment
    validation path. Repository identity alone never qualifies algorithm work.
@@ -37,8 +42,12 @@ timing are external labels, not the north-star metric.
    `clientThreadId` is persisted before any polling.
 6. **Task identity** binds issue, Codex task ID, project, source repository,
    worktree, first user input, and expected timestamped lifecycle title. The
-   selected project must be the exact source repository and must advertise a
-   Git repository; parent folders and the radar repository are invalid targets.
+   visible Codex project is always the single `github` project rooted at
+   `/Users/oxygen/Documents/github`; repository isolation is provided by the
+   controller-managed worktree bound in the private task context. The source
+   repository origin must match the issue, and the worktree must belong to that
+   source checkout; arbitrary parent folders and the Radar repository are
+   invalid implementation targets.
    When worktree creation returns only an asynchronous client ID, a later
    reconciliation may bind the task only if creation start time, canonical
    prompt, repository origin, and a previously unbound worktree identify
@@ -107,6 +116,11 @@ mode. The default is one durable task across issue dispatch, existing-PR
 follow-up, and validation continuation because starting another project-root
 app-server turn can interrupt the first task; `RADAR_MAX_ACTIVE_TASKS=0` may be
 set explicitly only on a host that proves concurrent root turns are isolated.
+This is a safety limit on active Codex implementation turns, not a discovery
+limit: scanning, evidence collection, queueing, PR refresh, notifications, and
+publication reconciliation continue independently. When a task releases the
+slot, the local event drain immediately advances the next highest-priority
+item; the hourly heartbeat is only the reconciliation fallback.
 The root-task owner polls persisted turn status as a watchdog, so a lost
 completion notification cannot leave a private app-server alive indefinitely.
 Hourly watch evidence forces a rescan on ownership,

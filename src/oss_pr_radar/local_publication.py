@@ -63,6 +63,7 @@ def advance_once(
     recovery = runner(root, "context-recover")
     recovery_errors = list(recovery.get("errors") or [])
     recovery_unavailable = list(recovery.get("unavailable") or [])
+    public_unavailable = recovery_unavailable[:5]
     if recovery.get("ok") is False or recovery_errors:
         return {
             "ok": False,
@@ -74,7 +75,8 @@ def advance_once(
             "contextsSynced": [],
             "pending": [],
             "blocked": [],
-            "contextsUnavailable": recovery_unavailable,
+            "contextsUnavailable": public_unavailable,
+            "contextsUnavailableCount": len(recovery_unavailable),
             "errors": recovery_errors
             or [{"error": "task context recovery failed before result ingestion"}],
         }
@@ -91,7 +93,8 @@ def advance_once(
             "contextsSynced": [],
             "pending": [],
             "blocked": [],
-            "contextsUnavailable": recovery_unavailable,
+            "contextsUnavailable": public_unavailable,
+            "contextsUnavailableCount": len(recovery_unavailable),
             "errors": ingestion_errors
             or [{"error": "task result ingestion failed before publication"}],
         }
@@ -116,13 +119,44 @@ def advance_once(
     pending = list(publication.get("pending") or [])
     renamed = list(title_reconciliation.get("renamed") or [])
     archived = list(cleanup_reconciliation.get("archived") or [])
-    activity = bool(ingested or requests or renamed or archived or published or blocked or errors)
+    should_drain = bool(ingested or validation_deferred or archived or published)
+    drain = {"ok": True, "action": "not_triggered"}
+    terminal_feedback = {"ok": True, "published": 0, "errors": []}
+    lifecycle_healthy = bool(
+        not errors
+        and title_reconciliation.get("ok") is not False
+        and cleanup_reconciliation.get("ok") is not False
+        and publication.get("ok") is not False
+        and context_sync.get("ok") is not False
+    )
+    if should_drain and lifecycle_healthy:
+        drain = runner(root, "drain-once")
+        errors.extend(list(drain.get("errors") or []))
+        if drain.get("terminalized"):
+            terminal_feedback = runner(root, "publish-terminal-feedback")
+            errors.extend(list(terminal_feedback.get("errors") or []))
+    drain_activity = bool(
+        drain.get("action")
+        and drain.get("action") not in {"none", "not_triggered", "drain_already_running"}
+    )
+    activity = bool(
+        ingested
+        or requests
+        or renamed
+        or archived
+        or published
+        or blocked
+        or errors
+        or drain_activity
+    )
     return {
         "ok": not errors
         and title_reconciliation.get("ok") is not False
         and cleanup_reconciliation.get("ok") is not False
         and publication.get("ok") is not False
-        and context_sync.get("ok") is not False,
+        and context_sync.get("ok") is not False
+        and drain.get("ok") is not False
+        and terminal_feedback.get("ok") is not False,
         "activity": activity,
         "resultsIngested": ingested,
         "publicationRequests": requests,
@@ -131,9 +165,12 @@ def advance_once(
         "threadsArchived": archived,
         "published": published,
         "contextsSynced": list(context_sync.get("written") or []),
+        "drain": drain,
+        "terminalFeedback": terminal_feedback,
         "pending": pending,
         "blocked": blocked,
-        "contextsUnavailable": recovery_unavailable,
+        "contextsUnavailable": public_unavailable,
+        "contextsUnavailableCount": len(recovery_unavailable),
         "errors": errors,
     }
 

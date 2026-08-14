@@ -145,6 +145,19 @@ def test_enqueue_starts_submit_ready_denominator(tmp_path):
     assert metrics["submitReady"] == 0
 
 
+def test_filter_miss_metrics_accept_current_machine_readable_failure_classes(tmp_path):
+    path = tmp_path / "ledger.sqlite3"
+    store = RadarLedger(path)
+    store.enqueue(intent())
+    store.record_stage("a/b#1", "AUDIT_NO_GO", evidence={}, reason="STRONG_EXISTING_PR")
+
+    metrics = rolling_quality(path)
+
+    assert metrics["filterMisses"] == 1
+    assert metrics["filterMissRate"] == 1.0
+    assert metrics["failureClassCounts"] == {"STRONG_EXISTING_PR": 1}
+
+
 def test_same_issue_cannot_create_a_second_live_task(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     assert store.enqueue(intent()) is True

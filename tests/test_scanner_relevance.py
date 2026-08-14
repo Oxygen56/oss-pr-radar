@@ -5,6 +5,7 @@ from oss_pr_radar.scanner import (
     BUG_ACTIONABILITY_RE,
     Radar,
     is_dynamic_agent_infra_issue,
+    public_reproduction_evidence,
     requires_unavailable_hardware,
 )
 
@@ -30,6 +31,28 @@ def test_is_not_honored_is_a_concrete_bug_signal():
     assert BUG_ACTIONABILITY_RE.search(
         "ModelSettings.parallel_tool_calls is not honored by the provider."
     )
+
+
+def test_reproduction_evidence_does_not_reward_headings_or_arbitrary_code():
+    assert public_reproduction_evidence("Steps to reproduce\n```json\n{\"ok\": true}\n```") == ()
+
+
+def test_reproduction_evidence_requires_independent_executable_signals():
+    evidence = public_reproduction_evidence(
+        """Steps to reproduce
+1. Start the server
+2. Send one request
+
+Expected output: one tool call
+Actual output: the tool call is empty
+
+```bash
+python -m example.repro --streaming --tool-call
+```
+"""
+    )
+
+    assert evidence == ("expected_actual_pair", "ordered_steps", "executable_command")
 
 
 def test_backend_context_does_not_turn_a_software_bug_into_hardware_only():

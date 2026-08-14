@@ -35,6 +35,12 @@ def test_fast_publication_runs_ingestion_and_publication_in_order(tmp_path):
             "written": [{"key": "a/b#1", "path": "/tmp/task-context.json"}],
             "errors": [],
         },
+        "drain-once": {
+            "ok": True,
+            "action": "issue_task_dispatched",
+            "key": "a/b#3",
+            "threadId": "thread-3",
+        },
     }
 
     def runner(root: Path, operation: str):
@@ -50,6 +56,7 @@ def test_fast_publication_runs_ingestion_and_publication_in_order(tmp_path):
         "cleanup-reconcile",
         "publication-run",
         "context-sync",
+        "drain-once",
     ]
     assert result["ok"] is True
     assert result["activity"] is True
@@ -57,6 +64,38 @@ def test_fast_publication_runs_ingestion_and_publication_in_order(tmp_path):
     assert result["threadsArchived"][0]["threadId"] == "thread-2"
     assert result["published"][0]["prUrl"] == "https://github.com/a/b/pull/2"
     assert result["contextsSynced"][0]["key"] == "a/b#1"
+    assert result["drain"]["threadId"] == "thread-3"
+
+
+def test_terminalized_live_audit_is_published_before_cycle_finishes(tmp_path):
+    calls = []
+
+    def runner(_root: Path, operation: str):
+        calls.append(operation)
+        if operation == "context-recover":
+            return {"ok": True, "verified": 0, "errors": []}
+        if operation == "ingest-results":
+            return {
+                "ok": True,
+                "ingested": [{"key": "a/b#1", "stage": "AUDIT_NO_GO"}],
+                "publicationRequests": [],
+                "errors": [],
+            }
+        if operation == "drain-once":
+            return {
+                "ok": True,
+                "action": "none",
+                "terminalized": [{"key": "a/b#2", "reason": "STRONG_EXISTING_PR"}],
+            }
+        if operation == "publish-terminal-feedback":
+            return {"ok": True, "published": 1, "errors": []}
+        return {"ok": True, "published": [], "pending": [], "blocked": [], "errors": []}
+
+    result = advance_once(tmp_path, runner=runner)
+
+    assert calls[-2:] == ["drain-once", "publish-terminal-feedback"]
+    assert result["ok"] is True
+    assert result["terminalFeedback"]["published"] == 1
 
 
 def test_fast_publication_is_quiet_when_no_result_or_request_exists(tmp_path):

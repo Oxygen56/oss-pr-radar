@@ -73,6 +73,7 @@ SEEN_RECHECK_STATUSES = frozenset(
         "inspection_budget_deferred",
         "candidate_overflow",
         "policy_migration_pending",
+        "semantic_review_retry",
     }
 )
 SCANNER_MIGRATION_RECHECK_STATUSES = frozenset(
@@ -540,9 +541,10 @@ PUBLIC_REPRO_RE = re.compile(
     re.I,
 )
 ROOT_CAUSE_RE = re.compile(
-    r"\b(root cause|caused by|regression from|bisect(?:ed)? to|because|"
-    r"(?:combine\s+to\s+)?cause(?:s|d)?\s+this|incorrectly|should instead|"
-    r"mismatch|overflow|race condition|invariant|discard(?:s|ed|ing)?)\b",
+    r"\b(root cause|caused by|regression from|bisect(?:ed)? to|"
+    r"(?:combine\s+to\s+)?cause(?:s|d)?\s+this|overflow|race condition|"
+    r"invariant violation|discard(?:s|ed|ing)?\s+(?:the|a|an)\s+"
+    r"(?:event|chunk|token|request|response|state|value))\b",
     re.I,
 )
 PRIVATE_REPRO_RE = re.compile(
@@ -777,18 +779,58 @@ KERNEL_RE = re.compile(
     r"fp8|mxfp4|quantization|numerical|argmax|batch invariant)\b",
     re.I,
 )
+REPRO_COMMAND_RE = re.compile(
+    r"(?:^|\n)\s*(?:\$\s*)?(?:python(?:3)?\s|pytest\s|uv\s+run\s|curl\s|"
+    r"docker\s+(?:run|compose)|npm\s+(?:test|run)|pnpm\s|yarn\s|cargo\s+(?:test|run)|"
+    r"go\s+test\s|cmake\s|make\s)",
+    re.I,
+)
+TRACEBACK_FRAME_RE = re.compile(
+    r"(?:traceback \(most recent call last\)|\bFile\s+['\"][^'\"]+['\"],\s*line\s+\d+|"
+    r"\bat\s+[A-Za-z0-9_.$<>]+\s*\([^\n]+:\d+(?::\d+)?\))",
+    re.I,
+)
+STEP_SEQUENCE_RE = re.compile(
+    r"(?:steps? to reproduce|repro(?:duction|ducer|ducible)?)[^\n]*\n"
+    r"(?:\s*(?:\d+[.)]|[-*])\s+\S[^\n]*\n?){2,}",
+    re.I,
+)
+
+
+def public_reproduction_evidence(body: str) -> tuple[str, ...]:
+    """Return independent, executable failure signals instead of template words."""
+
+    signals: list[str] = []
+    lowered = body.casefold()
+    if (
+        re.search(r"\bexpected (?:behavior|result|output)\b", lowered)
+        and re.search(r"\bactual (?:behavior|result|output)\b", lowered)
+    ):
+        signals.append("expected_actual_pair")
+    if TRACEBACK_FRAME_RE.search(body):
+        signals.append("traceback_frame")
+    if STEP_SEQUENCE_RE.search(body):
+        signals.append("ordered_steps")
+    for block in re.findall(r"```[^\n]*\n(.*?)```", body, re.I | re.S):
+        compact = re.sub(r"\s+", "", block)
+        if len(compact) >= 24 and REPRO_COMMAND_RE.search(block):
+            signals.append("executable_command")
+            break
+    if (
+        re.search(r"\bminimal (?:example|reproduction|reproducer)\b", body, re.I)
+        and any(
+            len(re.sub(r"\s+", "", block)) >= 80
+            for block in re.findall(r"```[^\n]*\n(.*?)```", body, re.I | re.S)
+        )
+    ):
+        signals.append("minimal_example")
+    return tuple(dict.fromkeys(signals))
 
 
 def public_reproduction_signal_count(body: str) -> int:
-    """Count concrete reproduction evidence without rewarding empty templates."""
-    text_signals = len(PUBLIC_REPRO_RE.findall(body))
-    fenced_blocks = re.findall(r"```[^\n]*\n(.*?)```", body, re.I | re.S)
-    meaningful_blocks = sum(
-        1
-        for block in fenced_blocks
-        if len(re.sub(r"\s+", "", block)) >= 8 and re.search(r"[A-Za-z0-9_./:=(){}\[\]-]", block)
-    )
-    return text_signals + meaningful_blocks
+    """Count independent executable signals, never headings or arbitrary code fences."""
+
+    return len(public_reproduction_evidence(body))
 
 
 def incomplete_template_value_count(body: str) -> int:
@@ -825,6 +867,12 @@ ISSUE_CODE_FILE_RE = re.compile(
     r"(?<![A-Za-z0-9_.-])([A-Za-z0-9_-]+\.(?:py|rs|ts|tsx|js|jsx|java|cs|cc|cpp|c|h|hpp))(?![A-Za-z0-9_.-])",
     re.I,
 )
+ISSUE_SYMBOL_RE = re.compile(
+    r"(?:`[A-Za-z_][A-Za-z0-9_.:]{2,}`|"
+    r"\b(?:class|function|method|module|operator|kernel|scheduler|parser|handler)\s+"
+    r"[A-Za-z_][A-Za-z0-9_.:]{2,})",
+    re.I,
+)
 GENERIC_CODE_BASENAMES = {
     "__init__.py",
     "api.py",
@@ -843,6 +891,17 @@ GENERIC_CODE_BASENAMES = {
     "types.ts",
     "utils.py",
 }
+
+
+def issue_code_anchors(text: str) -> tuple[str, ...]:
+    anchors = [match.group(0) for match in ISSUE_CODE_PATH_RE.finditer(text)]
+    anchors.extend(
+        match.group(1)
+        for match in ISSUE_CODE_FILE_RE.finditer(text)
+        if match.group(1).casefold() not in GENERIC_CODE_BASENAMES
+    )
+    anchors.extend(match.group(0) for match in ISSUE_SYMBOL_RE.finditer(text))
+    return tuple(dict.fromkeys(anchor[:160] for anchor in anchors))
 RELATED_FAILURE_SIGNATURE_RE = re.compile(
     r"\b(?:nvcc|cicc|ptxas|clang|gcc|segmentation\s+fault|bus\s+error|"
     r"illegal\s+memory\s+access|core\s+dumped|signal\s+\d+)\b|"
@@ -1291,6 +1350,33 @@ def select_seen_rechecks(
     return candidates[: max(0, limit)]
 
 
+def expire_stale_rechecks(
+    seen: dict[str, Any], now: datetime, *, max_age_hours: int = SEEN_RECHECK_HOURS
+) -> int:
+    """Retire old budget retries; a later issue update will naturally re-arm them."""
+
+    expired = 0
+    cutoff = now.astimezone(timezone.utc) - timedelta(hours=max(1, max_age_hours))
+    for key, value in list(seen.items()):
+        if not isinstance(value, dict) or value.get("status") not in SEEN_RECHECK_STATUSES:
+            continue
+        first_deferred = parse_github_time(
+            value.get("first_deferred_at")
+            or value.get("requeued_at")
+            or value.get("analyzed"),
+            now.astimezone(timezone.utc),
+        )
+        if first_deferred >= cutoff:
+            continue
+        seen[key] = value | {
+            "status": "deferred_expired",
+            "reason": "recheck_freshness_expired",
+            "analyzed": now.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+        expired += 1
+    return expired
+
+
 def count_seen_rechecks(seen: dict[str, Any]) -> int:
     return sum(
         isinstance(value, dict) and value.get("status") in SEEN_RECHECK_STATUSES
@@ -1585,6 +1671,34 @@ def candidate_notification_digest(
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def candidate_issue_outcome(candidate: dict[str, Any]) -> dict[str, Any]:
+    review = candidate.get("llm_review") if isinstance(candidate.get("llm_review"), dict) else {}
+    if review.get("status") in {"retry", "not_configured"}:
+        return {
+            "status": "deferred",
+            "reason": "semantic_review_retry",
+            "auto_spawn": False,
+            "track": candidate.get("track"),
+            "category": candidate.get("category"),
+            "gate_decision": candidate.get("gate_decision"),
+        }
+    return {
+        "status": "candidate",
+        "auto_spawn": bool(candidate.get("auto_spawn")),
+        "track": candidate.get("track"),
+        "category": candidate.get("category"),
+        "gate_decision": candidate.get("gate_decision"),
+        "submission_policy": candidate.get("submission_policy"),
+        "reason": (
+            "maintainer_active_investigation"
+            if (candidate.get("actionability_evidence") or {}).get(
+                "maintainer_active_investigation"
+            )
+            else candidate.get("gate_decision")
+        ),
+    }
+
+
 def should_skip_seen(
     old: Any,
     issue_updated: str | None = None,
@@ -1818,6 +1932,7 @@ class Radar:
         self.deferred_rechecks_before = 0
         self.deferred_rechecks_attempted = 0
         self.deferred_rechecks_migration_selected = 0
+        self.deferred_rechecks_expired = 0
         self.deferred_rechecks_remaining = 0
 
     def deep_inspection_deadline_reached(self) -> bool:
@@ -2016,6 +2131,7 @@ class Radar:
         algorithm_index = int(self.now.timestamp() // 3600) % len(LLM_ALGORITHM_DISCOVERY_QUERIES)
         algorithm_query = LLM_ALGORITHM_DISCOVERY_QUERIES[algorithm_index]
         self.add_search(items, f"{base} label:bug {algorithm_query}", 15, required=False)
+        self.deferred_rechecks_expired = expire_stale_rechecks(self.seen, self.now)
         rechecks = select_seen_rechecks(self.seen)
         self.deferred_rechecks_before = count_seen_rechecks(self.seen)
         recheck_keys = {key for key, _ in rechecks}
@@ -3213,8 +3329,15 @@ class Radar:
         needs_confirmation = bool(
             WAIT_LABEL_RE.search(labels_text) or ISSUE_APPROVAL_GATE_RE.search(body)
         )
-        public_repro_signals = public_reproduction_signal_count(body)
+        repro_evidence = public_reproduction_evidence(body)
+        public_repro_signals = len(repro_evidence)
         root_cause_signal = bool(ROOT_CAUSE_RE.search(title + "\n" + body))
+        code_anchors = issue_code_anchors(text[:24000])
+        probe_ready = bool(
+            (public_repro_signals >= 2 and code_anchors)
+            or (root_cause_signal and code_anchors)
+            or ((maintainer_approved or help_wanted) and code_anchors)
+        )
         algorithm_evidence = llm_algorithm_evidence(
             base["repo"],
             scoring_text,
@@ -3360,10 +3483,6 @@ class Radar:
             return None, "desktop_peripheral_issue"
         if is_frontend_interaction_issue(title, labels_text, body):
             return None, "frontend_interaction_issue"
-        if re.search(r"\b(bug|regression|performance)\b", issue_kind_text, re.I) and (
-            public_repro_signals < 2 and not root_cause_signal
-        ):
-            return None, "no_public_reproduction_or_root_cause"
         if track == LLM_ALGORITHM_TRACK:
             if algorithm_evidence["operational_only"]:
                 return None, "algorithm_operational_or_configuration_only"
@@ -3377,6 +3496,10 @@ class Radar:
             or is_dynamic_llm_algorithm_issue(dynamic_topic_text)
         ):
             return None, "off_topic_dynamic_repo"
+        if re.search(r"\b(bug|regression|performance)\b", issue_kind_text, re.I) and not (
+            probe_ready
+        ):
+            return None, "probe_contract_incomplete"
 
         high_hits = len({match.group(0).lower() for match in HIGH_RE.finditer(scoring_text)})
         impact_hits = len({match.group(0).lower() for match in IMPACT_RE.finditer(scoring_text)})
@@ -3553,7 +3676,10 @@ class Radar:
             "algorithm_evidence": algorithm_evidence if track == LLM_ALGORITHM_TRACK else None,
             "actionability_evidence": {
                 "public_repro_signals": public_repro_signals,
+                "reproduction_evidence": list(repro_evidence),
                 "root_cause_signal": root_cause_signal,
+                "code_anchors": list(code_anchors[:8]),
+                "probe_ready": probe_ready,
                 "maintainer_approved": maintainer_approved,
                 "help_wanted": help_wanted,
                 "needs_confirmation": needs_confirmation,
@@ -3982,21 +4108,7 @@ class Radar:
                 ],
             }
             candidates.append(scored)
-            self.issue_outcomes[key] = {
-                "status": "candidate",
-                "auto_spawn": bool(scored.get("auto_spawn")),
-                "track": scored.get("track"),
-                "category": scored.get("category"),
-                "gate_decision": scored.get("gate_decision"),
-                "submission_policy": scored.get("submission_policy"),
-                "reason": (
-                    "maintainer_active_investigation"
-                    if (scored.get("actionability_evidence") or {}).get(
-                        "maintainer_active_investigation"
-                    )
-                    else scored.get("gate_decision")
-                ),
-            }
+            self.issue_outcomes[key] = candidate_issue_outcome(scored)
 
         bucket_rank = {
             "immediate": 0,
@@ -4198,6 +4310,9 @@ class Radar:
             evaluator = DeepSeekEvaluator.from_environment(BASE_DIR / "state" / "llm_cache.json")
             candidates = evaluator.evaluate_candidates(candidates)
             llm_finished = self.monotonic_fn()
+            for candidate in candidates:
+                key = f"{candidate['repo']}#{candidate['num']}"
+                self.issue_outcomes[key] = candidate_issue_outcome(candidate)
             for key, rejected in getattr(evaluator, "rejected_candidates", {}).items():
                 candidate = rejected["candidate"]
                 reason = rejected["reason"]
@@ -4219,6 +4334,20 @@ class Radar:
             notification_candidates = []
             for candidate in candidates:
                 key = f"{candidate['repo']}#{candidate['num']}"
+                if candidate.get("notify") is False:
+                    review = candidate.get("llm_review") or {}
+                    self.seen[key] = {
+                        "analyzed": self.analyzed,
+                        "status": "semantic_review_retry",
+                        "reason": "semantic_review_retry",
+                        "requeued_at": self.analyzed,
+                        "title": candidate.get("title") or key,
+                        "url": candidate.get("url"),
+                        "issue_updated": candidate.get("issue_updated") or "",
+                        "llm_error_category": review.get("error_category")
+                        or review.get("status"),
+                    }
+                    continue
                 digest = candidate_notification_digest(candidate)
                 previous = self.seen.get(key)
                 previous_digest = (
@@ -4428,6 +4557,7 @@ class Radar:
                 "queued_before": self.deferred_rechecks_before,
                 "attempted": self.deferred_rechecks_attempted,
                 "migration_selected": self.deferred_rechecks_migration_selected,
+                "expired": self.deferred_rechecks_expired,
                 "remaining": self.deferred_rechecks_remaining,
                 "per_run_budget": RECHECK_INSPECTION_BUDGET,
                 "cooldown_enabled": False,

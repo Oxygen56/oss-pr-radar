@@ -5,8 +5,10 @@
 - `radar.yml`: every hour at minute 17 in `Asia/Shanghai`.
 - Local Codex heartbeat dispatcher: every hour at minute 30, reusing one
   controller task after the GitHub scan's delay budget.
-- Local completion collector: every 20 seconds, ingesting only existing
-  workspace results and advancing existing publication requests without an LLM.
+- Local completion collector: every 20 seconds, ingesting existing workspace
+  results, advancing existing publication requests without an LLM, and invoking
+  one serialized event drain only when a result or lifecycle transition releases
+  task capacity.
 - Health watchdog: every hour at minute 55.
 - The local dispatcher also runs the health check, so scheduler failure is not
   monitored only by another workflow on the same scheduler.
@@ -23,8 +25,11 @@ signed intents, and retries sync at the end or on the next hourly cycle.
 
 Deferred inspections are oldest-first and receive a dedicated 24-item budget
 in addition to the 30-item fresh-issue budget; there is no recheck cooldown. A
-terminal rejection drains the item; a transient evidence lookup failure remains
-eligible for retry. Candidates that exceed the per-run notification cap are
+terminal rejection drains the item. A transient evidence or semantic-model
+failure stays typed as retryable while the underlying issue snapshot is fresh.
+After 24 hours without a new issue update, that retry is retired as
+`deferred_expired`; a later issue update naturally creates a new evidence epoch
+and re-arms inspection. Candidates that exceed the per-run notification cap are
 stored as `candidate_overflow` instead of being silently lost.
 
 Within the fresh-issue budget, up to 12 positions are reserved for the
@@ -218,23 +223,27 @@ competition opportunity.
 
 ## Local Dispatcher Order
 
-The single-thread desktop heartbeat runs health with fallback repair, asynchronous
-task reconciliation, queue sync,
-real dispatch-failure alerts, PR lifecycle refresh, actionable existing-PR task
-follow-up, result ingestion, actionable validation continuation, and recoverable
-existing-task continuation before any new live claim/revalidation. New issue
-creation then uses write-ahead creation, single-project task creation, isolated worktree preparation, and task
-receipt verification, followed by workspace context sync, publication
-advancement, stale-archive restoration, title synchronization,
-and `AUDIT_NO_GO` cleanup in that order. The controller verifies that a task is
-actually unarchived before committing the restore receipt, and verifies the exact
-visible title before committing title state. Valid pending intents are ordinary queue state and must
-not be treated as a failed run; publication canary state does not cap private
-task creation.
+The desktop heartbeat runs only
+`.venv/bin/python scripts/controller_cycle.py`. The command owns health repair,
+interrupted creation, queue sync, PR refresh, ingestion, restoration, titles,
+cleanup, publication, notifications, final audit, and one serialized drain.
+The drain always prioritizes existing PR follow-up, validation continuation,
+and recoverable work before a new issue. New tasks use write-ahead creation, the
+single `github` project, an isolated source worktree, and an exact task receipt.
+Valid pending intents are ordinary queue state and publication canary state does
+not cap private task creation. No heartbeat step manually interprets a queue,
+renames a task, archives a task, or calls the desktop task API.
 The local completion collector also reconciles lifecycle titles and archives
 exact `[无价值]` `AUDIT_NO_GO` tasks immediately after ingesting a result, so a
 completed no-go task does not remain visible as valuable or wait for the next
-hourly heartbeat to be cleaned up.
+hourly heartbeat to be cleaned up. The same event then advances at most one next
+task under the shared drain lock. An idle 20-second cycle performs no live audit
+and creates no task.
+
+DeepSeek Harness runs as a separate product automation. It does not share the
+Radar ledger, scanner state, task WIP slot, task contexts, controller command,
+or quality metrics; only the user's common GitHub identity and normal repository
+policies are shared.
 `githubNaturalScheduleHealthy` refers only to GitHub Actions cron delivery;
 `operationalHealthy` also accepts a recent successful or currently active
 manual/fallback scan. Historical rolling-window gaps are reported separately in

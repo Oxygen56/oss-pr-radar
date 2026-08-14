@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import importlib.util
 import json
@@ -23,6 +24,244 @@ SPEC = importlib.util.spec_from_file_location("local_dispatch_bridge", SCRIPT)
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC and SPEC.loader
 SPEC.loader.exec_module(MODULE)
+
+
+def test_orphan_reconcile_commits_unique_matches_and_abandons_proven_misses(monkeypatch):
+    monkeypatch.setattr(
+        MODULE,
+        "orphan_list",
+        lambda _args: {
+            "ok": True,
+            "candidates": [
+                {
+                    "intentId": "intent-1",
+                    "threadId": "thread-1",
+                    "key": "a/b#1",
+                    "repo": "a/b",
+                    "desiredTitle": "[有价值] a/b#1",
+                    "orphanNonce": "orphan-1",
+                }
+            ],
+            "unmatched": [
+                {
+                    "intentId": "intent-2",
+                    "key": "a/b#2",
+                    "clientThreadId": None,
+                    "abandonable": True,
+                    "abandonNonce": "abandon-2",
+                }
+            ],
+            "blocked": [],
+        },
+    )
+    monkeypatch.setattr(MODULE, "source_repo", lambda _repo: Path("/tmp/a-b"))
+    monkeypatch.setattr(
+        MODULE,
+        "orphan_commit",
+        lambda args: {"ok": True, "intentId": args.intent_id, "threadId": args.thread_id},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "creation_abandon",
+        lambda args: {"ok": True, "intentId": args.intent_id, "abandoned": True},
+    )
+
+    result = MODULE.orphan_reconcile(
+        SimpleNamespace(
+            ledger=Path("/tmp/ledger"), min_age_minutes=70, project_id="github"
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["reconciled"][0]["threadId"] == "thread-1"
+    assert result["abandoned"][0]["intentId"] == "intent-2"
+
+
+def test_duplicate_task_reconcile_archives_only_exact_renamed_duplicates(monkeypatch):
+    candidate = {
+        "threadId": "duplicate-1",
+        "canonicalThreadId": "canonical-1",
+        "key": "a/b#1",
+        "currentTitle": "<codex_delegation>",
+    }
+    monkeypatch.setattr(
+        MODULE,
+        "duplicate_task_title_reconcile",
+        lambda _args: {
+            "ok": True,
+            "renamed": [
+                {
+                    "threadId": "duplicate-1",
+                    "key": "a/b#1",
+                    "title": "[无价值·重复任务] a/b#1",
+                }
+            ],
+            "errors": [],
+        },
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "duplicate_task_list",
+        lambda _args: {"ok": True, "duplicates": [candidate]},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "_archive_desktop_threads",
+        lambda items: {item["threadId"]: None for item in items},
+    )
+
+    result = MODULE.duplicate_task_reconcile(SimpleNamespace())
+
+    assert result["ok"] is True
+    assert result["archived"] == [
+        {
+            "key": "a/b#1",
+            "threadId": "duplicate-1",
+            "canonicalThreadId": "canonical-1",
+        }
+    ]
+
+
+def test_event_drain_creates_exactly_one_new_issue_task(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(
+        MODULE, "restore_reconcile", lambda _args: {"ok": True, "restored": [], "errors": []}
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "pr_followup_list",
+        lambda _args: {"candidates": [], "restoreRequired": [], "unresolved": []},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "validation_followup_list",
+        lambda _args: {"candidates": [], "unresolved": []},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "recovery_list",
+        lambda _args: {"recoverable": [], "unresolved": []},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "list_pending",
+        lambda _path: {
+            "pending": [
+                {
+                    "intentId": "intent-1",
+                    "key": "a/b#1",
+                }
+            ]
+        },
+    )
+
+    def claim(args):
+        calls.append(("claim", args.intent_id))
+        return {
+            "authorized": True,
+            "claimed": True,
+            "sourceRepoPath": "/tmp/source",
+            "worktreePath": "/tmp/worktree",
+            "titleTime": "08-15 12:00",
+        }
+
+    monkeypatch.setattr(MODULE, "claim_intent", claim)
+    monkeypatch.setattr(
+        MODULE,
+        "creation_start",
+        lambda args: calls.append(("creation", args.intent_id)) or {"creationToken": "token-1"},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "root_task_create",
+        lambda args: calls.append(("create", args.creation_token))
+        or {"threadId": "thread-1", "turnId": "turn-1"},
+    )
+
+    result = MODULE.drain_once(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            project_id="github-project",
+            owner="event-drain",
+        )
+    )
+
+    assert result["action"] == "issue_task_dispatched"
+    assert result["threadId"] == "thread-1"
+    assert calls == [("claim", "intent-1"), ("creation", "intent-1"), ("create", "token-1")]
+
+
+def test_event_drain_lock_suppresses_overlapping_trigger(tmp_path):
+    ledger_path = tmp_path / "ledger.sqlite3"
+    lock_path = ledger_path.with_suffix(".drain.lock")
+    lock_path.touch()
+    with lock_path.open("a+", encoding="utf-8") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        result = MODULE.drain_once(
+            SimpleNamespace(
+                ledger=ledger_path,
+                project_id="github-project",
+                owner="event-drain",
+            )
+        )
+
+    assert result == {"ok": True, "busy": True, "action": "drain_already_running"}
+
+
+def test_event_drain_skips_stale_pr_snapshot_and_continues_to_new_issue(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        MODULE, "restore_reconcile", lambda _args: {"ok": True, "restored": [], "errors": []}
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "pr_followup_list",
+        lambda _args: {
+            "candidates": [
+                {"threadId": "old-thread", "wakeDigest": "old-wake", "key": "a/b#1"}
+            ]
+        },
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "pr_followup_reserve",
+        lambda _args: {"ok": True, "deferred": True, "key": "a/b#1"},
+    )
+    monkeypatch.setattr(MODULE, "validation_followup_list", lambda _args: {"candidates": []})
+    monkeypatch.setattr(MODULE, "recovery_list", lambda _args: {"recoverable": []})
+    monkeypatch.setattr(
+        MODULE,
+        "list_pending",
+        lambda _path: {"pending": [{"intentId": "intent-2", "key": "a/b#2"}]},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "claim_intent",
+        lambda _args: {
+            "authorized": True,
+            "claimed": True,
+            "sourceRepoPath": "/tmp/source",
+            "worktreePath": "/tmp/worktree",
+            "titleTime": "08-15 03:00",
+        },
+    )
+    monkeypatch.setattr(MODULE, "creation_start", lambda _args: {"creationToken": "token-2"})
+    monkeypatch.setattr(
+        MODULE,
+        "root_task_create",
+        lambda _args: {"threadId": "new-thread", "turnId": "new-turn"},
+    )
+
+    result = MODULE.drain_once(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3", project_id="github", owner="event-drain"
+        )
+    )
+
+    assert result["action"] == "issue_task_dispatched"
+    assert result["threadId"] == "new-thread"
+    assert result["deferredFollowups"] == [
+        {"key": "a/b#1", "reason": "live_snapshot_changed"}
+    ]
 
 
 @pytest.fixture(autouse=True)

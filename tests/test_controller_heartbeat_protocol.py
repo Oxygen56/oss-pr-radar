@@ -7,110 +7,38 @@ PROTOCOL = (Path(__file__).parents[1] / "docs" / "controller-heartbeat.md").read
 )
 
 
-def test_controller_protocol_requires_visible_complete_read():
-    assert "must return this file's full content" in PROTOCOL
-    assert "output. Never redirect it" in PROTOCOL
-    assert "Never redirect it to `/dev/null`" in PROTOCOL
+def test_controller_protocol_has_one_deterministic_entrypoint():
+    assert ".venv/bin/python scripts/controller_cycle.py" in PROTOCOL
+    assert "only hourly orchestration entry point" in PROTOCOL
+    assert "Do not\nrepeat individual lifecycle operations" in PROTOCOL
 
 
-def test_controller_protocol_uses_transactional_title_reconciliation():
-    assert "title-reconcile" in PROTOCOL
-    assert "Never use" in PROTOCOL
-    assert "`set_thread_title` or manual `title-commit`" in PROTOCOL
-    assert "do not call `set_thread_title`" in PROTOCOL
-    assert "do not call `title-commit` manually" in PROTOCOL
+def test_controller_protocol_keeps_task_and_publication_boundaries():
+    assert "controller, not an issue implementation task" in PROTOCOL
+    assert "automatic public publication stays blocked" in PROTOCOL
+    assert "publicationReceipt.prUrl" in PROTOCOL
 
 
-def test_controller_protocol_keeps_fixed_point_queues_explicit():
-    for operation in (
-        "orphan-list",
-        "pr-followup-list",
-        "validation-followup-list",
-        "restore-list",
-        "title-list",
-        "cleanup-list",
-        "duplicate-task-list",
-    ):
-        assert operation in PROTOCOL
+def test_controller_protocol_serializes_and_prioritizes_dispatch():
+    assert "drains at most one user-visible action" in PROTOCOL
+    assert "existing PR follow-up, validation continuation, recovery, then new issue" in PROTOCOL
+    assert "controller_already_running" in PROTOCOL
+    assert "drain_already_running" in PROTOCOL
 
 
-def test_controller_protocol_avoids_global_thread_queries():
-    assert "Do not call\n  the global `list_threads` API" in PROTOCOL
-    assert "using only\n  `orphan-list`" in PROTOCOL
-    assert "use `read_thread`" not in PROTOCOL
+def test_controller_protocol_uses_event_driven_completion():
+    assert "Normal throughput is\nevent-driven" in PROTOCOL
+    assert "immediately calls the same" in PROTOCOL
+    assert "does not poll or" in PROTOCOL
 
 
-def test_controller_protocol_cleans_only_unbound_duplicate_tasks():
-    assert "duplicate-task-title-reconcile" in PROTOCOL
-    assert "ledger-bound canonical task" in PROTOCOL
-    assert "Never archive the\n   returned `canonicalThreadId`" in PROTOCOL
+def test_controller_protocol_isolates_deepseek_harness():
+    assert "DeepSeek Harness has its own automation" in PROTOCOL
+    assert "task capacity, state, and metrics" in PROTOCOL
 
 
-def test_controller_protocol_requires_structured_no_code_followup_result():
-    assert "prose alone is not a" in PROTOCOL
-    assert "completed handoff" in PROTOCOL
-    assert "exact follow-up digest" in PROTOCOL
-
-
-def test_controller_protocol_preserves_long_running_command_sessions():
-    assert "text(JSON.stringify(result))" in PROTOCOL
-    assert "poll that exact ID" in PROTOCOL
-    assert "with `write_stdin`" in PROTOCOL
-    assert "Empty output accompanied by a session ID means still running" in PROTOCOL
-
-
-def test_controller_protocol_recovers_terminal_desktop_errors_once():
-    assert "immediateRecovery=true" in PROTOCOL
-    assert "canonical recovery" in PROTOCOL
-    assert "never improvise a retry or send a second recovery" in PROTOCOL
-
-
-def test_controller_protocol_uses_receipted_existing_task_delivery():
-    for operation in (
-        "pr-followup-deliver",
-        "validation-followup-deliver",
-        "recovery-deliver",
-    ):
-        assert operation in PROTOCOL
-    assert "Never call `send_message_to_thread`" in PROTOCOL
-    assert "abandoned by age" in PROTOCOL
-
-
-def test_controller_protocol_does_not_interrupt_active_pr_followups():
-    assert "activeDeferred" in PROTOCOL
-    assert "must not be reserved, resent" in PROTOCOL
-
-
-def test_controller_protocol_preserves_prepared_pr_followup_snapshot():
-    assert "ledger-bound prepared commit" in PROTOCOL
-    assert "immutable follow-up snapshot" in PROTOCOL
-    assert "verifiable controller merge" in PROTOCOL
-
-
-def test_controller_protocol_delegates_validation_prefetch_to_bridge():
-    assert "The bridge itself computes" in PROTOCOL
-    assert "lockfile-scoped dependency prefetch" in PROTOCOL
-    assert "must never inspect or execute dependency commands" in PROTOCOL
-    assert "A failed prefetch leaves the candidate unreserved" in PROTOCOL
-
-
-def test_controller_protocol_does_not_repeat_environment_blocked_validation():
-    assert "environmentBlocked" in PROTOCOL
-    assert "do not send a validation continuation" in PROTOCOL
-
-
-def test_controller_protocol_does_not_confuse_historical_coverage_with_freshness():
-    assert "Historical rolling-window gaps" in PROTOCOL
-    assert "never make a fresh scheduler unhealthy" in PROTOCOL
-    assert "historical warnings" in PROTOCOL
-
-
-def test_controller_protocol_defers_changed_pr_snapshots():
-    assert "may return `deferred=true`" in PROTOCOL
-    assert "do not send or commit that wake" in PROTOCOL
-
-
-def test_controller_protocol_prioritizes_existing_work_over_new_issues():
-    assert "Existing work has strict priority over discovery" in PROTOCOL
-    assert "higher_priority_existing_work" in PROTOCOL
-    assert "Environment-blocked or" in PROTOCOL
+def test_controller_protocol_reports_final_truth_only():
+    assert "Use only the final JSON as the run result" in PROTOCOL
+    assert "finalBlockers" in PROTOCOL
+    assert "failures" in PROTOCOL
+    assert "Do not paste logs" in PROTOCOL

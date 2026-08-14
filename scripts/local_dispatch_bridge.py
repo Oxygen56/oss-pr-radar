@@ -50,6 +50,9 @@ THREAD_DB = Path.home() / ".codex" / "state_5.sqlite"
 GITHUB_ROOT = Path.home() / "Documents" / "github"
 WORKTREE_ROOT = Path.home() / ".codex" / "worktrees"
 KEYCHAIN_SERVICE = "oss-pr-radar-dispatch"
+DEFAULT_TASK_PROJECT_ID = os.environ.get(
+    "RADAR_TASK_PROJECT_ID", "5e41d21c-cba3-4be0-9a02-7eef35b67625"
+)
 ISSUE_URL = re.compile(r"^https://github\.com/([^/]+/[^/]+)/issues/(\d+)$")
 PULL_URL = re.compile(r"^https://github\.com/([^/]+/[^/]+)/pull/(\d+)$")
 DELEGATED_INPUT = re.compile(r"<input>(.*?)</input>", re.DOTALL)
@@ -3115,6 +3118,49 @@ def duplicate_task_title_reconcile(args: argparse.Namespace) -> dict[str, Any]:
     return {"ok": not errors, "renamed": renamed, "errors": errors}
 
 
+def duplicate_task_reconcile(args: argparse.Namespace) -> dict[str, Any]:
+    """Mark and archive only exact, stale duplicates of a canonical Radar task."""
+
+    titles = duplicate_task_title_reconcile(args)
+    errors: list[dict[str, Any]] = list(titles.get("errors") or [])
+    renamed_ids = {
+        str(item.get("threadId")) for item in titles.get("renamed") or []
+    }
+    candidates = duplicate_task_list(args).get("duplicates") or []
+    eligible = [
+        candidate
+        for candidate in candidates
+        if str(candidate.get("currentTitle") or "").startswith("[无价值·重复任务]")
+        or str(candidate.get("threadId")) in renamed_ids
+    ]
+    apply_results = _archive_desktop_threads(eligible)
+    archived: list[dict[str, Any]] = []
+    for candidate in eligible:
+        thread_id = str(candidate["threadId"])
+        if apply_results.get(thread_id):
+            errors.append(
+                {
+                    "key": candidate.get("key"),
+                    "threadId": thread_id,
+                    "error": apply_results[thread_id],
+                }
+            )
+            continue
+        archived.append(
+            {
+                "key": candidate.get("key"),
+                "threadId": thread_id,
+                "canonicalThreadId": candidate.get("canonicalThreadId"),
+            }
+        )
+    return {
+        "ok": not errors,
+        "renamed": titles.get("renamed") or [],
+        "archived": archived,
+        "errors": errors,
+    }
+
+
 def orphan_commit(args: argparse.Namespace) -> dict[str, Any]:
     result = orphan_list(args)
     candidates = {item["intentId"]: item for item in result["candidates"]}
@@ -3169,6 +3215,74 @@ def orphan_commit(args: argparse.Namespace) -> dict[str, Any]:
         "threadId": args.thread_id,
         "reconciled": True,
         "taskContextPath": str(context_path),
+    }
+
+
+def orphan_reconcile(args: argparse.Namespace) -> dict[str, Any]:
+    """Finish or safely abandon interrupted task creation without model judgment."""
+
+    state = orphan_list(args)
+    reconciled: list[dict[str, Any]] = []
+    abandoned: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = list(state.get("blocked") or [])
+    for candidate in state.get("candidates") or []:
+        try:
+            source = source_repo(str(candidate["repo"]))
+            result = orphan_commit(
+                argparse.Namespace(
+                    ledger=args.ledger,
+                    min_age_minutes=getattr(
+                        args, "min_age_minutes", ORPHAN_ABANDON_MIN_AGE_MINUTES
+                    ),
+                    intent_id=candidate["intentId"],
+                    thread_id=candidate["threadId"],
+                    project_id=getattr(args, "project_id", DEFAULT_TASK_PROJECT_ID),
+                    source_repo=str(source),
+                    desired_title=candidate["desiredTitle"],
+                    orphan_nonce=candidate["orphanNonce"],
+                )
+            )
+            reconciled.append(result)
+        except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
+            errors.append(
+                {
+                    "key": candidate.get("key"),
+                    "intentId": candidate.get("intentId"),
+                    "error": f"{type(exc).__name__}:{str(exc)[:240]}",
+                }
+            )
+    for candidate in state.get("unmatched") or []:
+        if not candidate.get("abandonable"):
+            continue
+        try:
+            result = creation_abandon(
+                argparse.Namespace(
+                    ledger=args.ledger,
+                    min_age_minutes=getattr(
+                        args, "min_age_minutes", ORPHAN_ABANDON_MIN_AGE_MINUTES
+                    ),
+                    intent_id=candidate["intentId"],
+                    owner=None,
+                    client_thread_id=candidate.get("clientThreadId"),
+                    abandon_nonce=candidate["abandonNonce"],
+                    reason="ASYNC_CREATION_NOT_MATERIALIZED",
+                )
+            )
+            abandoned.append(result)
+        except (OSError, RuntimeError, ValueError) as exc:
+            errors.append(
+                {
+                    "key": candidate.get("key"),
+                    "intentId": candidate.get("intentId"),
+                    "error": f"{type(exc).__name__}:{str(exc)[:240]}",
+                }
+            )
+    return {
+        "ok": not errors,
+        "reconciled": reconciled,
+        "abandoned": abandoned,
+        "pending": [item for item in state.get("unmatched") or [] if not item.get("abandonable")],
+        "errors": errors,
     }
 
 
@@ -5309,6 +5423,58 @@ def _archive_desktop_threads(
     )
 
 
+def _unarchive_desktop_threads(
+    candidates: list[dict[str, Any]], *, timeout_seconds: float = 20.0
+) -> dict[str, str | None]:
+    """Unarchive exact valuable lifecycle tasks through the supported app-server API."""
+
+    return _apply_desktop_thread_requests(
+        candidates,
+        method="thread/unarchive",
+        parameter_builder=lambda item: {"threadId": str(item["threadId"])},
+        operation_label="unarchive",
+        timeout_seconds=timeout_seconds,
+    )
+
+
+def restore_reconcile(args: argparse.Namespace) -> dict[str, Any]:
+    state = restore_list(args)
+    candidates = list(state.get("restore") or [])
+    apply_results = _unarchive_desktop_threads(candidates)
+    restored: list[dict[str, Any]] = list(state.get("reconciled") or [])
+    errors: list[dict[str, Any]] = list(state.get("blocked") or [])
+    for candidate in candidates:
+        thread_id = str(candidate["threadId"])
+        apply_error = apply_results.get(thread_id)
+        if apply_error:
+            errors.append(
+                {
+                    "key": candidate.get("key"),
+                    "threadId": thread_id,
+                    "error": apply_error,
+                }
+            )
+            continue
+        try:
+            committed = restore_commit(
+                argparse.Namespace(
+                    ledger=args.ledger,
+                    thread_id=thread_id,
+                    restore_nonce=candidate["restoreNonce"],
+                )
+            )
+            restored.append({"key": candidate.get("key"), **committed})
+        except (OSError, RuntimeError, ValueError) as exc:
+            errors.append(
+                {
+                    "key": candidate.get("key"),
+                    "threadId": thread_id,
+                    "error": f"{type(exc).__name__}:{str(exc)[:160]}",
+                }
+            )
+    return {"ok": not errors, "restored": restored, "errors": errors}
+
+
 def cleanup_reconcile(args: argparse.Namespace) -> dict[str, Any]:
     candidates = cleanup_list(args)["cleanup"]
     eligible: list[dict[str, Any]] = []
@@ -5905,6 +6071,219 @@ def task_context(args: argparse.Namespace) -> dict[str, Any]:
         sleep(0.5)
 
 
+def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
+    """Advance at most one user-visible task, terminalizing stale intents on the way."""
+
+    restored = restore_reconcile(argparse.Namespace(ledger=args.ledger))
+    if not restored.get("ok"):
+        return {
+            "ok": False,
+            "action": "restore_failed",
+            "restored": restored.get("restored") or [],
+            "errors": restored.get("errors") or [],
+        }
+
+    pr_state = pr_followup_list(argparse.Namespace(ledger=args.ledger))
+    deferred_followups: list[dict[str, Any]] = []
+    for candidate in pr_state.get("candidates") or []:
+        reserved = pr_followup_reserve(
+            argparse.Namespace(
+                ledger=args.ledger,
+                thread_id=candidate["threadId"],
+                wake_digest=candidate["wakeDigest"],
+            )
+        )
+        if reserved.get("deferred"):
+            deferred_followups.append(
+                {
+                    "key": reserved.get("key"),
+                    "reason": reserved.get("reason") or "live_snapshot_changed",
+                }
+            )
+            continue
+        delivered = pr_followup_deliver(
+            argparse.Namespace(
+                ledger=args.ledger,
+                thread_id=candidate["threadId"],
+                wake_digest=candidate["wakeDigest"],
+            )
+        )
+        return {
+            "ok": bool(delivered.get("ok")),
+            "action": "pr_followup_dispatched",
+            "key": candidate.get("key"),
+            "threadId": candidate.get("threadId"),
+            "delivery": delivered,
+            "deferredFollowups": deferred_followups,
+            "restored": restored.get("restored") or [],
+        }
+
+    validation_state = validation_followup_list(
+        argparse.Namespace(ledger=args.ledger, min_age_minutes=90)
+    )
+    if validation_state.get("candidates"):
+        candidate = validation_state["candidates"][0]
+        validation_followup_reserve(
+            argparse.Namespace(
+                ledger=args.ledger,
+                thread_id=candidate["threadId"],
+                result_digest=candidate["resultDigest"],
+                prefetch_complete=False,
+            )
+        )
+        delivered = validation_followup_deliver(
+            argparse.Namespace(
+                ledger=args.ledger,
+                thread_id=candidate["threadId"],
+                result_digest=candidate["resultDigest"],
+            )
+        )
+        return {
+            "ok": bool(delivered.get("ok")),
+            "action": "validation_followup_dispatched",
+            "key": candidate.get("key"),
+            "threadId": candidate.get("threadId"),
+            "delivery": delivered,
+            "deferredFollowups": deferred_followups,
+            "restored": restored.get("restored") or [],
+        }
+
+    recovery_state = recovery_list(
+        argparse.Namespace(
+            ledger=args.ledger,
+            min_age_minutes=90,
+            delivery_min_age_minutes=5,
+        )
+    )
+    if recovery_state.get("recoverable"):
+        candidate = recovery_state["recoverable"][0]
+        recovery_reserve(
+            argparse.Namespace(
+                ledger=args.ledger,
+                thread_id=candidate["threadId"],
+                recovery_nonce=candidate["recoveryNonce"],
+            )
+        )
+        delivered = recovery_deliver(
+            argparse.Namespace(
+                ledger=args.ledger,
+                thread_id=candidate["threadId"],
+                recovery_nonce=candidate["recoveryNonce"],
+            )
+        )
+        return {
+            "ok": bool(delivered.get("ok")),
+            "action": "recovery_dispatched",
+            "key": candidate.get("key"),
+            "threadId": candidate.get("threadId"),
+            "delivery": delivered,
+            "deferredFollowups": deferred_followups,
+            "restored": restored.get("restored") or [],
+        }
+
+    terminalized: list[dict[str, Any]] = []
+    held: list[dict[str, Any]] = []
+    owner = str(getattr(args, "owner", None) or "local-event-drain")
+    for intent in list_pending(args.ledger).get("pending") or []:
+        claim = claim_intent(
+            argparse.Namespace(
+                ledger=args.ledger,
+                intent_id=intent["intentId"],
+                owner=owner,
+                lease_minutes=30,
+                prepare=True,
+                task_project_id=args.project_id,
+            )
+        )
+        if not claim.get("authorized"):
+            decision = claim.get("decision") or {}
+            if decision.get("status") == "BLOCK":
+                terminalized.append(
+                    {
+                        "key": intent.get("key"),
+                        "reason": decision.get("reason_code")
+                        or decision.get("reasonCode"),
+                    }
+                )
+                continue
+            held.append(
+                {
+                    "key": intent.get("key"),
+                    "reason": claim.get("reason")
+                    or decision.get("reason_code")
+                    or decision.get("reasonCode"),
+                }
+            )
+            if claim.get("reason") in {"task_wip_limit", "higher_priority_existing_work"}:
+                break
+            continue
+        if claim.get("shadow"):
+            terminalized.append({"key": intent.get("key"), "reason": "shadow_observed"})
+            continue
+        if not claim.get("claimed"):
+            held.append({"key": intent.get("key"), "reason": claim.get("reason")})
+            continue
+
+        creation = creation_start(
+            argparse.Namespace(
+                ledger=args.ledger,
+                intent_id=intent["intentId"],
+                owner=owner,
+            )
+        )
+        created = root_task_create(
+            argparse.Namespace(
+                ledger=args.ledger,
+                intent_id=intent["intentId"],
+                creation_token=creation["creationToken"],
+                project_id=args.project_id,
+                source_repo=claim["sourceRepoPath"],
+                worktree=claim["worktreePath"],
+                title_time=claim["titleTime"],
+            )
+        )
+        return {
+            "ok": True,
+            "action": "issue_task_dispatched",
+            "key": intent.get("key"),
+            "threadId": created.get("threadId"),
+            "turnId": created.get("turnId"),
+            "terminalized": terminalized,
+            "held": held,
+            "deferredFollowups": deferred_followups,
+            "restored": restored.get("restored") or [],
+        }
+
+    return {
+        "ok": True,
+        "action": "none",
+        "terminalized": terminalized,
+        "held": held,
+        "deferredFollowups": deferred_followups,
+        "restored": restored.get("restored") or [],
+    }
+
+
+def drain_once(args: argparse.Namespace) -> dict[str, Any]:
+    """Serialize heartbeat and completion-event dispatch through one drain lock."""
+
+    lock_path = Path(args.ledger).with_suffix(".drain.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+", encoding="utf-8") as lock:
+        try:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return {"ok": True, "busy": True, "action": "drain_already_running"}
+        try:
+            return _drain_once_unlocked(args)
+        except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
+            return {
+                "ok": False,
+                "action": "drain_failed",
+                "errors": [{"error": f"{type(exc).__name__}:{str(exc)[:400]}"}],
+            }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--ledger", type=Path, default=LEDGER_PATH)
@@ -5984,6 +6363,11 @@ def main() -> int:
     orphan_list_parser.add_argument(
         "--min-age-minutes", type=int, default=ORPHAN_ABANDON_MIN_AGE_MINUTES
     )
+    orphan_reconcile_parser = subparsers.add_parser("orphan-reconcile")
+    orphan_reconcile_parser.add_argument(
+        "--min-age-minutes", type=int, default=ORPHAN_ABANDON_MIN_AGE_MINUTES
+    )
+    orphan_reconcile_parser.add_argument("--project-id", default=DEFAULT_TASK_PROJECT_ID)
     orphan_commit_parser = subparsers.add_parser("orphan-commit")
     orphan_commit_parser.add_argument("--intent-id", required=True)
     orphan_commit_parser.add_argument("--thread-id", required=True)
@@ -5995,6 +6379,8 @@ def main() -> int:
     duplicate_list_parser.add_argument("--min-age-minutes", type=int, default=30)
     duplicate_title_parser = subparsers.add_parser("duplicate-task-title-reconcile")
     duplicate_title_parser.add_argument("--min-age-minutes", type=int, default=30)
+    duplicate_reconcile_parser = subparsers.add_parser("duplicate-task-reconcile")
+    duplicate_reconcile_parser.add_argument("--min-age-minutes", type=int, default=30)
     outcome = subparsers.add_parser("outcome")
     outcome.add_argument("--key", required=True)
     outcome.add_argument("--stage", required=True)
@@ -6013,6 +6399,7 @@ def main() -> int:
     publication_check_parser.add_argument("--branch", required=True)
     subparsers.add_parser("cleanup-list")
     subparsers.add_parser("cleanup-reconcile")
+    subparsers.add_parser("restore-reconcile")
     subparsers.add_parser("context-recover")
     subparsers.add_parser("context-sync")
     pr_followup_list_parser = subparsers.add_parser("pr-followup-list")
@@ -6110,6 +6497,9 @@ def main() -> int:
     task_context_parser.add_argument("--thread-id")
     task_context_parser.add_argument("--worktree")
     task_context_parser.add_argument("--wait-seconds", type=float, default=180.0)
+    drain_parser = subparsers.add_parser("drain-once")
+    drain_parser.add_argument("--project-id", default=DEFAULT_TASK_PROJECT_ID)
+    drain_parser.add_argument("--owner", default="local-event-drain")
     metrics = subparsers.add_parser("metrics")
     metrics.add_argument("--days", type=int, default=30)
     args = parser.parse_args()
@@ -6147,12 +6537,16 @@ def main() -> int:
         result = _app_server_request_worker(args)
     elif args.operation == "orphan-list":
         result = orphan_list(args)
+    elif args.operation == "orphan-reconcile":
+        result = orphan_reconcile(args)
     elif args.operation == "orphan-commit":
         result = orphan_commit(args)
     elif args.operation == "duplicate-task-list":
         result = duplicate_task_list(args)
     elif args.operation == "duplicate-task-title-reconcile":
         result = duplicate_task_title_reconcile(args)
+    elif args.operation == "duplicate-task-reconcile":
+        result = duplicate_task_reconcile(args)
     elif args.operation == "outcome":
         result = record_outcome(args)
     elif args.operation == "request-publication":
@@ -6163,6 +6557,8 @@ def main() -> int:
         result = cleanup_list(args)
     elif args.operation == "cleanup-reconcile":
         result = cleanup_reconcile(args)
+    elif args.operation == "restore-reconcile":
+        result = restore_reconcile(args)
     elif args.operation == "context-recover":
         result = recover_task_contexts(args)
     elif args.operation == "context-sync":
@@ -6221,6 +6617,8 @@ def main() -> int:
         result = task_turn_worker_entry(args)
     elif args.operation == "task-context":
         result = task_context(args)
+    elif args.operation == "drain-once":
+        result = drain_once(args)
     else:
         result = rolling_quality(args.ledger, days=args.days)
     print(json.dumps(result, ensure_ascii=False))

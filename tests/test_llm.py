@@ -147,9 +147,17 @@ def test_api_failure_fails_closed(tmp_path, monkeypatch):
 
     monkeypatch.setattr(instance, "_request", fail)
     result = instance.evaluate_candidates([candidate()])
-    assert result[0]["category"] == "WAIT_MAINTAINER"
+    assert result[0]["category"] == "SEMANTIC_REVIEW_RETRY"
+    assert result[0]["gate_decision"] == "RETRY_REQUIRED"
     assert result[0]["auto_spawn"] is False
-    assert result[0]["llm_review"]["status"] == "error"
+    assert result[0]["notify"] is False
+    assert result[0]["llm_review"] == {
+        "status": "retry",
+        "model": "deepseek-v4-flash",
+        "error": "TimeoutError",
+        "error_category": "timeout",
+        "retryable": True,
+    }
 
 
 def test_missing_key_never_auto_spawns(tmp_path):

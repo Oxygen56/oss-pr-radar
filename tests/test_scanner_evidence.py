@@ -1,7 +1,7 @@
 import copy
 import json
 import subprocess
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -12,9 +12,11 @@ from oss_pr_radar.scanner import (
     SCANNER_MIGRATION_RECHECK_STATUSES,
     SCANNER_VERSION,
     Radar,
+    candidate_issue_outcome,
     candidate_notification_digest,
     controller_terminal_issue_outcomes,
     count_seen_rechecks,
+    expire_stale_rechecks,
     merge_controller_terminal_feedback,
     select_inspection_bases,
     select_seen_rechecks,
@@ -37,6 +39,44 @@ def test_paginated_gh_flattens_every_page(monkeypatch):
     assert rows == [{"id": 1}, {"id": 2}]
     assert captured["args"][-2:] == ["--paginate", "--slurp"]
     assert captured["timeout"] == 41
+
+
+def test_semantic_review_retry_replaces_pre_llm_candidate_outcome():
+    outcome = candidate_issue_outcome(
+        {
+            "repo": "a/b",
+            "num": 1,
+            "track": "agent_ai_infra",
+            "category": "SEMANTIC_REVIEW_RETRY",
+            "gate_decision": "RETRY_REQUIRED",
+            "auto_spawn": False,
+            "llm_review": {"status": "retry", "error_category": "timeout"},
+        }
+    )
+
+    assert outcome == {
+        "status": "deferred",
+        "reason": "semantic_review_retry",
+        "auto_spawn": False,
+        "track": "agent_ai_infra",
+        "category": "SEMANTIC_REVIEW_RETRY",
+        "gate_decision": "RETRY_REQUIRED",
+    }
+
+
+def test_old_budget_rechecks_expire_but_future_issue_updates_can_rearm():
+    now = datetime(2026, 8, 15, tzinfo=UTC)
+    seen = {
+        "a/b#1": {
+            "status": "inspection_budget_deferred",
+            "first_deferred_at": (now - timedelta(hours=25)).isoformat(),
+            "issue_updated": "2026-08-10T00:00:00Z",
+        }
+    }
+
+    assert expire_stale_rechecks(seen, now) == 1
+    assert seen["a/b#1"]["status"] == "deferred_expired"
+    assert not should_skip_seen(seen["a/b#1"], "2026-08-15T01:00:00Z", now)
 
 
 def test_gh_honors_full_timeout_without_proxy(monkeypatch):

@@ -172,6 +172,9 @@ as a short pointer to that file so protocol changes are reviewed and tested with
 the repository.
 
 ```bash
+# Run the complete deterministic hourly controller cycle
+python scripts/controller_cycle.py
+
 # Read, verify, and ingest the latest signed cloud queue
 python scripts/local_dispatch_bridge.py sync
 
@@ -236,10 +239,11 @@ integration merge so validation runs against the same combined code shape as
 GitHub CI. For a merge conflict, the signed snapshot includes both the PR head
 and target-branch head; the controller aligns both refs before waking the task.
 
-The hourly Codex heartbeat reuses one controller task, calls `sync`, claims each pending intent through a
-fresh live audit, and creates every issue task in the single configured GitHub
-project. Source code still lives in an isolated controller-owned Git worktree
-under that project, so UI ownership and repository isolation are independent.
+The hourly Codex heartbeat reuses one controller task and invokes the single
+deterministic `controller_cycle.py` entry point. It creates every issue task in
+the configured `github` project while source code lives in an isolated,
+controller-owned worktree, so UI ownership and repository isolation are
+independent.
 Existing PR follow-ups, incomplete validation, and recoverable interrupted tasks
 consume the shared task slot before new discovery, so near-publication work
 cannot be starved by a growing issue backlog. The claim command enforces the
@@ -266,13 +270,13 @@ branch-owned CI evidence wakes the original task with the same canonical two-lin
 controller first aligns its worktree to the exact live PR head. A subsequent
 validated patch is published only as a fast-forward update to that exact open
 PR, never as a competing replacement PR.
-The legacy Done-Gate hourly wrapper invokes `scripts/run_scanner.py`, so local
-traces and GitHub Actions share this repository's scanner and decision revision
-instead of maintaining a second copy of discovery rules.
 An independent macOS LaunchAgent runs only the idempotent result-ingestion and
-permit-bound publication path every 20 seconds. It does not scan GitHub, invoke
-an LLM, create tasks, or rewrite active task contexts; the hourly controller
-remains a recovery fallback.
+permit-bound publication path every 20 seconds. When a task result or lifecycle
+transition releases capacity, it immediately invokes the same serialized drain
+to advance one next task. An idle cycle does not scan GitHub, invoke an LLM,
+create tasks, or rewrite active task contexts; the hourly controller remains a
+reconciliation fallback. DeepSeek Harness is a separate automation and does not
+share the Radar ledger, WIP slot, task contexts, or quality metrics.
 Each sync also supersedes uncommitted local intents withdrawn from the latest
 signed cloud queue, so an older controller cannot dispatch a retracted decision.
 Before queue ingestion, sync verifies the private per-issue context in both its
