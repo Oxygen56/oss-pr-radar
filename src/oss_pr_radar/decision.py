@@ -6,6 +6,7 @@ import re
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from .contracts import ACTIONABLE_REVIEW_STATUSES
 from .evidence import EvidenceBundle
 
 SECURITY_RE = re.compile(
@@ -132,9 +133,9 @@ def authorize(candidate: dict[str, Any], evidence: EvidenceBundle) -> Authorizat
             and review.get("decision") == "WAIT_MAINTAINER"
             and review.get("waitReason") == "DISCLOSURE_ONLY"
         )
-        if review.get("status") != "ok" or not review_actionable:
+        if review.get("status") not in ACTIONABLE_REVIEW_STATUSES or not review_actionable:
             return decision("HOLD", "SEMANTIC_REVIEW_NOT_ACTIONABLE")
-        if float(review.get("confidence") or 0.0) < 0.65:
+        if review.get("status") == "ok" and float(review.get("confidence") or 0.0) < 0.65:
             return decision("HOLD", "SEMANTIC_CONFIDENCE_LOW")
     return decision(
         "ALLOW",

@@ -21,6 +21,12 @@ discovery quality.
   claim detection, related PR strength analysis, and hardware checks.
 - DeepSeek semantic review as a negative/re-ranking signal. It cannot authorize
   work or override a deterministic gate.
+- If that service is unavailable, only already-authorized Agent/AI-infra
+  candidates with a complete public reproduction, multiple code anchors, no
+  competing work, normal contribution policy, compatible hardware, and no
+  confirmation flags retain dispatch eligibility. Reports mark this as a
+  deterministic fallback; algorithm, disclosure, assignment, competition, and
+  ambiguous cases remain blocked.
 - Signed, expiring cloud-to-local intents that contain no executable prompt.
 - Local live revalidation before a Codex task is created.
 - Exact source-repository projects and isolated worktrees for implementation;

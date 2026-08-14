@@ -10,9 +10,9 @@ from pathlib import Path
 from typing import Any
 
 POLICY_VERSION = "submit_ready_quality_v1"
-SCANNER_DECISION_REVISION = "oss_pr_radar_v45_disclosure_only_wait"
+SCANNER_DECISION_REVISION = "oss_pr_radar_v46_semantic_fallback"
 DISPATCH_DECISION_REVISION = "signed_intent_v9_transactional_creation"
-DECISION_CONTRACT_SCHEMA = 6
+DECISION_CONTRACT_SCHEMA = 7
 DECISION_CONTRACT_MANIFEST = {
     "schema": DECISION_CONTRACT_SCHEMA,
     "policyVersion": POLICY_VERSION,
@@ -21,6 +21,7 @@ DECISION_CONTRACT_MANIFEST = {
     "tiers": ["TIER_A", "BUILD_AND_HOLD", "WATCH", "DROP"],
     "northStar": "rolling_submit_ready_rate",
     "externalMergeCountIsKpi": False,
+    "semanticReviewFallback": "strict_deterministic_high_confidence_only",
     "tracks": ["agent_ai_infra", "llm_algorithm"],
     "calibration": {
         "requiredMature": 50,

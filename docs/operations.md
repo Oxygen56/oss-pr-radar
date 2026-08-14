@@ -27,6 +27,10 @@ Deferred inspections are oldest-first and receive a dedicated 24-item budget
 in addition to the 30-item fresh-issue budget; there is no recheck cooldown. A
 terminal rejection drains the item. A transient evidence or semantic-model
 failure stays typed as retryable while the underlying issue snapshot is fresh.
+Semantic-service outages do not stop the whole pipeline: the scanner may retain an
+already-authorized Agent/AI-infra candidate only under the strict deterministic
+fallback contract documented in the architecture. This never applies to algorithm,
+policy, assignment, disclosure, competition, or confirmation-sensitive candidates.
 After 24 hours without a new issue update, that retry is retired as
 `deferred_expired`; a later issue update naturally creates a new evidence epoch
 and re-arms inspection. Candidates that exceed the per-run notification cap are

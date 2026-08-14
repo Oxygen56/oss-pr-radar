@@ -17,7 +17,7 @@ from typing import Any
 from .contracts import contract_digest
 from .util import sha256_text
 
-CACHE_SCHEMA = "deepseek_semantic_review_v5_wait_reason"
+CACHE_SCHEMA = "deepseek_semantic_review_v6_strict_fallback"
 NO_CODE_ACTION_RE = re.compile(
     r"\b(?:no new code changes? (?:(?:is|are) )?expected|"
     r"no code changes? (?:(?:is|are) )?(?:needed|required|expected)|"
@@ -146,10 +146,23 @@ class DeepSeekEvaluator:
                     cache[digest] = review
                     changed = True
                 except Exception as exc:  # noqa: BLE001 - external API failures fail closed
+                    safe_error = self._safe_error(exc)
+                    if isinstance(exc, DeepSeekRequestError) and self._allow_deterministic_fallback(
+                        candidate
+                    ):
+                        candidate["llm_review"] = {
+                            "status": "deterministic_fallback",
+                            "model": self.model,
+                            "decision": "NEW_CLEAN_CANDIDATE",
+                            "semantic_review_mode": "deterministic_high_confidence_fallback",
+                            **safe_error,
+                        }
+                        accepted.append(candidate)
+                        continue
                     candidate["llm_review"] = {
                         "status": "retry",
                         "model": self.model,
-                        **self._safe_error(exc),
+                        **safe_error,
                     }
                     candidate["auto_spawn"] = False
                     candidate["gate_decision"] = "RETRY_REQUIRED"
@@ -185,6 +198,39 @@ class DeepSeekEvaluator:
         if changed:
             self._write_cache(cache)
         return accepted
+
+    @staticmethod
+    def _allow_deterministic_fallback(candidate: dict[str, Any]) -> bool:
+        """Preserve only unusually strong clean candidates when semantic review is down."""
+        actionability = candidate.get("actionability_evidence")
+        if not isinstance(actionability, dict):
+            return False
+        open_pr = candidate.get("open_pr_assessment")
+        related_issue = candidate.get("related_issue_assessment")
+        if not isinstance(open_pr, dict) or open_pr.get("status") != "none":
+            return False
+        if not isinstance(related_issue, dict) or related_issue.get("status") != "none":
+            return False
+        code_anchors = actionability.get("code_anchors")
+        return bool(
+            candidate.get("category") == "NEW_CLEAN_CANDIDATE"
+            and candidate.get("gate_decision") == "ALLOW_TO_WORK"
+            and candidate.get("auto_spawn") is True
+            and candidate.get("track") == "agent_ai_infra"
+            and candidate.get("submission_policy") == "normal"
+            and candidate.get("public_submission_allowed") is True
+            and candidate.get("hardware_compatible") is True
+            and int(candidate.get("score") or 0) >= 9
+            and actionability.get("probe_ready") is True
+            and int(actionability.get("public_repro_signals") or 0) >= 2
+            and isinstance(code_anchors, list)
+            and len(code_anchors) >= 2
+            and actionability.get("needs_confirmation") is False
+            and actionability.get("design_confirmation") is False
+            and actionability.get("usage_confirmation") is False
+            and actionability.get("maintainer_active_investigation") is False
+            and actionability.get("maintainer_revalidation_requested") is False
+        )
 
     def _payload(self, candidate: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         return {

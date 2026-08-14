@@ -22,9 +22,12 @@ timing are external labels, not the north-star metric.
    competing PR without a material root-cause, critical-path, or test gap.
 3. **Decision** applies hard gates first. DeepSeek may reject, downgrade, or
    classify semantic competition; it cannot produce a positive authorization.
-   A missing, malformed, timed-out, or unavailable model response becomes a
-   typed semantic-review retry and never masquerades as maintainer approval or
-   a usable candidate. The scanner and signed intent expose one canonical
+   A missing model configuration becomes a typed semantic-review retry. When the
+   configured service is unavailable, a versioned deterministic fallback preserves
+   only unusually strong, already-authorized Agent/AI-infra candidates with complete
+   reproduction and code-path evidence. Every fallback is explicitly marked; all
+   algorithm, policy, assignment, disclosure, competition, and confirmation risks
+   remain fail-closed. The scanner and signed intent expose one canonical
    outcome for the issue; model review cannot leave a contradictory second
    status behind.
    `llm_algorithm` is a separate track whose snapshot must bind concrete

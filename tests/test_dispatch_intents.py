@@ -125,6 +125,23 @@ def test_human_review_and_llm_failure_are_not_dispatched():
     assert result["intents"] == []
 
 
+def test_strict_deterministic_fallback_is_dispatched():
+    result = MODULE.build(
+        report(
+            candidate(
+                llm_review={
+                    "status": "deterministic_fallback",
+                    "decision": "NEW_CLEAN_CANDIDATE",
+                    "semantic_review_mode": "deterministic_high_confidence_fallback",
+                }
+            )
+        ),
+        signing_key=KEY,
+        now=NOW,
+    )
+    assert len(result["intents"]) == 1
+
+
 def test_ai_disclosure_candidate_is_dispatched_for_private_work_only():
     result = MODULE.build(
         report(

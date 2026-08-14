@@ -10,7 +10,8 @@ from .util import sha256_json
 SCAN_SCHEMA = "oss-pr-radar.scan.v2"
 CANDIDATE_SCHEMA = "oss-pr-radar.candidate.v3"
 EVIDENCE_SCHEMA = "oss-pr-radar.evidence.v1"
-CONTRACT_REVISION = "trust-core-v7-disclosure-only-wait"
+CONTRACT_REVISION = "trust-core-v8-semantic-fallback"
+ACTIONABLE_REVIEW_STATUSES = frozenset({"ok", "deterministic_fallback"})
 
 CONTRACT_MANIFEST = {
     "scanSchema": SCAN_SCHEMA,
@@ -112,7 +113,10 @@ def validate_candidate(candidate: dict[str, Any]) -> None:
             candidate["gate_decision"] == "ALLOW_TO_WORK" or private_disclosure_work,
             "auto spawn requires authorized work",
         )
-        _require(review.get("status") == "ok", "auto spawn requires successful LLM review")
+        _require(
+            review.get("status") in ACTIONABLE_REVIEW_STATUSES,
+            "auto spawn requires an actionable semantic review",
+        )
         review_actionable = review.get("decision") in {
             "NEW_CLEAN_CANDIDATE",
             "PR_COMPETITION_OPPORTUNITY",
