@@ -454,6 +454,35 @@
     ],
     "why": "The issue provides a detailed, verified report of five gaps in the warp repository, with root causes identified for each (e.g., CRLF mismatch, missing --device in sidecar, POSIX-only syscalls). The maintainer has acknowledged the report and confirmed gap 3, indicating active engagement. However, the issue is a bug report and feature request, not a concrete code contribution. The track is llm_algorithm, but the gaps are primarily platform-specific build/test infrastructure issues, not algorithm changes. The maintainer's response suggests they will handle fixes, and there is no explicit request for external contribution. The deterministic gate is ALLOW_TO_WORK, but the maintainer's active involvement and the nature of the issues (infrastructure, not algorithm) make it prudent to wait for maintainer direction or a specific PR."
   },
+  "06dc7d57307adaeb6391d9b365e5ee1577f4896dc43668c9d8fb131a29c4b501": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify enrichHardwareFromDiscovery to avoid writing invalid gpuSku values",
+      "Possibly sync CRD enum with aiconfigurator systems list"
+    ],
+    "risks": [
+      "Changing enum may break existing deployments",
+      "Dropping default branch may leave gpuSku empty and require user action"
+    ],
+    "root_cause_clarity": "high",
+    "score": 13,
+    "test_plan": [
+      "Unit test for InferHardwareSystem with unknown GPU product string",
+      "Integration test applying DGDR without spec.hardware on a cluster with unknown GPU label"
+    ],
+    "unknowns": [
+      "Maintainer preference on fix approach",
+      "Whether a PR is expected or issue is just for tracking"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "The issue clearly identifies a bug in the DGDR operator where auto-discovery writes an invalid gpuSku value, causing reconcile failures. The root cause is well-documented with code references and a concrete reproduction scenario. However, the issue is a bug report, not a proposed code change, and there is no evidence of maintainer approval or assignment. The track is llm_algorithm, but the issue is primarily an operator bug fix, not an algorithm change. The suggested fix (dropping the default branch or syncing the enum) is actionable but requires maintainer confirmation on the preferred approach."
+  },
   "06df565d02dfed67b5b190a75650e95bf6714b7b4cadcddf9a607828a28f5cdb": {
     "confidence": 0.7,
     "contradictions": [
@@ -5372,6 +5401,38 @@
       "Exact model configuration details (e.g., openvino_config.json) that might affect shape inference"
     ],
     "why": "Issue provides a clear, reproducible failure with exact error from ScatterNDUpdate shape inference, affecting two public models on GPU. No competing PR or related issue exists. The root cause is likely in model conversion or OVMS handling of dynamic shapes, making it actionable."
+  },
+  "353f4dc670d412484bf5c788d8273fb32c7533848fd80f8090231f706d3af028": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims root cause is #private in interfaces, but PR #20995 attributes it to duplicate installs"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Type declarations in @mastra/core and @mastra/memory to avoid #private field incompatibility",
+      "Possibly package resolution/duplicate install handling"
+    ],
+    "risks": [
+      "Existing PR may already fix the issue; new work could be redundant",
+      "Changing public type declarations could break other consumers"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 12,
+    "test_plan": [
+      "Reproduce with the provided minimal example under tsc --noEmit and tsgo --noEmit",
+      "Run existing test suite for @mastra/core and @mastra/memory",
+      "Add regression test that type-checks Memory assignment to MastraMemory"
+    ],
+    "unknowns": [
+      "Whether PR #20995 was merged or superseded",
+      "Exact location of #private declarations in the type definitions"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue reports a type-declaration bug with clear repro, but an existing PR (#20995) by a maintainer directly addresses the root cause (duplicate @mastra/core installs) and is technically complete, though closed. Need to verify if the fix is merged or superseded before starting new work."
   },
   "35400c0b54daa99f9157d4e27639372382a08f7c1998e265162e9b51653747b9": {
     "confidence": 0.7,
@@ -12620,6 +12681,33 @@
     ],
     "why": "The issue reports a clear user-visible bug with a reproducible API behavior, but the root cause is not identified and the related issue audit and open PR lookup failed, leaving uncertainty about duplicates and existing work. The deterministic gate requires HUMAN_REVIEW."
   },
+  "70a91257ccf59a6276f5df537f67d07050f4f7f093164083350e0a19c2292bd3": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify DGDR generation logic to add --disaggregation-mode prefill and --kv-transfer-config to VllmPrefillWorker when autoApply and disaggregation are used.",
+      "Add regression test verifying generated DGD includes the required flags and that worker registration uses component 'prefill'."
+    ],
+    "risks": [
+      "The fix may require changes to the operator's DGDR generation code, which could have broader impact on other deployment modes.",
+      "The kv-transfer-config value may need to be configurable or derived from existing settings, adding complexity."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a unit test that generates a DGD from a DGDR with autoApply and verifies the VllmPrefillWorker args include --disaggregation-mode prefill and --kv-transfer-config.",
+      "Add an integration test that applies the generated DGD to a kind cluster and checks DynamoWorkerMetadata for the prefill worker has components=['prefill']."
+    ],
+    "unknowns": [
+      "No maintainer confirmation or assignment; but the repo does not require assignment, and the issue is clearly actionable."
+    ],
+    "wait_reason": null,
+    "why": "The issue provides a precise root cause: DGDR-generated prefill worker lacks --disaggregation-mode prefill, causing component name mismatch and Planner HOLD. Includes a minimal reproduction and a confirmed fix (adding the flag and kv-transfer-config). No competing PR exists; the only open PRs are unrelated. The fix is actionable and testable."
+  },
   "70b2e340af4b4bda2f7c599f1b98e6435e5dd891df30b17b530b80d913ebc5ce": {
     "confidence": 0.7,
     "contradictions": [
@@ -16557,6 +16645,38 @@
     ],
     "why": "Issue reports poor video/audio quality in stable-diffusion.cpp with Minimax H3, but root cause is unclear; user comments suggest possible dependency mismatch (ggml variant) and frame-count-dependent degradation, indicating a complex runtime issue. No maintainer investigation or design confirmation, and no clear algorithm-level fix path."
   },
+  "9733ca503af540de49bc1bb64d584926ed6e4fc7f41b8c6b5101360ecede099f": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims OOM is real, but maintainer suggests ABI mismatch fix in 2.2.4; no confirmation from reporter"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Upgrade to Higress 2.2.4 and verify fix",
+      "Add regression test for direct POST initialize without SSE session"
+    ],
+    "risks": [
+      "Fix may not fully address root cause if ABI mismatch is not the only issue",
+      "Non-documented configuration may not be officially supported, reducing priority"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with provided curl on 2.2.3, then upgrade to 2.2.4 and confirm no crash",
+      "Add test for out-of-order MCP requests returning 4xx instead of crashing"
+    ],
+    "unknowns": [
+      "Whether the crash reproduces on the documented SSE path",
+      "Whether the fix in 2.2.4 resolves the issue for the reporter",
+      "Whether the configuration is officially supported"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "Issue reports a gateway OOM/SIGABRT crash on a non-documented configuration path. Maintainer comment indicates a likely fix in 2.2.4 due to ABI mismatch, but no verification from reporter. The issue is not a code contribution; it's a bug report requiring maintainer confirmation and reproduction on the documented path."
+  },
   "976688a9d2c27073cb10b153949b73bb4fe8a9cba1d5af38e05f3826dfee61b6": {
     "confidence": 0.85,
     "contradictions": [
@@ -17270,6 +17390,35 @@
       "Maintainer's intent regarding the closed PR #4774 and whether they prefer a new PR with tests."
     ],
     "why": "Issue clearly identifies a mypy overload chain break caused by interleaved string literals, with a minimal repro and a suggested fix. However, an existing PR (#4774) directly addresses the issue but is closed and lacks regression tests, requiring maintainer review to decide whether to reopen or accept a new PR."
+  },
+  "9e52c5effae05aed5b2afe1dac9ef639d8e14042616605a378c795b5633638c0": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify RemoteA2aAgent._create_a2a_request_for_user_function_response to classify by origin (remote vs local) rather than function call name",
+      "Add regression test reproducing relayed pause resume scenario"
+    ],
+    "risks": [
+      "Potential behavior change for locally raised pauses if origin detection is incorrect",
+      "Security implications if flattening is bypassed for auth/credential responses"
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Use the provided minimal reproduction script to create a failing test that asserts the outbound message contains a DataPart with adk_type=function_response for relayed pauses",
+      "Run targeted unit tests for RemoteA2aAgent and A2A converters"
+    ],
+    "unknowns": [
+      "Maintainer approval or assignment for the fix",
+      "Whether the proposed origin-based fix aligns with maintainer design preferences"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "Issue provides a detailed, reproducible regression in ADK 2.7.0 where relayed human-input pauses are flattened, preventing remote agent resume and enabling silent approval-gate bypass. Root cause is clearly identified (classification by function call name instead of origin) with a concrete fix suggestion. However, the submission policy requires assignment, and the gate decision is HUMAN_REVIEW, so work cannot start without maintainer confirmation."
   },
   "9ed41ee46f2bb9856794228543909cf13d9abe9798db33cee69fb2f18b0d1e50": {
     "confidence": 0.8,
@@ -19032,6 +19181,33 @@
       "Existing open PRs or related issues"
     ],
     "why": "The issue reports a memory leak on NPU with dynamic chunking and radix cache, but lacks a minimal reproducer and root cause analysis. The deterministic gate is HUMAN_REVIEW, and open PR/related issue lookups failed, so duplicate work cannot be excluded."
+  },
+  "b265bff42219a76d4946f373f6c16db2c077b27ff84f1838eed16c655094c2ec": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify workflow engine selection so schedule only affects scheduler-fired runs, or add a loud failure when evented engine lacks a processor."
+    ],
+    "risks": [
+      "Existing PRs may already contain the fix; new PR could be redundant.",
+      "Changing engine selection may affect other runtime behaviors."
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Add a regression test that creates a workflow with schedule and runs it via createRun/start without an event processor, expecting either in-process execution or a clear error."
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred design among the two closed PRs.",
+      "Whether the closed PRs were rejected for technical reasons or simply abandoned."
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue describes a clear bug with high impact and a concrete reproduction, but two existing PRs (#18876, #18878) directly target the same root cause and are closed without merge. A new PR would likely duplicate prior work and require maintainer guidance on the preferred fix direction."
   },
   "b27928fa806e85c22b3b95c3c9cbfb239ab7e6695ff692005a8bf899be4b8497": {
     "confidence": 0.7,
@@ -26550,6 +26726,38 @@
     ],
     "why": "Issue reports a silent regression in v0.27.0 for Kimi-K3-NVFP4 on B300, with cross-model confirmation on GLM-5.2-FP8. No root cause identified; maintainer investigation or release differential needed. Existing PRs are unrelated or closed."
   },
+  "f3dc6764a1e2c1302860bd840ce4451c4fffd04ad5380d784ef9ea9ddf83875b": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue title mentions muse-glimmer but body also reports qwen3.6 and gemma4; no clear single target"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add failing test case for Latex escape errors",
+      "Investigate formatting/parser path for muse-glimmer and qwen3.6"
+    ],
+    "risks": [
+      "Potential duplicate issue #52291 may already cover this",
+      "Root cause may be in model behavior rather than vLLM code"
+    ],
+    "root_cause_clarity": "low",
+    "score": 11,
+    "test_plan": [
+      "Create a minimal reproduction script using the provided prompt and model",
+      "Run targeted unit tests for the formatting/parser module"
+    ],
+    "unknowns": [
+      "Exact vLLM code path responsible for formatting",
+      "Whether maintainers have acknowledged or are investigating",
+      "Whether issue #52291 is truly a duplicate"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "Issue reports user-visible formatting errors in model outputs but lacks a minimal reproducer, root cause analysis, or maintainer confirmation. The gate decision is HUMAN_REVIEW and the submission policy flags an AI disclosure conflict, blocking automated action. Potential duplicate issue #52291 shares only stack signatures, not the actual bug behavior."
+  },
   "f3efca3d98260fd39a1d3c3c8c15fdc2152ed4af3339445f3c162554bb583145": {
     "confidence": 0.6,
     "contradictions": [],
@@ -27770,6 +27978,38 @@
       "Whether maintainers want additional changes beyond the merged PR"
     ],
     "why": "The issue reports a real bug in prefix caching for hybrid Mamba models, but the root cause is already addressed by merged PR #46384, and the issue itself contains a detailed resolution comment. The candidate's proposed work overlaps with existing PRs (#39559, #42792, #48970) and requires maintainer confirmation on whether further action is needed."
+  },
+  "fccce25d469f18a4fc8eb70fbd1f9ae82083bfd00df8b62b6d39231be38e838f": {
+    "confidence": 0.7,
+    "contradictions": [
+      "None supplied"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Rust frontend structural tag generation",
+      "SGLang worker capability advertisement",
+      "tool-call parser boundary handling"
+    ],
+    "risks": [
+      "Changing structural tag generation could affect other models or non-reasoning paths.",
+      "Capability advertisement may require coordination with SGLang versioning."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 12,
+    "test_plan": [
+      "Add a regression test that sends the provided request 20 times with reasoning enabled and asserts all responses contain tool_calls and finish_reason=tool_calls.",
+      "Run the existing 38-request tool-calling suite to ensure no regressions."
+    ],
+    "unknowns": [
+      "Whether maintainers have already started investigating or have design preferences.",
+      "Whether issue #13231 is truly a duplicate or a separate root cause.",
+      "Whether the proposed capability advertisement is the intended fix or if a simpler fix exists."
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "Issue provides a detailed intermittent failure with a concrete repro and a plausible double-reasoning hypothesis, but the proposed fix direction (capability advertisement) is speculative and lacks maintainer confirmation or an assigned owner. The gate decision is HUMAN_REVIEW, and there is a potential duplicate issue #13231 that needs triage."
   },
   "fce3098af3266f4f055e0cbc5023b229e2dbcf5a78d09eb94f1823412b92f7d2": {
     "confidence": 0.7,
