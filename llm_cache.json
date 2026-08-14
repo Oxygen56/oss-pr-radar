@@ -6197,6 +6197,42 @@
     ],
     "why": "Issue reports a Triton illegal memory access in Qwen3.5 with vLLM 0.23.0, but root cause is unconfirmed; maintainer asked to try latest release, and related issue/PR lookup timed out, so duplicate coverage cannot be excluded."
   },
+  "3ae6732ca5522d2a998665eec25b27348f6cdb0b607982034131174f1571a30c": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Gate decision HUMAN_REVIEW vs. candidate category WAIT_MAINTAINER",
+      "Potential duplicate issue #41331 shares stack signatures but different title"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "open_pr_assessment",
+      "related_issue_assessment"
+    ],
+    "expected_changes": [
+      "Fix weight_loader attribute overwrite in FP8 cutlass path",
+      "Ensure tensor-parallel weight loading does not re-set attributes"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #47023 or issue #41331",
+      "Hardware-specific reproduction may be difficult without Blackwell GPUs"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 13,
+    "test_plan": [
+      "Reproduce with FP8 model on 2x RTX 5090 with tensor-parallel-size 2",
+      "Run existing vLLM unit tests for compressed_tensors FP8 and cutlass scaled_mm",
+      "Add regression test for multi-GPU weight loading with FP8"
+    ],
+    "unknowns": [
+      "Whether existing PR #47023 fully fixes the issue",
+      "Whether issue #41331 is truly a duplicate",
+      "Maintainer confirmation of root cause and desired fix"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "The issue reports a concrete FP8 tensor-parallel weight_loader overwrite assertion, but the supplied evidence flags a potential duplicate issue #41331 and an existing weak PR #47023. The deterministic gate is HUMAN_REVIEW, and the submission policy indicates an AI disclosure conflict. The root cause is not fully confirmed; the existing PR may already address the path, and the duplicate issue needs maintainer triage."
+  },
   "3af1369e67a0b6d7d7a62dbca2c849291bfd0d303633f6e8174b909d98b495cc": {
     "confidence": 0.7,
     "contradictions": [],
@@ -12318,6 +12354,34 @@
     ],
     "why": "The issue reports a reproducible Ref2VA-specific snow/noise bug with detailed diagnostics and a minimal repro, but the root cause is not identified and the issue is not assigned or confirmed by maintainers. The track requires a concrete algorithm mechanism; while the report mentions FSDP/offload and numerical diagnostics, the actual defect could be in the diffusion pipeline's reference-conditioning path, which is not clearly an LLM algorithm mechanism. The evidence is strong for a bug report but insufficient to start implementation without maintainer triage."
   },
+  "6e368d44fe1e9cb126c26141c69dcb91ed981f397c32890dca295485f028ffc3": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue says docs say fallback, but comment says docs were corrected to match override behavior."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "litellm/proxy/common_request_processing.py",
+      "litellm/proxy/pass_through_endpoints/pass_through_endpoints.py"
+    ],
+    "risks": [
+      "Changing behavior may break users relying on current override semantics."
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Add regression test that sends request with explicit model and asserts routing uses client model, not completion_model."
+    ],
+    "unknowns": [
+      "Maintainer intent on whether completion_model should be fallback or override."
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue clearly describes a bug with root cause and repro, but multiple PRs already attempt to fix it, including a technically complete one (#21903) that is closed. The docs were corrected to match current behavior, indicating maintainers may have decided the current behavior is intended. Need maintainer confirmation on intended semantics before starting new work."
+  },
   "6e4e928d2e4fd9e9de18046f6aebf2f691d4e1c4c226ea2c1b13a87a080add39": {
     "confidence": 0.7,
     "contradictions": [],
@@ -13509,6 +13573,42 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue reports CUDA illegal memory access in GDN kernel with multiple reproductions, but root cause is unclear and may be a duplicate of #38916. Existing PRs overlap semantically but none directly reference the issue. Maintainer investigation is not confirmed."
+  },
+  "790b2f7b8d90378f601ba5e1a06e8cbff4ebd185ea382a7c6f89f8cd13e5b4b4": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Dosu initially stated the icon is not present when hideLogModal is set, but the user confirms it is visible and clickable",
+      "The user requests per-message traces, which is a feature request, while the issue title frames it as a bug"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Prevent Log component from rendering or firing when hideLogModal is set in Agent V2 log detail panel",
+      "Clear global log modal state on navigation or scope it to page",
+      "Optionally expose agent_thoughts/tool-call trace data in Agent V2 log detail panel"
+    ],
+    "risks": [
+      "Changing the Log component behavior may affect legacy app logs",
+      "Scoping global state may require refactoring the app store and could introduce regressions",
+      "Exposing agent_thoughts may require backend API changes and data mapping"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Add a regression test that clicks the log icon in Agent V2 logs and verifies no modal appears on the current page or after navigation",
+      "Add a test that verifies the log icon is hidden or disabled when hideLogModal is true",
+      "If implementing the feature, add a test that verifies tool-call details are displayed in the Agent V2 log panel"
+    ],
+    "unknowns": [
+      "Maintainer confirmation on whether to fix the icon behavior, implement the feature, or both",
+      "Whether the backend already exposes agent_thoughts data in the Agent V2 log API",
+      "Exact scope of the fix: minimal bug fix vs. feature addition"
+    ],
+    "wait_reason": "DESIGN_CONFIRMATION",
+    "why": "The issue describes a UI bug in Agent V2 logs where the log icon is visible but non-functional, and clicking it causes a stale modal to appear on another page. Dosu's analysis identifies two concrete bugs: the click handler fires despite hideLogModal, and global state leaks across pages. However, the user also requests a feature: exposing per-message agent traces (tool calls, intermediate reasoning) in the Agent V2 log panel. The maintainers have not confirmed whether this is a bug fix or a feature request, and the desired behavior is ambiguous. Existing PRs (#39858, #40057) have already addressed related UI issues, and a new PR would need to align with maintainer design preferences."
   },
   "7961bfa2c611b105779cfe8d2912ba32de7af3014aaaf313926c3d8ebbf5a3f2": {
     "confidence": 0.8,
@@ -15788,6 +15888,38 @@
       "Whether existing PRs will be merged or superseded"
     ],
     "why": "Issue clearly describes mid-stream provider errors bypassing retries and being unclassifiable, with concrete repro and production evidence. However, the deterministic gate is HUMAN_REVIEW, and the issue has been split into two sub-issues (#18668, #18669) requiring design confirmation. Two open PRs (#18671, #18672) exist with overlapping intent but are not directly linked, so maintainer guidance is needed to avoid duplicate or conflicting work."
+  },
+  "8d833737cd3d71936adb59b4b324de95db54780e38729779ef176cf2f4bb9125": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify RedisRunStore.append_event to use a two-key Lua script that checks run status before XADD and refreshes TTLs atomically",
+      "Update RunEventSink contract to require running status for appends",
+      "Handle sealed-stream coordination error in AgentRunRunner",
+      "Align in-memory adapter behavior"
+    ],
+    "risks": [
+      "Potential behavior change for existing consumers that rely on late events being appended",
+      "Lua script complexity may introduce performance overhead or Redis version compatibility issues",
+      "Rolling deployment limitation: stronger invariant only after all writers upgraded"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add in-memory tests for all terminal statuses (cancelled, finished, failed) verifying late appends are rejected",
+      "Add Redis adapter tests for accepted, sealed, and missing-record writes",
+      "Add runner tests for terminal winning before run_started and before in-flight Pydantic AI event",
+      "Add real-Redis tests with two clients for deterministic late writes and concurrent append/finalize races"
+    ],
+    "unknowns": [
+      "No explicit maintainer approval or assignment, but repository does not require assignment; issue is a bug report with clear reproduction steps"
+    ],
+    "wait_reason": null,
+    "why": "The issue describes a concrete race condition in the Dify agent runtime where a terminal event can be followed by a late non-terminal event, violating the event-stream contract. It provides a clear root cause (unconditional XADD in append_event vs atomic finalize), a correctness invariant, a proposed implementation (Lua-based atomic check-and-append), and a detailed verification plan. This is a well-scoped, actionable bug fix with high user impact."
   },
   "8de24e9cd4380f38ab3035a84d8d3a14faa714b0c6be8d60048aec77da22cfdf": {
     "confidence": 0.85,
@@ -23416,6 +23548,37 @@
     ],
     "why": "Issue identifies a concrete over-counting bug in web_search_requests with strong evidence and a clear root cause. However, the issue itself poses open semantic questions (dedup vs cap, normalization, scope) that require maintainer confirmation before implementation. Additionally, multiple open PRs overlap with the same code path and semantics, so a new PR risks duplication without maintainer guidance."
   },
+  "daf4ffc1bc6eb9675dd230a152a99f7179e46868bb6766f233747dced2ffea11": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Bug 3 initially reported as defect but later withdrawn; bug 1 described as terminating but actually hangs"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "scheduler.rs execute_job recipe settings resolution",
+      "RecipeSettingsDto validation/warning for unknown keys"
+    ],
+    "risks": [
+      "deny_unknown_fields could break existing recipes",
+      "Overlap with PR #11110 requires careful merge"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "test_plan": [
+      "Add regression test for scheduled run honoring recipe provider/model/temperature/max_turns",
+      "Add test for unknown recipe settings warning"
+    ],
+    "unknowns": [
+      "Maintainer decision on scope for recipe settings and unknown-key validation",
+      "Whether PR #11110 covers the remaining bug 2"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue reports four scheduler defects; comments confirm bugs 1, 3, 4 fixed in v1.46/main, leaving bug 2 (recipe settings ignored on scheduled runs) as the remaining actionable defect. A contributor has a local patch for the bounded scope but has not opened a PR pending maintainer design confirmation. Existing PR #11110 overlaps scheduler paths but lacks tests and does not reference this issue. The remaining work is well-defined but requires maintainer scope decision and comparison with existing PR."
+  },
   "db8f5cb996e9231163dd2916904fd4055e3932480f55fc9b862615300b40cf77": {
     "confidence": 0.9,
     "contradictions": [
@@ -27773,6 +27936,39 @@
       "whether the MCP issue is a configuration problem rather than a code bug"
     ],
     "why": "Issue reports two user-visible failures but lacks a concrete root cause or minimal reproducer. The suggested investigation is speculative and the candidate's expected changes are vague. No maintainer confirmation or design direction exists, and the open PRs are only keyword-overlapping, not competing implementations."
+  },
+  "ff1dfadd2472d617c4b4b24f8db0f38442c92dec0c39833aa30459843008bfae": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims latest main not tested, but PR #34270 is recent and may fix it"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix speculative decoding target-verify buffer sizing or synchronization for long context",
+      "Add regression test for context-boundary behavior with NEXTN and CUDA graphs"
+    ],
+    "risks": [
+      "Root cause may be in CUDA graph capture/replay not covered by PR",
+      "Hardware-specific (H800) and model-specific (Qwen3.5) may limit generalizability"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 13,
+    "test_plan": [
+      "Reproduce with synthetic long-context request on TP8 H800 using provided config",
+      "Run existing PR #34270 tests and verify they cover this scenario",
+      "Add test that checks no illegal memory access when full token count approaches context length"
+    ],
+    "unknowns": [
+      "Whether PR #34270 actually fixes this issue",
+      "Exact root cause (buffer sizing vs synchronization)",
+      "Reproducibility on latest main"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue reports a reproducible CUDA illegal memory access near context boundary with NEXTN on Qwen3.5 hybrid model. Existing PR #34270 has semantic overlap and is maintainer-owned, but does not reference this issue. Need maintainer to confirm whether PR addresses this root cause before creating a new task."
   },
   "ff621c4d4ea95504d04ba212856c8aa8980b1f1838ec3e746571651040a75a8d": {
     "confidence": 0.7,
