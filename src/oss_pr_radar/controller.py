@@ -131,11 +131,7 @@ def controller_cycle(
         stages["queueSync"] = {
             "ok": True,
             "skipped": True,
-            "reason": (
-                "remote_scan_active"
-                if remote_scan_active
-                else "workflow_not_operational"
-            ),
+            "reason": ("remote_scan_active" if remote_scan_active else "workflow_not_operational"),
         }
     bridge("refreshPullRequests", "refresh-prs")
 

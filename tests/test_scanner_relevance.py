@@ -34,7 +34,7 @@ def test_is_not_honored_is_a_concrete_bug_signal():
 
 
 def test_reproduction_evidence_does_not_reward_headings_or_arbitrary_code():
-    assert public_reproduction_evidence("Steps to reproduce\n```json\n{\"ok\": true}\n```") == ()
+    assert public_reproduction_evidence('Steps to reproduce\n```json\n{"ok": true}\n```') == ()
 
 
 def test_reproduction_evidence_requires_independent_executable_signals():

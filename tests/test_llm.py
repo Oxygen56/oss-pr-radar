@@ -219,9 +219,7 @@ def test_service_failure_preserves_only_strict_high_confidence_candidate(tmp_pat
         ("related_issue_assessment", {"status": "related_open_issue", "issues": [{}]}),
     ],
 )
-def test_service_failure_keeps_risky_candidates_in_retry(
-    tmp_path, monkeypatch, override, value
-):
+def test_service_failure_keeps_risky_candidates_in_retry(tmp_path, monkeypatch, override, value):
     instance = evaluator(tmp_path)
 
     def fail(payload):

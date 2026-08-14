@@ -3123,9 +3123,7 @@ def duplicate_task_reconcile(args: argparse.Namespace) -> dict[str, Any]:
 
     titles = duplicate_task_title_reconcile(args)
     errors: list[dict[str, Any]] = list(titles.get("errors") or [])
-    renamed_ids = {
-        str(item.get("threadId")) for item in titles.get("renamed") or []
-    }
+    renamed_ids = {str(item.get("threadId")) for item in titles.get("renamed") or []}
     candidates = duplicate_task_list(args).get("duplicates") or []
     eligible = [
         candidate
@@ -6201,8 +6199,7 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
                 terminalized.append(
                     {
                         "key": intent.get("key"),
-                        "reason": decision.get("reason_code")
-                        or decision.get("reasonCode"),
+                        "reason": decision.get("reason_code") or decision.get("reasonCode"),
                     }
                 )
                 continue

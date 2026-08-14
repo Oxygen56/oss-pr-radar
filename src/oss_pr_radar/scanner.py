@@ -802,9 +802,8 @@ def public_reproduction_evidence(body: str) -> tuple[str, ...]:
 
     signals: list[str] = []
     lowered = body.casefold()
-    if (
-        re.search(r"\bexpected (?:behavior|result|output)\b", lowered)
-        and re.search(r"\bactual (?:behavior|result|output)\b", lowered)
+    if re.search(r"\bexpected (?:behavior|result|output)\b", lowered) and re.search(
+        r"\bactual (?:behavior|result|output)\b", lowered
     ):
         signals.append("expected_actual_pair")
     if TRACEBACK_FRAME_RE.search(body):
@@ -816,12 +815,9 @@ def public_reproduction_evidence(body: str) -> tuple[str, ...]:
         if len(compact) >= 24 and REPRO_COMMAND_RE.search(block):
             signals.append("executable_command")
             break
-    if (
-        re.search(r"\bminimal (?:example|reproduction|reproducer)\b", body, re.I)
-        and any(
-            len(re.sub(r"\s+", "", block)) >= 80
-            for block in re.findall(r"```[^\n]*\n(.*?)```", body, re.I | re.S)
-        )
+    if re.search(r"\bminimal (?:example|reproduction|reproducer)\b", body, re.I) and any(
+        len(re.sub(r"\s+", "", block)) >= 80
+        for block in re.findall(r"```[^\n]*\n(.*?)```", body, re.I | re.S)
     ):
         signals.append("minimal_example")
     return tuple(dict.fromkeys(signals))
@@ -902,6 +898,8 @@ def issue_code_anchors(text: str) -> tuple[str, ...]:
     )
     anchors.extend(match.group(0) for match in ISSUE_SYMBOL_RE.finditer(text))
     return tuple(dict.fromkeys(anchor[:160] for anchor in anchors))
+
+
 RELATED_FAILURE_SIGNATURE_RE = re.compile(
     r"\b(?:nvcc|cicc|ptxas|clang|gcc|segmentation\s+fault|bus\s+error|"
     r"illegal\s+memory\s+access|core\s+dumped|signal\s+\d+)\b|"
@@ -1361,9 +1359,7 @@ def expire_stale_rechecks(
         if not isinstance(value, dict) or value.get("status") not in SEEN_RECHECK_STATUSES:
             continue
         first_deferred = parse_github_time(
-            value.get("first_deferred_at")
-            or value.get("requeued_at")
-            or value.get("analyzed"),
+            value.get("first_deferred_at") or value.get("requeued_at") or value.get("analyzed"),
             now.astimezone(timezone.utc),
         )
         if first_deferred >= cutoff:
@@ -4344,8 +4340,7 @@ class Radar:
                         "title": candidate.get("title") or key,
                         "url": candidate.get("url"),
                         "issue_updated": candidate.get("issue_updated") or "",
-                        "llm_error_category": review.get("error_category")
-                        or review.get("status"),
+                        "llm_error_category": review.get("error_category") or review.get("status"),
                     }
                     continue
                 digest = candidate_notification_digest(candidate)

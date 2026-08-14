@@ -67,9 +67,7 @@ def test_orphan_reconcile_commits_unique_matches_and_abandons_proven_misses(monk
     )
 
     result = MODULE.orphan_reconcile(
-        SimpleNamespace(
-            ledger=Path("/tmp/ledger"), min_age_minutes=70, project_id="github"
-        )
+        SimpleNamespace(ledger=Path("/tmp/ledger"), min_age_minutes=70, project_id="github")
     )
 
     assert result["ok"] is True
@@ -174,8 +172,10 @@ def test_event_drain_creates_exactly_one_new_issue_task(monkeypatch, tmp_path):
     monkeypatch.setattr(
         MODULE,
         "root_task_create",
-        lambda args: calls.append(("create", args.creation_token))
-        or {"threadId": "thread-1", "turnId": "turn-1"},
+        lambda args: (
+            calls.append(("create", args.creation_token))
+            or {"threadId": "thread-1", "turnId": "turn-1"}
+        ),
     )
 
     result = MODULE.drain_once(
@@ -216,9 +216,7 @@ def test_event_drain_skips_stale_pr_snapshot_and_continues_to_new_issue(monkeypa
         MODULE,
         "pr_followup_list",
         lambda _args: {
-            "candidates": [
-                {"threadId": "old-thread", "wakeDigest": "old-wake", "key": "a/b#1"}
-            ]
+            "candidates": [{"threadId": "old-thread", "wakeDigest": "old-wake", "key": "a/b#1"}]
         },
     )
     monkeypatch.setattr(
@@ -259,9 +257,7 @@ def test_event_drain_skips_stale_pr_snapshot_and_continues_to_new_issue(monkeypa
 
     assert result["action"] == "issue_task_dispatched"
     assert result["threadId"] == "new-thread"
-    assert result["deferredFollowups"] == [
-        {"key": "a/b#1", "reason": "live_snapshot_changed"}
-    ]
+    assert result["deferredFollowups"] == [{"key": "a/b#1", "reason": "live_snapshot_changed"}]
 
 
 @pytest.fixture(autouse=True)
