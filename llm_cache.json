@@ -2149,6 +2149,37 @@
     ],
     "why": "Issue reports intermittent timeouts in LiveKit Inference but lacks a clear root cause; a contributor comment suggests possible misconfiguration (wrong model name), and no maintainer confirmation or design direction exists. The report is a bug report without a concrete code path or reproducible test, making it premature to start implementation."
   },
+  "162402800f531949d717a35207a5f79d9e173a3f969193538ec87a47c7c1f791": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue expects log icon to open dialog, but bot says icon is intentionally hidden"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "web/features/agent-v2/agent-detail/logs/components/log-detail-panel.tsx",
+      "web/app/components/base/chat/chat/answer/operation.tsx"
+    ],
+    "risks": [
+      "Changing intentional behavior may conflict with Agent V2 design",
+      "Adding per-message trace details could be a larger feature requiring backend support"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Manual UI test: open Agent V2 log detail, hover answer, verify log icon behavior matches expected design",
+      "Regression test for log detail panel rendering if behavior is confirmed as bug"
+    ],
+    "unknowns": [
+      "Maintainer's intended behavior for Agent V2 log details",
+      "Whether per-message trace details are required or just conversation summary"
+    ],
+    "wait_reason": "DESIGN_CONFIRMATION",
+    "why": "The issue reports a UI bug in Agent V2 logs, but the bot's analysis indicates the behavior is intentional (log icon hidden by design) and the real gap is missing per-message trace details. This requires product/design confirmation on whether to restore the modal or add trace features. No maintainer has confirmed the desired behavior."
+  },
   "16519cf5533c5654742400de797e7d911887310a0a6b24e3edbbb4325f9395cb": {
     "confidence": 0.7,
     "contradictions": [],
@@ -8747,6 +8778,41 @@
     ],
     "why": "The issue clearly identifies a recurring bug: new Claude models fail because temperature is deprecated, and the fix requires a maintainable approach rather than adding each model to an exclusion list. The root cause is a hardcoded model list in the Bedrock provider. No open PR or issue addresses this, and the issue provides a concrete reproduction."
   },
+  "53b3942bf010b63d9c2573470657b12ac45d8b8648276e15d53c472d237e6311": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue body suggests smart quotes may be corrupted JSON, but comment confirms they are a rendering artifact",
+      "Issue body suggests relation to #518, but comment clarifies the symptom is different (text imitation vs HTTP 400)"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify crates/jcode-provider-gemini/src/lib.rs to change the downgrade marker behavior",
+      "Add dispatcher guard for textual pseudo-calls",
+      "Add regression tests for sequential calls, malformed JSON, smart quotes, unknown tools, and false completion state"
+    ],
+    "risks": [
+      "Changing the downgrade marker may affect model context preservation and could cause 400 errors if not handled carefully",
+      "The reference implementation is based on v0.75.0 and needs rebasing to current master",
+      "The maintainer's preferred design (forced native-call retry vs surfaced error) is not yet decided"
+    ],
+    "root_cause_clarity": "high",
+    "score": 13,
+    "test_plan": [
+      "Reproduce the issue with the public reproduction steps using Antigravity gemini-3.6-flash-high",
+      "Run the focused provider tests from the reference fork (3 Antigravity pseudo-call tests and 1 Gemini neutral-downgrade test)",
+      "Run five live rounds with ten sequential read calls each, verifying tool_start/tool_exec/tool_done counts"
+    ],
+    "unknowns": [
+      "Maintainer's final design choice between forced native-call retry and surfaced provider error",
+      "Whether the reference implementation will be accepted or rewritten by maintainers"
+    ],
+    "wait_reason": "DESIGN_CONFIRMATION",
+    "why": "Root cause is confirmed with a concrete code path and a reference implementation exists, but the maintainer explicitly requires a design decision between forced native-call retry and surfaced provider error. The reference fix is offered as a proof-of-concept, not a final implementation, and must be ported to current master. The deterministic gate is HUMAN_REVIEW, so no upgrade is allowed."
+  },
   "53d950a5b046494851fa50c7ca77ecc413da27b51ed680746bb5cfc30906150f": {
     "confidence": 0.7,
     "contradictions": [],
@@ -9713,6 +9779,33 @@
     ],
     "why": "Issue reports a user-visible bug with q4_0 KV cache causing garbage output, but maintainer comments indicate it may be model-specific and not reproducible on other platforms. No code change proposed; likely a configuration or model suitability issue. Open PR and related issue lookups failed, so duplicate work cannot be excluded."
   },
+  "5a0fb0f0c45ecc9f1c3ee593170cd4a6c1f4f5072ff88d22e42efe3bcb901df3": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "litellm/proxy/response_api_endpoints/endpoints.py",
+      "litellm/integrations/custom_guardrail.py",
+      "litellm/proxy/utils.py"
+    ],
+    "risks": [
+      "Potential overlap with PR #36633; need to compare implementation boundaries to avoid duplicate work."
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Add regression test for post-call guardrail block with known usage on original_response, asserting usage matches; add pre-call block asserting zeros."
+    ],
+    "unknowns": [
+      "Whether PR #36633 already fixes this issue or is unrelated; maintainer preference on design."
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue provides a clear, reproducible bug with root cause and fix direction, but an existing PR (#36633) has semantic overlap on the same code path and requires manual comparison before creating a new task."
+  },
   "5ab857fcfe5b35fe95cdce7aeab523908ce5a5d0e849b2467b7f9130cf81baa0": {
     "confidence": 0.7,
     "contradictions": [],
@@ -10249,6 +10342,36 @@
       "Maintainer's intent on whether this is a bug or usage error"
     ],
     "why": "The issue reports a CLI argument error for MiniMax-H3, but comments indicate the problem is resolved by adding --model-type diffusion or updating to the latest version. The root cause is unclear and may be a version mismatch or documentation gap rather than a code bug. The referenced PR #33365 was merged and may already address the issue, but it does not reference this issue. No maintainer confirmation or design direction exists."
+  },
+  "5fa7ed21b4febd1ca20d3d7e8ae088f4524744c662530127e4c5be73ddd958de": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "message indexing pipeline fix",
+      "statistics update logic"
+    ],
+    "risks": [
+      "root cause may be configuration or environment-specific",
+      "fix may require maintainer design input"
+    ],
+    "root_cause_clarity": "low",
+    "score": 6,
+    "test_plan": [
+      "reproduce with Docker Compose and Qwen3-Embedding-8B",
+      "verify indexed message count increments after new messages"
+    ],
+    "unknowns": [
+      "root cause",
+      "relevant logs",
+      "maintainer interest or assignment"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "Issue reports a user-visible bug in message indexing but provides no root cause, logs, or maintainer confirmation. No open PR or related issue exists, and the track is agent_ai_infra, not llm_algorithm. The candidate lacks a concrete implementation path and validation plan beyond reproduction."
   },
   "5fefcfafa9805475b802a674c9ea4f2465fbad4cbad1be54dff6505ac28672eb": {
     "confidence": 0.8,
@@ -12440,6 +12563,33 @@
     ],
     "why": "The issue precisely identifies a missing zero-tool-call guard in fc_agent_runner.py, with clear code references and a concrete detection signal. However, the proposed fix requires design decisions (retry vs error, per-tool vs per-agent flag, error surface) that need maintainer input, and the repository's AI disclosure policy conflicts with automated public contribution. The issue is an enhancement request without maintainer approval or help-wanted label, and the candidate is categorized as LOCAL_FIX_ONLY with ALLOW_PRIVATE_WORK, indicating private work is permitted but public PR submission is blocked."
   },
+  "70c556ca987c6cbc3e3a9e61bac75a15d66cb1b3d7794cebf9d80dba00e0aa13": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify Responses streaming logic to either forward complete commentary event groups or suppress both SSE frames and terminal output item consistently",
+      "Add configuration or header policy for commentary_mode passthrough/suppress"
+    ],
+    "risks": [
+      "Potential behavior change for existing clients relying on current suppression; need to ensure backward compatibility or explicit opt-in",
+      "Risk of incomplete suppression if only SSE frames are filtered but terminal payload not updated"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a recorded native Responses SSE fixture with commentary message followed by function call",
+      "Add integration test asserting either passthrough (all commentary frames present and terminal output includes item) or suppress (no commentary frames and terminal output omits item)"
+    ],
+    "unknowns": [
+      "Maintainer preference on which policy (passthrough vs suppress) to implement; issue does not indicate maintainer approval or design confirmation"
+    ],
+    "wait_reason": null,
+    "why": "Issue describes a concrete protocol inconsistency in the Responses streaming path: commentary SSE frames are dropped while the terminal payload retains the item. The expected behavior is clearly specified with two policy options, and a validation plan with a recorded fixture is provided. No competing PR or issue found, and the gate allows work."
+  },
   "7180eafb3f5daded788ae121f33f8da2f4cf39fe96b9de1ade59eb72c4a56438": {
     "confidence": 0.7,
     "contradictions": [],
@@ -13847,6 +13997,36 @@
     ],
     "why": "The issue clearly describes a user-visible bug where CodeGraph configuration ignores the user's agent selection and modifies unselected agents' configs. It provides a concrete reproduction, traces the root cause to specific functions (InstallWithHome, detectedCodeGraphTargets, InjectCodeGraphGuidance) that use DiscoverInstalled instead of the selected AgentIDs, and suggests acceptance criteria. No competing PR or related issue exists, and the gate allows work. The fix is actionable: pass resolved AgentIDs through the installation flow and scope all CodeGraph operations to selected agents."
   },
+  "7fb9b0128031ea27f0be98d838efbe1d19f949255acae565042e94e1471b2951": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add regression test for Send with UntrackedValue on resume",
+      "Modify runtime/scheduler to preserve or detect untracked input for pending Send tasks"
+    ],
+    "risks": [
+      "Changing retry behavior may affect other checkpoint scenarios",
+      "Potential overlap with issue #8458 and related PRs requires careful scoping"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "test_plan": [
+      "Run the provided repro script to confirm failure",
+      "Add a regression test that asserts resource is present on resume or that retry is skipped",
+      "Run targeted unit tests for checkpoint and Send task replay"
+    ],
+    "unknowns": [
+      "Maintainer confirmation on intended contract (preserve vs. detect vs. document)",
+      "Whether assignment is required for external contributors"
+    ],
+    "wait_reason": "ASSIGNMENT",
+    "why": "Issue clearly describes a bug with a minimal repro and explicit contract question, but the repository requires assignment and the issue author requests maintainer confirmation before work. Existing PR #8584 is closed and weak, so a new PR could be viable after assignment."
+  },
   "7ff3d7edf6c856f5baf89c00f67bff7318cbdf790bdc79300a0ccb4b60f2ded0": {
     "confidence": 0.7,
     "contradictions": [],
@@ -14747,6 +14927,35 @@
       "Whether maintainers have already started work on this issue"
     ],
     "why": "Issue reports a concrete user-facing bug: cache_control blocks are ordered incorrectly, causing API 400 errors. The bug is reproducible and likely in the proxy's cache_control handling. No competing PR directly addresses this issue; PR #2771 is related but not a direct fix. The issue is actionable with a clear test path."
+  },
+  "86e0f719fe6478118a0d68df8ad74b4fbaf12e0701d71c315021ec6bdd3d9827": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Pass resolved AgentIDs into CodeGraph installation flow",
+      "Scope CodeGraph targets, MCP wiring, snapshots, validation, and guidance to selected agents",
+      "Update tests to reflect selected-agent scope"
+    ],
+    "risks": [
+      "Potential API changes in communitytool package may affect other callers",
+      "Need to ensure standalone flow correctly derives scope from persisted InstalledAgents"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "test_plan": [
+      "Add regression test TestCodeGraphConfigurationRespectsSelectedAgents that verifies unselected agents remain unchanged",
+      "Run existing communitytool tests and adjust TestCodeGraphGuidanceInjectsForRepresentativeAgents"
+    ],
+    "unknowns": [
+      "Maintainer approval status for the issue",
+      "Whether maintainers have design preferences for scope propagation"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "Issue clearly describes a bug where CodeGraph configuration ignores user-selected agents, with concrete repro steps and code pointers. However, the repository requires linked issues to have status:approved before PRs are accepted, and this issue lacks maintainer approval. The gate decision is HUMAN_REVIEW, and there is no maintainer confirmation or design approval. The suggested fix is actionable but requires maintainer sign-off."
   },
   "871598ca2c382e296de994fbc08de68de4755825ae6c11e89dafa3226bdb6f6e": {
     "confidence": 0.8,
@@ -19111,6 +19320,40 @@
     ],
     "why": "The issue describes a clear user-visible bug with a minimal reproduction, but the root cause is not fully diagnosed and the fix may require design decisions about session lifecycle and error recovery. The deterministic gate requires HUMAN_REVIEW, and there is no maintainer approval or explicit help-wanted signal."
   },
+  "b7857582e5415f53b924e5b13c7211af3d02cc4d784f9a45cda8b7ffcc901e42": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Electron main process environment handling",
+      "Gateway spawn environment merging",
+      "Potential new desktop settings UI",
+      "Gateway restart mechanism"
+    ],
+    "risks": [
+      "Security boundary if environment mutation exposed via dashboard API",
+      "Lifecycle issues if Gateway restart not graceful",
+      "Trust in shell startup files if sourcing ~/.zshrc"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "test_plan": [
+      "Reproduce with a CLI in a user-configured PATH directory and verify absence in agent shell",
+      "After fix, verify agent shell resolves the CLI without absolute path",
+      "Test launchctl getenv PATH merge on macOS",
+      "If settings UI added, test persistence and refresh/restart flow"
+    ],
+    "unknowns": [
+      "Maintainer preference on which product shape to implement",
+      "Whether other environment variables beyond PATH are in scope"
+    ],
+    "wait_reason": "DESIGN_CONFIRMATION",
+    "why": "The issue provides a clear root cause (Electron app inherits GUI PATH, Gateway inherits incomplete env) and a reproducible scenario, but the fix requires a product-shape decision among four distinct approaches with different security, lifecycle, and scope implications. The maintainer collaborator explicitly routed to needs-human and suggested incremental decomposition, indicating design confirmation is required before implementation."
+  },
   "b7c004e699feba973f3134a58a452542e9042d9c616ce4100284750d34d8a1c8": {
     "confidence": 0.8,
     "contradictions": [],
@@ -22683,6 +22926,34 @@
     ],
     "why": "Issue reports incoherent output at high context for Gemma 4 31B, but root cause is unconfirmed. Maintainer requested controlled ablation experiments to isolate whether target-only or MTP path fails. Existing PR #40391 is open but stale and lacks strong semantic overlap. Actionability is blocked pending user-provided reproduction data and maintainer analysis."
   },
+  "d7b9db7071e3ba8d6eddacfc5091e968033842da77f15b316e2c458a92a522e6": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix streaming usage reconstruction to preserve prompt_tokens_details.cached_tokens when present, including zero values",
+      "Add regression test for streaming usage chunk with cached_tokens=0"
+    ],
+    "risks": [
+      "Potential behavior change if upstream omits the field; must ensure field remains absent rather than synthesized",
+      "May need to coordinate with existing streaming usage merge logic to avoid regressions"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "test_plan": [
+      "Use the provided repro script to capture streaming usage chunks and assert cached_tokens presence across multiple attempts",
+      "Add unit test simulating streaming usage dict reconstruction with cached_tokens=0 and verify field is not dropped"
+    ],
+    "unknowns": [
+      "Whether the upstream provider actually returns cached_tokens for all requests; issue admits this is not fully distinguished"
+    ],
+    "wait_reason": null,
+    "why": "Issue reports a user-visible intermittent bug in streaming usage telemetry with a concrete repro script and clear expected behavior. No competing PR directly addresses this issue; existing PRs are keyword-overlap only. The bug is actionable: likely a truthy-value check dropping cached_tokens=0 during streaming usage reconstruction. Root cause is not fully confirmed (upstream vs proxy), but the issue provides a clear test path and the fix is scoped."
+  },
   "d7f3ef61dbd9936139ae1ddfc657e1ce6df11f23d2c1ebcdb3c9ea77b58563eb": {
     "confidence": 0.7,
     "contradictions": [],
@@ -23869,6 +24140,37 @@
       "Whether PR #22183 will be updated to address the trajectory merge bug"
     ],
     "why": "The issue identifies three concrete, independent bugs in the diffusion multi-output rollout path, with clear root causes and code-level evidence. Bug 1 is a silent numerical corruption that collapses per-sample trajectories, directly affecting GRPO training. The existing PR #22183 is weak (no tests, stale, incomplete coverage) and does not address the trajectory merge bug, leaving room for a materially better PR."
+  },
+  "dfed14860a861c515ef1c0a98dd42b661095d1d537da0f2ce29e4cf322f157a1": {
+    "confidence": 0.7,
+    "contradictions": [
+      "PR #51397 is closed but not merged; issue suggests a fix that may be identical to that PR"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/config/vllm.py: add weight offloading to unsupported features for V2 runner",
+      "possibly vllm/v1/worker/gpu/model_runner.py: wire offloader for feature parity"
+    ],
+    "risks": [
+      "Feature parity approach may introduce regressions in V2 runner capture/replay",
+      "Changing default runner selection may affect performance for models that default to V2"
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Add an end-to-end test that runs a model with cpu_offload_gb and asserts the offload log line appears or that V2 runner is not selected",
+      "Run existing config tests and targeted model runner tests"
+    ],
+    "unknowns": [
+      "Whether PR #51397 is mergeable or has been superseded",
+      "Maintainer preference for fail-safe vs feature parity"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue provides a clear root cause and reproducible bug, but an existing PR (#51397) directly addresses the same problem with a fail-safe approach and is already closed. The issue itself suggests a minimal fix that overlaps with that PR, so a new PR would be redundant unless the existing PR is inadequate. Maintainer review of the existing PR is needed before starting new work."
   },
   "e03a166acc822a28dafd0201f359f54bf36b7dc610b2205fc92d1497d90d2476": {
     "confidence": 0.8,
@@ -25909,6 +26211,35 @@
       "Whether maintainers have a preferred design for BCG replay fixes"
     ],
     "why": "Issue provides a clear single-GPU-only BCG replay failure with detailed bisection, repro commands, and evidence pointing to a concurrency bug in Z-Image's breakable graph replay. No competing PR addresses the root cause; related PR #34180 is cleanup only and #34182 is a mitigation. Actionable for a runtime/scheduler fix."
+  },
+  "f227b389a06d7492b4840ffb6585a10370f6035f12c55de0b5bcc9845c6a793c": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue title mentions vllm0.25 but traceback paths show vllm_0.20; body says duplicate but no target issue number."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "deep_gemm.py",
+      "qwen3_vl.py",
+      "cuda_graph.py"
+    ],
+    "risks": [
+      "Root cause may be in torch.compile TMA layout, not vLLM code; fix may require upstream torch changes."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "test_plan": [
+      "Reproduce with Qwen3-VL FP8 under CUDA graph and torch.compile; run existing PR tests; add regression test for illegal memory access."
+    ],
+    "unknowns": [
+      "Exact vLLM version and configuration; whether PR #47258 fully resolves the issue; maintainer confirmation of root cause."
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue reports illegal memory access in DeepGemm FP8 kernel under CUDA graph with torch.compile, but body is truncated and marked duplicate. Existing PR #47258 addresses per-model DeepGEMM auto-disable in warmup and MoE selection, overlapping semantically. Need maintainer to confirm root cause and PR coverage before new work."
   },
   "f275a7d5a039c5d2a19b7a068fa8184f08a6509d08dc6cb22bbc34172b97c70f": {
     "confidence": 0.6,
