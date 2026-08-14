@@ -844,11 +844,11 @@
     },
     "review|hiyouga/LlamaFactory#10755": {
       "category": "WAIT_MAINTAINER",
-      "digest": "dd6eeb961ca8399ecef0d3e86b92f96860da1ed0bb18f3018920af06bb73bcfc",
+      "digest": "a43419a1f2ad08a56226d0fc24fb583dfa4365f0f9ea880655716422fec78d40",
       "kind": "review",
-      "scannerVersion": "oss_pr_radar_v45_disclosure_only_wait",
-      "seenAt": "2026-08-14T15:13:09.357639Z",
-      "stateId": "c5e8ed71f2cd59e346c46dbfc12bf3929da990f896494e9ce1dd269f15334aa5"
+      "scannerVersion": "oss_pr_radar_v46_semantic_fallback",
+      "seenAt": "2026-08-14T19:21:40.142435Z",
+      "stateId": "bd0c611da8002f6aa7e2d939b1169a7c1f56c025046938c7dd0c88c218dbcabb"
     },
     "review|huggingface/trl#6683": {
       "category": "WAIT_MAINTAINER",
@@ -1760,6 +1760,14 @@
       "seenAt": "2026-08-07T05:33:51.867072Z",
       "stateId": "c23b3bf34fd57b90c3a4e1d331384c08c9a3bd0a10be649f6d2a319ad54ea0ae"
     },
+    "review|tracel-ai/burn#5351": {
+      "category": "WAIT_MAINTAINER",
+      "digest": "242accf76060474f0d910e2a8f649ed9ff9bb3a95a8d624d46e5b784de4960c3",
+      "kind": "review",
+      "scannerVersion": "oss_pr_radar_v46_semantic_fallback",
+      "seenAt": "2026-08-14T19:21:40.142435Z",
+      "stateId": "8e71d42726fd568e06f396088481f5876988447159ff25a40f937bda5f7b006c"
+    },
     "review|tsz-org/tsz#17005": {
       "category": "WAIT_MAINTAINER",
       "digest": "57750c5e7b5baa47696f5a7c0e58c21168dbe35c7017ba763533cabdcd51432a",
@@ -2314,7 +2322,7 @@
       "stateId": "c9aaa14e909618da98299db4f6d865b74190b2d3aa9f0aead7e0b30779f13330"
     }
   },
-  "digest": "1f037aae12ddb44132c4be808f978d39ce0b1d8b1b125c43bbcb0518598c20f3",
+  "digest": "4d9e725ee01c075efae14803eff71c404c1efe12b5d155b6993817b1038f8d73",
   "events": [
     {
       "attempts": 1,
@@ -23284,9 +23292,71 @@
       "runId": "pr-followup-1786733934",
       "sentAt": "2026-08-14T19:03:55.699710Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "hiyouga/LlamaFactory#10755",
+        "tracel-ai/burn#5351"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "a43419a1f2ad08a56226d0fc24fb583dfa4365f0f9ea880655716422fec78d40",
+          "key": "hiyouga/LlamaFactory#10755",
+          "kind": "review",
+          "scannerVersion": "oss_pr_radar_v46_semantic_fallback",
+          "stateId": "bd0c611da8002f6aa7e2d939b1169a7c1f56c025046938c7dd0c88c218dbcabb"
+        },
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "242accf76060474f0d910e2a8f649ed9ff9bb3a95a8d624d46e5b784de4960c3",
+          "key": "tracel-ai/burn#5351",
+          "kind": "review",
+          "scannerVersion": "oss_pr_radar_v46_semantic_fallback",
+          "stateId": "8e71d42726fd568e06f396088481f5876988447159ff25a40f937bda5f7b006c"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[hiyouga/LlamaFactory#10755](https://github.com/hiyouga/LlamaFactory/issues/10755) [Bug] DPO training crashes with Qwen3.5-35B-A3B (MoE VLM): TypeError: expected Tensor as element 0 in argument 0, but got list in collator**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue reports a concrete DPO+MoE VLM collator crash with a clear traceback and root-cause hypothesis. However, the supplied gate decision is HUMAN_REVIEW, and the open PR assessment flags semantic overlap with PR #10639 and #10589, both touching the same collator path. The issue is not linked to any PR, and the existing PRs lack regression tests and are stale. A new PR could be viable, but the overlap requires maintainer comparison to avoid duplicate work.\n改动：src/llamafactory/data/collator.py: fix _compute_rope_position_ids to handle hybrid linear/full attention and return tensors\n验证：Add a unit test with a small hybrid-attention model (or mocked config) and synthetic multimodal DPO batch to verify collator returns stacked tensors.；Run existing collator tests and a CPU/GPU DPO smoke test with fixed seed.\n风险：Existing PR #10639 or #10589 may already address the root cause; need to compare implementations.；Fix may be model-specific and require careful handling of MTP/MRoPE configs.\n竞争：发现 PR #10639 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 1，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[tracel-ai/burn#5351](https://github.com/tracel-ai/burn/issues/5351) Metal (wgpu-msl): LoRA adapter gradients explode exponentially with depth on M1 Max (Apple7) at seq_len >= 1024 — correct on newer Apple GPUs**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue reports a reproducible GPU-family-dependent gradient explosion in LoRA training, with strong evidence of an autotune-selected kernel defect or data race. However, the root cause is not yet isolated to a specific kernel or code path; the reporter offers to run diagnostics but no maintainer has confirmed or assigned the investigation. The candidate is actionable but requires maintainer confirmation to proceed with a fix.\n改动：Identify and fix the defective autotune-selected kernel (likely in cubecl matmul/reduce) causing mis-scaled or racy gradients on Apple7 GPUs；Add regression test for LoRA training on Apple7 with seq_len >= 1024\n验证：Reproduce with provided harness on M1 Max using CUBECL_AUTOTUNE_LEVEL=minimal vs default；Bisect autotune variants to isolate the defective kernel；Run long training (500+ steps) to verify no finite-wrong-gradient drift\n风险：Root cause may be a data race that is hard to reproduce deterministically；Fix may require changes to cubecl kernel code with broad impact\n竞争：未发现相关 open PR\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 0，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-14T19:21:40.142435Z",
+      "eventId": "29b286186d92b000f4cf0f1bee902ef5fac4818aef82498572639273a1e05c2f",
+      "idempotencyKey": "29b286186d92b000f4cf0f1bee902ef5fac4818aef82498572",
+      "kind": "review",
+      "runId": "scan-20260814T191831Z-d12e91704f9c",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-14T19:03:17.840847Z",
-  "newEventCount": 1,
+  "generatedAt": "2026-08-14T19:21:40.511927Z",
+  "newEventCount": 0,
   "version": "notification_outbox_v2"
 }

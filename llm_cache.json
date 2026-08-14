@@ -4760,6 +4760,36 @@
     ],
     "why": "Issue provides a precise root cause (initialValues missing env_json, stdio save defaults to {}) with code references and a runnable PoC. A second user independently confirms the bug and adds a second affected code path. No competing PR or issue exists, and the fix is a minimal UI change with a clear regression test."
   },
+  "2ce03d3d0a2d0af56eb1b08b32d2f655bfc1824d3df534f2394cced5f75c57a7": {
+    "confidence": 0.7,
+    "contradictions": [
+      "PR #10639 title is about FlashAttention-4, not DPO collator, yet semantic overlap is claimed."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "src/llamafactory/data/collator.py: fix _compute_rope_position_ids to handle hybrid linear/full attention and return tensors"
+    ],
+    "risks": [
+      "Existing PR #10639 or #10589 may already address the root cause; need to compare implementations.",
+      "Fix may be model-specific and require careful handling of MTP/MRoPE configs."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "test_plan": [
+      "Add a unit test with a small hybrid-attention model (or mocked config) and synthetic multimodal DPO batch to verify collator returns stacked tensors.",
+      "Run existing collator tests and a CPU/GPU DPO smoke test with fixed seed."
+    ],
+    "unknowns": [
+      "Whether PR #10639 or #10589 actually fixes this issue; no direct link or test evidence.",
+      "Maintainer preference on whether to accept a new PR vs. improving existing ones."
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue reports a concrete DPO+MoE VLM collator crash with a clear traceback and root-cause hypothesis. However, the supplied gate decision is HUMAN_REVIEW, and the open PR assessment flags semantic overlap with PR #10639 and #10589, both touching the same collator path. The issue is not linked to any PR, and the existing PRs lack regression tests and are stale. A new PR could be viable, but the overlap requires maintainer comparison to avoid duplicate work."
+  },
   "2d048185be5c349e516ff4c46d856642a1aed757d628b637bc611f675d4eff8a": {
     "confidence": 0.85,
     "contradictions": [],
@@ -6322,6 +6352,40 @@
       "Maintainer approval or design confirmation not yet obtained"
     ],
     "why": "Issue provides a detailed root-cause analysis with code references and a concrete race scenario, but lacks a native CUDA reproduction and maintainer confirmation. A contributor has claimed the fix, so assignment and design confirmation are needed before starting work."
+  },
+  "3b0947df1f634bf70a07c2fd7f78e01533cf2c6d8f5cd24f9f8e1ab34d5810b8": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Reporter claims --acp is passed to child, but maintainer analysis says child uses daemon's own entry which supports --acp",
+      "Reporter's environment shows QWEN_CODE_CLI set to cli-entry.js but actual child runs cli.js, conflicting with expected behavior"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix argument passing in ACP child spawn to avoid passing --acp to incompatible entry",
+      "Implement --http-bridge=false support or document it as unsupported"
+    ],
+    "risks": [
+      "Changing spawn logic may break other entry points or environments",
+      "Implementing --http-bridge=false may require significant refactoring if native mode is not ready"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with exact environment: Node 24, qwen-code 0.21.9, no QWEN_CLI_ENTRY, and capture child stderr",
+      "Add regression test that spawns child with --acp and verifies it starts without 'Unknown argument'",
+      "Test with QWEN_CLI_ENTRY set to cli-entry.js to confirm workaround"
+    ],
+    "unknowns": [
+      "Exact entry file the failing child executes and its version",
+      "Whether the issue persists after setting QWEN_CLI_ENTRY to cli-entry.js",
+      "Maintainer's preferred fix direction"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "The issue reports a user-visible bug in ACP child process spawning, but maintainer triage and collaborator analysis indicate the reported failure cannot originate from the installed version's own entry; the root cause is likely environment skew (stale entry, QWEN_CLI_ENTRY, or managed update pointer). The reporter's latest comment provides environment details but does not resolve the discrepancy between QWEN_CODE_CLI and actual execution path. The maintainer has requested more information and the issue is labeled status/need-information. The gate decision is HUMAN_REVIEW, and there is no maintainer approval or active investigation. The candidate is not yet actionable without further diagnosis."
   },
   "3b2b9b7c73213495c130b948d4923b71045d3de4581197c71dd6a24c291681a5": {
     "confidence": 0.85,
@@ -9285,6 +9349,33 @@
       "No open PR or related issue found; maintainer approval not confirmed but not required for private work"
     ],
     "why": "The issue provides a precise root cause, a failing test case, and a minimal fix direction for a user-visible bug in URL normalization. The fix is localized and low-risk, with clear acceptance criteria and regression coverage."
+  },
+  "5560a1a4d1b186884678e361ee53fdb3e0b3a76fe4edf71ffa88b7173c810a89": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Comment shows another model works with same setup, suggesting model-specific issue."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Distributed inference memory management in HETERO/PIPELINE_PARALLEL"
+    ],
+    "risks": [
+      "May be driver or hardware-specific; fix could be non-algorithmic."
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with minimal model and fixed seed on dual GPU; compare against single GPU baseline; monitor memory usage."
+    ],
+    "unknowns": [
+      "Exact memory allocation failure point; whether issue is reproducible on other hardware/drivers; maintainer interest."
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "Issue reports CL_OUT_OF_RESOURCES with HETERO and PIPELINE_PARALLEL but lacks root cause analysis, minimal reproducer, or maintainer confirmation. No competing PR exists, but the bug is likely environment-specific and requires maintainer triage to determine if it is a genuine algorithm defect."
   },
   "5572bd2f0341b616ddf17cd8cd4790ea217afa4fd7e15541e2a20413a897ba27": {
     "confidence": 0.7,
@@ -13212,6 +13303,31 @@
       "Whether existing PRs are considered sufficient or need replacement"
     ],
     "why": "Issue clearly identifies a stale-fact retrieval bug in mem0 v3 ADD-only extraction, with concrete reproduction and community confirmation. However, multiple closed PRs already attempt fixes (e.g., #4969 soft-supersede, #4965 restore CRUD), and maintainer direction is unclear. The deterministic gate requires HUMAN_REVIEW, and the AI disclosure conflict blocks automated action."
+  },
+  "757f74065dd04d0c1b894743a4393d3f5786549b755b07fe7111e0658cd613a7": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Message indexing pipeline",
+      "Index statistics update logic"
+    ],
+    "risks": [
+      "Root cause may be configuration-specific; fix may require maintainer design input"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "test_plan": [
+      "Reproduce with provided steps in Docker Compose; verify indexed message count increments after new messages; add regression test for indexing count update"
+    ],
+    "unknowns": [
+      "Exact code path and logs; whether maintainer has preferred fix approach"
+    ],
+    "wait_reason": null,
+    "why": "Issue reports a clear user-visible bug in message indexing: enabled but count stays 0 despite working embedding and vector DB. Provides ordered repro steps and expected/actual pair. No competing PR or related issue found. Root cause not identified but code path is in backend service/API, actionable for investigation and fix."
   },
   "75a64662e62c6630f640c7ce029076eaac2480d39b08a2879087f65d7060b1f7": {
     "confidence": 0.7,
@@ -19520,6 +19636,35 @@
     "wait_reason": null,
     "why": "Issue provides a precise root cause, deterministic repro, and a suggested fix for a user-visible bug in embedding cache merge. Existing PR #29288 is technically complete but stale (>30 days) and may not address the deeper issue that the provider receives the full batch instead of only misses, as noted in recent comments. This creates an opportunity for a materially better PR that fixes both the index remapping and the remaining_list propagation."
   },
+  "b5bb0e3609affd0db5fb17b8723a97e8c430b0fe8ace3ff51991d4b1f62c5734": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify AgentInvite.__call__ to use resource access service for fresh agent lookup",
+      "Fix TeamMember owner_id assignment to use resolved agent's owner",
+      "Add cross-owner regression tests for AgentInvite, TeamSay, and team/session deletion"
+    ],
+    "risks": [
+      "Potential behavior change in ownership semantics; need to ensure revocation still fails closed",
+      "May require updates to related TeamSay and deletion paths to maintain consistency"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add the provided regression test to tests/service_team_tools_test.py and run pytest -q tests/service_team_tools_test.py -k AgentInviteCrossOwner",
+      "Run existing team tool tests to ensure no regressions"
+    ],
+    "unknowns": [
+      "Maintainer design preferences on ownership model; but issue is clear enough to proceed with minimal fix"
+    ],
+    "wait_reason": null,
+    "why": "Issue provides a clear, reproducible bug with root cause identified (fresh lookup uses storage.get_agent instead of resource access service) and a concrete regression test. No competing PR or issue found. The fix is actionable and scoped to the AgentInvite path."
+  },
   "b5cd2e181fc5bc44aa623875ac9e034f10b37017dc90ee2e9a83401815051729": {
     "confidence": 0.8,
     "contradictions": [],
@@ -20000,6 +20145,39 @@
     ],
     "why": "The issue provides a precise root cause, a deterministic no-LLM repro, production impact metrics, and a concrete suggested fix. However, the deterministic gate requires HUMAN_REVIEW, and maintainer triage is needed to confirm design preferences (e.g., whether to use pending-updates check vs. tool-name filter, and whether to introduce StateDeltaEvent at the boundary) and to disambiguate potential overlap with issue #7491."
   },
+  "bb0e43a69a836e5c64e46d2090bbc23b98ac46f1935180d98f613d6647713431": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Initial report suggests family-dependent arithmetic issue, but later comments indicate autotune-selected kernel defect and possible data race"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Identify and fix the defective autotune-selected kernel (likely in cubecl matmul/reduce) causing mis-scaled or racy gradients on Apple7 GPUs",
+      "Add regression test for LoRA training on Apple7 with seq_len >= 1024"
+    ],
+    "risks": [
+      "Root cause may be a data race that is hard to reproduce deterministically",
+      "Fix may require changes to cubecl kernel code with broad impact"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "test_plan": [
+      "Reproduce with provided harness on M1 Max using CUBECL_AUTOTUNE_LEVEL=minimal vs default",
+      "Bisect autotune variants to isolate the defective kernel",
+      "Run long training (500+ steps) to verify no finite-wrong-gradient drift"
+    ],
+    "unknowns": [
+      "Exact kernel variant causing the issue",
+      "Maintainer acknowledgment or assignment",
+      "Whether the issue is specific to Apple7 or affects other GPU families"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "Issue reports a reproducible GPU-family-dependent gradient explosion in LoRA training, with strong evidence of an autotune-selected kernel defect or data race. However, the root cause is not yet isolated to a specific kernel or code path; the reporter offers to run diagnostics but no maintainer has confirmed or assigned the investigation. The candidate is actionable but requires maintainer confirmation to proceed with a fix."
+  },
   "bb516bcf522aade73c2d9d1088435c11443264d36d9601497381a4ef6f7d3e06": {
     "confidence": 0.7,
     "contradictions": [],
@@ -20462,6 +20640,31 @@
       "Exact status of PR #20285 relative to this issue"
     ],
     "why": "Issue provides a detailed, high-impact bug with clear root cause and suggested fix, but the deterministic gate requires HUMAN_REVIEW and existing PR #20285 has semantic overlap with the code paths, necessitating maintainer comparison before starting new work."
+  },
+  "bf2efd73f5a448531c567d31eccca1c50380bc2bfb9496375a4f7107047d31b1": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify streaming event filtering logic to either forward complete commentary event groups or suppress commentary consistently from both SSE and terminal payload",
+      "Add configuration option for commentary_mode passthrough/suppress if needed"
+    ],
+    "risks": [
+      "Changing behavior may affect existing clients relying on current suppression; need to ensure backward compatibility or document policy change"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "test_plan": [
+      "Add integration test using recorded SSE fixture with commentary message followed by function call; assert either passthrough (all commentary frames present and terminal output includes item) or suppress (no commentary frames and terminal output omits item)"
+    ],
+    "unknowns": [
+      "Exact code location and current filtering logic; maintainer preference on passthrough vs suppress policy"
+    ],
+    "wait_reason": null,
+    "why": "Issue describes a concrete protocol inconsistency in streaming Responses API: commentary SSE frames are dropped while the terminal payload retains the item. It includes a minimal reproduction, expected vs actual event sequences, and a validation plan. No competing PR or issue found. Root cause is not identified but the fix is actionable: enforce consistent passthrough or suppression policy."
   },
   "bf7a7492d3eaa127d552d503815d6210dab8778071dc4024972f8b10166ebc98": {
     "confidence": 0.7,
@@ -21725,6 +21928,35 @@
       "Maintainer preference on backend-specific fixes"
     ],
     "why": "Issue reports a tool-call error when switching moe-runner-backend to flashinfer_mxfp4, but lacks a minimal repro and root cause analysis. Open PR lookup timed out, and related PRs may overlap. Maintainer input needed."
+  },
+  "cb2694a1ae6fdd6e87627687316a2e5d96520f0b817bd4c8dc166616b5cb084b": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify ChatService.interrupt to check for active run via ChatRunRegistry or a distributed run-alive marker before falling back to resume-trigger path.",
+      "Optionally add except asyncio.CancelledError in assembly phase to synthesize INTERRUPTED reply.",
+      "Add regression test with slow workspace manager to reproduce assembly-phase interrupt."
+    ],
+    "risks": [
+      "Distributed deployments require a run-alive marker that is set before lock acquisition and cleared on task completion; must handle multi-replica consistency.",
+      "Changing interrupt judge may affect the 409 guard behavior if not carefully scoped.",
+      "Adding CancelledError handling in assembly may require careful asyncio semantics to avoid swallowing cancellation."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a test that uses a SlowWorkspaceManager to delay assembly, call interrupt during that window, and assert no full reply is persisted and REPLY_END(INTERRUPTED) is emitted.",
+      "Run existing unit tests for ChatService and CancelDispatcher to ensure no regressions."
+    ],
+    "unknowns": [
+      "Maintainer preference on fix direction (e.g., whether to move acquire_lock earlier vs. add run-alive marker)."
+    ],
+    "wait_reason": null,
+    "why": "The issue identifies a concrete race condition in ChatService.interrupt where the assembly phase of _run_impl is not cancellable because the interrupt judge relies solely on is_locked, which is False before lock acquisition. The root cause is precisely located with code references, and the fix directions are actionable and minimally invasive. The bug is user-visible (ghost replies persisted) and affects a critical path. No competing PR or issue exists, and the maintainer has not yet responded, but the issue is self-contained with a clear reproduction sketch."
   },
   "cb6324d4034f42904d94291b1bac3a9d8313e6bab0c118ddb6115e2c011c48bc": {
     "confidence": 0.7,
