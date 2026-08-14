@@ -264,12 +264,12 @@
       "stateId": "b5d5fe437b4982d9a6b5a32a8a49015c2c0c1c79ae4a1a6a2892df64dd278a92"
     },
     "review|ComposioHQ/composio#4020": {
-      "category": "WAIT_MAINTAINER",
-      "digest": "013a2d9586b5882bda446df0b88ea078b98fcb861cd0886f3b6bf26884c757f3",
+      "category": "SEMANTIC_REVIEW_RETRY",
+      "digest": "d7d256a18d56fe451ea4db9b851c80a84c661cba413a06d049a7422ef3d33f81",
       "kind": "review",
-      "scannerVersion": "oss_pr_radar_v45_disclosure_only_wait",
-      "seenAt": "2026-08-14T18:14:08.897270Z",
-      "stateId": "6163130714655e7a42b24ec84fde9402e40d7aeaa609fa76bfe4a86cd9bf9430"
+      "scannerVersion": "oss_pr_radar_v46_semantic_fallback",
+      "seenAt": "2026-08-14T19:03:17.508256Z",
+      "stateId": "df022d8e10983f7766b7f64f991b5ea090b602492b368df5c34adfa6386b51e5"
     },
     "review|ComposioHQ/composio#4101": {
       "category": "WAIT_MAINTAINER",
@@ -463,12 +463,12 @@
       "stateId": "a89c25a7955da38868f13ae82fbc047f0cb5c55ab0549e23bc5e46401221dd81"
     },
     "review|PrefectHQ/fastmcp#4839": {
-      "category": "WAIT_MAINTAINER",
-      "digest": "1dcba5cff95f1f0637de61fbcdd229e87a9ff88c07473bdcc7f7b789d071374e",
+      "category": "SEMANTIC_REVIEW_RETRY",
+      "digest": "ebfe62db48ef366a712f1ef24ed69503fdffae9726fd5a02bba57d894c0f37ed",
       "kind": "review",
-      "scannerVersion": "oss_pr_radar_v45_disclosure_only_wait",
-      "seenAt": "2026-08-14T15:13:09.357639Z",
-      "stateId": "56ed26eda4052d5cd4d439be889e62f014dcf75a99683f0bb675bde9be980568"
+      "scannerVersion": "oss_pr_radar_v46_semantic_fallback",
+      "seenAt": "2026-08-14T19:03:17.508256Z",
+      "stateId": "932fd6bcfb38fc3e82e1798efebd0e86fe33961b194222752debc02bba40fc73"
     },
     "review|QwenLM/qwen-code#8871": {
       "category": "WAIT_MAINTAINER",
@@ -589,6 +589,14 @@
       "scannerVersion": "oss_pr_radar_v44_disclosure_tasks_resolve_uncertainty",
       "seenAt": "2026-08-13T21:10:20.883823Z",
       "stateId": "906ed34560e2bf178962b1d434b4dba66ea609dc4b15e2b8748d07856c7e648e"
+    },
+    "review|ai-dynamo/dynamo#12355": {
+      "category": "SEMANTIC_REVIEW_RETRY",
+      "digest": "5b1332ce3097c3dec27ccb5d31b13a6827678bc55b619576308ff5da11c2ba7a",
+      "kind": "review",
+      "scannerVersion": "oss_pr_radar_v46_semantic_fallback",
+      "seenAt": "2026-08-14T19:03:17.508256Z",
+      "stateId": "10f43b0c28d077436adff4e16f7dd49c6c75c71de1c82a61ee7c2d345e8c91d4"
     },
     "review|ai-dynamo/dynamo#12864": {
       "category": "WAIT_MAINTAINER",
@@ -2147,11 +2155,11 @@
     },
     "watch|BerriAI/litellm#36791": {
       "category": "PR_FOLLOWUP",
-      "digest": "17f91aed722ea43f3eb5ea76fad586fdc9e21deca911d328b4f409b5c7563d3c",
+      "digest": "d5e15bb0a1afcb0055360bb329c7aeee7645dd38a467a9de6c6c4cc51d42ee1d",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-14T18:43:57.516854Z",
-      "stateId": "d7639e28bcc5fee5adf8862bd9c2fc230bf0f253ed3f82a2227284c4736ad4bf"
+      "seenAt": "2026-08-14T19:03:17.840847Z",
+      "stateId": "1dab54cffcac309ed3a512fff0b54f432f9f5e63f6cc12a0981ba53254405017"
     },
     "watch|SWE-bench/SWE-bench#593": {
       "category": "PR_FOLLOWUP",
@@ -2222,7 +2230,7 @@
       "digest": "8a9091aaac506dc24b694a5c290d685140fd5bda4d69a1cf9ddcf12591bb872a",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-14T18:43:57.516854Z",
+      "seenAt": "2026-08-12T01:34:05.545351Z",
       "stateId": "0311e0f6b94f98df89614655a7b3b387d7e4177ba4ac07d80f96f3fc5cde59df"
     },
     "watch|esengine/DeepSeek-Reasonix#8510": {
@@ -2306,7 +2314,7 @@
       "stateId": "c9aaa14e909618da98299db4f6d865b74190b2d3aa9f0aead7e0b30779f13330"
     }
   },
-  "digest": "893263002e8cb73f34e9d32d86507547e089eafc0b2040cadfac92c72137008a",
+  "digest": "e593e8e3492d2ad7ebfbc5fb4354396dbcd634ff86a241c61a000628dec26669",
   "events": [
     {
       "attempts": 1,
@@ -23146,9 +23154,133 @@
       "runId": "pr-followup-1786732773",
       "sentAt": "2026-08-14T18:44:39.234525Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "ComposioHQ/composio#4020",
+        "PrefectHQ/fastmcp#4839",
+        "ai-dynamo/dynamo#12355"
+      ],
+      "candidateStates": [
+        {
+          "category": "SEMANTIC_REVIEW_RETRY",
+          "digest": "d7d256a18d56fe451ea4db9b851c80a84c661cba413a06d049a7422ef3d33f81",
+          "key": "ComposioHQ/composio#4020",
+          "kind": "review",
+          "scannerVersion": "oss_pr_radar_v46_semantic_fallback",
+          "stateId": "df022d8e10983f7766b7f64f991b5ea090b602492b368df5c34adfa6386b51e5"
+        },
+        {
+          "category": "SEMANTIC_REVIEW_RETRY",
+          "digest": "ebfe62db48ef366a712f1ef24ed69503fdffae9726fd5a02bba57d894c0f37ed",
+          "key": "PrefectHQ/fastmcp#4839",
+          "kind": "review",
+          "scannerVersion": "oss_pr_radar_v46_semantic_fallback",
+          "stateId": "932fd6bcfb38fc3e82e1798efebd0e86fe33961b194222752debc02bba40fc73"
+        },
+        {
+          "category": "SEMANTIC_REVIEW_RETRY",
+          "digest": "5b1332ce3097c3dec27ccb5d31b13a6827678bc55b619576308ff5da11c2ba7a",
+          "key": "ai-dynamo/dynamo#12355",
+          "kind": "review",
+          "scannerVersion": "oss_pr_radar_v46_semantic_fallback",
+          "stateId": "10f43b0c28d077436adff4e16f7dd49c6c75c71de1c82a61ee7c2d345e8c91d4"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[ComposioHQ/composio#4020](https://github.com/ComposioHQ/composio/issues/4020) [Bug]: Google Ads developer token is stuck on Basic Access tier — hitting daily quota exhaustion (RESOURCE_EXHAUSTED) on managed integration**\n建议：SEMANTIC_REVIEW_RETRY | 分数：11\n价值：用户可见 bug/性能问题，合并动机明确；命中 agent/inference/RAG 关键路径；影响面高，适合做可复现修复\n改动：先补失败用例，再沿相关 runtime/provider/scheduler 路径做最小修复。\n验证：用 issue 的公开最小复现先建立失败测试，再运行目标 package 的定向单测和静态检查。\n风险：需确认是否已有 maintainer 设计偏好；避免扩大 API 行为变更。\n竞争：未发现相关 open PR；仅发现未直接关联 issue 的历史 PR\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 1，根因信号 True",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[PrefectHQ/fastmcp#4839](https://github.com/PrefectHQ/fastmcp/issues/4839) AzureProvider OAuth with Microsoft Entra fails with AADSTS9010010 when connecting from ChatGPT Remote MCP**\n建议：SEMANTIC_REVIEW_RETRY | 分数：11\n价值：用户可见 bug/性能问题，合并动机明确；命中 agent/inference/RAG 关键路径；影响面高，适合做可复现修复\n改动：先补失败用例，再沿相关 runtime/provider/scheduler 路径做最小修复。\n验证：用 issue 的公开最小复现先建立失败测试，再运行目标 package 的定向单测和静态检查。\n风险：需确认是否已有 maintainer 设计偏好；避免扩大 API 行为变更。\n竞争：未发现相关 open PR\n下一步：先请求维护者分配/确认方案，获批后再开 PR。\n证据：复现信号 2，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[ai-dynamo/dynamo#12355](https://github.com/ai-dynamo/dynamo/issues/12355) [BUG] vllm-runtime 1.3.0-dev.1-cuda13: baked flashinfer-jit-cache pin breaks any in-container vLLM upgrade (serve-time registry failure)**\n建议：SEMANTIC_REVIEW_RETRY | 分数：10\n价值：用户可见 bug/性能问题，合并动机明确；命中 agent/inference/RAG 关键路径；影响面高，适合做可复现修复\n改动：复现数值或批次不变量，定位 kernel 选择/块大小/数据布局根因，并补确定性正确性回归测试。\n验证：先用 CPU/mock 或现有 kernel 单测固定输入输出不变量；具备匹配 GPU 时再补真实硬件复现。\n风险：需确认是否已有 maintainer 设计偏好；避免扩大 API 行为变更。；DCO 将自动使用已配置 Git 身份 sign-off；CLA 不阻止创建 PR，但协议接受仍需用户本人完成。\n竞争：仅发现未直接关联、无代码路径或强机制重合的 PR #12915；保留为搜索上下文，不阻止实现\n下一步：按正常流程实现并验证；如要求 DCO 则自动 sign-off，PR 创建后报告 CLA 状态。\n证据：复现信号 1，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-14T19:03:17.508256Z",
+      "eventId": "61d81509b4646b35b19079599d464eef044c8b43f635bed7b86dd97b630ba438",
+      "idempotencyKey": "61d81509b4646b35b19079599d464eef044c8b43f635bed7b8",
+      "kind": "review",
+      "runId": "scan-20260814T185939Z-377bf4f9a190",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "BerriAI/litellm#36791"
+      ],
+      "candidateStates": [
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "d5e15bb0a1afcb0055360bb329c7aeee7645dd38a467a9de6c6c4cc51d42ee1d",
+          "key": "BerriAI/litellm#36791",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "1dab54cffcac309ed3a512fff0b54f432f9f5e63f6cc12a0981ba53254405017"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#36791](https://github.com/BerriAI/litellm/pull/36791) fix(router): support anthropic messages streaming fallback**\n建议：PR_FOLLOWUP\n价值：当前分支检查失败；存在未解决审查线程\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-14T19:03:17.840847Z",
+      "eventId": "9db919883bc12b7d3217086459e63665172b40d8d230ad44d87f744ac6409ebc",
+      "idempotencyKey": "9db919883bc12b7d3217086459e63665172b40d8d230ad44d8",
+      "kind": "watch",
+      "runId": "pr-followup-1786733934",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-14T18:43:57.516854Z",
+  "generatedAt": "2026-08-14T19:03:17.840847Z",
   "newEventCount": 1,
   "version": "notification_outbox_v2"
 }
