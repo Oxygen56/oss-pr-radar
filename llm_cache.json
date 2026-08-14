@@ -12622,6 +12622,42 @@
     ],
     "why": "Issue provides a precise root-cause analysis with code references and a clear reproduction path. The bug is in the ACP session lifecycle: session/new swallows provider construction errors, leaving the session in an inconsistent state that cannot recover. This is a high-impact correctness bug in the agent infrastructure, and the fix is well-scoped."
   },
+  "6ea4541a57a95c494a49d4eea11f20ce775d27f5d8bcda1251a6369c8ec84fee": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue title says garbled output only with FULL_DECODE_ONLY, but comment reports both NONE and FULL_DECODE_ONLY",
+      "Comment says v0.21.0 works, suggesting issue may be already fixed"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Investigate CUDA graph capture and replay path for DeepSeek-V4 with concurrent identical requests",
+      "Verify fix for distributed tensor/expert parallel synchronization or checkpoint invariants",
+      "Add regression test for concurrent identical inputs with CUDA graph enabled"
+    ],
+    "risks": [
+      "Root cause may be in external dependencies (transformers, flashinfer) not vLLM",
+      "Garbled output may be due to tokenizer or tool-call parser issues, not CUDA graph",
+      "Existing PR #41834 may already fix the issue, making new work redundant"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 12,
+    "test_plan": [
+      "Reproduce with provided docker command and concurrent claude requests on v0.20.1",
+      "Run same test on v0.21.0 to confirm fix already exists",
+      "If bug persists, create minimal unit test with small model and fixed seed comparing CPU reference vs GPU output under CUDA graph"
+    ],
+    "unknowns": [
+      "Whether issue #52386 is truly duplicate and shares root cause",
+      "Whether PR #41834 already addresses this bug",
+      "Exact root cause: CUDA graph, distributed sync, or tokenizer"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "The issue reports a concrete LLM inference bug (garbled output under CUDA graph with concurrent identical requests) with a clear reproduction command and environment. However, the supplied evidence indicates a potential duplicate issue #52386 sharing stack signatures and an existing PR #41834 with semantic overlap. The deterministic gate is HUMAN_REVIEW, and the submission policy flags an AI disclosure conflict. The root cause is not yet isolated; the issue may be resolved in v0.21.0 per comments, and the existing PR may already cover the fix. A new PR would require careful comparison with existing work and maintainer guidance."
+  },
   "6ec08c602d2cb0d75e7095ac0c4114b15a653e3c3c71e933e838600f25137e65": {
     "confidence": 0.7,
     "contradictions": [
