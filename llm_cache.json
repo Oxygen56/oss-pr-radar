@@ -12254,6 +12254,37 @@
     ],
     "why": "The issue provides a precise root cause and a concrete fix direction, but the deterministic gate requires HUMAN_REVIEW and open PR/related issue lookups timed out, so duplicate work cannot be excluded."
   },
+  "728fd9dfee48442beceb511650a5e8f905a21872d61ac0ece3b1f88a92d1ef48": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Adjust max_tokens calculation to account for reasoning tokens",
+      "Add fast-fail fallback when content empty or finish_reason=length",
+      "Parallelize batch rerank calls or add timeout",
+      "Optionally skip LLM fallback when rerank model returns 0 results"
+    ],
+    "risks": [
+      "Changing max_tokens may increase cost for non-reasoning models",
+      "Parallelizing calls may hit rate limits or increase load",
+      "Skipping fallback may reduce recall for some queries"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a unit test mocking chat/completions with reasoning tokens to verify max_tokens calculation",
+      "Add integration test with a reasoning model to reproduce empty content and assert fast fallback",
+      "Measure latency with 72 candidates to ensure parallelization reduces total time"
+    ],
+    "unknowns": [
+      "Exact code location and maintainer preference for fallback behavior"
+    ],
+    "why": "Issue provides a clear, reproducible bug in LLM rerank fallback: insufficient max_tokens for reasoning models causing empty content and wasted 20-30s serial calls. Root cause is well-defined with code-level reproduction and logs. No competing PR or maintainer assignment blocks work."
+  },
   "729cddf2ac7224f7195fd74fe2acd8d1325c21efe02d050156dd3d6a5445e03f": {
     "confidence": 0.7,
     "contradictions": [
@@ -15547,6 +15578,33 @@
     ],
     "why": "Issue provides a deterministic failure with a clear root cause in the Bedrock Converse lowering: consecutive user messages are not merged, violating Anthropic's requirement for toolResult blocks. The fix is a minimal merge in the lowering, analogous to the existing anthropic-messages protocol. No competing PR or issue found."
   },
+  "93919a7400f327dac017fdab818ec3c66503b7cae0336660a726c80c24bf0ac5": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Fix convert_anyof_null_to_nullable and add_object_type in litellm/llms/vertex_ai/common_utils.py to handle list-valued items",
+      "Add regression tests for tuple-form items schema"
+    ],
+    "risks": [
+      "Existing PR #30782 may already address the root cause; need to compare implementation boundaries",
+      "Potential behavior changes if normalization approach is chosen over simple guard"
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Use the provided curl reproduction to create a failing test",
+      "Run targeted unit tests for Vertex AI schema building"
+    ],
+    "unknowns": [
+      "Whether PR #30782 actually fixes the tuple-form items issue",
+      "Maintainer design preference for handling tuple-form items"
+    ],
+    "why": "Issue provides a clear root cause and reproduction for a Vertex AI schema crash on tuple-form items. However, the deterministic gate is HUMAN_REVIEW and an existing PR (#30782) has semantic overlap requiring manual comparison. No maintainer confirmation or assignment is present, and the track is agent_ai_infra, not llm_algorithm, so algorithm evidence is not required."
+  },
   "93a8d9a7f4e1f9141ee16cf3f3c99e3101bc3acd859dfd50a04be51a5e43a6fd": {
     "confidence": 0.7,
     "contradictions": [],
@@ -16985,6 +17043,41 @@
       "Status of related issue audit (timeout) and whether #50894 is viable"
     ],
     "why": "Issue provides a clear root cause and reproduction for a user-visible crash with TP>1, but the deterministic gate requires HUMAN_REVIEW and the related issue audit failed (timeout). A draft PR (#50894) exists with failed CI and incomplete evidence, so a new clean candidate is not appropriate without maintainer confirmation."
+  },
+  "a4a9b8abca860f2895cecbf4d15a3db008406c854fcdf9ce38e1e67aef3dbb49": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Initial report suggests exponential amplification with depth, but later comments indicate a data race causing sporadic wrong gradients; both may be manifestations of the same underlying kernel defect."
+    ],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix the racy kernel in cubecl/wgpu-msl backend",
+      "Add regression test for autotune kernel selection on Apple7",
+      "Possibly add synchronization or barrier in matmul/reduce kernels"
+    ],
+    "risks": [
+      "Hardware-specific issue may be difficult to reproduce on other GPUs",
+      "Root cause may be in cubecl rather than burn, requiring cross-repo coordination",
+      "Potential for nondeterministic failures making regression tests flaky"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce with provided harness on M1 Max with default autotune level and seq_len 1024",
+      "Run with CUBECL_AUTOTUNE_LEVEL=minimal to confirm workaround",
+      "Instrument kernel execution to detect data races or mis-scaled outputs",
+      "Add a regression test that runs the failing shape and asserts finite gradients within tolerance"
+    ],
+    "unknowns": [
+      "Exact kernel and race location not yet identified",
+      "Whether the fix belongs in burn or cubecl",
+      "Whether the issue is reproducible on other Apple7 devices or only M1 Max"
+    ],
+    "why": "Issue identifies a reproducible, hardware-specific kernel defect in the wgpu-msl backend causing exponentially growing LoRA gradients on M1 Max. Root cause is narrowed to an autotune-selected kernel with a suspected data race, evidenced by nondeterministic behavior and Heisenbug. This is a concrete algorithm/kernel bug with a clear validation path via controlled experiments and numerical regression."
   },
   "a548b9ad454f3bec0917ec7fcb87124bbe88f452d48f1bfeeeb26e3429b39709": {
     "confidence": 0.8,
@@ -25309,6 +25402,34 @@
       "Reproducibility on other hardware"
     ],
     "why": "Issue reports a silent regression in v0.27.0 for Kimi-K3-NVFP4 on B300, with cross-model confirmation on GLM-5.2-FP8. No root cause identified; maintainer investigation or release differential needed. Existing PRs are unrelated or closed."
+  },
+  "f3efca3d98260fd39a1d3c3c8c15fdc2152ed4af3339445f3c162554bb583145": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Error propagation in NIXL HMA receive path",
+      "Request failure handling in scheduler"
+    ],
+    "risks": [
+      "May overlap with existing PR #52232",
+      "Requires distributed environment with B200 GPUs and NIXL setup"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with Gemma-4-26B FP8, NIXL HMA, block sizes 128/64, verify HTTP 500 on handshake failure",
+      "Regression test for fail-closed behavior with corrupted token prevention"
+    ],
+    "unknowns": [
+      "Status and content of PR #52232",
+      "Maintainer confirmation on desired fix approach",
+      "Whether the issue qualifies as llm_algorithm track"
+    ],
+    "why": "The issue describes a fail-open bug in NIXL HMA receive failures causing HTTP 200 with corrupted tokens. It identifies a plausible root cause (HMA block IDs omitted from invalid_block_ids) and references a related PR #52232 that propagates failures by request ID. However, the track is llm_algorithm, and the issue lacks a concrete algorithmic mechanism (no training objective, numerical method, or kernel algorithm). It is primarily a distributed-systems error-handling bug. The deterministic gate is ALLOW_PRIVATE_WORK, but the AI disclosure conflict blocks public action. The related PR #52232 may already address the issue, but its status is unknown. Therefore, maintainer confirmation and PR status verification are needed."
   },
   "f3f9d25b050598d268fa98599ba6bc00216eaaf706c346509a83fde42b4965d5": {
     "confidence": 0.7,
