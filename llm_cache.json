@@ -337,6 +337,33 @@
     ],
     "why": "The issue reports a CUDA illegal memory access in the GDN linear attention kernel, with multiple reproductions across different hardware and versions. The root cause is not yet identified; one comment isolates it to the FlashInfer MNNVL fuse_allreduce_rms pass, but this is not confirmed. The deterministic gate is HUMAN_REVIEW, and open PR and related issue lookups failed, so duplicate work cannot be excluded."
   },
+  "06151357bb2c3bc52f70bebfb83f56397ff2e3d8b3792da4ed4b6ac76f85a53f": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue title says ADD-only extraction, but comments mention append-only graph memory architecture and soft-supersede approach."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "No new code changes; await maintainer decision on existing PRs or request for a new approach."
+    ],
+    "risks": [
+      "Duplicating existing PRs; conflicting with maintainer's append-only design direction."
+    ],
+    "root_cause_clarity": "high",
+    "score": 5,
+    "test_plan": [
+      "No new tests proposed; existing PRs include test files for stale-fact scenarios."
+    ],
+    "unknowns": [
+      "Whether maintainers will accept any existing PR or request a new implementation; exact design requirements for supersession."
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue clearly describes a stale-fact bug in ADD-only extraction, but multiple closed PRs (#4969, #4965, #5240) already target it, and the issue comments indicate maintainer direction toward append-only soft-supersede. The gate decision is HUMAN_REVIEW, and the submission policy blocks automatic action due to AI disclosure conflict. A new PR would duplicate existing work and require maintainer confirmation."
+  },
   "063ce2a3f90a7ab2eadefc9320656b31f0db007bbe3f3830e3a785039a6d618e": {
     "confidence": 0.7,
     "contradictions": [],
@@ -995,6 +1022,43 @@
       "Whether PR #29288 will be updated or superseded"
     ],
     "why": "Issue identifies a real bug in embedding cache merge with a clear repro, but a recent comment reveals a second root cause (remaining_list not reaching provider) that invalidates the proposed fix's sufficiency. Existing PR #29288 is stale and incomplete. Maintainer input is needed to confirm the intended fix scope and avoid duplicate/conflicting work."
+  },
+  "0c7336474bb3be084a7da8e3f13b26accd404dadfc1a9c96ae12e5afa04535e8": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue title mentions V1 engine but comments reference v0.19.x and v0.26.0",
+      "Reported on H200 with vLLM 0.15.1 but comments include different versions"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix MTP speculative decoding state update in gpu_model_runner.py",
+      "Correct hidden state pickup for mixed prefill/decode batches",
+      "Add regression test for concurrency >=4 with MTP"
+    ],
+    "risks": [
+      "Potential overlap with issue #50427 may require deduplication",
+      "Root cause may involve multiple interacting components (MTP, chunked prefill, async processing)",
+      "Fix may need to cover multiple speculative decoding methods"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 13,
+    "test_plan": [
+      "Reproduce with provided script at concurrency 4 and MTP num_speculative_tokens=2",
+      "Run with num_speculative_tokens=1 to isolate multi-token logic",
+      "Test with --disable-async-output-proc to check async race",
+      "Compare against SGLang baseline for output token statistics"
+    ],
+    "unknowns": [
+      "Whether issue #50427 is truly duplicate or distinct root cause",
+      "Exact code path causing the corruption (off-by-one vs. race condition)",
+      "Maintainer confirmation of the bug and priority"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "The issue reports a reproducible MTP speculative decoding corruption at concurrency >=4, with strong evidence of a mixed-batch indexing bug. However, the supplied evidence indicates a potential duplicate issue #50427 sharing stack failure signatures, and the deterministic gate is HUMAN_REVIEW. The root cause is not fully confirmed, and maintainer investigation is not active."
   },
   "0cc0439c61fa12f891d63078e40da97d52af4be5bba2d708de549e438cb78643": {
     "confidence": 0.85,
@@ -2206,6 +2270,36 @@
       "Current state of the codebase after recent commits mentioned in comments."
     ],
     "why": "Issue clearly identifies a bug where max_end_user_budget_id is not persisted to DB, causing budget reset to fail. However, an existing PR (#25387) directly addresses this issue but is closed with failing CI and no tests, and a newer PR (#36328) may partially overlap. Maintainer confirmation is needed to decide whether to revive, supersede, or create a new PR."
+  },
+  "18219dc3ad2e1d0f504c001fb7f70911dff35e46a8fa56958ee5e1ff77fb55be": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Adjust default residual_diff_threshold or document its effective range",
+      "Add audio quality metric for MiniMax-H3",
+      "Document RDT and MC coupling and Bn counterproductivity"
+    ],
+    "risks": [
+      "Changing default may affect other models; need broader validation",
+      "Audio metric implementation may be non-trivial and require new dependencies"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce with given setup (B200, MiniMax-H3 T2VA, 768p, 8.7s, 50 steps) and verify default RDT=0.24 yields no rejections",
+      "Sweep RDT values and compare hit rates and quality metrics",
+      "Add audio SNR metric to evaluation pipeline"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer changing default vs documentation",
+      "Exact code path for residual_diff_threshold in DBCache"
+    ],
+    "wait_reason": null,
+    "why": "Issue provides concrete measurements showing default residual_diff_threshold is inert for MiniMax-H3, with clear reproduction setup and data. No competing PR or maintainer assignment blocks work. Actionable: adjust default or document behavior, add audio metric, and clarify RDT/MC interaction."
   },
   "18348522a1bfdd7a584ae96094cb9bb55add0fbeb99e68c9d0637ced290b5740": {
     "confidence": 0.7,
@@ -3484,6 +3578,35 @@
       "Exact third call site in the built bundle."
     ],
     "why": "Issue provides a precise root cause (web passes raw icon id instead of icon_url) and a minimal fix. Existing PR #37405 overlaps semantically but is stale and not directly linked, leaving room for a better PR."
+  },
+  "23b4e2712235abca92ceeaf6876af231a3bebb04de081433d7ccf3f65180f593": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Map reasoning_effort to generationConfig.thinking_summaries for Gemini 3.x in generateContent path",
+      "Possibly add Interactions API support for reasoning summaries"
+    ],
+    "risks": [
+      "Changing request mapping may affect other Gemini models or user expectations",
+      "Interactions API support is a larger feature with unknown scope"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "test_plan": [
+      "Add a regression test using a mocked Gemini 3.5 response to verify reasoning_content is populated when thinking_summaries is set",
+      "Run existing LiteLLM Gemini integration tests"
+    ],
+    "unknowns": [
+      "Maintainer preference on whether to support Interactions API or just map thinking_summaries",
+      "Exact LiteLLM code path for Gemini request construction"
+    ],
+    "wait_reason": "DESIGN_CONFIRMATION",
+    "why": "Issue reports a concrete bug with a plausible root cause (Gemini 3.5 deprecates includeThoughts and requires thinking_summaries or Interactions API), but the fix requires design confirmation: whether LiteLLM should map reasoning_effort to thinking_summaries for 3.x models and whether to add Interactions API support. No maintainer response or design decision exists."
   },
   "24574cab4d9b2ab5aec89cba1a427038a851f0dba3ce409dd47eb316fc8f3a64": {
     "confidence": 0.7,
@@ -6212,6 +6335,36 @@
       "Maintainer's intended fix scope"
     ],
     "why": "The issue reports a VSCode BYOK integration failure with LiteLLM proxy, but the root cause is unclear: a commenter suggests a URL configuration issue, while the reporter says it persists across URL styles. The problem may be in VSCode's client behavior or LiteLLM's /v1/models response format, requiring maintainer confirmation of the intended fix scope."
+  },
+  "3c6257863d0ec057d0914ddabd1ee2c877859d2c29d86a3a273ee98e9fab1f82": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Instrumentation or timeout in ptxas-generated spin loops",
+      "Diagnostic path for stalled tcgen05.alloc.cta_group::2 protocol"
+    ],
+    "risks": [
+      "Root cause may be hardware or ptxas behavior outside vLLM's control",
+      "Instrumentation may not be possible without compiler changes"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 13,
+    "test_plan": [
+      "Reproduce the wedge with burst/idle cycling harness",
+      "Use cuda-gdb to capture live wedge and verify proposed instrumentation"
+    ],
+    "unknowns": [
+      "Exact root cause of the stall",
+      "Whether maintainers have seen similar TMEM allocation stalls",
+      "Feasibility of source-level mitigation in FlashMLA or CUTLASS"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "The issue is a detailed bug report about a TMEM allocation spin loop in FlashMLA's sparse-decode MLA kernel, but it explicitly asks for maintainer guidance on the correct owner and diagnostic path, not a code contribution. The root cause is undetermined (phase mismatch vs. visibility vs. hardware state), and the reporter notes the spin loops are generated by ptxas, not hand-written, so a source-level fix is not straightforward. The issue is actionable only as a request for investigation, not as a concrete implementation task."
   },
   "3ccfec3428609455656a0ac379dba06b5a74ee6fac829f573253607b8b7104db": {
     "confidence": 0.7,
@@ -9233,6 +9386,38 @@
     ],
     "why": "The issue provides a clear root cause (AOT cache key ignores limit_mm_per_prompt/multimodal_config) and a reproducible crash, but the deterministic gate requires HUMAN_REVIEW and an existing PR (#50908) already attempts a fix with failing CI. Maintainer direction is needed to avoid duplicate or conflicting work."
   },
+  "57e7c375409988c010097720b7bef606e4eb4d1c343d0cde3c3ed327622ae0fd": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Comment from mauro33 reports the same skip-list behavior in moderate mode, while the issue title focuses on fast mode; this may indicate the skip list applies beyond fast mode, but the root cause is the same"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify src/discover/discover.c to remove 'scripts' from FAST_SKIP_DIRS or gate it behind a heuristic",
+      "Add a regression test that verifies scripts/ is indexed in fast mode",
+      "Consider adding a warning when a top-level source dir is skipped by a built-in heuristic"
+    ],
+    "risks": [
+      "Changing skip-list behavior may affect performance or indexing of genuinely non-source scripts/ directories",
+      "Potential for unintended inclusion of large or generated content under scripts/"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a minimal repo with src/pkg/core.py and scripts/deploy_tool/main.py, run index_repository --mode fast, assert scripts/ files are present in the graph",
+      "Run existing discover.c unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether the maintainer will accept a fix that removes 'scripts' from the skip list or prefers a configurable approach",
+      "Exact scope of the skip list in moderate mode as reported by mauro33"
+    ],
+    "wait_reason": "ASSIGNMENT",
+    "why": "Issue is a well-reproduced, high-impact bug with a clear root cause (hardcoded FAST_SKIP_DIRS in discover.c) and maintainer acknowledgment, but the repository requires assignment and no maintainer has assigned the issue, so work should not start without assignment."
+  },
   "5835357fafa438b6672dc8786248a76d079acc0ab8495c1414126704fa235397": {
     "confidence": 0.8,
     "contradictions": [],
@@ -10997,6 +11182,33 @@
     ],
     "why": "The issue reports a reproducible hang with tokenizer-worker-num 2 and provides a clear A/B comparison, but the root cause is only hypothesized (routing of AbortReq responses). The deterministic gate requires HUMAN_REVIEW, and open PR/related issue lookups failed, so duplicate work cannot be excluded. The track is llm_algorithm but the bug is operational (request routing) rather than an algorithm mechanism; no concrete training objective or numerical method is involved."
   },
+  "6764cb66725f476268731538f36a6518989c4ca40f3498fb6827fda07103cf40": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "litellm/proxy/auth/auth_checks.py",
+      "litellm/proxy/utils.py",
+      "litellm/proxy/services/reset_budget_job.py"
+    ],
+    "risks": [
+      "Existing PR #25387 may be revived or superseded; maintainer may prefer a different fix approach."
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Add regression test: auto-create end user with max_end_user_budget_id, assert budget_id persisted in DB and reset job matches user."
+    ],
+    "unknowns": [
+      "Why PR #25387 was closed; whether maintainers have an alternative fix in progress."
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue clearly describes a real bug with root cause and repro, but an existing PR (#25387) directly targets the same code paths and is closed without merge. Need maintainer review of that PR's status and design preferences before starting new work."
+  },
   "676dbf442006c8e5c919f7c422e00d6efae04f098a8bba8bdfadd57243312cdb": {
     "confidence": 0.6,
     "contradictions": [
@@ -12314,6 +12526,39 @@
     ],
     "why": "The issue provides a precise root cause and a concrete fix direction, but the deterministic gate requires HUMAN_REVIEW and open PR/related issue lookups timed out, so duplicate work cannot be excluded."
   },
+  "721b35a5aa0b7959841d304f16c73aea5a46fd70cef3865f15e2910539a4b5e0": {
+    "confidence": 0.7,
+    "contradictions": [
+      "PR #33986 claimed a fix but was withdrawn due to corruption"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "FlashInfer kernel instantiation for topk=192 in decode-dsv4",
+      "SGLang shim fallback logic in flash_mla_sm120.py"
+    ],
+    "risks": [
+      "Intermittent corruption if padding approach is reused",
+      "Kernel instantiation may have performance or memory implications",
+      "Hardware-specific (SM120) testing required"
+    ],
+    "root_cause_clarity": "high",
+    "score": 13,
+    "test_plan": [
+      "Reproduce the original failure with the provided command on SM120 hardware",
+      "Add a regression test that verifies DSpark speculative decoding starts and produces correct output over long sequences",
+      "Run numerical correctness tests comparing padded vs non-padded outputs"
+    ],
+    "unknowns": [
+      "Whether FlashInfer maintainers will accept the topk=192 instantiation",
+      "Exact cause of the intermittent corruption in the withdrawn PR"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "The issue provides a clear root cause and a concrete fix path, but the only proposed PR was withdrawn due to intermittent corruption, and the remaining fix (FlashInfer instantiation) lacks a validated implementation. The issue is actionable but requires maintainer confirmation on the correct fix direction and a regression test."
+  },
   "728fd9dfee48442beceb511650a5e8f905a21872d61ac0ece3b1f88a92d1ef48": {
     "confidence": 0.85,
     "contradictions": [],
@@ -13055,6 +13300,39 @@
       "Exact conflicting package versions and maintainer preferred resolution"
     ],
     "why": "Issue reports dependency conflicts when installing eval and langchain extras together, but root cause is unclear (likely botocore version pinning). No maintainer triage or design confirmation; gate requires HUMAN_REVIEW."
+  },
+  "78f3a481933603c84e1ec86d45b5738aaae249e27cc4822adad5a575dc3d6ca7": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Reproductions vary across hardware and versions",
+      "Some workarounds exist but not universally"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix GDN kernel memory access bug",
+      "Add regression test for long-context prefill"
+    ],
+    "risks": [
+      "Root cause may be in FlashInfer or CUDA driver",
+      "Potential duplicate issue requires maintainer triage"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 12,
+    "test_plan": [
+      "Reproduce with minimal config on single GPU",
+      "Run with TP=2 and concurrency stress",
+      "Compare with and without fuse_allreduce_rms"
+    ],
+    "unknowns": [
+      "Exact root cause not identified",
+      "Maintainer awareness and priority unknown"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue reports CUDA illegal memory access in GDN kernel with multiple reproductions, but root cause is unclear and may be a duplicate of #38916. Existing PRs overlap semantically but none directly reference the issue. Maintainer investigation is not confirmed."
   },
   "7961bfa2c611b105779cfe8d2912ba32de7af3014aaaf313926c3d8ebbf5a3f2": {
     "confidence": 0.8,
@@ -14183,6 +14461,42 @@
     ],
     "why": "Issue clearly identifies a detached promise in Agent#executeOnFinish causing title loss on serverless runtimes, with a minimal repro and a contributor asking for design direction. However, the deterministic gate is HUMAN_REVIEW and the contributor explicitly requests maintainer preference on whether to await title persistence or use a background hook, which changes latency and durability semantics. Existing PRs have semantic overlap but none directly address this issue, so a new PR could be viable but requires design confirmation."
   },
+  "8484006fde1ed336734ac3d9badd8045433b46e154f27d8f1af6ae57b5d7ffae": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue claims distinct from #40742 and #48749, but no evidence confirms distinctness",
+      "Comment says config passes in isolation on H100, but CI runs on H200 with full file"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Reproduce the failure in a single pytest session on H200",
+      "Identify the antecedent CUDA error that invalidates capture",
+      "Fix the root cause in vllm/compilation/cuda_graph.py or related distributed/kv_transfer code"
+    ],
+    "risks": [
+      "Failure may be flaky and not reproducible, leading to wasted effort",
+      "Root cause may be in external libraries or hardware-specific behavior",
+      "Fix may require changes to torch.compile internals or vLLM's CUDA graph capture logic"
+    ],
+    "root_cause_clarity": "low",
+    "score": 13,
+    "test_plan": [
+      "Run the full test file in one pytest session on H200 to reproduce",
+      "Add a regression test that runs the failing config after other tests to simulate cross-test state",
+      "Use CUDA_LAUNCH_BLOCKING=1 and capture the antecedent error for diagnosis"
+    ],
+    "unknowns": [
+      "Antecedent CUDA error not identified",
+      "Whether failure reproduces in a full session on H200",
+      "Whether maintainers consider this a duplicate or a new issue"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "Issue reports a flaky CI failure in torch.compile CUDA graph capture, but root cause is unknown and reproduction is incomplete. The only comment indicates the exact config passes in isolation on H100, and the failure may be due to cross-test GPU state on H200. No maintainer investigation or confirmation of a distinct root cause. The issue is a CI failure report, not a concrete algorithm bug with a clear fix path."
+  },
   "84d222e459f8beb2d88a2cd008898afbdcc18960c047b70e1382dc5c25c9333e": {
     "confidence": 0.7,
     "contradictions": [
@@ -15071,6 +15385,41 @@
     ],
     "why": "Issue reports stale get_episodes data; maintainer attributes to queue latency, but a commenter identifies a concrete root cause: get_episodes uses keyset pagination with ORDER BY uuid DESC, returning arbitrary stable subset instead of most recent. Existing PR #1726 claims to fix this but has failing CI/check and lacks evidence of root-cause analysis. A materially better PR with proper tests and root-cause explanation is plausible."
   },
+  "8c47761129f72eab6a141a725f87254a51e24d5393db6f3fe4fb2fb528cf3bbe": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Proposal claims exactly-once but comment shows at-least-once with idempotent effect keys"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add after_durable_model_request hook to AbstractCapability",
+      "Invoke hook inside durable units in Temporal/DBOS/Prefect and inline path",
+      "Add stable effect identity for idempotent external commits"
+    ],
+    "risks": [
+      "Design may change based on maintainer feedback",
+      "Exactly-once semantics require idempotency support in external sinks",
+      "Potential overhead or complexity in adding effect identity"
+    ],
+    "root_cause_clarity": "high",
+    "score": 13,
+    "test_plan": [
+      "Reproduce double-commit with SpendLimits under Temporal replay",
+      "Test crash before external commit and after commit before checkpoint",
+      "Test multiple capabilities with distinct effect ids",
+      "Test same logical request retry reuses effect id"
+    ],
+    "unknowns": [
+      "Maintainer design preference and approval",
+      "Whether effect identity will be added to the hook contract"
+    ],
+    "wait_reason": "DESIGN_CONFIRMATION",
+    "why": "Issue identifies a real replay-duplication bug in capability hooks under durable execution, with a concrete proposal and precedent. However, the proposed 'exactly once' semantics are challenged by a crash window, and the maintainer has not confirmed the design. The issue is a disclosure with a proposed design, not an approved implementation."
+  },
   "8cb3b7bcaaf3c6c8ffef73796514f44617eeb168c098602a4df55d7a997ce1f8": {
     "confidence": 0.7,
     "contradictions": [],
@@ -15897,6 +16246,38 @@
       "Whether PR #6696 already fixes this issue or will be merged soon"
     ],
     "why": "Issue clearly identifies a missing capability id hint in a durable-exec error message, with a minimal repro and root cause. However, open PR #6696 has semantic overlap and may already address the code path; maintainer design preference is unknown and no assignment is confirmed."
+  },
+  "97b330fa148903db2755a89d867a04223c5d39252d7ec9ceffaee19c6d9f3dd5": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add isolation: 'auto' and/or construction-time warning",
+      "Document Windows as unsupported",
+      "Possibly implement Windows backend via native addon or helper binary"
+    ],
+    "risks": [
+      "Native addon adds build complexity to @mastra/core",
+      "External helper has no Microsoft-distributed candidate",
+      "Changing default behavior may break existing users"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "test_plan": [
+      "Add unit test for detectIsolation() on win32 returning 'none' with available:false",
+      "Add test for LocalSandbox constructor warning when isolation defaults to 'none' on Windows",
+      "If backend implemented, test executeCommand with AppContainer isolation on Windows"
+    ],
+    "unknowns": [
+      "Maintainer preference among the three backend options",
+      "Whether maintainers accept the low-cost visibility fix independently"
+    ],
+    "wait_reason": "DESIGN_CONFIRMATION",
+    "why": "Issue accurately identifies a silent security gap on Windows and proposes a clear seam, but the fix direction is an architectural decision (native addon vs helper binary vs docs) that maintainers must confirm. The reporter explicitly asks for direction before implementing, and the triage bot recommends maintainer decision. No competing PR exists, but work cannot start without design confirmation."
   },
   "97c4141612a630c09d8cbe628e7b68569405b17e334827f173efc623bd10c438": {
     "confidence": 0.7,
@@ -18056,6 +18437,38 @@
     ],
     "why": "The issue is an evidence/ops completion task, not a code contribution. The implementation gap is already closed by commit 23b875ff7f8, and the remaining work requires human-provided artifacts (ASR bundle, fused library) and legal audio staging. No new code change is actionable without those prerequisites."
   },
+  "af58976ba654f3f4294b8d4f0f27e7c539549bb181a754e64c36e0a0c37e835b": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims serializer does not filter images, but maintainer says it already does"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Capability-selection policy for unknown/custom model profiles",
+      "Possibly TUI affordance for manual image removal"
+    ],
+    "risks": [
+      "Changing default capability for unknown models could break custom vision endpoints",
+      "Option B TUI changes may be larger than necessary"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 13,
+    "test_plan": [
+      "Regression test for text-only model with image block in history",
+      "Test for custom profile with explicit input=[\"text\"]",
+      "Test for unknown profile default behavior"
+    ],
+    "unknowns": [
+      "Maintainer's preferred policy for unknown-model image capability",
+      "Whether Option B is desired in addition to Option A"
+    ],
+    "wait_reason": "DESIGN_CONFIRMATION",
+    "why": "The issue describes a real session-breaking bug for text-only models, but the maintainer's comments indicate the serializer already filters images and the remaining root cause is a capability-selection policy for unknown/custom profiles. The maintainer explicitly states this needs a maintainer decision on unknown-model capability policy, and the gate decision is HUMAN_REVIEW. The proposed Option A is already partially implemented, and Option B requires TUI design confirmation. Thus, design confirmation is required before work can start."
+  },
   "af93e795ad3c6bda430639c6c9fae128bf392221249184eaeba6d3c228ddb5fa": {
     "confidence": 0.7,
     "contradictions": [
@@ -18530,6 +18943,39 @@
       "Whether PR #51397 can be revived or superseded"
     ],
     "why": "Issue clearly identifies a silent no-op bug in V2 model runner with root cause and empirical evidence. However, an existing PR (#51397) directly addresses the issue with a fail-safe approach, but its CI failed and it is closed. The issue suggests both a minimal fix and a feature-parity option, requiring maintainer decision on scope. The submission policy conflict (AI disclosure) blocks automated action, and the gate requires human review."
+  },
+  "b5872ca90016a4b0879cb3b8d164d1631c1c349a7d341b0fe1bb8addaa2be6ac": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims cache write path keeps indices correct, but recent comment shows provider receives full batch, contradicting the assumption that only misses are sent"
+    ],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix index remapping in _combine_cached_embedding_response_with_api_result",
+      "Fix remaining_list propagation so provider receives only cache misses",
+      "Add regression tests for partial cache hits covering index integrity and provider sub-batch size"
+    ],
+    "risks": [
+      "Changing remaining_list propagation may affect other call paths or caching behavior",
+      "Potential maintainer preference on API behavior changes; need to align with existing design"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Run the provided unit test test_partial_cache_hit_does_not_corrupt_indices on current main to confirm failure",
+      "Add integration test using CustomLLM and local cache to verify provider receives only misses and indices are sequential",
+      "Run existing caching test suite to ensure no regressions"
+    ],
+    "unknowns": [
+      "Whether maintainers have expressed preference on the fix approach",
+      "Whether existing PR #29288 can be revived or is abandoned"
+    ],
+    "wait_reason": null,
+    "why": "Issue provides a precise root cause, deterministic repro, and a suggested fix for a user-visible bug in embedding cache merge. Existing PR #29288 is technically complete but stale (>30 days) and may not address the deeper issue that the provider receives the full batch instead of only misses, as noted in recent comments. This creates an opportunity for a materially better PR that fixes both the index remapping and the remaining_list propagation."
   },
   "b5cd2e181fc5bc44aa623875ac9e034f10b37017dc90ee2e9a83401815051729": {
     "confidence": 0.8,
@@ -20948,6 +21394,36 @@
       "Exact WorkflowsStorage contract changes needed"
     ],
     "why": "Issue clearly identifies a race condition in workflow resume with public repro and production evidence, but the deterministic gate requires HUMAN_REVIEW and the maintainer has not confirmed the storage-backed CAS design direction. Existing PR #20512 is closed and insufficient, so a new PR is plausible but needs design confirmation."
+  },
+  "cedd28be87e98609487349905b73146b54465e7afbcf0de220c97c83774e727d": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue expected output shows '</think>' without opening '<think>', which seems inconsistent with the described fix."
+    ],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/tokenizers/deepseek_v4_encoding.py",
+      "tests for deepseek_v4 tokenizer encoding"
+    ],
+    "risks": [
+      "Potential maintainer preference on tokenizer behavior; need to confirm expected output format with maintainers.",
+      "Existing PR #46257 may already fix the issue; must compare implementations before starting."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add a regression test using the issue's reproducer asserting no empty <think></think> block when tools are present and reasoning is absent.",
+      "Run existing deepseek_v4 encoding tests and compare against reference fixtures."
+    ],
+    "unknowns": [
+      "Whether PR #46257 already resolves the issue; maintainer stance on the fix."
+    ],
+    "wait_reason": null,
+    "why": "Issue provides a concrete encoder-only reproducer and root cause in deepseek_v4_encoding.py, with reference fixtures supporting the expected output. Existing PR #46257 overlaps semantically but is authored by NONE, lacks issue linkage, and has CI failures; a stronger PR with a regression test and maintainer engagement is plausible."
   },
   "cf1eb4e8c323079c2eca94153aa33c81eb9c117a08c0419799fd44913b562d16": {
     "confidence": 0.8,
