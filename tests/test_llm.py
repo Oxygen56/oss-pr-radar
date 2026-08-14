@@ -85,9 +85,7 @@ def test_llm_cannot_upgrade_human_review(tmp_path, monkeypatch):
     assert result[0]["auto_spawn"] is False
 
 
-def test_disclosure_candidate_waiting_on_design_does_not_spawn(
-    tmp_path, monkeypatch
-):
+def test_disclosure_candidate_waiting_on_design_does_not_spawn(tmp_path, monkeypatch):
     instance = evaluator(tmp_path)
     monkeypatch.setattr(
         instance,

@@ -1380,9 +1380,7 @@ def test_new_issue_claim_defers_to_existing_validation_work(monkeypatch, tmp_pat
     monkeypatch.setattr(
         MODULE,
         "_higher_priority_existing_work",
-        lambda _args, *, intent_key: [
-            {"kind": "validation_followup", "key": "a/b#1"}
-        ],
+        lambda _args, *, intent_key: [{"kind": "validation_followup", "key": "a/b#1"}],
     )
     monkeypatch.setattr(
         MODULE,
@@ -2267,9 +2265,7 @@ def test_recovery_immediately_surfaces_a_recent_terminal_desktop_error(monkeypat
     assert result["recoverable"][0]["terminalError"]["code"] == "cyber_policy"
 
 
-def test_recovery_immediately_resumes_an_interrupted_validation_followup(
-    monkeypatch, tmp_path
-):
+def test_recovery_immediately_resumes_an_interrupted_validation_followup(monkeypatch, tmp_path):
     store, worktree = registered_store(tmp_path)
     run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
     store.record_stage("a/b#1", "VALIDATION_PENDING")
@@ -2279,12 +2275,8 @@ def test_recovery_immediately_resumes_an_interrupted_validation_followup(
         result_digest="result-digest",
         missing=["relevant_tests_green"],
     )
-    store.reserve_validation_followup(
-        thread_id="thread-1", result_digest="result-digest"
-    )
-    store.commit_validation_followup(
-        thread_id="thread-1", result_digest="result-digest"
-    )
+    store.reserve_validation_followup(thread_id="thread-1", result_digest="result-digest")
+    store.commit_validation_followup(thread_id="thread-1", result_digest="result-digest")
     thread_db = tmp_path / "threads.sqlite3"
     with sqlite3.connect(thread_db) as connection:
         connection.execute(
@@ -2323,9 +2315,9 @@ def test_recovery_immediately_resumes_an_interrupted_validation_followup(
     monkeypatch.setattr(
         MODULE,
         "active_task_turn_worker",
-        lambda thread_id: {"pid": 123, "deliveryKind": "validation-followup"}
-        if thread_id == "thread-1"
-        else None,
+        lambda thread_id: (
+            {"pid": 123, "deliveryKind": "validation-followup"} if thread_id == "thread-1" else None
+        ),
     )
 
     draining = MODULE.recovery_list(

@@ -1484,12 +1484,8 @@ def test_interrupted_validation_followup_can_enter_controlled_recovery(tmp_path)
         result_digest="result-digest",
         missing=["relevant_tests_green"],
     )
-    store.reserve_validation_followup(
-        thread_id="thread-1", result_digest="result-digest"
-    )
-    store.commit_validation_followup(
-        thread_id="thread-1", result_digest="result-digest"
-    )
+    store.reserve_validation_followup(thread_id="thread-1", result_digest="result-digest")
+    store.commit_validation_followup(thread_id="thread-1", result_digest="result-digest")
 
     candidate = store.recovery_candidates(min_age_minutes=0)[0]
 

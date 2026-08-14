@@ -1385,13 +1385,9 @@ def _higher_priority_existing_work(
     )
     for item in [*validation_state["candidates"], *validation_state["unresolved"]]:
         if item.get("key") != intent_key:
-            priorities.append(
-                {"kind": "validation_followup", "key": str(item.get("key") or "")}
-            )
+            priorities.append({"kind": "validation_followup", "key": str(item.get("key") or "")})
 
-    recovery_state = recovery_list(
-        argparse.Namespace(ledger=args.ledger, min_age_minutes=90)
-    )
+    recovery_state = recovery_list(argparse.Namespace(ledger=args.ledger, min_age_minutes=90))
     for item in [*recovery_state["recoverable"], *recovery_state["unresolved"]]:
         if item.get("key") != intent_key:
             priorities.append({"kind": "recovery", "key": str(item.get("key") or "")})
@@ -5460,8 +5456,7 @@ def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
                 or int(row["archived"] or 0) == 1
                 or int(row["updated_at"] or 0) <= activity_cutoff
                 or (
-                    latest_thread_turn_state(row["rollout_path"])
-                    or live_turn_states.get(thread_id)
+                    latest_thread_turn_state(row["rollout_path"]) or live_turn_states.get(thread_id)
                 )
                 is not None
             ):
@@ -5529,9 +5524,7 @@ def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
             )
             immediate_recovery = _is_immediate_recovery(turn_state)
             turn_worker = (
-                active_task_turn_worker(candidate["threadId"])
-                if immediate_recovery
-                else None
+                active_task_turn_worker(candidate["threadId"]) if immediate_recovery else None
             )
             if turn_worker is not None:
                 active_deferred.append(
