@@ -231,9 +231,10 @@ actually unarchived before committing the restore receipt, and verifies the exac
 visible title before committing title state. Valid pending intents are ordinary queue state and must
 not be treated as a failed run; publication canary state does not cap private
 task creation.
-The local completion collector also reconciles lifecycle titles immediately
-after ingesting a result, so a completed `AUDIT_NO_GO` task does not remain
-visibly marked as valuable until the next hourly heartbeat.
+The local completion collector also reconciles lifecycle titles and archives
+exact `[无价值]` `AUDIT_NO_GO` tasks immediately after ingesting a result, so a
+completed no-go task does not remain visible as valuable or wait for the next
+hourly heartbeat to be cleaned up.
 `githubNaturalScheduleHealthy` refers only to GitHub Actions cron delivery;
 `operationalHealthy` also accepts a recent successful or currently active
 manual/fallback scan. Historical rolling-window gaps are reported separately in

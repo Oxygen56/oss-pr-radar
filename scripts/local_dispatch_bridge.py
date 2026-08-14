@@ -17,7 +17,7 @@ import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from time import monotonic, sleep
-from typing import Any
+from typing import Any, Callable
 
 ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT / "src"))
@@ -1817,7 +1817,7 @@ def _wait_for_app_server_terminal_turn(
             and read_requested_at is not None
             and now - read_requested_at >= APP_SERVER_WATCHDOG_STALE_SECONDS
         )
-        if request_stale and now >= next_external_probe_at:
+        if now >= next_external_probe_at:
             independently_observed = live_thread_turn_states({thread_id}).get(thread_id)
             next_external_probe_at = monotonic() + APP_SERVER_WATCHDOG_EXTERNAL_PROBE_SECONDS
             if (
@@ -5175,6 +5175,192 @@ def cleanup_commit(args: argparse.Namespace) -> dict[str, Any]:
     return {"ok": True, "threadId": args.thread_id}
 
 
+def _apply_desktop_thread_requests(
+    items: list[dict[str, Any]],
+    *,
+    method: str,
+    parameter_builder: Callable[[dict[str, Any]], dict[str, Any]],
+    operation_label: str,
+    timeout_seconds: float = 20.0,
+) -> dict[str, str | None]:
+    """Apply one supported app-server operation to exact desktop tasks."""
+
+    results = {str(item["threadId"]): "app_server_response_missing" for item in items}
+    if not items:
+        return results
+    executable = shutil.which("codex")
+    if not executable:
+        return {thread_id: "codex_executable_missing" for thread_id in results}
+    process = subprocess.Popen(
+        [
+            executable,
+            "app-server",
+            "--disable",
+            "recommended_plugins",
+            "--disable",
+            "remote_plugin",
+            "--stdio",
+        ],
+        cwd=ROOT,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        bufsize=0,
+    )
+    request_items = {index: item for index, item in enumerate(items, 1)}
+    request_ids = {index: str(item["threadId"]) for index, item in request_items.items()}
+    try:
+        if process.stdin is None or process.stdout is None:
+            raise RuntimeError("app server pipes are unavailable")
+        requests = [
+            {
+                "id": 0,
+                "method": "initialize",
+                "params": {
+                    "clientInfo": {"name": "oss-pr-radar", "version": "1.0"},
+                    "capabilities": {"experimentalApi": True},
+                },
+            },
+            *[
+                {
+                    "id": request_id,
+                    "method": method,
+                    "params": parameter_builder(request_items[request_id]),
+                }
+                for request_id in request_ids
+            ],
+        ]
+        process.stdin.write(
+            b"".join(
+                (json.dumps(request, ensure_ascii=False) + "\n").encode("utf-8")
+                for request in requests
+            )
+        )
+        process.stdin.flush()
+
+        pending = {0, *request_ids}
+        buffer = b""
+        deadline = monotonic() + max(1.0, timeout_seconds)
+        with selectors.DefaultSelector() as selector:
+            selector.register(process.stdout, selectors.EVENT_READ)
+            while pending and monotonic() < deadline:
+                ready = selector.select(max(0.0, deadline - monotonic()))
+                if not ready:
+                    break
+                chunk = os.read(process.stdout.fileno(), 65536)
+                if not chunk:
+                    break
+                buffer += chunk
+                while b"\n" in buffer:
+                    raw, buffer = buffer.split(b"\n", 1)
+                    try:
+                        response = json.loads(raw)
+                    except (UnicodeDecodeError, json.JSONDecodeError):
+                        continue
+                    if not isinstance(response, dict):
+                        continue
+                    response_id = response.get("id")
+                    if response_id not in pending:
+                        continue
+                    pending.remove(response_id)
+                    if response_id == 0:
+                        if response.get("error"):
+                            raise RuntimeError("app server initialization failed")
+                        continue
+                    thread_id = request_ids[response_id]
+                    results[thread_id] = (
+                        f"app_server_{operation_label}_failed" if response.get("error") else None
+                    )
+        if 0 in pending:
+            return {thread_id: "app_server_initialization_timeout" for thread_id in results}
+        for request_id in pending:
+            if request_id in request_ids:
+                results[request_ids[request_id]] = f"app_server_{operation_label}_timeout"
+        return results
+    except (OSError, RuntimeError, ValueError) as exc:
+        reason = f"{type(exc).__name__}:{str(exc)[:160]}"
+        return {
+            thread_id: (current if current is None else reason)
+            for thread_id, current in results.items()
+        }
+    finally:
+        if process.stdin is not None:
+            process.stdin.close()
+        if process.poll() is None:
+            process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+
+
+def _archive_desktop_threads(
+    candidates: list[dict[str, Any]], *, timeout_seconds: float = 20.0
+) -> dict[str, str | None]:
+    """Archive exact lifecycle candidates through the supported app-server API."""
+
+    return _apply_desktop_thread_requests(
+        candidates,
+        method="thread/archive",
+        parameter_builder=lambda item: {"threadId": str(item["threadId"])},
+        operation_label="archive",
+        timeout_seconds=timeout_seconds,
+    )
+
+
+def cleanup_reconcile(args: argparse.Namespace) -> dict[str, Any]:
+    candidates = cleanup_list(args)["cleanup"]
+    eligible: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    for candidate in candidates:
+        if candidate.get("stage") != "AUDIT_NO_GO" or not str(
+            candidate.get("title") or ""
+        ).startswith(f"{TITLE_PREFIXES['AUDIT_NO_GO']} "):
+            errors.append(
+                {
+                    "key": candidate.get("key"),
+                    "threadId": candidate.get("threadId"),
+                    "error": "cleanup_title_not_reconciled",
+                }
+            )
+            continue
+        eligible.append(candidate)
+
+    apply_results = _archive_desktop_threads(eligible)
+    archived: list[dict[str, Any]] = []
+    for candidate in eligible:
+        thread_id = str(candidate["threadId"])
+        apply_error = apply_results.get(thread_id)
+        if apply_error:
+            errors.append(
+                {
+                    "key": candidate["key"],
+                    "threadId": thread_id,
+                    "error": apply_error,
+                }
+            )
+            continue
+        try:
+            committed = cleanup_commit(
+                argparse.Namespace(
+                    ledger=args.ledger,
+                    thread_id=thread_id,
+                    cleanup_nonce=candidate["cleanupNonce"],
+                )
+            )
+            archived.append({"key": candidate["key"], **committed})
+        except (OSError, RuntimeError, ValueError) as exc:
+            errors.append(
+                {
+                    "key": candidate["key"],
+                    "threadId": thread_id,
+                    "error": f"{type(exc).__name__}:{str(exc)[:160]}",
+                }
+            )
+    return {"ok": not errors, "archived": archived, "errors": errors}
+
+
 def title_list(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
     bindings = store.title_bindings()
@@ -5249,116 +5435,16 @@ def _set_desktop_thread_titles(
 ) -> dict[str, str | None]:
     """Apply lifecycle titles through the supported local app-server protocol."""
 
-    results = {str(item["threadId"]): "app_server_response_missing" for item in titles}
-    if not titles:
-        return results
-    executable = shutil.which("codex")
-    if not executable:
-        return {thread_id: "codex_executable_missing" for thread_id in results}
-    process = subprocess.Popen(
-        [
-            executable,
-            "app-server",
-            "--disable",
-            "recommended_plugins",
-            "--disable",
-            "remote_plugin",
-            "--stdio",
-        ],
-        cwd=ROOT,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        bufsize=0,
+    return _apply_desktop_thread_requests(
+        titles,
+        method="thread/name/set",
+        parameter_builder=lambda item: {
+            "threadId": str(item["threadId"]),
+            "name": str(item["desiredTitle"]),
+        },
+        operation_label="title_update",
+        timeout_seconds=timeout_seconds,
     )
-    request_ids = {index: str(item["threadId"]) for index, item in enumerate(titles, 1)}
-    try:
-        if process.stdin is None or process.stdout is None:
-            raise RuntimeError("app server pipes are unavailable")
-        requests = [
-            {
-                "id": 0,
-                "method": "initialize",
-                "params": {
-                    "clientInfo": {"name": "oss-pr-radar", "version": "1.0"},
-                    "capabilities": {"experimentalApi": True},
-                },
-            }
-        ]
-        requests.extend(
-            {
-                "id": request_id,
-                "method": "thread/name/set",
-                "params": {
-                    "threadId": request_ids[request_id],
-                    "name": str(titles[request_id - 1]["desiredTitle"]),
-                },
-            }
-            for request_id in request_ids
-        )
-        process.stdin.write(
-            b"".join(
-                (json.dumps(request, ensure_ascii=False) + "\n").encode("utf-8")
-                for request in requests
-            )
-        )
-        process.stdin.flush()
-
-        pending = {0, *request_ids}
-        buffer = b""
-        deadline = monotonic() + max(1.0, timeout_seconds)
-        with selectors.DefaultSelector() as selector:
-            selector.register(process.stdout, selectors.EVENT_READ)
-            while pending and monotonic() < deadline:
-                ready = selector.select(max(0.0, deadline - monotonic()))
-                if not ready:
-                    break
-                chunk = os.read(process.stdout.fileno(), 65536)
-                if not chunk:
-                    break
-                buffer += chunk
-                while b"\n" in buffer:
-                    raw, buffer = buffer.split(b"\n", 1)
-                    try:
-                        response = json.loads(raw)
-                    except (UnicodeDecodeError, json.JSONDecodeError):
-                        continue
-                    if not isinstance(response, dict):
-                        continue
-                    response_id = response.get("id")
-                    if response_id not in pending:
-                        continue
-                    pending.remove(response_id)
-                    if response_id == 0:
-                        if response.get("error"):
-                            raise RuntimeError("app server initialization failed")
-                        continue
-                    thread_id = request_ids[response_id]
-                    results[thread_id] = (
-                        "app_server_title_update_failed" if response.get("error") else None
-                    )
-        if 0 in pending:
-            return {thread_id: "app_server_initialization_timeout" for thread_id in results}
-        for request_id in pending:
-            if request_id in request_ids:
-                results[request_ids[request_id]] = "app_server_title_update_timeout"
-        return results
-    except (OSError, RuntimeError, ValueError) as exc:
-        reason = f"{type(exc).__name__}:{str(exc)[:160]}"
-        return {
-            thread_id: (current if current is None else reason)
-            for thread_id, current in results.items()
-        }
-    finally:
-        if process.stdin is not None:
-            process.stdin.close()
-        if process.poll() is None:
-            process.terminate()
-        try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait(timeout=5)
 
 
 def _ensure_desktop_thread_title(thread_id: str, desired_title: str) -> None:
@@ -5926,6 +6012,7 @@ def main() -> int:
     publication_check_parser.add_argument("--commit-sha", required=True)
     publication_check_parser.add_argument("--branch", required=True)
     subparsers.add_parser("cleanup-list")
+    subparsers.add_parser("cleanup-reconcile")
     subparsers.add_parser("context-recover")
     subparsers.add_parser("context-sync")
     pr_followup_list_parser = subparsers.add_parser("pr-followup-list")
@@ -6074,6 +6161,8 @@ def main() -> int:
         result = publication_check(args)
     elif args.operation == "cleanup-list":
         result = cleanup_list(args)
+    elif args.operation == "cleanup-reconcile":
+        result = cleanup_reconcile(args)
     elif args.operation == "context-recover":
         result = recover_task_contexts(args)
     elif args.operation == "context-sync":

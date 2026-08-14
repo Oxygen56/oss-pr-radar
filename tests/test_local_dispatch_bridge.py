@@ -2835,10 +2835,18 @@ def test_app_server_watchdog_uses_independent_terminal_probe_when_read_stalls(mo
         def select(_timeout):
             return []
 
-    monkeypatch.setattr(MODULE, "monotonic", lambda: 0.0)
+    class StepClock:
+        def __init__(self):
+            self.value = -1.0
+
+        def __call__(self):
+            self.value += 1.0
+            return self.value
+
+    monkeypatch.setattr(MODULE, "monotonic", StepClock())
     monkeypatch.setattr(MODULE, "APP_SERVER_WATCHDOG_INTERVAL_SECONDS", 0.0)
     monkeypatch.setattr(MODULE, "APP_SERVER_WATCHDOG_STALE_SECONDS", 0.0)
-    monkeypatch.setattr(MODULE, "APP_SERVER_WATCHDOG_EXTERNAL_PROBE_SECONDS", 0.0)
+    monkeypatch.setattr(MODULE, "APP_SERVER_WATCHDOG_EXTERNAL_PROBE_SECONDS", 2.0)
     monkeypatch.setattr(
         MODULE,
         "live_thread_turn_states",
@@ -2860,6 +2868,78 @@ def test_app_server_watchdog_uses_independent_terminal_probe_when_read_stalls(mo
     result = MODULE._wait_for_app_server_terminal_turn(
         process,
         NeverReadySelector(),
+        b"",
+        thread_id="thread-1",
+        turn_id="turn-1",
+    )
+
+    assert result == {"turnId": "turn-1", "status": "interrupted", "error": None}
+    assert json.loads(process.stdin.writes[0])["method"] == "thread/read"
+
+
+def test_app_server_watchdog_uses_independent_probe_when_owner_view_is_stale(monkeypatch):
+    class FakeStdin:
+        def __init__(self):
+            self.writes: list[bytes] = []
+
+        def write(self, value: bytes) -> None:
+            self.writes.append(value)
+
+        def flush(self) -> None:
+            return None
+
+    class FakeStdout:
+        @staticmethod
+        def fileno() -> int:
+            return 123
+
+    class FakeProcess:
+        def __init__(self):
+            self.stdin = FakeStdin()
+            self.stdout = FakeStdout()
+
+        @staticmethod
+        def poll():
+            return None
+
+    class AlwaysReadySelector:
+        @staticmethod
+        def select(_timeout):
+            return [(object(), None)]
+
+    class StepClock:
+        def __init__(self):
+            self.value = -1.0
+
+        def __call__(self):
+            self.value += 1.0
+            return self.value
+
+    owner_view = (
+        b'{"id":3,"result":{"thread":{"id":"thread-1","turns":'
+        b'[{"id":"turn-1","status":"inProgress"}]}}}\n'
+    )
+    monkeypatch.setattr(MODULE, "monotonic", StepClock())
+    monkeypatch.setattr(MODULE, "APP_SERVER_WATCHDOG_INTERVAL_SECONDS", 0.0)
+    monkeypatch.setattr(MODULE, "APP_SERVER_WATCHDOG_EXTERNAL_PROBE_SECONDS", 3.0)
+    monkeypatch.setattr(MODULE.os, "read", lambda _fd, _size: owner_view)
+    monkeypatch.setattr(
+        MODULE,
+        "live_thread_turn_states",
+        lambda _thread_ids: {
+            "thread-1": {
+                "turnId": "turn-1",
+                "status": "interrupted",
+                "code": "turn_interrupted",
+                "message": "interrupted",
+            }
+        },
+    )
+    process = FakeProcess()
+
+    result = MODULE._wait_for_app_server_terminal_turn(
+        process,
+        AlwaysReadySelector(),
         b"",
         thread_id="thread-1",
         turn_id="turn-1",
@@ -3196,6 +3276,44 @@ def test_cleanup_commit_removes_managed_bootstrap_context(monkeypatch, tmp_path)
 
     assert store.committed is True
     assert not bootstrap.exists()
+
+
+def test_cleanup_reconcile_archives_reconciled_no_go_task(monkeypatch, tmp_path):
+    store, _worktree = registered_store(tmp_path)
+    store.record_stage("a/b#1", "AUDIT_NO_GO", evidence={})
+    title = store.title_candidates()[0]
+    desired_title = MODULE.lifecycle_title(
+        title["titleState"], title["titleTime"], title["key"], title["title"]
+    )
+    store.commit_title(
+        thread_id="thread-1",
+        state=title["titleState"],
+        nonce=title["titleNonce"],
+    )
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute("CREATE TABLE threads (id TEXT, archived INTEGER, title TEXT)")
+        connection.execute("INSERT INTO threads VALUES (?,?,?)", ("thread-1", 0, desired_title))
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+
+    def archive(candidates):
+        with sqlite3.connect(thread_db) as connection:
+            for candidate in candidates:
+                connection.execute(
+                    "UPDATE threads SET archived=1 WHERE id=?", (candidate["threadId"],)
+                )
+        return {str(candidate["threadId"]): None for candidate in candidates}
+
+    monkeypatch.setattr(MODULE, "_archive_desktop_threads", archive)
+
+    result = MODULE.cleanup_reconcile(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert result == {
+        "ok": True,
+        "archived": [{"key": "a/b#1", "ok": True, "threadId": "thread-1"}],
+        "errors": [],
+    }
+    assert store.cleanup_candidates() == []
 
 
 def test_restore_list_and_commit_require_actual_unarchive(monkeypatch, tmp_path):

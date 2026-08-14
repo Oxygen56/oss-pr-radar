@@ -97,6 +97,7 @@ def advance_once(
         }
     ingested = list(ingestion.get("ingested") or [])
     title_reconciliation = runner(root, "title-reconcile")
+    cleanup_reconciliation = runner(root, "cleanup-reconcile")
     publication = runner(root, "publication-run")
     published = list(publication.get("published") or [])
     context_sync = (
@@ -105,6 +106,7 @@ def advance_once(
 
     errors = [
         *list(title_reconciliation.get("errors") or []),
+        *list(cleanup_reconciliation.get("errors") or []),
         *list(publication.get("errors") or []),
         *list(context_sync.get("errors") or []),
     ]
@@ -113,10 +115,12 @@ def advance_once(
     blocked = list(publication.get("blocked") or [])
     pending = list(publication.get("pending") or [])
     renamed = list(title_reconciliation.get("renamed") or [])
-    activity = bool(ingested or requests or renamed or published or blocked or errors)
+    archived = list(cleanup_reconciliation.get("archived") or [])
+    activity = bool(ingested or requests or renamed or archived or published or blocked or errors)
     return {
         "ok": not errors
         and title_reconciliation.get("ok") is not False
+        and cleanup_reconciliation.get("ok") is not False
         and publication.get("ok") is not False
         and context_sync.get("ok") is not False,
         "activity": activity,
@@ -124,6 +128,7 @@ def advance_once(
         "publicationRequests": requests,
         "validationDeferred": validation_deferred,
         "titlesRenamed": renamed,
+        "threadsArchived": archived,
         "published": published,
         "contextsSynced": list(context_sync.get("written") or []),
         "pending": pending,

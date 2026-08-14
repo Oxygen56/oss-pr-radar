@@ -18,6 +18,11 @@ def test_fast_publication_runs_ingestion_and_publication_in_order(tmp_path):
             "renamed": [{"key": "a/b#1", "threadId": "thread-1"}],
             "errors": [],
         },
+        "cleanup-reconcile": {
+            "ok": True,
+            "archived": [{"key": "a/b#2", "threadId": "thread-2"}],
+            "errors": [],
+        },
         "publication-run": {
             "ok": True,
             "published": [{"key": "a/b#1", "prUrl": "https://github.com/a/b/pull/2"}],
@@ -42,12 +47,14 @@ def test_fast_publication_runs_ingestion_and_publication_in_order(tmp_path):
         "context-recover",
         "ingest-results",
         "title-reconcile",
+        "cleanup-reconcile",
         "publication-run",
         "context-sync",
     ]
     assert result["ok"] is True
     assert result["activity"] is True
     assert result["titlesRenamed"][0]["threadId"] == "thread-1"
+    assert result["threadsArchived"][0]["threadId"] == "thread-2"
     assert result["published"][0]["prUrl"] == "https://github.com/a/b/pull/2"
     assert result["contextsSynced"][0]["key"] == "a/b#1"
 
@@ -90,6 +97,7 @@ def test_fast_publication_surfaces_title_reconciliation_failure(tmp_path):
         "context-recover",
         "ingest-results",
         "title-reconcile",
+        "cleanup-reconcile",
         "publication-run",
     ]
     assert result["ok"] is False
@@ -118,6 +126,7 @@ def test_missing_historical_worktree_does_not_stop_fast_publication(tmp_path):
         "context-recover",
         "ingest-results",
         "title-reconcile",
+        "cleanup-reconcile",
         "publication-run",
     ]
     assert result["ok"] is True
