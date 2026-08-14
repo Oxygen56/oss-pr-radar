@@ -26,7 +26,16 @@ SPEC.loader.exec_module(MODULE)
 
 
 @pytest.fixture(autouse=True)
-def disable_live_thread_watchdog(monkeypatch):
+def disable_live_thread_watchdog(monkeypatch, tmp_path):
+    thread_db = tmp_path / "default-codex-db" / "threads.sqlite3"
+    thread_db.parent.mkdir()
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "CREATE TABLE threads ("
+            "id TEXT, title TEXT, archived INTEGER, updated_at INTEGER, "
+            "rollout_path TEXT, first_user_message TEXT, cwd TEXT, git_origin_url TEXT)"
+        )
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
     monkeypatch.setattr(MODULE, "live_thread_turn_states", lambda _thread_ids: {})
     monkeypatch.setattr(MODULE, "active_task_turn_worker", lambda _thread_id: None)
 
