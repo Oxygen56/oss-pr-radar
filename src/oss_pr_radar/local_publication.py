@@ -60,6 +60,7 @@ def advance_once(
     root = root.resolve()
     recovery = runner(root, "context-recover")
     recovery_errors = list(recovery.get("errors") or [])
+    recovery_unavailable = list(recovery.get("unavailable") or [])
     if recovery.get("ok") is False or recovery_errors:
         return {
             "ok": False,
@@ -71,6 +72,7 @@ def advance_once(
             "contextsSynced": [],
             "pending": [],
             "blocked": [],
+            "contextsUnavailable": recovery_unavailable,
             "errors": recovery_errors
             or [{"error": "task context recovery failed before result ingestion"}],
         }
@@ -87,9 +89,12 @@ def advance_once(
             "contextsSynced": [],
             "pending": [],
             "blocked": [],
+            "contextsUnavailable": recovery_unavailable,
             "errors": ingestion_errors
             or [{"error": "task result ingestion failed before publication"}],
         }
+    ingested = list(ingestion.get("ingested") or [])
+    title_reconciliation = runner(root, "title-reconcile")
     publication = runner(root, "publication-run")
     published = list(publication.get("published") or [])
     context_sync = (
@@ -97,27 +102,31 @@ def advance_once(
     )
 
     errors = [
+        *list(title_reconciliation.get("errors") or []),
         *list(publication.get("errors") or []),
         *list(context_sync.get("errors") or []),
     ]
-    ingested = list(ingestion.get("ingested") or [])
     requests = list(ingestion.get("publicationRequests") or [])
     validation_deferred = list(ingestion.get("validationDeferred") or [])
     blocked = list(publication.get("blocked") or [])
     pending = list(publication.get("pending") or [])
-    activity = bool(ingested or requests or published or blocked or errors)
+    renamed = list(title_reconciliation.get("renamed") or [])
+    activity = bool(ingested or requests or renamed or published or blocked or errors)
     return {
         "ok": not errors
+        and title_reconciliation.get("ok") is not False
         and publication.get("ok") is not False
         and context_sync.get("ok") is not False,
         "activity": activity,
         "resultsIngested": ingested,
         "publicationRequests": requests,
         "validationDeferred": validation_deferred,
+        "titlesRenamed": renamed,
         "published": published,
         "contextsSynced": list(context_sync.get("written") or []),
         "pending": pending,
         "blocked": blocked,
+        "contextsUnavailable": recovery_unavailable,
         "errors": errors,
     }
 

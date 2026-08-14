@@ -144,7 +144,7 @@ def test_ai_disclosure_candidate_is_dispatched_for_private_work_only():
     assert result["intents"][0]["submissionPolicy"] == "ai_disclosure_conflict"
 
 
-def test_ai_disclosure_review_uncertainty_still_dispatches_private_task():
+def test_ai_disclosure_only_wait_dispatches_private_task():
     result = MODULE.build(
         report(
             candidate(
@@ -155,6 +155,7 @@ def test_ai_disclosure_review_uncertainty_still_dispatches_private_task():
                 llm_review={
                     "status": "ok",
                     "decision": "WAIT_MAINTAINER",
+                    "wait_reason": "DISCLOSURE_ONLY",
                     "confidence": 0.7,
                     "model": "deepseek-v4-flash",
                 },
@@ -166,6 +167,33 @@ def test_ai_disclosure_review_uncertainty_still_dispatches_private_task():
     )
     assert len(result["intents"]) == 1
     assert result["intents"][0]["autoSubmitAuthorized"] is False
+    assert result["intents"][0]["llmReview"]["waitReason"] == "DISCLOSURE_ONLY"
+
+
+def test_ai_disclosure_design_wait_does_not_dispatch_private_task():
+    result = MODULE.build(
+        report(
+            candidate(
+                category="WAIT_MAINTAINER",
+                gate_decision="HUMAN_REVIEW",
+                auto_spawn=False,
+                submission_policy="ai_disclosure_conflict",
+                public_submission_allowed=False,
+                llm_review={
+                    "status": "ok",
+                    "decision": "WAIT_MAINTAINER",
+                    "wait_reason": "DESIGN_CONFIRMATION",
+                    "confidence": 0.7,
+                    "model": "deepseek-v4-flash",
+                },
+            )
+        ),
+        signing_key=KEY,
+        now=NOW,
+        mode="canary",
+    )
+
+    assert result["intents"] == []
 
 
 def test_existing_unconsumed_intent_survives_unobserved_scan_and_is_renewed():
@@ -332,7 +360,7 @@ def test_v6_intent_requires_issue_update_watermark():
         verify_queue(queue, signer, now=NOW)
 
 
-def test_v6_intent_requires_policy_watermark():
+def test_current_intent_requires_policy_watermark():
     signer = DispatchSigner(KEY)
     queue = MODULE.build(report(candidate()), signing_key=KEY, now=NOW)
     broken = dict(queue["intents"][0])
@@ -344,7 +372,7 @@ def test_v6_intent_requires_policy_watermark():
         verify_queue(queue, signer, now=NOW)
 
 
-def test_signed_v4_queue_remains_readable_during_v6_deployment():
+def test_signed_v4_queue_remains_readable_during_v7_deployment():
     signer = DispatchSigner(KEY)
     legacy = LEGACY_QUEUE_CONTRACTS["dispatch_intents_v4"]
     issue_url = "https://github.com/example/project/issues/42"
@@ -378,7 +406,7 @@ def test_signed_v4_queue_remains_readable_during_v6_deployment():
     assert verify_queue(queue, signer, now=NOW) == [intent]
 
 
-def test_signed_v5_queue_remains_readable_during_v6_deployment():
+def test_signed_v5_queue_remains_readable_during_v7_deployment():
     signer = DispatchSigner(KEY)
     legacy = LEGACY_QUEUE_CONTRACTS["dispatch_intents_v5"]
     issue_url = "https://github.com/example/project/issues/42"
@@ -402,6 +430,42 @@ def test_signed_v5_queue_remains_readable_during_v6_deployment():
     queue = signer.seal(
         {
             "version": "dispatch_intents_v5",
+            "scannerVersion": legacy["scannerVersion"],
+            "decisionContractDigest": legacy["decisionContractDigest"],
+            "contractDigest": legacy["contractDigest"],
+            "intents": [intent],
+        }
+    )
+
+    assert verify_queue(queue, signer, now=NOW) == [intent]
+
+
+def test_signed_v6_queue_remains_readable_during_v7_deployment():
+    signer = DispatchSigner(KEY)
+    legacy = LEGACY_QUEUE_CONTRACTS["dispatch_intents_v6"]
+    issue_url = "https://github.com/example/project/issues/42"
+    intent = signer.seal(
+        {
+            "version": legacy["intentVersion"],
+            "intentId": "legacy-intent-v6",
+            "key": "example/project#42",
+            "repo": "example/project",
+            "issueNumber": 42,
+            "issueUrl": issue_url,
+            "issueUpdatedAt": "2026-08-04T00:00:00Z",
+            "policyDigest": "policy-digest",
+            "scannerVersion": legacy["scannerVersion"],
+            "decisionContractDigest": legacy["decisionContractDigest"],
+            "contractDigest": legacy["contractDigest"],
+            "promptDigest": sha256_text(canonical_prompt(issue_url)),
+            "issuedAt": iso_z(NOW),
+            "expiresAt": iso_z(NOW + timedelta(hours=2)),
+            "status": "PENDING",
+        }
+    )
+    queue = signer.seal(
+        {
+            "version": "dispatch_intents_v6",
             "scannerVersion": legacy["scannerVersion"],
             "decisionContractDigest": legacy["decisionContractDigest"],
             "contractDigest": legacy["contractDigest"],

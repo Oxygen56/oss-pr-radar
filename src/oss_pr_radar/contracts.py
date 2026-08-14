@@ -10,7 +10,7 @@ from .util import sha256_json
 SCAN_SCHEMA = "oss-pr-radar.scan.v2"
 CANDIDATE_SCHEMA = "oss-pr-radar.candidate.v3"
 EVIDENCE_SCHEMA = "oss-pr-radar.evidence.v1"
-CONTRACT_REVISION = "trust-core-v6-external-state-watermark"
+CONTRACT_REVISION = "trust-core-v7-disclosure-only-wait"
 
 CONTRACT_MANIFEST = {
     "scanSchema": SCAN_SCHEMA,
@@ -116,7 +116,11 @@ def validate_candidate(candidate: dict[str, Any]) -> None:
         review_actionable = review.get("decision") in {
             "NEW_CLEAN_CANDIDATE",
             "PR_COMPETITION_OPPORTUNITY",
-        } or (private_disclosure_work and review.get("decision") == "WAIT_MAINTAINER")
+        } or (
+            private_disclosure_work
+            and review.get("decision") == "WAIT_MAINTAINER"
+            and review.get("wait_reason") == "DISCLOSURE_ONLY"
+        )
         _require(review_actionable, "auto spawn requires an actionable LLM decision")
 
 

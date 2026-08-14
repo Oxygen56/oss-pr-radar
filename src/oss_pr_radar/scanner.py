@@ -98,6 +98,7 @@ KNOWN_REPOS = [
     "deepseek-ai/3FS",
     "deepseek-ai/DeepSeek-R1",
     "deepseek-ai/DeepGEMM",
+    "deepseek-ai/deepseek-harness",
     "vllm-project/vllm",
     "sgl-project/sglang",
     "lm-sys/FastChat",
@@ -217,6 +218,7 @@ KNOWN_REPOS = [
 ]
 
 AGENT_RUNTIME_REPOS = {
+    "deepseek-ai/deepseek-harness",
     "langchain-ai/langgraph",
     "pydantic/pydantic-ai",
     "microsoft/autogen",

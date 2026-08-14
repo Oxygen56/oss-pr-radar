@@ -1287,6 +1287,43 @@ def test_recent_dispatch_can_be_authorized_for_terminal_error_recovery(tmp_path)
     assert store.unresolved_recoveries()[0]["threadId"] == "thread-1"
 
 
+def test_unknown_recovery_delivery_can_be_abandoned_and_rearmed(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+    first = store.recovery_candidates(min_age_minutes=0)[0]
+    store.reserve_recovery(thread_id="thread-1", nonce=first["recoveryNonce"])
+    with store.connect() as connection:
+        connection.execute(
+            """UPDATE events SET created_at=?
+               WHERE event_type='THREAD_RECOVERY_RESERVED'""",
+            (iso_z(datetime.now(UTC) - timedelta(minutes=10)),),
+        )
+
+    store.abandon_recovery_delivery(
+        thread_id="thread-1",
+        nonce=first["recoveryNonce"],
+        reason="TARGET_TURN_NOT_MATERIALIZED",
+        min_age_minutes=5,
+    )
+
+    assert store.unresolved_recoveries() == []
+    rearmed = store.recovery_candidates(min_age_minutes=0)[0]
+    assert rearmed["recoveryNonce"] != first["recoveryNonce"]
+    with pytest.raises(LedgerError, match="stale or invalid"):
+        store.reserve_recovery(thread_id="thread-1", nonce=first["recoveryNonce"])
+    store.reserve_recovery(thread_id="thread-1", nonce=rearmed["recoveryNonce"])
+    store.commit_recovery(thread_id="thread-1", nonce=rearmed["recoveryNonce"])
+    assert store.unresolved_recoveries() == []
+
+
 def test_sent_pr_followup_without_a_result_gets_recovery(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(
@@ -1427,6 +1464,44 @@ def test_validation_deferred_result_is_not_an_empty_thread_recovery(tmp_path):
     )
 
     assert store.recovery_candidates(min_age_minutes=90) == []
+
+
+def test_interrupted_validation_followup_can_enter_controlled_recovery(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+    store.record_stage("a/b#1", "VALIDATION_PENDING")
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest="result-digest",
+        missing=["relevant_tests_green"],
+    )
+    store.reserve_validation_followup(
+        thread_id="thread-1", result_digest="result-digest"
+    )
+    store.commit_validation_followup(
+        thread_id="thread-1", result_digest="result-digest"
+    )
+
+    candidate = store.recovery_candidates(min_age_minutes=0)[0]
+
+    assert candidate["threadId"] == "thread-1"
+    assert candidate["recoveryKind"] == "VALIDATION_FOLLOWUP_RESULT"
+    assert candidate["followupDigest"] == "result-digest"
+
+    store.record_task_result_ingested(
+        "a/b#1", digest="new-result-digest", stage="VALIDATION_PENDING"
+    )
+
+    assert store.recovery_candidates(min_age_minutes=0) == []
 
 
 def test_completed_task_can_enter_controlled_validation(tmp_path):

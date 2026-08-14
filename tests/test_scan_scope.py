@@ -16,6 +16,7 @@ from oss_pr_radar.scanner import (
 def test_fixed_scope_covers_mature_agent_ecosystem_domains():
     assert len(AGENT_INFRA_SCAN_REPOS) >= 45
     assert {
+        "deepseek-ai/deepseek-harness",
         "google/adk-python",
         "OpenHands/OpenHands",
         "bytedance/deer-flow",

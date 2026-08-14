@@ -180,8 +180,14 @@ receiving their own worktrees.
   duplicating the previous wake-up. A sent follow-up that remains on the same
   validation result for 90 minutes is surfaced in the `stale` list as an
   operational failure; it is not silently treated as healthy or automatically
-  sent again. A later
-  result with complete evidence may advance it to `FIX_READY`. A
+  sent again.
+  Explicitly interrupted validation turns are different: the controller may
+  recover the same task as soon as its detached owner has exited and no newer
+  result was ingested. The first-turn `root-task-worker` and continuation
+  `task-turn-worker` both count as owners. While either worker is alive the task
+  remains `terminal_turn_worker_draining`, because its in-flight checks may
+  still write the awaited result. A later result with complete evidence may advance it to
+  `FIX_READY`. A
   policy-blocked fix may settle as local `FIX_READY`
   only when the technical evidence is complete and `policy_verified` is the
   sole missing field. The controller gives that policy check one continuation;
@@ -215,18 +221,25 @@ competition opportunity.
 The single-thread desktop heartbeat runs health with fallback repair, asynchronous
 task reconciliation, queue sync,
 real dispatch-failure alerts, PR lifecycle refresh, actionable existing-PR task
-follow-up, live
-claim/revalidation, write-ahead creation, single-project task creation, isolated worktree preparation, task
-receipt verification, workspace context sync, result ingestion, publication
-advancement, one-shot recovery, stale-archive restoration, title synchronization,
+follow-up, result ingestion, actionable validation continuation, and recoverable
+existing-task continuation before any new live claim/revalidation. New issue
+creation then uses write-ahead creation, single-project task creation, isolated worktree preparation, and task
+receipt verification, followed by workspace context sync, publication
+advancement, stale-archive restoration, title synchronization,
 and `AUDIT_NO_GO` cleanup in that order. The controller verifies that a task is
 actually unarchived before committing the restore receipt, and verifies the exact
 visible title before committing title state. Valid pending intents are ordinary queue state and must
 not be treated as a failed run; publication canary state does not cap private
 task creation.
+The local completion collector also reconciles lifecycle titles immediately
+after ingesting a result, so a completed `AUDIT_NO_GO` task does not remain
+visibly marked as valuable until the next hourly heartbeat.
 `githubNaturalScheduleHealthy` refers only to GitHub Actions cron delivery;
 `operationalHealthy` also accepts a recent successful or currently active
-manual/fallback scan. The desktop heartbeat's own trigger is a separate signal.
+manual/fallback scan. Historical rolling-window gaps are reported separately in
+`githubNaturalScheduleWarnings`; they do not describe a current outage or
+trigger a duplicate fallback. The desktop heartbeat's own trigger is a separate
+signal.
 An issue task waits up to three minutes for its workspace-local context. A
 missing file ends privately without Plan Hub, external ledger access, elevated
 permission, or inferred authorization.

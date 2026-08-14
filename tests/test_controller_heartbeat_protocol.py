@@ -65,6 +65,17 @@ def test_controller_protocol_recovers_terminal_desktop_errors_once():
     assert "never improvise a retry or send a second recovery" in PROTOCOL
 
 
+def test_controller_protocol_uses_receipted_existing_task_delivery():
+    for operation in (
+        "pr-followup-deliver",
+        "validation-followup-deliver",
+        "recovery-deliver",
+    ):
+        assert operation in PROTOCOL
+    assert "Never call `send_message_to_thread`" in PROTOCOL
+    assert "abandoned by age" in PROTOCOL
+
+
 def test_controller_protocol_does_not_interrupt_active_pr_followups():
     assert "activeDeferred" in PROTOCOL
     assert "must not be reserved, resent" in PROTOCOL
@@ -89,6 +100,17 @@ def test_controller_protocol_does_not_repeat_environment_blocked_validation():
 
 
 def test_controller_protocol_does_not_confuse_historical_coverage_with_freshness():
-    assert "historical coverage" in PROTOCOL
-    assert "operationalHealthy=true" in PROTOCOL
-    assert "historical coverage flags" in PROTOCOL
+    assert "Historical rolling-window gaps" in PROTOCOL
+    assert "never make a fresh scheduler unhealthy" in PROTOCOL
+    assert "historical warnings" in PROTOCOL
+
+
+def test_controller_protocol_defers_changed_pr_snapshots():
+    assert "may return `deferred=true`" in PROTOCOL
+    assert "do not send or commit that wake" in PROTOCOL
+
+
+def test_controller_protocol_prioritizes_existing_work_over_new_issues():
+    assert "Existing work has strict priority over discovery" in PROTOCOL
+    assert "higher_priority_existing_work" in PROTOCOL
+    assert "Environment-blocked or" in PROTOCOL

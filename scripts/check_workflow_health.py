@@ -111,11 +111,17 @@ def github_actions_external_blocker(repo: str, workflow_runs: list[dict]) -> dic
     return None
 
 
-def health(workflow_runs: list[dict], *, now: datetime | None = None) -> dict:
+def health(
+    workflow_runs: list[dict],
+    *,
+    now: datetime | None = None,
+    coverage_window_hours: int = 12,
+) -> dict:
     current = (now or datetime.now(UTC)).astimezone(UTC)
     scheduled = [item for item in workflow_runs if item.get("event") == "schedule"]
     successful = [item for item in scheduled if item.get("conclusion") == "success"]
-    issues = []
+    issues: list[str] = []
+    coverage_warnings: list[str] = []
     latest_schedule = scheduled[0] if scheduled else None
     latest_success = successful[0] if successful else None
     if not latest_schedule:
@@ -129,7 +135,8 @@ def health(workflow_runs: list[dict], *, now: datetime | None = None) -> dict:
     if sum(item.get("conclusion") == "failure" for item in scheduled[:3]) >= 2:
         issues.append("REPEATED_SCHEDULE_FAILURE")
 
-    coverage_window = timedelta(hours=24)
+    window_hours = max(6, min(int(coverage_window_hours), 24))
+    coverage_window = timedelta(hours=window_hours)
     window_start = current - coverage_window
     run_times = [parse_time(item["created_at"]) for item in workflow_runs if item.get("created_at")]
     coverage_assessed = bool(run_times and min(run_times) <= window_start)
@@ -138,8 +145,8 @@ def health(workflow_runs: list[dict], *, now: datetime | None = None) -> dict:
         for item in successful
         if item.get("created_at") and parse_time(item["created_at"]) >= window_start
     )
-    expected_runs = 24
-    minimum_runs = 12
+    expected_runs = window_hours
+    minimum_runs = max(3, window_hours // 2)
     coverage_ratio = min(1.0, len(successful_times) / expected_runs)
     gap_points = [window_start, *successful_times, current]
     max_gap_minutes = max(
@@ -150,28 +157,31 @@ def health(workflow_runs: list[dict], *, now: datetime | None = None) -> dict:
         default=None,
     )
     if coverage_assessed and len(successful_times) < minimum_runs:
-        issues.append("NATURAL_SCHEDULE_COVERAGE_LOW")
+        coverage_warnings.append("NATURAL_SCHEDULE_COVERAGE_LOW")
     if coverage_assessed and max_gap_minutes is not None and max_gap_minutes > 150:
-        issues.append("NATURAL_SCHEDULE_GAP_EXCESSIVE")
+        coverage_warnings.append("NATURAL_SCHEDULE_GAP_EXCESSIVE")
     return {
         "healthy": not issues,
         "issues": issues,
         "healthScope": "github_actions_schedule",
         "githubNaturalScheduleHealthy": not issues,
         "githubNaturalScheduleIssues": issues,
+        "githubNaturalScheduleWarnings": coverage_warnings,
         # Compatibility fields for older controller prompts and reports.
         "naturalScheduleHealthy": not issues,
         "naturalScheduleIssues": issues,
+        "naturalScheduleWarnings": coverage_warnings,
         "latestScheduleUrl": latest_schedule.get("html_url") if latest_schedule else None,
         "latestSuccessUrl": latest_success.get("html_url") if latest_success else None,
         "naturalScheduleCoverage": {
             "assessed": coverage_assessed,
-            "windowHours": 24,
+            "windowHours": window_hours,
             "successfulRuns": len(successful_times),
             "expectedRuns": expected_runs,
             "minimumRuns": minimum_runs,
             "coverageRatio": round(coverage_ratio, 3),
             "maxGapMinutes": max_gap_minutes,
+            "warnings": coverage_warnings,
         },
         "checkedAt": current.isoformat().replace("+00:00", "Z"),
     }
@@ -181,7 +191,7 @@ def effective_scan_freshness(
     workflow_runs: list[dict],
     *,
     now: datetime | None = None,
-    max_age: timedelta = timedelta(minutes=65),
+    max_age: timedelta = timedelta(minutes=110),
     active_grace: timedelta = timedelta(minutes=50),
 ) -> dict:
     """Treat a recent fallback run as healthy and avoid duplicate repairs."""
@@ -250,10 +260,11 @@ def main() -> int:
     parser.add_argument("--repair", action="store_true")
     parser.add_argument("--dry-run-repair", action="store_true")
     parser.add_argument("--ref", default="main")
-    parser.add_argument("--max-effective-age-minutes", type=int, default=65)
+    parser.add_argument("--max-effective-age-minutes", type=int, default=110)
+    parser.add_argument("--coverage-window-hours", type=int, default=12)
     args = parser.parse_args()
     workflow_runs = runs(args.repo)
-    result = health(workflow_runs)
+    result = health(workflow_runs, coverage_window_hours=args.coverage_window_hours)
     external_blocker = github_actions_external_blocker(args.repo, workflow_runs)
     if external_blocker:
         code = str(external_blocker["code"])

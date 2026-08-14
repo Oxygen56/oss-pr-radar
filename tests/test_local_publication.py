@@ -13,6 +13,11 @@ def test_fast_publication_runs_ingestion_and_publication_in_order(tmp_path):
             "publicationRequests": [{"requestId": "request-1", "status": "PENDING"}],
             "errors": [],
         },
+        "title-reconcile": {
+            "ok": True,
+            "renamed": [{"key": "a/b#1", "threadId": "thread-1"}],
+            "errors": [],
+        },
         "publication-run": {
             "ok": True,
             "published": [{"key": "a/b#1", "prUrl": "https://github.com/a/b/pull/2"}],
@@ -36,11 +41,13 @@ def test_fast_publication_runs_ingestion_and_publication_in_order(tmp_path):
     assert [operation for _, operation in calls] == [
         "context-recover",
         "ingest-results",
+        "title-reconcile",
         "publication-run",
         "context-sync",
     ]
     assert result["ok"] is True
     assert result["activity"] is True
+    assert result["titlesRenamed"][0]["threadId"] == "thread-1"
     assert result["published"][0]["prUrl"] == "https://github.com/a/b/pull/2"
     assert result["contextsSynced"][0]["key"] == "a/b#1"
 
@@ -57,6 +64,65 @@ def test_fast_publication_is_quiet_when_no_result_or_request_exists(tmp_path):
 
     assert result["ok"] is True
     assert result["activity"] is False
+
+
+def test_fast_publication_surfaces_title_reconciliation_failure(tmp_path):
+    calls = []
+
+    def runner(_root: Path, operation: str):
+        calls.append(operation)
+        if operation == "context-recover":
+            return {"ok": True, "verified": 0, "errors": []}
+        if operation == "ingest-results":
+            return {
+                "ok": True,
+                "ingested": [{"key": "a/b#1", "stage": "AUDIT_NO_GO"}],
+                "publicationRequests": [],
+                "errors": [],
+            }
+        if operation == "title-reconcile":
+            return {"ok": False, "renamed": [], "errors": [{"error": "rename failed"}]}
+        return {"ok": True, "published": [], "pending": [], "blocked": [], "errors": []}
+
+    result = advance_once(tmp_path, runner=runner)
+
+    assert calls == [
+        "context-recover",
+        "ingest-results",
+        "title-reconcile",
+        "publication-run",
+    ]
+    assert result["ok"] is False
+    assert result["errors"] == [{"error": "rename failed"}]
+
+
+def test_missing_historical_worktree_does_not_stop_fast_publication(tmp_path):
+    calls = []
+
+    def runner(_root: Path, operation: str):
+        calls.append(operation)
+        if operation == "context-recover":
+            return {
+                "ok": True,
+                "verified": 0,
+                "unavailable": [{"key": "old/repo#1"}],
+                "errors": [],
+            }
+        if operation == "ingest-results":
+            return {"ok": True, "ingested": [], "publicationRequests": [], "errors": []}
+        return {"ok": True, "published": [], "pending": [], "blocked": [], "errors": []}
+
+    result = advance_once(tmp_path, runner=runner)
+
+    assert calls == [
+        "context-recover",
+        "ingest-results",
+        "title-reconcile",
+        "publication-run",
+    ]
+    assert result["ok"] is True
+    assert result["activity"] is False
+    assert result["contextsUnavailable"] == [{"key": "old/repo#1"}]
 
 
 def test_incomplete_validation_is_healthy_and_quiet(tmp_path):

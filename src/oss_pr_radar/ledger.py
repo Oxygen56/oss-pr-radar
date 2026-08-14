@@ -997,6 +997,62 @@ class RadarLedger:
                 superseded.append(intent_id)
         return superseded
 
+    def supersede_missing_workspace(
+        self,
+        *,
+        key: str,
+        intent_id: str,
+        worktree_path: str,
+        replacement_intent_id: str,
+    ) -> bool:
+        """Retire a lost private task only when a fresh signed intent replaces it."""
+
+        if not replacement_intent_id or replacement_intent_id == intent_id:
+            return False
+        now = iso_z(datetime.now(UTC))
+        with self.transaction() as connection:
+            row = connection.execute(
+                """SELECT i.status,i.worktree_path,o.stage
+                   FROM intents i JOIN opportunities o ON o.key=i.opportunity_key
+                   WHERE i.intent_id=? AND i.opportunity_key=?""",
+                (intent_id, key),
+            ).fetchone()
+            if row is None:
+                return False
+            if row["status"] not in {"DISPATCHED", "COMPLETED"}:
+                return False
+            if row["stage"] not in {"DISPATCHED", "VALIDATION_PENDING", "FIX_READY"}:
+                return False
+            if Path(str(row["worktree_path"] or "")).resolve() != Path(worktree_path).resolve():
+                raise LedgerError("missing workspace binding disagrees with the ledger")
+            if connection.execute(
+                "SELECT 1 FROM publication_requests WHERE opportunity_key=? LIMIT 1", (key,)
+            ).fetchone():
+                return False
+            connection.execute(
+                """UPDATE intents SET status='SUPERSEDED',lease_owner=NULL,
+                          lease_until=NULL,updated_at=? WHERE intent_id=?""",
+                (now, intent_id),
+            )
+            connection.execute(
+                """UPDATE opportunities SET stage='QUALIFIED',terminal_reason=NULL,
+                          updated_at=? WHERE key=?""",
+                (now, key),
+            )
+            self._event(
+                connection,
+                key,
+                "MISSING_WORKSPACE_SUPERSEDED",
+                f"{intent_id}:{replacement_intent_id}",
+                {
+                    "intentId": intent_id,
+                    "replacementIntentId": replacement_intent_id,
+                    "worktreePath": str(Path(worktree_path).resolve()),
+                },
+                now,
+            )
+        return True
+
     def claim(
         self,
         intent_id: str,
@@ -1026,13 +1082,11 @@ class RadarLedger:
             if row["lease_until"] and parse_time(row["lease_until"]) > now_dt:
                 return None
             if max_active is not None:
-                active = connection.execute(
-                    """SELECT COUNT(*) FROM intents
-                       WHERE status IN ('LEASED','CREATING','DISPATCHED')
-                         AND intent_id<>?
-                         AND (status IN ('CREATING','DISPATCHED') OR lease_until>?)""",
-                    (intent_id, now),
-                ).fetchone()[0]
+                active = self._active_task_count(
+                    connection,
+                    now=now,
+                    exclude_intent_id=intent_id,
+                )
                 if int(active) >= max(0, max_active):
                     return None
             connection.execute(
@@ -1896,6 +1950,74 @@ class RadarLedger:
         with self.connect() as connection:
             return int(connection.execute(query, params).fetchone()[0])
 
+    @staticmethod
+    def _active_task_count(
+        connection: sqlite3.Connection,
+        *,
+        now: str,
+        exclude_intent_id: str | None = None,
+    ) -> int:
+        intent_filter = "" if exclude_intent_id is None else "AND intent_id<>?"
+        params: list[Any] = [now]
+        if exclude_intent_id is not None:
+            params.append(exclude_intent_id)
+        return int(
+            connection.execute(
+                f"""SELECT COUNT(*) FROM (
+                     SELECT opportunity_key FROM intents
+                     WHERE status IN ('LEASED','CREATING','DISPATCHED')
+                       AND (status IN ('CREATING','DISPATCHED') OR lease_until>?)
+                       {intent_filter}
+                     UNION
+                     SELECT r.opportunity_key FROM events r
+                     WHERE r.event_type='PR_FOLLOWUP_RESERVED'
+                       AND NOT EXISTS (
+                         SELECT 1 FROM events result
+                         WHERE result.opportunity_key=r.opportunity_key
+                           AND result.event_type='PR_FOLLOWUP_RESULT_INGESTED'
+                           AND result.dedupe_key=r.dedupe_key
+                       )
+                       AND NOT EXISTS (
+                         SELECT 1 FROM events abandoned
+                         WHERE abandoned.opportunity_key=r.opportunity_key
+                           AND abandoned.event_type='PR_FOLLOWUP_DELIVERY_ABANDONED'
+                           AND json_extract(abandoned.payload_json,'$.wakeDigest')=r.dedupe_key
+                           AND abandoned.id>r.id
+                       )
+                     UNION
+                     SELECT r.opportunity_key FROM events r
+                     JOIN opportunities o ON o.key=r.opportunity_key
+                     WHERE r.event_type='VALIDATION_FOLLOWUP_RESERVED'
+                       AND o.stage='VALIDATION_PENDING'
+                       AND r.dedupe_key=(
+                         SELECT json_extract(d.payload_json,'$.resultDigest')
+                         FROM events d
+                         WHERE d.opportunity_key=r.opportunity_key
+                           AND d.event_type='TASK_RESULT_VALIDATION_DEFERRED'
+                         ORDER BY d.id DESC LIMIT 1
+                       )
+                       AND NOT EXISTS (
+                         SELECT 1 FROM events abandoned
+                         WHERE abandoned.opportunity_key=r.opportunity_key
+                           AND abandoned.event_type='VALIDATION_FOLLOWUP_DELIVERY_ABANDONED'
+                           AND json_extract(abandoned.payload_json,'$.resultDigest')=r.dedupe_key
+                           AND abandoned.id>r.id
+                       )
+                   )""",
+                params,
+            ).fetchone()[0]
+        )
+
+    def active_task_count(self, *, exclude_intent_id: str | None = None) -> int:
+        """Count durable issue, PR-follow-up, and validation work in flight."""
+
+        with self.connect() as connection:
+            return self._active_task_count(
+                connection,
+                now=iso_z(datetime.now(UTC)),
+                exclude_intent_id=exclude_intent_id,
+            )
+
     def recovery_candidates(self, *, min_age_minutes: int = 90) -> list[dict[str, Any]]:
         cutoff = iso_z(
             datetime.now(UTC) - timedelta(minutes=max(0, min(int(min_age_minutes), 24 * 60)))
@@ -1903,7 +2025,12 @@ class RadarLedger:
         with self.connect() as connection:
             dispatched_rows = connection.execute(
                 """SELECT o.key,o.issue_url,o.title,i.intent_id,i.thread_id,
-                          i.worktree_path,d.created_at AS dispatched_at
+                          i.worktree_path,d.created_at AS dispatched_at,
+                          (SELECT MAX(abandoned.created_at) FROM events abandoned
+                           WHERE abandoned.opportunity_key=o.key
+                             AND abandoned.event_type='THREAD_RECOVERY_DELIVERY_ABANDONED'
+                             AND json_extract(abandoned.payload_json,'$.threadId')=i.thread_id
+                          ) AS recovery_epoch
                    FROM opportunities o
                    JOIN intents i ON i.opportunity_key=o.key
                    JOIN events d ON d.opportunity_key=o.key
@@ -1915,7 +2042,16 @@ class RadarLedger:
                        WHERE e.opportunity_key=o.key
                          AND (
                            (e.event_type='THREAD_RECOVERY_RESERVED'
-                            AND e.dedupe_key=i.thread_id)
+                            AND json_extract(e.payload_json,'$.threadId')=i.thread_id
+                            AND NOT EXISTS (
+                              SELECT 1 FROM events abandoned
+                              WHERE abandoned.opportunity_key=e.opportunity_key
+                                AND abandoned.event_type='THREAD_RECOVERY_DELIVERY_ABANDONED'
+                                AND json_extract(
+                                      abandoned.payload_json,'$.reservationDigest'
+                                    )=e.dedupe_key
+                                AND abandoned.id>e.id
+                            ))
                            OR
                            (e.event_type='TASK_RESULT_VALIDATION_DEFERRED'
                             AND json_extract(e.payload_json,'$.threadId')=i.thread_id)
@@ -1927,7 +2063,12 @@ class RadarLedger:
             followup_rows = connection.execute(
                 """SELECT o.key,o.issue_url,o.title,i.intent_id,i.thread_id,
                           i.worktree_path,s.created_at AS dispatched_at,
-                          s.dedupe_key AS followup_digest
+                          s.dedupe_key AS followup_digest,
+                          (SELECT MAX(abandoned.created_at) FROM events abandoned
+                           WHERE abandoned.opportunity_key=o.key
+                             AND abandoned.event_type='THREAD_RECOVERY_DELIVERY_ABANDONED'
+                             AND json_extract(abandoned.payload_json,'$.threadId')=i.thread_id
+                          ) AS recovery_epoch
                    FROM opportunities o
                    JOIN intents i ON i.intent_id=(
                      SELECT i2.intent_id FROM intents i2
@@ -1950,6 +2091,64 @@ class RadarLedger:
                        WHERE recovery.opportunity_key=o.key
                          AND recovery.event_type='THREAD_RECOVERY_RESERVED'
                          AND json_extract(recovery.payload_json,'$.threadId')=i.thread_id
+                         AND NOT EXISTS (
+                           SELECT 1 FROM events abandoned
+                           WHERE abandoned.opportunity_key=recovery.opportunity_key
+                             AND abandoned.event_type='THREAD_RECOVERY_DELIVERY_ABANDONED'
+                             AND json_extract(
+                                   abandoned.payload_json,'$.reservationDigest'
+                                 )=recovery.dedupe_key
+                             AND abandoned.id>recovery.id
+                         )
+                     )
+                   ORDER BY s.created_at""",
+                (cutoff,),
+            ).fetchall()
+            validation_rows = connection.execute(
+                """SELECT o.key,o.issue_url,o.title,i.intent_id,i.thread_id,
+                          i.worktree_path,s.created_at AS dispatched_at,
+                          s.dedupe_key AS followup_digest,
+                          (SELECT MAX(abandoned.created_at) FROM events abandoned
+                           WHERE abandoned.opportunity_key=o.key
+                             AND abandoned.event_type='THREAD_RECOVERY_DELIVERY_ABANDONED'
+                             AND json_extract(abandoned.payload_json,'$.threadId')=i.thread_id
+                          ) AS recovery_epoch
+                   FROM opportunities o
+                   JOIN intents i ON i.intent_id=(
+                     SELECT i2.intent_id FROM intents i2
+                     WHERE i2.opportunity_key=o.key
+                       AND i2.thread_id IS NOT NULL AND i2.worktree_path IS NOT NULL
+                     ORDER BY i2.updated_at DESC,i2.intent_id DESC LIMIT 1
+                   )
+                   JOIN events d ON d.id=(
+                     SELECT MAX(d2.id) FROM events d2
+                     WHERE d2.opportunity_key=o.key
+                       AND d2.event_type='TASK_RESULT_VALIDATION_DEFERRED'
+                   )
+                   JOIN events s ON s.opportunity_key=o.key
+                     AND s.event_type='VALIDATION_FOLLOWUP_SENT'
+                     AND s.dedupe_key=d.dedupe_key
+                   WHERE o.stage='VALIDATION_PENDING' AND s.created_at<=?
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events result
+                       WHERE result.opportunity_key=o.key
+                         AND result.event_type='TASK_RESULT_INGESTED'
+                         AND result.id>s.id
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events recovery
+                       WHERE recovery.opportunity_key=o.key
+                         AND recovery.event_type='THREAD_RECOVERY_RESERVED'
+                         AND json_extract(recovery.payload_json,'$.threadId')=i.thread_id
+                         AND NOT EXISTS (
+                           SELECT 1 FROM events abandoned
+                           WHERE abandoned.opportunity_key=recovery.opportunity_key
+                             AND abandoned.event_type='THREAD_RECOVERY_DELIVERY_ABANDONED'
+                             AND json_extract(
+                                   abandoned.payload_json,'$.reservationDigest'
+                                 )=recovery.dedupe_key
+                             AND abandoned.id>recovery.id
+                         )
                      )
                    ORDER BY s.created_at""",
                 (cutoff,),
@@ -1958,10 +2157,13 @@ class RadarLedger:
         for row, recovery_kind in (
             *((row, "DISPATCHED_TASK") for row in dispatched_rows),
             *((row, "PR_FOLLOWUP_RESULT") for row in followup_rows),
+            *((row, "VALIDATION_FOLLOWUP_RESULT") for row in validation_rows),
         ):
             thread_id = str(row["thread_id"])
             followup_digest = (
-                str(row["followup_digest"]) if recovery_kind == "PR_FOLLOWUP_RESULT" else None
+                str(row["followup_digest"])
+                if recovery_kind in {"PR_FOLLOWUP_RESULT", "VALIDATION_FOLLOWUP_RESULT"}
+                else None
             )
             candidate = {
                 "key": row["key"],
@@ -1975,7 +2177,8 @@ class RadarLedger:
                 "followupDigest": followup_digest,
                 "recoveryNonce": sha256_text(
                     f"{row['key']}|{thread_id}|{row['dispatched_at']}|"
-                    f"{recovery_kind}|{followup_digest or ''}|recovery-v2"
+                    f"{recovery_kind}|{followup_digest or ''}|"
+                    f"{row['recovery_epoch'] or ''}|recovery-v3"
                 ),
             }
             previous = candidates.get(thread_id)
@@ -1986,16 +2189,32 @@ class RadarLedger:
     def unresolved_recoveries(self) -> list[dict[str, Any]]:
         with self.connect() as connection:
             rows = connection.execute(
-                """SELECT o.key,o.issue_url,i.thread_id,r.payload_json,r.created_at
+                """SELECT o.key,o.issue_url,i.worktree_path,
+                          json_extract(r.payload_json,'$.threadId') AS thread_id,
+                          r.dedupe_key AS reservation_digest,
+                          r.payload_json,r.created_at
                    FROM opportunities o
-                   JOIN intents i ON i.opportunity_key=o.key
+                   JOIN intents i ON i.intent_id=(
+                     SELECT i2.intent_id FROM intents i2
+                     WHERE i2.opportunity_key=o.key AND i2.thread_id IS NOT NULL
+                     ORDER BY i2.updated_at DESC,i2.intent_id DESC LIMIT 1
+                   )
                    JOIN events r ON r.opportunity_key=o.key
                      AND r.event_type='THREAD_RECOVERY_RESERVED'
-                     AND r.dedupe_key=i.thread_id
                    WHERE NOT EXISTS (
                      SELECT 1 FROM events e
                      WHERE e.opportunity_key=o.key
                        AND e.event_type='THREAD_RECOVERY_SENT'
+                       AND e.dedupe_key=r.dedupe_key
+                   )
+                     AND NOT EXISTS (
+                     SELECT 1 FROM events abandoned
+                     WHERE abandoned.opportunity_key=o.key
+                       AND abandoned.event_type='THREAD_RECOVERY_DELIVERY_ABANDONED'
+                       AND json_extract(
+                             abandoned.payload_json,'$.reservationDigest'
+                           )=r.dedupe_key
+                       AND abandoned.id>r.id
                    )
                    ORDER BY r.created_at"""
             ).fetchall()
@@ -2003,7 +2222,9 @@ class RadarLedger:
             {
                 "key": row["key"],
                 "issueUrl": row["issue_url"],
+                "worktreePath": row["worktree_path"],
                 "threadId": row["thread_id"],
+                "reservationDigest": row["reservation_digest"],
                 "reservedAt": row["created_at"],
                 "reservation": json.loads(row["payload_json"]),
             }
@@ -2022,8 +2243,18 @@ class RadarLedger:
         now = iso_z(datetime.now(UTC))
         with self.transaction() as connection:
             existing = connection.execute(
-                """SELECT 1 FROM events WHERE opportunity_key=?
-                   AND event_type='THREAD_RECOVERY_RESERVED' AND dedupe_key=?""",
+                """SELECT 1 FROM events reserved WHERE opportunity_key=?
+                   AND event_type='THREAD_RECOVERY_RESERVED'
+                   AND json_extract(payload_json,'$.threadId')=?
+                   AND NOT EXISTS (
+                     SELECT 1 FROM events abandoned
+                     WHERE abandoned.opportunity_key=reserved.opportunity_key
+                       AND abandoned.event_type='THREAD_RECOVERY_DELIVERY_ABANDONED'
+                       AND json_extract(
+                             abandoned.payload_json,'$.reservationDigest'
+                           )=reserved.dedupe_key
+                       AND abandoned.id>reserved.id
+                   )""",
                 (candidate["key"], thread_id),
             ).fetchone()
             if existing:
@@ -2032,7 +2263,7 @@ class RadarLedger:
                 connection,
                 candidate["key"],
                 "THREAD_RECOVERY_RESERVED",
-                thread_id,
+                nonce,
                 {"threadId": thread_id, "recoveryNonce": nonce},
                 now,
             )
@@ -2041,14 +2272,29 @@ class RadarLedger:
     def commit_recovery(self, *, thread_id: str, nonce: str) -> None:
         with self.transaction() as connection:
             row = connection.execute(
-                """SELECT o.key,r.payload_json
+                """SELECT r.opportunity_key AS key,r.dedupe_key,r.payload_json
                    FROM opportunities o
-                   JOIN intents i ON i.opportunity_key=o.key
                    JOIN events r ON r.opportunity_key=o.key
                      AND r.event_type='THREAD_RECOVERY_RESERVED'
-                     AND r.dedupe_key=i.thread_id
-                   WHERE i.thread_id=?""",
-                (thread_id,),
+                   WHERE json_extract(r.payload_json,'$.threadId')=?
+                     AND json_extract(r.payload_json,'$.recoveryNonce')=?
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events sent
+                       WHERE sent.opportunity_key=r.opportunity_key
+                         AND sent.event_type='THREAD_RECOVERY_SENT'
+                         AND sent.dedupe_key=r.dedupe_key
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events abandoned
+                       WHERE abandoned.opportunity_key=r.opportunity_key
+                         AND abandoned.event_type='THREAD_RECOVERY_DELIVERY_ABANDONED'
+                         AND json_extract(
+                               abandoned.payload_json,'$.reservationDigest'
+                             )=r.dedupe_key
+                         AND abandoned.id>r.id
+                     )
+                   ORDER BY r.id DESC LIMIT 1""",
+                (thread_id, nonce),
             ).fetchone()
             if row is None:
                 raise LedgerError("recovery reservation not found")
@@ -2059,9 +2305,67 @@ class RadarLedger:
                 connection,
                 row["key"],
                 "THREAD_RECOVERY_SENT",
-                thread_id,
+                row["dedupe_key"],
                 {"threadId": thread_id, "recoveryNonce": nonce},
                 iso_z(datetime.now(UTC)),
+            )
+
+    def abandon_recovery_delivery(
+        self,
+        *,
+        thread_id: str,
+        nonce: str,
+        reason: str,
+        min_age_minutes: int = 5,
+    ) -> None:
+        """Retire a recovery reservation after proving no target turn materialized."""
+
+        current = datetime.now(UTC)
+        now = iso_z(current)
+        with self.transaction() as connection:
+            row = connection.execute(
+                """SELECT r.id,r.opportunity_key AS key,r.dedupe_key,r.created_at
+                   FROM events r
+                   WHERE r.event_type='THREAD_RECOVERY_RESERVED'
+                     AND json_extract(r.payload_json,'$.threadId')=?
+                     AND json_extract(r.payload_json,'$.recoveryNonce')=?
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events sent
+                       WHERE sent.opportunity_key=r.opportunity_key
+                         AND sent.event_type='THREAD_RECOVERY_SENT'
+                         AND sent.dedupe_key=r.dedupe_key
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events abandoned
+                       WHERE abandoned.opportunity_key=r.opportunity_key
+                         AND abandoned.event_type='THREAD_RECOVERY_DELIVERY_ABANDONED'
+                         AND json_extract(
+                               abandoned.payload_json,'$.reservationDigest'
+                             )=r.dedupe_key
+                         AND abandoned.id>r.id
+                     )
+                   ORDER BY r.id DESC LIMIT 1""",
+                (thread_id, nonce),
+            ).fetchone()
+            if row is None:
+                raise LedgerError("recovery delivery is not abandonable")
+            minimum_age = timedelta(minutes=max(1, min_age_minutes))
+            if parse_time(row["created_at"]) + minimum_age > current:
+                raise LedgerError("recovery delivery is not old enough to abandon")
+            self._event(
+                connection,
+                row["key"],
+                "THREAD_RECOVERY_DELIVERY_ABANDONED",
+                sha256_text(f"{thread_id}|{row['dedupe_key']}|{row['created_at']}"),
+                {
+                    "threadId": thread_id,
+                    "recoveryNonce": nonce,
+                    "reservationDigest": row["dedupe_key"],
+                    "reservedAt": row["created_at"],
+                    "reason": reason,
+                    "minimumAgeMinutes": max(1, min_age_minutes),
+                },
+                now,
             )
 
     def record_validation_deferred(
@@ -2303,7 +2607,13 @@ class RadarLedger:
             ).fetchone()
         return row is not None
 
-    def reserve_validation_followup(self, *, thread_id: str, result_digest: str) -> dict[str, Any]:
+    def reserve_validation_followup(
+        self,
+        *,
+        thread_id: str,
+        result_digest: str,
+        max_active: int | None = None,
+    ) -> dict[str, Any]:
         candidate = next(
             (
                 item
@@ -2315,6 +2625,11 @@ class RadarLedger:
         if candidate is None:
             raise LedgerError("validation follow-up authorization is stale or invalid")
         with self.transaction() as connection:
+            if max_active is not None and self._active_task_count(
+                connection,
+                now=iso_z(datetime.now(UTC)),
+            ) >= max(0, max_active):
+                raise LedgerError("global task WIP limit reached")
             self._event(
                 connection,
                 candidate["key"],
@@ -2370,8 +2685,13 @@ class RadarLedger:
     def unresolved_validation_followups(self) -> list[dict[str, Any]]:
         with self.connect() as connection:
             rows = connection.execute(
-                """SELECT o.key,r.payload_json,r.created_at
+                """SELECT o.key,o.issue_url,i.worktree_path,r.payload_json,r.created_at
                    FROM opportunities o
+                   JOIN intents i ON i.intent_id=(
+                     SELECT i2.intent_id FROM intents i2
+                     WHERE i2.opportunity_key=o.key AND i2.thread_id IS NOT NULL
+                     ORDER BY i2.updated_at DESC,i2.intent_id DESC LIMIT 1
+                   )
                    JOIN events r ON r.opportunity_key=o.key
                      AND r.event_type='VALIDATION_FOLLOWUP_RESERVED'
                    WHERE NOT EXISTS (
@@ -2390,6 +2710,8 @@ class RadarLedger:
         return [
             {
                 "key": row["key"],
+                "issueUrl": row["issue_url"],
+                "worktreePath": row["worktree_path"],
                 "threadId": json.loads(row["payload_json"]).get("threadId"),
                 "resultDigest": json.loads(row["payload_json"]).get("resultDigest"),
                 "missing": list(json.loads(row["payload_json"]).get("missing") or []),
@@ -3791,6 +4113,24 @@ class RadarLedger:
                 previous = connection.execute(
                     "SELECT * FROM pr_followups WHERE opportunity_key=?", (key,)
                 ).fetchone()
+                deferred = connection.execute(
+                    """SELECT payload_json FROM events
+                       WHERE opportunity_key=?
+                         AND event_type='PR_FOLLOWUP_SNAPSHOT_DEFERRED'
+                       ORDER BY id DESC LIMIT 1""",
+                    (key,),
+                ).fetchone()
+                deferred_checked_at = None
+                if deferred is not None:
+                    deferred_payload = json.loads(deferred["payload_json"])
+                    deferred_checked_at = str(deferred_payload.get("checkedAt") or "")
+                suppress_deferred_snapshot = bool(
+                    required
+                    and deferred_checked_at
+                    and checked_time <= parse_time(deferred_checked_at)
+                )
+                if suppress_deferred_snapshot:
+                    required = False
                 if required and (
                     previous is None
                     or not bool(previous["followup_required"])
@@ -3880,7 +4220,8 @@ class RadarLedger:
     def pr_followup_candidates(self) -> list[dict[str, Any]]:
         with self.connect() as connection:
             rows = connection.execute(
-                """SELECT f.*,o.key,o.issue_url,o.stage,i.thread_id,i.worktree_path,
+                """SELECT f.*,o.key,o.repo,o.issue_url,o.stage,i.intent_id,
+                          i.thread_id,i.worktree_path,
                           r.branch
                    FROM pr_followups f
                    JOIN opportunities o ON o.key=f.opportunity_key
@@ -3943,6 +4284,7 @@ class RadarLedger:
                 key,
                 {
                     "key": key,
+                    "repo": row["repo"],
                     "issueUrl": row["issue_url"],
                     "prUrl": row["pr_url"],
                     "headSha": row["head_sha"],
@@ -3953,6 +4295,7 @@ class RadarLedger:
                     "evidence": json.loads(row["evidence_json"]),
                     "checkedAt": row["checked_at"],
                     "threadId": row["thread_id"],
+                    "intentId": row["intent_id"],
                     "worktreePath": row["worktree_path"],
                     "branch": row["branch"],
                 },
@@ -3983,6 +4326,7 @@ class RadarLedger:
         prepared_head_sha: str | None = None,
         prepared_base_sha: str | None = None,
         merge_conflict_files: list[str] | None = None,
+        max_active: int | None = None,
     ) -> dict[str, Any]:
         candidate = next(
             (
@@ -4023,6 +4367,11 @@ class RadarLedger:
         elif merge_conflict_files is not None:
             raise LedgerError("PR follow-up conflict files lack a prepared base")
         with self.transaction() as connection:
+            if max_active is not None and self._active_task_count(
+                connection,
+                now=iso_z(datetime.now(UTC)),
+            ) >= max(0, max_active):
+                raise LedgerError("global task WIP limit reached")
             self._event(
                 connection,
                 candidate["key"],
@@ -4046,6 +4395,54 @@ class RadarLedger:
                     iso_z(datetime.now(UTC)),
                 )
         return snapshot_candidate
+
+    def defer_pr_followup_snapshot(
+        self,
+        *,
+        thread_id: str,
+        wake_digest: str,
+        reason: str,
+        evidence: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        candidate = next(
+            (
+                item
+                for item in self.pr_followup_candidates()
+                if item["threadId"] == thread_id and item["wakeDigest"] == wake_digest
+            ),
+            None,
+        )
+        if candidate is None:
+            raise LedgerError("PR follow-up deferral authorization is stale or invalid")
+        if not reason:
+            raise LedgerError("PR follow-up deferral reason is required")
+        now = iso_z(datetime.now(UTC))
+        payload = {
+            "threadId": thread_id,
+            "prUrl": candidate["prUrl"],
+            "wakeDigest": wake_digest,
+            "checkedAt": candidate["checkedAt"],
+            "reason": reason,
+            "evidence": evidence or {},
+        }
+        with self.transaction() as connection:
+            updated = connection.execute(
+                """UPDATE pr_followups
+                   SET followup_required=0,wake_digest=NULL,updated_at=?
+                   WHERE opportunity_key=? AND wake_digest=? AND followup_required=1""",
+                (now, candidate["key"], wake_digest),
+            )
+            if updated.rowcount != 1:
+                raise LedgerError("PR follow-up deferral authorization changed")
+            self._event(
+                connection,
+                candidate["key"],
+                "PR_FOLLOWUP_SNAPSHOT_DEFERRED",
+                wake_digest,
+                payload,
+                now,
+            )
+        return candidate | payload
 
     def unbound_pr_followup_preparations(self) -> list[dict[str, Any]]:
         """Return sent follow-ups created before prepared snapshots were durable."""
@@ -4374,9 +4771,16 @@ class RadarLedger:
     def unresolved_pr_followups(self) -> list[dict[str, Any]]:
         with self.connect() as connection:
             rows = connection.execute(
-                """SELECT r.opportunity_key AS key,r.dedupe_key AS wake_digest,
+                """SELECT r.opportunity_key AS key,o.issue_url,i.worktree_path,
+                          r.dedupe_key AS wake_digest,
                           r.payload_json,r.created_at
                    FROM events r
+                   JOIN opportunities o ON o.key=r.opportunity_key
+                   JOIN intents i ON i.intent_id=(
+                     SELECT i2.intent_id FROM intents i2
+                     WHERE i2.opportunity_key=o.key AND i2.thread_id IS NOT NULL
+                     ORDER BY i2.updated_at DESC,i2.intent_id DESC LIMIT 1
+                   )
                    WHERE r.event_type='PR_FOLLOWUP_RESERVED'
                      AND NOT EXISTS (
                      SELECT 1 FROM events s WHERE s.opportunity_key=r.opportunity_key
@@ -4394,6 +4798,8 @@ class RadarLedger:
         return [
             {
                 "key": row["key"],
+                "issue_url": row["issue_url"],
+                "worktree_path": row["worktree_path"],
                 "thread_id": json.loads(row["payload_json"]).get("threadId"),
                 "pr_url": json.loads(row["payload_json"]).get("prUrl"),
                 "wake_digest": row["wake_digest"],

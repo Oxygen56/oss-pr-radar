@@ -85,7 +85,7 @@ def test_llm_cannot_upgrade_human_review(tmp_path, monkeypatch):
     assert result[0]["auto_spawn"] is False
 
 
-def test_disclosure_candidate_keeps_private_work_gate_when_review_wants_confirmation(
+def test_disclosure_candidate_waiting_on_design_does_not_spawn(
     tmp_path, monkeypatch
 ):
     instance = evaluator(tmp_path)
@@ -94,6 +94,34 @@ def test_disclosure_candidate_keeps_private_work_gate_when_review_wants_confirma
         "_request",
         lambda payload: {
             "decision": "WAIT_MAINTAINER",
+            "wait_reason": "DESIGN_CONFIRMATION",
+            "score": 7,
+            "confidence": 0.7,
+        },
+    )
+    result = instance.evaluate_candidates(
+        [
+            candidate(
+                gate_decision="ALLOW_PRIVATE_WORK",
+                category="LOCAL_FIX_ONLY",
+                submission_policy="ai_disclosure_conflict",
+                public_submission_allowed=False,
+            )
+        ]
+    )
+    assert result[0]["gate_decision"] == "HUMAN_REVIEW"
+    assert result[0]["category"] == "WAIT_MAINTAINER"
+    assert result[0]["auto_spawn"] is False
+
+
+def test_disclosure_only_wait_keeps_private_work_gate(tmp_path, monkeypatch):
+    instance = evaluator(tmp_path)
+    monkeypatch.setattr(
+        instance,
+        "_request",
+        lambda payload: {
+            "decision": "WAIT_MAINTAINER",
+            "wait_reason": "DISCLOSURE_ONLY",
             "score": 7,
             "confidence": 0.7,
         },

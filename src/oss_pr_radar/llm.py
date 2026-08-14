@@ -17,7 +17,7 @@ from typing import Any
 from .contracts import contract_digest
 from .util import sha256_text
 
-CACHE_SCHEMA = "deepseek_semantic_review_v4_algorithm_track"
+CACHE_SCHEMA = "deepseek_semantic_review_v5_wait_reason"
 NO_CODE_ACTION_RE = re.compile(
     r"\b(?:no new code changes? (?:(?:is|are) )?expected|"
     r"no code changes? (?:(?:is|are) )?(?:needed|required|expected)|"
@@ -41,6 +41,7 @@ Allowed decisions:
 Required JSON shape:
 {
   "decision": "NEW_CLEAN_CANDIDATE",
+  "wait_reason": null,
   "score": 8,
   "confidence": 0.85,
   "root_cause_clarity": "high",
@@ -52,6 +53,11 @@ Required JSON shape:
   "contradictions": ["conflicting supplied facts"],
   "unknowns": ["missing fact that affects actionability"]
 }
+When decision is WAIT_MAINTAINER, wait_reason must be exactly one of:
+DISCLOSURE_ONLY, ASSIGNMENT, DESIGN_CONFIRMATION, MISSING_EVIDENCE,
+DUPLICATE_REVIEW, or OTHER. Use DISCLOSURE_ONLY only when the implementation is
+otherwise clearly actionable and the sole remaining blocker is user-approved
+wording for a required public AI/tool-use disclosure.
 Do not upgrade a candidate when the supplied deterministic gate says HUMAN_REVIEW.
 You have no positive authorization vote. Cite supplied evidence IDs rather than
 inventing facts. Low confidence or materially blocking unknowns must result in
@@ -266,8 +272,22 @@ class DeepSeekEvaluator:
             confidence = max(0.0, min(1.0, float(review.get("confidence", 0))))
         except (TypeError, ValueError):
             confidence = 0.0
+        allowed_wait_reasons = {
+            "DISCLOSURE_ONLY",
+            "ASSIGNMENT",
+            "DESIGN_CONFIRMATION",
+            "MISSING_EVIDENCE",
+            "DUPLICATE_REVIEW",
+            "OTHER",
+        }
+        wait_reason = str(review.get("wait_reason") or "").upper()
+        if decision != "WAIT_MAINTAINER":
+            wait_reason = None
+        elif wait_reason not in allowed_wait_reasons:
+            wait_reason = "OTHER"
         return {
             "decision": decision,
+            "wait_reason": wait_reason,
             "score": score,
             "confidence": confidence,
             "root_cause_clarity": str(review.get("root_cause_clarity") or "unknown")[:32],
@@ -308,7 +328,15 @@ class DeepSeekEvaluator:
             and str(candidate.get("submission_policy") or "").startswith("ai_disclosure")
             and candidate.get("public_submission_allowed") is False
         )
-        if private_disclosure_work:
+        disclosure_only_wait = bool(
+            decision == "WAIT_MAINTAINER"
+            and review.get("wait_reason") == "DISCLOSURE_ONLY"
+            and not low_confidence
+        )
+        if private_disclosure_work and (
+            decision in {"NEW_CLEAN_CANDIDATE", "PR_COMPETITION_OPPORTUNITY"}
+            or disclosure_only_wait
+        ):
             candidate["category"] = "LOCAL_FIX_ONLY"
             candidate["gate_decision"] = "ALLOW_PRIVATE_WORK"
             candidate["auto_spawn"] = True

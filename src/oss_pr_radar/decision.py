@@ -127,7 +127,11 @@ def authorize(candidate: dict[str, Any], evidence: EvidenceBundle) -> Authorizat
         review_actionable = review.get("decision") in {
             "NEW_CLEAN_CANDIDATE",
             "PR_COMPETITION_OPPORTUNITY",
-        } or (private_disclosure_work and review.get("decision") == "WAIT_MAINTAINER")
+        } or (
+            private_disclosure_work
+            and review.get("decision") == "WAIT_MAINTAINER"
+            and review.get("waitReason") == "DISCLOSURE_ONLY"
+        )
         if review.get("status") != "ok" or not review_actionable:
             return decision("HOLD", "SEMANTIC_REVIEW_NOT_ACTIONABLE")
         if float(review.get("confidence") or 0.0) < 0.65:

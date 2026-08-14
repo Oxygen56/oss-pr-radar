@@ -53,7 +53,10 @@ timing are external labels, not the north-star metric.
    exact changed-file allowlist plus proposed branch and commit message. The
    controller validates that allowlist, creates the local commit, and ingests the
    result. A late AI-disclosure finding remains a local-fix outcome and cannot
-   create a publication request.
+   create a publication request. Disclosure policy is not allowed to mask a
+   second semantic blocker: private dispatch accepts `WAIT_MAINTAINER` only when
+   the signed review reason is `DISCLOSURE_ONLY`; design, assignment, evidence,
+   duplicate, and unclassified waits never create a task.
 8. **Publication** rechecks the exact clean commit, branch, diff, evidence,
    ownership, duplicates, policy, DCO, identity, fork owner, base branch, PR
    title, and PR body digest. A permit expires quickly and is consumed by the
@@ -74,7 +77,9 @@ do not enter the SubmitReady denominator.
 Visible task titles progress through `GO`, `本地修复就绪`, `存在发布请求`,
 `PR已开`, `已合并`, or terminal `无价值`, while preserving the original dispatch timestamp. A
 dispatched task with no outcome can receive one write-ahead, exact-prompt
-recovery attempt; an ambiguous recovery is surfaced instead of retried.
+recovery attempt. Recoveries use the same single-task limit: one active or
+authorized recovery keeps every later failed task in a visible queue. An
+ambiguous recovery is surfaced instead of retried.
 
 ## State Ownership
 
@@ -98,8 +103,13 @@ reject source pull requests, are hard-blocked before dispatch.
 
 Actionable opportunities remain in the watchlist and signed queue until local
 dispatch. Private Codex task concurrency is independent of publication rollout
-mode; an optional `RADAR_MAX_ACTIVE_TASKS` limit can be set explicitly, while
-the default does not serialize investigations. Hourly watch evidence forces a rescan on ownership,
+mode. The default is one durable task across issue dispatch, existing-PR
+follow-up, and validation continuation because starting another project-root
+app-server turn can interrupt the first task; `RADAR_MAX_ACTIVE_TASKS=0` may be
+set explicitly only on a host that proves concurrent root turns are isolated.
+The root-task owner polls persisted turn status as a watchdog, so a lost
+completion notification cannot leave a private app-server alive indefinitely.
+Hourly watch evidence forces a rescan on ownership,
 closure, strong-PR, or policy changes. Duplicate suppression and transient API
 failures do not withdraw an otherwise-valid intent; every task and publication
 still performs its own live gate.

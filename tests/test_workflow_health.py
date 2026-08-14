@@ -67,11 +67,14 @@ def test_sparse_natural_schedule_coverage_is_reported_without_hiding_freshness()
         }
     )
 
-    result = MODULE.health(runs, now=NOW)
+    result = MODULE.health(runs, now=NOW, coverage_window_hours=24)
 
-    assert result["githubNaturalScheduleHealthy"] is False
-    assert "NATURAL_SCHEDULE_COVERAGE_LOW" in result["issues"]
-    assert "NATURAL_SCHEDULE_GAP_EXCESSIVE" in result["issues"]
+    assert result["githubNaturalScheduleHealthy"] is True
+    assert result["issues"] == []
+    assert result["githubNaturalScheduleWarnings"] == [
+        "NATURAL_SCHEDULE_COVERAGE_LOW",
+        "NATURAL_SCHEDULE_GAP_EXCESSIVE",
+    ]
     assert result["naturalScheduleCoverage"] == {
         "assessed": True,
         "windowHours": 24,
@@ -80,6 +83,10 @@ def test_sparse_natural_schedule_coverage_is_reported_without_hiding_freshness()
         "minimumRuns": 12,
         "coverageRatio": 0.333,
         "maxGapMinutes": 180,
+        "warnings": [
+            "NATURAL_SCHEDULE_COVERAGE_LOW",
+            "NATURAL_SCHEDULE_GAP_EXCESSIVE",
+        ],
     }
 
 
@@ -194,7 +201,7 @@ def test_recent_manual_success_keeps_effective_scan_fresh():
     assert result["recentSuccess"] is True
 
 
-def test_default_freshness_expires_before_the_desktop_repair_window():
+def test_default_freshness_tolerates_normal_github_schedule_jitter():
     result = MODULE.effective_scan_freshness(
         [
             {
@@ -209,8 +216,27 @@ def test_default_freshness_expires_before_the_desktop_repair_window():
         now=NOW,
     )
 
+    assert result["fresh"] is True
+    assert result["maxAgeMinutes"] == 110
+
+
+def test_default_freshness_expires_after_a_missed_hourly_scan():
+    result = MODULE.effective_scan_freshness(
+        [
+            {
+                "event": "schedule",
+                "status": "completed",
+                "conclusion": "success",
+                "created_at": (NOW - timedelta(minutes=125)).isoformat(),
+                "updated_at": (NOW - timedelta(minutes=120)).isoformat(),
+                "html_url": "https://github.com/a/b/actions/runs/missed-window",
+            }
+        ],
+        now=NOW,
+    )
+
     assert result["fresh"] is False
-    assert result["maxAgeMinutes"] == 65
+    assert result["maxAgeMinutes"] == 110
 
 
 def test_recent_active_run_suppresses_duplicate_repair():

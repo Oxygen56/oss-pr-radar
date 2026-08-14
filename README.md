@@ -59,7 +59,7 @@ discovery quality.
 
 ## Scan Scope
 
-Every hour directly polls 75 mature repositories and also runs bounded dynamic
+Every hour directly polls 105 mature repositories and also runs bounded dynamic
 GitHub searches for Agent/AI-infrastructure and LLM-algorithm repositories outside
 the curated list. The fixed scope is grouped by the code surface it contributes:
 
@@ -133,6 +133,12 @@ with the user's configured Git identity and is revalidated before publication.
 Broader relicensing or proprietary-use contribution agreements are not treated
 as ordinary CLA/DCO and are filtered before task creation.
 
+A disclosure-required repository may still receive a private local-fix task only
+when the issue is otherwise actionable. A semantic `WAIT_MAINTAINER` result is
+dispatchable only when its structured reason is `DISCLOSURE_ONLY`; assignment,
+design, evidence, duplicate, or unclassified waits remain in discovery and do
+not create a desktop task.
+
 ## Setup
 
 Requirements: Python 3.11+, authenticated `gh`, macOS Codex Desktop for local
@@ -194,28 +200,28 @@ python scripts/local_dispatch_bridge.py title-reconcile
 python scripts/local_dispatch_bridge.py pr-followup-list
 python scripts/local_dispatch_bridge.py pr-followup-reserve \
   --thread-id THREAD_ID --wake-digest WAKE_DIGEST
-python scripts/local_dispatch_bridge.py pr-followup-commit \
+python scripts/local_dispatch_bridge.py pr-followup-deliver \
   --thread-id THREAD_ID --wake-digest WAKE_DIGEST
 
 # Prefetch only lockfile-declared dependencies, then resume incomplete validation.
 # The listing also reports follow-ups that have made no progress for 90 minutes.
 python scripts/local_dispatch_bridge.py validation-followup-list --min-age-minutes 90
 python scripts/local_dispatch_bridge.py validation-followup-reserve \
-  --thread-id THREAD_ID --result-digest RESULT_DIGEST --prefetch-complete
-python scripts/local_dispatch_bridge.py validation-followup-commit \
+  --thread-id THREAD_ID --result-digest RESULT_DIGEST
+python scripts/local_dispatch_bridge.py validation-followup-deliver \
   --thread-id THREAD_ID --result-digest RESULT_DIGEST
 
 # Advance independently revalidated publication requests
 python scripts/local_dispatch_bridge.py publication-run
 
-# Install the no-LLM local completion collector (20-second maximum pickup delay)
+# Install the no-LLM local completion collector and terminal-title reconciler
 python scripts/install_local_publication_agent.py
 
 # Rolling controllable quality metrics
 python scripts/local_dispatch_bridge.py metrics --days 30
 
 # Independent GitHub Actions schedule check (manual/fallback freshness is separate)
-python scripts/check_workflow_health.py --max-effective-age-minutes 65 --notify --repair
+python scripts/check_workflow_health.py --max-effective-age-minutes 110 --notify --repair
 ```
 
 PR follow-up keeps all failing checks as diagnostic evidence, but only notifies
@@ -231,6 +237,10 @@ The hourly Codex heartbeat reuses one controller task, calls `sync`, claims each
 fresh live audit, and creates every issue task in the single configured GitHub
 project. Source code still lives in an isolated controller-owned Git worktree
 under that project, so UI ownership and repository isolation are independent.
+Existing PR follow-ups, incomplete validation, and recoverable interrupted tasks
+consume the shared task slot before new discovery, so near-publication work
+cannot be starved by a growing issue backlog. The claim command enforces the
+same priority even if a controller turn executes its stages out of order.
 The controller verifies the timestamped lifecycle title, prompt, project root,
 repository origin, and worktree identity before committing a receipt. It retries an obviously
 empty task at most once through a write-ahead recovery receipt. It archives a

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
 import re
 import shutil
 import sqlite3
@@ -15,13 +16,19 @@ import pytest
 
 from oss_pr_radar.ledger import LedgerError, RadarLedger
 from oss_pr_radar.metrics import QUALITY_FIELDS
-from oss_pr_radar.util import iso_z
+from oss_pr_radar.util import iso_z, parse_time
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "local_dispatch_bridge.py"
 SPEC = importlib.util.spec_from_file_location("local_dispatch_bridge", SCRIPT)
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC and SPEC.loader
 SPEC.loader.exec_module(MODULE)
+
+
+@pytest.fixture(autouse=True)
+def disable_live_thread_watchdog(monkeypatch):
+    monkeypatch.setattr(MODULE, "live_thread_turn_states", lambda _thread_ids: {})
+    monkeypatch.setattr(MODULE, "active_task_turn_worker", lambda _thread_id: None)
 
 
 def run_git(path: Path, *args: str) -> str:
@@ -173,6 +180,21 @@ def test_title_reconcile_applies_and_receipts_desktop_title(monkeypatch, tmp_pat
     assert result["ok"] is True
     assert result["errors"] == []
     assert result["renamed"][0]["threadId"] == "thread-1"
+    assert MODULE.title_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3")) == {
+        "ok": True,
+        "titles": [],
+    }
+
+
+def test_title_list_ignores_archived_desktop_tasks(monkeypatch, tmp_path):
+    store, _worktree = registered_store(tmp_path)
+    store.record_stage("a/b#1", "FIX_READY", evidence={})
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute("CREATE TABLE threads (id TEXT, title TEXT, archived INTEGER)")
+        connection.execute("INSERT INTO threads VALUES (?,?,?)", ("thread-1", "old", 1))
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+
     assert MODULE.title_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3")) == {
         "ok": True,
         "titles": [],
@@ -615,6 +637,109 @@ def test_shared_context_recovery_verifies_an_existing_dispatched_task(monkeypatc
             "resultReceiptRestored": False,
         }
     ]
+
+
+def test_shared_context_recovery_does_not_block_on_a_missing_historical_worktree(
+    monkeypatch, tmp_path
+):
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, _ = registered_store(tmp_path / "original", worktree=worktree)
+    run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
+    MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    shutil.rmtree(worktree)
+
+    recovered = RadarLedger(tmp_path / "recovered.sqlite3")
+    result = MODULE.recover_shared_task_contexts(recovered)
+
+    assert result["verified"] == 0
+    assert result["restored"] == []
+    assert result["errors"] == []
+    assert result["unavailable"] == [
+        {
+            "path": str(MODULE.shared_context_path("https://github.com/a/b/issues/1")),
+            "key": "a/b#1",
+            "issueUrl": "https://github.com/a/b/issues/1",
+            "intentId": "intent-1",
+            "stage": "DISPATCHED",
+            "threadId": "thread-1",
+            "worktreePath": str(worktree.resolve()),
+            "published": False,
+            "reason": "TASK_WORKTREE_UNAVAILABLE",
+        }
+    ]
+
+
+def test_shared_context_recovery_defers_and_repairs_a_missing_worktree_mirror(
+    monkeypatch, tmp_path
+):
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, _ = registered_store(tmp_path / "original", worktree=worktree)
+    run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
+    local_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    local_path.unlink()
+
+    recovered = MODULE.recover_shared_task_contexts(store)
+
+    assert recovered["verified"] == 0
+    assert recovered["errors"] == []
+    assert recovered["unavailable"][0]["reason"] == "TASK_CONTEXT_MIRROR_UNAVAILABLE"
+
+    synced = MODULE.sync_task_contexts(
+        SimpleNamespace(ledger=tmp_path / "original" / "ledger.sqlite3")
+    )
+
+    assert synced["ok"] is True
+    assert local_path.is_file()
+    assert json.loads(local_path.read_text(encoding="utf-8")) == json.loads(
+        MODULE.shared_context_path("https://github.com/a/b/issues/1").read_text(encoding="utf-8")
+    )
+
+
+def test_fresh_signed_intent_can_replace_a_task_whose_workspace_was_lost(tmp_path):
+    store, worktree = registered_store(tmp_path)
+    store.record_stage("a/b#1", "FIX_READY", evidence={})
+
+    replaced = store.supersede_missing_workspace(
+        key="a/b#1",
+        intent_id="intent-1",
+        worktree_path=str(worktree),
+        replacement_intent_id="intent-2",
+    )
+    now = datetime.now(UTC)
+    inserted = store.enqueue(
+        {
+            "intentId": "intent-2",
+            "key": "a/b#1",
+            "repo": "a/b",
+            "issueNumber": 1,
+            "issueUrl": "https://github.com/a/b/issues/1",
+            "title": "Runtime bug",
+            "mode": "canary",
+            "score": 9,
+            "snapshotId": "snapshot-2",
+            "decisionDigest": "decision-2",
+            "issuedAt": iso_z(now),
+            "expiresAt": iso_z(now + timedelta(hours=1)),
+        }
+    )
+
+    assert replaced is True
+    assert inserted is True
+    assert [item["intentId"] for item in store.pending()] == ["intent-2"]
 
 
 def test_shared_context_recovery_accepts_a_superseded_dispatched_mirror(monkeypatch, tmp_path):
@@ -1151,7 +1276,7 @@ def test_private_task_dispatch_is_not_limited_by_publication_canary(monkeypatch,
     )
     monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
     monkeypatch.setattr(MODULE, "_audit_intent", lambda _intent: (evidence, verdict))
-    monkeypatch.delenv("RADAR_MAX_ACTIVE_TASKS", raising=False)
+    monkeypatch.setenv("RADAR_MAX_ACTIVE_TASKS", "0")
 
     result = MODULE.claim_intent(
         SimpleNamespace(
@@ -1171,6 +1296,120 @@ def test_private_task_dispatch_is_not_limited_by_publication_canary(monkeypatch,
                ORDER BY id DESC LIMIT 1"""
         ).fetchone()
     assert json.loads(audit["payload_json"])["liveAudit"]["evidence"]["digest"] == ("evidence-2")
+
+
+def test_private_task_dispatch_defaults_to_one_active_task(monkeypatch, tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    now = datetime.now(UTC)
+    for number in (1, 2):
+        store.enqueue(
+            {
+                "intentId": f"intent-{number}",
+                "key": f"a/b#{number}",
+                "repo": "a/b",
+                "issueNumber": number,
+                "issueUrl": f"https://github.com/a/b/issues/{number}",
+                "title": f"Runtime bug {number}",
+                "mode": "canary",
+                "category": "NEW_CLEAN_CANDIDATE",
+                "scanGate": "ALLOW_TO_WORK",
+                "autoSpawn": True,
+                "score": 9,
+                "snapshotId": "snapshot",
+                "decisionDigest": f"decision-{number}",
+                "issuedAt": iso_z(now),
+                "expiresAt": iso_z(now + timedelta(hours=1)),
+            }
+        )
+    store.claim("intent-1", "controller")
+    store.commit_dispatch(
+        "intent-1",
+        owner="controller",
+        thread_id="thread-1",
+        project_id="github",
+        worktree_path="/tmp/worktree-1",
+    )
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    monkeypatch.setattr(
+        MODULE,
+        "_audit_intent",
+        lambda _intent: pytest.fail("WIP-limited tasks must not run a live audit"),
+    )
+    monkeypatch.delenv("RADAR_MAX_ACTIVE_TASKS", raising=False)
+
+    result = MODULE.claim_intent(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            intent_id="intent-2",
+            owner="controller",
+            lease_minutes=15,
+            prepare=False,
+        )
+    )
+
+    assert result["authorized"] is False
+    assert result["auditDeferred"] is True
+    assert result["held"] is True
+    assert result["claimed"] is False
+    assert result["reason"] == "task_wip_limit"
+
+
+def test_new_issue_claim_defers_to_existing_validation_work(monkeypatch, tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    now = datetime.now(UTC)
+    store.enqueue(
+        {
+            "intentId": "intent-new",
+            "key": "a/b#2",
+            "repo": "a/b",
+            "issueNumber": 2,
+            "issueUrl": "https://github.com/a/b/issues/2",
+            "title": "New runtime bug",
+            "mode": "canary",
+            "category": "NEW_CLEAN_CANDIDATE",
+            "scanGate": "ALLOW_TO_WORK",
+            "autoSpawn": True,
+            "score": 9,
+            "snapshotId": "snapshot",
+            "decisionDigest": "decision-new",
+            "issuedAt": iso_z(now),
+            "expiresAt": iso_z(now + timedelta(hours=1)),
+        }
+    )
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    monkeypatch.setattr(
+        MODULE,
+        "_higher_priority_existing_work",
+        lambda _args, *, intent_key: [
+            {"kind": "validation_followup", "key": "a/b#1"}
+        ],
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "_audit_intent",
+        lambda _intent: pytest.fail("new issue must not be audited ahead of validation"),
+    )
+
+    result = MODULE.claim_intent(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            intent_id="intent-new",
+            owner="controller",
+            lease_minutes=15,
+            prepare=False,
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "authorized": False,
+        "auditDeferred": True,
+        "held": True,
+        "claimed": False,
+        "reason": "higher_priority_existing_work",
+        "priorityWork": [{"kind": "validation_followup", "key": "a/b#1"}],
+    }
+    assert store.pending()[0]["ledgerStatus"] == "PENDING"
 
 
 def test_claim_hold_does_not_terminalize_candidate(monkeypatch, tmp_path):
@@ -1676,14 +1915,18 @@ def test_recovery_accepts_github_project_thread_with_managed_worktree(monkeypatc
 def test_pr_followup_list_defers_recently_active_threads(monkeypatch, tmp_path):
     thread_db = tmp_path / "threads.sqlite3"
     with sqlite3.connect(thread_db) as connection:
-        connection.execute("CREATE TABLE threads (id TEXT, updated_at INTEGER)")
+        connection.execute(
+            "CREATE TABLE threads (id TEXT, updated_at INTEGER, archived INTEGER, rollout_path TEXT)"
+        )
         connection.executemany(
-            "INSERT INTO threads VALUES (?,?)",
+            "INSERT INTO threads VALUES (?,?,?,?)",
             [
-                ("thread-active", int(datetime.now(UTC).timestamp())),
+                ("thread-active", int(datetime.now(UTC).timestamp()), 0, None),
                 (
                     "thread-idle",
                     int((datetime.now(UTC) - timedelta(hours=2)).timestamp()),
+                    0,
+                    None,
                 ),
             ],
         )
@@ -1708,20 +1951,93 @@ def test_pr_followup_list_defers_recently_active_threads(monkeypatch, tmp_path):
     assert result["activeDeferred"][0]["reason"] == "thread_recently_active"
 
 
-def test_pr_followup_abandons_only_when_no_target_turn_materialized(monkeypatch, tmp_path):
+def test_pr_followup_list_defers_ready_candidates_at_global_wip_limit(monkeypatch, tmp_path):
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "CREATE TABLE threads (id TEXT, updated_at INTEGER, archived INTEGER, rollout_path TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?,?)",
+            (
+                "thread-idle",
+                int((datetime.now(UTC) - timedelta(hours=2)).timestamp()),
+                0,
+                None,
+            ),
+        )
+
+    class Store:
+        def pr_followup_candidates(self):
+            return [{"key": "a/b#1", "threadId": "thread-idle"}]
+
+        def unresolved_pr_followups(self):
+            return []
+
+        def active_task_count(self, **_kwargs):
+            return 1
+
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+
+    result = MODULE.pr_followup_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert result["candidates"] == []
+    assert result["queuedDeferred"] == [
+        {
+            "key": "a/b#1",
+            "threadId": "thread-idle",
+            "reason": "global_task_wip_limit",
+            "activeTaskCount": 1,
+            "taskLimit": 1,
+        }
+    ]
+
+
+def test_pr_followup_list_requires_archived_task_restoration(monkeypatch, tmp_path):
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "CREATE TABLE threads (id TEXT, updated_at INTEGER, archived INTEGER, rollout_path TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?,?)",
+            ("thread-1", int(datetime.now(UTC).timestamp()), 1, None),
+        )
+
+    class Store:
+        def pr_followup_candidates(self):
+            return [{"key": "a/b#1", "threadId": "thread-1"}]
+
+        def unresolved_pr_followups(self):
+            return []
+
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+
+    result = MODULE.pr_followup_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert result["candidates"] == []
+    assert result["restoreRequired"] == [
+        {"key": "a/b#1", "threadId": "thread-1", "reason": "thread_archived"}
+    ]
+    assert result["blocked"] == []
+
+
+def test_pr_followup_never_abandons_an_unreceipted_delivery(monkeypatch, tmp_path):
     now = datetime.now(UTC)
     reserved_at = iso_z(now - timedelta(hours=2))
     thread_db = tmp_path / "threads.sqlite3"
     with sqlite3.connect(thread_db) as connection:
-        connection.execute("CREATE TABLE threads (id TEXT, updated_at INTEGER)")
         connection.execute(
-            "INSERT INTO threads VALUES (?,?)",
-            ("thread-1", int((now - timedelta(hours=3)).timestamp())),
+            "CREATE TABLE threads (id TEXT, updated_at INTEGER, archived INTEGER, rollout_path TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?,?)",
+            ("thread-1", int((now - timedelta(hours=3)).timestamp()), 0, None),
         )
 
     class Store:
-        abandoned = None
-
         def pr_followup_candidates(self):
             return []
 
@@ -1736,10 +2052,6 @@ def test_pr_followup_abandons_only_when_no_target_turn_materialized(monkeypatch,
                 }
             ]
 
-        def abandon_pr_followup_delivery(self, **kwargs):
-            self.abandoned = kwargs
-            return {"replacementWakeDigest": "b" * 64}
-
     store = Store()
     monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
     monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
@@ -1750,35 +2062,50 @@ def test_pr_followup_abandons_only_when_no_target_turn_materialized(monkeypatch,
     probe = MODULE.pr_followup_list(args)
     unresolved = probe["unresolved"][0]
 
-    result = MODULE.pr_followup_abandon(
-        SimpleNamespace(
-            ledger=tmp_path / "ledger.sqlite3",
-            thread_id="thread-1",
-            wake_digest="a" * 64,
-            abandon_nonce=unresolved["abandonNonce"],
-            reason="TARGET_TURN_NOT_MATERIALIZED",
-            min_age_minutes=90,
+    assert unresolved["abandonable"] is False
+    assert unresolved["commitReady"] is False
+    assert "abandonNonce" not in unresolved
+    with pytest.raises(RuntimeError, match="not safely abandonable"):
+        MODULE.pr_followup_abandon(
+            SimpleNamespace(
+                ledger=tmp_path / "ledger.sqlite3",
+                thread_id="thread-1",
+                wake_digest="a" * 64,
+                abandon_nonce="unused",
+                reason="TARGET_TURN_NOT_MATERIALIZED",
+                min_age_minutes=90,
+            )
         )
-    )
-
-    assert result["abandoned"] is True
-    assert result["replacementWakeDigest"] == "b" * 64
-    assert store.abandoned == {
-        "thread_id": "thread-1",
-        "wake_digest": "a" * 64,
-        "reason": "TARGET_TURN_NOT_MATERIALIZED",
-        "min_age_minutes": 90,
-    }
 
 
 def test_pr_followup_keeps_unknown_delivery_when_target_thread_updated(monkeypatch, tmp_path):
     now = datetime.now(UTC)
+    reserved_at = now - timedelta(hours=2)
+    rollout = tmp_path / "rollout.jsonl"
+    rollout.write_text(
+        json.dumps(
+            {
+                "timestamp": iso_z(reserved_at + timedelta(minutes=1)),
+                "type": "turn_context",
+                "payload": {"turn_id": "turn-1"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     thread_db = tmp_path / "threads.sqlite3"
     with sqlite3.connect(thread_db) as connection:
-        connection.execute("CREATE TABLE threads (id TEXT, updated_at INTEGER)")
         connection.execute(
-            "INSERT INTO threads VALUES (?,?)",
-            ("thread-1", int((now - timedelta(minutes=30)).timestamp())),
+            "CREATE TABLE threads (id TEXT, updated_at INTEGER, archived INTEGER, rollout_path TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?,?)",
+            (
+                "thread-1",
+                int((now - timedelta(minutes=30)).timestamp()),
+                0,
+                str(rollout),
+            ),
         )
 
     class Store:
@@ -1792,7 +2119,7 @@ def test_pr_followup_keeps_unknown_delivery_when_target_thread_updated(monkeypat
                     "thread_id": "thread-1",
                     "pr_url": "https://github.com/a/b/pull/2",
                     "wake_digest": "a" * 64,
-                    "created_at": iso_z(now - timedelta(hours=2)),
+                    "created_at": iso_z(reserved_at),
                 }
             ]
 
@@ -1804,6 +2131,7 @@ def test_pr_followup_keeps_unknown_delivery_when_target_thread_updated(monkeypat
     )
 
     assert result["unresolved"][0]["targetTurnMaterialized"] is True
+    assert result["unresolved"][0]["commitReady"] is True
     assert result["unresolved"][0]["abandonable"] is False
 
 
@@ -1939,6 +2267,300 @@ def test_recovery_immediately_surfaces_a_recent_terminal_desktop_error(monkeypat
     assert result["recoverable"][0]["terminalError"]["code"] == "cyber_policy"
 
 
+def test_recovery_immediately_resumes_an_interrupted_validation_followup(
+    monkeypatch, tmp_path
+):
+    store, worktree = registered_store(tmp_path)
+    run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
+    store.record_stage("a/b#1", "VALIDATION_PENDING")
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest="result-digest",
+        missing=["relevant_tests_green"],
+    )
+    store.reserve_validation_followup(
+        thread_id="thread-1", result_digest="result-digest"
+    )
+    store.commit_validation_followup(
+        thread_id="thread-1", result_digest="result-digest"
+    )
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            """CREATE TABLE threads (
+                id TEXT, archived INTEGER, title TEXT, first_user_message TEXT,
+                cwd TEXT, git_origin_url TEXT, updated_at INTEGER, rollout_path TEXT
+            )"""
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?,?,?,?,?,?)",
+            (
+                "thread-1",
+                0,
+                "task",
+                MODULE.issue_prompt("https://github.com/a/b/issues/1"),
+                str(worktree),
+                "https://github.com/a/b.git",
+                int(datetime.now(UTC).timestamp()),
+                None,
+            ),
+        )
+
+    interrupted = {
+        "status": "interrupted",
+        "code": "turn_interrupted",
+        "message": "interrupted",
+        "turnId": "turn-validation",
+    }
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    monkeypatch.setattr(
+        MODULE,
+        "live_thread_turn_states",
+        lambda thread_ids: {"thread-1": interrupted} if "thread-1" in thread_ids else {},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "active_task_turn_worker",
+        lambda thread_id: {"pid": 123, "deliveryKind": "validation-followup"}
+        if thread_id == "thread-1"
+        else None,
+    )
+
+    draining = MODULE.recovery_list(
+        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3", min_age_minutes=90)
+    )
+
+    assert draining["recoverable"] == []
+    assert draining["activeDeferred"][0]["reason"] == "terminal_turn_worker_draining"
+
+    monkeypatch.setattr(MODULE, "active_task_turn_worker", lambda _thread_id: None)
+
+    listed = MODULE.recovery_list(
+        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3", min_age_minutes=90)
+    )
+
+    assert listed["activeDeferred"] == []
+    assert listed["recoverable"][0]["recoveryKind"] == "VALIDATION_FOLLOWUP_RESULT"
+    assert listed["recoverable"][0]["immediateRecovery"] is True
+    assert listed["recoverable"][0]["terminalError"] == interrupted
+
+    reserved = MODULE.recovery_reserve(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            thread_id="thread-1",
+            recovery_nonce=listed["recoverable"][0]["recoveryNonce"],
+        )
+    )
+
+    assert reserved["terminalError"] == interrupted
+    assert reserved["prompt"] == MODULE.VALIDATION_RECOVERY_PROMPT
+
+
+def test_recovery_serializes_multiple_terminal_failures(monkeypatch, tmp_path):
+    project_root = tmp_path / "github"
+    thread_db = tmp_path / "threads.sqlite3"
+    candidates = []
+    rows = []
+    for index in (1, 2):
+        repo = f"repo{index}"
+        worktree = project_root / ".oss-pr-radar" / "worktrees" / f"task-{index}" / repo
+        worktree.mkdir(parents=True)
+        run_git(worktree, "init")
+        run_git(worktree, "remote", "add", "origin", f"https://github.com/a/{repo}.git")
+        rollout = tmp_path / f"rollout-{index}.jsonl"
+        rollout.write_text(
+            json.dumps(
+                {
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "task_complete",
+                        "turn_id": f"turn-{index}",
+                        "error": {
+                            "codex_error_info": "other",
+                            "message": "unexpected status 403 Forbidden",
+                        },
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        issue_url = f"https://github.com/a/{repo}/issues/{index}"
+        candidates.append(
+            {
+                "key": f"a/{repo}#{index}",
+                "issueUrl": issue_url,
+                "threadId": f"thread-{index}",
+                "worktreePath": str(worktree),
+            }
+        )
+        rows.append(
+            (
+                f"thread-{index}",
+                0,
+                "task",
+                MODULE.issue_prompt(issue_url),
+                str(project_root),
+                None,
+                int(datetime.now(UTC).timestamp()),
+                str(rollout),
+            )
+        )
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            """CREATE TABLE threads (
+                id TEXT, archived INTEGER, title TEXT, first_user_message TEXT,
+                cwd TEXT, git_origin_url TEXT, updated_at INTEGER, rollout_path TEXT
+            )"""
+        )
+        connection.executemany("INSERT INTO threads VALUES (?,?,?,?,?,?,?,?)", rows)
+
+    unresolved = []
+
+    class Store:
+        def recovery_candidates(self, **_kwargs):
+            return candidates
+
+        def task_context_candidates(self):
+            return []
+
+        def unresolved_recoveries(self):
+            return list(unresolved)
+
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+
+    result = MODULE.recovery_list(
+        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3", min_age_minutes=90)
+    )
+
+    assert [item["threadId"] for item in result["recoverable"]] == ["thread-1"]
+    assert [item["threadId"] for item in result["queuedDeferred"]] == ["thread-2"]
+
+    unresolved.append(
+        {
+            "key": "a/other#3",
+            "threadId": "thread-other",
+            "reservedAt": iso_z(datetime.now(UTC)),
+        }
+    )
+    blocked_by_unknown_delivery = MODULE.recovery_list(
+        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3", min_age_minutes=90)
+    )
+
+    assert blocked_by_unknown_delivery["recoverable"] == []
+    assert [item["threadId"] for item in blocked_by_unknown_delivery["queuedDeferred"]] == [
+        "thread-1",
+        "thread-2",
+    ]
+    assert {item["reason"] for item in blocked_by_unknown_delivery["queuedDeferred"]} == {
+        "recovery_delivery_unresolved"
+    }
+
+
+def test_active_turn_defers_all_terminal_recoveries(monkeypatch, tmp_path):
+    project_root = tmp_path / "github"
+    active_worktree = project_root / ".oss-pr-radar" / "worktrees" / "active" / "active"
+    failed_worktree = project_root / ".oss-pr-radar" / "worktrees" / "failed" / "failed"
+    for worktree, repo in ((active_worktree, "active"), (failed_worktree, "failed")):
+        worktree.mkdir(parents=True)
+        run_git(worktree, "init")
+        run_git(worktree, "remote", "add", "origin", f"https://github.com/a/{repo}.git")
+    active_rollout = tmp_path / "active.jsonl"
+    active_rollout.write_text(
+        json.dumps({"type": "turn_context", "payload": {"turn_id": "turn-active"}}) + "\n",
+        encoding="utf-8",
+    )
+    failed_rollout = tmp_path / "failed.jsonl"
+    failed_rollout.write_text(
+        json.dumps(
+            {
+                "type": "event_msg",
+                "payload": {
+                    "type": "task_complete",
+                    "turn_id": "turn-failed",
+                    "error": {"codex_error_info": "unauthorized", "message": "logged out"},
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    thread_db = tmp_path / "threads.sqlite3"
+    now = int(datetime.now(UTC).timestamp())
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            """CREATE TABLE threads (
+                id TEXT, archived INTEGER, title TEXT, first_user_message TEXT,
+                cwd TEXT, git_origin_url TEXT, updated_at INTEGER, rollout_path TEXT
+            )"""
+        )
+        connection.executemany(
+            "INSERT INTO threads VALUES (?,?,?,?,?,?,?,?)",
+            [
+                (
+                    "thread-active",
+                    0,
+                    "active",
+                    MODULE.issue_prompt("https://github.com/a/active/issues/1"),
+                    str(project_root),
+                    None,
+                    now,
+                    str(active_rollout),
+                ),
+                (
+                    "thread-failed",
+                    0,
+                    "failed",
+                    MODULE.issue_prompt("https://github.com/a/failed/issues/2"),
+                    str(project_root),
+                    None,
+                    now,
+                    str(failed_rollout),
+                ),
+            ],
+        )
+
+    class Store:
+        def recovery_candidates(self, **_kwargs):
+            return [
+                {
+                    "key": "a/failed#2",
+                    "issueUrl": "https://github.com/a/failed/issues/2",
+                    "threadId": "thread-failed",
+                    "worktreePath": str(failed_worktree),
+                }
+            ]
+
+        def task_context_candidates(self):
+            return [
+                {
+                    "key": "a/active#1",
+                    "issueUrl": "https://github.com/a/active/issues/1",
+                    "threadId": "thread-active",
+                    "worktreePath": str(active_worktree),
+                }
+            ]
+
+        def unresolved_recoveries(self):
+            return []
+
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+
+    result = MODULE.recovery_list(
+        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3", min_age_minutes=90)
+    )
+
+    assert result["recoverable"] == []
+    assert [item["threadId"] for item in result["activeDeferred"]] == ["thread-active"]
+    assert [item["threadId"] for item in result["queuedDeferred"]] == ["thread-failed"]
+
+
 def test_latest_terminal_error_ignores_a_failure_before_a_new_turn(tmp_path):
     rollout = tmp_path / "rollout.jsonl"
     rollout.write_text(
@@ -1961,6 +2583,368 @@ def test_latest_terminal_error_ignores_a_failure_before_a_new_turn(tmp_path):
     )
 
     assert MODULE.latest_terminal_thread_error(str(rollout)) is None
+
+
+def test_thread_turn_materialization_is_bounded_by_reservation_time(tmp_path):
+    rollout = tmp_path / "rollout.jsonl"
+    reserved_at = datetime.now(UTC)
+    rollout.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "timestamp": iso_z(reserved_at - timedelta(minutes=1)),
+                        "type": "turn_context",
+                        "payload": {"turn_id": "turn-old"},
+                    }
+                ),
+                json.dumps(
+                    {
+                        "timestamp": iso_z(reserved_at + timedelta(seconds=1)),
+                        "type": "turn_context",
+                        "payload": {"turn_id": "turn-new"},
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert MODULE.thread_turn_materialized_after(str(rollout), iso_z(reserved_at)) == (True, True)
+    assert MODULE.thread_turn_materialized_after(
+        str(tmp_path / "missing.jsonl"), iso_z(reserved_at)
+    ) == (False, False)
+
+
+def test_app_server_terminal_turn_accepts_completion_notification():
+    result = MODULE._app_server_terminal_turn(
+        {
+            "method": "turn/completed",
+            "params": {
+                "threadId": "thread-1",
+                "turn": {"id": "turn-1", "status": "failed", "error": {"message": "x"}},
+            },
+        },
+        thread_id="thread-1",
+        turn_id="turn-1",
+    )
+
+    assert result == {
+        "turnId": "turn-1",
+        "status": "failed",
+        "error": {"message": "x"},
+    }
+
+
+def test_app_server_terminal_turn_accepts_thread_read_watchdog_response():
+    result = MODULE._app_server_terminal_turn(
+        {
+            "id": 7,
+            "result": {
+                "thread": {
+                    "id": "thread-1",
+                    "turns": [
+                        {"id": "turn-old", "status": "completed"},
+                        {"id": "turn-1", "status": "interrupted"},
+                    ],
+                }
+            },
+        },
+        thread_id="thread-1",
+        turn_id="turn-1",
+        read_request_id=7,
+    )
+
+    assert result == {"turnId": "turn-1", "status": "interrupted", "error": None}
+
+
+def test_app_server_terminal_turn_ignores_in_progress_or_unrelated_turns():
+    assert (
+        MODULE._app_server_terminal_turn(
+            {
+                "id": 7,
+                "result": {
+                    "thread": {
+                        "id": "thread-1",
+                        "turns": [{"id": "turn-1", "status": "inProgress"}],
+                    }
+                },
+            },
+            thread_id="thread-1",
+            turn_id="turn-1",
+            read_request_id=7,
+        )
+        is None
+    )
+    assert (
+        MODULE._app_server_terminal_turn(
+            {
+                "method": "turn/completed",
+                "params": {
+                    "threadId": "thread-2",
+                    "turn": {"id": "turn-1", "status": "completed"},
+                },
+            },
+            thread_id="thread-1",
+            turn_id="turn-1",
+        )
+        is None
+    )
+
+
+def test_app_server_watchdog_polls_on_wall_clock_despite_continuous_events(monkeypatch):
+    class FakeStdin:
+        def __init__(self):
+            self.writes: list[bytes] = []
+
+        def write(self, value: bytes) -> None:
+            self.writes.append(value)
+
+        def flush(self) -> None:
+            return None
+
+    class FakeStdout:
+        @staticmethod
+        def fileno() -> int:
+            return 123
+
+    class FakeProcess:
+        def __init__(self):
+            self.stdin = FakeStdin()
+            self.stdout = FakeStdout()
+
+        @staticmethod
+        def poll():
+            return None
+
+    class AlwaysReadySelector:
+        @staticmethod
+        def select(_timeout):
+            return [(object(), None)]
+
+    times = iter([0.0, 1.0, 1.0, 5.0, 5.0])
+    chunks = iter(
+        [
+            b'{"method":"turn/started","params":{}}\n',
+            (
+                b'{"id":3,"result":{"thread":{"id":"thread-1","turns":'
+                b'[{"id":"turn-1","status":"interrupted"}]}}}\n'
+            ),
+        ]
+    )
+    monkeypatch.setattr(MODULE, "monotonic", lambda: next(times, 5.0))
+    monkeypatch.setattr(MODULE.os, "read", lambda _fd, _size: next(chunks))
+    process = FakeProcess()
+
+    result = MODULE._wait_for_app_server_terminal_turn(
+        process,
+        AlwaysReadySelector(),
+        b"",
+        thread_id="thread-1",
+        turn_id="turn-1",
+    )
+
+    assert result == {"turnId": "turn-1", "status": "interrupted", "error": None}
+    assert json.loads(process.stdin.writes[0]) == {
+        "id": 3,
+        "method": "thread/read",
+        "params": {"threadId": "thread-1", "includeTurns": True},
+    }
+
+
+def test_active_root_task_worker_owns_the_first_turn(monkeypatch, tmp_path):
+    receipt_root = tmp_path / "root_task_receipts"
+    receipt_root.mkdir()
+    creation_token = "root-token"
+    (receipt_root / f"{creation_token}.launch.json").write_text(
+        json.dumps({"pid": 123, "startedAt": "2026-08-13T17:00:00Z"}),
+        encoding="utf-8",
+    )
+    (receipt_root / f"{creation_token}.json").write_text(
+        json.dumps({"ok": True, "threadId": "thread-1"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(MODULE, "STATE", tmp_path)
+    monkeypatch.setattr(MODULE, "_pid_is_alive", lambda _pid: True)
+    monkeypatch.setattr(
+        MODULE.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            stdout=(
+                "python scripts/local_dispatch_bridge.py root-task-worker "
+                f"--creation-token {creation_token}"
+            )
+        ),
+    )
+
+    assert MODULE.active_root_task_worker("thread-1") == {
+        "pid": 123,
+        "deliveryKind": "root-task",
+        "startedAt": "2026-08-13T17:00:00Z",
+    }
+    assert MODULE.active_root_task_worker("thread-2") is None
+
+
+def test_task_turn_delivery_reconciles_a_materialized_turn_without_resending(monkeypatch, tmp_path):
+    issue_url = "https://github.com/a/b/issues/1"
+    reserved_at = datetime.now(UTC) - timedelta(minutes=5)
+    project_root = tmp_path / "github"
+    worktree = project_root / ".oss-pr-radar" / "worktrees" / "intent" / "b"
+    worktree.mkdir(parents=True)
+    rollout = tmp_path / "rollout.jsonl"
+    rollout.write_text(
+        json.dumps(
+            {
+                "timestamp": iso_z(reserved_at + timedelta(seconds=1)),
+                "type": "turn_context",
+                "payload": {"turn_id": "turn-new"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "CREATE TABLE threads (id TEXT, cwd TEXT, archived INTEGER, "
+            "first_user_message TEXT, rollout_path TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?,?,?)",
+            ("thread-1", str(project_root), 0, MODULE.issue_prompt(issue_url), str(rollout)),
+        )
+
+    class Store:
+        committed = None
+
+        def unresolved_pr_followups(self):
+            return [
+                {
+                    "key": "a/b#1",
+                    "issue_url": issue_url,
+                    "worktree_path": str(worktree),
+                    "thread_id": "thread-1",
+                    "pr_url": "https://github.com/a/b/pull/2",
+                    "wake_digest": "a" * 64,
+                    "created_at": iso_z(reserved_at),
+                }
+            ]
+
+        def commit_pr_followup(self, **kwargs):
+            self.committed = kwargs
+
+    store = Store()
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "STATE", tmp_path / "state")
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    monkeypatch.setattr(
+        MODULE.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: pytest.fail("a materialized turn must not be resent"),
+    )
+
+    result = MODULE.task_turn_deliver(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            delivery_kind="pr-followup",
+            delivery_token="a" * 64,
+            thread_id="thread-1",
+        )
+    )
+
+    assert result["reconciled"] is True
+    assert store.committed == {"thread_id": "thread-1", "wake_digest": "a" * 64}
+
+
+def test_task_turn_delivery_never_restarts_a_live_worker(monkeypatch, tmp_path):
+    issue_url = "https://github.com/a/b/issues/1"
+    reserved_at = datetime.now(UTC) - timedelta(minutes=5)
+    project_root = tmp_path / "github"
+    worktree = project_root / ".oss-pr-radar" / "worktrees" / "intent" / "b"
+    worktree.mkdir(parents=True)
+    rollout = tmp_path / "rollout.jsonl"
+    rollout.write_text("", encoding="utf-8")
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "CREATE TABLE threads (id TEXT, cwd TEXT, archived INTEGER, "
+            "first_user_message TEXT, rollout_path TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?,?,?)",
+            ("thread-1", str(project_root), 0, MODULE.issue_prompt(issue_url), str(rollout)),
+        )
+
+    class Store:
+        def unresolved_pr_followups(self):
+            return [
+                {
+                    "key": "a/b#1",
+                    "issue_url": issue_url,
+                    "worktree_path": str(worktree),
+                    "thread_id": "thread-1",
+                    "pr_url": "https://github.com/a/b/pull/2",
+                    "wake_digest": "a" * 64,
+                    "created_at": iso_z(reserved_at),
+                }
+            ]
+
+    state = tmp_path / "state"
+    receipt_key = MODULE.sha256_json(
+        {
+            "deliveryKind": "pr-followup",
+            "threadId": "thread-1",
+            "deliveryToken": "a" * 64,
+        }
+    )
+    receipt_root = state / "task_turn_receipts"
+    receipt_root.mkdir(parents=True)
+    (receipt_root / f"{receipt_key}.launch.json").write_text(
+        json.dumps({"pid": os.getpid()}), encoding="utf-8"
+    )
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "STATE", state)
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+    monkeypatch.setattr(
+        MODULE.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: pytest.fail("a live delivery worker must not be duplicated"),
+    )
+
+    result = MODULE.task_turn_deliver(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            delivery_kind="pr-followup",
+            delivery_token="a" * 64,
+            thread_id="thread-1",
+        )
+    )
+
+    assert result["pending"] is True
+    assert result["workerPid"] == os.getpid()
+
+
+def test_task_turn_worker_setup_failure_writes_a_negative_receipt(monkeypatch, tmp_path):
+    receipt = tmp_path / "receipt.json"
+    monkeypatch.setattr(
+        MODULE,
+        "_app_server_task_turn_worker",
+        lambda _args: (_ for _ in ()).throw(RuntimeError("setup failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="setup failed"):
+        MODULE.task_turn_worker_entry(SimpleNamespace(receipt=str(receipt)))
+
+    value = json.loads(receipt.read_text(encoding="utf-8"))
+    assert value == {
+        "ok": False,
+        "turnStarted": False,
+        "turnId": None,
+        "error": "RuntimeError:setup failed",
+    }
 
 
 def test_recovery_reserve_rephrases_a_benign_policy_false_positive(monkeypatch, tmp_path):
@@ -1993,6 +2977,14 @@ def test_recovery_reserve_rephrases_a_benign_policy_false_positive(monkeypatch, 
 
     monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
     monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+    monkeypatch.setattr(
+        MODULE,
+        "recovery_list",
+        lambda _args: {
+            "ok": True,
+            "recoverable": [{"threadId": "thread-1", "recoveryNonce": "nonce"}],
+        },
+    )
 
     result = MODULE.recovery_reserve(
         SimpleNamespace(
@@ -2237,8 +3229,10 @@ def _published_followup_store(
     return store, worktree, head_sha, pr_url
 
 
-def test_pr_followup_reserve_refreshes_context_and_uses_canonical_prompt(monkeypatch, tmp_path):
+def test_pr_followup_reserve_refreshes_context_and_routes_to_shared_context(monkeypatch, tmp_path):
     store, worktree, _head_sha, pr_url = _published_followup_store(tmp_path)
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
     candidate = store.pr_followup_candidates()[0]
     prepared = []
 
@@ -2258,11 +3252,12 @@ def test_pr_followup_reserve_refreshes_context_and_uses_canonical_prompt(monkeyp
 
     assert prepared == [candidate]
     assert result["prUrl"] == pr_url
-    assert result["prompt"] == MODULE.issue_prompt("https://github.com/a/b/issues/1")
-    assert result["prompt"].splitlines() == [
+    assert result["prompt"].splitlines()[:2] == [
         "[$gh-issue-pr](/Users/oxygen/.codex/skills/gh-issue-pr/SKILL.md)",
         "https://github.com/a/b/issues/1",
     ]
+    assert str(MODULE.shared_context_path("https://github.com/a/b/issues/1")) in result["prompt"]
+    assert "不要在当前入口目录等待 .oss-pr-radar/task-context.json" in result["prompt"]
     context = json.loads(Path(result["contextPath"]).read_text(encoding="utf-8"))
     assert context["prFollowup"]["wakeDigest"] == candidate["wakeDigest"]
     assert context["prFollowup"]["preparedHeadSha"] == "b" * 40
@@ -2278,6 +3273,63 @@ def test_pr_followup_reserve_refreshes_context_and_uses_canonical_prompt(monkeyp
     assert refreshed["prFollowup"]["preparedHeadSha"] == "b" * 40
     assert refreshed["contextDigest"] == context["contextDigest"]
     assert store.pr_followup_candidates() == []
+
+
+def test_pr_followup_reserve_defers_changed_snapshot_until_fresh_import(monkeypatch, tmp_path):
+    store, _worktree, _head_sha, pr_url = _published_followup_store(tmp_path)
+    candidate = store.pr_followup_candidates()[0]
+
+    def changed_snapshot(_candidate):
+        raise MODULE.PrFollowupSnapshotChanged(
+            "PR_BASE_CHANGED",
+            expectedBaseSha="a" * 40,
+            actualBaseSha="b" * 40,
+        )
+
+    monkeypatch.setattr(MODULE, "_prepare_pr_followup", changed_snapshot)
+
+    result = MODULE.pr_followup_reserve(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            thread_id="thread-1",
+            wake_digest=candidate["wakeDigest"],
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["deferred"] is True
+    assert result["reason"] == "PR_BASE_CHANGED"
+    assert store.pr_followup_candidates() == []
+
+    def import_snapshot(checked_at):
+        return store.import_pr_followups(
+            {
+                "version": "pr_followup_v3",
+                "generatedAt": checked_at,
+                "items": [
+                    {
+                        "url": pr_url,
+                        "headSha": candidate["headSha"],
+                        "actionDigest": candidate["actionDigest"],
+                        "taskActionDigest": candidate["taskActionDigest"],
+                        "taskFollowupRequired": True,
+                        "taskActions": candidate["actions"],
+                        "evidence": candidate["evidence"],
+                        "checkedAt": checked_at,
+                    }
+                ],
+            }
+        )
+
+    import_snapshot(candidate["checkedAt"])
+    assert store.pr_followup_candidates() == []
+
+    fresh_checked_at = iso_z(parse_time(candidate["checkedAt"]) + timedelta(minutes=1))
+    import_snapshot(fresh_checked_at)
+    fresh = store.pr_followup_candidates()
+    assert len(fresh) == 1
+    assert fresh[0]["checkedAt"] == fresh_checked_at
+    assert fresh[0]["wakeDigest"] != candidate["wakeDigest"]
 
 
 def test_pr_followup_reserve_binds_controller_verified_conflict_files(tmp_path):
@@ -2579,6 +3631,40 @@ def test_prepare_pr_followup_accepts_fast_forwarded_base(monkeypatch, tmp_path):
     assert run_git(worktree, "branch", "--show-current") == "fix/1-runtime"
     assert run_git(worktree, "rev-parse", "refs/remotes/origin/main") == live_base
     assert run_git(worktree, "status", "--porcelain") == ""
+
+
+def test_pr_followup_recreates_a_missing_controller_workspace(monkeypatch, tmp_path):
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    expected = MODULE.managed_worktree_path("intent-1", "a/b")
+    source = tmp_path / "source"
+    source.mkdir()
+    calls = []
+
+    monkeypatch.setattr(
+        MODULE, "source_repo", lambda repo: calls.append(("source", repo)) or source
+    )
+
+    def prepare(source_path, *, intent_id, repo):
+        calls.append(("prepare", source_path, intent_id, repo))
+        expected.mkdir(parents=True)
+        return expected
+
+    monkeypatch.setattr(MODULE, "prepare_managed_worktree", prepare)
+
+    recovered = MODULE._ensure_pr_followup_worktree(
+        {
+            "worktreePath": str(expected),
+            "repo": "a/b",
+            "intentId": "intent-1",
+        }
+    )
+
+    assert recovered == expected
+    assert calls == [
+        ("source", "a/b"),
+        ("prepare", source, "intent-1", "a/b"),
+    ]
 
 
 def test_prepare_conflicted_pr_followup_requires_signed_base_snapshot(monkeypatch, tmp_path):
@@ -2991,6 +4077,27 @@ def test_controller_policy_snapshot_recovers_an_existing_blocked_fix(monkeypatch
     request = store.publication_request(request_id)
     assert request is not None
     assert request["request"]["quality"]["policy_verified"] is True
+
+
+def test_validation_followup_list_defers_ready_candidates_at_global_wip_limit(
+    monkeypatch, tmp_path
+):
+    store, _worktree, _result_path = _controller_commit_result(
+        tmp_path,
+        policy_verified=False,
+    )
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    assert first["validationDeferred"][0]["missing"] == ["policy_verified"]
+    monkeypatch.setattr(store, "active_task_count", lambda **_kwargs: 1)
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+
+    listed = MODULE.validation_followup_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert listed["candidates"] == []
+    assert len(listed["queuedDeferred"]) == 1
+    assert listed["queuedDeferred"][0]["reason"] == "global_task_wip_limit"
+    assert listed["queuedDeferred"][0]["activeTaskCount"] == 1
+    assert listed["queuedDeferred"][0]["taskLimit"] == 1
 
 
 def test_repaired_quality_rearms_same_blocked_publication_request(tmp_path):
@@ -3467,20 +4574,18 @@ def test_validation_followup_list_reconciles_and_reports_unchanged_gap(tmp_path)
     assert listed["blockedNoProgress"][0]["missing"] == ["relevant_tests_green"]
 
 
-def test_validation_followup_abandons_only_when_no_target_turn_materialized(monkeypatch, tmp_path):
+def test_validation_followup_never_abandons_an_unreceipted_delivery(monkeypatch, tmp_path):
     now = datetime.now(UTC)
     reserved_at = iso_z(now - timedelta(hours=2))
     thread_db = tmp_path / "threads.sqlite3"
     with sqlite3.connect(thread_db) as connection:
-        connection.execute("CREATE TABLE threads (id TEXT, updated_at INTEGER)")
+        connection.execute("CREATE TABLE threads (id TEXT, updated_at INTEGER, rollout_path TEXT)")
         connection.execute(
-            "INSERT INTO threads VALUES (?,?)",
-            ("thread-1", int((now - timedelta(hours=3)).timestamp())),
+            "INSERT INTO threads VALUES (?,?,?)",
+            ("thread-1", int((now - timedelta(hours=3)).timestamp()), None),
         )
 
     class Store:
-        abandoned = None
-
         def reconcile_validation_no_progress(self):
             return 0
 
@@ -3504,33 +4609,26 @@ def test_validation_followup_abandons_only_when_no_target_turn_materialized(monk
         def validation_no_progress(self):
             return []
 
-        def abandon_validation_followup_delivery(self, **kwargs):
-            self.abandoned = kwargs
-
     store = Store()
     monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
     monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
     args = SimpleNamespace(ledger=tmp_path / "ledger.sqlite3", min_age_minutes=90)
     unresolved = MODULE.validation_followup_list(args)["unresolved"][0]
 
-    result = MODULE.validation_followup_abandon(
-        SimpleNamespace(
-            ledger=tmp_path / "ledger.sqlite3",
-            thread_id="thread-1",
-            result_digest="a" * 64,
-            abandon_nonce=unresolved["abandonNonce"],
-            reason="TARGET_TURN_NOT_MATERIALIZED",
-            min_age_minutes=90,
+    assert unresolved["abandonable"] is False
+    assert unresolved["commitReady"] is False
+    assert "abandonNonce" not in unresolved
+    with pytest.raises(RuntimeError, match="not safely abandonable"):
+        MODULE.validation_followup_abandon(
+            SimpleNamespace(
+                ledger=tmp_path / "ledger.sqlite3",
+                thread_id="thread-1",
+                result_digest="a" * 64,
+                abandon_nonce="unused",
+                reason="TARGET_TURN_NOT_MATERIALIZED",
+                min_age_minutes=90,
+            )
         )
-    )
-
-    assert result["abandoned"] is True
-    assert store.abandoned == {
-        "thread_id": "thread-1",
-        "result_digest": "a" * 64,
-        "reason": "TARGET_TURN_NOT_MATERIALIZED",
-        "min_age_minutes": 90,
-    }
 
 
 def test_controller_defers_unvalidated_publishable_fix_without_agent_failure(tmp_path):

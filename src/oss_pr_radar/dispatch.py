@@ -12,8 +12,8 @@ from .contracts import contract_digest, validate_report
 from .policy import SCANNER_DECISION_REVISION, decision_contract_digest
 from .util import canonical_json, iso_z, parse_time, sha256_json, sha256_text
 
-QUEUE_VERSION = "dispatch_intents_v6"
-INTENT_VERSION = "dispatch_intent_v6"
+QUEUE_VERSION = "dispatch_intents_v7"
+INTENT_VERSION = "dispatch_intent_v7"
 LEGACY_QUEUE_CONTRACTS = {
     "dispatch_intents_v4": {
         "intentVersion": "dispatch_intent_v4",
@@ -30,6 +30,14 @@ LEGACY_QUEUE_CONTRACTS = {
             "84e6679669c6896f2aa42250f2e60aac4fd537a02f822eb95c8fc4498acbdb2b"
         ),
         "contractDigest": ("1259820e1344ef496d0aa936ae10c40b939621e8d09ce78e64b07f9f65396238"),
+    },
+    "dispatch_intents_v6": {
+        "intentVersion": "dispatch_intent_v6",
+        "scannerVersion": "oss_pr_radar_v44_disclosure_tasks_resolve_uncertainty",
+        "decisionContractDigest": (
+            "3055f8aa2bf39e97c4ac4e981fa468506f59dfa03a5d2f84dfdaf91e2ffed8fc"
+        ),
+        "contractDigest": ("d203810b30032b5edbfe18113f0805420ab6d1dc77792d3d12c9343355d38fba"),
     },
 }
 SKILL = "[$gh-issue-pr](/Users/oxygen/.codex/skills/gh-issue-pr/SKILL.md)"
@@ -94,7 +102,11 @@ def _eligible(candidate: dict[str, Any]) -> bool:
         and review.get("status") == "ok"
         and (
             review.get("decision") in ACTIONABLE_DECISIONS
-            or (private_disclosure_work and review.get("decision") == "WAIT_MAINTAINER")
+            or (
+                private_disclosure_work
+                and review.get("decision") == "WAIT_MAINTAINER"
+                and review.get("wait_reason") == "DISCLOSURE_ONLY"
+            )
         )
     )
 
@@ -211,8 +223,10 @@ def build_queue(
             "authorizationSource": "signed_live_revalidation_required",
             "publicationMode": mode,
             "llmReview": {
-                key: (candidate.get("llm_review") or {}).get(key)
-                for key in ("status", "decision", "confidence", "model")
+                ("waitReason" if key == "wait_reason" else key): (
+                    candidate.get("llm_review") or {}
+                ).get(key)
+                for key in ("status", "decision", "wait_reason", "confidence", "model")
             },
             "actionabilityEvidence": candidate.get("actionability_evidence") or {},
             "algorithmEvidence": candidate.get("algorithm_evidence"),

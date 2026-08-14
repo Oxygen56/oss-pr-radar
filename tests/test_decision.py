@@ -139,7 +139,7 @@ def test_live_gate_allows_ai_disclosure_candidate_for_private_work_only():
     assert result.reason_code == "AI_DISCLOSURE_PRIVATE_WORK_ALLOWED"
 
 
-def test_live_gate_allows_private_disclosure_task_to_resolve_review_uncertainty():
+def test_live_gate_allows_private_disclosure_only_wait():
     current = evidence("A normal runtime bug report.")
     value = EvidenceBundle(
         **{**current.__dict__, "policy": current.policy | {"ai_disclosure": True}}
@@ -152,6 +152,7 @@ def test_live_gate_allows_private_disclosure_task_to_resolve_review_uncertainty(
         "llm_review": {
             "status": "ok",
             "decision": "WAIT_MAINTAINER",
+            "waitReason": "DISCLOSURE_ONLY",
             "confidence": 0.7,
         },
     }
@@ -159,3 +160,28 @@ def test_live_gate_allows_private_disclosure_task_to_resolve_review_uncertainty(
     result = authorize(private_candidate, value)
 
     assert result.status == "ALLOW"
+    assert result.reason_code == "AI_DISCLOSURE_PRIVATE_WORK_ALLOWED"
+
+
+def test_live_gate_holds_private_disclosure_task_waiting_on_design():
+    current = evidence("A normal runtime bug report.")
+    value = EvidenceBundle(
+        **{**current.__dict__, "policy": current.policy | {"ai_disclosure": True}}
+    )
+    private_candidate = candidate() | {
+        "category": "LOCAL_FIX_ONLY",
+        "gate_decision": "ALLOW_PRIVATE_WORK",
+        "auto_spawn": True,
+        "public_submission_allowed": False,
+        "llm_review": {
+            "status": "ok",
+            "decision": "WAIT_MAINTAINER",
+            "waitReason": "DESIGN_CONFIRMATION",
+            "confidence": 0.7,
+        },
+    }
+
+    result = authorize(private_candidate, value)
+
+    assert result.status == "HOLD"
+    assert result.reason_code == "SEMANTIC_REVIEW_NOT_ACTIONABLE"

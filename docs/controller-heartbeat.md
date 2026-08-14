@@ -48,7 +48,12 @@ session. Empty output accompanied by a session ID means still running, never
 1. Run `scripts/install_local_publication_agent.py`, then run it again with
    `--status`. Record `localPublicationAgentHealthy`; installation is an
    idempotent repair, not a user-maintenance request.
-2. Run `scripts/check_workflow_health.py --max-effective-age-minutes 65
+   A valid historical context whose worktree was removed, or whose local mirror
+   is temporarily absent after workspace recreation, is reported under
+   `unavailable`; it is a durable recovery warning and must not block unrelated
+   queue sync, result ingestion, or publication. `context-sync` repairs a
+   missing mirror when the managed worktree is otherwise valid.
+2. Run `scripts/check_workflow_health.py --max-effective-age-minutes 110
    --repair`. Record `operationalHealthy`, `githubNaturalScheduleHealthy`,
    `repairTriggered`, `repairSuppressedReason`, `recentActive`, and `fallback`.
    `GITHUB_ACTIONS_BILLING_BLOCKED` is an external account blocker: do not
@@ -56,10 +61,12 @@ session. Empty output accompanied by a session ID means still running, never
    action once instead of treating repeated zero-step jobs as code failures.
 3. Never wait for GitHub Actions. If a remote scan is active, skip only the
    remote `sync` step and continue consuming valid local queues.
-4. `githubNaturalScheduleHealthy=false` may describe historical coverage while
-   `operationalHealthy=true` confirms a fresh effective scan. In that case,
-   `sync` is required whenever `recentActive=false`; historical coverage flags
-   must never suppress ingestion of the current signed cloud queue.
+4. `githubNaturalScheduleHealthy=false` describes a current scheduler failure.
+   Historical rolling-window gaps appear only in
+   `githubNaturalScheduleWarnings` and never make a fresh scheduler unhealthy.
+   When `operationalHealthy=true`, `sync` is required whenever
+   `recentActive=false`; historical warnings must never suppress ingestion of
+   the current signed cloud queue.
 
 ## 2. Reconcile interrupted creation
 
@@ -107,28 +114,49 @@ local row or retry the same follow-up manually; fresh cloud state re-arms it.
 
 Entries under `activeDeferred` are already being handled by a recently active
 task. They are not failures and must not be reserved, resent, or reported as a
-stalled follow-up. Process only `candidates`.
+stalled follow-up. Entries under `queuedDeferred` wait behind another durable
+issue, PR-follow-up, or validation task under the shared global WIP limit.
+Process only `candidates`.
+
+Entries under `restoreRequired` are valuable existing-PR tasks that the desktop
+currently marks archived. Unarchive each exact `threadId`, rerun
+`pr-followup-list`, and then process the resulting candidate. This is routine
+lifecycle repair and does not require user approval. A missing managed worktree
+is recreated by `pr-followup-reserve` from the verified PR head before the wake
+is reserved. Report `blocked` entries exactly; never create a replacement task
+for a missing thread.
 
 For each candidate, process one transaction at a time:
 
 1. `pr-followup-reserve --thread-id <threadId> --wake-digest <wakeDigest>`
-2. Send the returned canonical prompt unchanged to the same task with
-   `send_message_to_thread`. Never create another task or worktree.
-3. Only after explicit send success, run `pr-followup-commit` with the same
-   thread and wake digest.
+   may return `deferred=true` when the live PR head, base, or conflict state no
+   longer matches the verified cloud snapshot. This is a successful stale
+   snapshot invalidation: do not send or commit that wake. A later cloud import
+   may create a fresh wake only after its `checkedAt` advances.
+2. Run `pr-followup-deliver --thread-id <threadId> --wake-digest <wakeDigest>`.
+   The bridge resumes the same desktop task, starts the exact canonical turn,
+   and commits the reservation only after the app-server returns that turn ID.
+   Never call `send_message_to_thread`, create another task, or create another
+   worktree.
 
-If sending times out or has an unknown result, leave the reservation unresolved
-and stop that item. Never resend the same unresolved reservation directly. If
-`pr-followup-list` later reports `abandonable=true`, its local task-index check
-has already proved that the target task had no turn at or after `created_at`;
-call `pr-followup-abandon` with the returned nonce. Only the newly eligible
-signed candidate may then be reserved and sent again. Preserve ambiguous
-deliveries when the target task did update. Report all remaining unresolved
-entries with exact task, PR URL, and wake digest. Cancellation-only checks,
-aggregate checks, and failures unrelated to branch files are not actionable
-candidates.
+An unknown worker outcome remains frozen and is never released by elapsed time.
+If `commitReady=true`, rerun `pr-followup-deliver`; it reconciles the already
+materialized target turn without starting another one. Report any remaining
+unresolved entry with its exact task, PR URL, and wake digest. Cancellation-only
+checks, aggregate checks, and failures unrelated to branch files are not
+actionable candidates.
 
 ## 5. Dispatch new issue tasks
+
+Existing work has strict priority over discovery. Before claiming any new issue,
+run `ingest-results`, then re-run `pr-followup-list`,
+`validation-followup-list`, and `recovery-list --min-age-minutes 90`. Finish one
+actionable PR follow-up, validation continuation, or recoverable existing task
+before using the global task slot for a new issue. Environment-blocked or
+unchanged-no-progress validation does not block new discovery. The bridge
+enforces this gate and may return `reason=higher_priority_existing_work`; when
+it does, do not audit or claim another new intent in that run. Process the
+reported existing-work class and re-check the lists instead.
 
 Process every eligible `PENDING` intent sequentially:
 
@@ -167,8 +195,13 @@ For a successful claim:
 
 Only `claim` receives `--owner`; all later lifecycle commands read the stored
 lease owner. `authorized=false`, `shadow=true`, or `claimed=false` never creates
-a task. Private task concurrency is limited only by an explicit
-`RADAR_MAX_ACTIVE_TASKS` value.
+a task. Private task concurrency defaults to one durable task across issue
+dispatch, existing-PR follow-up, and validation continuation so a later
+app-server root turn cannot interrupt an earlier one. The bridge checks this
+limit before performing another expensive live audit; `task_wip_limit` leaves
+the pending intent untouched for a later run. An explicit
+`RADAR_MAX_ACTIVE_TASKS=0` removes the limit only on hosts with proven isolated
+root-turn execution.
 
 ## 6. Results, publication, and validation
 
@@ -202,20 +235,27 @@ preserves the reconciliation block.
 
 Run `validation-followup-list`. For each candidate:
 
+Items under `queuedDeferred` wait behind the same global WIP limit as issue and
+PR-follow-up work. Do not reserve or send them until they return under
+`candidates`.
+
 - Reserve with the exact task and result digest. The bridge itself computes,
   validates, and runs any required lockfile-scoped dependency prefetch before
   reserving; the controller must never inspect or execute dependency commands.
   A failed prefetch leaves the candidate unreserved and must be reported.
-- Send the canonical prompt returned by the reservation unchanged to the same
-  task; commit only after explicit send success.
-- Unknown send results stay unresolved and are never resent automatically. If
-  `validation-followup-list` later reports `abandonable=true`, its local
-  task-index check has already proved that the target task had no turn at or
-  after `reservedAt`; call `validation-followup-abandon` with the returned
-  nonce. Re-list the queue; the same result may be reconsidered only through
-  the newly authorized state.
+- Run `validation-followup-deliver --thread-id <threadId> --result-digest
+  <resultDigest>`. The bridge resumes the same task and commits only after the
+  app-server receipts the exact new turn.
+- Unknown worker outcomes remain unresolved and are never released or resent
+  by age. If `commitReady=true`, rerun `validation-followup-deliver` to commit
+  the already materialized turn without creating another one.
 - Report entries stale after 90 minutes as `validationFollowupStalled`; this is
   a delivery watchdog, not a general review cooldown.
+- A validation turn that the independent desktop view marks `interrupted` may
+  enter `recovery-list` immediately, but only after the exact detached
+  owner has exited. Both the first-turn `root-task-worker` and continuation
+  `task-turn-worker` are active ownership. `terminal_turn_worker_draining` is
+  not a stalled task; never start a second turn while either owner is present.
 - Entries under `environmentBlocked` have a real dependency failure but no
   deterministic lockfile-scoped preparation path. Report the exact task and
   reason, but do not send a validation continuation that cannot change the
@@ -227,8 +267,18 @@ Run `validation-followup-list`. For each candidate:
 
 ## 7. Recovery, titles, and cleanup
 
-1. Run `recovery-list --min-age-minutes 90`; use one write-ahead recovery only
-   for tasks with no recent activity and no structured result. This includes an
+1. Run `recovery-list --min-age-minutes 90`; only the single item under
+   `recoverable` is authorized for this round. Entries under `queuedDeferred`
+   stay queued behind it, and any `activeDeferred` item suppresses all new
+   recovery sends until that task reaches a terminal state. Any entry under
+   `unresolved` also suppresses the complete recovery queue until the prior
+   delivery is receipted. After `recovery-reserve`, run `recovery-deliver` with
+   the same task and recovery nonce. If `commitReady=true`, rerun
+   `recovery-deliver`; it commits the already materialized turn without
+   creating another one. Unknown worker outcomes remain frozen and are never
+   abandoned by age. Never send the next queued item while a delivery result is
+   unknown. Use one write-ahead
+   recovery only for tasks with no recent activity and no structured result. This includes an
    existing-PR follow-up that was sent successfully but never returned its
    required identity-matched result. Recently active tasks must not be woken,
    except when the bridge reports `immediateRecovery=true` for a terminal
@@ -252,7 +302,8 @@ Run `validation-followup-list`. For each candidate:
 
 ## 8. Final fixed-point gate
 
-Run a final health check without `--repair`, then repeat the relevant reconcile
+Run a final health check without `--repair` and run
+`scripts/install_local_publication_agent.py --status` again, then repeat the relevant reconcile
 sequence: `orphan-list`, `pr-followup-list`, `context-sync`, `ingest-results`,
 `validation-followup-list`, `publish-terminal-feedback`, `publication-run`,
 `context-sync`, `dispatch-notifications --notify`, `list`, `alerts`,
@@ -264,10 +315,15 @@ Before reporting success, prove these six queues are empty:
 
 - `orphan-list`
 - `pr-followup-list` candidates, unresolved, and errors (`activeDeferred` may
-  remain while its task is actively working)
+  remain while its task is actively working; `restoreRequired` and `blocked`
+  must be empty)
 - `validation-followup-list` candidates, unresolved, stale, and errors;
   `blockedNoProgress` may remain only when each key and unchanged gap is included
   in the final operational summary
+- `recovery-list` blocked and unresolved must be empty; `recoverable` must be
+  empty after any authorized send. `activeDeferred` and `queuedDeferred` may
+  remain only as the explicit serialized work queue reported in the final
+  operational summary.
 - `restore-list`
 - `title-list`
 - `cleanup-list`
@@ -289,6 +345,6 @@ local publication agent and health state, natural schedule state, repairs or
 fallback, reconciled creation, contexts/results/validation/feedback/publication,
 dispatch and notification counts, recovery/restore/title/archive counts,
 remaining pending/alerts, validation no-progress blocks, policy suppressions,
-schedule warnings, and genuine failed stages. Expected policy filters, explicit
+unavailable historical worktrees, schedule warnings, and genuine failed stages. Expected policy filters, explicit
 validation no-progress blocks, and historical schedule gaps are warnings, not
 execution failures. Never print credentials.

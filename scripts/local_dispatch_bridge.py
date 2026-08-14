@@ -61,6 +61,9 @@ ORPHAN_ABANDON_MIN_AGE_MINUTES = 70
 PR_FOLLOWUP_ACTIVE_DEFERRAL_MINUTES = 30
 PR_FOLLOWUP_ABANDON_MIN_AGE_MINUTES = 90
 CLOUD_PR_FOLLOWUP_MAX_AGE_MINUTES = 150
+APP_SERVER_WATCHDOG_INTERVAL_SECONDS = 5.0
+APP_SERVER_WATCHDOG_STALE_SECONDS = 15.0
+APP_SERVER_EVENT_DRAIN_SLICE_SECONDS = 1.0
 VALIDATION_PREFETCH_TIMEOUTS = {
     "cargo_locked_fetch": 300,
     "go_locked_download": 300,
@@ -95,20 +98,55 @@ PUBLISHED_TASK_STAGES = {
 }
 IMMEDIATE_RECOVERY_ERROR_CODES = {
     "cyber_policy",
+    "cyberPolicy",
     "internal_error",
+    "internalServerError",
     "server_error",
+    "serverOverloaded",
     "system_error",
+    "unauthorized",
+    "httpConnectionFailed",
+    "responseStreamConnectionFailed",
+    "responseStreamDisconnected",
+    "responseTooManyFailedAttempts",
 }
 BENIGN_POLICY_RECOVERY_PROMPT = (
     "这是一个普通开源软件的本地 GPU 张量生命周期修复续办，不是网络安全任务。"
     "保留现有工作树和已完成改动，直接完成离线测试、独立复核以及 Workspace Result "
     "Protocol 结构化交接；不要访问网络，不要执行公开操作。"
 )
+VALIDATION_RECOVERY_PROMPT = (
+    "这是同一受控任务的验证续跑中断恢复，不要创建新任务或重新实现。重新读取工作树内的 "
+    ".oss-pr-radar/task-context.json 和 result.json，只补齐仍缺失的验证证据并正常完成交接。"
+    "不得刷新 GitHub、安装依赖、请求权限、提交、推送、创建 PR 或执行其他公开动作。"
+)
 issue_prompt = canonical_prompt
 
 
-def latest_terminal_thread_error(rollout_path: str | None) -> dict[str, Any] | None:
-    """Return the latest turn's terminal error without loading a large rollout."""
+class TaskContextWorktreeUnavailable(RuntimeError):
+    """A valid shared context whose controller-owned workspace no longer exists."""
+
+    def __init__(
+        self,
+        context: dict[str, Any],
+        reason: str = "TASK_WORKTREE_UNAVAILABLE",
+    ):
+        super().__init__(reason)
+        self.context = context
+        self.reason = reason
+
+
+class PrFollowupSnapshotChanged(RuntimeError):
+    """The live PR no longer matches the cloud snapshot being prepared."""
+
+    def __init__(self, reason: str, **evidence: str):
+        super().__init__(reason)
+        self.reason = reason
+        self.evidence = {key: value for key, value in evidence.items() if value}
+
+
+def latest_thread_turn_state(rollout_path: str | None) -> dict[str, Any] | None:
+    """Return the latest turn's terminal state without loading a large rollout."""
 
     if not rollout_path:
         return None
@@ -121,7 +159,9 @@ def latest_terminal_thread_error(rollout_path: str | None) -> dict[str, Any] | N
     except OSError:
         return None
     for raw_line in reversed(data.splitlines()):
-        if '"task_complete"' not in raw_line and '"turn_context"' not in raw_line:
+        if not any(
+            marker in raw_line for marker in ('"task_complete"', '"turn_aborted"', '"turn_context"')
+        ):
             continue
         try:
             record = json.loads(raw_line)
@@ -130,17 +170,228 @@ def latest_terminal_thread_error(rollout_path: str | None) -> dict[str, Any] | N
         if record.get("type") == "turn_context":
             return None
         payload = record.get("payload") or {}
-        if record.get("type") != "event_msg" or payload.get("type") != "task_complete":
+        if record.get("type") != "event_msg":
+            continue
+        if payload.get("type") == "turn_aborted":
+            return {
+                "status": "interrupted",
+                "code": "turn_interrupted",
+                "message": str(payload.get("reason") or "interrupted")[:240],
+                "turnId": str(payload.get("turn_id") or ""),
+            }
+        if payload.get("type") != "task_complete":
             continue
         error = payload.get("error")
         if not isinstance(error, dict):
-            return None
+            return {
+                "status": "completed",
+                "code": None,
+                "message": "",
+                "turnId": str(payload.get("turn_id") or ""),
+            }
+        error_info = error.get("codex_error_info")
+        if isinstance(error_info, dict):
+            code = str(next(iter(error_info), "system_error"))
+        else:
+            code = str(error_info or "system_error")
         return {
-            "code": str(error.get("codex_error_info") or "system_error"),
+            "status": "failed",
+            "code": code,
             "message": str(error.get("message") or "")[:240],
             "turnId": str(payload.get("turn_id") or ""),
         }
     return None
+
+
+def _terminal_state_from_app_server_turn(turn: dict[str, Any]) -> dict[str, Any] | None:
+    status = str(turn.get("status") or "")
+    turn_id = str(turn.get("id") or "")
+    if status == "completed":
+        return {"status": "completed", "code": None, "message": "", "turnId": turn_id}
+    if status == "interrupted":
+        return {
+            "status": "interrupted",
+            "code": "turn_interrupted",
+            "message": "interrupted",
+            "turnId": turn_id,
+        }
+    if status != "failed":
+        return None
+    error = turn.get("error") if isinstance(turn.get("error"), dict) else {}
+    error_info = error.get("codexErrorInfo") or error.get("codex_error_info")
+    if isinstance(error_info, dict):
+        code = str(next(iter(error_info), "system_error"))
+    else:
+        code = str(error_info or "system_error")
+    return {
+        "status": "failed",
+        "code": code,
+        "message": str(error.get("message") or "")[:240],
+        "turnId": turn_id,
+    }
+
+
+def live_thread_turn_states(thread_ids: set[str]) -> dict[str, dict[str, Any]]:
+    """Read terminal states from a separate app-server view of desktop tasks."""
+
+    requested = sorted({str(item) for item in thread_ids if str(item)})
+    executable = shutil.which("codex")
+    if not requested or not executable:
+        return {}
+    try:
+        process = subprocess.Popen(
+            [
+                executable,
+                "app-server",
+                "--disable",
+                "recommended_plugins",
+                "--disable",
+                "remote_plugin",
+                "--stdio",
+            ],
+            cwd=GITHUB_ROOT,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            bufsize=0,
+        )
+    except OSError:
+        return {}
+    try:
+        if process.stdin is None or process.stdout is None:
+            return {}
+        request_threads = {index + 1: thread_id for index, thread_id in enumerate(requested)}
+        requests = [
+            {
+                "id": 0,
+                "method": "initialize",
+                "params": {
+                    "clientInfo": {"name": "oss-pr-radar-watchdog", "version": "1.0"},
+                    "capabilities": {"experimentalApi": True},
+                },
+            },
+            *[
+                {
+                    "id": request_id,
+                    "method": "thread/read",
+                    "params": {"threadId": thread_id, "includeTurns": True},
+                }
+                for request_id, thread_id in request_threads.items()
+            ],
+        ]
+        process.stdin.write(
+            b"".join((json.dumps(item) + "\n").encode("utf-8") for item in requests)
+        )
+        process.stdin.flush()
+        buffer = b""
+        states: dict[str, dict[str, Any]] = {}
+        pending = set(request_threads)
+        deadline = monotonic() + 10
+        with selectors.DefaultSelector() as selector:
+            selector.register(process.stdout, selectors.EVENT_READ)
+            while pending and monotonic() < deadline:
+                ready = selector.select(max(0.0, deadline - monotonic()))
+                if not ready:
+                    break
+                chunk = os.read(process.stdout.fileno(), 65536)
+                if not chunk:
+                    break
+                buffer += chunk
+                while b"\n" in buffer:
+                    raw, buffer = buffer.split(b"\n", 1)
+                    try:
+                        message = json.loads(raw)
+                    except json.JSONDecodeError:
+                        continue
+                    request_id = message.get("id")
+                    if request_id not in pending:
+                        continue
+                    pending.remove(request_id)
+                    if message.get("error"):
+                        continue
+                    thread = (message.get("result") or {}).get("thread") or {}
+                    thread_id = request_threads[request_id]
+                    if str(thread.get("id") or "") != thread_id:
+                        continue
+                    turns = [item for item in thread.get("turns") or [] if isinstance(item, dict)]
+                    if not turns:
+                        continue
+                    state = _terminal_state_from_app_server_turn(turns[-1])
+                    if state is not None:
+                        states[thread_id] = state
+        return states
+    except (OSError, RuntimeError, subprocess.SubprocessError):
+        return {}
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=3)
+
+
+def latest_terminal_thread_error(rollout_path: str | None) -> dict[str, Any] | None:
+    """Return the latest turn's terminal failure for compatibility callers."""
+
+    state = latest_thread_turn_state(rollout_path)
+    if not state or state.get("status") not in {"failed", "interrupted"}:
+        return None
+    return state
+
+
+def thread_turn_materialized_after(rollout_path: str | None, reserved_at: str) -> tuple[bool, bool]:
+    """Return whether a persisted turn started at or after a delivery reservation."""
+
+    if not rollout_path:
+        return False, False
+    path = Path(rollout_path)
+    try:
+        threshold = parse_time(reserved_at)
+        with path.open("rb") as handle:
+            size = handle.seek(0, os.SEEK_END)
+            handle.seek(max(0, size - 8 * 1024 * 1024))
+            data = handle.read().decode("utf-8", errors="ignore")
+    except (OSError, ValueError):
+        return False, False
+    for raw_line in data.splitlines():
+        if '"turn_context"' not in raw_line:
+            continue
+        try:
+            record = json.loads(raw_line)
+            timestamp = record.get("timestamp")
+            if (
+                record.get("type") == "turn_context"
+                and timestamp
+                and parse_time(str(timestamp)) >= threshold
+            ):
+                return True, True
+        except (json.JSONDecodeError, ValueError):
+            continue
+    return True, False
+
+
+def _is_immediate_recovery(state: dict[str, Any] | None) -> bool:
+    if not state:
+        return False
+    if state.get("status") == "interrupted":
+        return True
+    if state.get("status") != "failed":
+        return False
+    code = str(state.get("code") or "")
+    if code in IMMEDIATE_RECOVERY_ERROR_CODES:
+        return True
+    message = str(state.get("message") or "").casefold()
+    return code == "other" and any(
+        marker in message
+        for marker in (
+            "403 forbidden",
+            "access token could not be refreshed",
+            "response stream",
+            "connection failed",
+        )
+    )
 
 
 def managed_worktree_root() -> Path:
@@ -432,26 +683,6 @@ def _verified_shared_task_context(path: Path) -> tuple[dict[str, Any], str]:
     if Path(str(context.get("bootstrapContextPath") or "")).resolve() != path.resolve():
         raise RuntimeError("shared task context bootstrap path is invalid")
 
-    worktree = Path(str(context.get("worktreePath") or "")).resolve()
-    if not worktree.is_dir() or not _is_managed_worktree(worktree):
-        raise RuntimeError("shared task context worktree is unavailable or unmanaged")
-    local_path = worktree / TASK_PRIVATE_DIR / "task-context.json"
-    if local_path.is_symlink() or not local_path.is_file():
-        raise RuntimeError("worktree task context mirror is missing")
-    if local_path.stat().st_mode & 0o022:
-        raise RuntimeError("worktree task context mirror is group or world writable")
-    if local_path.read_bytes() != raw:
-        raise RuntimeError("shared and worktree task context mirrors disagree")
-    if Path(command(["git", "rev-parse", "--show-toplevel"], cwd=worktree)).resolve() != worktree:
-        raise RuntimeError("shared task context worktree root is invalid")
-    remotes = command(["git", "remote"], cwd=worktree).splitlines()
-    if not any(
-        normalize_origin(command(["git", "remote", "get-url", remote], cwd=worktree))
-        == repo.casefold()
-        for remote in remotes
-    ):
-        raise RuntimeError("shared task context worktree does not belong to issue repository")
-
     for key, expected in {
         "controllerOwnsLifecycle": True,
         "controllerOwnsPublication": True,
@@ -483,7 +714,6 @@ def _verified_shared_task_context(path: Path) -> tuple[dict[str, Any], str]:
         commit_sha = str(receipt.get("commitSha") or "")
         if not re.fullmatch(r"[0-9a-f]{40}", commit_sha):
             raise RuntimeError("shared task context publication commit is invalid")
-        command(["git", "cat-file", "-e", f"{commit_sha}^{{commit}}"], cwd=worktree)
     followup = context.get("prFollowup")
     prepared_head = (
         str(followup.get("preparedHeadSha"))
@@ -507,6 +737,37 @@ def _verified_shared_task_context(path: Path) -> tuple[dict[str, Any], str]:
     }
     if context.get("contextDigest") not in accepted_digests:
         raise RuntimeError("shared task context digest mismatch")
+
+    # Missing historical workspaces must not block unrelated live queue items.
+    # The shared envelope has passed identity, boundary, receipt, and digest
+    # checks before availability is classified here.
+    worktree = Path(str(context.get("worktreePath") or "")).resolve()
+    if not worktree.is_dir() or not _is_managed_worktree(worktree):
+        raise TaskContextWorktreeUnavailable(context)
+    local_path = worktree / TASK_PRIVATE_DIR / "task-context.json"
+    if local_path.is_symlink() or not local_path.is_file():
+        # A recreated historical PR worktree can briefly exist before
+        # context-sync restores its controller-owned mirror. Keep that task
+        # unavailable without blocking unrelated result or publication work.
+        raise TaskContextWorktreeUnavailable(
+            context,
+            reason="TASK_CONTEXT_MIRROR_UNAVAILABLE",
+        )
+    if local_path.stat().st_mode & 0o022:
+        raise RuntimeError("worktree task context mirror is group or world writable")
+    if local_path.read_bytes() != raw:
+        raise RuntimeError("shared and worktree task context mirrors disagree")
+    if Path(command(["git", "rev-parse", "--show-toplevel"], cwd=worktree)).resolve() != worktree:
+        raise RuntimeError("shared task context worktree root is invalid")
+    remotes = command(["git", "remote"], cwd=worktree).splitlines()
+    if not any(
+        normalize_origin(command(["git", "remote", "get-url", remote], cwd=worktree))
+        == repo.casefold()
+        for remote in remotes
+    ):
+        raise RuntimeError("shared task context worktree does not belong to issue repository")
+    if isinstance(receipt, dict) and receipt.get("prUrl"):
+        command(["git", "cat-file", "-e", f"{receipt['commitSha']}^{{commit}}"], cwd=worktree)
     source_updated_at = iso_z(
         datetime.fromtimestamp(max(path.stat().st_mtime, local_path.stat().st_mtime), tz=UTC)
     )
@@ -594,9 +855,11 @@ def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
             "verified": 0,
             "restored": [],
             "resultReceiptsRestored": 0,
+            "unavailable": [],
             "errors": [],
         }
     restored: list[dict[str, Any]] = []
+    unavailable: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
     result_receipts_restored = 0
     for path in sorted(root.glob("*.json")):
@@ -625,12 +888,29 @@ def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
                 receipt_restored = True
                 result_receipts_restored += 1
             restored.append(restored_context | {"resultReceiptRestored": receipt_restored})
+        except TaskContextWorktreeUnavailable as exc:
+            context = exc.context
+            receipt = context.get("publicationReceipt")
+            unavailable.append(
+                {
+                    "path": str(path),
+                    "key": str(context.get("key") or ""),
+                    "issueUrl": str(context.get("issueUrl") or ""),
+                    "intentId": str(context.get("intentId") or ""),
+                    "stage": str(context.get("stage") or ""),
+                    "threadId": str(context.get("threadId") or ""),
+                    "worktreePath": str(context.get("worktreePath") or ""),
+                    "published": bool(isinstance(receipt, dict) and receipt.get("prUrl")),
+                    "reason": exc.reason,
+                }
+            )
         except (OSError, RuntimeError, ValueError) as exc:
             errors.append({"path": str(path), "error": str(exc)[:300]})
     return {
         "verified": len(restored),
         "restored": restored,
         "resultReceiptsRestored": result_receipts_restored,
+        "unavailable": unavailable,
         "errors": errors,
     }
 
@@ -653,9 +933,31 @@ def sync_queue(path: Path = LEDGER_PATH) -> dict[str, Any]:
             "inserted": 0,
             "superseded": 0,
             "staleTerminalRejected": 0,
+            "missingWorkspacesSuperseded": [],
             "taskContextRecovery": context_recovery,
             "prFollowup": {"status": "deferred", "reason": "task_context_recovery_failed"},
         }
+    incoming_by_key = {str(item.get("key") or ""): item for item in intents}
+    workspace_superseded: list[dict[str, str]] = []
+    for unavailable in context_recovery["unavailable"]:
+        if unavailable.get("published"):
+            continue
+        replacement = incoming_by_key.get(str(unavailable.get("key") or ""))
+        if not replacement:
+            continue
+        if store.supersede_missing_workspace(
+            key=str(unavailable["key"]),
+            intent_id=str(unavailable["intentId"]),
+            worktree_path=str(unavailable["worktreePath"]),
+            replacement_intent_id=str(replacement["intentId"]),
+        ):
+            workspace_superseded.append(
+                {
+                    "key": str(unavailable["key"]),
+                    "intentId": str(unavailable["intentId"]),
+                    "replacementIntentId": str(replacement["intentId"]),
+                }
+            )
     stale_terminal = store.reconcile_terminal_intents()
     superseded = store.reconcile_pending(
         {str(item["intentId"]) for item in intents if item.get("intentId")}
@@ -699,6 +1001,7 @@ def sync_queue(path: Path = LEDGER_PATH) -> dict[str, Any]:
         "inserted": inserted,
         "superseded": len(superseded),
         "staleTerminalRejected": len(stale_terminal),
+        "missingWorkspacesSuperseded": workspace_superseded,
         "taskContextRecovery": context_recovery,
         "prFollowup": followup_import,
     }
@@ -1036,7 +1339,7 @@ def _audit_payload(evidence: Any, verdict: Any) -> dict[str, Any]:
 
 
 def _private_task_limit() -> int | None:
-    raw = os.environ.get("RADAR_MAX_ACTIVE_TASKS", "0").strip()
+    raw = os.environ.get("RADAR_MAX_ACTIVE_TASKS", "1").strip()
     try:
         value = int(raw)
     except ValueError as exc:
@@ -1046,12 +1349,87 @@ def _private_task_limit() -> int | None:
     return value or None
 
 
+def _active_task_count(store: Any, *, exclude_intent_id: str | None = None) -> int:
+    counter = getattr(store, "active_task_count", None)
+    if callable(counter):
+        return int(counter(exclude_intent_id=exclude_intent_id))
+    fallback = getattr(store, "active_dispatch_count", None)
+    return int(fallback(exclude_intent_id=exclude_intent_id)) if callable(fallback) else 0
+
+
+def _global_task_wip(store: Any) -> tuple[bool, int, int | None]:
+    limit = _private_task_limit()
+    active = _active_task_count(store)
+    return limit is not None and active >= limit, active, limit
+
+
+def _higher_priority_existing_work(
+    args: argparse.Namespace,
+    *,
+    intent_key: str,
+) -> list[dict[str, str]]:
+    """Keep scarce task capacity on work already closest to a useful outcome."""
+
+    priorities: list[dict[str, str]] = []
+    pr_state = pr_followup_list(argparse.Namespace(ledger=args.ledger))
+    for item in [
+        *pr_state["candidates"],
+        *pr_state["restoreRequired"],
+        *pr_state["unresolved"],
+    ]:
+        if item.get("key") != intent_key:
+            priorities.append({"kind": "pr_followup", "key": str(item.get("key") or "")})
+
+    validation_state = validation_followup_list(
+        argparse.Namespace(ledger=args.ledger, min_age_minutes=90)
+    )
+    for item in [*validation_state["candidates"], *validation_state["unresolved"]]:
+        if item.get("key") != intent_key:
+            priorities.append(
+                {"kind": "validation_followup", "key": str(item.get("key") or "")}
+            )
+
+    recovery_state = recovery_list(
+        argparse.Namespace(ledger=args.ledger, min_age_minutes=90)
+    )
+    for item in [*recovery_state["recoverable"], *recovery_state["unresolved"]]:
+        if item.get("key") != intent_key:
+            priorities.append({"kind": "recovery", "key": str(item.get("key") or "")})
+    return priorities
+
+
 def claim_intent(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
     pending = {item["intentId"]: item for item in store.pending()}
     intent = pending.get(args.intent_id)
     if not intent:
         raise RuntimeError("intent is not pending")
+    max_active = _private_task_limit()
+    if (
+        intent.get("mode") != "shadow"
+        and max_active is not None
+        and _active_task_count(store, exclude_intent_id=intent["intentId"]) >= max_active
+    ):
+        return {
+            "ok": True,
+            "authorized": False,
+            "auditDeferred": True,
+            "held": True,
+            "claimed": False,
+            "reason": "task_wip_limit",
+        }
+    if intent.get("mode") != "shadow":
+        priority_work = _higher_priority_existing_work(args, intent_key=str(intent["key"]))
+        if priority_work:
+            return {
+                "ok": True,
+                "authorized": False,
+                "auditDeferred": True,
+                "held": True,
+                "claimed": False,
+                "reason": "higher_priority_existing_work",
+                "priorityWork": priority_work,
+            }
     evidence, verdict = _audit_intent(intent)
     if verdict.status == "BLOCK":
         store.record_stage(
@@ -1092,7 +1470,6 @@ def claim_intent(args: argparse.Namespace) -> dict[str, Any]:
             "shadow": True,
             "decision": verdict.as_dict(),
         }
-    max_active = _private_task_limit()
     claimed = store.claim(
         intent["intentId"],
         args.owner,
@@ -1102,7 +1479,7 @@ def claim_intent(args: argparse.Namespace) -> dict[str, Any]:
     if not claimed:
         wip_limited = (
             max_active is not None
-            and store.active_dispatch_count(exclude_intent_id=intent["intentId"]) >= max_active
+            and _active_task_count(store, exclude_intent_id=intent["intentId"]) >= max_active
         )
         return {
             "ok": True,
@@ -1381,6 +1758,117 @@ def creation_abandon(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def _app_server_terminal_turn(
+    message: dict[str, Any],
+    *,
+    thread_id: str,
+    turn_id: str,
+    read_request_id: int | None = None,
+) -> dict[str, Any] | None:
+    """Extract the target turn once app-server reports a terminal state."""
+
+    turn: dict[str, Any] | None = None
+    if message.get("method") == "turn/completed":
+        params = message.get("params") or {}
+        if str(params.get("threadId") or "") != thread_id:
+            return None
+        candidate = params.get("turn")
+        if isinstance(candidate, dict):
+            turn = candidate
+    elif read_request_id is not None and message.get("id") == read_request_id:
+        thread = (message.get("result") or {}).get("thread") or {}
+        if str(thread.get("id") or "") != thread_id:
+            return None
+        turns = thread.get("turns") or []
+        turn = next(
+            (
+                candidate
+                for candidate in turns
+                if isinstance(candidate, dict) and str(candidate.get("id") or "") == turn_id
+            ),
+            None,
+        )
+    if not turn or str(turn.get("id") or "") != turn_id:
+        return None
+    status = str(turn.get("status") or "")
+    if status not in {"completed", "interrupted", "failed"}:
+        return None
+    return {"turnId": turn_id, "status": status, "error": turn.get("error")}
+
+
+def _wait_for_app_server_terminal_turn(
+    process: subprocess.Popen[bytes],
+    selector: selectors.BaseSelector,
+    buffer: bytes,
+    *,
+    thread_id: str,
+    turn_id: str,
+    next_request_id: int = 3,
+) -> dict[str, Any] | None:
+    """Keep an app-server owner alive while independently polling turn state."""
+
+    if process.stdin is None or process.stdout is None:
+        return None
+    read_request_id: int | None = None
+    read_requested_at: float | None = None
+    next_read_at = monotonic() + APP_SERVER_WATCHDOG_INTERVAL_SECONDS
+    while process.poll() is None:
+        now = monotonic()
+        request_stale = (
+            read_request_id is not None
+            and read_requested_at is not None
+            and now - read_requested_at >= APP_SERVER_WATCHDOG_STALE_SECONDS
+        )
+        if now >= next_read_at and (read_request_id is None or request_stale):
+            read_request_id = next_request_id
+            next_request_id += 1
+            read_requested_at = now
+            process.stdin.write(
+                (
+                    json.dumps(
+                        {
+                            "id": read_request_id,
+                            "method": "thread/read",
+                            "params": {"threadId": thread_id, "includeTurns": True},
+                        }
+                    )
+                    + "\n"
+                ).encode("utf-8")
+            )
+            process.stdin.flush()
+            next_read_at = now + APP_SERVER_WATCHDOG_INTERVAL_SECONDS
+
+        timeout = min(
+            APP_SERVER_EVENT_DRAIN_SLICE_SECONDS,
+            max(0.0, next_read_at - monotonic()),
+        )
+        ready = selector.select(timeout)
+        if not ready:
+            continue
+        chunk = os.read(process.stdout.fileno(), 65536)
+        if not chunk:
+            break
+        buffer += chunk
+        while b"\n" in buffer:
+            raw, buffer = buffer.split(b"\n", 1)
+            try:
+                message = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            terminal = _app_server_terminal_turn(
+                message,
+                thread_id=thread_id,
+                turn_id=turn_id,
+                read_request_id=read_request_id,
+            )
+            if read_request_id is not None and message.get("id") == read_request_id:
+                read_request_id = None
+                read_requested_at = None
+            if terminal:
+                return terminal
+    return None
+
+
 def _app_server_request_worker(args: argparse.Namespace) -> dict[str, Any]:
     """Create a project-root task without the delegated subagent API."""
 
@@ -1543,26 +2031,23 @@ def _app_server_request_worker(args: argparse.Namespace) -> dict[str, Any]:
             )
             _atomic_json(Path(args.receipt), {"ok": True, "turnId": turn_id} | receipt)
 
-            # Keep the stdio owner alive until the task turn completes.
-            while process.poll() is None:
-                ready = selector.select(60)
-                if not ready:
-                    continue
-                chunk = os.read(process.stdout.fileno(), 65536)
-                if not chunk:
-                    break
-                buffer += chunk
-                while b"\n" in buffer:
-                    raw, buffer = buffer.split(b"\n", 1)
-                    try:
-                        message = json.loads(raw)
-                    except json.JSONDecodeError:
-                        continue
-                    if (
-                        message.get("method") == "turn/completed"
-                        and str((message.get("params") or {}).get("threadId") or "") == thread_id
-                    ):
-                        return {"ok": True, "threadId": thread_id, "turnId": turn_id}
+            # Keep the stdio owner alive until the task turn completes. Poll the
+            # persisted turn as a watchdog because a lost completion notification
+            # must not leave one app-server process alive indefinitely.
+            terminal = _wait_for_app_server_terminal_turn(
+                process,
+                selector,
+                buffer,
+                thread_id=thread_id,
+                turn_id=turn_id,
+            )
+            if terminal:
+                return {
+                    "ok": True,
+                    "threadId": thread_id,
+                    "turnId": turn_id,
+                    "turnStatus": terminal["status"],
+                }
             return {"ok": True, "threadId": thread_id, "turnId": turn_id}
     except Exception as exc:
         receipt_path = Path(args.receipt)
@@ -1575,15 +2060,23 @@ def _app_server_request_worker(args: argparse.Namespace) -> dict[str, Any]:
     finally:
         if process.poll() is None:
             process.terminate()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
 
 
 def root_task_create(args: argparse.Namespace) -> dict[str, Any]:
-    receipt = STATE / "root_task_receipts" / f"{args.creation_token}.json"
+    receipt_root = STATE / "root_task_receipts"
+    receipt = receipt_root / f"{args.creation_token}.json"
+    launch = receipt_root / f"{args.creation_token}.launch.json"
     receipt.unlink(missing_ok=True)
-    log = STATE / "root_task_receipts" / f"{args.creation_token}.log"
+    launch.unlink(missing_ok=True)
+    log = receipt_root / f"{args.creation_token}.log"
     log.parent.mkdir(parents=True, exist_ok=True)
     with log.open("ab") as handle:
-        subprocess.Popen(
+        worker = subprocess.Popen(
             [
                 sys.executable,
                 str(Path(__file__).resolve()),
@@ -1611,6 +2104,15 @@ def root_task_create(args: argparse.Namespace) -> dict[str, Any]:
             stderr=subprocess.STDOUT,
             start_new_session=True,
         )
+    _atomic_json(
+        launch,
+        {
+            "pid": worker.pid,
+            "startedAt": iso_z(datetime.now(UTC)),
+            "intentId": args.intent_id,
+            "creationToken": args.creation_token,
+        },
+    )
     deadline = monotonic() + 60
     while monotonic() < deadline:
         if receipt.exists():
@@ -1620,6 +2122,576 @@ def root_task_create(args: argparse.Namespace) -> dict[str, Any]:
             return result
         sleep(0.25)
     raise RuntimeError("root task creation result is unknown; orphan reconciliation required")
+
+
+def _task_turn_reservation(
+    store: RadarLedger,
+    *,
+    delivery_kind: str,
+    thread_id: str,
+    delivery_token: str,
+) -> dict[str, Any] | None:
+    if delivery_kind == "pr-followup":
+        candidate = next(
+            (
+                item
+                for item in store.unresolved_pr_followups()
+                if item.get("thread_id") == thread_id and item.get("wake_digest") == delivery_token
+            ),
+            None,
+        )
+        if candidate is None:
+            return None
+        return candidate | {
+            "issueUrl": candidate.get("issue_url"),
+            "worktreePath": candidate.get("worktree_path"),
+            "reservedAt": candidate.get("created_at"),
+        }
+    if delivery_kind == "validation-followup":
+        return next(
+            (
+                item
+                for item in store.unresolved_validation_followups()
+                if item.get("threadId") == thread_id and item.get("resultDigest") == delivery_token
+            ),
+            None,
+        )
+    if delivery_kind == "recovery":
+        return next(
+            (
+                item
+                for item in store.unresolved_recoveries()
+                if item.get("threadId") == thread_id
+                and (item.get("reservation") or {}).get("recoveryNonce") == delivery_token
+            ),
+            None,
+        )
+    raise RuntimeError("unsupported task-turn delivery kind")
+
+
+def _task_turn_prompt(delivery_kind: str, candidate: dict[str, Any]) -> str:
+    issue_url = str(candidate.get("issueUrl") or "")
+    if not ISSUE_URL.fullmatch(issue_url):
+        raise RuntimeError("task-turn delivery has an invalid issue URL")
+    if delivery_kind == "pr-followup":
+        return _pr_followup_prompt({"issueUrl": issue_url})
+    if delivery_kind == "validation-followup":
+        return _validation_followup_prompt(candidate)
+    if delivery_kind == "recovery":
+        connection = sqlite3.connect(THREAD_DB)
+        try:
+            row = connection.execute(
+                "SELECT rollout_path FROM threads WHERE id=?",
+                (candidate["threadId"],),
+            ).fetchone()
+        finally:
+            connection.close()
+        terminal_error = latest_terminal_thread_error(row[0] if row else None)
+        if terminal_error and terminal_error.get("code") == "cyber_policy":
+            return BENIGN_POLICY_RECOVERY_PROMPT
+        return issue_prompt(issue_url)
+    raise RuntimeError("unsupported task-turn delivery kind")
+
+
+def _validated_task_turn_thread(candidate: dict[str, Any]) -> tuple[Path, str | None]:
+    thread_id = str(candidate.get("threadId") or candidate.get("thread_id") or "")
+    issue_url = str(candidate.get("issueUrl") or "")
+    worktree_value = candidate.get("worktreePath")
+    if not thread_id or not worktree_value:
+        raise RuntimeError("task-turn delivery lacks its task identity")
+    worktree = Path(str(worktree_value)).resolve()
+    if not worktree.is_dir():
+        raise RuntimeError("task-turn delivery worktree is unavailable")
+    connection = sqlite3.connect(THREAD_DB)
+    connection.row_factory = sqlite3.Row
+    try:
+        row = connection.execute(
+            "SELECT cwd,archived,first_user_message,rollout_path FROM threads WHERE id=?",
+            (thread_id,),
+        ).fetchone()
+    finally:
+        connection.close()
+    if row is None or int(row["archived"] or 0) != 0:
+        raise RuntimeError("task-turn delivery target is missing or archived")
+    if canonical_prompt(str(row["first_user_message"] or "")) != issue_prompt(issue_url):
+        raise RuntimeError("task-turn delivery target prompt mismatch")
+    cwd = Path(str(row["cwd"])).resolve()
+    if _is_managed_worktree(worktree):
+        if cwd != GITHUB_ROOT.resolve():
+            raise RuntimeError("managed task-turn delivery project root mismatch")
+    elif cwd != worktree or not _is_within(worktree, WORKTREE_ROOT):
+        raise RuntimeError("legacy task-turn delivery worktree mismatch")
+    return cwd, row["rollout_path"]
+
+
+def _commit_task_turn_delivery(
+    store: RadarLedger,
+    *,
+    delivery_kind: str,
+    thread_id: str,
+    delivery_token: str,
+) -> None:
+    if delivery_kind == "pr-followup":
+        store.commit_pr_followup(thread_id=thread_id, wake_digest=delivery_token)
+    elif delivery_kind == "validation-followup":
+        store.commit_validation_followup(thread_id=thread_id, result_digest=delivery_token)
+    elif delivery_kind == "recovery":
+        store.commit_recovery(thread_id=thread_id, nonce=delivery_token)
+    else:
+        raise RuntimeError("unsupported task-turn delivery kind")
+
+
+def _app_server_task_turn_worker(args: argparse.Namespace) -> dict[str, Any]:
+    """Resume one existing task and durably receipt the exact new turn."""
+
+    store = ledger(args.ledger)
+    candidate = _task_turn_reservation(
+        store,
+        delivery_kind=args.delivery_kind,
+        thread_id=args.thread_id,
+        delivery_token=args.delivery_token,
+    )
+    if candidate is None:
+        raise RuntimeError("task-turn delivery reservation is unavailable")
+    candidate = candidate | {"threadId": args.thread_id}
+    cwd, _rollout_path = _validated_task_turn_thread(candidate)
+    prompt = _task_turn_prompt(args.delivery_kind, candidate)
+    executable = shutil.which("codex")
+    if not executable:
+        raise RuntimeError("codex executable is unavailable")
+    process = subprocess.Popen(
+        [
+            executable,
+            "app-server",
+            "--disable",
+            "recommended_plugins",
+            "--disable",
+            "remote_plugin",
+            "--stdio",
+        ],
+        cwd=cwd,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        bufsize=0,
+    )
+    turn_id = ""
+    try:
+        if process.stdin is None or process.stdout is None:
+            raise RuntimeError("app server pipes are unavailable")
+        requests = [
+            {
+                "id": 0,
+                "method": "initialize",
+                "params": {
+                    "clientInfo": {"name": "oss-pr-radar", "version": "1.0"},
+                    "capabilities": {"experimentalApi": True},
+                },
+            },
+            {
+                "id": 1,
+                "method": "thread/resume",
+                "params": {
+                    "threadId": args.thread_id,
+                    "cwd": str(cwd),
+                    "sandbox": "danger-full-access",
+                    "approvalPolicy": "never",
+                    "excludeTurns": True,
+                },
+            },
+        ]
+        process.stdin.write(
+            b"".join(
+                (json.dumps(item, ensure_ascii=False) + "\n").encode("utf-8") for item in requests
+            )
+        )
+        process.stdin.flush()
+        buffer = b""
+        resumed_thread_id = ""
+        deadline = monotonic() + 30
+        with selectors.DefaultSelector() as selector:
+            selector.register(process.stdout, selectors.EVENT_READ)
+            while monotonic() < deadline and not resumed_thread_id:
+                ready = selector.select(max(0.0, deadline - monotonic()))
+                if not ready:
+                    break
+                chunk = os.read(process.stdout.fileno(), 65536)
+                if not chunk:
+                    break
+                buffer += chunk
+                while b"\n" in buffer:
+                    raw, buffer = buffer.split(b"\n", 1)
+                    try:
+                        message = json.loads(raw)
+                    except json.JSONDecodeError:
+                        continue
+                    if message.get("id") != 1:
+                        continue
+                    if message.get("error"):
+                        raise RuntimeError("app server could not resume the task")
+                    resumed_thread_id = str(
+                        ((message.get("result") or {}).get("thread") or {}).get("id") or ""
+                    )
+            if resumed_thread_id != args.thread_id:
+                raise RuntimeError("app server resumed the wrong task")
+            process.stdin.write(
+                (
+                    json.dumps(
+                        {
+                            "id": 2,
+                            "method": "turn/start",
+                            "params": {
+                                "threadId": args.thread_id,
+                                "cwd": str(cwd),
+                                "input": [{"type": "text", "text": prompt, "text_elements": []}],
+                                "approvalPolicy": "never",
+                                "sandboxPolicy": {"type": "dangerFullAccess"},
+                                "clientUserMessageId": (
+                                    f"oss-pr-radar:{args.delivery_kind}:{args.delivery_token}"
+                                ),
+                                "summary": "auto",
+                            },
+                        },
+                        ensure_ascii=False,
+                    )
+                    + "\n"
+                ).encode("utf-8")
+            )
+            process.stdin.flush()
+            deadline = monotonic() + 45
+            while monotonic() < deadline and not turn_id:
+                ready = selector.select(max(0.0, deadline - monotonic()))
+                if not ready:
+                    break
+                chunk = os.read(process.stdout.fileno(), 65536)
+                if not chunk:
+                    break
+                buffer += chunk
+                while b"\n" in buffer:
+                    raw, buffer = buffer.split(b"\n", 1)
+                    try:
+                        message = json.loads(raw)
+                    except json.JSONDecodeError:
+                        continue
+                    if message.get("id") != 2:
+                        continue
+                    if message.get("error"):
+                        raise RuntimeError("app server could not start the task turn")
+                    turn_id = str(((message.get("result") or {}).get("turn") or {}).get("id") or "")
+            if not turn_id:
+                raise RuntimeError("app server did not receipt the task turn")
+            _commit_task_turn_delivery(
+                store,
+                delivery_kind=args.delivery_kind,
+                thread_id=args.thread_id,
+                delivery_token=args.delivery_token,
+            )
+            receipt = {
+                "ok": True,
+                "threadId": args.thread_id,
+                "turnId": turn_id,
+                "deliveryKind": args.delivery_kind,
+                "deliveryToken": args.delivery_token,
+            }
+            _atomic_json(Path(args.receipt), receipt)
+
+            terminal = _wait_for_app_server_terminal_turn(
+                process,
+                selector,
+                buffer,
+                thread_id=args.thread_id,
+                turn_id=turn_id,
+            )
+            if terminal:
+                return receipt | {"turnStatus": terminal["status"]}
+            return receipt
+    except Exception as exc:
+        receipt_path = Path(args.receipt)
+        if not receipt_path.exists():
+            _atomic_json(
+                receipt_path,
+                {
+                    "ok": False,
+                    "turnStarted": bool(turn_id),
+                    "turnId": turn_id or None,
+                    "error": f"{type(exc).__name__}:{str(exc)[:300]}",
+                },
+            )
+        raise
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
+
+
+def task_turn_worker_entry(args: argparse.Namespace) -> dict[str, Any]:
+    """Guarantee a negative receipt even when setup fails before app-server starts."""
+
+    try:
+        return _app_server_task_turn_worker(args)
+    except Exception as exc:
+        receipt = Path(args.receipt)
+        if not receipt.exists():
+            _atomic_json(
+                receipt,
+                {
+                    "ok": False,
+                    "turnStarted": False,
+                    "turnId": None,
+                    "error": f"{type(exc).__name__}:{str(exc)[:300]}",
+                },
+            )
+        raise
+
+
+def _pid_is_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+def active_task_turn_worker(thread_id: str) -> dict[str, Any] | None:
+    """Return the verified local worker that still owns a task turn."""
+
+    receipt_root = STATE / "task_turn_receipts"
+    if not receipt_root.is_dir():
+        return None
+    for launch_path in receipt_root.glob("*.launch.json"):
+        launch = read_json(launch_path, missing={})
+        if str(launch.get("threadId") or "") != thread_id:
+            continue
+        pid = int(launch.get("pid") or 0)
+        if not pid or not _pid_is_alive(pid):
+            continue
+        try:
+            command_line = subprocess.run(
+                ["ps", "-p", str(pid), "-o", "command="],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=2,
+            ).stdout.strip()
+        except (OSError, RuntimeError, subprocess.SubprocessError):
+            continue
+        if (
+            "local_dispatch_bridge.py" not in command_line
+            or "task-turn-worker" not in command_line
+            or thread_id not in command_line
+        ):
+            continue
+        return {
+            "pid": pid,
+            "deliveryKind": launch.get("deliveryKind"),
+            "startedAt": launch.get("startedAt"),
+        }
+    return active_root_task_worker(thread_id)
+
+
+def active_root_task_worker(thread_id: str) -> dict[str, Any] | None:
+    """Return the verified root-task worker that owns a task's first turn."""
+
+    receipt_root = STATE / "root_task_receipts"
+    if not receipt_root.is_dir():
+        return None
+    for launch_path in receipt_root.glob("*.launch.json"):
+        creation_token = launch_path.name.removesuffix(".launch.json")
+        launch = read_json(launch_path, missing={})
+        receipt = read_json(receipt_root / f"{creation_token}.json", missing={})
+        if str(receipt.get("threadId") or "") != thread_id:
+            continue
+        pid = int(launch.get("pid") or 0)
+        if not pid or not _pid_is_alive(pid):
+            continue
+        try:
+            command_line = subprocess.run(
+                ["ps", "-p", str(pid), "-o", "command="],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=2,
+            ).stdout.strip()
+        except (OSError, RuntimeError, subprocess.SubprocessError):
+            continue
+        if (
+            "local_dispatch_bridge.py" not in command_line
+            or "root-task-worker" not in command_line
+            or creation_token not in command_line
+        ):
+            continue
+        return {
+            "pid": pid,
+            "deliveryKind": "root-task",
+            "startedAt": launch.get("startedAt"),
+        }
+    return None
+
+
+def task_turn_deliver(args: argparse.Namespace) -> dict[str, Any]:
+    """Start an existing-task turn once, or reconcile its exact receipt."""
+
+    store = ledger(args.ledger)
+    candidate = _task_turn_reservation(
+        store,
+        delivery_kind=args.delivery_kind,
+        thread_id=args.thread_id,
+        delivery_token=args.delivery_token,
+    )
+    if candidate is None:
+        raise RuntimeError("task-turn delivery reservation is unavailable")
+    candidate = candidate | {"threadId": args.thread_id}
+    _cwd, rollout_path = _validated_task_turn_thread(candidate)
+    activity_available, materialized = thread_turn_materialized_after(
+        rollout_path,
+        str(candidate["reservedAt"]),
+    )
+    if materialized:
+        _commit_task_turn_delivery(
+            store,
+            delivery_kind=args.delivery_kind,
+            thread_id=args.thread_id,
+            delivery_token=args.delivery_token,
+        )
+        return {
+            "ok": True,
+            "threadId": args.thread_id,
+            "deliveryKind": args.delivery_kind,
+            "reconciled": True,
+            "targetTurnMaterialized": True,
+        }
+
+    receipt_key = sha256_json(
+        {
+            "deliveryKind": args.delivery_kind,
+            "threadId": args.thread_id,
+            "deliveryToken": args.delivery_token,
+        }
+    )
+    receipt_root = STATE / "task_turn_receipts"
+    receipt = receipt_root / f"{receipt_key}.json"
+    launch = receipt_root / f"{receipt_key}.launch.json"
+    log = receipt_root / f"{receipt_key}.log"
+    receipt_root.mkdir(parents=True, exist_ok=True)
+
+    if receipt.exists():
+        result = read_json(receipt, missing={})
+        if result.get("ok"):
+            return result
+        if result.get("turnStarted"):
+            return {
+                "ok": False,
+                "pending": True,
+                "requiresReconciliation": True,
+                "threadId": args.thread_id,
+                "deliveryKind": args.delivery_kind,
+                "turnId": result.get("turnId"),
+                "reason": "TURN_STARTED_BEFORE_LEDGER_COMMIT",
+            }
+        receipt.unlink(missing_ok=True)
+        launch.unlink(missing_ok=True)
+
+    if launch.exists():
+        launch_state = read_json(launch, missing={})
+        worker_pid = int(launch_state.get("pid") or 0)
+        if worker_pid and _pid_is_alive(worker_pid):
+            return {
+                "ok": True,
+                "pending": True,
+                "threadId": args.thread_id,
+                "deliveryKind": args.delivery_kind,
+                "workerPid": worker_pid,
+            }
+        return {
+            "ok": False,
+            "pending": True,
+            "requiresReconciliation": True,
+            "threadId": args.thread_id,
+            "deliveryKind": args.delivery_kind,
+            "targetTurnMaterialized": materialized,
+            "threadActivityAvailable": activity_available,
+            "reason": "DELIVERY_WORKER_OUTCOME_UNKNOWN",
+        }
+
+    with log.open("ab") as handle:
+        worker = subprocess.Popen(
+            [
+                sys.executable,
+                str(Path(__file__).resolve()),
+                "--ledger",
+                str(args.ledger),
+                "task-turn-worker",
+                "--delivery-kind",
+                args.delivery_kind,
+                "--thread-id",
+                args.thread_id,
+                "--delivery-token",
+                args.delivery_token,
+                "--receipt",
+                str(receipt),
+            ],
+            cwd=ROOT,
+            stdin=subprocess.DEVNULL,
+            stdout=handle,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    _atomic_json(
+        launch,
+        {
+            "pid": worker.pid,
+            "startedAt": iso_z(datetime.now(UTC)),
+            "threadId": args.thread_id,
+            "deliveryKind": args.delivery_kind,
+        },
+    )
+    deadline = monotonic() + 60
+    while monotonic() < deadline:
+        if receipt.exists():
+            result = read_json(receipt, missing={})
+            if result.get("ok"):
+                return result
+            if result.get("turnStarted"):
+                return {
+                    "ok": False,
+                    "pending": True,
+                    "requiresReconciliation": True,
+                    "threadId": args.thread_id,
+                    "deliveryKind": args.delivery_kind,
+                    "turnId": result.get("turnId"),
+                    "reason": "TURN_STARTED_BEFORE_LEDGER_COMMIT",
+                }
+            raise RuntimeError(str(result.get("error") or "task-turn delivery failed"))
+        sleep(0.25)
+    return {
+        "ok": True,
+        "pending": True,
+        "threadId": args.thread_id,
+        "deliveryKind": args.delivery_kind,
+        "workerPid": worker.pid,
+    }
+
+
+def pr_followup_deliver(args: argparse.Namespace) -> dict[str, Any]:
+    args.delivery_kind = "pr-followup"
+    args.delivery_token = args.wake_digest
+    return task_turn_deliver(args)
+
+
+def validation_followup_deliver(args: argparse.Namespace) -> dict[str, Any]:
+    args.delivery_kind = "validation-followup"
+    args.delivery_token = args.result_digest
+    return task_turn_deliver(args)
+
+
+def recovery_deliver(args: argparse.Namespace) -> dict[str, Any]:
+    args.delivery_kind = "recovery"
+    args.delivery_token = args.recovery_nonce
+    return task_turn_deliver(args)
 
 
 def commit_receipt(args: argparse.Namespace) -> dict[str, Any]:
@@ -2578,6 +3650,7 @@ def sync_task_contexts(args: argparse.Namespace) -> dict[str, Any]:
     written: list[dict[str, str]] = []
     refreshed: list[dict[str, str]] = []
     no_go: list[dict[str, str]] = []
+    unavailable: list[dict[str, str]] = []
     superseded = store.reconcile_superseded_pr_followups()
     prepared_recovered, errors = _recover_unbound_pr_followup_preparations(store)
     preparation_error_keys = {item["key"] for item in errors}
@@ -2585,6 +3658,17 @@ def sync_task_contexts(args: argparse.Namespace) -> dict[str, Any]:
         if candidate["key"] in preparation_error_keys:
             continue
         try:
+            worktree = Path(candidate["worktreePath"]).resolve()
+            if not worktree.is_dir():
+                unavailable.append(
+                    {
+                        "key": candidate["key"],
+                        "threadId": candidate["threadId"],
+                        "worktreePath": str(worktree),
+                        "reason": "TASK_WORKTREE_UNAVAILABLE",
+                    }
+                )
+                continue
             current = store.task_context(
                 issue_url=candidate["issueUrl"],
                 thread_id=candidate["threadId"],
@@ -2634,6 +3718,7 @@ def sync_task_contexts(args: argparse.Namespace) -> dict[str, Any]:
         "prFollowupsSuperseded": superseded,
         "preparedFollowupsRecovered": prepared_recovered,
         "noGo": no_go,
+        "unavailable": unavailable,
         "errors": errors,
     }
 
@@ -2646,6 +3731,8 @@ def pr_followup_list(args: argparse.Namespace) -> dict[str, Any]:
         (datetime.now(UTC) - timedelta(minutes=PR_FOLLOWUP_ACTIVE_DEFERRAL_MINUTES)).timestamp()
     )
     activity: dict[str, int] = {}
+    archived: dict[str, int] = {}
+    rollout_paths: dict[str, str | None] = {}
     if candidates or unresolved:
         thread_ids = sorted(
             {str(item["threadId"]) for item in candidates}
@@ -2655,16 +3742,27 @@ def pr_followup_list(args: argparse.Namespace) -> dict[str, Any]:
         connection = sqlite3.connect(THREAD_DB)
         try:
             rows = connection.execute(
-                f"SELECT id,updated_at FROM threads WHERE id IN ({placeholders})",
+                f"SELECT id,updated_at,archived,rollout_path FROM threads WHERE id IN ({placeholders})",
                 thread_ids,
             ).fetchall()
             activity = {str(row[0]): int(row[1] or 0) for row in rows}
+            archived = {str(row[0]): int(row[2] or 0) for row in rows}
+            rollout_paths = {str(row[0]): row[3] for row in rows}
         finally:
             connection.close()
     ready: list[dict[str, Any]] = []
     active_deferred: list[dict[str, Any]] = []
+    restore_required: list[dict[str, Any]] = []
+    blocked: list[dict[str, Any]] = []
     for candidate in candidates:
-        updated_at = activity.get(str(candidate["threadId"]), 0)
+        thread_id = str(candidate["threadId"])
+        if thread_id not in archived:
+            blocked.append(candidate | {"reason": "thread_missing"})
+            continue
+        if archived[thread_id] == 1:
+            restore_required.append(candidate | {"reason": "thread_archived"})
+            continue
+        updated_at = activity.get(thread_id, 0)
         if updated_at > recent_cutoff:
             active_deferred.append(
                 candidate
@@ -2675,45 +3773,45 @@ def pr_followup_list(args: argparse.Namespace) -> dict[str, Any]:
             )
         else:
             ready.append(candidate)
-    minimum_age_minutes = max(
-        1,
-        int(
-            getattr(
-                args,
-                "min_age_minutes",
-                PR_FOLLOWUP_ABANDON_MIN_AGE_MINUTES,
-            )
-        ),
-    )
+    wip_limited, active_task_count, task_limit = _global_task_wip(store)
+    queued_deferred: list[dict[str, Any]] = []
+    if wip_limited and ready:
+        queued_deferred = [
+            item
+            | {
+                "reason": "global_task_wip_limit",
+                "activeTaskCount": active_task_count,
+                "taskLimit": task_limit,
+            }
+            for item in ready
+        ]
+        ready = []
     now = datetime.now(UTC)
     unresolved_with_recovery: list[dict[str, Any]] = []
     for item in unresolved:
         reserved_at = parse_time(str(item["created_at"]))
         age_minutes = max(0, int((now - reserved_at).total_seconds() // 60))
         thread_updated_at = activity.get(str(item.get("thread_id") or ""), 0)
-        target_turn_materialized = thread_updated_at >= int(reserved_at.timestamp())
-        abandonable = age_minutes >= minimum_age_minutes and not target_turn_materialized
+        activity_available, target_turn_materialized = thread_turn_materialized_after(
+            rollout_paths.get(str(item.get("thread_id") or "")),
+            str(item["created_at"]),
+        )
         value = item | {
             "ageMinutes": age_minutes,
             "threadUpdatedAt": thread_updated_at,
+            "threadActivityAvailable": activity_available,
             "targetTurnMaterialized": target_turn_materialized,
-            "abandonable": abandonable,
+            "commitReady": target_turn_materialized,
+            "abandonable": False,
         }
-        if abandonable:
-            value["abandonNonce"] = sha256_json(
-                {
-                    "threadId": item.get("thread_id"),
-                    "wakeDigest": item.get("wake_digest"),
-                    "reservedAt": item.get("created_at"),
-                    "threadUpdatedAt": thread_updated_at,
-                    "operation": "pr-followup-delivery-abandon-v1",
-                }
-            )
         unresolved_with_recovery.append(value)
     return {
-        "ok": not unresolved_with_recovery,
+        "ok": not unresolved_with_recovery and not blocked,
         "candidates": ready,
         "activeDeferred": active_deferred,
+        "queuedDeferred": queued_deferred,
+        "restoreRequired": restore_required,
+        "blocked": blocked,
         "unresolved": unresolved_with_recovery,
     }
 
@@ -2758,8 +3856,26 @@ def _upstream_remote(worktree: Path, repo: str) -> str:
     raise RuntimeError("managed worktree has no upstream remote")
 
 
-def _prepare_pr_followup(candidate: dict[str, Any]) -> dict[str, Any]:
+def _ensure_pr_followup_worktree(candidate: dict[str, Any]) -> Path:
     worktree = Path(candidate["worktreePath"]).resolve()
+    if worktree.is_dir():
+        return worktree
+    repo = str(candidate.get("repo") or "")
+    intent_id = str(candidate.get("intentId") or "")
+    if not repo or not intent_id:
+        raise RuntimeError("PR follow-up cannot recover its workspace identity")
+    expected = managed_worktree_path(intent_id, repo)
+    if worktree != expected:
+        raise RuntimeError("PR follow-up missing workspace path is not controller-managed")
+    source = source_repo(repo)
+    recovered = prepare_managed_worktree(source, intent_id=intent_id, repo=repo)
+    if recovered != expected:
+        raise RuntimeError("PR follow-up workspace recovery path mismatch")
+    return recovered
+
+
+def _prepare_pr_followup(candidate: dict[str, Any]) -> dict[str, Any]:
+    worktree = _ensure_pr_followup_worktree(candidate)
     match = re.fullmatch(r"https://github\.com/([^/]+/[^/]+)/pull/(\d+)", candidate["prUrl"])
     if not match:
         raise RuntimeError("invalid PR follow-up URL")
@@ -2809,7 +3925,11 @@ def _prepare_pr_followup(candidate: dict[str, Any]) -> dict[str, Any]:
                 == 0
             )
             if evidence.get("baseIntegrationRequired") is True or not fast_forward:
-                raise RuntimeError("PR base changed while preparing follow-up")
+                raise PrFollowupSnapshotChanged(
+                    "PR_BASE_CHANGED",
+                    expectedBaseSha=base_sha,
+                    actualBaseSha=fetched_base,
+                )
             base_sha = fetched_base
     command(
         ["git", "fetch", "--quiet", "--no-tags", remote, f"pull/{number}/head"],
@@ -2818,7 +3938,11 @@ def _prepare_pr_followup(candidate: dict[str, Any]) -> dict[str, Any]:
     )
     fetched = command(["git", "rev-parse", "FETCH_HEAD"], cwd=worktree)
     if fetched != candidate["headSha"]:
-        raise RuntimeError("PR head changed while preparing follow-up")
+        raise PrFollowupSnapshotChanged(
+            "PR_HEAD_CHANGED",
+            expectedHeadSha=str(candidate["headSha"]),
+            actualHeadSha=fetched,
+        )
     current = command(["git", "rev-parse", "HEAD"], cwd=worktree)
     if current != fetched:
         command(["git", "switch", "--detach", fetched], cwd=worktree)
@@ -2843,7 +3967,11 @@ def _prepare_pr_followup(candidate: dict[str, Any]) -> dict[str, Any]:
         )
         _optional_command(["git", "merge", "--abort"], cwd=worktree)
         if completed.returncode != 1 or not conflicts:
-            raise RuntimeError("PR merge conflict no longer reproduces on the prepared base")
+            raise PrFollowupSnapshotChanged(
+                "PR_MERGE_CONFLICT_CHANGED",
+                expectedBaseSha=base_sha,
+                actualHeadSha=fetched,
+            )
         if command(["git", "rev-parse", "HEAD"], cwd=worktree) != fetched:
             raise RuntimeError("PR conflict preparation changed the branch head")
         if command(["git", "status", "--porcelain"], cwd=worktree):
@@ -2878,7 +4006,11 @@ def _prepare_pr_followup(candidate: dict[str, Any]) -> dict[str, Any]:
     unmerged = _optional_command(["git", "diff", "--name-only", "--diff-filter=U"], cwd=worktree)
     if completed.returncode != 0 or unmerged:
         _optional_command(["git", "merge", "--abort"], cwd=worktree)
-        raise RuntimeError("PR base integration is no longer a clean merge")
+        raise PrFollowupSnapshotChanged(
+            "PR_BASE_INTEGRATION_CHANGED",
+            expectedBaseSha=base_sha,
+            actualHeadSha=fetched,
+        )
     if (
         _optional_command(["git", "rev-parse", "-q", "--verify", "MERGE_HEAD"], cwd=worktree)
         is None
@@ -2909,6 +4041,9 @@ def _prepare_pr_followup(candidate: dict[str, Any]) -> dict[str, Any]:
 
 def pr_followup_reserve(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
+    wip_limited, _active_task_count_value, _task_limit = _global_task_wip(store)
+    if wip_limited:
+        raise RuntimeError("global task WIP limit reached")
     candidate = next(
         (
             item
@@ -2919,7 +4054,24 @@ def pr_followup_reserve(args: argparse.Namespace) -> dict[str, Any]:
     )
     if candidate is None:
         raise RuntimeError("PR follow-up authorization is stale or invalid")
-    prepared = _prepare_pr_followup(candidate)
+    try:
+        prepared = _prepare_pr_followup(candidate)
+    except PrFollowupSnapshotChanged as exc:
+        deferred = store.defer_pr_followup_snapshot(
+            thread_id=candidate["threadId"],
+            wake_digest=candidate["wakeDigest"],
+            reason=exc.reason,
+            evidence=exc.evidence,
+        )
+        return {
+            "ok": True,
+            "deferred": True,
+            "key": deferred["key"],
+            "threadId": deferred["threadId"],
+            "prUrl": deferred["prUrl"],
+            "reason": deferred["reason"],
+            "checkedAt": deferred["checkedAt"],
+        }
     prepared_head = str(prepared["preparedHeadSha"])
     reserved = store.reserve_pr_followup(
         thread_id=candidate["threadId"],
@@ -2927,6 +4079,7 @@ def pr_followup_reserve(args: argparse.Namespace) -> dict[str, Any]:
         prepared_head_sha=prepared_head,
         prepared_base_sha=prepared.get("preparedBaseSha"),
         merge_conflict_files=prepared.get("mergeConflictFiles"),
+        max_active=_private_task_limit(),
     )
     context_path = write_task_context(
         store,
@@ -2942,8 +4095,19 @@ def pr_followup_reserve(args: argparse.Namespace) -> dict[str, Any]:
         "prUrl": reserved["prUrl"],
         "wakeDigest": reserved["wakeDigest"],
         "contextPath": str(context_path),
-        "prompt": issue_prompt(reserved["issueUrl"]),
+        "prompt": _pr_followup_prompt(reserved),
     }
+
+
+def _pr_followup_prompt(candidate: dict[str, Any]) -> str:
+    context_path = shared_context_path(str(candidate["issueUrl"])).resolve()
+    return (
+        f"{issue_prompt(str(candidate['issueUrl']))}\n\n"
+        "这是同一任务的受控 PR 跟进，不要创建新任务或重新选择 issue。"
+        f"直接读取并验证 {context_path}，再进入其中记录的 worktreePath 继续；"
+        "不要在当前入口目录等待 .oss-pr-radar/task-context.json。"
+        "只处理该上下文绑定的最新 PR 快照、审查意见、冲突和检查，完成后按技能协议更新结果。"
+    )
 
 
 def pr_followup_commit(args: argparse.Namespace) -> dict[str, Any]:
@@ -3141,6 +4305,16 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
     errors: list[dict[str, str]] = []
     for candidate in store.validation_followup_candidates():
         try:
+            worktree = Path(candidate["worktreePath"]).resolve()
+            if not worktree.is_dir():
+                environment_blocked.append(
+                    candidate
+                    | {
+                        "reason": "TASK_WORKTREE_UNAVAILABLE",
+                        "dependencyFailures": [],
+                    }
+                )
+                continue
             commands, dependency_failures = _validation_prefetch_plan(candidate)
             if dependency_failures and not commands:
                 environment_blocked.append(
@@ -3167,9 +4341,22 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
             )
         except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
             errors.append({"key": candidate["key"], "error": str(exc)[:300]})
+    wip_limited, active_task_count, task_limit = _global_task_wip(store)
+    queued_deferred: list[dict[str, Any]] = []
+    if wip_limited and candidates:
+        queued_deferred = [
+            item
+            | {
+                "reason": "global_task_wip_limit",
+                "activeTaskCount": active_task_count,
+                "taskLimit": task_limit,
+            }
+            for item in candidates
+        ]
+        candidates = []
     unresolved = store.unresolved_validation_followups()
-    minimum_age_minutes = max(1, int(getattr(args, "min_age_minutes", 90)))
     activity: dict[str, int] = {}
+    rollout_paths: dict[str, str | None] = {}
     activity_available = THREAD_DB.is_file()
     if unresolved and activity_available:
         thread_ids = sorted({str(item["threadId"]) for item in unresolved if item.get("threadId")})
@@ -3177,10 +4364,11 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
         connection = sqlite3.connect(THREAD_DB)
         try:
             rows = connection.execute(
-                f"SELECT id,updated_at FROM threads WHERE id IN ({placeholders})",
+                f"SELECT id,updated_at,rollout_path FROM threads WHERE id IN ({placeholders})",
                 thread_ids,
             ).fetchall()
             activity = {str(row[0]): int(row[1] or 0) for row in rows}
+            rollout_paths = {str(row[0]): row[2] for row in rows}
         finally:
             connection.close()
     now = datetime.now(UTC)
@@ -3189,35 +4377,25 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
         reserved_at = parse_time(str(item["reservedAt"]))
         age_minutes = max(0, int((now - reserved_at).total_seconds() // 60))
         thread_updated_at = activity.get(str(item.get("threadId") or ""), 0)
-        target_turn_materialized = thread_updated_at >= int(reserved_at.timestamp())
-        abandonable = (
-            activity_available
-            and age_minutes >= minimum_age_minutes
-            and not target_turn_materialized
+        turn_activity_available, target_turn_materialized = thread_turn_materialized_after(
+            rollout_paths.get(str(item.get("threadId") or "")),
+            str(item["reservedAt"]),
         )
         value = item | {
             "ageMinutes": age_minutes,
             "threadUpdatedAt": thread_updated_at,
             "targetTurnMaterialized": target_turn_materialized,
-            "threadActivityAvailable": activity_available,
-            "abandonable": abandonable,
+            "threadActivityAvailable": activity_available and turn_activity_available,
+            "commitReady": target_turn_materialized,
+            "abandonable": False,
         }
-        if abandonable:
-            value["abandonNonce"] = sha256_json(
-                {
-                    "threadId": item.get("threadId"),
-                    "resultDigest": item.get("resultDigest"),
-                    "reservedAt": item.get("reservedAt"),
-                    "threadUpdatedAt": thread_updated_at,
-                    "operation": "validation-followup-delivery-abandon-v1",
-                }
-            )
         unresolved_with_recovery.append(value)
     stale = store.stale_validation_followups(min_age_minutes=getattr(args, "min_age_minutes", 90))
     blocked_no_progress = store.validation_no_progress()
     return {
         "ok": not errors and not unresolved_with_recovery and not stale,
         "candidates": candidates,
+        "queuedDeferred": queued_deferred,
         "environmentBlocked": environment_blocked,
         "unresolved": unresolved_with_recovery,
         "stale": stale,
@@ -3279,6 +4457,9 @@ def _validation_followup_prompt(candidate: dict[str, Any]) -> str:
 
 def validation_followup_reserve(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
+    wip_limited, _active_task_count_value, _task_limit = _global_task_wip(store)
+    if wip_limited:
+        raise RuntimeError("global task WIP limit reached")
     candidate = next(
         (
             item
@@ -3298,7 +4479,9 @@ def validation_followup_reserve(args: argparse.Namespace) -> dict[str, Any]:
         cwd=Path(enriched["worktreePath"]),
     )
     reserved = store.reserve_validation_followup(
-        thread_id=enriched["threadId"], result_digest=enriched["resultDigest"]
+        thread_id=enriched["threadId"],
+        result_digest=enriched["resultDigest"],
+        max_active=_private_task_limit(),
     )
     return {
         "ok": True,
@@ -3959,6 +5142,9 @@ def title_list(args: argparse.Namespace) -> dict[str, Any]:
     for candidate in store.title_candidates():
         if not candidate.get("titleTime"):
             continue
+        actual = current.get(str(candidate["threadId"]))
+        if actual is None or actual[1] != 0:
+            continue
         values.append(
             candidate
             | {
@@ -4228,15 +5414,70 @@ def refresh_pull_requests(args: argparse.Namespace) -> dict[str, Any]:
 
 def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
+    unresolved = store.unresolved_recoveries()
     connection = sqlite3.connect(THREAD_DB)
     connection.row_factory = sqlite3.Row
     recoverable: list[dict[str, Any]] = []
+    active_deferred: list[dict[str, Any]] = []
+    queued_deferred: list[dict[str, Any]] = []
     blocked: list[dict[str, Any]] = []
     activity_cutoff = int(
         (datetime.now(UTC) - timedelta(minutes=max(30, args.min_age_minutes))).timestamp()
     )
     try:
-        for candidate in store.recovery_candidates(min_age_minutes=0):
+        candidates = store.recovery_candidates(min_age_minutes=0)
+        candidate_thread_ids = {item["threadId"] for item in candidates}
+        context_candidates = getattr(store, "task_context_candidates", lambda: [])()
+        probe_thread_ids: set[str] = set()
+        for thread_id in candidate_thread_ids | {
+            str(item.get("threadId") or "") for item in context_candidates
+        }:
+            if not thread_id:
+                continue
+            row = connection.execute(
+                "SELECT updated_at,rollout_path FROM threads WHERE id=?", (thread_id,)
+            ).fetchone()
+            if (
+                row is not None
+                and latest_thread_turn_state(row["rollout_path"]) is None
+                and (
+                    thread_id in candidate_thread_ids
+                    or int(row["updated_at"] or 0) > activity_cutoff
+                )
+            ):
+                probe_thread_ids.add(thread_id)
+        live_turn_states = live_thread_turn_states(probe_thread_ids)
+        for task in context_candidates:
+            thread_id = str(task.get("threadId") or "")
+            if not thread_id or thread_id in candidate_thread_ids:
+                continue
+            row = connection.execute(
+                "SELECT archived,title,updated_at,rollout_path FROM threads WHERE id=?",
+                (thread_id,),
+            ).fetchone()
+            if (
+                row is None
+                or int(row["archived"] or 0) == 1
+                or int(row["updated_at"] or 0) <= activity_cutoff
+                or (
+                    latest_thread_turn_state(row["rollout_path"])
+                    or live_turn_states.get(thread_id)
+                )
+                is not None
+            ):
+                continue
+            active_deferred.append(
+                {
+                    "key": task["key"],
+                    "issueUrl": task["issueUrl"],
+                    "threadId": thread_id,
+                    "worktreePath": task["worktreePath"],
+                    "currentTitle": row["title"],
+                    "threadUpdatedAt": row["updated_at"],
+                    "reason": "recovery_turn_in_progress",
+                }
+            )
+        for candidate in candidates:
             row = connection.execute(
                 "SELECT archived,title,first_user_message,cwd,git_origin_url,updated_at,"
                 "rollout_path "
@@ -4278,33 +5519,121 @@ def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
             if not valid_workspace:
                 blocked.append(candidate | {"reason": "thread_origin_mismatch"})
                 continue
-            terminal_error = latest_terminal_thread_error(row["rollout_path"])
-            immediate_recovery = bool(
-                terminal_error and terminal_error.get("code") in IMMEDIATE_RECOVERY_ERROR_CODES
+            turn_state = latest_thread_turn_state(row["rollout_path"]) or live_turn_states.get(
+                candidate["threadId"]
             )
+            terminal_error = (
+                turn_state
+                if turn_state and turn_state.get("status") in {"failed", "interrupted"}
+                else None
+            )
+            immediate_recovery = _is_immediate_recovery(turn_state)
+            turn_worker = (
+                active_task_turn_worker(candidate["threadId"])
+                if immediate_recovery
+                else None
+            )
+            if turn_worker is not None:
+                active_deferred.append(
+                    candidate
+                    | {
+                        "currentTitle": row["title"],
+                        "threadUpdatedAt": row["updated_at"],
+                        "terminalError": terminal_error,
+                        "worker": turn_worker,
+                        "reason": "terminal_turn_worker_draining",
+                    }
+                )
+                continue
+            if turn_state is None and int(row["updated_at"] or 0) > activity_cutoff:
+                active_deferred.append(
+                    candidate
+                    | {
+                        "currentTitle": row["title"],
+                        "threadUpdatedAt": row["updated_at"],
+                        "reason": "thread_recently_active",
+                    }
+                )
+                continue
+            if (
+                candidate.get("recoveryKind") == "VALIDATION_FOLLOWUP_RESULT"
+                and not immediate_recovery
+            ):
+                continue
             if int(row["updated_at"] or 0) > activity_cutoff and not immediate_recovery:
                 continue
-            recoverable.append(
-                candidate
-                | {
-                    "currentTitle": row["title"],
-                    "cwd": row["cwd"],
-                    "threadUpdatedAt": row["updated_at"],
-                    "terminalError": terminal_error,
-                    "immediateRecovery": immediate_recovery,
-                }
-            )
+            eligible = candidate | {
+                "currentTitle": row["title"],
+                "cwd": row["cwd"],
+                "threadUpdatedAt": row["updated_at"],
+                "terminalError": terminal_error,
+                "immediateRecovery": immediate_recovery,
+            }
+            if active_deferred or recoverable:
+                queued_deferred.append(eligible | {"reason": "serialized_recovery_queue"})
+            else:
+                recoverable.append(eligible)
     finally:
         connection.close()
+    if active_deferred and recoverable:
+        queued_deferred = [
+            item | {"reason": "serialized_recovery_queue"} for item in recoverable
+        ] + queued_deferred
+        recoverable = []
+    now = datetime.now(UTC)
+    unresolved_with_recovery: list[dict[str, Any]] = []
+    connection = sqlite3.connect(THREAD_DB)
+    connection.row_factory = sqlite3.Row
+    try:
+        for item in unresolved:
+            row = connection.execute(
+                "SELECT rollout_path,updated_at FROM threads WHERE id=?",
+                (item["threadId"],),
+            ).fetchone()
+            age_minutes = max(
+                0,
+                int((now - parse_time(str(item["reservedAt"]))).total_seconds() // 60),
+            )
+            activity_available, materialized = thread_turn_materialized_after(
+                row["rollout_path"] if row else None,
+                str(item["reservedAt"]),
+            )
+            value = item | {
+                "ageMinutes": age_minutes,
+                "threadUpdatedAt": int(row["updated_at"] or 0) if row else 0,
+                "threadActivityAvailable": activity_available,
+                "targetTurnMaterialized": materialized,
+                "commitReady": materialized,
+                "abandonable": False,
+            }
+            unresolved_with_recovery.append(value)
+    finally:
+        connection.close()
+    if unresolved:
+        queued_deferred = [
+            item | {"reason": "recovery_delivery_unresolved"}
+            for item in recoverable + queued_deferred
+        ]
+        recoverable = []
     return {
-        "ok": not blocked and not store.unresolved_recoveries(),
+        "ok": not blocked and not unresolved,
         "recoverable": recoverable,
+        "activeDeferred": active_deferred,
+        "queuedDeferred": queued_deferred,
         "blocked": blocked,
-        "unresolved": store.unresolved_recoveries(),
+        "unresolved": unresolved_with_recovery,
     }
 
 
 def recovery_reserve(args: argparse.Namespace) -> dict[str, Any]:
+    probe = recovery_list(argparse.Namespace(ledger=args.ledger, min_age_minutes=0))
+    authorized = {item["threadId"]: item for item in probe["recoverable"]}.get(args.thread_id)
+    if (
+        not probe["ok"]
+        or authorized is None
+        or authorized.get("recoveryNonce") != args.recovery_nonce
+    ):
+        raise RuntimeError("recovery is not the current serialized candidate")
     candidate = ledger(args.ledger).reserve_recovery(
         thread_id=args.thread_id,
         nonce=args.recovery_nonce,
@@ -4316,9 +5645,13 @@ def recovery_reserve(args: argparse.Namespace) -> dict[str, Any]:
         ).fetchone()
     finally:
         connection.close()
-    terminal_error = latest_terminal_thread_error(row[0] if row else None)
+    terminal_error = authorized.get("terminalError") or latest_terminal_thread_error(
+        row[0] if row else None
+    )
     prompt = issue_prompt(candidate["issueUrl"])
-    if terminal_error and terminal_error.get("code") == "cyber_policy":
+    if candidate.get("recoveryKind") == "VALIDATION_FOLLOWUP_RESULT":
+        prompt = VALIDATION_RECOVERY_PROMPT
+    elif terminal_error and terminal_error.get("code") == "cyber_policy":
         prompt = BENIGN_POLICY_RECOVERY_PROMPT
     return {
         "ok": True,
@@ -4335,6 +5668,43 @@ def recovery_commit(args: argparse.Namespace) -> dict[str, Any]:
         nonce=args.recovery_nonce,
     )
     return {"ok": True, "threadId": args.thread_id}
+
+
+def recovery_abandon(args: argparse.Namespace) -> dict[str, Any]:
+    if not re.fullmatch(r"[A-Z][A-Z0-9_]{2,80}", args.reason):
+        raise RuntimeError("abandon reason must be machine-readable")
+    probe = recovery_list(
+        argparse.Namespace(
+            ledger=args.ledger,
+            min_age_minutes=0,
+            delivery_min_age_minutes=args.min_age_minutes,
+        )
+    )
+    candidate = next(
+        (
+            item
+            for item in probe["unresolved"]
+            if item.get("threadId") == args.thread_id
+            and item.get("reservation", {}).get("recoveryNonce") == args.recovery_nonce
+        ),
+        None,
+    )
+    if not candidate or not candidate.get("abandonable"):
+        raise RuntimeError("recovery delivery is not safely abandonable")
+    if candidate.get("abandonNonce") != args.abandon_nonce:
+        raise RuntimeError("recovery abandonment authorization is stale or invalid")
+    ledger(args.ledger).abandon_recovery_delivery(
+        thread_id=args.thread_id,
+        nonce=args.recovery_nonce,
+        reason=args.reason,
+        min_age_minutes=args.min_age_minutes,
+    )
+    return {
+        "ok": True,
+        "threadId": args.thread_id,
+        "recoveryNonce": args.recovery_nonce,
+        "abandoned": True,
+    }
 
 
 def task_context(args: argparse.Namespace) -> dict[str, Any]:
@@ -4495,6 +5865,9 @@ def main() -> int:
     pr_followup_reserve_parser = subparsers.add_parser("pr-followup-reserve")
     pr_followup_reserve_parser.add_argument("--thread-id", required=True)
     pr_followup_reserve_parser.add_argument("--wake-digest", required=True)
+    pr_followup_deliver_parser = subparsers.add_parser("pr-followup-deliver")
+    pr_followup_deliver_parser.add_argument("--thread-id", required=True)
+    pr_followup_deliver_parser.add_argument("--wake-digest", required=True)
     pr_followup_commit_parser = subparsers.add_parser("pr-followup-commit")
     pr_followup_commit_parser.add_argument("--thread-id", required=True)
     pr_followup_commit_parser.add_argument("--wake-digest", required=True)
@@ -4514,6 +5887,9 @@ def main() -> int:
     validation_followup_reserve_parser.add_argument("--thread-id", required=True)
     validation_followup_reserve_parser.add_argument("--result-digest", required=True)
     validation_followup_reserve_parser.add_argument("--prefetch-complete", action="store_true")
+    validation_followup_deliver_parser = subparsers.add_parser("validation-followup-deliver")
+    validation_followup_deliver_parser.add_argument("--thread-id", required=True)
+    validation_followup_deliver_parser.add_argument("--result-digest", required=True)
     validation_followup_commit_parser = subparsers.add_parser("validation-followup-commit")
     validation_followup_commit_parser.add_argument("--thread-id", required=True)
     validation_followup_commit_parser.add_argument("--result-digest", required=True)
@@ -4545,12 +5921,31 @@ def main() -> int:
     subparsers.add_parser("refresh-prs")
     recovery_list_parser = subparsers.add_parser("recovery-list")
     recovery_list_parser.add_argument("--min-age-minutes", type=int, default=90)
+    recovery_list_parser.add_argument("--delivery-min-age-minutes", type=int, default=5)
     recovery_reserve_parser = subparsers.add_parser("recovery-reserve")
     recovery_reserve_parser.add_argument("--thread-id", required=True)
     recovery_reserve_parser.add_argument("--recovery-nonce", required=True)
+    recovery_deliver_parser = subparsers.add_parser("recovery-deliver")
+    recovery_deliver_parser.add_argument("--thread-id", required=True)
+    recovery_deliver_parser.add_argument("--recovery-nonce", required=True)
     recovery_commit_parser = subparsers.add_parser("recovery-commit")
     recovery_commit_parser.add_argument("--thread-id", required=True)
     recovery_commit_parser.add_argument("--recovery-nonce", required=True)
+    recovery_abandon_parser = subparsers.add_parser("recovery-abandon")
+    recovery_abandon_parser.add_argument("--thread-id", required=True)
+    recovery_abandon_parser.add_argument("--recovery-nonce", required=True)
+    recovery_abandon_parser.add_argument("--abandon-nonce", required=True)
+    recovery_abandon_parser.add_argument("--reason", required=True)
+    recovery_abandon_parser.add_argument("--min-age-minutes", type=int, default=5)
+    task_turn_worker_parser = subparsers.add_parser("task-turn-worker")
+    task_turn_worker_parser.add_argument(
+        "--delivery-kind",
+        required=True,
+        choices=("pr-followup", "validation-followup", "recovery"),
+    )
+    task_turn_worker_parser.add_argument("--thread-id", required=True)
+    task_turn_worker_parser.add_argument("--delivery-token", required=True)
+    task_turn_worker_parser.add_argument("--receipt", required=True)
     task_context_parser = subparsers.add_parser("task-context")
     task_context_parser.add_argument("--issue-url", required=True)
     task_context_parser.add_argument("--thread-id")
@@ -4615,6 +6010,8 @@ def main() -> int:
         result = pr_followup_list(args)
     elif args.operation == "pr-followup-reserve":
         result = pr_followup_reserve(args)
+    elif args.operation == "pr-followup-deliver":
+        result = pr_followup_deliver(args)
     elif args.operation == "pr-followup-commit":
         result = pr_followup_commit(args)
     elif args.operation == "pr-followup-abandon":
@@ -4623,6 +6020,8 @@ def main() -> int:
         result = validation_followup_list(args)
     elif args.operation == "validation-followup-reserve":
         result = validation_followup_reserve(args)
+    elif args.operation == "validation-followup-deliver":
+        result = validation_followup_deliver(args)
     elif args.operation == "validation-followup-commit":
         result = validation_followup_commit(args)
     elif args.operation == "validation-followup-abandon":
@@ -4651,8 +6050,14 @@ def main() -> int:
         result = recovery_list(args)
     elif args.operation == "recovery-reserve":
         result = recovery_reserve(args)
+    elif args.operation == "recovery-deliver":
+        result = recovery_deliver(args)
     elif args.operation == "recovery-commit":
         result = recovery_commit(args)
+    elif args.operation == "recovery-abandon":
+        result = recovery_abandon(args)
+    elif args.operation == "task-turn-worker":
+        result = task_turn_worker_entry(args)
     elif args.operation == "task-context":
         result = task_context(args)
     else:
