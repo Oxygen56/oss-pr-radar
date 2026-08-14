@@ -26929,6 +26929,35 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue reports illegal memory access in DeepGemm FP8 kernel under CUDA graph with torch.compile, but body is truncated and marked duplicate. Existing PR #47258 addresses per-model DeepGEMM auto-disable in warmup and MoE selection, overlapping semantically. Need maintainer to confirm root cause and PR coverage before new work."
   },
+  "f228509face389bdbd46bc1b795a1376f2b06fd82e57b28db3ca19d65329b45a": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "operator-level accuracy diagnosis for pow",
+      "possible numerical precision fix in pow implementation"
+    ],
+    "risks": [
+      "Platform-specific issue may not reproduce in CI",
+      "Fix may require vendor-specific hardware knowledge"
+    ],
+    "root_cause_clarity": "low",
+    "score": 6,
+    "test_plan": [
+      "Create minimal reproducer comparing FlagGems pow vs native PyTorch on Hygon DCU",
+      "Run numerical regression tests for pow output distribution"
+    ],
+    "unknowns": [
+      "Root cause of accuracy degradation",
+      "Minimal reproducible example",
+      "Maintainer interest or design preference"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "Issue reports accuracy degradation on Hygon DCU, suspects pow operator, but lacks root cause evidence, minimal reproducer, and maintainer confirmation. No open PRs or related issues found. Actionability is limited without concrete numerical comparison or code-level diagnosis."
+  },
   "f275a7d5a039c5d2a19b7a068fa8184f08a6509d08dc6cb22bbc34172b97c70f": {
     "confidence": 0.6,
     "contradictions": [],
