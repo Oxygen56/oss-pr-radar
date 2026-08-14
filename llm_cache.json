@@ -5135,6 +5135,35 @@
     ],
     "why": "Issue clearly describes a user-visible bug with a concrete reproduction and root cause analysis, but the deterministic gate requires HUMAN_REVIEW and the issue requests design confirmation. The suggested fix is plausible but needs maintainer input to avoid unintended API changes."
   },
+  "343ecb161ff61603a678d37a425ddada4991ce36176394b6abf325f7fd45dc70": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "src/agentscope/mcp/_mcp_client.py transport detection",
+      "add regression test for SSE URL with query string"
+    ],
+    "risks": [
+      "PR #2311 may already fix the issue; avoid duplicate work",
+      "Potential behavior change if detection logic is broadened incorrectly"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Use provided Amap example to reproduce McpError",
+      "Add unit test asserting sse_client is selected for URLs ending with /sse?key=...",
+      "Run existing MCP client tests"
+    ],
+    "unknowns": [
+      "Whether PR #2311 fully resolves the issue and is acceptable to maintainers"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue clearly identifies a root cause in transport detection ignoring query strings, with a concrete repro and control experiment. However, an open PR #2311 directly targets the same code path and semantics, requiring maintainer comparison before new work."
+  },
   "34bb800971bbab733ff321d7b7e92dae085a3bf01d65015c28d93fc4befa4bc2": {
     "confidence": 0.7,
     "contradictions": [],
@@ -7245,6 +7274,37 @@
       "Related issue audit incomplete due to timeout"
     ],
     "why": "Issue provides a precise, reproducible bug with clear root cause in the streaming path of the ollama/ provider, but the deterministic gate requires HUMAN_REVIEW and open PR/related issue lookups timed out, so duplicate work cannot be excluded."
+  },
+  "47ccaf9462a48b0500a84ef12be206055d47446a55183aaa7624286ea517ca4b": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Propagate unrecoverable HMA receive failures by request ID in the NIXL connector",
+      "Ensure failed requests are marked as failed before token generation",
+      "Add regression test for HMA handshake failure returning error instead of corrupted tokens"
+    ],
+    "risks": [
+      "Potential impact on performance or latency if failure handling adds overhead",
+      "Need to ensure correct handling of partial failures and request IDs across distributed roles",
+      "May require coordination with NIXL library changes"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Run the provided reproduction with prefill block size 128 and decode block size 64 on B200 with NIXL HMA; assert HTTP 500 and no generated tokens",
+      "Add a unit test for HMA failure propagation using mock NIXL connector to verify request failure is signaled",
+      "Run existing KV transfer tests to ensure no regression"
+    ],
+    "unknowns": [
+      "Exact implementation details of the fix in #52232 and whether it is complete",
+      "Whether the fix is already merged or in progress"
+    ],
+    "wait_reason": null,
+    "why": "The issue describes a concrete LLM serving bug where NIXL HMA receive failures are not propagated, causing the request to return HTTP 200 with corrupted tokens. The root cause is clearly identified: HMA block IDs are omitted from invalid_block_ids, so the scheduler receives no failure signal. The issue includes a reproduction with specific hardware, model, and block sizes, and references a related PR (#52232) that fixes the propagation and yields HTTP 500. This is a kernel/algorithm-level correctness issue in the KV transfer path, with a clear validation path via the reproduction and regression test."
   },
   "481ab1efdd4bc763df9caf7515bcccb4d1ceb77282b497c9ab34b4659640fe40": {
     "confidence": 0.7,
@@ -17419,6 +17479,39 @@
     ],
     "why": "The issue reports a crash in FLASHMLA_SPARSE_DSV4 backend on SM12x, but the root cause is that FlashMLA-sparse kernels are unsupported on SM12x. The proposed fix is a fail-fast error message, not a functional backend. The issue is already being investigated by a contributor, and the user is satisfied with waiting. No competing implementation exists, but the work is not actionable as a new algorithm contribution."
   },
+  "a96aca75671a2168d87ca2566000f2cd05fb6d5d258293e52984f0c7e343eeca": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add validate_config gate and dataclass validators",
+      "Replace silent fallbacks with raises in reward parsing, config handling, and training loops",
+      "Add visible counters and abort thresholds for transient anomalies"
+    ],
+    "risks": [
+      "Behavioral changes may break existing user configs relying on fallbacks",
+      "Distinguishing misconfiguration from stochastic anomalies requires careful threshold tuning",
+      "Large scope may require maintainer prioritization"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "CPU tests for unified_reward parsing and malformed output counters",
+      "CPU tests for offline_dpo_dataset missing column raises",
+      "CPU tests for diffusion_attention backend raise cases",
+      "validate_config resume_mode enum raise/pass cases"
+    ],
+    "unknowns": [
+      "No explicit maintainer approval beyond collaborator comment",
+      "No existing PR or issue to avoid duplication"
+    ],
+    "wait_reason": null,
+    "why": "The RFC identifies concrete silent-fallback bugs in reward parsing, config validation, and training loops, with specific file/line references and a clear fail-fast policy. It includes a test plan for CPU regression tests and aligns with upstream verl's design. The issue is labeled 'help wanted' and a collaborator endorsed it, making it actionable."
+  },
   "a9ed777cdb78b0f430741af887510ab938125b6d23e3dc7c680d68f77235c50d": {
     "confidence": 0.85,
     "contradictions": [],
@@ -22057,6 +22150,33 @@
       "No maintainer confirmation on preferred fix approach, but the issue is clearly actionable and no competing PR exists."
     ],
     "why": "Issue reports a user-visible bug where transient MCP transport failure leaves the active conversation permanently pending. A contributor reproduced the root cause on current main: the configured read timeout is never passed to the MCP SDK ClientSession, so in-flight requests can hang indefinitely. The fix is a small, well-scoped change with a clear regression test path."
+  },
+  "d78cc3572a7c09ec72aa148feac25b1b2fabde50ed5f214bd197290f44999101": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify monitor_instance_source task ownership to not retain Client generation beyond caller handles",
+      "Possibly share reconciliation/routing state at endpoint scope to avoid per-client duplication"
+    ],
+    "risks": [
+      "May require design confirmation if maintainers prefer endpoint-scoped sharing over simple cancellation",
+      "Potential impact on existing reconciliation behavior if task cancellation timing changes"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add a regression test that creates a runtime, repeatedly calls endpoint.client(), drops clients, and asserts weak references to routing state are no longer upgradable after reconciliation interval",
+      "Run targeted unit tests for lib/runtime and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred design for sharing routing state at endpoint scope"
+    ],
+    "wait_reason": null,
+    "why": "Issue describes a concrete resource leak in Rust runtime: each Endpoint::client() call spawns a reconciliation task that retains the Client via primary_token, preventing drop of caller-owned clones. Root cause is clear from source links, and expected behavior is well-defined. No competing PR or issue found, and the gate allows work."
   },
   "d7a04bdb4def010444f45071371431ed885071b0752c9868cfdba05f2a917e85": {
     "confidence": 0.8,
