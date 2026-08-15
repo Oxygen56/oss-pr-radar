@@ -4196,6 +4196,33 @@
     ],
     "why": "The issue is a usage/support question about MCP availability in Zed remote projects. The only comment suggests the user may have installed on the wrong machine, indicating a configuration misunderstanding rather than a code defect. No concrete code path or reproducible bug is identified, and the track is agent_ai_infra, not llm_algorithm. The candidate lacks actionable technical detail and is not a credible code contribution."
   },
+  "28c1dcbb30293846510b755c7907e6e5856fc32c9dff56ab14017967d892fb22": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "plugins/wasm-go/extensions/ai-agent/main.go",
+      "plugins/wasm-go/extensions/ai-agent/dashscope/"
+    ],
+    "risks": [
+      "Potential behavior change if not scoped carefully; maintainer notes to keep user role for observations"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add concurrent regression test where request B's Clear() interleaves between request A's assistant append and observation serialization",
+      "Run targeted unit tests for ai-agent package"
+    ],
+    "unknowns": [
+      "Explicit assignment confirmation from maintainer for this specific issue"
+    ],
+    "wait_reason": "ASSIGNMENT",
+    "why": "Issue clearly identifies a concurrency bug in ai-agent's global message store with maintainer-approved spec and reproduction path, but repository requires assignment and AI disclosure confirmation before implementation."
+  },
   "28c79fd55bc98cd01a8a90cb9e9e8f1623022973fa9ab985385dd2d22accec62": {
     "confidence": 0.8,
     "contradictions": [],
@@ -12005,6 +12032,37 @@
       "Whether maintainers have already discussed a preferred solution"
     ],
     "why": "The issue clearly identifies a recurring bug: new Claude models fail because temperature is deprecated, and the fix requires a maintainable approach instead of per-model hardcoding. No open PR or issue addresses this, and the existing PRs are merged and only add specific models."
+  },
+  "691703cc5c84e6847ce39e5141c5f2c225fc880257a055205aa9872a616b1a8f": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Maintainer approval is conditional on resolving the local-docker kubeconfig conflict; no final design decision yet."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "hgctl/pkg/upgrade.go",
+      "hgctl/pkg/uninstall.go",
+      "tests for discovery failure injection"
+    ],
+    "risks": [
+      "Behavior change for local-docker installs without kubeconfig if strict fail-closed is adopted.",
+      "Potential breakage of automation relying on zero exit for discovery failures."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add unit tests injecting failures from GetProfileInstalledPath, NewFileDirProfileStore, file List, kubernetes.NewCLIClient, NewConfigmapProfileStore, and ConfigMap List; verify non-zero exit and error wrapping.",
+      "Add regression test for local-docker scenario with no kubeconfig to confirm intended behavior."
+    ],
+    "unknowns": [
+      "Whether strict fail-closed semantics or an exception for local-docker will be chosen in Design #4403."
+    ],
+    "wait_reason": "DESIGN_CONFIRMATION",
+    "why": "Issue clearly identifies error suppression in hgctl upgrade/uninstall and has maintainer approval, but a design conflict remains: strict fail-closed semantics would break local-docker installs without kubeconfig. The maintainer requires Design #4403 revision and approval before implementation."
   },
   "696e02a999f1d011ae915149f892da85ad6d48baaeb77c7118e9f6f1d84d1d0e": {
     "confidence": 0.7,
@@ -20648,6 +20706,32 @@
     ],
     "why": "Issue provides a clear root cause and repro, but the deterministic gate requires HUMAN_REVIEW and an existing PR (#7598) already addresses it with failing CI. Competition is possible only if the PR's gaps are filled, but maintainer confirmation is needed."
   },
+  "bb8c5603e0d7e95e6c13cd2f7880702e8a990ee36c145e4531ec34ebfce7d3f6": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/v1/worker/gpu/model_states/mamba_hybrid.py",
+      "vllm/v1/attention/backends/mamba_attn.py"
+    ],
+    "risks": [
+      "Existing PRs may already fix the issue; overlapping changes could cause merge conflicts."
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Reproduce with the provided command on DGX Spark; verify startup succeeds with mamba_cache_mode='all' and dspark; add a regression test for MRv2 metadata wiring."
+    ],
+    "unknowns": [
+      "Whether PR #52419 or #50457 actually fixes this exact crash; maintainer assignment status."
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue identifies a concrete MRv2 wiring bug (prev_last_scheduled_idx not passed) with a clear code path and repro. However, PR #52419 and #50457 overlap semantically and may already address the root cause; a maintainer must compare before new work starts."
+  },
   "bb969417320867a56e708368f9ad6c86947b5a393d52bdf55fdc94dd838f66bd": {
     "confidence": 0.7,
     "contradictions": [],
@@ -21873,6 +21957,32 @@
       "Maintainer preference on whether to change behavior or document only"
     ],
     "why": "Issue identifies a clear bug where constructor-provided capabilities.tools.listChanged is silently overridden by setToolRequestHandlers(). Root cause is pinpointed to mergeCapabilities spread order. No competing PR or issue found. Actionable fix is to preserve explicit constructor value."
+  },
+  "c68be7c4e33146174afd7d0e2471e65c041174db6749499bd57cacd176dd0520": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Add validation to schedule add path",
+      "Propagate precise error from manage_schedule"
+    ],
+    "risks": [
+      "Potential behavior change in schedule add may affect existing workflows"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "test_plan": [
+      "Add regression test using provided bad.yaml for schedule add and manage_schedule"
+    ],
+    "unknowns": [
+      "No code anchors or root cause identified",
+      "No maintainer feedback or assignment"
+    ],
+    "wait_reason": "ASSIGNMENT",
+    "why": "Issue clearly describes inconsistent validation across three paths with a concrete repro, but lacks root-cause analysis and code anchors. Submission policy requires assignment, and no maintainer approval or design confirmation exists."
   },
   "c6c534faee3f0aa9e065bf623cca6c3fe79145346d70973e857d9f3489b14c24": {
     "confidence": 0.7,
