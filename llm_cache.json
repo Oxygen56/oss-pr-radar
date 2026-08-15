@@ -13907,6 +13907,38 @@
     ],
     "why": "The issue reports a plausible bug in the output processor's messages argument being empty, but the root cause is inferred from behavior, not confirmed. The maintainer has labeled it for triage but no design confirmation or assignment has been made. The issue asks for clarification on expected behavior and API support, indicating design questions that need maintainer input."
   },
+  "73ed7bb8b192a58b5cc5a3a63786f25e07e82c1ac5480f510fd066a531e39b41": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Forward RequestContext to internal detector getModel/generate calls",
+      "Add documented fail-closed policy option with backwards-compatible default",
+      "Apply policy consistently across input, output-result, and output-stream paths",
+      "Add tests for dynamic-model and inference-failure scenarios"
+    ],
+    "risks": [
+      "API design changes may conflict with maintainer preferences",
+      "Changing failure policy could affect existing users relying on fail-open behavior"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 12,
+    "test_plan": [
+      "Create a dynamic model resolver that reads from RequestContext and verify it receives context when invoked via detectors",
+      "Simulate internal inference failure and verify fail-open default behavior and fail-closed opt-in behavior",
+      "Run existing processor unit tests and add regression tests for all four detectors"
+    ],
+    "unknowns": [
+      "Maintainer design preferences for failure-policy name and default",
+      "Whether maintainers have already started work or have specific implementation guidance"
+    ],
+    "wait_reason": "DESIGN_CONFIRMATION",
+    "why": "Issue identifies a concrete bug (RequestContext not forwarded to internal detector agents) and a desired feature (fail-closed policy). However, the failure-policy API design explicitly requires maintainer review, and the issue is untriaged with a bot notice instructing to wait for maintainer approval before opening a PR. The deterministic gate is HUMAN_REVIEW, and design confirmation is needed for the policy name/default."
+  },
   "745079e0e14acfe695f0717fca08c99bef4d14152cfe74f7c56bb08dd48d8305": {
     "confidence": 0.8,
     "contradictions": [],
