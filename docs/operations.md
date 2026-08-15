@@ -161,6 +161,9 @@ receiving their own worktrees.
 - A PR follow-up reservation records its prepared commit and immutable evidence
   snapshot in the append-only ledger. Later audit refreshes cannot replace that
   parent binding or dispatch a second follow-up while the task is active.
+  A follow-up whose managed worktree contains uncommitted changes is isolated
+  as `worktree_dirty`; the bridge preserves those changes and continues to the
+  next serialized candidate instead of failing the whole drain.
   Legacy reservations are repaired
   only when the worktree head is the original PR head or a verifiable
   controller-created base-integration merge. An older incomplete reservation is

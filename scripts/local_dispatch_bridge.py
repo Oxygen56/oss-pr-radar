@@ -4039,6 +4039,32 @@ def pr_followup_list(args: argparse.Namespace) -> dict[str, Any]:
         if archived[thread_id] == 1:
             restore_required.append(candidate | {"reason": "thread_archived"})
             continue
+        worktree_value = str(candidate.get("worktreePath") or "")
+        if worktree_value:
+            worktree = Path(worktree_value).resolve()
+            if worktree.is_dir():
+                status = subprocess.run(
+                    ["git", "status", "--porcelain"],
+                    cwd=worktree,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                if status.returncode != 0:
+                    blocked.append(candidate | {"reason": "worktree_status_unavailable"})
+                    continue
+                dirty_paths = [line[3:] for line in status.stdout.splitlines() if line]
+                if dirty_paths:
+                    blocked.append(
+                        candidate
+                        | {
+                            "reason": "worktree_dirty",
+                            "dirtyPathCount": len(dirty_paths),
+                            "dirtyPaths": dirty_paths[:10],
+                        }
+                    )
+                    continue
         updated_at = activity.get(thread_id, 0)
         if updated_at > recent_cutoff:
             active_deferred.append(

@@ -2266,6 +2266,56 @@ def test_pr_followup_list_requires_archived_task_restoration(monkeypatch, tmp_pa
     assert result["blocked"] == []
 
 
+def test_pr_followup_list_isolates_dirty_worktree_and_keeps_next_candidate(monkeypatch, tmp_path):
+    thread_db = tmp_path / "threads.sqlite3"
+    dirty = tmp_path / "dirty"
+    clean = tmp_path / "clean"
+    for worktree in (dirty, clean):
+        worktree.mkdir()
+        run_git(worktree, "init")
+        (worktree / "tracked.txt").write_text("base\n", encoding="utf-8")
+        run_git(worktree, "add", "tracked.txt")
+        run_git(worktree, "commit", "-m", "baseline")
+    (dirty / "tracked.txt").write_text("changed\n", encoding="utf-8")
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "CREATE TABLE threads (id TEXT, updated_at INTEGER, archived INTEGER, rollout_path TEXT)"
+        )
+        old = int((datetime.now(UTC) - timedelta(hours=2)).timestamp())
+        connection.executemany(
+            "INSERT INTO threads VALUES (?,?,?,?)",
+            [("thread-dirty", old, 0, None), ("thread-clean", old, 0, None)],
+        )
+
+    class Store:
+        def pr_followup_candidates(self):
+            return [
+                {
+                    "key": "a/b#1",
+                    "threadId": "thread-dirty",
+                    "worktreePath": str(dirty),
+                },
+                {
+                    "key": "a/b#2",
+                    "threadId": "thread-clean",
+                    "worktreePath": str(clean),
+                },
+            ]
+
+        def unresolved_pr_followups(self):
+            return []
+
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+
+    result = MODULE.pr_followup_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert [item["key"] for item in result["candidates"]] == ["a/b#2"]
+    assert result["blocked"][0]["key"] == "a/b#1"
+    assert result["blocked"][0]["reason"] == "worktree_dirty"
+    assert result["blocked"][0]["dirtyPaths"] == ["tracked.txt"]
+
+
 def test_pr_followup_never_abandons_an_unreceipted_delivery(monkeypatch, tmp_path):
     now = datetime.now(UTC)
     reserved_at = iso_z(now - timedelta(hours=2))
