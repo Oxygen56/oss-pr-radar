@@ -52,7 +52,6 @@
       "category": "WAIT_MAINTAINER",
       "digest": "f53a20f705d8e4e9fe87a057579bc3bf5d83016d127d206e04e134c4798974b8",
       "kind": "review",
-      "scannerVersion": "",
       "seenAt": "2026-08-08T20:51:28.750832Z",
       "stateId": "b891e42c6d03824ca2a1c320b0da327d4212f76f9c4a734c9fc9385348006259"
     },
@@ -1462,6 +1461,22 @@
       "seenAt": "2026-08-14T13:51:33.050203Z",
       "stateId": "7b541327c5d4809eca2d2e3e376ba7da4623928681f06d1d1011006f83c05264"
     },
+    "review|mem0ai/mem0#6994": {
+      "category": "WAIT_MAINTAINER",
+      "digest": "3a6b06688e9731020c7a9894c329ec0660b04c55a01b5938aa9d1d5d8e376ee3",
+      "kind": "review",
+      "scannerVersion": "oss_pr_radar_v46_semantic_fallback",
+      "seenAt": "2026-08-15T21:41:42.186609Z",
+      "stateId": "e532a1448ed011b0342810fff1ae08d5020bd57ced7f2ce3cf860520c97a86dd"
+    },
+    "review|mem0ai/mem0#6995": {
+      "category": "WAIT_MAINTAINER",
+      "digest": "5ac47db59bc8470d37c593907ae0d047767191fdcba6f08b66b79deac26ac143",
+      "kind": "review",
+      "scannerVersion": "oss_pr_radar_v46_semantic_fallback",
+      "seenAt": "2026-08-15T21:41:42.186609Z",
+      "stateId": "d612b8358e242e3cd51372cfcdb5926cbf1f385768074eda8bca3540a833e2c4"
+    },
     "review|microsoft/agent-framework#7569": {
       "category": "WAIT_MAINTAINER",
       "digest": "f54239f89785ec924673f23bc3feb31d2cddc856fa632381358b951b19fc2742",
@@ -2436,11 +2451,11 @@
     },
     "watch|BerriAI/litellm#36791": {
       "category": "PR_FOLLOWUP",
-      "digest": "85db811c68571d09eddb4e7d7af84d128dd46229a5ca182e74121decfe2d8458",
+      "digest": "cf69e05d725eb52befaea68fefec9f770ef2ec369353a35be3aabb3dfeccaab9",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-15T19:41:34.147213Z",
-      "stateId": "d5940c6df38a3fff10ef3a6a5dd5ed4d5b0fe2c23afc61729c7d115f2b89c129"
+      "seenAt": "2026-08-15T21:41:42.537735Z",
+      "stateId": "a50e7b61daaec8135645f0d179f3d5c327978ff43de95c43cae4c27e2c3e90f6"
     },
     "watch|SWE-bench/SWE-bench#593": {
       "category": "PR_FOLLOWUP",
@@ -2588,168 +2603,15 @@
     },
     "watch|vllm-project/vllm#52298": {
       "category": "PR_FOLLOWUP",
-      "digest": "995cd95ef6d874841b7ac0a75e6b6741927bac67d755b9eb22b8eec5a26353ca",
+      "digest": "5ccc1ba99728f4d5c8ef94a740a4d2cbc19c0a14d66e4caaa0e55ba00a5e2394",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-15T19:41:34.147213Z",
-      "stateId": "0b525fc47643234b76e23f7f8643b7a45058d337450996bda63fb82c833f62bc"
+      "seenAt": "2026-08-15T21:41:42.537735Z",
+      "stateId": "0acbc622782d062033ac332ef9367bce27f3875aff0b9b3ec79f8f4d497a6c33"
     }
   },
-  "digest": "2abfbbe64baef10f262f201e9aefeb272799a16ba365f17cf75a64cddd63f39f",
+  "digest": "7a758f84b5d94ca627ee40c5715519fe5fb66a5391aee1d8ecfdf89426d6089b",
   "events": [
-    {
-      "attempts": 1,
-      "candidateKeys": [
-        "BerriAI/litellm#27767"
-      ],
-      "candidateStates": [
-        {
-          "category": "WAIT_MAINTAINER",
-          "digest": "f53a20f705d8e4e9fe87a057579bc3bf5d83016d127d206e04e134c4798974b8",
-          "key": "BerriAI/litellm#27767",
-          "kind": "review",
-          "stateId": "b891e42c6d03824ca2a1c320b0da327d4212f76f9c4a734c9fc9385348006259"
-        }
-      ],
-      "card": {
-        "config": {
-          "wide_screen_mode": true
-        },
-        "elements": [
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[BerriAI/litellm#27767](https://github.com/BerriAI/litellm/issues/27767) [Bug]: litellm.BadRequestError when using llm_as_a_judge guardrail with self-hosted vllm model**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue is a real bug with clear root cause: llm_as_a_judge guardrail bypasses proxy router and calls litellm.acompletion directly, failing for proxy-registered models. However, the deterministic gate requires HUMAN_REVIEW, and existing PR #33624 has semantic overlap in litellm/main.py, requiring maintainer comparison before new work.\n改动：Modify guardrail registry to pass llm_router to initialize_guardrail；Update LLMAsAJudgeGuardrail to accept and store llm_router；Use llm_router.acompletion in _run_judge when available\n验证：Add regression test reproducing guardrail failure with a proxy-registered vllm model；Run existing guardrail and proxy tests\n风险：Potential behavior change for directly-addressable models if router fallback not handled；Existing PR #33624 may already address similar path; need to compare\n竞争：发现 PR #36240 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 2，根因信号 False",
-              "tag": "lark_md"
-            }
-          }
-        ],
-        "header": {
-          "template": "yellow",
-          "title": {
-            "content": "OSS PR Radar: 需要确认",
-            "tag": "plain_text"
-          }
-        }
-      },
-      "createdAt": "2026-08-08T20:51:28.750832Z",
-      "eventId": "9058c20d3b8a1c088695bc1fcf3d22520baa48e07c157c8e0408ca489a2b8183",
-      "idempotencyKey": "9058c20d3b8a1c088695bc1fcf3d22520baa48e07c157c8e04",
-      "kind": "review",
-      "lastAttemptAt": "2026-08-08T20:51:57.421720Z",
-      "messageId": "om_x100b684d203eeca0b2ab5611323d4fc",
-      "runId": "scan-20260808T204950Z-1b309080dfe9",
-      "sentAt": "2026-08-08T20:51:59.617698Z",
-      "status": "SENT"
-    },
-    {
-      "attempts": 1,
-      "candidateKeys": [
-        "langflow-ai/langflow#14470",
-        "langflow-ai/langflow#14471"
-      ],
-      "candidateStates": [
-        {
-          "category": "PR_FOLLOWUP",
-          "digest": "d4449179ce3b982ae1bb25fe5e4c45a14c682189b483a5b9b54aee8b94a72a45",
-          "key": "langflow-ai/langflow#14470",
-          "kind": "watch",
-          "stateId": "cddd88f2b82b323909941ef787ed02c446eb85068d69698527659b3229ff7ba3"
-        },
-        {
-          "category": "PR_FOLLOWUP",
-          "digest": "f24fe1e6215ed04f5c5eb8c450476dc94019b5fa923997abc94ae28a1cbb17b6",
-          "key": "langflow-ai/langflow#14471",
-          "kind": "watch",
-          "stateId": "1f39e20f50378833c14f7398ecf1a06ff3150853d3746a627d01c9019f58017a"
-        }
-      ],
-      "card": {
-        "config": {
-          "wide_screen_mode": true
-        },
-        "elements": [
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[langflow-ai/langflow#14470](https://github.com/langflow-ai/langflow/pull/14470) fix: bound web search result content**\n建议：PR_FOLLOWUP\n价值：CI 检查失败；存在未解决审查线程\n验证：查看正式 review、失败检查或冲突详情后处理",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[langflow-ai/langflow#14471](https://github.com/langflow-ai/langflow/pull/14471) fix(lfx): align tool mode capability detection with runtime**\n建议：PR_FOLLOWUP\n价值：CI 检查失败\n验证：查看正式 review、失败检查或冲突详情后处理",
-              "tag": "lark_md"
-            }
-          }
-        ],
-        "header": {
-          "template": "yellow",
-          "title": {
-            "content": "OSS PR Radar: 状态更新",
-            "tag": "plain_text"
-          }
-        }
-      },
-      "createdAt": "2026-08-08T20:51:29.127967Z",
-      "eventId": "222a96fe83ef79f83ade52005356d47a71c05807bf9e85b69d4b7eda2343e47e",
-      "idempotencyKey": "222a96fe83ef79f83ade52005356d47a71c05807bf9e85b69d",
-      "kind": "watch",
-      "lastAttemptAt": "2026-08-08T20:51:59.617725Z",
-      "messageId": "om_x100b684d21ca78a0b305d81b0587eaf",
-      "runId": "pr-followup-1786222149",
-      "sentAt": "2026-08-08T20:52:00.910292Z",
-      "status": "SENT"
-    },
-    {
-      "attempts": 1,
-      "candidateKeys": [
-        "mastra-ai/mastra#20836"
-      ],
-      "candidateStates": [
-        {
-          "category": "WAIT_MAINTAINER",
-          "digest": "f88c4df4b1c9eb878ee2a21840c9736d485bc445ba3983f00df9c247d77a0211",
-          "key": "mastra-ai/mastra#20836",
-          "kind": "review",
-          "stateId": "4d95b66f0a86b3156c52f3a57a3ea8ce44234b3bc04b821301141be7f769834f"
-        }
-      ],
-      "card": {
-        "config": {
-          "wide_screen_mode": true
-        },
-        "elements": [
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[mastra-ai/mastra#20836](https://github.com/mastra-ai/mastra/issues/20836) [BUG] Client-echoed history can overwrite canonical persisted messages**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue provides a clear root cause (upsert overwrite via client echo) and a concrete fix direction, but the proposed solution involves API design changes (delta transitions, revision checks) that need maintainer confirmation. No maintainer has approved or commented, and the contributor's offer to PR is pending. The issue is actionable but requires design confirmation before implementation.\n改动：MessageHistory.processInput/processOutputResult；Observational Memory processor；Potential new authority-resolution helper\n验证：Add regression tests for stale echo overwrite, client-side tool result merge, and revision downgrade prevention；Run existing message-history and observational-memory test suites\n风险：API design changes may break existing client workflows；Complexity of merging deltas while preserving server-authored content\n竞争：未发现相关 open PR\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 6，根因信号 True",
-              "tag": "lark_md"
-            }
-          }
-        ],
-        "header": {
-          "template": "yellow",
-          "title": {
-            "content": "OSS PR Radar: 需要确认",
-            "tag": "plain_text"
-          }
-        }
-      },
-      "createdAt": "2026-08-08T20:54:24.464635Z",
-      "eventId": "06c897585b5869e0e7545f94154532bbb1cef2f73f3dfc9a8b05f956be793e4d",
-      "idempotencyKey": "06c897585b5869e0e7545f94154532bbb1cef2f73f3dfc9a8b",
-      "kind": "review",
-      "lastAttemptAt": "2026-08-08T20:55:02.669591Z",
-      "messageId": "om_x100b684d3451dca4dd44cb07a7e4c59",
-      "runId": "scan-20260808T205330Z-7311f462c2ca",
-      "sentAt": "2026-08-08T20:55:06.105133Z",
-      "status": "SENT"
-    },
     {
       "attempts": 1,
       "candidateKeys": [
@@ -24651,9 +24513,133 @@
       "runId": "pr-followup-1786822692",
       "sentAt": "2026-08-15T19:42:12.145196Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "mem0ai/mem0#6994",
+        "mem0ai/mem0#6995"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "3a6b06688e9731020c7a9894c329ec0660b04c55a01b5938aa9d1d5d8e376ee3",
+          "key": "mem0ai/mem0#6994",
+          "kind": "review",
+          "scannerVersion": "oss_pr_radar_v46_semantic_fallback",
+          "stateId": "e532a1448ed011b0342810fff1ae08d5020bd57ced7f2ce3cf860520c97a86dd"
+        },
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "5ac47db59bc8470d37c593907ae0d047767191fdcba6f08b66b79deac26ac143",
+          "key": "mem0ai/mem0#6995",
+          "kind": "review",
+          "scannerVersion": "oss_pr_radar_v46_semantic_fallback",
+          "stateId": "d612b8358e242e3cd51372cfcdb5926cbf1f385768074eda8bca3540a833e2c4"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[mem0ai/mem0#6994](https://github.com/mem0ai/mem0/issues/6994) Protect against None timestamps in Valkey layer**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue clearly describes a real bug in Valkey adapter with a concrete repro and root cause. However, an existing PR #6993 directly addresses the same issue with a complete implementation and tests, but is closed and requires human review to determine if it is acceptable or if a new PR is needed.\n改动：mem0/vector_stores/valkey.py: handle None timestamps in insert/update；possibly add regression test\n验证：Run the provided repro script against Valkey backend and assert entity link is updated；Run existing test suite for valkey vector store\n风险：PR #6993 may already be merged or superseded; need to verify its status；Potential maintainer preference on how to handle None timestamps\n竞争：发现关键词相关 PR，但未确认直接覆盖：#6993；需人工核对\n下一步：已有 PR 但强度不足；先看维护者规则和 issue 讨论，必要时先请求确认方案或分配。\n证据：复现信号 2，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[mem0ai/mem0#6995](https://github.com/mem0ai/mem0/issues/6995) Flush Valkey documents on collection reset**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue clearly describes a silent correctness bug in Valkey vector store reset, with root cause and reproduction. However, an existing PR #6996 directly addresses the same issue with a test and is technically complete, but is closed and requires human review to determine if it can be merged or if a new PR is needed.\n改动：mem0/vector_stores/valkey.py: modify delete_col to use FT.DROPINDEX with DD flag or explicitly delete document keys before dropping index\n验证：Add regression test that adds memory, calls reset(), and asserts get_all() returns empty and no mem0:<collection>:* keys remain\n风险：Potential impact on existing Valkey data if DD flag is used; need to ensure compatibility with Valkey versions\n竞争：发现关键词相关 PR，但未确认直接覆盖：#6996；需人工核对\n下一步：已有 PR 但强度不足；先看维护者规则和 issue 讨论，必要时先请求确认方案或分配。\n证据：复现信号 1，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-15T21:41:42.186609Z",
+      "eventId": "b3c954ec2d660d6276c7a899cc4206a384058343365a0aa16818dd5e7dbf361d",
+      "idempotencyKey": "b3c954ec2d660d6276c7a899cc4206a384058343365a0aa168",
+      "kind": "review",
+      "runId": "scan-20260815T213938Z-e5c6a4b79e20",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "BerriAI/litellm#36791",
+        "vllm-project/vllm#52298"
+      ],
+      "candidateStates": [
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "cf69e05d725eb52befaea68fefec9f770ef2ec369353a35be3aabb3dfeccaab9",
+          "key": "BerriAI/litellm#36791",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "a50e7b61daaec8135645f0d179f3d5c327978ff43de95c43cae4c27e2c3e90f6"
+        },
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "5ccc1ba99728f4d5c8ef94a740a4d2cbc19c0a14d66e4caaa0e55ba00a5e2394",
+          "key": "vllm-project/vllm#52298",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "0acbc622782d062033ac332ef9367bce27f3875aff0b9b3ec79f8f4d497a6c33"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#36791](https://github.com/BerriAI/litellm/pull/36791) fix(router): support anthropic messages streaming fallback**\n建议：PR_FOLLOWUP\n价值：当前分支检查失败；存在未解决审查线程\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#52298](https://github.com/vllm-project/vllm/pull/52298) [Bugfix] Validate guidance tokenizer compatibility before EngineCore**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-15T21:41:42.537735Z",
+      "eventId": "1ce4f36730d00251aafaac1383dac6c1f5782fc668e841f22c30abfe373031c6",
+      "idempotencyKey": "1ce4f36730d00251aafaac1383dac6c1f5782fc668e841f22c",
+      "kind": "watch",
+      "runId": "pr-followup-1786829925",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-15T20:45:18.010440Z",
-  "newEventCount": 0,
+  "generatedAt": "2026-08-15T21:41:42.537735Z",
+  "newEventCount": 1,
   "version": "notification_outbox_v2"
 }

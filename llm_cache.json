@@ -966,6 +966,37 @@
     ],
     "why": "Issue reports a tool call error when switching moe-runner-backend from marlin to flashinfer_mxfp4, but lacks a minimal reproduction and root cause analysis. Open PR lookup timed out, and related PRs may overlap. Maintainer input needed."
   },
+  "0bf9ce8c08da3bccee182b02e96cfff5ed3c58805be59e87efbcec67ed00dd7d": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue states dated-snapshot entries lack priority keys; comment shows they are present on current main and recent commits"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "pricing data in model_prices_and_context_window_backup.json",
+      "cost lookup in llm_cost_calc/utils.py"
+    ],
+    "risks": [
+      "Fixing data that is already correct could be wasted effort",
+      "Changing fallback logic may affect other model families"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with current main using service_tier=priority and verify x-litellm-response-cost matches priority rate",
+      "Add regression test for dated-snapshot model names with priority keys"
+    ],
+    "unknowns": [
+      "LiteLLM version of the reporter's proxy",
+      "Whether the issue persists on current main after the comment's evidence"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "Issue claims missing priority pricing keys on dated-snapshot entries, but a recent comment with code excerpts shows those keys are present on current main and in recent commits, contradicting the root cause. The comment suggests the reporter's proxy may be outdated and requests version info. Without resolving this contradiction, the fix is not actionable."
+  },
   "0c4f0b2de15d2116505fb050cc35db70311810f38fe2e12c49a3b33a194ba76f": {
     "confidence": 0.7,
     "contradictions": [
@@ -20605,6 +20636,30 @@
     ],
     "why": "The issue reports a max_tokens mismatch for a specific model on DeepInfra, but the root cause is unclear: whether it's a gateway default, model catalog misconfiguration, or upstream limit change. No maintainer confirmation or design direction exists, and the fix could involve provider-specific logic or configuration changes."
   },
+  "b027b51de95571dc51caf125e2ca0febeca6e7c68e471833211ef1491ec86ed4": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify McpConnectionManager.reconnect in packages/agent-core/src/mcp/connection-manager.ts to set status to pending, clear tool state, and emit status before awaiting old client close. Apply same fix to agent-core-v2 variant."
+    ],
+    "risks": [
+      "Changing status emission order may affect consumers that rely on current behavior; need to ensure attempt-identity check still prevents stale reconnects."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add the provided regression test to packages/agent-core/test/mcp/connection-manager.test.ts and run vitest to confirm it fails before fix and passes after. Add similar test for agent-core-v2 if applicable."
+    ],
+    "unknowns": [
+      "Maintainer design preference for status transition ordering is not confirmed, but issue suggests a minimal fix and no conflicting design is evident."
+    ],
+    "wait_reason": null,
+    "why": "Issue provides a precise root cause, a failing test with exact reproduction steps, and a clear fix direction. The bug affects public API consistency and tool registry state during MCP reconnect, with high user impact. No competing PR or issue found."
+  },
   "b0b15ca84081da9279a79f70a3fe6de5b086346f7abbe5532dc25b5ce61c4b2b": {
     "confidence": 0.7,
     "contradictions": [],
@@ -20910,6 +20965,37 @@
       "Whether maintainers consider this a bug or user error; whether a PR is already in progress"
     ],
     "why": "Issue reports a CLI argument error for MiniMax-H3, but root cause is unclear; a comment suggests adding --model-type diffusion as a workaround, indicating possible missing documentation or validation. No maintainer confirmation or design decision."
+  },
+  "b43df068b655d8f1cedc87b8db8f1046546a827797b7322f3352df114dc5c9bb": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Issue claims no existing PR, but open_pr_assessment finds PR #6993 with same title and semantic overlap"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "mem0/vector_stores/valkey.py: handle None timestamps in insert/update",
+      "possibly add regression test"
+    ],
+    "risks": [
+      "PR #6993 may already be merged or superseded; need to verify its status",
+      "Potential maintainer preference on how to handle None timestamps"
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Run the provided repro script against Valkey backend and assert entity link is updated",
+      "Run existing test suite for valkey vector store"
+    ],
+    "unknowns": [
+      "Whether PR #6993 is merged, superseded, or rejected",
+      "Maintainer's preferred fix approach"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue clearly describes a real bug in Valkey adapter with a concrete repro and root cause. However, an existing PR #6993 directly addresses the same issue with a complete implementation and tests, but is closed and requires human review to determine if it is acceptable or if a new PR is needed."
   },
   "b460bd144d841f31132ae242cebb136b32017ce7250ba7c549d8c26a637360ac": {
     "confidence": 0.7,
@@ -29710,6 +29796,31 @@
       "Whether maintainers intend to support the reported CLI usage without --model-type"
     ],
     "why": "Issue reports a CLI argument error for MiniMax-H3 in sglang serve, but comments indicate a workaround (adding --model-type diffusion) and a merged PR (#33365) that may already address the root cause. The open PR lookup timed out, so competition status is unknown. The issue is a user-facing bug with a clear repro, but the fix may already be merged or require maintainer confirmation on intended CLI behavior."
+  },
+  "f7020a1413496f0fe1d0a8280d120c6beff7116d4c5bfd2bdb4bfca2996e8cf8": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "mem0/vector_stores/valkey.py: modify delete_col to use FT.DROPINDEX with DD flag or explicitly delete document keys before dropping index"
+    ],
+    "risks": [
+      "Potential impact on existing Valkey data if DD flag is used; need to ensure compatibility with Valkey versions"
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Add regression test that adds memory, calls reset(), and asserts get_all() returns empty and no mem0:<collection>:* keys remain"
+    ],
+    "unknowns": [
+      "Whether PR #6996 is mergeable or has issues; maintainer's preference on approach"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue clearly describes a silent correctness bug in Valkey vector store reset, with root cause and reproduction. However, an existing PR #6996 directly addresses the same issue with a test and is technically complete, but is closed and requires human review to determine if it can be merged or if a new PR is needed."
   },
   "f759c47b1a678e9098887e15181bb2f15de855fd93cdd408b1f94a4bc172b3fe": {
     "confidence": 0.7,
