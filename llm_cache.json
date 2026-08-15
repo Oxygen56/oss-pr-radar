@@ -1270,6 +1270,38 @@
     ],
     "why": "Issue provides strong evidence of MRv2 memory profiler over-reporting available KV cache due to insufficient CUDA graph capture headroom, leading to OOM under load. However, root cause is not fully isolated (eager residual unexplained), and an existing draft PR #49233 attempts a fix but is incomplete with failed CI. Maintainer direction is unclear, and the issue is still open without explicit approval."
   },
+  "0de81c54f2abae5e8520147aefe55c211eaf2e4c30c5056f9f6341e120852130": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue title suggests adjusting num_redundant_experts, but PR #46370 is about fault-tolerant EP scale-down, which may not directly address divisibility"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Expert-parallel expert count validation or automatic adjustment of num_redundant_experts",
+      "Possibly changes in model_runner.py or deepseek_v4 model initialization"
+    ],
+    "risks": [
+      "PR #46370 may already fix the issue, making new work redundant",
+      "Potential duplicate issue #52407 may indicate a broader root cause"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 13,
+    "test_plan": [
+      "Reproduce with the provided vllm serve command on 3 A100 GPUs",
+      "Run existing expert-parallel tests with ep_size=3 and n_physical_experts not divisible",
+      "Compare behavior with PR #46370 applied"
+    ],
+    "unknowns": [
+      "Whether PR #46370 actually resolves this assertion",
+      "Whether maintainers have acknowledged the issue or assigned ownership"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue reports a concrete expert-parallel divisibility assertion failure with a clear repro command and stack trace, but an existing PR #46370 overlaps semantically and may already address the root cause. The issue is not linked to that PR, and the related issue #52407 shares stack signatures, so duplicate review is required before starting new work."
+  },
   "0e098b5bc7a4419c24019e327e30777126dcba1c796cc1f7d80d1888b462cde9": {
     "confidence": 0.7,
     "contradictions": [
@@ -11044,6 +11076,36 @@
     ],
     "why": "Issue describes a clear bug with exact location and a reproduced failing test, but the deterministic gate requires HUMAN_REVIEW and design confirmation is needed before implementation."
   },
+  "60913e0494ff16aa532f15b15b8f1fb20d2f978f563b39a9cc63806907162316": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "runtime image packaging metadata",
+      "flashinfer-jit-cache pinning logic",
+      "documentation of supported upgrade workflow"
+    ],
+    "risks": [
+      "Changing packaging may break existing image compatibility",
+      "Documenting unsupported workflow may be preferred over code fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "test_plan": [
+      "Reproduce with provided docker command and assert engine starts without FLASHINFER_DISABLE_VERSION_CHECK",
+      "Add a serve-time image test that upgrades vLLM in-container and verifies flashinfer version match"
+    ],
+    "unknowns": [
+      "Maintainer decision on supported in-container vLLM upgrade workflow",
+      "Owner assignment for packaging fix"
+    ],
+    "wait_reason": "DESIGN_CONFIRMATION",
+    "why": "Issue clearly describes a version-skew bug with a verified workaround and concrete repro, but the suggested fixes (a/b/c) require a maintainer decision on whether in-container vLLM upgrades are supported and who owns coupled packaging. The triage comment explicitly asks for a runtime-image contract decision and owner assignment, so implementation should wait for that confirmation."
+  },
   "60ac23d0229bf12bd3284ba951c4b3e1ff8202f059e05f24bcf21a5d2ef7ae26": {
     "confidence": 0.7,
     "contradictions": [
@@ -13480,6 +13542,38 @@
     ],
     "why": "Issue provides detailed root cause and repro, but existing PR #2078 is draft and may already address it; maintainer design preferences and PR quality need assessment before starting competing work."
   },
+  "733337bcf3c87277414f60dd1315f1676fd748dcac6334cf725cfd865868f68b": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue title mentions ParallelLMHead attribute, but related issue #52407 is about device mismatch in NVFP4 emulation"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix ParallelLMHead attribute access in tensor-parallel or quantization path",
+      "Add regression test for NVFP4/Marlin with ParallelLMHead"
+    ],
+    "risks": [
+      "Root cause may be in model config or environment-specific, not general code",
+      "Potential duplicate issue may already be under investigation"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 12,
+    "test_plan": [
+      "Reproduce with the exact command and model on a single GPU",
+      "Add a unit test that loads a small ParallelLMHead model with NVFP4/Marlin and checks output_size_per_partition"
+    ],
+    "unknowns": [
+      "Minimal reproduction script and full stack trace",
+      "Whether maintainers have acknowledged or are investigating",
+      "Exact code path where output_size_per_partition is expected"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "The issue reports an AttributeError in ParallelLMHead but lacks a minimal reproduction script, model config, or stack trace beyond the error line. The algorithm relevance is inferred from environment variables and model type, but the root cause is not clearly identified. Potential duplicate issue #52407 shares stack signatures but not the specific error, so overlap is uncertain."
+  },
   "7372012f7ca3664a8e96c6d3d7519b76bf5018245fd9abb1a59da525b25eb634": {
     "confidence": 0.85,
     "contradictions": [],
@@ -14590,6 +14684,35 @@
       "Whether a fix is already in progress"
     ],
     "why": "The issue reports a reproducible bug in the internal MCP self-connection path, but the root cause is not precisely identified and the fix requires design decisions about URL derivation and error handling. No maintainer confirmation or open PR exists, and the repository requires AI disclosure, blocking automated public action."
+  },
+  "7ce34cb84c64dd25da9de07be55d738ebb6558915635681053a42f751a0f12bd": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add None guard for extend_prefix_lens in prepare_decode_context_parallel_metadata or populate field in dspark_verify.run_non_compact",
+      "Add regression test for DCP+DSPARK decode verify batch"
+    ],
+    "risks": [
+      "Existing PR #34432 may already fix the issue; need to compare implementation boundaries",
+      "Potential interaction with other DCP/DSPARK fixes in progress"
+    ],
+    "root_cause_clarity": "high",
+    "score": 13,
+    "test_plan": [
+      "Reproduce with Kimi K3 or smaller hybrid model, DCP size 8, DSPARK, PD disaggregation; run first target-verify batch and assert no crash",
+      "Unit test for planner with extend_prefix_lens=None"
+    ],
+    "unknowns": [
+      "Whether PR #34432 or other open PRs already address this exact crash",
+      "Maintainer preference on fix location (guard vs populate)"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue reports a deterministic crash in DCP+DSPARK decode path with clear traceback and root cause. However, existing PR #34432 has semantic overlap with the same code path and key terms, and the supplied gate decision is HUMAN_REVIEW. Need maintainer comparison of PR #34432 and related PRs before starting new work."
   },
   "7cf36c7ae9304d10b958e94f4b778117daa2faf0404775f56273cca084cc4420": {
     "confidence": 0.8,
@@ -16623,6 +16746,41 @@
       "Whether existing PRs will be merged or superseded"
     ],
     "why": "Issue clearly describes mid-stream provider errors bypassing retries and being unclassifiable, with concrete repro and production evidence. However, the deterministic gate is HUMAN_REVIEW, and the issue has been split into two sub-issues (#18668, #18669) requiring design confirmation. Two open PRs (#18671, #18672) exist with overlapping intent but are not directly linked, so maintainer guidance is needed to avoid duplicate or conflicting work."
+  },
+  "8d73ab97940c4a949d426b6c2547f627eb612d9ae52cefc5d21fe5356a74234b": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims formatting errors but final solution is correct",
+      "Comment suggests parser configuration may be the cause, but user insists command line is correct"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Reasoning parser selection and chat template handling",
+      "Potential fix in parser logic for Muse-Glimmer and Qwen3 XML"
+    ],
+    "risks": [
+      "May be a model output issue not a vLLM bug",
+      "Potential duplicate issue #52407 with shared stack signatures",
+      "Requires maintainer confirmation to avoid wasted effort"
+    ],
+    "root_cause_clarity": "low",
+    "score": 12,
+    "test_plan": [
+      "Reproduce with exact server commands and raw JSON responses",
+      "Compare streaming vs non-streaming to isolate parser vs model output",
+      "Test with different reasoning parsers and chat templates"
+    ],
+    "unknowns": [
+      "Exact raw model output without rendering layer",
+      "Whether the issue is in parser, template, or model generation",
+      "Maintainer confirmation of the bug and desired fix"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "Issue reports formatting/parsing bugs in Muse-Glimmer and Qwen3.6 with LaTeX escape errors and missing thinking blocks. The root cause is unclear; comments suggest it may be model output, parser selection, or rendering. No concrete algorithm mechanism or reproducible code path is identified. The gate decision is HUMAN_REVIEW, and the submission policy indicates a conflict with AI disclosure, so no automatic action is allowed."
   },
   "8d833737cd3d71936adb59b4b324de95db54780e38729779ef176cf2f4bb9125": {
     "confidence": 0.85,
