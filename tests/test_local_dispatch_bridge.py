@@ -2273,6 +2273,8 @@ def test_pr_followup_list_isolates_dirty_worktree_and_keeps_next_candidate(monke
     for worktree in (dirty, clean):
         worktree.mkdir()
         run_git(worktree, "init")
+        run_git(worktree, "config", "user.name", "Radar Test")
+        run_git(worktree, "config", "user.email", "radar-test@example.invalid")
         (worktree / "tracked.txt").write_text("base\n", encoding="utf-8")
         run_git(worktree, "add", "tracked.txt")
         run_git(worktree, "commit", "-m", "baseline")
