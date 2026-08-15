@@ -3014,6 +3014,36 @@
     ],
     "why": "The issue clearly describes a user-visible bug: files uploaded via canvas in cloud are not surfaced to the agent or Files tab, despite being placed in the sandbox. The root cause is likely a missing notification or event propagation from the upload handler to the agent and file index. This is actionable and no competing PR exists."
   },
+  "1e92d6f17c971c840b9e6b34333d047d091814f5e5119264b36c837a49d7c543": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "server-filesystem package",
+      "Windows launch/command handling",
+      "documentation for Windows configuration"
+    ],
+    "risks": [
+      "May require maintainer design confirmation on preferred fix approach (quoting vs. path resolution)",
+      "Potential overlap with other open PRs addressing similar Windows path issues"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "test_plan": [
+      "Add a regression test that simulates a command path with spaces and verifies the server starts or the command is correctly quoted",
+      "Run existing package tests on Windows CI or with a Windows-compatible test harness"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred fix direction or are willing to accept a code change vs. docs-only",
+      "Exact behavior of Claude Desktop's command invocation on Windows beyond the issue description"
+    ],
+    "wait_reason": null,
+    "why": "Issue clearly describes a Windows-specific startup failure caused by unquoted paths with spaces when Claude Desktop invokes the server via cmd.exe. The existing PR #4499 is docs-only, lacks tests, and has been stale for 37 days, leaving room for a materially better PR that adds a regression test and a robust fix (e.g., proper quoting or path resolution)."
+  },
   "1ebeb46d4c7f39910e33296bfcc1d34912ac92dfed604d8da99044d38c17661c": {
     "confidence": 0.8,
     "contradictions": [],
@@ -18091,6 +18121,36 @@
     ],
     "why": "Issue identifies a clear correctness bug from inconsistent inference_mode usage, with reproduction and maintainer discussion. However, open PR lookup timed out and related issue audit failed, so duplicate/competing work cannot be excluded. Maintainer comment asks for design alignment, indicating need for maintainer decision."
   },
+  "a085e03d1f08d5e571fc1a291113199310a17cad9cb689caf1467743ac571d8a": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "@mastra/mcp MCPServer.startHTTP to route through createMcpHandler with legacy stateless mode",
+      "Expose cache hints (ttlMs, cacheScope) on tool/resource/prompt registration",
+      "Preserve auth bridge (mapAuthInfoToUser, RequestContext) across eras"
+    ],
+    "risks": [
+      "Potential API behavior changes affecting existing 2025-era clients",
+      "Maintainer may have different design preferences for dual-revision support"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "test_plan": [
+      "Create a failing test using the issue's minimal repro for serving 2026-07-28 via MCPServer",
+      "Run targeted unit tests for @mastra/mcp and static checks"
+    ],
+    "unknowns": [
+      "Maintainer design preference for the integration approach",
+      "Whether maintainers have already planned this feature internally"
+    ],
+    "wait_reason": "DESIGN_CONFIRMATION",
+    "why": "Issue clearly identifies a missing integration path in @mastra/mcp for MCP protocol revision 2026-07-28, with concrete code anchors and a suggested design. However, it is an infrastructure/API enhancement requiring maintainer design confirmation, and the gate decision is HUMAN_REVIEW."
+  },
   "a0988c0775eda5f125f8e9fc12358bd74dade8d93f3e6ddd5b7144b6779dc168": {
     "confidence": 0.8,
     "contradictions": [
@@ -21448,6 +21508,35 @@
     ],
     "why": "The issue provides a detailed root cause analysis and a concrete suggested fix, but a related PR #20499 is actively refactoring the tracing model, and a contributor has asked whether to stack work on it. This requires maintainer direction before implementation to avoid conflicting changes."
   },
+  "c1d65387e4871050b6492aa838a6a847f30e3c120bd99e6f510a26e53a34b371": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "src/mcp/client/streamable_http.py",
+      "tests/client/test_streamable_http.py"
+    ],
+    "risks": [
+      "Potential behavior change for existing callers relying on unlimited reconnects on clean EOF.",
+      "Need to ensure the fix does not break other reconnection scenarios."
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "test_plan": [
+      "Add a regression test that simulates clean EOF without JSON-RPC response on each reconnect and verifies the client stops after MAX_RECONNECTION_ATTEMPTS and emits CONNECTION_CLOSED.",
+      "Run existing test suite and static checks as described in the issue."
+    ],
+    "unknowns": [
+      "Maintainer confirmation on the desired behavior and assignment status.",
+      "Whether the repository's AI disclosure policy has been satisfied for the proposed patch."
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "The issue clearly describes a bug in the streamable HTTP client's reconnection budget handling, with a concrete reproduction and expected behavior. However, the repository requires assignment and AI disclosure confirmation, and the issue is labeled 'needs confirmation' with no maintainer approval. The candidate is technically actionable but blocked by missing maintainer confirmation and assignment."
+  },
   "c1d70ac8a8e5f15a55021e0ec70bb4ad6d502a9ba4b3108647ee096f3e27e046": {
     "confidence": 0.7,
     "contradictions": [
@@ -24748,6 +24837,33 @@
     ],
     "why": "The issue is a detailed evidence dump of a device-side spin loop in the TMEM allocation path of the sparse-decode MLA kernel, but it explicitly asks for maintainer guidance on the correct owner and diagnostic path, not a code patch. The root cause is not established; the report itself notes that the exact stall mechanism (phase mismatch vs. visibility vs. hardware state) is undetermined. The gate decision is HUMAN_REVIEW, and the open PR assessment flags semantic overlap with PR #48726 that requires manual comparison. The issue is a request for guidance and instrumentation, not a concrete actionable code contribution."
   },
+  "dd132af943fd160c33d51b689c814e18da2a4dcb99b2d5dc20bf84fc989cded0": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify bin/kimi-cu-mcp.cmd to fallback to USERPROFILE-derived path or absolute path when LOCALAPPDATA is missing",
+      "Possibly adjust host environment handling for stdio MCP servers"
+    ],
+    "risks": [
+      "Potential behavior change if fallback path conflicts with other installations",
+      "Need to ensure fix doesn't mask genuine missing runtime cases"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add regression test that runs launcher with clean environment (env -i) and verifies it locates runtime when exe exists",
+      "Run existing plugin/MCP tests on Windows to ensure no regression"
+    ],
+    "unknowns": [
+      "No maintainer feedback or design preference; but not blocking as issue is clear and no competing PR exists"
+    ],
+    "wait_reason": null,
+    "why": "Issue provides a clear, reproducible bug with root cause identified: launcher script relies on LOCALAPPDATA which may be stripped by host environment. Expected behavior and minimal repro are given, making it actionable for a focused fix."
+  },
   "dd133218a0472782b27d62ae78bf525358c089554982bab7b494e411e9c9d4cf": {
     "confidence": 0.7,
     "contradictions": [
@@ -26449,6 +26565,34 @@
       "Maintainer confirmation on preferred fix location (legacy vs new mapper)"
     ],
     "why": "Issue provides a precise root cause: langfuse_otel output setters ignore RerankResponse, with a minimal repro and suggested fix. No competing PR or issue found. The fix is small and testable."
+  },
+  "e9431a38e8cd0ce801c126e3f47209e278199d0973754a2e820b0a9a4cfb7091": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "pkg/cert/server.go",
+      "pkg/cert/server_test.go",
+      "pkg/bootstrap/server.go"
+    ],
+    "risks": [
+      "Changing startup behavior may affect deployments that currently tolerate latent failures; intentional but needs communication."
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "test_plan": [
+      "Unit red/green: inject constructor failures on baseline and fixed revisions, assert error propagation and no later-stage calls.",
+      "Runtime red/green in kind cluster with invalid certificate config, assert startup fails at boundary with originating error."
+    ],
+    "unknowns": [
+      "Maintainer approval status; assignment status."
+    ],
+    "wait_reason": "ASSIGNMENT",
+    "why": "The issue clearly describes a concrete bug: InitServer discards three errors and mutates Server fields before validation. The proposed design is actionable with narrow seams and deterministic tests. However, the repository requires assignment and the issue explicitly states implementation is blocked on maintainer approval, so work cannot start without maintainer authorization."
   },
   "e978276646fcd0104adc6abd64f55fb72a84bb630a2686a4b3ecf85be9527b09": {
     "confidence": 0.85,
