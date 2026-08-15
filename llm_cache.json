@@ -3164,6 +3164,38 @@
     ],
     "why": "Issue reports a real bug with detailed reproduction and ruled-out factors, but open PR and related issue lookups timed out, so duplicate work cannot be excluded. The repository requires AI disclosure, which conflicts with automated public action. Maintainer approval is absent and design confirmation is needed for the suspected areas."
   },
+  "1fac82adf1890890e51a3dccb2b3b2dd325f3cadcfd38aba573ee3f5f40809a8": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "observational-memory hook execution policy",
+      "hook option shape",
+      "async-buffer failure propagation"
+    ],
+    "risks": [
+      "API behavior change may conflict with maintainer design preferences",
+      "Async-buffer semantics are underspecified and need explicit agreement"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Add failing tests for rejected start/end hooks in synchronous cycles",
+      "Verify model call is skipped on start hook failure",
+      "Verify end hook receives original model error",
+      "Verify exactly one paired end callback and cleanup",
+      "Test async-buffer fire-and-forget behavior"
+    ],
+    "unknowns": [
+      "Maintainer-approved option shape and async-buffer behavior"
+    ],
+    "wait_reason": "DESIGN_CONFIRMATION",
+    "why": "Issue clearly describes a fail-closed hook policy gap with a concrete repro, but explicitly requests maintainer approval on option shape and async-buffer behavior. Gate is HUMAN_REVIEW and no maintainer approval or help-wanted signal exists."
+  },
   "1fc050f77344b8b2237da7aaef141d81c17aba1ca352efa5ec0e16018248562e": {
     "confidence": 0.8,
     "contradictions": [
@@ -22483,6 +22515,35 @@
     ],
     "why": "Issue clearly describes a silent truncation bug in RemoteA2aAgent when A2A stream ends before terminal state, with reproduction steps and expected fixes. However, the deterministic gate requires HUMAN_REVIEW, and the submission policy needs assignment, so work should wait for maintainer confirmation."
   },
+  "c3f78a681f81afa1bef33e26eade2053698086618a3a917735d715094b46ea35": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix streaming Responses tool continuation state propagation in .NET Semantic Kernel",
+      "Add regression test for streaming tool continuation with previous_response_id"
+    ],
+    "risks": [
+      "Root cause may involve interaction with Microsoft.Extensions.AI or OpenAI SDK versions, requiring careful isolation",
+      "Fix may need to align with maintainer design preferences for streaming state management"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "test_plan": [
+      "Create a minimal reproduction using OpenAI Responses IChatClient with function invocation middleware and streaming, then assert continuation succeeds",
+      "Run existing Semantic Kernel .NET unit tests for streaming and function invocation"
+    ],
+    "unknowns": [
+      "Exact code path in SK 1.79 causing the regression",
+      "Whether maintainers have already started internal investigation"
+    ],
+    "wait_reason": null,
+    "why": "Issue reports a clear regression in .NET Semantic Kernel 1.79 streaming Responses tool continuation, with A/B version comparison and detailed diagnostics. Root cause is not pinpointed but is localized to SK 1.79 changes in streaming/tool-call state propagation. No competing PR addresses this specific issue."
+  },
   "c404def84d9bc7cd1a8df1ef92e2ff8a4144319ec2d9351518c5c6453ad7305d": {
     "confidence": 0.7,
     "contradictions": [],
@@ -26638,6 +26699,41 @@
       "Whether maintainers have accepted the proposed fix direction is unknown"
     ],
     "why": "The issue identifies a concrete performance bug in the vLLM connector's KVBM disk-to-device onboarding path, where per-layer NIXL descriptors cause ~10x throughput loss on network storage. Root cause is precisely located in layout handling (layer_separate_auto never returns FullyContiguous) and descriptor aggregation logic. The fix is actionable: either expose PyLayoutType or aggregate adjacent descriptors. The issue includes reproduction steps, performance measurements, and a reference implementation on a fork, providing a clear validation path."
+  },
+  "e2c045648c2180f3cd55069bd9d537e8a983b263279d0f92738d17bec3296d36": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "hgctl/pkg/installer/standalone.go",
+      "hgctl/pkg/installer/standalone_agent.go",
+      "hgctl/pkg/installer/installer_docker.go",
+      "hgctl/pkg/installer tests"
+    ],
+    "risks": [
+      "Changing Agent.Version error propagation may affect other call sites (Install, Upgrade, display reads) and must be explicitly handled.",
+      "Whitespace normalization must be specified to avoid leaking newline into persisted YAML.",
+      "Persistence failure after successful upgrade must be reported honestly without claiming rollback."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add deterministic tests for successful updater plus readable VERSION, updater failure, unreadable/malformed VERSION, and Profile-store save failure.",
+      "Add regression test with overlay (e.g., --set gateway.httpPort=...) asserting stored Profile does not reflect overlay.",
+      "Compare saved Profile against pre-upgrade stored file field-by-field excluding higressVersion.",
+      "Run go test ./pkg/installer -count=1 and go test ./... -count=1 from hgctl.",
+      "Run git diff --check before review."
+    ],
+    "unknowns": [
+      "Exact mechanism for reconstructing stored Profile (e.g., FileDirProfileStore / ProfileContext) not yet specified.",
+      "Explicit choice on whether to change Agent.Version or add a strict read for this path."
+    ],
+    "wait_reason": "DESIGN_CONFIRMATION",
+    "why": "The design is technically sound and addresses a real bug, but the maintainer has requested specific revisions (write source mechanism, whitespace normalization, and error-propagation call-site impact) before approval. The candidate is not yet actionable until the design is revised and approved."
   },
   "e2d7ebb8359fc65e48a932636e5956add14c0813d4e2820c4835bf41e599c3c6": {
     "confidence": 0.8,
