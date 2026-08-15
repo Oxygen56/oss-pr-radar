@@ -3429,6 +3429,35 @@
     ],
     "why": "Issue provides detailed reproduction and root-cause analysis, but maintainer guidance is pending on scope and upstream dependency fix; existing PR #1571 is draft and incomplete, leaving competition opportunity but requiring design confirmation."
   },
+  "21496647c773b13d6bb60fe8d8e5b309f7da0197175f637887b2320f1d3abe4e": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix non-streaming chatgpt/* responses transformation to recover output items from raw response",
+      "Add regression test for non-streaming chatgpt/* with OAuth auth.json"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #34095 that touches similar streaming/non-streaming logic",
+      "Changing transformation behavior may affect other provider paths"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 11,
+    "test_plan": [
+      "Use the provided minimal reproducer to create a failing test for stream=false",
+      "Run targeted unit tests for litellm_responses_transformation/transformation.py"
+    ],
+    "unknowns": [
+      "Whether maintainers have already started a fix or have design preferences",
+      "Exact root cause of output_items becoming empty in non-streaming path"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "Issue reports a clear regression with a minimal reproducer and suspected code path, but root cause is unconfirmed and no maintainer has acknowledged or assigned. The candidate is actionable but requires maintainer confirmation of the intended fix scope to avoid conflicting with ongoing work."
+  },
   "2157666a01c6611d2766485a271f0397669624ec708a68262cc7b7566eb2239d": {
     "confidence": 0.7,
     "contradictions": [],
@@ -29186,6 +29215,35 @@
       "Whether existing PR #14266 will be updated with tests"
     ],
     "why": "Issue clearly identifies a hardcoded :predict endpoint causing 400 errors for gemini-embedding-2 models. Existing PR #14266 addresses the same root cause but lacks regression tests, leaving room for a materially better PR with tests and minimal fix."
+  },
+  "f58c180645073b9bb3daa8ef1a34b6180de80a0479e56f1be482973b0ab2c652": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "custom_all_reduce kernel or CUDA graph capture logic",
+      "regression test for TP=4 Hopper graph capture"
+    ],
+    "risks": [
+      "Existing PR #46515 may already fix the issue; duplicate work if not compared",
+      "Hardware-specific bug may not be reproducible in CI without Hopper GPUs"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 11,
+    "test_plan": [
+      "Run the reported reproduction command on 0.27.1 with and without the candidate fix",
+      "Add a CUDA graph capture regression test for custom_all_reduce on Hopper TP=4"
+    ],
+    "unknowns": [
+      "Whether PR #46515 actually fixes this issue",
+      "Maintainer preference on the correct fix approach"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue reports a reproducible CUDA illegal memory access in custom_all_reduce during CUDA graph capture on Hopper TP=4, with a clear version regression and code anchors. However, existing PR #46515 semantically overlaps the same code path and may already address the root cause; a human must compare implementations before starting new work."
   },
   "f5c25ff48fd056b67de74406fe8893895face7baacb2a7c417a1deadcdbbcdab": {
     "confidence": 0.7,
