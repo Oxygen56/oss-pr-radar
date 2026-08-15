@@ -14604,6 +14604,44 @@
     ],
     "why": "The issue precisely identifies two hardcoded gates in the OpenAI passthrough path that prevent spend logging for /v1/embeddings, with a clear mechanism and a reproducible end-to-end test. The bug is user-visible, causes budget under-enforcement, and has no competing PR or open issue. The fix is a minimal code change in the dispatcher and handler, with a clear test path."
   },
+  "7782ccef795ada8d12221ca0b308e706f25006d725db244e18781a4e2ac5d109": {
+    "confidence": 0.6,
+    "contradictions": [
+      "The issue states the failure is silent and only appears on long prompts, but also reports a crash with num_speculative_tokens=1 on the first request.",
+      "The issue rules out stateless-first-chunk recurrent state reuse, but the crash at an async copy sync could still be related to memory management."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Investigate and fix the interaction between MTP speculative decoding and turboquant KV cache on sm120, likely in the attention kernel or KV cache quantization path.",
+      "Add regression tests for MTP with turboquant KV cache on supported hardware."
+    ],
+    "risks": [
+      "The root cause may be in a third-party kernel (TurboQuant) or require hardware-specific fixes.",
+      "The issue may be a duplicate of an existing PR or issue not yet identified.",
+      "The fix may require changes to the KV cache quantization scales or MTP draft head handling, which could have broader performance implications."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 13,
+    "test_plan": [
+      "Reproduce the issue using the provided command and prompt length.",
+      "Run with CUDA_LAUNCH_BLOCKING=1 to identify the faulting kernel.",
+      "Compare behavior with and without MTP, and with fp8 vs turboquant KV cache.",
+      "Test with num_speculative_tokens=1 to reproduce the crash and capture the traceback.",
+      "Add a regression test that runs MTP with turboquant KV cache on a small model and checks for repetition collapse and engine stability."
+    ],
+    "unknowns": [
+      "The exact root cause of the repetition collapse and the illegal memory access.",
+      "Whether the existing PR #40704 already addresses this issue.",
+      "Whether the maintainers have acknowledged the issue or are actively investigating.",
+      "The impact of the AI disclosure conflict on the ability to proceed."
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "The issue reports a reproducible silent degradation and a crash when combining MTP speculative decoding with turboquant KV cache on sm120. It provides detailed reproduction steps, a comparison table, and rules out several alternative causes. However, the root cause is not isolated; the issue itself notes the fault is detected at an async copy sync and suggests hypotheses (e.g., discarded KV calibration scales) without confirmation. The existing PR #40704 has semantic overlap but is not directly linked, and its technical completeness is unknown. The deterministic gate is HUMAN_REVIEW, and the submission policy indicates an AI disclosure conflict, which blocks automatic action. The candidate is potentially valuable but requires maintainer confirmation of the root cause and comparison with the overlapping PR before work can start."
+  },
   "77b3ff6cc302eba5e65c28fde13894adbb5fb5f57f3e53a43bf5007ee09b3a46": {
     "confidence": 0.7,
     "contradictions": [],
