@@ -24227,6 +24227,34 @@
     ],
     "why": "The issue reports a reproducible CUDA illegal memory access in the GDN kernel, with multiple independent reproductions and a confirmed workaround (disabling fuse_allreduce_rms). However, the root cause is not yet identified, and the open PR search failed due to rate limits, so duplicate or competing implementations cannot be ruled out. The deterministic gate requires HUMAN_REVIEW."
   },
+  "d068cef6c28bb825cb1280daeb009505c684b065e6ff01859550a7e896c39925": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Proposed fix (drop undeclared tool call) conflicts with open PR #1788 (fail closed on undeclared tool call)."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "bridge.ts tool-call validation behavior",
+      "streaming error handling for undeclared tool calls"
+    ],
+    "risks": [
+      "Changing fail-closed to drop-and-continue may mask provider errors and affect security-sensitive tool execution."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "test_plan": [
+      "Reproduce with sensenova routing and undeclared exec tool call; verify stream continues with warning instead of 502."
+    ],
+    "unknowns": [
+      "Maintainer preference on whether to drop or fail closed for undeclared tool calls."
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "The issue describes a concrete bug with a proposed fix, but an open PR (#1788) already addresses the same behavior (fail closed on undeclared tool calls), and the proposed fix directly conflicts with that PR's approach. This requires maintainer review to reconcile the competing designs."
+  },
   "d06c8e85b4388846a844bfc902645fa48b10b28766cbed6fac5ebc258646a0e9": {
     "confidence": 0.7,
     "contradictions": [],
