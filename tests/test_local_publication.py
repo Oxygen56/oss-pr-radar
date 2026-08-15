@@ -38,6 +38,7 @@ def test_fast_publication_runs_ingestion_and_publication_in_order(tmp_path):
             "written": [{"key": "a/b#1", "path": "/tmp/task-context.json"}],
             "errors": [],
         },
+        "recovery-list": {"ok": True, "recoverable": []},
         "drain-once": {
             "ok": True,
             "action": "issue_task_dispatched",
@@ -59,6 +60,7 @@ def test_fast_publication_runs_ingestion_and_publication_in_order(tmp_path):
         "cleanup-reconcile",
         "publication-run",
         "context-sync",
+        "recovery-list",
         "drain-once",
     ]
     assert result["ok"] is True
@@ -144,6 +146,56 @@ def test_fast_publication_retries_an_old_negative_turn_receipt(tmp_path):
     assert result["activity"] is True
 
 
+def test_fast_publication_retries_a_terminal_interrupted_receipt(tmp_path):
+    receipt_root = tmp_path / "state" / "task_turn_receipts"
+    receipt_root.mkdir(parents=True)
+    receipt = receipt_root / "interrupted.json"
+    receipt.write_text(json.dumps({"ok": True, "turnStatus": "interrupted"}), encoding="utf-8")
+    old = time.time() - 120
+    os.utime(receipt, (old, old))
+    calls = []
+
+    def runner(_root: Path, operation: str):
+        calls.append(operation)
+        if operation == "context-recover":
+            return {"ok": True, "verified": 0, "errors": []}
+        if operation == "ingest-results":
+            return {"ok": True, "ingested": [], "publicationRequests": [], "errors": []}
+        if operation == "drain-once":
+            return {"ok": True, "action": "recovery_dispatched", "errors": []}
+        return {"ok": True, "published": [], "pending": [], "blocked": [], "errors": []}
+
+    result = advance_once(tmp_path, runner=runner)
+
+    assert calls[-1] == "drain-once"
+    assert result["activity"] is True
+
+
+def test_fast_publication_drains_an_immediately_recoverable_interrupted_turn(tmp_path):
+    calls = []
+
+    def runner(_root: Path, operation: str):
+        calls.append(operation)
+        if operation == "context-recover":
+            return {"ok": True, "verified": 0, "errors": []}
+        if operation == "ingest-results":
+            return {"ok": True, "ingested": [], "publicationRequests": [], "errors": []}
+        if operation == "recovery-list":
+            return {
+                "ok": True,
+                "recoverable": [{"key": "a/b#1", "threadId": "thread-1"}],
+            }
+        if operation == "drain-once":
+            return {"ok": True, "action": "recovery_dispatched", "errors": []}
+        return {"ok": True, "published": [], "pending": [], "blocked": [], "errors": []}
+
+    result = advance_once(tmp_path, runner=runner)
+
+    assert calls[-2:] == ["recovery-list", "drain-once"]
+    assert result["recoverable"][0]["threadId"] == "thread-1"
+    assert result["activity"] is True
+
+
 def test_fast_publication_surfaces_title_reconciliation_failure(tmp_path):
     calls = []
 
@@ -199,6 +251,7 @@ def test_missing_historical_worktree_does_not_stop_fast_publication(tmp_path):
         "title-reconcile",
         "cleanup-reconcile",
         "publication-run",
+        "recovery-list",
     ]
     assert result["ok"] is True
     assert result["activity"] is False

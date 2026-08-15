@@ -124,6 +124,7 @@ VALIDATION_RECOVERY_PROMPT = (
     "这是同一受控任务的验证续跑中断恢复，不要创建新任务或重新实现。"
     "不要重新读取技能文件或重放完整历史；沿用首轮已经加载的协议。重新读取工作树内的 "
     ".oss-pr-radar/task-context.json 和 result.json，只补齐仍缺失的验证证据并正常完成交接。"
+    "不要恢复上一轮遗留的 shell/exec 会话；对未完成的命令在当前工作树中新开进程重新执行。"
     "不得刷新 GitHub、安装依赖、请求权限、提交、推送、创建 PR 或执行其他公开动作。"
 )
 issue_prompt = canonical_prompt
@@ -345,6 +346,22 @@ def latest_terminal_thread_error(rollout_path: str | None) -> dict[str, Any] | N
     if not state or state.get("status") not in {"failed", "interrupted"}:
         return None
     return state
+
+
+def persisted_thread_turn_state(thread_id: str) -> dict[str, Any] | None:
+    """Read a task terminal state without opening the task in another app-server."""
+
+    try:
+        connection = sqlite3.connect(THREAD_DB)
+        row = connection.execute(
+            "SELECT rollout_path FROM threads WHERE id=?", (thread_id,)
+        ).fetchone()
+    except sqlite3.Error:
+        return None
+    finally:
+        if "connection" in locals():
+            connection.close()
+    return latest_thread_turn_state(row[0] if row else None)
 
 
 def thread_turn_materialized_after(rollout_path: str | None, reserved_at: str) -> tuple[bool, bool]:
@@ -1822,8 +1839,8 @@ def _wait_for_app_server_terminal_turn(
             and read_requested_at is not None
             and now - read_requested_at >= APP_SERVER_WATCHDOG_STALE_SECONDS
         )
-        if request_stale and now >= next_external_probe_at:
-            independently_observed = live_thread_turn_states({thread_id}).get(thread_id)
+        if now >= next_external_probe_at:
+            independently_observed = persisted_thread_turn_state(thread_id)
             next_external_probe_at = monotonic() + APP_SERVER_WATCHDOG_EXTERNAL_PROBE_SECONDS
             if (
                 independently_observed
@@ -2428,7 +2445,9 @@ def _app_server_task_turn_worker(args: argparse.Namespace) -> dict[str, Any]:
                 turn_id=turn_id,
             )
             if terminal:
-                return receipt | {"turnStatus": terminal["status"]}
+                terminal_receipt = receipt | {"turnStatus": terminal["status"]}
+                _atomic_json(Path(args.receipt), terminal_receipt)
+                return terminal_receipt
             return receipt
     except Exception as exc:
         receipt_path = Path(args.receipt)
@@ -2700,6 +2719,81 @@ def _rearm_negative_followup_deliveries(store: RadarLedger) -> list[dict[str, An
             }
         )
     return rearmed
+
+
+def _rearm_interrupted_recovery_turns(
+    store: RadarLedger,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Permit one fresh recovery when the delivered recovery turn was interrupted."""
+
+    pending = store.sent_recoveries_without_result()
+    if not pending:
+        return [], []
+    connection = sqlite3.connect(THREAD_DB)
+    connection.row_factory = sqlite3.Row
+    try:
+        rows = {
+            item["threadId"]: connection.execute(
+                "SELECT rollout_path FROM threads WHERE id=?", (item["threadId"],)
+            ).fetchone()
+            for item in pending
+        }
+    finally:
+        connection.close()
+    probe_ids = {
+        thread_id
+        for thread_id, row in rows.items()
+        if row is not None
+        and latest_thread_turn_state(row["rollout_path"]) is None
+        and active_task_turn_worker(thread_id) is None
+    }
+    live = live_thread_turn_states(probe_ids)
+    rearmed: list[dict[str, Any]] = []
+    exhausted: list[dict[str, Any]] = []
+    for item in pending:
+        row = rows.get(item["threadId"])
+        state = (
+            latest_thread_turn_state(row["rollout_path"]) if row is not None else None
+        ) or live.get(item["threadId"])
+        if not _is_immediate_recovery(state):
+            continue
+        if int(item.get("retryCount") or 0) >= 1:
+            nonce = str((item.get("reservation") or {}).get("recoveryNonce") or "")
+            store.exhaust_recovery(thread_id=item["threadId"], nonce=nonce)
+            _discard_negative_task_turn_receipt(
+                delivery_kind="recovery",
+                thread_id=item["threadId"],
+                delivery_token=nonce,
+            )
+            exhausted.append(
+                {
+                    "key": item["key"],
+                    "threadId": item["threadId"],
+                    "reason": "RECOVERY_RETRY_EXHAUSTED",
+                }
+            )
+            continue
+        nonce = str((item.get("reservation") or {}).get("recoveryNonce") or "")
+        store.abandon_recovery_delivery(
+            thread_id=item["threadId"],
+            nonce=nonce,
+            reason="TERMINAL_RECOVERY_TURN_INTERRUPTED",
+            min_age_minutes=0,
+        )
+        _discard_negative_task_turn_receipt(
+            delivery_kind="recovery",
+            thread_id=item["threadId"],
+            delivery_token=nonce,
+        )
+        rearmed.append(
+            {
+                "kind": "recovery",
+                "key": item["key"],
+                "threadId": item["threadId"],
+                "reason": "TERMINAL_RECOVERY_TURN_INTERRUPTED",
+            }
+        )
+    return rearmed, exhausted
 
 
 def task_turn_deliver(args: argparse.Namespace) -> dict[str, Any]:
@@ -5982,6 +6076,7 @@ def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
             if (
                 row is not None
                 and latest_thread_turn_state(row["rollout_path"]) is None
+                and active_task_turn_worker(thread_id) is None
                 and (
                     thread_id in candidate_thread_ids
                     or int(row["updated_at"] or 0) > activity_cutoff
@@ -6308,6 +6403,8 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
 
     store = ledger(args.ledger)
     rearmed = _rearm_negative_followup_deliveries(store)
+    recovery_rearmed, recovery_exhausted = _rearm_interrupted_recovery_turns(store)
+    rearmed.extend(recovery_rearmed)
 
     pr_state = pr_followup_list(argparse.Namespace(ledger=args.ledger))
     deferred_followups: list[dict[str, Any]] = []
@@ -6343,6 +6440,7 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
             "deferredFollowups": deferred_followups,
             "restored": restored.get("restored") or [],
             "rearmed": rearmed,
+            "recoveryRetryExhausted": recovery_exhausted,
         }
 
     validation_state = validation_followup_list(
@@ -6374,6 +6472,7 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
             "deferredFollowups": deferred_followups,
             "restored": restored.get("restored") or [],
             "rearmed": rearmed,
+            "recoveryRetryExhausted": recovery_exhausted,
         }
 
     recovery_state = recovery_list(
@@ -6408,6 +6507,7 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
             "deferredFollowups": deferred_followups,
             "restored": restored.get("restored") or [],
             "rearmed": rearmed,
+            "recoveryRetryExhausted": recovery_exhausted,
         }
 
     terminalized: list[dict[str, Any]] = []
@@ -6481,6 +6581,7 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
             "deferredFollowups": deferred_followups,
             "restored": restored.get("restored") or [],
             "rearmed": rearmed,
+            "recoveryRetryExhausted": recovery_exhausted,
         }
 
     return {
@@ -6491,6 +6592,7 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
         "deferredFollowups": deferred_followups,
         "restored": restored.get("restored") or [],
         "rearmed": rearmed,
+        "recoveryRetryExhausted": recovery_exhausted,
     }
 
 

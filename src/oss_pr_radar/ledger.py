@@ -1972,6 +1972,11 @@ class RadarLedger:
                      SELECT r.opportunity_key FROM events r
                      WHERE r.event_type='PR_FOLLOWUP_RESERVED'
                        AND NOT EXISTS (
+                         SELECT 1 FROM events exhausted
+                         WHERE exhausted.opportunity_key=r.opportunity_key
+                           AND exhausted.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED'
+                       )
+                       AND NOT EXISTS (
                          SELECT 1 FROM events result
                          WHERE result.opportunity_key=r.opportunity_key
                            AND result.event_type='PR_FOLLOWUP_RESULT_INGESTED'
@@ -1989,6 +1994,11 @@ class RadarLedger:
                      JOIN opportunities o ON o.key=r.opportunity_key
                      WHERE r.event_type='VALIDATION_FOLLOWUP_RESERVED'
                        AND o.stage='VALIDATION_PENDING'
+                       AND NOT EXISTS (
+                         SELECT 1 FROM events exhausted
+                         WHERE exhausted.opportunity_key=r.opportunity_key
+                           AND exhausted.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED'
+                       )
                        AND r.dedupe_key=(
                          SELECT json_extract(d.payload_json,'$.resultDigest')
                          FROM events d
@@ -2038,6 +2048,12 @@ class RadarLedger:
                    WHERE i.status='DISPATCHED' AND i.thread_id IS NOT NULL
                      AND d.created_at<=?
                      AND NOT EXISTS (
+                       SELECT 1 FROM events exhausted
+                       WHERE exhausted.opportunity_key=o.key
+                         AND exhausted.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED'
+                         AND json_extract(exhausted.payload_json,'$.threadId')=i.thread_id
+                     )
+                     AND NOT EXISTS (
                        SELECT 1 FROM events e
                        WHERE e.opportunity_key=o.key
                          AND (
@@ -2081,6 +2097,12 @@ class RadarLedger:
                      AND s.event_type='PR_FOLLOWUP_SENT'
                    WHERE o.stage IN ('PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED')
                      AND s.created_at<=?
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events exhausted
+                       WHERE exhausted.opportunity_key=o.key
+                         AND exhausted.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED'
+                         AND json_extract(exhausted.payload_json,'$.threadId')=i.thread_id
+                     )
                      AND NOT EXISTS (
                        SELECT 1 FROM events result
                        WHERE result.opportunity_key=o.key
@@ -2131,6 +2153,12 @@ class RadarLedger:
                      AND s.event_type='VALIDATION_FOLLOWUP_SENT'
                      AND s.dedupe_key=d.dedupe_key
                    WHERE o.stage='VALIDATION_PENDING' AND s.created_at<=?
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events exhausted
+                       WHERE exhausted.opportunity_key=o.key
+                         AND exhausted.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED'
+                         AND json_extract(exhausted.payload_json,'$.threadId')=i.thread_id
+                     )
                      AND NOT EXISTS (
                        SELECT 1 FROM events result
                        WHERE result.opportunity_key=o.key
@@ -2234,6 +2262,61 @@ class RadarLedger:
             for row in rows
         ]
 
+    def sent_recoveries_without_result(self) -> list[dict[str, Any]]:
+        """Return delivered recovery turns that still produced no controller result."""
+
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT o.key,i.thread_id,r.dedupe_key AS reservation_digest,
+                          r.payload_json,s.created_at AS sent_at,
+                          (SELECT COUNT(*) FROM events prior
+                           WHERE prior.opportunity_key=o.key
+                             AND prior.event_type='THREAD_RECOVERY_DELIVERY_ABANDONED'
+                             AND json_extract(prior.payload_json,'$.reason')=
+                                 'TERMINAL_RECOVERY_TURN_INTERRUPTED'
+                          ) AS retry_count
+                   FROM opportunities o
+                   JOIN intents i ON i.intent_id=(
+                     SELECT i2.intent_id FROM intents i2
+                     WHERE i2.opportunity_key=o.key AND i2.thread_id IS NOT NULL
+                     ORDER BY i2.updated_at DESC,i2.intent_id DESC LIMIT 1
+                   )
+                   JOIN events r ON r.opportunity_key=o.key
+                     AND r.event_type='THREAD_RECOVERY_RESERVED'
+                   JOIN events s ON s.opportunity_key=o.key
+                     AND s.event_type='THREAD_RECOVERY_SENT'
+                     AND s.dedupe_key=r.dedupe_key
+                   WHERE NOT EXISTS (
+                     SELECT 1 FROM events abandoned
+                     WHERE abandoned.opportunity_key=o.key
+                       AND abandoned.event_type='THREAD_RECOVERY_DELIVERY_ABANDONED'
+                       AND json_extract(
+                             abandoned.payload_json,'$.reservationDigest'
+                           )=r.dedupe_key
+                       AND abandoned.id>r.id
+                   )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events result
+                       WHERE result.opportunity_key=o.key
+                         AND result.id>s.id
+                         AND result.event_type IN (
+                           'TASK_RESULT_INGESTED','PR_FOLLOWUP_RESULT_INGESTED'
+                         )
+                     )
+                   ORDER BY s.created_at"""
+            ).fetchall()
+        return [
+            {
+                "key": row["key"],
+                "threadId": row["thread_id"],
+                "reservationDigest": row["reservation_digest"],
+                "reservation": json.loads(row["payload_json"]),
+                "sentAt": row["sent_at"],
+                "retryCount": int(row["retry_count"] or 0),
+            }
+            for row in rows
+        ]
+
     def reserve_recovery(self, *, thread_id: str, nonce: str) -> dict[str, Any]:
         # The bridge may authorize an immediate one-shot recovery after a
         # terminal desktop error, before the normal stale-task threshold.
@@ -2327,23 +2410,27 @@ class RadarLedger:
         reason: str,
         min_age_minutes: int = 5,
     ) -> None:
-        """Retire a recovery reservation after proving no target turn materialized."""
+        """Retire a recovery reservation after proving delivery or result failure."""
 
         current = datetime.now(UTC)
         now = iso_z(current)
         with self.transaction() as connection:
+            allow_sent = reason in {
+                "TERMINAL_RECOVERY_TURN_INTERRUPTED",
+                "RECOVERY_RETRY_EXHAUSTED",
+            }
             row = connection.execute(
                 """SELECT r.id,r.opportunity_key AS key,r.dedupe_key,r.created_at
                    FROM events r
                    WHERE r.event_type='THREAD_RECOVERY_RESERVED'
                      AND json_extract(r.payload_json,'$.threadId')=?
                      AND json_extract(r.payload_json,'$.recoveryNonce')=?
-                     AND NOT EXISTS (
+                     AND (? OR NOT EXISTS (
                        SELECT 1 FROM events sent
                        WHERE sent.opportunity_key=r.opportunity_key
                          AND sent.event_type='THREAD_RECOVERY_SENT'
                          AND sent.dedupe_key=r.dedupe_key
-                     )
+                     ))
                      AND NOT EXISTS (
                        SELECT 1 FROM events abandoned
                        WHERE abandoned.opportunity_key=r.opportunity_key
@@ -2354,11 +2441,11 @@ class RadarLedger:
                          AND abandoned.id>r.id
                      )
                    ORDER BY r.id DESC LIMIT 1""",
-                (thread_id, nonce),
+                (thread_id, nonce, int(allow_sent)),
             ).fetchone()
             if row is None:
                 raise LedgerError("recovery delivery is not abandonable")
-            minimum_age = timedelta(minutes=max(1, min_age_minutes))
+            minimum_age = timedelta(minutes=max(0 if allow_sent else 1, min_age_minutes))
             if parse_time(row["created_at"]) + minimum_age > current:
                 raise LedgerError("recovery delivery is not old enough to abandon")
             self._event(
@@ -2372,9 +2459,38 @@ class RadarLedger:
                     "reservationDigest": row["dedupe_key"],
                     "reservedAt": row["created_at"],
                     "reason": reason,
-                    "minimumAgeMinutes": max(1, min_age_minutes),
+                    "minimumAgeMinutes": max(0 if allow_sent else 1, min_age_minutes),
                 },
                 now,
+            )
+
+    def exhaust_recovery(self, *, thread_id: str, nonce: str) -> None:
+        """Release a repeatedly interrupted recovery and make the terminal state durable."""
+
+        self.abandon_recovery_delivery(
+            thread_id=thread_id,
+            nonce=nonce,
+            reason="RECOVERY_RETRY_EXHAUSTED",
+            min_age_minutes=0,
+        )
+        with self.transaction() as connection:
+            row = connection.execute(
+                """SELECT opportunity_key AS key FROM events
+                   WHERE event_type='THREAD_RECOVERY_RESERVED'
+                     AND json_extract(payload_json,'$.threadId')=?
+                     AND json_extract(payload_json,'$.recoveryNonce')=?
+                   ORDER BY id DESC LIMIT 1""",
+                (thread_id, nonce),
+            ).fetchone()
+            if row is None:
+                raise LedgerError("exhausted recovery reservation not found")
+            self._event(
+                connection,
+                row["key"],
+                "THREAD_RECOVERY_RETRY_EXHAUSTED",
+                nonce,
+                {"threadId": thread_id, "recoveryNonce": nonce},
+                iso_z(datetime.now(UTC)),
             )
 
     def record_validation_deferred(

@@ -2606,8 +2606,8 @@ def test_recovery_immediately_resumes_an_interrupted_validation_followup(monkeyp
     monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
     monkeypatch.setattr(
         MODULE,
-        "live_thread_turn_states",
-        lambda thread_ids: {"thread-1": interrupted} if "thread-1" in thread_ids else {},
+        "latest_thread_turn_state",
+        lambda _rollout_path: interrupted,
     )
     monkeypatch.setattr(
         MODULE,
@@ -2645,6 +2645,100 @@ def test_recovery_immediately_resumes_an_interrupted_validation_followup(monkeyp
 
     assert reserved["terminalError"] == interrupted
     assert reserved["prompt"] == MODULE.VALIDATION_RECOVERY_PROMPT
+
+
+def test_interrupted_recovery_turn_is_rearmed_once(monkeypatch, tmp_path):
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute("CREATE TABLE threads (id TEXT, rollout_path TEXT)")
+        connection.execute("INSERT INTO threads VALUES (?,?)", ("thread-1", None))
+    calls = []
+
+    class Store:
+        def sent_recoveries_without_result(self):
+            return [
+                {
+                    "key": "a/b#1",
+                    "threadId": "thread-1",
+                    "reservation": {"recoveryNonce": "nonce-1"},
+                    "retryCount": 0,
+                }
+            ]
+
+        def abandon_recovery_delivery(self, **kwargs):
+            calls.append(kwargs)
+
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(
+        MODULE,
+        "live_thread_turn_states",
+        lambda _ids: {
+            "thread-1": {
+                "turnId": "turn-1",
+                "status": "interrupted",
+                "code": "turn_interrupted",
+                "message": "interrupted",
+            }
+        },
+    )
+    monkeypatch.setattr(MODULE, "_discard_negative_task_turn_receipt", lambda **_kwargs: None)
+
+    rearmed, exhausted = MODULE._rearm_interrupted_recovery_turns(Store())
+
+    assert exhausted == []
+    assert rearmed[0]["reason"] == "TERMINAL_RECOVERY_TURN_INTERRUPTED"
+    assert calls == [
+        {
+            "thread_id": "thread-1",
+            "nonce": "nonce-1",
+            "reason": "TERMINAL_RECOVERY_TURN_INTERRUPTED",
+            "min_age_minutes": 0,
+        }
+    ]
+
+
+def test_interrupted_recovery_turn_stops_after_one_rearm(monkeypatch, tmp_path):
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute("CREATE TABLE threads (id TEXT, rollout_path TEXT)")
+        connection.execute("INSERT INTO threads VALUES (?,?)", ("thread-1", None))
+
+    exhausted_calls = []
+
+    class Store:
+        def sent_recoveries_without_result(self):
+            return [
+                {
+                    "key": "a/b#1",
+                    "threadId": "thread-1",
+                    "reservation": {"recoveryNonce": "nonce-2"},
+                    "retryCount": 1,
+                }
+            ]
+
+        def exhaust_recovery(self, **kwargs):
+            exhausted_calls.append(kwargs)
+
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(
+        MODULE,
+        "live_thread_turn_states",
+        lambda _ids: {
+            "thread-1": {
+                "turnId": "turn-2",
+                "status": "interrupted",
+                "code": "turn_interrupted",
+                "message": "interrupted",
+            }
+        },
+    )
+    monkeypatch.setattr(MODULE, "_discard_negative_task_turn_receipt", lambda **_kwargs: None)
+
+    rearmed, exhausted = MODULE._rearm_interrupted_recovery_turns(Store())
+
+    assert rearmed == []
+    assert exhausted[0]["reason"] == "RECOVERY_RETRY_EXHAUSTED"
+    assert exhausted_calls == [{"thread_id": "thread-1", "nonce": "nonce-2"}]
 
 
 def test_new_validation_followup_is_not_blocked_by_prior_sent_recovery(tmp_path):
@@ -3093,7 +3187,7 @@ def test_app_server_watchdog_polls_on_wall_clock_despite_continuous_events(monke
     }
 
 
-def test_app_server_watchdog_uses_independent_terminal_probe_when_read_stalls(monkeypatch):
+def test_app_server_watchdog_uses_persisted_terminal_probe_when_read_stalls(monkeypatch):
     class FakeStdin:
         def __init__(self):
             self.writes: list[bytes] = []
@@ -3137,18 +3231,16 @@ def test_app_server_watchdog_uses_independent_terminal_probe_when_read_stalls(mo
     monkeypatch.setattr(MODULE, "APP_SERVER_WATCHDOG_EXTERNAL_PROBE_SECONDS", 2.0)
     monkeypatch.setattr(
         MODULE,
-        "live_thread_turn_states",
-        lambda thread_ids: (
+        "persisted_thread_turn_state",
+        lambda thread_id: (
             {
-                "thread-1": {
-                    "turnId": "turn-1",
-                    "status": "interrupted",
-                    "code": "turn_interrupted",
-                    "message": "interrupted",
-                }
+                "turnId": "turn-1",
+                "status": "interrupted",
+                "code": "turn_interrupted",
+                "message": "interrupted",
             }
-            if "thread-1" in thread_ids
-            else {}
+            if thread_id == "thread-1"
+            else None
         ),
     )
     process = FakeProcess()
@@ -3165,7 +3257,7 @@ def test_app_server_watchdog_uses_independent_terminal_probe_when_read_stalls(mo
     assert json.loads(process.stdin.writes[0])["method"] == "thread/read"
 
 
-def test_app_server_watchdog_does_not_override_responsive_owner_view(monkeypatch):
+def test_app_server_watchdog_reconciles_persisted_terminal_view(monkeypatch):
     class FakeStdin:
         def __init__(self):
             self.writes: list[bytes] = []
@@ -3195,29 +3287,19 @@ def test_app_server_watchdog_does_not_override_responsive_owner_view(monkeypatch
         def select(_timeout):
             return [(object(), None)]
 
-    owner_views = iter(
-        [
-            (
-                b'{"id":3,"result":{"thread":{"id":"thread-1","turns":'
-                b'[{"id":"turn-1","status":"inProgress"}]}}}\n'
-            ),
-            (
-                b'{"id":4,"result":{"thread":{"id":"thread-1","turns":'
-                b'[{"id":"turn-1","status":"completed"}]}}}\n'
-            ),
-        ]
-    )
     monkeypatch.setattr(MODULE, "monotonic", lambda: 0.0)
     monkeypatch.setattr(MODULE, "APP_SERVER_WATCHDOG_INTERVAL_SECONDS", 0.0)
     monkeypatch.setattr(MODULE, "APP_SERVER_WATCHDOG_STALE_SECONDS", 15.0)
     monkeypatch.setattr(MODULE, "APP_SERVER_WATCHDOG_EXTERNAL_PROBE_SECONDS", 0.0)
-    monkeypatch.setattr(MODULE.os, "read", lambda _fd, _size: next(owner_views))
     monkeypatch.setattr(
         MODULE,
-        "live_thread_turn_states",
-        lambda _thread_ids: (_ for _ in ()).throw(
-            AssertionError("independent view must not override a responsive owner")
-        ),
+        "persisted_thread_turn_state",
+        lambda _thread_id: {
+            "turnId": "turn-1",
+            "status": "interrupted",
+            "code": "turn_interrupted",
+            "message": "interrupted",
+        },
     )
     process = FakeProcess()
 
@@ -3229,8 +3311,8 @@ def test_app_server_watchdog_does_not_override_responsive_owner_view(monkeypatch
         turn_id="turn-1",
     )
 
-    assert result == {"turnId": "turn-1", "status": "completed", "error": None}
-    assert [json.loads(item)["id"] for item in process.stdin.writes] == [3, 4]
+    assert result == {"turnId": "turn-1", "status": "interrupted", "error": None}
+    assert process.stdin.writes == []
 
 
 def test_active_root_task_worker_owns_the_first_turn(monkeypatch, tmp_path):

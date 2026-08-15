@@ -71,6 +71,8 @@ def retryable_delivery_pending(root: Path, *, min_age_seconds: int = 60) -> bool
             continue
         if value.get("ok") is False and value.get("turnStarted") is False:
             return True
+        if value.get("turnStatus") in {"failed", "interrupted"}:
+            return True
     return False
 
 
@@ -139,9 +141,6 @@ def advance_once(
     pending = list(publication.get("pending") or [])
     renamed = list(title_reconciliation.get("renamed") or [])
     archived = list(cleanup_reconciliation.get("archived") or [])
-    should_drain = bool(
-        ingested or validation_deferred or archived or published or retryable_delivery_pending(root)
-    )
     drain = {"ok": True, "action": "not_triggered"}
     terminal_feedback = {"ok": True, "published": 0, "errors": []}
     lifecycle_healthy = bool(
@@ -150,6 +149,18 @@ def advance_once(
         and cleanup_reconciliation.get("ok") is not False
         and publication.get("ok") is not False
         and context_sync.get("ok") is not False
+    )
+    recovery = (
+        runner(root, "recovery-list") if lifecycle_healthy else {"ok": False, "recoverable": []}
+    )
+    recoverable = list(recovery.get("recoverable") or []) if recovery.get("ok") else []
+    should_drain = bool(
+        ingested
+        or validation_deferred
+        or archived
+        or published
+        or recoverable
+        or retryable_delivery_pending(root)
     )
     if should_drain and lifecycle_healthy:
         drain = runner(root, "drain-once")
@@ -187,6 +198,7 @@ def advance_once(
         "threadsArchived": archived,
         "published": published,
         "contextsSynced": list(context_sync.get("written") or []),
+        "recoverable": recoverable,
         "drain": drain,
         "terminalFeedback": terminal_feedback,
         "pending": pending,
