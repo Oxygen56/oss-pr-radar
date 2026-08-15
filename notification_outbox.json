@@ -2182,6 +2182,14 @@
       "seenAt": "2026-08-14T23:45:03.443907Z",
       "stateId": "be4d707dddbcca48900d449a9745f5726e0c3ca1d5bde7edb3c322c6c1013853"
     },
+    "review|vllm-project/vllm#52407": {
+      "category": "WAIT_MAINTAINER",
+      "digest": "fafb08b89d8a715f537b368b295f9d400339db688f2bc396f55a7e08c80e8c03",
+      "kind": "review",
+      "scannerVersion": "oss_pr_radar_v46_semantic_fallback",
+      "seenAt": "2026-08-15T01:57:30.899523Z",
+      "stateId": "18731d600fcb90337a37e63f92eb34a84b9cf38066e8aa9364254f2b2622c0da"
+    },
     "review|vllm-project/vllm-omni#6159": {
       "category": "WAIT_MAINTAINER",
       "digest": "7117ab4c9f257d6a77405816b38f5361ef19f4e4da36eeb9b2883eb3481f5f4a",
@@ -2200,11 +2208,11 @@
     },
     "watch|BerriAI/litellm#36791": {
       "category": "PR_FOLLOWUP",
-      "digest": "bac205f40d5b4831433b4c6b6080dbde218fa58f16557b0df6c3678ae931ddbd",
+      "digest": "d2660f9cc0f8cdeb44650b56a9c0630f1400c5e13db2e4afa303325e3926bb3e",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-15T00:55:36.350670Z",
-      "stateId": "99a8b7e979e2176b6fdead28e84969d33911dae5b263a509418685c95f3d6c0c"
+      "seenAt": "2026-08-15T01:57:31.244233Z",
+      "stateId": "12e62c14553e8f9f98876e8fbf8c98e267716d29faad7c0a3d3f46723a27c84c"
     },
     "watch|SWE-bench/SWE-bench#593": {
       "category": "PR_FOLLOWUP",
@@ -2280,11 +2288,11 @@
     },
     "watch|esengine/DeepSeek-Reasonix#8510": {
       "category": "PR_FOLLOWUP",
-      "digest": "6616bcf207e6941d8c30fe7670f5e09c14e0684a093981c02c31e71eafdb177e",
+      "digest": "b18355cb407b10ea76cc3244f5bc8e67d29b72ace0830c8fd752c6ae68cbe5f4",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-14T17:18:22.753124Z",
-      "stateId": "41900d8f5cb7739e1f90e3b879d7702848e1db08ee23370f2828af3bee9320a4"
+      "seenAt": "2026-08-15T01:57:31.244233Z",
+      "stateId": "00ad45b1ac269d961e785d3588ada9633941923fc30fe0f6656c5d40325965fe"
     },
     "watch|hashicorp/terraform-mcp-server#442": {
       "category": "PR_FOLLOWUP",
@@ -2352,14 +2360,14 @@
     },
     "watch|vllm-project/vllm#52298": {
       "category": "PR_FOLLOWUP",
-      "digest": "16f0208ad0629fadf082f5e9a08617d28574d10be27d08d39a0635aa09787f7f",
+      "digest": "a83d3667442fe2f507f7238922989ec1a718b3b4d809f81f5e364f8168326087",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-15T00:55:36.350670Z",
-      "stateId": "d9cc442c7e221dccc2d75063366c7148cb7fa164a15ae25208a7ee7fe7ba9953"
+      "seenAt": "2026-08-15T01:57:31.244233Z",
+      "stateId": "34dbe953d9db58577f56eccf49631e1934155ab01316aa9fd154dfd0277cb7f0"
     }
   },
-  "digest": "c4134eafa7d0f87d1af9f8fa8c3798c8712b5b37f8f3b0a6439ff040a2c65070",
+  "digest": "4c20e71b09ad016f2775fa6452ca59c6a93ae5f10062cc791fdc2a20e08cff9d",
   "events": [
     {
       "attempts": 1,
@@ -23925,9 +23933,133 @@
       "runId": "pr-followup-1786755117",
       "sentAt": "2026-08-15T00:56:19.234824Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "vllm-project/vllm#52407"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "fafb08b89d8a715f537b368b295f9d400339db688f2bc396f55a7e08c80e8c03",
+          "key": "vllm-project/vllm#52407",
+          "kind": "review",
+          "scannerVersion": "oss_pr_radar_v46_semantic_fallback",
+          "stateId": "18731d600fcb90337a37e63f92eb34a84b9cf38066e8aa9364254f2b2622c0da"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#52407](https://github.com/vllm-project/vllm/issues/52407) [Bug]: VLLM_BATCH_INVARIANT=1 crashes NVFP4 models: emulation break_fp4_bytes device mismatch (lookup table on CPU, indices on GPU)**\n建议：WAIT_MAINTAINER | 分数：13\n价值：The issue identifies a concrete device-mismatch bug in NVFP4 emulation with a clear root cause and suggested one-line fix. However, an existing PR #52231 overlaps the same code path and may already address the issue, requiring maintainer comparison before new work.\n改动：vllm/model_executor/layers/quantization/utils/nvfp4_emulation_utils.py；nvfp4.py\n验证：Run minimal reproduction with VLLM_BATCH_INVARIANT=1 on NVFP4 model to confirm crash；Verify fix by running same reproduction and checking engine init succeeds；Add regression test for device placement in break_fp4_bytes\n风险：PR #52231 may already fix the issue, making new PR redundant；Potential duplicate issue #52398 shares stack signatures but may be unrelated\n竞争：发现 PR #52231 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 3，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-15T01:57:30.899523Z",
+      "eventId": "a622a8b40c32e1ccb751eb105f4017d244fdad1da1129eef2499130e5a175078",
+      "idempotencyKey": "a622a8b40c32e1ccb751eb105f4017d244fdad1da1129eef24",
+      "kind": "review",
+      "runId": "scan-20260815T015334Z-590e46f32c4b",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "BerriAI/litellm#36791",
+        "esengine/DeepSeek-Reasonix#8510",
+        "vllm-project/vllm#52298"
+      ],
+      "candidateStates": [
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "d2660f9cc0f8cdeb44650b56a9c0630f1400c5e13db2e4afa303325e3926bb3e",
+          "key": "BerriAI/litellm#36791",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "12e62c14553e8f9f98876e8fbf8c98e267716d29faad7c0a3d3f46723a27c84c"
+        },
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "b18355cb407b10ea76cc3244f5bc8e67d29b72ace0830c8fd752c6ae68cbe5f4",
+          "key": "esengine/DeepSeek-Reasonix#8510",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "00ad45b1ac269d961e785d3588ada9633941923fc30fe0f6656c5d40325965fe"
+        },
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "a83d3667442fe2f507f7238922989ec1a718b3b4d809f81f5e364f8168326087",
+          "key": "vllm-project/vllm#52298",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "34dbe953d9db58577f56eccf49631e1934155ab01316aa9fd154dfd0277cb7f0"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#36791](https://github.com/BerriAI/litellm/pull/36791) fix(router): support anthropic messages streaming fallback**\n建议：PR_FOLLOWUP\n价值：当前分支检查失败；存在未解决审查线程\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[esengine/DeepSeek-Reasonix#8510](https://github.com/esengine/DeepSeek-Reasonix/pull/8510) fix(acp): return prompt failures as JSON-RPC errors**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#52298](https://github.com/vllm-project/vllm/pull/52298) [Bugfix] Validate guidance tokenizer compatibility before EngineCore**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-15T01:57:31.244233Z",
+      "eventId": "145770134ee1a336a4fb0c2d03535a594af573931ef0cc73302d9b792acfbd8c",
+      "idempotencyKey": "145770134ee1a336a4fb0c2d03535a594af573931ef0cc7330",
+      "kind": "watch",
+      "runId": "pr-followup-1786758774",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-15T00:55:36.350670Z",
+  "generatedAt": "2026-08-15T01:57:31.244233Z",
   "newEventCount": 1,
   "version": "notification_outbox_v2"
 }

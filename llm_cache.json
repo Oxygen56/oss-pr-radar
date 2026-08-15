@@ -2295,6 +2295,33 @@
     ],
     "why": "Issue provides a clear, reproducible bug with a suggested one-line fix, but an existing open PR (#7053) by a maintainer overlaps semantically with the same code path and may already address the root cause. The deterministic gate requires HUMAN_REVIEW, and the PR competition assessment indicates semantic overlap requiring manual comparison. Without maintainer confirmation or PR review, starting a new PR risks duplication."
   },
+  "174dfb7855c7f3b18ed343acf956ee701aecbffdad210edf30f827dbb65c7dba": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Issue hypothesis suggests a serialization bug, but comments identify hybrid-model list handling as root cause."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "none; issue already fixed"
+    ],
+    "risks": [
+      "The separate startup failure under --enable-sleep-mode may still be unresolved and needs its own issue."
+    ],
+    "root_cause_clarity": "high",
+    "score": 5,
+    "test_plan": [
+      "Verify on a build containing commit 56f31af or release 0.27.0 that wake_up succeeds with FP8 KV cache and flashinfer."
+    ],
+    "unknowns": [
+      "Whether the v0.25.1 startup failure still reproduces on a post-fix build."
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue reports a wake_up crash in init_fp8_kv_scales; comments confirm it is a duplicate of #41564, fixed by #41602 and released in 0.27.0. The separate v0.25.1 startup failure is a distinct issue but lacks a dedicated report and reproduction. Existing PR #52132 has semantic overlap but is not directly linked and may be redundant."
+  },
   "178beb142a7ded8d283979807c3ae6643ee82f8f7489521e8537f997234e6751": {
     "confidence": 0.8,
     "contradictions": [
@@ -20068,6 +20095,38 @@
       "Whether the existing PR #14266 will be updated with tests"
     ],
     "why": "Issue clearly identifies a hardcoded :predict endpoint causing 400 errors for gemini-embedding-2 models, with a public repro. Existing PR #14266 addresses the same root cause but lacks tests, leaving room for a stronger PR with regression tests and broader coverage."
+  },
+  "b83816b64d3244ec0883ba218fa5a9b67a389f12a69d297b3df19f53b12b02d9": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue #52398 shares stack signatures but has different title and behavior"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/model_executor/layers/quantization/utils/nvfp4_emulation_utils.py",
+      "nvfp4.py"
+    ],
+    "risks": [
+      "PR #52231 may already fix the issue, making new PR redundant",
+      "Potential duplicate issue #52398 shares stack signatures but may be unrelated"
+    ],
+    "root_cause_clarity": "high",
+    "score": 13,
+    "test_plan": [
+      "Run minimal reproduction with VLLM_BATCH_INVARIANT=1 on NVFP4 model to confirm crash",
+      "Verify fix by running same reproduction and checking engine init succeeds",
+      "Add regression test for device placement in break_fp4_bytes"
+    ],
+    "unknowns": [
+      "Whether PR #52231 already fixes the device mismatch",
+      "Maintainer preference on whether to fix or fail fast"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "The issue identifies a concrete device-mismatch bug in NVFP4 emulation with a clear root cause and suggested one-line fix. However, an existing PR #52231 overlaps the same code path and may already address the issue, requiring maintainer comparison before new work."
   },
   "b88373a689e668ed0b081ec77c5a4fa1e4767501ce368bd26ec2b7bde892d789": {
     "confidence": 0.7,
