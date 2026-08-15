@@ -857,6 +857,22 @@
       "seenAt": "2026-08-14T12:04:04.267376Z",
       "stateId": "10ebd8e5fcef8f9980fde24abc6fc46dfbcf478f14418fdf08a25d6968b6f75f"
     },
+    "review|higress-group/higress#4416": {
+      "category": "WAIT_MAINTAINER",
+      "digest": "8cd5e25a9ae00d90f5f82fd041904f8644ec7bce5a0cf238aa8e729ef9db0e93",
+      "kind": "review",
+      "scannerVersion": "oss_pr_radar_v46_semantic_fallback",
+      "seenAt": "2026-08-15T04:00:56.252581Z",
+      "stateId": "f0ce875fdb8abdbff0caeddd38aa1f2f04bbcbdb5e29e21de60fc4dd281c5d86"
+    },
+    "review|higress-group/higress#4427": {
+      "category": "WAIT_MAINTAINER",
+      "digest": "06ad4d1a0fd62db92e19afed11513aca74e710db09a11de44705f253434476fe",
+      "kind": "review",
+      "scannerVersion": "oss_pr_radar_v46_semantic_fallback",
+      "seenAt": "2026-08-15T04:00:56.252581Z",
+      "stateId": "f35f7628232357e136feef4d215f3ad02df380e6df53105b8f7fe188f552f5ed"
+    },
     "review|higress-group/higress#4507": {
       "category": "WAIT_MAINTAINER",
       "digest": "ca4747ad1455ea319af1d685c3be4440e849bc190c059be433080397a9521171",
@@ -2232,11 +2248,11 @@
     },
     "watch|BerriAI/litellm#36791": {
       "category": "PR_FOLLOWUP",
-      "digest": "d2660f9cc0f8cdeb44650b56a9c0630f1400c5e13db2e4afa303325e3926bb3e",
+      "digest": "56506e14aa0bffa4ee7b48f63d4fba77ae9a0e115d70fd0cf47058c4be25615e",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-15T01:57:31.244233Z",
-      "stateId": "12e62c14553e8f9f98876e8fbf8c98e267716d29faad7c0a3d3f46723a27c84c"
+      "seenAt": "2026-08-15T04:00:56.589708Z",
+      "stateId": "21ca6d5a67384715217eb22116ff5fc6104425842ec4f4b80eb2d2422b016193"
     },
     "watch|SWE-bench/SWE-bench#593": {
       "category": "PR_FOLLOWUP",
@@ -2328,11 +2344,11 @@
     },
     "watch|langflow-ai/langflow#14470": {
       "category": "PR_FOLLOWUP",
-      "digest": "03f7037e5b390b8f68ebceeac4891e41cdc21f5d185b14051347780b5e198e25",
+      "digest": "166ac4e30fd0746330a40de15af6f145601051c8399fdada3d90030f0fc161b0",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-14T20:52:15.534510Z",
-      "stateId": "765bcb67f31ae46511f91a9c581b2ca5566c9e5e959241ca4657b2ab6dd76023"
+      "seenAt": "2026-08-15T04:00:56.589708Z",
+      "stateId": "93420e5a4f37ecb50be4d88f592cae3afacdfcf06cb65e7e1d9fcf3cf5b064a2"
     },
     "watch|langflow-ai/langflow#14471": {
       "category": "PR_FOLLOWUP",
@@ -2391,7 +2407,7 @@
       "stateId": "34dbe953d9db58577f56eccf49631e1934155ab01316aa9fd154dfd0277cb7f0"
     }
   },
-  "digest": "5ddec6a55bf5ab48ee725c6cef430f4325316faeee0300c83bdf978bdd7332be",
+  "digest": "54ae6c00ed4430db0ae3a6079849774c66f90214dbc449ecc3dbf70ccc17bb0c",
   "events": [
     {
       "attempts": 1,
@@ -24192,9 +24208,133 @@
       "runId": "pr-followup-1786763250",
       "sentAt": "2026-08-15T03:12:08.746209Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "higress-group/higress#4416",
+        "higress-group/higress#4427"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "8cd5e25a9ae00d90f5f82fd041904f8644ec7bce5a0cf238aa8e729ef9db0e93",
+          "key": "higress-group/higress#4416",
+          "kind": "review",
+          "scannerVersion": "oss_pr_radar_v46_semantic_fallback",
+          "stateId": "f0ce875fdb8abdbff0caeddd38aa1f2f04bbcbdb5e29e21de60fc4dd281c5d86"
+        },
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "06ad4d1a0fd62db92e19afed11513aca74e710db09a11de44705f253434476fe",
+          "key": "higress-group/higress#4427",
+          "kind": "review",
+          "scannerVersion": "oss_pr_radar_v46_semantic_fallback",
+          "stateId": "f35f7628232357e136feef4d215f3ad02df380e6df53105b8f7fe188f552f5ed"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[higress-group/higress#4416](https://github.com/higress-group/higress/issues/4416) Proposal: Keep persisted local-docker version in sync after upgrade**\n建议：WAIT_MAINTAINER | 分数：8\n价值：Issue is a well-scoped, maintainer-approved proposal with confirmed root causes and clear success criteria. However, the repository requires assignment and the issue explicitly requests maintainer approval before implementation begins, so work cannot start without that approval.\n改动：hgctl/pkg/installer/standalone.go；hgctl/pkg/installer/standalone_agent.go；hgctl/pkg/installer/installer_docker.go；hgctl/pkg/installer tests\n验证：Add regression test that starts with stored v1.0.0 profile, performs successful upgrade to v2.0.0, and asserts in-memory and persisted profiles report v2.0.0 with all other fields unchanged.；Add failure-path tests: runtime upgrade failure performs no profile write; unreadable VERSION returns error and does not overwrite stored version; profile save failure returns error without claiming success.\n风险：Changing Agent.Version() to propagate read errors affects Install call site and display-only reads; must handle whitespace normalization to avoid trailing newline leaking into stored version.\n竞争：未发现相关 open PR\n下一步：先等待维护者分配/确认方案；即使获批，公开 PR 的 AI 复核/披露确认仍必须由用户本人处理。\n证据：复现信号 0，根因信号 False",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[higress-group/higress#4427](https://github.com/higress-group/higress/issues/4427) Proposal: Stop hgctl K8s mutation when Helm ownership detection fails**\n建议：WAIT_MAINTAINER | 分数：10\n价值：The issue precisely identifies a fail-open Helm ownership guard in hgctl that can mutate a cluster when helm list fails, with a clear proposed fail-closed behavior and deterministic test plan. Maintainer approval is present, but the repository requires assignment and the contributor must complete AI disclosure before implementation, so work cannot start cleanly.\n改动：hgctl/pkg/installer/helm_agent.go: return non-nil errors on Helm start/non-zero exit failures；hgctl/pkg/installer/installer_k8s.go: propagate ownership-detection errors and stop before component Run/render/apply/Profile persistence；Add deterministic regression tests for lookup outcomes and install/upgrade stop boundary\n验证：Add unit tests using fake Helm executables (missing binary, exit status 23) to assert non-nil errors and no component execution；Add tests for successful empty lookup (installed=false, err=nil) and deployed-release guard behavior；Run go test ./pkg/installer -run '^TestCandidate' -count=1 -v and existing installer tests\n风险：Enforcing Helm CLI as a prerequisite may break existing automation that relied on fail-open behavior；Error wrapping must avoid leaking credentials or Helm values\n竞争：未发现相关 open PR\n下一步：先等待维护者分配/确认方案；即使获批，公开 PR 的 AI 复核/披露确认仍必须由用户本人处理。\n证据：复现信号 1，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-15T04:00:56.252581Z",
+      "eventId": "7d92fc536a9b573b1dbd3ce7fd48e86089ead2da9402923443cc5c96dec8a313",
+      "idempotencyKey": "7d92fc536a9b573b1dbd3ce7fd48e86089ead2da9402923443",
+      "kind": "review",
+      "runId": "scan-20260815T035807Z-3297d2aab4b9",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "BerriAI/litellm#36791",
+        "langflow-ai/langflow#14470"
+      ],
+      "candidateStates": [
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "56506e14aa0bffa4ee7b48f63d4fba77ae9a0e115d70fd0cf47058c4be25615e",
+          "key": "BerriAI/litellm#36791",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "21ca6d5a67384715217eb22116ff5fc6104425842ec4f4b80eb2d2422b016193"
+        },
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "166ac4e30fd0746330a40de15af6f145601051c8399fdada3d90030f0fc161b0",
+          "key": "langflow-ai/langflow#14470",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "93420e5a4f37ecb50be4d88f592cae3afacdfcf06cb65e7e1d9fcf3cf5b064a2"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#36791](https://github.com/BerriAI/litellm/pull/36791) fix(router): support anthropic messages streaming fallback**\n建议：PR_FOLLOWUP\n价值：当前分支检查失败；存在未解决审查线程\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[langflow-ai/langflow#14470](https://github.com/langflow-ai/langflow/pull/14470) fix: bound web search result content**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突；存在未解决审查线程\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-15T04:00:56.589708Z",
+      "eventId": "994b77ca7d90b2f8f9c4721d6b9af4240497b3ae716af4c7a81bf82e96961149",
+      "idempotencyKey": "994b77ca7d90b2f8f9c4721d6b9af4240497b3ae716af4c7a8",
+      "kind": "watch",
+      "runId": "pr-followup-1786766237",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-15T03:11:25.054754Z",
+  "generatedAt": "2026-08-15T04:00:56.589708Z",
   "newEventCount": 1,
   "version": "notification_outbox_v2"
 }

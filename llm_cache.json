@@ -14267,6 +14267,36 @@
     ],
     "why": "Issue clearly identifies a logging-level bug in MCPSkillsSource where refusal paths use DEBUG instead of WARNING, causing silent skill drops. The fix is straightforward (change log levels or add summary), but the deterministic gate requires HUMAN_REVIEW and maintainer design confirmation is needed for the preferred approach (per-path WARNING vs summary line)."
   },
+  "7c0a36fdce4eabab525e3dd5ec02037d831555d28f9f92a438f220cab0e620d7": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Wasm OCI image fetch/parse logic in proxy runtime",
+      "Registry image publishing for ai-statistics plugin"
+    ],
+    "risks": [
+      "May be a registry-side issue not fixable in code",
+      "Changing OCI parsing could break other plugins"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with actual failing image and capture logs",
+      "Add regression test for OCI media type and layer count validation"
+    ],
+    "unknowns": [
+      "Actual root cause (client vs registry)",
+      "Maintainer design preference",
+      "Assignment and disclosure confirmation"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "Issue reports a Wasm OCI image fetch failure for ai-statistics plugin, but the root cause is unclear: it may be a registry-side image format problem, a client-side parsing bug, or a configuration issue. The reproduction steps are placeholders, and no maintainer investigation or design confirmation is present. The repository requires assignment and AI disclosure, and the gate decision is HUMAN_REVIEW."
+  },
   "7c25fd8985de9c0ccd34b23f3137551c2d7f01dbee64cc0a86ea78dce32f10c3": {
     "confidence": 0.7,
     "contradictions": [],
@@ -24202,6 +24232,36 @@
     ],
     "why": "Issue is a well-analyzed bug with clear root cause and fix direction, but the triage bot's correction indicates the reported layer table is inaccurate: the store already resolves against workspace root, not session cwd. This changes the fix scope and requires maintainer confirmation before implementation."
   },
+  "d92a1453f792d108fbe7ff85adfa68959d25241968ae77aeca6d4ad1f17ae1fa": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "hgctl/pkg/installer/helm_agent.go: return non-nil errors on Helm start/non-zero exit failures",
+      "hgctl/pkg/installer/installer_k8s.go: propagate ownership-detection errors and stop before component Run/render/apply/Profile persistence",
+      "Add deterministic regression tests for lookup outcomes and install/upgrade stop boundary"
+    ],
+    "risks": [
+      "Enforcing Helm CLI as a prerequisite may break existing automation that relied on fail-open behavior",
+      "Error wrapping must avoid leaking credentials or Helm values"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add unit tests using fake Helm executables (missing binary, exit status 23) to assert non-nil errors and no component execution",
+      "Add tests for successful empty lookup (installed=false, err=nil) and deployed-release guard behavior",
+      "Run go test ./pkg/installer -run '^TestCandidate' -count=1 -v and existing installer tests"
+    ],
+    "unknowns": [
+      "Exact assignment workflow and AI disclosure confirmation status for the contributor"
+    ],
+    "wait_reason": "ASSIGNMENT",
+    "why": "The issue precisely identifies a fail-open Helm ownership guard in hgctl that can mutate a cluster when helm list fails, with a clear proposed fail-closed behavior and deterministic test plan. Maintainer approval is present, but the repository requires assignment and the contributor must complete AI disclosure before implementation, so work cannot start cleanly."
+  },
   "d960266b8096eb9889c11d9586d2cfa232e11b27ad7c08221cee2eed052ea46c": {
     "confidence": 0.85,
     "contradictions": [],
@@ -27871,6 +27931,33 @@
     ],
     "why": "The issue is a real user-facing bug with clear repro evidence, but the deterministic gate requires HUMAN_REVIEW and the maintainer bot explicitly states a product decision is needed on cross-channel delivery policy. Existing PRs are closed/unmerged and do not settle the design. A new PR would be premature without maintainer direction."
   },
+  "f6c785e08652dcd35892eece21e39b575ad88511db6cb8a902e38f46a5d69171": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify xpu_qnorm_rope_kv_fp8_insert.py to cast tl.program_id to int64 before address computation",
+      "Add regression test for shapes exceeding 2^31 q elements"
+    ],
+    "risks": [
+      "Potential performance impact of int64 arithmetic on XPU kernels",
+      "Need to verify the fix works on actual MUSA/XPU hardware"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a unit test that runs the kernel with shapes like 98304x64 and 131072x128, asserting correct output or no overflow error",
+      "Use CPU/mock or existing kernel test infrastructure to validate address computation without GPU"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred fix approach or if the kernel is being refactored"
+    ],
+    "wait_reason": null,
+    "why": "Issue identifies a concrete int32 overflow in XPU qnorm/rope kernel address computation, with a clear root cause and a minimal fix. The bug is user-visible and affects large prefill shapes. No competing PR or issue found, and the fix is localized and testable."
+  },
   "f6d48dec254e93b0da0e08b577d87965fbe363585b80177d2ade154381293bdf": {
     "confidence": 0.7,
     "contradictions": [
@@ -28173,6 +28260,35 @@
       "Exact handling of the AI disclosure policy conflict for public contribution"
     ],
     "why": "The issue precisely identifies a runner-level gap in fc_agent_runner.py where zero tool calls with plain-text terminal answers are accepted as success, and the signal (tool_responses empty, function_call_state False) is available. However, the proposed fix requires design decisions (per-tool vs per-agent flag, retry vs error, error surface) that need maintainer input, and the repository's AI disclosure policy conflicts with automated public contribution. The issue is a feature request with no maintainer approval or help-wanted signal, and the discussion reveals a second failure mode (wrong parameter on genuine tool call) that broadens scope. Actionability is high technically but blocked by design confirmation and policy constraints."
+  },
+  "f919d62193ad7f61a52ee9d5a7aa76fe4e73a039e58dac2c0672b79ba444b98c": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "hgctl/pkg/installer/standalone.go",
+      "hgctl/pkg/installer/standalone_agent.go",
+      "hgctl/pkg/installer/installer_docker.go",
+      "hgctl/pkg/installer tests"
+    ],
+    "risks": [
+      "Changing Agent.Version() to propagate read errors affects Install call site and display-only reads; must handle whitespace normalization to avoid trailing newline leaking into stored version."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add regression test that starts with stored v1.0.0 profile, performs successful upgrade to v2.0.0, and asserts in-memory and persisted profiles report v2.0.0 with all other fields unchanged.",
+      "Add failure-path tests: runtime upgrade failure performs no profile write; unreadable VERSION returns error and does not overwrite stored version; profile save failure returns error without claiming success."
+    ],
+    "unknowns": [
+      "Exact design details for merge and test structure, to be defined in the Design issue."
+    ],
+    "wait_reason": "ASSIGNMENT",
+    "why": "Issue is a well-scoped, maintainer-approved proposal with confirmed root causes and clear success criteria. However, the repository requires assignment and the issue explicitly requests maintainer approval before implementation begins, so work cannot start without that approval."
   },
   "f9388995937b1e55bd8977335851a0e9859696c4056b203c018e1a8a6a848547": {
     "confidence": 0.8,
