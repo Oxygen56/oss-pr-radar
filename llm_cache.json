@@ -1862,6 +1862,35 @@
     ],
     "why": "Issue provides a precise root cause and a concrete fix (route split + frontend update). Existing PR #40029 is weak: no tests, minimal changes, and lacks regression coverage. A materially better PR with tests and complete frontend changes is plausible."
   },
+  "12cf02eb16f58d4b78039d02ded0e299a3aaf80d88d376f30342b878aa5ba2bc": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Adjust default residual_diff_threshold or document behavior",
+      "Add audio metric for quality gate"
+    ],
+    "risks": [
+      "Duplicate effort if PR #34841 already fixes root cause",
+      "Changing default may affect other models"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "test_plan": [
+      "Reproduce with provided config on B200 to confirm inert threshold",
+      "Run existing PR tests to see if they cover the issue"
+    ],
+    "unknowns": [
+      "Whether PR #34841 addresses the default threshold issue",
+      "Maintainer design preference on default value"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue reports default residual_diff_threshold inert and quality gap, but existing PR #34841 (draft) overlaps semantically and may address the same code path. Need maintainer comparison before creating new work."
+  },
   "12d9a7fef26e5ebb631333f600024de9a3fa9b596657a13f3313e23d906d5007": {
     "confidence": 0.85,
     "contradictions": [],
@@ -3419,6 +3448,36 @@
       "No clear algorithm-level validation path"
     ],
     "why": "The issue describes a concrete bug in message history persistence with a clear root cause (incoming duplicate IDs win upsert), but the track requires an LLM algorithm contribution. The described mechanism is message deduplication and persistence, not a training objective, model mechanism, or numerical method. The algorithm_evidence is weak and the issue lacks a reference-vs-implementation test or numerical regression path. The candidate is a bug fix in an application framework, not an algorithm contribution."
+  },
+  "2180a7dab10800e4c9d5ceb918bfd8d6268a4a607d46f2f1151e315d90eaeb98": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "hgctl/pkg/installer/standalone.go",
+      "hgctl/pkg/installer/standalone_agent.go",
+      "hgctl/pkg/installer/installer_docker.go",
+      "hgctl/pkg/installer tests"
+    ],
+    "risks": [
+      "Changing Agent.Version() to propagate read errors affects Install call site and display-only reads; need to handle whitespace normalization to avoid trailing newline leaking into stored version."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add regression test that starts with stored v1.0.0 profile, performs successful upgrade to v2.0.0, and asserts in-memory and persisted profiles report v2.0.0 with all other fields unchanged.",
+      "Add failure-path tests: runtime upgrade failure performs no Profile write; unreadable VERSION returns error without overwriting stored version; Profile-save failure returns error without claiming success.",
+      "Run go test ./pkg/installer from hgctl module."
+    ],
+    "unknowns": [
+      "Design issue #4534 approval status and any resulting implementation details."
+    ],
+    "wait_reason": "ASSIGNMENT",
+    "why": "Issue is a well-scoped correctness fix with confirmed root causes (inverted version-read condition and missing Profile save) and maintainer approval of the proposal and SPEC. However, the repository requires assignment and the contributor must complete AI disclosure/review before implementation, and the design issue #4534 is pending maintainer approval."
   },
   "21a031fef4f849318371f3a071e2de07143b89abd124b36248a1c3ab7011b7f1": {
     "confidence": 0.7,
@@ -8596,6 +8655,36 @@
       "Maintainer preference on design option (no_grad vs no_grad+inference_mode)"
     ],
     "why": "Issue clearly identifies a correctness bug from inconsistent inference_mode usage, with reproduction and maintainer discussion. However, open PR lookup timed out and related issue audit failed, so duplicate implementation cannot be excluded. Maintainer comments indicate design decision pending (align to no_grad vs no_grad+inference_mode), requiring maintainer confirmation before implementation."
+  },
+  "4d79061551d5bff33e04ff73ebc12a50699da0804643d4ac54037aa250114309": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify dispatcher logic to treat 'deliver' like 'wake' by observing agent_end or explicit claim before completing decision/pending start",
+      "On observation timeout, fail the decision for retry instead of console.warn",
+      "Possibly change ifActive behavior to persist/queue instead of deliver"
+    ],
+    "risks": [
+      "Changing delivery semantics may affect existing behavior for active runs that legitimately process kickoffs",
+      "Potential for increased latency or complexity in decision completion"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a failing test that reproduces the race: a run that is terminating when a kickoff is delivered, asserting the skill is eventually executed or the decision is retried",
+      "Run targeted unit tests for the dispatcher and related runtime paths"
+    ],
+    "unknowns": [
+      "Maintainer preference on the suggested fix direction (observe vs park)",
+      "Whether there is an existing design or planned change for this area"
+    ],
+    "wait_reason": "DESIGN_CONFIRMATION",
+    "why": "Issue identifies a concrete race in skill kickoff delivery where a terminating run consumes a kickoff without executing it, with clear code anchors and a suggested fix direction. However, the proposed fix involves design choices (e.g., whether to observe agent_end or park kickoffs) that need maintainer confirmation, and the issue is untriaged with no maintainer approval."
   },
   "4d90623b6bb948f1d5b84365865c8cf0ce1c86bbfff8fee115daf0c8868d2242": {
     "confidence": 0.85,
@@ -14216,6 +14305,36 @@
     ],
     "why": "Issue clearly identifies a platform-conditional bug in MiniMAXGemmaRMSNorm with a concrete reproduction and a suggested fix. However, a maintainer comment indicates the NVIDIA model is intentionally CUDA-only and expects platform-specific implementations, conflicting with the issue's proposal to modify the shared NVIDIA path. This design disagreement requires maintainer confirmation before implementation."
   },
+  "7a750086dfc228076808772d851ce6d5833facc1acf57db100fe7dd60d77e35a": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "StreamableHTTPClientTransport._send",
+      "StreamableHTTPClientTransport._handleSseStream",
+      "Transport.onmessage signature or Protocol handler context"
+    ],
+    "risks": [
+      "Changing onmessage signature may break existing consumers; need backward-compatible overload.",
+      "Potential ambiguity when multiple requests share a stream or when resumption replays messages."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a failing test that simulates a server-initiated request on a POST response stream and asserts the client can attribute it to the originating request id.",
+      "Run existing transport unit tests and type checks."
+    ],
+    "unknowns": [
+      "No public reproduction or failing test provided.",
+      "No maintainer feedback on preferred API surface (transport-level vs handler-level).",
+      "No open PR to compare against."
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "Issue clearly identifies a client-side provenance loss in StreamableHTTPClientTransport and proposes a concrete, client-only fix with code anchors. However, the gate decision is HUMAN_REVIEW and there is no public reproduction, no maintainer approval, and no open PR to assess. The fix is actionable but requires maintainer confirmation on API surface and design."
+  },
   "7aa644878ca18a33a4e7eb691ce7364ed91e88d3fd2280698b872f3758874cf1": {
     "confidence": 0.85,
     "contradictions": [],
@@ -15358,6 +15477,32 @@
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue reports a flaky CI failure in torch.compile CUDA graph capture, but root cause is unknown and reproduction is incomplete. The only comment indicates the exact config passes in isolation on H100, and the failure may be due to cross-test GPU state on H200. No maintainer investigation or confirmation of a distinct root cause. The issue is a CI failure report, not a concrete algorithm bug with a clear fix path."
   },
+  "84ba1cf6420b2d84e14e629c75008a63e88f08322f6542e639e41900e0cac126": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "apps/bridges.py",
+      "kiro-cli agent resolution"
+    ],
+    "risks": [
+      "Cross-component contract change may affect other apps; need to ensure backward compatibility"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "test_plan": [
+      "Reproduce with steps in issue; add regression test for namespaced agent ID resolution"
+    ],
+    "unknowns": [
+      "Maintainer preference for fix strategy (strip prefix vs. teach kiro-cli)"
+    ],
+    "wait_reason": "DESIGN_CONFIRMATION",
+    "why": "Issue provides a clear root cause (namespaced agent IDs not resolved by kiro-cli) and a concrete repro, but the fix requires a cross-component design decision between bridges.py and kiro-cli contract. Maintainer comment explicitly routes to needs-investigation for design choice, so implementation should wait for maintainer direction."
+  },
   "84d222e459f8beb2d88a2cd008898afbdcc18960c047b70e1382dc5c25c9333e": {
     "confidence": 0.7,
     "contradictions": [
@@ -16033,6 +16178,41 @@
       "Exact implementation details of existing PR #36184"
     ],
     "why": "Issue identifies a concrete, reproducible bug: Codex 0.147 sends a reserved 'functions' namespace that Mantle rejects, breaking all requests. Existing PR #36184 overlaps semantically but lacks explicit issue linkage and has CI failures; a cleaner PR with bidirectional rename and tests is plausible."
+  },
+  "8a51f96e99a27a43215269bd28b18f9c3165875d07a2daf1115cc4048ba29a53": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add validate_config gate and dataclass validation in workers/config",
+      "Replace silent fallbacks with raises in reward parsing, dataset loading, attention backend, and trainer config paths",
+      "Add visible counters and abort thresholds for transient anomalies",
+      "Introduce shared helpers raise_unknown_value and raise_mutually_exclusive"
+    ],
+    "risks": [
+      "Changing silent fallbacks to raises may break existing user configurations that rely on defaults",
+      "Distinguishing genuine misconfiguration from transient stochastic anomalies requires careful threshold tuning",
+      "Large scope across many files increases review complexity and merge risk"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "CPU tests for unified_reward parsing: all-3-axes labeled format passes; partial/unlabeled triggers malformed counter and threshold raise",
+      "offline_dpo_dataset raises on missing score columns",
+      "diffusion_attention raises on typo'd backend and on user-override FA3-unavailable",
+      "validate_config resume_mode enum raise/pass cases",
+      "One raise-case and one pass-case per new validate_config rule"
+    ],
+    "unknowns": [
+      "Maintainer approval not yet given, but issue is labeled help wanted and collaborator comment indicates support",
+      "Exact implementation details for counters and abort thresholds are not specified"
+    ],
+    "wait_reason": null,
+    "why": "The RFC identifies concrete silent-fallback bugs in RL training paths (e.g., reward parsing, config validation, gradient handling) with specific file/line anchors and a clear fail-fast policy. It includes a test plan for CPU-based regression tests and aligns with upstream verl's design. No competing PR exists; the only open PR #297 is a draft with no semantic overlap."
   },
   "8ab1baa9834e96953545c832dfbee21851bdcc417148d48de08294e5406359bc": {
     "confidence": 0.7,
@@ -21225,6 +21405,35 @@
     ],
     "why": "Issue provides a detailed, high-impact bug with clear root cause and suggested fix, but the deterministic gate requires HUMAN_REVIEW and existing PR #20285 has semantic overlap with the code paths, necessitating maintainer comparison before starting new work."
   },
+  "bf20d726b494da9668225ce44cfd4151614f0087a34de8240c7a8e94b466d89f": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "hgctl/pkg/installer/helm_agent.go",
+      "hgctl/pkg/installer/installer_k8s.go",
+      "new tests under hgctl/pkg/installer"
+    ],
+    "risks": [
+      "Helm availability becomes an intentional prerequisite for affected K8s paths, which may be a behavior change for users without Helm.",
+      "Potential need to align with maintainer design preferences."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add deterministic fake-command tests for four lookup outcomes: Helm unavailable, Helm non-zero failure, confirmed absence, detected Higress release.",
+      "Add installer tests proving install and stored-Profile upgrade do not call component Run or Profile save after ownership-check failure.",
+      "Run go test ./pkg/installer -count=1 and go test ./... -count=1 from hgctl."
+    ],
+    "unknowns": [
+      "No evidence of assignment or maintainer approval; repository requires assignment."
+    ],
+    "wait_reason": "ASSIGNMENT",
+    "why": "The issue provides a clear design for fail-closed behavior when Helm ownership detection fails, with concrete code anchors and a verification plan. However, the repository requires assignment before work can start, and the submission policy mandates AI disclosure and assignment. The gate decision is HUMAN_REVIEW, and there is no maintainer approval or assignment evidence."
+  },
   "bf2efd73f5a448531c567d31eccca1c50380bc2bfb9496375a4f7107047d31b1": {
     "confidence": 0.8,
     "contradictions": [],
@@ -21480,6 +21689,35 @@
       "Exact code path in the frontend that triggers the request is not fully detailed, but the issue provides enough to start"
     ],
     "why": "The issue clearly identifies a user-visible 500 error caused by the Agent configuration UI incorrectly querying the builtin credential endpoint for MCP providers. The root cause is well described: the route resolves via ToolManager.get_builtin_provider, which fails for MCP server identifiers. No competing PR addresses this specific bug, and the fix is localized to the credential-info route and UI request logic."
+  },
+  "c18a58db761b1b769911ee1529d7f5cb77ba98660d02205ac8e01ad5a7b07466": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Update _HASH_PATTERN in headroom.py to support <<ccr:...>> markers",
+      "Normalize capture groups and deduplicate hashes",
+      "Add tests for new marker formats and both API shapes"
+    ],
+    "risks": [
+      "Existing PRs may already fix the issue; new PR could be redundant",
+      "Changing regex may affect legacy marker handling"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "test_plan": [
+      "Add unit tests for each marker format in headroom.py",
+      "Integration test with Chat Completions and Responses to verify tool injection"
+    ],
+    "unknowns": [
+      "Whether existing PRs fully resolve the issue and are mergeable"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue clearly identifies a regex mismatch in headroom.py causing missing headroom_retrieve injection, with concrete repro steps and suggested fix. However, two open PRs (#36245, #36581) already target the same file and semantic overlap, requiring maintainer comparison before new work."
   },
   "c1cc22b223081a242f8b3ddfbf3d9264c802dbdcd2052af99d74af8fb2269a59": {
     "confidence": 0.7,
@@ -23876,6 +24114,32 @@
     "test_plan": [],
     "unknowns": [],
     "why": "The issue is a straightforward API parameter validation bug (None vs bool) in the /v1/responses endpoint. It is an ordinary API plumbing fix, not an LLM algorithm contribution. The track requires concrete algorithm mechanisms (training objective, kernel, etc.), which are absent. The proposed fix is a simple default value fallback, not a reference-vs-implementation test or numerical regression."
+  },
+  "d5c6aa8af2f76bf3b04aa827ffcb49bd63c3820c8fe58a7e0fb9d4509f4c4068": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "plugins/wasm-go/extensions/ai-agent/main.go",
+      "plugins/wasm-go/extensions/ai-agent/dashscope/"
+    ],
+    "risks": [
+      "Potential behavior change if request-local state is not carefully scoped; need to preserve existing tool-call ordering."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add concurrent regression test where request B's Clear() interleaves between request A's assistant append and observation serialization, verifying no cross-request message leakage."
+    ],
+    "unknowns": [
+      "Whether assignment has been granted to the proposer; design approval status for #4531."
+    ],
+    "wait_reason": "ASSIGNMENT",
+    "why": "Issue clearly identifies a package-global mutable message store causing cross-request contamination in ai-agent, with maintainer-approved proposal and SPEC. However, repository requires assignment and AI disclosure confirmation, and the candidate is not yet assigned; design issue #4531 is pending review."
   },
   "d5db1e3ff902d31b217b0739930132e3c6b835582f06ce8323eabb0925c5022a": {
     "confidence": 0.8,
@@ -27264,6 +27528,35 @@
       "Maintainer preference on whether to bundle or promote to dependency is not confirmed, but the issue suggests both options and the fix is low-risk"
     ],
     "why": "Issue provides a clear, reproducible root cause: DCP's runtime value import of @opencode-ai/plugin fails because it is only a peer dependency and opencode's plugin cache does not include it, causing silent load failure. The fix is straightforward (bundle or promote to direct dependency) and the issue includes a reproduction command and confirmed workaround."
+  },
+  "eec0277e592784a5a6fd6b37f5ff043a2b4b8660e7eb62d53e7cc601006f1712": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "hgctl/pkg/installer/helm_agent.go",
+      "hgctl/pkg/installer/installer_k8s.go",
+      "new tests in hgctl/pkg/installer"
+    ],
+    "risks": [
+      "Enforcing Helm CLI as a prerequisite may break existing automation that relied on fail-open behavior",
+      "Error wrapping must avoid leaking credentials or sensitive Helm values"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add deterministic tests for missing Helm executable, non-zero exit, successful empty lookup, and deployed-release lookup",
+      "Add tests verifying install and upgrade stop before component Run on lookup failure"
+    ],
+    "unknowns": [
+      "Explicit maintainer assignment to implement the change is not yet recorded"
+    ],
+    "wait_reason": "ASSIGNMENT",
+    "why": "The issue clearly identifies a fail-open Helm ownership check in hgctl that can lead to unsafe cluster mutation, with a concrete reproduction and maintainer approval. However, the repository requires assignment and the candidate's own submission policy mandates maintainer approval before implementation, so work cannot start without an explicit assignment."
   },
   "eedb6f98197eeaad63421e0e15c27cbe8c237c8bdbfc92fdb985bfed58858d04": {
     "confidence": 0.8,
