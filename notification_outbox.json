@@ -523,7 +523,6 @@
       "category": "WAIT_MAINTAINER",
       "digest": "f7b46f9695a6f6b2d5c4b51f74ace3caa09a4a43dde66825c10985895ee88f77",
       "kind": "review",
-      "scannerVersion": "",
       "seenAt": "2026-08-08T14:06:05.920365Z",
       "stateId": "17e185be1375805b6c3acc63d4667023f43e2c136fc4bf4d21c58ebf431c8296"
     },
@@ -2525,76 +2524,31 @@
     },
     "watch|sgl-project/sglang#30554": {
       "category": "PR_FOLLOWUP",
-      "digest": "54c5173c6969f35b1edf91cbe6d5df232f6af588f54210b0808abd6e2b9eedf7",
+      "digest": "c561bfaaddc96e7eb44ad0536661fe5d7a7b7b6fc6e5bff1d7b62e3408f67cee",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-15T10:46:29.195589Z",
-      "stateId": "883c4c7a8be9f9adb85695b3ebe8c08cb43c7e37a78f7e016dc5a3861ba052bf"
+      "seenAt": "2026-08-15T14:45:55.596739Z",
+      "stateId": "1ac6d11a6fcc045ad476911b1957160f03797aedfc5ff8a9ba9aecdc36af8f5b"
     },
     "watch|sgl-project/sglang#34138": {
       "category": "PR_FOLLOWUP",
-      "digest": "ab1ba9434fd595d78524c97302b457b9b091f88dae2a0ab1452da7c4b5550110",
+      "digest": "eb7981e0172de9628d770c6e9db52b207997d02169d591423d614b3d34d868f9",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-15T10:46:29.195589Z",
-      "stateId": "aaa2eab1346d58c3d69a471da26a6759005eebb656e7395692c318236a1e9e25"
+      "seenAt": "2026-08-15T14:45:55.596739Z",
+      "stateId": "fdc49a0863631512608caf508a30ea1c8df4a3b2e544c9f1f706e0b6d20e66ef"
     },
     "watch|vllm-project/vllm#52298": {
       "category": "PR_FOLLOWUP",
-      "digest": "c0c442e82ccccaaea5d0fb53783280ccd82690de07da4654cfe206084b0dcaea",
+      "digest": "6b9bb048eca9437302f08f627aefc5c7616679c4cf83aa01c8bd389400005407",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-15T09:48:57.919029Z",
-      "stateId": "d14d97c1fc37e2b6765cbedd3218c39c4bb857e9d21d6fcbb410d76ec278a28e"
+      "seenAt": "2026-08-15T14:45:55.596739Z",
+      "stateId": "513bf0832936914e0dad23ece551e261c3741f93229887f2c5763c7c271212ad"
     }
   },
-  "digest": "48f4d5011e9f65255ae47c3374d1364d8405187ec7c16123f2925dc37a76279c",
+  "digest": "e762f9c70625ea5f9c6989a8c09e0708c415cb4eae1787d9a1e48f8da92791f8",
   "events": [
-    {
-      "attempts": 1,
-      "candidateKeys": [
-        "aaif-goose/goose#11041"
-      ],
-      "candidateStates": [
-        {
-          "category": "WAIT_MAINTAINER",
-          "digest": "f7b46f9695a6f6b2d5c4b51f74ace3caa09a4a43dde66825c10985895ee88f77",
-          "key": "aaif-goose/goose#11041",
-          "kind": "review",
-          "stateId": "17e185be1375805b6c3acc63d4667023f43e2c136fc4bf4d21c58ebf431c8296"
-        }
-      ],
-      "card": {
-        "config": {
-          "wide_screen_mode": true
-        },
-        "elements": [
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[aaif-goose/goose#11041](https://github.com/aaif-goose/goose/issues/11041) `InferenceMetadata` is never recorded for providers that don't report a `resolved_model`, so per-message model attribution is lost and the model-change disclosure never renders**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue provides a precise root cause and a concrete fix, but the deterministic gate requires HUMAN_REVIEW and existing PRs overlap semantically, so maintainer review is needed before starting work.\n改动：crates/goose/src/agents/agent.rs；ui/desktop/src/components/ProgressiveMessageList.tsx\n验证：Add regression test using CountingTextProvider to assert inference metadata is recorded for non-Databricks providers.\n风险：Existing PRs may already address the issue; need to compare implementation boundaries.\n竞争：发现 PR #10621 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 6，根因信号 True",
-              "tag": "lark_md"
-            }
-          }
-        ],
-        "header": {
-          "template": "yellow",
-          "title": {
-            "content": "OSS PR Radar: 需要确认",
-            "tag": "plain_text"
-          }
-        }
-      },
-      "createdAt": "2026-08-08T14:06:05.920365Z",
-      "eventId": "acad0c3ca3c3be9eed699981ef2df3075d96bb42ae2bc3c0436747a33bf48f93",
-      "idempotencyKey": "acad0c3ca3c3be9eed699981ef2df3075d96bb42ae2bc3c043",
-      "kind": "review",
-      "lastAttemptAt": "2026-08-08T14:06:39.546787Z",
-      "messageId": "om_x100b684731dd68a4c3bf5e405cca108",
-      "runId": "scan-20260808T140221Z-4b7b689bc905",
-      "sentAt": "2026-08-08T14:06:41.492617Z",
-      "status": "SENT"
-    },
     {
       "attempts": 1,
       "candidateKeys": [
@@ -24944,9 +24898,90 @@
       "runId": "scan-20260815T134618Z-a97eba7ede00",
       "sentAt": "2026-08-15T13:49:33.045701Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "sgl-project/sglang#30554",
+        "sgl-project/sglang#34138",
+        "vllm-project/vllm#52298"
+      ],
+      "candidateStates": [
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "c561bfaaddc96e7eb44ad0536661fe5d7a7b7b6fc6e5bff1d7b62e3408f67cee",
+          "key": "sgl-project/sglang#30554",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "1ac6d11a6fcc045ad476911b1957160f03797aedfc5ff8a9ba9aecdc36af8f5b"
+        },
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "eb7981e0172de9628d770c6e9db52b207997d02169d591423d614b3d34d868f9",
+          "key": "sgl-project/sglang#34138",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "fdc49a0863631512608caf508a30ea1c8df4a3b2e544c9f1f706e0b6d20e66ef"
+        },
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "6b9bb048eca9437302f08f627aefc5c7616679c4cf83aa01c8bd389400005407",
+          "key": "vllm-project/vllm#52298",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "513bf0832936914e0dad23ece551e261c3741f93229887f2c5763c7c271212ad"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#30554](https://github.com/sgl-project/sglang/pull/30554) [Spec] Size shared logits buffer for adaptive candidates**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#34138](https://github.com/sgl-project/sglang/pull/34138) Bind streaming abort cleanup to request lifecycle**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#52298](https://github.com/vllm-project/vllm/pull/52298) [Bugfix] Validate guidance tokenizer compatibility before EngineCore**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-15T14:45:55.596739Z",
+      "eventId": "c029a795e1e4e9bf30a3a4e826895abae91626c948a2aa20093c4631f2dd162e",
+      "idempotencyKey": "c029a795e1e4e9bf30a3a4e826895abae91626c948a2aa2009",
+      "kind": "watch",
+      "runId": "pr-followup-1786804965",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-15T13:48:56.403048Z",
-  "newEventCount": 0,
+  "generatedAt": "2026-08-15T14:45:55.596739Z",
+  "newEventCount": 1,
   "version": "notification_outbox_v2"
 }

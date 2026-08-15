@@ -14470,6 +14470,33 @@
     ],
     "why": "Issue identifies a concrete bug in Gemma4UnifiedMultimodalEmbedder where output_proj_dims is incorrectly used as input dimension for audio, causing weight-loading AssertionError. Root cause is clear, fix is minimal and verified by reporter. No competing PR or related issue found."
   },
+  "78e61498ae4ad3052df9899eec903410f6838c131873daa97be33e671d183879": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify MCP auto-execute loop to skip tool_use blocks not in tool_server_map and pass them through to client",
+      "Add regression test for mixed MCP and client tools with require_approval never"
+    ],
+    "risks": [
+      "Potential behavior change for existing auto-execute flows; need to ensure only non-MCP tools are passed through",
+      "May require coordination with maintainers on expected pass-through format"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a test that simulates a request with both MCP and client tools, assert client tools are returned to client and MCP tools are auto-executed",
+      "Run existing MCP handler unit tests and proxy integration tests"
+    ],
+    "unknowns": [
+      "No full end-to-end reproduction provided; maintainer confirmation of desired behavior not yet obtained"
+    ],
+    "wait_reason": null,
+    "why": "Issue describes a concrete bug with clear root cause in MCP auto-execute loop that hijacks client tool_use, breaking agentic clients. Code anchors and expected behavior are specific, and no competing PR exists."
+  },
   "78ed9a73717aa1e59093588fdb18eb3fa1c08168a8b831260d205b2d9b5f2df4": {
     "confidence": 0.7,
     "contradictions": [],
