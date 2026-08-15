@@ -2459,11 +2459,11 @@
     },
     "watch|BerriAI/litellm#36791": {
       "category": "PR_FOLLOWUP",
-      "digest": "7c41dd8402e4f009ef5206eb67cce96a3c5415cf142c6692203717a91f05e4a7",
+      "digest": "b4c0c8e08565c84b2a4efcff0b6230b342ff33bdb6ff30e6e2db8d9a42517c7a",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-15T22:44:45.767052Z",
-      "stateId": "03657a546a1bb4368228ccd7e3231101b17253ab515be372007ac44f1da9a212"
+      "seenAt": "2026-08-15T23:40:14.683050Z",
+      "stateId": "617ce9b7a3a99c4fa40b1ed4d7ab8c91a171be98399b6dcfb57b19ba8909f28a"
     },
     "watch|SWE-bench/SWE-bench#593": {
       "category": "PR_FOLLOWUP",
@@ -2595,19 +2595,19 @@
     },
     "watch|sgl-project/sglang#30554": {
       "category": "PR_FOLLOWUP",
-      "digest": "ab964acad7faaf26aea08bc167dcd1586786e4188eaa4f29cb049e1f52841934",
+      "digest": "962ffd4b9e0427881d7055c06434e89ecc645bb51e63eb7b41f3a82aac2ff122",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-15T22:44:45.767052Z",
-      "stateId": "628723c41bb6f96d1950e1cf7e8b29c5fe514b726d9177ea05f3c7bb0141d2b9"
+      "seenAt": "2026-08-15T23:40:14.683050Z",
+      "stateId": "d13e6d1b7e8116f1457ba07817c1cd748d38c75463776fccbfccc1b7e62a1754"
     },
     "watch|sgl-project/sglang#34138": {
       "category": "PR_FOLLOWUP",
-      "digest": "c297dc883e53f86ae1b2a9921d3afc05ed21cbd2a2cd9caec3d105fbb01f5e75",
+      "digest": "c6940ae6bc57927df4dcc275d2663aa366cba73db57152822abf7ce259e29b55",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-15T22:44:45.767052Z",
-      "stateId": "94da4cb161f759a7c7650c7de870f5102839ae99b4cb382204c50c5dbff1b4b0"
+      "seenAt": "2026-08-15T23:40:14.683050Z",
+      "stateId": "deddd05a45e512ef454d67ae4dcd6b777ccd481597e720d83e598ba4fc95dce2"
     },
     "watch|vllm-project/vllm#52298": {
       "category": "PR_FOLLOWUP",
@@ -2618,503 +2618,8 @@
       "stateId": "0d1c16428f294b41c758379fa375052f57f417ae6b25dbf8da0714975e999363"
     }
   },
-  "digest": "cc58a9bd8cf2f4096c4d544eb5d6661be1ae5c9d4adce06f88658eb329b2775e",
+  "digest": "d555b1c1ea0da800cd7f7607e1b7dcc0d78e4c0a39a599b619069bcee8888b4c",
   "events": [
-    {
-      "attempts": 1,
-      "candidateKeys": [
-        "open-webui/open-webui#28305"
-      ],
-      "candidateStates": [
-        {
-          "category": "WAIT_MAINTAINER",
-          "digest": "722012bfcb821bdfb81c15cae59cf05c88a43c002d9ee38813d796f65ca73735",
-          "key": "open-webui/open-webui#28305",
-          "kind": "review",
-          "stateId": "1856f881fd8b06e0d4af0275dc5a7ca7c6a48d6261b45c038e5c7e1bb0b99c8a"
-        }
-      ],
-      "card": {
-        "config": {
-          "wide_screen_mode": true
-        },
-        "elements": [
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[open-webui/open-webui#28305](https://github.com/open-webui/open-webui/issues/28305) issue: a tool call whose id an earlier round reused is dropped, orphaning its result**\n建议：WAIT_MAINTAINER | 分数：10\n价值：The issue provides a detailed root cause in middleware.py, a concrete reproduction, and a proposed 13-line fix. However, the fix has not been tested against a live multi-round session, and the maintainer has not confirmed the design direction. The related issue #24758 is closed but may indicate prior maintainer preferences. The candidate is actionable but requires maintainer confirmation before implementation.\n改动：Modify backend/open_webui/utils/middleware.py to rename reused tool-call IDs before dedup, scoped to already-answered calls；Add regression test for multi-round tool-call ID reuse\n验证：Reproduce with moonshotai/kimi-k3 via OpenRouter using 5-6 parallel calls per round；Verify that stored output pairs each round's results with its calls；Run existing middleware tests and add a unit test simulating ID reuse\n风险：Renaming IDs may affect provider-side validation or downstream logic；Scoping to answered calls may miss edge cases where IDs are reused before results are processed\n竞争：未发现相关 open PR\n下一步：按正常流程实现并验证；如要求 DCO 则自动 sign-off，PR 创建后报告 CLA 状态。\n证据：复现信号 6，根因信号 False",
-              "tag": "lark_md"
-            }
-          }
-        ],
-        "header": {
-          "template": "yellow",
-          "title": {
-            "content": "OSS PR Radar: 需要确认",
-            "tag": "plain_text"
-          }
-        }
-      },
-      "createdAt": "2026-08-08T22:45:08.372737Z",
-      "eventId": "a5da289361c0d6b2b9d7bd4398f8264073a29c24782e2f08270ec1d1186b8a13",
-      "idempotencyKey": "a5da289361c0d6b2b9d7bd4398f8264073a29c24782e2f0827",
-      "kind": "review",
-      "lastAttemptAt": "2026-08-08T22:45:36.867540Z",
-      "messageId": "om_x100b684f57ed34a0b3b19075df401ae",
-      "runId": "scan-20260808T224322Z-c259b2a88b71",
-      "sentAt": "2026-08-08T22:45:38.421627Z",
-      "status": "SENT"
-    },
-    {
-      "attempts": 1,
-      "candidateKeys": [
-        "The-PR-Agent/pr-agent#2430",
-        "crewAIInc/crewAI#6407",
-        "langflow-ai/langflow#14470",
-        "langflow-ai/langflow#14471",
-        "ray-project/ray#64102"
-      ],
-      "candidateStates": [
-        {
-          "category": "PR_FOLLOWUP",
-          "digest": "2333022248f60f1bd29e191fdc5d93ddf1631f54f9778bb8ab6daadbe0171cbb",
-          "key": "The-PR-Agent/pr-agent#2430",
-          "kind": "watch",
-          "stateId": "eb002f9229bb32b9e8b8d88ed0176382aed5f3c6fb78f85f9008e03cbd117dc7"
-        },
-        {
-          "category": "PR_FOLLOWUP",
-          "digest": "f61ba71cf71c43816b749e5714255be5ccb43dd8034b56aad700073476364988",
-          "key": "crewAIInc/crewAI#6407",
-          "kind": "watch",
-          "stateId": "bb857fec07db54c0a6d2b14c354a7fba85d3513722a72fd86d0990dc59316eba"
-        },
-        {
-          "category": "PR_FOLLOWUP",
-          "digest": "2fcd7cfc4eba76017d99d594e261aa855559eee44bc38c4c27b1675304e2bb8c",
-          "key": "langflow-ai/langflow#14470",
-          "kind": "watch",
-          "stateId": "ae96aab976044a7cb2e8634fe84163b2abea44cdacf2f296ee48db03c3ec8afa"
-        },
-        {
-          "category": "PR_FOLLOWUP",
-          "digest": "3eb204d72b8253267728fa365b0c13f711e3fdc4f6cdd92d0ac4e945b418a4d5",
-          "key": "langflow-ai/langflow#14471",
-          "kind": "watch",
-          "stateId": "d6c0655db3e561cc7d2622e5c034d779b60ed26ee5779f25406c081315f1051f"
-        },
-        {
-          "category": "PR_FOLLOWUP",
-          "digest": "349e17e8b23044ec1953974842ef1a9d5382fe4f0629fa6858cad411c3878994",
-          "key": "ray-project/ray#64102",
-          "kind": "watch",
-          "stateId": "572b1723b4112efa09684a00db9fb95fdc266e5a2c6238f4e9172633e16e68ce"
-        }
-      ],
-      "card": {
-        "config": {
-          "wide_screen_mode": true
-        },
-        "elements": [
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[The-PR-Agent/pr-agent#2430](https://github.com/The-PR-Agent/pr-agent/pull/2430) feat: add Asana ticket detection to ticket compliance check**\n建议：PR_FOLLOWUP\n价值：存在未解决审查线程\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[crewAIInc/crewAI#6407](https://github.com/crewAIInc/crewAI/pull/6407) Fix async task failure cleanup**\n建议：PR_FOLLOWUP\n价值：存在未解决审查线程\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[langflow-ai/langflow#14470](https://github.com/langflow-ai/langflow/pull/14470) fix: bound web search result content**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突；存在未解决审查线程\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[langflow-ai/langflow#14471](https://github.com/langflow-ai/langflow/pull/14471) fix(lfx): align tool mode capability detection with runtime**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[ray-project/ray#64102](https://github.com/ray-project/ray/pull/64102) [serve] Fix gRPC router cache invalidation on request failure (#63261)**\n建议：PR_FOLLOWUP\n价值：存在未解决审查线程\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
-              "tag": "lark_md"
-            }
-          }
-        ],
-        "header": {
-          "template": "yellow",
-          "title": {
-            "content": "OSS PR Radar: 状态更新",
-            "tag": "plain_text"
-          }
-        }
-      },
-      "createdAt": "2026-08-08T22:45:08.735857Z",
-      "eventId": "7cf61fcf29ad0c5c2e1b52dce5d01a66f01061d10072898aab0b19efb0e04bfc",
-      "idempotencyKey": "7cf61fcf29ad0c5c2e1b52dce5d01a66f01061d10072898aab",
-      "kind": "watch",
-      "lastAttemptAt": "2026-08-08T22:45:38.421653Z",
-      "messageId": "om_x100b684f57fe58a0b11b15f7b612292",
-      "runId": "pr-followup-1786228965",
-      "sentAt": "2026-08-08T22:45:39.650654Z",
-      "status": "SENT"
-    },
-    {
-      "attempts": 1,
-      "candidateKeys": [
-        "PrefectHQ/fastmcp#4789",
-        "mastra-ai/mastra#21054"
-      ],
-      "candidateStates": [
-        {
-          "category": "WAIT_MAINTAINER",
-          "digest": "2c3438ce7f2563f3033f6d7a55e2771bf36f2b52c8dae951715444b8c6b95e80",
-          "key": "PrefectHQ/fastmcp#4789",
-          "kind": "review",
-          "stateId": "0debbe816c80fa5d3bf409f1681d2f1bbf220a7afc0718d3d2401895d961c336"
-        },
-        {
-          "category": "WAIT_MAINTAINER",
-          "digest": "1e89b4e3a9f2d3c5b810c8404167956912397d92863d3b95353a05d65527c963",
-          "key": "mastra-ai/mastra#21054",
-          "kind": "review",
-          "stateId": "6113bc1fe098d2eb88ecfaac6028325a72e872c67740d6843db678b7da4fbde4"
-        }
-      ],
-      "card": {
-        "config": {
-          "wide_screen_mode": true
-        },
-        "elements": [
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[PrefectHQ/fastmcp#4789](https://github.com/PrefectHQ/fastmcp/issues/4789) release/3.x: CIMD private_key_jwt clients always rejected — expected aud has a doubled slash (fixed on main in #4659, unreleased on 3.x)**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue identifies a clear bug with root cause and MRE, but an existing PR (#4783) directly backports the fix and was auto-closed only for lack of linked issue. The issue asks to reopen/merge that PR, so work is not cleanly actionable without maintainer action.\n改动：Backport #4659 to release/3.x in fastmcp_slim/fastmcp/server/auth/oauth_proxy/proxy.py\n验证：Run the provided MRE to reproduce the audience mismatch, then verify the fix makes advertised token_endpoint equal expected aud.\n风险：Maintainer may prefer a different fix or release process; need confirmation before proceeding.\n竞争：发现关键词相关 PR，但未确认直接覆盖：#4783；需人工核对\n下一步：已有 PR 但强度不足；先看维护者规则和 issue 讨论，必要时先请求确认方案或分配。\n证据：复现信号 2，根因信号 True",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[mastra-ai/mastra#21054](https://github.com/mastra-ai/mastra/issues/21054) Agent loop stops on TOOL_EXECUTION_FAILED instead of recovering**\n建议：WAIT_MAINTAINER | 分数：13\n价值：Issue reports a user-visible bug in agent loop recovery after tool execution failures, with concrete reproduction steps and error structure. However, the root cause is not identified, and the maintainer has only labeled it for triage without confirming design direction. The deterministic gate requires HUMAN_REVIEW, and design confirmation is needed before implementation.\n改动：Agent loop error handling to allow recovery from TOOL_EXECUTION_FAILED；Tool result propagation to agent for error processing\n验证：Create a failing test using the provided reproduction steps (e.g., file not found or permission error) to verify the loop continues after error；Run targeted unit tests for the agent runtime and tool execution paths\n风险：Potential API behavior changes if error handling is broadened；Need to align with maintainer design preferences for error recovery\n竞争：未发现相关 open PR\n下一步：先在 issue 下请求分配/确认方案，获批后再开 PR。\n证据：复现信号 4，根因信号 False",
-              "tag": "lark_md"
-            }
-          }
-        ],
-        "header": {
-          "template": "yellow",
-          "title": {
-            "content": "OSS PR Radar: 需要确认",
-            "tag": "plain_text"
-          }
-        }
-      },
-      "createdAt": "2026-08-08T22:52:42.630436Z",
-      "eventId": "be97143113b8b639c7994cc0b43224814739393a89215960bda6f87a60784f25",
-      "idempotencyKey": "be97143113b8b639c7994cc0b43224814739393a89215960bd",
-      "kind": "review",
-      "lastAttemptAt": "2026-08-08T22:53:12.325480Z",
-      "messageId": "om_x100b684f7b5204a4b341cec3e17c7bf",
-      "runId": "scan-20260808T225149Z-f551cf00f75d",
-      "sentAt": "2026-08-08T22:53:14.353877Z",
-      "status": "SENT"
-    },
-    {
-      "attempts": 1,
-      "candidateKeys": [
-        "PrefectHQ/fastmcp#4788",
-        "lidge-jun/opencodex#1292"
-      ],
-      "candidateStates": [
-        {
-          "category": "WAIT_MAINTAINER",
-          "digest": "b247bd4d20defe9de021b01ad0d47cadcc53c610005226a8923708daa05c61b1",
-          "key": "PrefectHQ/fastmcp#4788",
-          "kind": "review",
-          "stateId": "de6c07f2a840538360603306f03465dc6e52c75cb2f67292aeec242d95455ceb"
-        },
-        {
-          "category": "WAIT_MAINTAINER",
-          "digest": "0a1c67e435198a6aed0f878cd541b72bb257cbecde1088e6ed0991f0641e55bd",
-          "key": "lidge-jun/opencodex#1292",
-          "kind": "review",
-          "stateId": "aef270655627d90a9691085fc06ba7dd73d8460da04bf1766948e4c20787a2e8"
-        }
-      ],
-      "card": {
-        "config": {
-          "wide_screen_mode": true
-        },
-        "elements": [
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[PrefectHQ/fastmcp#4788](https://github.com/PrefectHQ/fastmcp/issues/4788) Server-level mcp.enable() / mcp.disable() do not emit tools/list_changed notifications in FastMCP 3.4.6**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue reports a concrete bug: server-level enable/disable do not emit ToolListChangedNotification, causing stale tool lists in connected clients. The code path is identified and a minimal fix is plausible, but the deterministic gate requires HUMAN_REVIEW and the issue lacks maintainer confirmation or design guidance.\n改动：Add notification emission in server-level enable/disable in fastmcp/server/providers/base.py；Possibly add tests for server-level visibility change notifications\n验证：Create a failing test that connects a client, calls mcp.disable(), and asserts a ToolListChangedNotification is received；Run existing FastMCP test suite for server providers\n风险：May need to align with maintainer design preferences on notification behavior；Potential side effects on other components (resources, prompts) if notification logic is broadened\n竞争：未发现相关 open PR\n下一步：先请求维护者分配/确认方案，获批后再开 PR。\n证据：复现信号 7，根因信号 False",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[lidge-jun/opencodex#1292](https://github.com/lidge-jun/opencodex/issues/1292) [Provider compatibility] DeepSeek V4 Flash returns 400 when developer message is interleaved between function_call and function_call_output**\n建议：WAIT_MAINTAINER | 分数：12\n价值：The issue is a provider-compatibility bug in the openai-responses adapter: interleaved developer messages between function_call and function_call_output cause DeepSeek to return 400. The maintainer has confirmed the mechanism and proposed a fix (ordering normalization in repairOrphanedInputItems), but explicitly requested design confirmation on blast radius and semantic impact before patching. The track is llm_algorithm, yet the fix is adapter plumbing, not an algorithm change; however, the issue is actionable and well-evidenced. Since the maintainer is actively engaged and has not yet approved the design, WAIT_MAINTAINER is appropriate.\n改动：Modify repairOrphanedInputItems in src/adapters/openai-responses.ts to reorder function_call_output items to be contiguous with their matching function_call, possibly gated by a provider predicate.\n验证：Add a unit test with a synthetic input containing function_call, developer message, function_call_output and assert the output order is normalized.；Add an integration test against a mock DeepSeek endpoint that returns 400 on interleaved pairs and verify the fix avoids the error.\n风险：Reordering may change message semantics for providers that tolerate interleaving; needs provider-specific gating.；Moving developer messages could affect model behavior; must be validated with controlled experiments.\n竞争：未发现相关 open PR\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 18，根因信号 True",
-              "tag": "lark_md"
-            }
-          }
-        ],
-        "header": {
-          "template": "yellow",
-          "title": {
-            "content": "OSS PR Radar: 需要确认",
-            "tag": "plain_text"
-          }
-        }
-      },
-      "createdAt": "2026-08-08T22:55:45.613862Z",
-      "eventId": "f83ad74f9ef49e50ee5bd5f29aeff695b100d692841d9a2f4c68f1bb81a5de98",
-      "idempotencyKey": "f83ad74f9ef49e50ee5bd5f29aeff695b100d692841d9a2f4c",
-      "kind": "review",
-      "lastAttemptAt": "2026-08-08T22:56:10.386700Z",
-      "messageId": "om_x100b684f0e7004a0b253856b469918e",
-      "runId": "scan-20260808T225438Z-6b0d8517ffc8",
-      "sentAt": "2026-08-08T22:56:12.240456Z",
-      "status": "SENT"
-    },
-    {
-      "attempts": 1,
-      "candidateKeys": [
-        "langflow-ai/langflow#14470",
-        "langflow-ai/langflow#14471"
-      ],
-      "candidateStates": [
-        {
-          "category": "PR_FOLLOWUP",
-          "digest": "647749e72ee968d7491cacd7f24eb28204c0eed226b46dc5214aa426082569a7",
-          "key": "langflow-ai/langflow#14470",
-          "kind": "watch",
-          "stateId": "8246d04b599d58c0a3a6d83b0343b966a0d7a46b879fb1dbf3e77ea459a5285c"
-        },
-        {
-          "category": "PR_FOLLOWUP",
-          "digest": "225fd739f733530e4c343d7563b8fb5f6f1847ee0290aeb8cac60197d5814227",
-          "key": "langflow-ai/langflow#14471",
-          "kind": "watch",
-          "stateId": "0fc2f30933cb062d858a94ceb95e05de1bd35f07765519d8f33b9afcacc9a629"
-        }
-      ],
-      "card": {
-        "config": {
-          "wide_screen_mode": true
-        },
-        "elements": [
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[langflow-ai/langflow#14470](https://github.com/langflow-ai/langflow/pull/14470) fix: bound web search result content**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突；存在未解决审查线程\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[langflow-ai/langflow#14471](https://github.com/langflow-ai/langflow/pull/14471) fix(lfx): align tool mode capability detection with runtime**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
-              "tag": "lark_md"
-            }
-          }
-        ],
-        "header": {
-          "template": "yellow",
-          "title": {
-            "content": "OSS PR Radar: 状态更新",
-            "tag": "plain_text"
-          }
-        }
-      },
-      "createdAt": "2026-08-08T22:55:45.996666Z",
-      "eventId": "7845650223ef454476dda5b7a4de9d791982dd2b1687a9bdb9af830598c53a4f",
-      "idempotencyKey": "7845650223ef454476dda5b7a4de9d791982dd2b1687a9bdb9",
-      "kind": "watch",
-      "lastAttemptAt": "2026-08-08T22:56:12.240491Z",
-      "messageId": "om_x100b684f0e1d28a8b3947519cdce097",
-      "runId": "pr-followup-1786229624",
-      "sentAt": "2026-08-08T22:56:13.443977Z",
-      "status": "SENT"
-    },
-    {
-      "attempts": 1,
-      "candidateKeys": [
-        "BerriAI/litellm#36310",
-        "PrefectHQ/fastmcp#4789",
-        "elizaOS/eliza#18061",
-        "mastra-ai/mastra#21054"
-      ],
-      "candidateStates": [
-        {
-          "category": "WAIT_MAINTAINER",
-          "digest": "5cc2a4f7ebb34ab9a62faac59b464e4802f4c33c67deefe46028b787eb0d45f0",
-          "key": "BerriAI/litellm#36310",
-          "kind": "review",
-          "stateId": "d308ad5017d03fe215f36c7b1f224e832a2b66651cc7297fba9a35feaf660812"
-        },
-        {
-          "category": "WAIT_MAINTAINER",
-          "digest": "eff5a1be46a851c78ac48615823de643d416f354ede75006a53096ba7cbf97e6",
-          "key": "PrefectHQ/fastmcp#4789",
-          "kind": "review",
-          "stateId": "5d6bc89aac45302e1d90820bc3a0c10f62d16d4c6f024c02201580b9fb0611b6"
-        },
-        {
-          "category": "NEW_CLEAN_CANDIDATE",
-          "digest": "55f32704c5270887e3c5f0a8c5feffcef651cf97da273bced37dd44ffd147bf7",
-          "key": "elizaOS/eliza#18061",
-          "kind": "review",
-          "stateId": "608bed331cfc9d19abafa65f3dc9ec0138004a8f626929f4b28721fcc48082f9"
-        },
-        {
-          "category": "WAIT_MAINTAINER",
-          "digest": "050d4db2b6a66ba2f1ea3b2bad9d05401dfce9aa95f67aeb7e9924aa320eee3b",
-          "key": "mastra-ai/mastra#21054",
-          "kind": "review",
-          "stateId": "9b98159b85fd843988588ef980a471cdd93c142b26c90a21cfaf8dca2890276d"
-        }
-      ],
-      "card": {
-        "config": {
-          "wide_screen_mode": true
-        },
-        "elements": [
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[BerriAI/litellm#36310](https://github.com/BerriAI/litellm/issues/36310) Admin UI lets you save routing_groups config the runtime hard-rejects (model in two groups), silently breaking ALL groups**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue clearly identifies a runtime validation gap causing silent group failure, but existing PR #36115 overlaps semantically and requires maintainer review to avoid duplicate work.\n改动：Add cross-group validation in Admin UI save path；Modify Router._init_routing_groups to skip conflicting groups instead of aborting all\n验证：Reproduce with provided config and assert groups load despite overlap；Add UI test for rejecting overlapping routing_groups\n风险：Existing PR may already address root cause; need comparison；Changing runtime behavior may affect existing users relying on strict validation\n竞争：发现 PR #36115 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 5，根因信号 True",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[PrefectHQ/fastmcp#4789](https://github.com/PrefectHQ/fastmcp/issues/4789) release/3.x: CIMD private_key_jwt clients always rejected — expected aud has a doubled slash (fixed on main in #4659, unreleased on 3.x)**\n建议：WAIT_MAINTAINER | 分数：12\n价值：The issue clearly identifies a bug in the 3.x branch where the expected audience for private_key_jwt has a doubled slash, causing all such clients to be rejected. A backport PR (#4783) already exists and is technically complete, but was auto-closed due to a missing issue link. The deterministic gate requires HUMAN_REVIEW, and the existing PR needs maintainer action to reopen/merge. This is not a new candidate but a duplicate of an existing PR that requires maintainer intervention.\n改动：Backport of #4659 to release/3.x, specifically fixing the audience construction in fastmcp_slim/fastmcp/server/auth/oauth_proxy/proxy.py\n验证：Use the provided MRE to create a failing test that asserts the expected audience equals the advertised token_endpoint, then run the test against the patched code.\n风险：Potential merge conflicts or unintended behavior changes if the backport is not clean; need to ensure the fix is consistent with 3.x branch stability.\n竞争：发现关键词相关 PR，但未确认直接覆盖：#4783；需人工核对\n下一步：已有 PR 但强度不足；先看维护者规则和 issue 讨论，必要时先请求确认方案或分配。\n证据：复现信号 2，根因信号 True",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[elizaOS/eliza#18061](https://github.com/elizaOS/eliza/issues/18061) test(cloud): live provisioning smoke cannot pass on the shared-tier contract**\n建议：NEW_CLEAN_CANDIDATE | 分数：11\n价值：The issue identifies a deterministic contract mismatch in the live provisioning smoke script: it expects HTTP 202 with a jobId while the shared tier returns HTTP 200 with no job, and pairing always fails with 503. The fix is well-scoped: update the script to handle the shared contract, add a fail-closed staging guard, and add regression tests. No competing PR exists, and the maintainer has not yet responded, but the technical path is clear and actionable.\n改动：Update live-cloud-provision-smoke.ts to accept the shared-tier provision response (200, source: shared_runtime) and handle pairing as a negative assertion or remove it.；Add a hard-coded staging origin guard to prevent production mutation.；Add deterministic regression tests for tier selection and provision-response normalization.\n验证：Run the existing focused tests for tier selection and provision normalization to confirm they pass.；Add a regression test that simulates the shared-tier provision response and asserts the smoke script proceeds correctly.；Run the smoke script against a staging environment with a disposable credential to verify end-to-end behavior.\n风险：The fix may require coordination with the cloud team to ensure the staging environment is available and safe for testing.；Changing the smoke script's contract could affect other tooling that depends on its current behavior.\n竞争：未发现相关 open PR\n下一步：仅完成本地复现、修复、测试和私有提交包；由用户自行决定公开提交。\n证据：复现信号 3，根因信号 True",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[mastra-ai/mastra#21054](https://github.com/mastra-ai/mastra/issues/21054) Agent loop stops on TOOL_EXECUTION_FAILED instead of recovering**\n建议：WAIT_MAINTAINER | 分数：13\n价值：Issue reports a user-visible bug in agent loop recovery after tool execution failures, with concrete reproduction steps and error structure. However, the root cause is not identified, and the maintainer has only labeled it for triage without confirming design direction. The deterministic gate requires HUMAN_REVIEW, and design confirmation is needed before implementation.\n改动：Agent loop error handling to allow recovery from TOOL_EXECUTION_FAILED；Tool result propagation to agent for error processing\n验证：Create a failing test using the provided reproduction steps (e.g., file not found or permission error) to verify the loop continues after error；Run targeted unit tests for the agent runtime and tool execution paths\n风险：Potential API behavior changes if error handling is broadened；Need to align with maintainer design preferences for error recovery\n竞争：未发现相关 open PR\n下一步：先在 issue 下请求分配/确认方案，获批后再开 PR。\n证据：复现信号 4，根因信号 False",
-              "tag": "lark_md"
-            }
-          }
-        ],
-        "header": {
-          "template": "yellow",
-          "title": {
-            "content": "OSS PR Radar: 需要确认",
-            "tag": "plain_text"
-          }
-        }
-      },
-      "createdAt": "2026-08-08T23:20:27.540458Z",
-      "eventId": "a54032b6baa44ea47bb01dc3cd6cf9e0bf70604f434c77b460cf0d5a8b3532a6",
-      "idempotencyKey": "a54032b6baa44ea47bb01dc3cd6cf9e0bf70604f434c77b460",
-      "kind": "review",
-      "lastAttemptAt": "2026-08-08T23:20:57.100380Z",
-      "messageId": "om_x100b684fd36510a0c3231496cc54491",
-      "runId": "scan-20260808T231809Z-c167381cac55",
-      "sentAt": "2026-08-08T23:20:58.950025Z",
-      "status": "SENT"
-    },
-    {
-      "attempts": 1,
-      "candidateKeys": [
-        "langflow-ai/langflow#14471"
-      ],
-      "candidateStates": [
-        {
-          "category": "PR_FOLLOWUP",
-          "digest": "84490d6fbc19039ee5be51dd1f05c15298c03bf15b987ebdd21fccbd81ffc499",
-          "key": "langflow-ai/langflow#14471",
-          "kind": "watch",
-          "stateId": "3ba3f8c615627f27e5c206711ce9f014e3326c45d115da2e4c7bff15026de590"
-        }
-      ],
-      "card": {
-        "config": {
-          "wide_screen_mode": true
-        },
-        "elements": [
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[langflow-ai/langflow#14471](https://github.com/langflow-ai/langflow/pull/14471) fix(lfx): align tool mode capability detection with runtime**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
-              "tag": "lark_md"
-            }
-          }
-        ],
-        "header": {
-          "template": "yellow",
-          "title": {
-            "content": "OSS PR Radar: 状态更新",
-            "tag": "plain_text"
-          }
-        }
-      },
-      "createdAt": "2026-08-08T23:20:27.958512Z",
-      "eventId": "490a8f8b27954404a5886ea858ad62d14688e6084e4c69b7fbcc177c0cd4322e",
-      "idempotencyKey": "490a8f8b27954404a5886ea858ad62d14688e6084e4c69b7fb",
-      "kind": "watch",
-      "lastAttemptAt": "2026-08-08T23:20:58.950048Z",
-      "messageId": "om_x100b684fd373cca0c2cdd62ecff5946",
-      "runId": "pr-followup-1786231048",
-      "sentAt": "2026-08-08T23:21:00.301153Z",
-      "status": "SENT"
-    },
     {
       "attempts": 1,
       "candidateKeys": [
@@ -24648,9 +24153,90 @@
       "runId": "pr-followup-1786833718",
       "sentAt": "2026-08-15T22:45:27.304927Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "BerriAI/litellm#36791",
+        "sgl-project/sglang#30554",
+        "sgl-project/sglang#34138"
+      ],
+      "candidateStates": [
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "b4c0c8e08565c84b2a4efcff0b6230b342ff33bdb6ff30e6e2db8d9a42517c7a",
+          "key": "BerriAI/litellm#36791",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "617ce9b7a3a99c4fa40b1ed4d7ab8c91a171be98399b6dcfb57b19ba8909f28a"
+        },
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "962ffd4b9e0427881d7055c06434e89ecc645bb51e63eb7b41f3a82aac2ff122",
+          "key": "sgl-project/sglang#30554",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "d13e6d1b7e8116f1457ba07817c1cd748d38c75463776fccbfccc1b7e62a1754"
+        },
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "c6940ae6bc57927df4dcc275d2663aa366cba73db57152822abf7ce259e29b55",
+          "key": "sgl-project/sglang#34138",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "deddd05a45e512ef454d67ae4dcd6b777ccd481597e720d83e598ba4fc95dce2"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#36791](https://github.com/BerriAI/litellm/pull/36791) fix(router): support anthropic messages streaming fallback**\n建议：PR_FOLLOWUP\n价值：当前分支检查失败；存在未解决审查线程\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#30554](https://github.com/sgl-project/sglang/pull/30554) [Spec] Size shared logits buffer for adaptive candidates**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#34138](https://github.com/sgl-project/sglang/pull/34138) Bind streaming abort cleanup to request lifecycle**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-15T23:40:14.683050Z",
+      "eventId": "8cc9d14eba73d936ec746d2fa142bc3979f5b76e842464540cb8471c5cd421ee",
+      "idempotencyKey": "8cc9d14eba73d936ec746d2fa142bc3979f5b76e842464540c",
+      "kind": "watch",
+      "runId": "pr-followup-1786837053",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-15T22:44:45.767052Z",
+  "generatedAt": "2026-08-15T23:40:14.683050Z",
   "newEventCount": 1,
   "version": "notification_outbox_v2"
 }
