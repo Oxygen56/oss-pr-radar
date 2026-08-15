@@ -1523,6 +1523,34 @@
     ],
     "why": "Issue reports a user-visible bug in NIXL P/D replacement with clear repro steps, but root cause is unknown and open PR/related issue lookups timed out, so duplicate work cannot be excluded."
   },
+  "107bca6f8300846a360001cd4e05508acbbfc6d44dbfcbc8d6bb1f4eb07990a5": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Override shutdown in JsonlGzipRequestTraceSink to drain, flush, and await writer task",
+      "Add regression test in request_trace::sink"
+    ],
+    "risks": [
+      "Potential behavior change in shutdown semantics may affect other sinks; need to ensure no deadlock or double-close",
+      "Maintainer may have design preferences for shutdown error handling"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Implement unit test that constructs sink with large buffer, emits record, calls shutdown, and asserts segment contains request ID",
+      "Run targeted Rust tests for request_trace and telemetry modules"
+    ],
+    "unknowns": [
+      "No maintainer confirmation or assignment; but repository does not require assignment, so not blocking"
+    ],
+    "wait_reason": null,
+    "why": "Issue clearly identifies a concrete bug: RequestTraceSink::shutdown is a no-op for JsonlGzipRequestTraceSink, causing buffered records to be lost on shutdown. Root cause is well-localized with code anchors and a deterministic reproducer is proposed. No competing PR addresses this path."
+  },
   "10dabe9ada907634e3bf4f157d76a7200337065f020387ba07a3246607e80ca9": {
     "confidence": 0.7,
     "contradictions": [],
@@ -21994,6 +22022,38 @@
       "Exact internal structure of activations_hlsmodel and how model.trace expects input; maintainer preference on handling multi-input profiling."
     ],
     "why": "The issue clearly identifies a bug in profiling.numerical() for multi-input models, with a reproducible traceback showing np.ascontiguousarray(X) fails on a list of arrays with different shapes. The fix is localized to the profiling code path, and no competing PR exists."
+  },
+  "c9c946ff34929ec11bb867b43746f226c79807213cec8fbc11eac784c8e17f7d": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue claims v3.4.7 produces resource parameter; commenter shows v3.4.7 code should not"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "AzureProvider OAuth request construction",
+      "possibly OAuthProxy resource handling"
+    ],
+    "risks": [
+      "Potential misdiagnosis if deployed version differs",
+      "OAuth behavior change could break other providers"
+    ],
+    "root_cause_clarity": "low",
+    "score": 11,
+    "test_plan": [
+      "Reproduce with exact deployed version and inspect AzureProvider.authorize source",
+      "Add regression test for Entra scope/resource matching"
+    ],
+    "unknowns": [
+      "Actual deployed code version and source",
+      "Maintainer confirmation of bug",
+      "Whether a fix is already in progress"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "Issue reports AADSTS9010010 with AzureProvider, but a commenter shows v3.4.7 code should not produce the reported request, suggesting a version/import mismatch. No maintainer confirmation or root cause evidence yet."
   },
   "ca135e4e909adc9515585f89c7720fa67ac5b04452219ecef5111f0d49667fcf": {
     "confidence": 0.95,
