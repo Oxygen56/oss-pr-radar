@@ -4338,6 +4338,33 @@
     ],
     "why": "Issue reports prefix caching ineffective for Mamba-2/GDN hybrid, but maintainer comments indicate it may be a block-size issue and PR #46384 already addresses it. Open PR search failed due to rate limit, and the issue is not confirmed on current main. Requires maintainer confirmation and duplicate review."
   },
+  "29589401203795fd43c5f27d4eebb135710b2e4d18a61172a84b7efb866f3b24": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Add pagination parameters to view_spend_logs and pass take/skip to find_many",
+      "Add regression test for pagination and large result handling"
+    ],
+    "risks": [
+      "Changing API behavior may break existing callers; need to maintain backward compatibility",
+      "Default page size choice may affect performance"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a test that populates LiteMM_SpendLogs with many rows and asserts GET /spend/logs returns paginated results without OOM",
+      "Run existing spend log tests and static checks"
+    ],
+    "unknowns": [
+      "Maintainer preference on pagination vs default cap vs deprecation"
+    ],
+    "wait_reason": null,
+    "why": "Issue clearly identifies an unbounded query in view_spend_logs causing OOM, with concrete code anchors and suggested fixes. No competing PR or maintainer assignment found."
+  },
   "299193e33be75e17c4de14a725267dadb6b46592dacd4bdf988adf4aa81509ad": {
     "confidence": 0.7,
     "contradictions": [
@@ -17941,6 +17968,35 @@
       "Maintainer preference on whether to forward all additional_kwargs or whitelist specific ones"
     ],
     "why": "Issue clearly identifies a bug in BedrockEmbedding where additional_kwargs are ignored for Cohere models, with a concrete repro and root cause in _get_request_body. However, the deterministic gate requires HUMAN_REVIEW and design confirmation is needed, so work should wait for maintainer guidance."
+  },
+  "9f0d606c4a53adc4578c9a4403b2fd8f18586eef56cc188ded6a4fc79e162de2": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "orchestrator turn-completion verification",
+      "persistence tool error handling"
+    ],
+    "risks": [
+      "Broad blast radius on orchestrator behavior",
+      "Potential API behavior changes"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 14,
+    "test_plan": [
+      "Reproduce with provided steps and assert missing gate row/artifact",
+      "Add regression test for save retry on verification failure"
+    ],
+    "unknowns": [
+      "Maintainer design preference for fix scope",
+      "Exact shared persistence path root cause"
+    ],
+    "wait_reason": "DESIGN_CONFIRMATION",
+    "why": "Issue reports a real, recurring silent persistence failure in agent orchestration, with concrete repro steps and evidence. However, the root cause is not localized: it spans multiple tools (gsd_uat_result_save, gsd_validate_milestone) and the suggested fix (turn-completion verification) touches orchestrator behavior with broad blast radius. Maintainer review is explicitly requested and design confirmation is needed before implementation."
   },
   "9f2d7396821a06a6cd983a52d1ec95a4cdccc7ceccfcd54a4997ad4d2173c254": {
     "confidence": 0.8,

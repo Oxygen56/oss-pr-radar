@@ -1576,6 +1576,14 @@
       "seenAt": "2026-08-13T00:05:25.460928Z",
       "stateId": "2e15fa77616774698cc5964ebf288a81994bbf6ffda4d969422967f265b93b77"
     },
+    "review|open-gsd/gsd-pi#1761": {
+      "category": "WAIT_MAINTAINER",
+      "digest": "0dbde4869af924ee425cdbcd2445cabdebaa39eb8f8646f516c9618336d2dcfd",
+      "kind": "review",
+      "scannerVersion": "oss_pr_radar_v46_semantic_fallback",
+      "seenAt": "2026-08-15T05:48:52.201489Z",
+      "stateId": "013ac56cac4953abab3f67c29723a0f1de5e9a04d2248819c97c7c723d26ae12"
+    },
     "review|open-webui/open-webui#28305": {
       "category": "WAIT_MAINTAINER",
       "digest": "adff273b9fb0764938d71876c1abc00b36c4390fd36d9506fb0677f458f875f6",
@@ -2279,11 +2287,11 @@
     },
     "watch|BerriAI/litellm#36791": {
       "category": "PR_FOLLOWUP",
-      "digest": "56506e14aa0bffa4ee7b48f63d4fba77ae9a0e115d70fd0cf47058c4be25615e",
+      "digest": "5a985a5bb1e2bc9ef365ccbaef6cd2fcada6032df72cdf4adf538238532d517b",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-15T04:00:56.589708Z",
-      "stateId": "21ca6d5a67384715217eb22116ff5fc6104425842ec4f4b80eb2d2422b016193"
+      "seenAt": "2026-08-15T05:48:52.480421Z",
+      "stateId": "49e7e1e02641ea9a474777a12fdc4d44791cc27eaa430bc9e290d5e6e3a0a8ef"
     },
     "watch|SWE-bench/SWE-bench#593": {
       "category": "PR_FOLLOWUP",
@@ -2415,19 +2423,19 @@
     },
     "watch|sgl-project/sglang#30554": {
       "category": "PR_FOLLOWUP",
-      "digest": "b80af1d52b3917c63f489665d7240443cec37df5698126d1d959f311a11011fc",
+      "digest": "c68fbf92049a967fa9919dd4d167009b1a4b24952f1f9d084ba2f41020975e5d",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-15T04:53:59.079956Z",
-      "stateId": "22a4f0d6f3bb863b2a28554b4e6da7688a470f1b16f455f79aea52df978f43dc"
+      "seenAt": "2026-08-15T05:48:52.480421Z",
+      "stateId": "62a01b9bbb901361fe5a63e66bc0c543afe434e6ef1121c2222aaa291f0e39a6"
     },
     "watch|sgl-project/sglang#34138": {
       "category": "PR_FOLLOWUP",
-      "digest": "bf516cc68a9937732150145af76d7c9e7b504c897d9c47033a42fa34f84e2898",
+      "digest": "727934d7e8034b8e1403db570f98b83c502fd24fcd58b63c8902a3e3b598f0e0",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-15T04:53:59.079956Z",
-      "stateId": "b9305f21fbf08fad88f17c2f180cd2faf08231311b6b174cede809c45d5eb281"
+      "seenAt": "2026-08-15T05:48:52.480421Z",
+      "stateId": "5f804e9edf1335a395e1bd98a1db0ffbcba9e4c804e4cc17fe12289fb326e0c6"
     },
     "watch|vllm-project/vllm#52298": {
       "category": "PR_FOLLOWUP",
@@ -2438,7 +2446,7 @@
       "stateId": "34dbe953d9db58577f56eccf49631e1934155ab01316aa9fd154dfd0277cb7f0"
     }
   },
-  "digest": "35def062b1559dfc24cd7f73908925224bf215b08a93ae9b2d25f343cd131330",
+  "digest": "96faf4c687611e40498f4b2156c372304c41e71a7092d6102f7cb74485510234",
   "events": [
     {
       "attempts": 1,
@@ -24474,9 +24482,133 @@
       "runId": "pr-followup-1786769406",
       "sentAt": "2026-08-15T04:54:34.593447Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "open-gsd/gsd-pi#1761"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "0dbde4869af924ee425cdbcd2445cabdebaa39eb8f8646f516c9618336d2dcfd",
+          "key": "open-gsd/gsd-pi#1761",
+          "kind": "review",
+          "scannerVersion": "oss_pr_radar_v46_semantic_fallback",
+          "stateId": "013ac56cac4953abab3f67c29723a0f1de5e9a04d2248819c97c7c723d26ae12"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[open-gsd/gsd-pi#1761](https://github.com/open-gsd/gsd-pi/issues/1761) [Bug]: gsd_uat_result_save: checks pass with real evidence but the final save silently fails to persist — no signal, discovered only via a later finalize-retry liveness wedge**\n建议：WAIT_MAINTAINER | 分数：14\n价值：Issue reports a real, recurring silent persistence failure in agent orchestration, with concrete repro steps and evidence. However, the root cause is not localized: it spans multiple tools (gsd_uat_result_save, gsd_validate_milestone) and the suggested fix (turn-completion verification) touches orchestrator behavior with broad blast radius. Maintainer review is explicitly requested and design confirmation is needed before implementation.\n改动：orchestrator turn-completion verification；persistence tool error handling\n验证：Reproduce with provided steps and assert missing gate row/artifact；Add regression test for save retry on verification failure\n风险：Broad blast radius on orchestrator behavior；Potential API behavior changes\n竞争：未发现相关 open PR\n下一步：创建项目任务并完成本地复现、修复、测试和私有提交包；公开提交前等待用户确认披露措辞。\n证据：复现信号 2，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-15T05:48:52.201489Z",
+      "eventId": "a23287bd2810d45ea3062ea1f502c34195a974de509cc5df2d5b752666312d9b",
+      "idempotencyKey": "a23287bd2810d45ea3062ea1f502c34195a974de509cc5df2d",
+      "kind": "review",
+      "runId": "scan-20260815T054513Z-f552fc282691",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "BerriAI/litellm#36791",
+        "sgl-project/sglang#30554",
+        "sgl-project/sglang#34138"
+      ],
+      "candidateStates": [
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "5a985a5bb1e2bc9ef365ccbaef6cd2fcada6032df72cdf4adf538238532d517b",
+          "key": "BerriAI/litellm#36791",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "49e7e1e02641ea9a474777a12fdc4d44791cc27eaa430bc9e290d5e6e3a0a8ef"
+        },
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "c68fbf92049a967fa9919dd4d167009b1a4b24952f1f9d084ba2f41020975e5d",
+          "key": "sgl-project/sglang#30554",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "62a01b9bbb901361fe5a63e66bc0c543afe434e6ef1121c2222aaa291f0e39a6"
+        },
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "727934d7e8034b8e1403db570f98b83c502fd24fcd58b63c8902a3e3b598f0e0",
+          "key": "sgl-project/sglang#34138",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "5f804e9edf1335a395e1bd98a1db0ffbcba9e4c804e4cc17fe12289fb326e0c6"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#36791](https://github.com/BerriAI/litellm/pull/36791) fix(router): support anthropic messages streaming fallback**\n建议：PR_FOLLOWUP\n价值：当前分支检查失败；存在未解决审查线程\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#30554](https://github.com/sgl-project/sglang/pull/30554) [Spec] Size shared logits buffer for adaptive candidates**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#34138](https://github.com/sgl-project/sglang/pull/34138) Bind streaming abort cleanup to request lifecycle**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-15T05:48:52.480421Z",
+      "eventId": "c35bb21baeb6d71d17a0f18903ee46c8741afc07be4a2de37fdc126aa48af3d4",
+      "idempotencyKey": "c35bb21baeb6d71d17a0f18903ee46c8741afc07be4a2de37f",
+      "kind": "watch",
+      "runId": "pr-followup-1786772682",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-15T04:53:59.079956Z",
+  "generatedAt": "2026-08-15T05:48:52.480421Z",
   "newEventCount": 1,
   "version": "notification_outbox_v2"
 }
