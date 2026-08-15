@@ -5665,6 +5665,57 @@ def test_validation_prefetch_recognizes_go_vet_and_python_tool_environment_gaps(
     assert [item["kind"] for item in commands] == ["go_locked_download", "uv_locked_sync"]
 
 
+def test_validation_prefetch_includes_locked_group_that_provides_missing_pytest(tmp_path):
+    worktree = tmp_path / "worktree"
+    result_dir = worktree / ".oss-pr-radar"
+    result_dir.mkdir(parents=True)
+    (worktree / "uv.lock").write_text("version = 1\n", encoding="utf-8")
+    (worktree / "pyproject.toml").write_text(
+        """
+[project]
+name = "x"
+[dependency-groups]
+test = ["pytest>=8", "pytest-asyncio>=0.25"]
+docs = ["mkdocs>=1"]
+""".strip(),
+        encoding="utf-8",
+    )
+    result = {
+        "changedFiles": ["runtime.py"],
+        "tests": [
+            {
+                "command": ".venv/bin/python run_tests.py -t test_runtime.py",
+                "exitCode": 1,
+                "summary": "The repository runner could not find pytest.",
+            }
+        ],
+    }
+    raw = json.dumps(result).encode()
+    (result_dir / "result.json").write_bytes(raw)
+
+    commands = MODULE._validation_prefetch_commands(
+        {
+            "worktreePath": str(worktree),
+            "resultDigest": hashlib.sha256(raw).hexdigest(),
+        }
+    )
+
+    assert commands == [
+        {
+            "kind": "uv_locked_sync",
+            "cwd": str(worktree.resolve()),
+            "argv": [
+                "uv",
+                "sync",
+                "--frozen",
+                "--no-install-project",
+                "--group",
+                "test",
+            ],
+        }
+    ]
+
+
 def test_validation_followup_blocks_missing_python_dependencies_without_lockfile(
     tmp_path,
 ):

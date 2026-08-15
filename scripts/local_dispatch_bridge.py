@@ -14,6 +14,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import tomllib
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from time import monotonic, sleep
@@ -4467,6 +4468,42 @@ VALIDATION_DEPENDENCY_FAILURE_MARKERS = (
 )
 
 
+def _locked_python_dependency_groups(pyproject: Path, failure_text: str) -> list[str]:
+    """Select only locked dependency groups that provide a missing validation tool."""
+
+    try:
+        value = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return []
+    groups = value.get("dependency-groups")
+    if not isinstance(groups, dict):
+        return []
+    requested: set[str] = set()
+    folded = failure_text.casefold()
+    for tool in ("pytest", "pyright", "ruff", "pre-commit"):
+        if tool in folded:
+            requested.add(tool)
+    if not requested:
+        return []
+
+    selected: list[str] = []
+    for group, dependencies in groups.items():
+        if not isinstance(group, str) or not isinstance(dependencies, list):
+            continue
+        names = {
+            re.split(r"[<>=!~\[ ;]", dependency.casefold(), maxsplit=1)[0]
+            for dependency in dependencies
+            if isinstance(dependency, str)
+        }
+        if any(
+            tool in names
+            or (tool == "pytest" and any(name.startswith("pytest-") for name in names))
+            for tool in requested
+        ):
+            selected.append(group)
+    return sorted(selected)
+
+
 def _validation_prefetch_plan(
     candidate: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -4495,6 +4532,9 @@ def _validation_prefetch_plan(
 
     commands: list[dict[str, Any]] = []
     combined = "\n".join(str(item.get("command") or "") for item in dependency_failures)
+    failure_text = "\n".join(
+        f"{item.get('command', '')}\n{item.get('summary', '')}" for item in dependency_failures
+    )
     if "cargo " in combined and (worktree / "Cargo.lock").is_file():
         commands.append(
             {
@@ -4526,20 +4566,23 @@ def _validation_prefetch_plan(
             )
     if (
         (
-            "pytest" in combined
-            or "pyright" in combined
-            or "ruff" in combined
-            or "pre-commit" in combined
+            "pytest" in failure_text
+            or "pyright" in failure_text
+            or "ruff" in failure_text
+            or "pre-commit" in failure_text
             or re.search(r"(?:^|\s)(?:python|python3)\s", combined)
         )
         and (worktree / "uv.lock").is_file()
         and (worktree / "pyproject.toml").is_file()
     ):
+        argv = ["uv", "sync", "--frozen", "--no-install-project"]
+        for group in _locked_python_dependency_groups(worktree / "pyproject.toml", failure_text):
+            argv.extend(["--group", group])
         commands.append(
             {
                 "kind": "uv_locked_sync",
                 "cwd": str(worktree),
-                "argv": ["uv", "sync", "--frozen", "--no-install-project"],
+                "argv": argv,
             }
         )
     if "npm " in combined:
@@ -4587,7 +4630,6 @@ def _execute_validation_prefetch(
     allowed_argv = {
         "cargo_locked_fetch": ["cargo", "fetch", "--locked"],
         "go_locked_download": ["go", "mod", "download"],
-        "uv_locked_sync": ["uv", "sync", "--frozen", "--no-install-project"],
         "npm_locked_install": [
             "npm",
             "ci",
@@ -4601,7 +4643,31 @@ def _execute_validation_prefetch(
         kind = item.get("kind")
         argv = item.get("argv")
         cwd_value = item.get("cwd")
-        if kind not in allowed_argv or argv != allowed_argv[kind]:
+        if kind == "uv_locked_sync":
+            base = ["uv", "sync", "--frozen", "--no-install-project"]
+            extras = (
+                argv[len(base) :] if isinstance(argv, list) and argv[: len(base)] == base else None
+            )
+            groups = (
+                set(
+                    _locked_python_dependency_groups(
+                        Path(cwd_value) / "pyproject.toml", "pytest pyright ruff pre-commit"
+                    )
+                )
+                if isinstance(cwd_value, str)
+                else set()
+            )
+            valid_extras = (
+                extras is not None
+                and len(extras) % 2 == 0
+                and all(
+                    extras[index] == "--group" and extras[index + 1] in groups
+                    for index in range(0, len(extras), 2)
+                )
+            )
+            if not valid_extras:
+                raise RuntimeError("validation prefetch command is not allowlisted")
+        elif kind not in allowed_argv or argv != allowed_argv[kind]:
             raise RuntimeError("validation prefetch command is not allowlisted")
         if not isinstance(cwd_value, str):
             raise RuntimeError("validation prefetch cwd is invalid")
@@ -4787,6 +4853,8 @@ def _validation_followup_prompt(candidate: dict[str, Any]) -> str:
         "建 PR 或其他公开动作。若仍无法完成验证，保留对应 quality=false 并写清可复核原因；不得把格式检查"
         "当作功能验证。若广泛检查失败，必须在修复前基线使用同一环境复跑；只有失败集合完全属于基线既有问题，"
         "且改动路径的功能、类型、格式和仓库专用门禁全部通过时，才可将 relevant_tests_green 标为 true。"
+        "不要扫描工作树之外的目录，不要寻找全局替代工具、镜像或缓存；若控制器预取后锁定环境仍缺少必需门禁，"
+        "记录该事实、保留 quality=false 并立即结束本轮。"
         "完成后正常结束，由控制器重新接收结果。"
     )
 
