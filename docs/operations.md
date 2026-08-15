@@ -183,14 +183,23 @@ receiving their own worktrees.
   never enters the no-value cleanup queue. The controller consumes
   `validation-followup-list` and reserves the exact result digest. During that
   reservation, the bridge computes, validates, and runs any required
-  lockfile-scoped Cargo, Go, Python, or Node dependency prefetch itself; the
-  controller never interprets or executes dependency commands. It then resumes
-  the same task once. A changed result digest rearms validation without
-  duplicating the previous wake-up. A sent follow-up that remains on the same
+  lockfile-scoped Cargo, Go, Python, or Node dependency prefetch itself; this
+  includes Go test/vet/build gates and locked Python pytest, Ruff, Pyright, or
+  pre-commit environments. The controller never interprets or executes
+  dependency commands. It then resumes the same task once. A changed result
+  digest rearms validation without duplicating the previous wake-up. If the
+  app server returns a durable receipt proving that no target turn started,
+  the local collector retires the failed reservation after one minute and
+  retries the same serialized work item. It never releases a reservation on an
+  ambiguous or materialized turn. A sent follow-up that remains on the same
   validation result for 90 minutes is surfaced in the `stale` list as an
   operational failure; it is not silently treated as healthy or automatically
   sent again.
-  Explicitly interrupted validation turns are different: the controller may
+  Broad validation failures must be compared against the same gate on the
+  parent baseline. They may be treated as unrelated only when the failure set
+  is entirely pre-existing and all changed-path functional, type, format, and
+  repository-specific gates pass. Explicitly interrupted validation turns are
+  different: the controller may
   recover the same task as soon as its detached owner has exited and no newer
   result was ingested. The first-turn `root-task-worker` and continuation
   `task-turn-worker` both count as owners. While either worker is alive the task

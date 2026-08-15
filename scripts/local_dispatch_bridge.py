@@ -2586,6 +2586,120 @@ def retryable_negative_task_turn_receipt(
     }
 
 
+def _discard_negative_task_turn_receipt(
+    *, delivery_kind: str, thread_id: str, delivery_token: str
+) -> None:
+    """Remove a proved-negative receipt after retiring its ledger reservation."""
+
+    receipt_key = sha256_json(
+        {
+            "deliveryKind": delivery_kind,
+            "threadId": thread_id,
+            "deliveryToken": delivery_token,
+        }
+    )
+    receipt_root = STATE / "task_turn_receipts"
+    (receipt_root / f"{receipt_key}.json").unlink(missing_ok=True)
+    (receipt_root / f"{receipt_key}.launch.json").unlink(missing_ok=True)
+
+
+def _rearm_negative_followup_deliveries(store: RadarLedger) -> list[dict[str, Any]]:
+    """Release reservations whose durable receipt proves that no turn started."""
+
+    rearmed: list[dict[str, Any]] = []
+    now = datetime.now(UTC)
+    for item in store.unresolved_pr_followups():
+        thread_id = str(item.get("thread_id") or "")
+        token = str(item.get("wake_digest") or "")
+        retry = retryable_negative_task_turn_receipt(
+            delivery_kind="pr-followup",
+            thread_id=thread_id,
+            delivery_token=token,
+        )
+        if not retry or parse_time(str(item["created_at"])) + timedelta(minutes=1) > now:
+            continue
+        replacement = store.abandon_pr_followup_delivery(
+            thread_id=thread_id,
+            wake_digest=token,
+            reason="NEGATIVE_RECEIPT_NO_TURN_STARTED",
+            min_age_minutes=1,
+        )
+        _discard_negative_task_turn_receipt(
+            delivery_kind="pr-followup",
+            thread_id=thread_id,
+            delivery_token=token,
+        )
+        rearmed.append(
+            {
+                "kind": "pr-followup",
+                "key": item.get("opportunity_key") or item.get("key"),
+                "threadId": thread_id,
+                "replacementWakeDigest": replacement.get("wakeDigest"),
+            }
+        )
+
+    for item in store.unresolved_validation_followups():
+        thread_id = str(item.get("threadId") or "")
+        token = str(item.get("resultDigest") or "")
+        retry = retryable_negative_task_turn_receipt(
+            delivery_kind="validation-followup",
+            thread_id=thread_id,
+            delivery_token=token,
+        )
+        if not retry or parse_time(str(item["reservedAt"])) + timedelta(minutes=1) > now:
+            continue
+        store.abandon_validation_followup_delivery(
+            thread_id=thread_id,
+            result_digest=token,
+            reason="NEGATIVE_RECEIPT_NO_TURN_STARTED",
+            min_age_minutes=1,
+        )
+        _discard_negative_task_turn_receipt(
+            delivery_kind="validation-followup",
+            thread_id=thread_id,
+            delivery_token=token,
+        )
+        rearmed.append(
+            {
+                "kind": "validation-followup",
+                "key": item.get("key"),
+                "threadId": thread_id,
+                "resultDigest": token,
+            }
+        )
+
+    for item in getattr(store, "unresolved_recoveries", lambda: [])():
+        thread_id = str(item.get("threadId") or "")
+        token = str((item.get("reservation") or {}).get("recoveryNonce") or "")
+        retry = retryable_negative_task_turn_receipt(
+            delivery_kind="recovery",
+            thread_id=thread_id,
+            delivery_token=token,
+        )
+        if not retry or parse_time(str(item["reservedAt"])) + timedelta(minutes=1) > now:
+            continue
+        store.abandon_recovery_delivery(
+            thread_id=thread_id,
+            nonce=token,
+            reason="NEGATIVE_RECEIPT_NO_TURN_STARTED",
+            min_age_minutes=1,
+        )
+        _discard_negative_task_turn_receipt(
+            delivery_kind="recovery",
+            thread_id=thread_id,
+            delivery_token=token,
+        )
+        rearmed.append(
+            {
+                "kind": "recovery",
+                "key": item.get("key"),
+                "threadId": thread_id,
+                "recoveryNonce": token,
+            }
+        )
+    return rearmed
+
+
 def task_turn_deliver(args: argparse.Namespace) -> dict[str, Any]:
     """Start an existing-task turn once, or reconcile its exact receipt."""
 
@@ -4301,6 +4415,8 @@ def _nearest_manifest_root(path: Path, *, stop: Path, manifest: str) -> Path | N
 VALIDATION_DEPENDENCY_FAILURE_MARKERS = (
     "offline",
     "not cached",
+    "uncached dependencies",
+    "incomplete cached environment",
     "lacks locked dependency",
     "module lookup disabled",
     "goproxy=off",
@@ -4310,6 +4426,9 @@ VALIDATION_DEPENDENCY_FAILURE_MARKERS = (
     "eslint was unavailable",
     "next.js was unavailable",
     "pytest is not installed",
+    "could not find pytest",
+    "no pytest executable",
+    "no pre-commit executable",
     "no module named pytest",
     "no module named",
     "is not installed",
@@ -4356,7 +4475,7 @@ def _validation_prefetch_plan(
             }
         )
 
-    if "go test" in combined:
+    if re.search(r"(?:^|\s)go\s+(?:test|vet|build|run)\b", combined):
         roots: set[Path] = set()
         changed_files = result.get("changedFiles")
         if isinstance(changed_files, list):
@@ -4377,7 +4496,13 @@ def _validation_prefetch_plan(
                 }
             )
     if (
-        ("pytest" in combined or "python -m" in combined or "python3 -m" in combined)
+        (
+            "pytest" in combined
+            or "pyright" in combined
+            or "ruff" in combined
+            or "pre-commit" in combined
+            or re.search(r"(?:^|\s)(?:python|python3)\s", combined)
+        )
         and (worktree / "uv.lock").is_file()
         and (worktree / "pyproject.toml").is_file()
     ):
@@ -4630,7 +4755,9 @@ def _validation_followup_prompt(candidate: dict[str, Any]) -> str:
         "必须依据真实运行结果更新 .oss-pr-radar/result.json：补充针对性回归测试；如以测试作为复现证据，"
         "需证明修复前失败、修复后通过。不得刷新 GitHub、不得安装依赖、不得请求权限、不得执行提交、推送、"
         "建 PR 或其他公开动作。若仍无法完成验证，保留对应 quality=false 并写清可复核原因；不得把格式检查"
-        "当作功能验证。完成后正常结束，由控制器重新接收结果。"
+        "当作功能验证。若广泛检查失败，必须在修复前基线使用同一环境复跑；只有失败集合完全属于基线既有问题，"
+        "且改动路径的功能、类型、格式和仓库专用门禁全部通过时，才可将 relevant_tests_green 标为 true。"
+        "完成后正常结束，由控制器重新接收结果。"
     )
 
 
@@ -6081,6 +6208,9 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
             "errors": restored.get("errors") or [],
         }
 
+    store = ledger(args.ledger)
+    rearmed = _rearm_negative_followup_deliveries(store)
+
     pr_state = pr_followup_list(argparse.Namespace(ledger=args.ledger))
     deferred_followups: list[dict[str, Any]] = []
     for candidate in pr_state.get("candidates") or []:
@@ -6114,6 +6244,7 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
             "delivery": delivered,
             "deferredFollowups": deferred_followups,
             "restored": restored.get("restored") or [],
+            "rearmed": rearmed,
         }
 
     validation_state = validation_followup_list(
@@ -6144,6 +6275,7 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
             "delivery": delivered,
             "deferredFollowups": deferred_followups,
             "restored": restored.get("restored") or [],
+            "rearmed": rearmed,
         }
 
     recovery_state = recovery_list(
@@ -6177,6 +6309,7 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
             "delivery": delivered,
             "deferredFollowups": deferred_followups,
             "restored": restored.get("restored") or [],
+            "rearmed": rearmed,
         }
 
     terminalized: list[dict[str, Any]] = []
@@ -6249,6 +6382,7 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
             "held": held,
             "deferredFollowups": deferred_followups,
             "restored": restored.get("restored") or [],
+            "rearmed": rearmed,
         }
 
     return {
@@ -6258,6 +6392,7 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
         "held": held,
         "deferredFollowups": deferred_followups,
         "restored": restored.get("restored") or [],
+        "rearmed": rearmed,
     }
 
 

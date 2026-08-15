@@ -216,6 +216,7 @@ python scripts/local_dispatch_bridge.py pr-followup-deliver \
   --thread-id THREAD_ID --wake-digest WAKE_DIGEST
 
 # Prefetch only lockfile-declared dependencies, then resume incomplete validation.
+# Durable no-turn receipts are re-armed automatically; ambiguous starts are not retried.
 # The listing also reports follow-ups that have made no progress for 90 minutes.
 python scripts/local_dispatch_bridge.py validation-followup-list --min-age-minutes 90
 python scripts/local_dispatch_bridge.py validation-followup-reserve \

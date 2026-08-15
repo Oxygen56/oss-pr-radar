@@ -5205,6 +5205,130 @@ def test_validation_followup_retries_an_explicit_no_turn_receipt(monkeypatch, tm
     assert unresolved["abandonable"] is False
 
 
+def test_negative_validation_receipt_rearms_the_same_result(monkeypatch, tmp_path):
+    reserved_at = iso_z(datetime.now(UTC) - timedelta(minutes=2))
+    calls = []
+
+    class Store:
+        def unresolved_pr_followups(self):
+            return []
+
+        def unresolved_validation_followups(self):
+            return [
+                {
+                    "key": "a/b#1",
+                    "threadId": "thread-1",
+                    "resultDigest": "a" * 64,
+                    "reservedAt": reserved_at,
+                }
+            ]
+
+        def abandon_validation_followup_delivery(self, **kwargs):
+            calls.append(kwargs)
+
+    state = tmp_path / "state"
+    receipt_root = state / "task_turn_receipts"
+    receipt_root.mkdir(parents=True)
+    receipt_key = MODULE.sha256_json(
+        {
+            "deliveryKind": "validation-followup",
+            "threadId": "thread-1",
+            "deliveryToken": "a" * 64,
+        }
+    )
+    receipt = receipt_root / f"{receipt_key}.json"
+    launch = receipt_root / f"{receipt_key}.launch.json"
+    receipt.write_text(
+        json.dumps({"ok": False, "turnStarted": False, "error": "resume failed"}),
+        encoding="utf-8",
+    )
+    launch.write_text(json.dumps({"pid": 0}), encoding="utf-8")
+    monkeypatch.setattr(MODULE, "STATE", state)
+
+    rearmed = MODULE._rearm_negative_followup_deliveries(Store())
+
+    assert rearmed == [
+        {
+            "kind": "validation-followup",
+            "key": "a/b#1",
+            "threadId": "thread-1",
+            "resultDigest": "a" * 64,
+        }
+    ]
+    assert calls == [
+        {
+            "thread_id": "thread-1",
+            "result_digest": "a" * 64,
+            "reason": "NEGATIVE_RECEIPT_NO_TURN_STARTED",
+            "min_age_minutes": 1,
+        }
+    ]
+    assert not receipt.exists()
+    assert not launch.exists()
+
+
+def test_negative_recovery_receipt_rearms_the_same_task(monkeypatch, tmp_path):
+    reserved_at = iso_z(datetime.now(UTC) - timedelta(minutes=2))
+    calls = []
+
+    class Store:
+        def unresolved_pr_followups(self):
+            return []
+
+        def unresolved_validation_followups(self):
+            return []
+
+        def unresolved_recoveries(self):
+            return [
+                {
+                    "key": "a/b#1",
+                    "threadId": "thread-1",
+                    "reservedAt": reserved_at,
+                    "reservation": {"recoveryNonce": "nonce-1"},
+                }
+            ]
+
+        def abandon_recovery_delivery(self, **kwargs):
+            calls.append(kwargs)
+
+    state = tmp_path / "state"
+    receipt_root = state / "task_turn_receipts"
+    receipt_root.mkdir(parents=True)
+    receipt_key = MODULE.sha256_json(
+        {
+            "deliveryKind": "recovery",
+            "threadId": "thread-1",
+            "deliveryToken": "nonce-1",
+        }
+    )
+    receipt = receipt_root / f"{receipt_key}.json"
+    receipt.write_text(
+        json.dumps({"ok": False, "turnStarted": False, "error": "resume failed"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(MODULE, "STATE", state)
+
+    rearmed = MODULE._rearm_negative_followup_deliveries(Store())
+
+    assert rearmed == [
+        {
+            "kind": "recovery",
+            "key": "a/b#1",
+            "threadId": "thread-1",
+            "recoveryNonce": "nonce-1",
+        }
+    ]
+    assert calls == [
+        {
+            "thread_id": "thread-1",
+            "nonce": "nonce-1",
+            "reason": "NEGATIVE_RECEIPT_NO_TURN_STARTED",
+            "min_age_minutes": 1,
+        }
+    ]
+    assert not receipt.exists()
+
+
 def test_controller_defers_unvalidated_publishable_fix_without_agent_failure(tmp_path):
     store, worktree, result_path = _controller_commit_result(
         tmp_path,
@@ -5451,6 +5575,43 @@ def test_validation_prefetch_plan_is_lockfile_scoped(tmp_path):
     ]
 
 
+def test_validation_prefetch_recognizes_go_vet_and_python_tool_environment_gaps(tmp_path):
+    worktree = tmp_path / "worktree"
+    result_dir = worktree / ".oss-pr-radar"
+    result_dir.mkdir(parents=True)
+    (worktree / "go.mod").write_text("module example.com/runtime\n", encoding="utf-8")
+    (worktree / "go.sum").write_text("", encoding="utf-8")
+    (worktree / "runtime.go").write_text("package runtime\n", encoding="utf-8")
+    (worktree / "uv.lock").write_text("version = 1\n", encoding="utf-8")
+    (worktree / "pyproject.toml").write_text("[project]\nname = 'x'\n", encoding="utf-8")
+    result = {
+        "changedFiles": ["runtime.go", "runtime.py"],
+        "tests": [
+            {
+                "command": "GOPROXY=off go vet ./...",
+                "exitCode": 1,
+                "summary": "blocked by uncached dependencies",
+            },
+            {
+                "command": "pyright",
+                "exitCode": 1,
+                "summary": "full check used an incomplete cached environment",
+            },
+        ],
+    }
+    raw = json.dumps(result).encode()
+    (result_dir / "result.json").write_bytes(raw)
+
+    commands = MODULE._validation_prefetch_commands(
+        {
+            "worktreePath": str(worktree),
+            "resultDigest": hashlib.sha256(raw).hexdigest(),
+        }
+    )
+
+    assert [item["kind"] for item in commands] == ["go_locked_download", "uv_locked_sync"]
+
+
 def test_validation_followup_blocks_missing_python_dependencies_without_lockfile(
     tmp_path,
 ):
@@ -5463,7 +5624,7 @@ def test_validation_followup_blocks_missing_python_dependencies_without_lockfile
         {
             "command": "python3 -m pytest test_runtime.py",
             "exitCode": 1,
-            "summary": "Collection blocked: NumPy is not installed and torch is missing.",
+            "summary": "The prepared worktree has no pytest executable.",
         }
     ]
     raw = json.dumps(value).encode()

@@ -8,6 +8,7 @@ import os
 import plistlib
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -52,6 +53,25 @@ def run_bridge(root: Path, operation: str, *, timeout: int = 900) -> dict[str, A
     if not isinstance(value, dict):
         raise RuntimeError(f"{operation}: local bridge returned a non-object")
     return value
+
+
+def retryable_delivery_pending(root: Path, *, min_age_seconds: int = 60) -> bool:
+    """Detect a durable no-turn receipt that is old enough to re-arm."""
+
+    receipt_root = root / "state" / "task_turn_receipts"
+    now = time.time()
+    for path in receipt_root.glob("*.json"):
+        if path.name.endswith(".launch.json"):
+            continue
+        try:
+            if now - path.stat().st_mtime < min_age_seconds:
+                continue
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if value.get("ok") is False and value.get("turnStarted") is False:
+            return True
+    return False
 
 
 def advance_once(
@@ -119,7 +139,9 @@ def advance_once(
     pending = list(publication.get("pending") or [])
     renamed = list(title_reconciliation.get("renamed") or [])
     archived = list(cleanup_reconciliation.get("archived") or [])
-    should_drain = bool(ingested or validation_deferred or archived or published)
+    should_drain = bool(
+        ingested or validation_deferred or archived or published or retryable_delivery_pending(root)
+    )
     drain = {"ok": True, "action": "not_triggered"}
     terminal_feedback = {"ok": True, "published": 0, "errors": []}
     lifecycle_healthy = bool(

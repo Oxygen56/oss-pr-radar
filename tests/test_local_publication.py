@@ -1,3 +1,6 @@
+import json
+import os
+import time
 from pathlib import Path
 
 from oss_pr_radar.local_publication import advance_once, launch_agent_spec
@@ -110,6 +113,35 @@ def test_fast_publication_is_quiet_when_no_result_or_request_exists(tmp_path):
 
     assert result["ok"] is True
     assert result["activity"] is False
+
+
+def test_fast_publication_retries_an_old_negative_turn_receipt(tmp_path):
+    receipt_root = tmp_path / "state" / "task_turn_receipts"
+    receipt_root.mkdir(parents=True)
+    receipt = receipt_root / "failed.json"
+    receipt.write_text(
+        json.dumps({"ok": False, "turnStarted": False, "error": "resume failed"}),
+        encoding="utf-8",
+    )
+    old = time.time() - 120
+    os.utime(receipt, (old, old))
+    calls = []
+
+    def runner(_root: Path, operation: str):
+        calls.append(operation)
+        if operation == "context-recover":
+            return {"ok": True, "verified": 0, "errors": []}
+        if operation == "ingest-results":
+            return {"ok": True, "ingested": [], "publicationRequests": [], "errors": []}
+        if operation == "drain-once":
+            return {"ok": True, "action": "validation_followup_dispatched", "errors": []}
+        return {"ok": True, "published": [], "pending": [], "blocked": [], "errors": []}
+
+    result = advance_once(tmp_path, runner=runner)
+
+    assert calls[-1] == "drain-once"
+    assert result["ok"] is True
+    assert result["activity"] is True
 
 
 def test_fast_publication_surfaces_title_reconciliation_failure(tmp_path):
