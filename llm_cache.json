@@ -15574,6 +15574,36 @@
     ],
     "why": "Issue clearly identifies a hardcoded :predict endpoint causing 400 errors for gemini-embedding-2 models. Existing PR #14266 addresses the same root cause but lacks regression tests, leaving room for a materially better PR with tests and minimal fix."
   },
+  "838c64f725544e4fea431240d7f21fbe1f43c293fec1b3b16f63e61b3fd41247": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "hgctl/pkg/installer/helm_agent.go",
+      "hgctl/pkg/installer/installer_k8s.go",
+      "new tests under hgctl/pkg/installer"
+    ],
+    "risks": [
+      "Helm availability becomes a prerequisite for affected K8s paths, but this is intentional and safer.",
+      "Need to add injectable helm binary name for tests; otherwise tests would shell out to real binary."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add fake-command tests for four lookup outcomes: Helm unavailable, non-zero failure, confirmed absence, detected release.",
+      "Add installer tests proving install and upgrade do not call Run or Profile save after ownership-check failure.",
+      "Run go test ./pkg/installer -count=1 and go test ./... -count=1, plus git diff --check."
+    ],
+    "unknowns": [
+      "Whether the issue is assigned to a developer; the design is approved but implementation assignment is pending."
+    ],
+    "wait_reason": "ASSIGNMENT",
+    "why": "The design is technically sound and actionable, with clear root cause and test plan. However, the repository requires assignment before implementation, and the issue is a design proposal that has been approved but not yet assigned for implementation. The gate decision is HUMAN_REVIEW, and the submission policy requires assignment and AI disclosure confirmation, which are not yet satisfied."
+  },
   "840f049b1af16ab1fa4991aef344f33ec427b5b1aea0d59a178b2fa50e231455": {
     "confidence": 0.7,
     "contradictions": [
@@ -20463,6 +20493,41 @@
     ],
     "why": "Issue reports a CLI argument error for MiniMax-H3, but root cause is unclear; a comment suggests adding --model-type diffusion as a workaround, indicating possible missing documentation or validation. No maintainer confirmation or design decision."
   },
+  "b460bd144d841f31132ae242cebb136b32017ce7250ba7c549d8c26a637360ac": {
+    "confidence": 0.7,
+    "contradictions": [
+      "The issue title and body focus on AttributeError, but the related issue #52407 is about a different crash (device mismatch) with shared stack signatures only",
+      "The commenter's root cause hypothesis is not confirmed by the reporter"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "NVFP4 quant config to add ParallelLMHead branch analogous to awq_marlin.py/gptq_marlin.py",
+      "Regression test for ParallelLMHead with NVFP4 Marlin backend"
+    ],
+    "risks": [
+      "Hardware-specific: reproduction requires DGX Spark/Blackwell GPU",
+      "Potential duplicate issue #52407 may already cover this or a related bug",
+      "The proposed fix may not address the actual root cause if the attribute is expected to be set elsewhere"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 12,
+    "test_plan": [
+      "Reproduce with the provided command on DGX Spark or a compatible Blackwell GPU",
+      "Add a unit test that instantiates a ParallelLMHead with NVFP4 Marlin backend and verifies output_size_per_partition is set",
+      "Run existing Marlin kernel tests with the new branch to ensure no regressions"
+    ],
+    "unknowns": [
+      "Whether the NVFP4 quant config actually lacks the ParallelLMHead branch",
+      "Whether the issue is a duplicate of #52407 or another existing issue",
+      "Whether maintainers have acknowledged or are investigating this issue"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "The issue reports a concrete AttributeError in ParallelLMHead with NVFP4 Marlin backend, and a commenter proposes a plausible root cause (missing ParallelLMHead branch in NVFP4 quant config) with a reference to #40999. However, the root cause is not confirmed by the reporter, and the proposed fix is speculative. The issue is a bug report, not a PR, and the track requires a concrete algorithm mechanism; while the bug touches distributed training and quantization kernels, the actionable code path is not yet established. The presence of a potential duplicate issue #52407 and the lack of maintainer confirmation further reduce actionability."
+  },
   "b4c865ee4f28e46fa5eb1375ba1416e0b94e298336cb0f94e5b180866b839cf9": {
     "confidence": 0.7,
     "contradictions": [
@@ -21118,6 +21183,25 @@
       "Exact expected behavior for guardrail when router is unavailable"
     ],
     "why": "Issue reports a clear bug: llm_as_a_judge guardrail fails when judge model is proxy-registered (vllm/openai-compatible) because it calls litellm.acompletion directly without router resolution. Contributor comment identifies root cause and proposes fix: pass llm_router to guardrail initializer and use router.acompletion. However, open PR and related issue lookup failed (timeout), so duplicate implementation cannot be excluded. Also, maintainer approval/design confirmation is absent, and the fix touches guardrail registry API, requiring maintainer input."
+  },
+  "ba1368d41c3278cd9842c12097a24575fea4539ab07cc59d945a7b15832a4e1e": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [],
+    "risks": [],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [],
+    "unknowns": [
+      "Whether maintainers intend to support BYOC or upgrade token tier; no code-level root cause or implementation path is provided."
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "Issue is a support request about shared Google Ads token tier, not a code bug. No code path or actionable implementation is identified; the only suggested fix (BYOC) is a feature request requiring design confirmation. Existing PR #3778 is merged and only adds explanatory docs, not a fix. No maintainer approval or active investigation."
   },
   "ba37fa9b8ba7b85c8ddf7dfa633d0d87cf75335fd7b2f4d0d393d1ced8c91641": {
     "confidence": 0.9,
@@ -25239,6 +25323,34 @@
       "Maintainer preference on fix approach"
     ],
     "why": "The issue reports a user-visible bug in budget alerting for standalone virtual keys, with a plausible code path and reproduction steps. However, the root cause is unconfirmed (cache staleness vs. alert never attempted), and the open PR and related issue lookups timed out, so duplicate work cannot be excluded. The deterministic gate is HUMAN_REVIEW, and the maintainer has not confirmed design or investigation direction."
+  },
+  "da07d476a00e1189ef4f7acf4388091e32b5f4f1062b384fff13664687763b2d": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue suggests environment issue but PR #52256 is already modifying the same test file; AMD mirror passed in same build."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "tests/models/multimodal/generation/test_vit_cudagraph.py",
+      "torch_compile_cache handling"
+    ],
+    "risks": [
+      "Duplicate work with PR #52256; failure may be environment-specific and not reproducible on main; changing cache behavior could have broad impact."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 11,
+    "test_plan": [
+      "Reproduce the failure on a clean node with the exact test command; verify whether the TritonBundler cache warning is the cause; run the test with a cleared torch_compile_cache."
+    ],
+    "unknowns": [
+      "Whether the failure reproduces on a clean main build; whether PR #52256 already fixes the root cause; maintainer's intent regarding the existing PR."
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue reports a CI failure with a plausible environment/cache root cause, but existing PR #52256 overlaps the exact test file and is maintainer-owned with passing CI. The issue is not verified on main and the failure may be node-specific. A new PR would risk duplicating #52256 or addressing a non-reproducible environment issue."
   },
   "da85de896707cae18237a14c499e137814ef5b471f46586a28e7153b00e75e15": {
     "confidence": 0.8,
