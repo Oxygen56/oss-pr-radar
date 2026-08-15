@@ -120,7 +120,8 @@ BENIGN_POLICY_RECOVERY_PROMPT = (
     "Protocol 结构化交接；不要访问网络，不要执行公开操作。"
 )
 VALIDATION_RECOVERY_PROMPT = (
-    "这是同一受控任务的验证续跑中断恢复，不要创建新任务或重新实现。重新读取工作树内的 "
+    "这是同一受控任务的验证续跑中断恢复，不要创建新任务或重新实现。"
+    "不要重新读取技能文件或重放完整历史；沿用首轮已经加载的协议。重新读取工作树内的 "
     ".oss-pr-radar/task-context.json 和 result.json，只补齐仍缺失的验证证据并正常完成交接。"
     "不得刷新 GitHub、安装依赖、请求权限、提交、推送、创建 PR 或执行其他公开动作。"
 )
@@ -4031,6 +4032,7 @@ def pr_followup_list(args: argparse.Namespace) -> dict[str, Any]:
     active_deferred: list[dict[str, Any]] = []
     restore_required: list[dict[str, Any]] = []
     blocked: list[dict[str, Any]] = []
+    quarantined: list[dict[str, Any]] = []
     for candidate in candidates:
         thread_id = str(candidate["threadId"])
         if thread_id not in archived:
@@ -4056,7 +4058,7 @@ def pr_followup_list(args: argparse.Namespace) -> dict[str, Any]:
                     continue
                 dirty_paths = [line[3:] for line in status.stdout.splitlines() if line]
                 if dirty_paths:
-                    blocked.append(
+                    quarantined.append(
                         candidate
                         | {
                             "reason": "worktree_dirty",
@@ -4123,6 +4125,7 @@ def pr_followup_list(args: argparse.Namespace) -> dict[str, Any]:
         "queuedDeferred": queued_deferred,
         "restoreRequired": restore_required,
         "blocked": blocked,
+        "quarantined": quarantined,
         "unresolved": unresolved_with_recovery,
     }
 
@@ -4775,7 +4778,8 @@ def _validation_followup_prompt(candidate: dict[str, Any]) -> str:
         else "无需新增依赖；直接补齐缺失证据并重新运行相关检查。"
     )
     return (
-        "这是同一任务的验证续跑，不要创建新任务或重新实现。重新读取工作树内的 "
+        "这是同一任务的验证续跑，不要创建新任务或重新实现。"
+        "不要重新读取技能文件或重放完整历史；沿用首轮已经加载的协议。重新读取工作树内的 "
         ".oss-pr-radar/task-context.json，并只在其中记录的 worktreePath 继续。\n\n"
         f"当前缺失发布证据：{missing}。{dependency_note}\n\n"
         "必须依据真实运行结果更新 .oss-pr-radar/result.json：补充针对性回归测试；如以测试作为复现证据，"

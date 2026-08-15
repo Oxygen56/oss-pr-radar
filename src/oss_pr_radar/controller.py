@@ -221,7 +221,7 @@ def _final_blockers(stages: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
         "finalValidationFollowups": ("unresolved", "stale", "errors"),
         "finalRecovery": ("blocked", "unresolved"),
         "finalRestore": ("restore", "blocked"),
-        "finalTitles": ("titles", "blocked"),
+        "finalTitles": ("blocked",),
         "finalCleanup": ("cleanup", "blocked"),
         "finalDuplicates": ("duplicates",),
     }
@@ -290,6 +290,8 @@ def compact_controller_result(
     stages = result.get("stages") or {}
     recovery = stages.get("contextRecovery") or {}
     validation = stages.get("finalValidationFollowups") or {}
+    pr_followups = stages.get("finalPrFollowups") or {}
+    titles = stages.get("finalTitles") or {}
     publication = stages.get("publication") or {}
     feedback = stages.get("terminalFeedbackBeforeSync") or {}
     compact = {
@@ -302,6 +304,8 @@ def compact_controller_result(
             "unavailableWorktrees": len(recovery.get("unavailable") or []),
             "validationEnvironmentBlocked": len(validation.get("environmentBlocked") or []),
             "validationNoProgress": len(validation.get("blockedNoProgress") or []),
+            "prFollowupQuarantined": len(pr_followups.get("quarantined") or []),
+            "titleUpdatesPending": len(titles.get("titles") or []),
             "publicationBlocked": len(publication.get("blocked") or []),
             "terminalFeedbackDeferred": len(feedback.get("deferred") or []),
         },

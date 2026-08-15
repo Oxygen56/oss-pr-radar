@@ -2311,9 +2311,10 @@ def test_pr_followup_list_isolates_dirty_worktree_and_keeps_next_candidate(monke
     result = MODULE.pr_followup_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
 
     assert [item["key"] for item in result["candidates"]] == ["a/b#2"]
-    assert result["blocked"][0]["key"] == "a/b#1"
-    assert result["blocked"][0]["reason"] == "worktree_dirty"
-    assert result["blocked"][0]["dirtyPaths"] == ["tracked.txt"]
+    assert result["blocked"] == []
+    assert result["quarantined"][0]["key"] == "a/b#1"
+    assert result["quarantined"][0]["reason"] == "worktree_dirty"
+    assert result["quarantined"][0]["dirtyPaths"] == ["tracked.txt"]
 
 
 def test_pr_followup_never_abandons_an_unreceipted_delivery(monkeypatch, tmp_path):

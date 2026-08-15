@@ -110,6 +110,8 @@ def test_controller_output_is_compact_and_full_evidence_stays_in_report(tmp_path
                 "environmentBlocked": [{"key": "a/b#1"}],
                 "blockedNoProgress": [],
             },
+            "finalPrFollowups": {"quarantined": [{"key": "a/b#2"}]},
+            "finalTitles": {"titles": [{"key": "a/b#3"}]},
             "publication": {"blocked": []},
             "terminalFeedbackBeforeSync": {"deferred": []},
         },
@@ -121,5 +123,25 @@ def test_controller_output_is_compact_and_full_evidence_stays_in_report(tmp_path
     assert report.is_file()
     assert compact["warnings"]["unavailableWorktrees"] == 1
     assert compact["warnings"]["validationEnvironmentBlocked"] == 1
+    assert compact["warnings"]["prFollowupQuarantined"] == 1
+    assert compact["warnings"]["titleUpdatesPending"] == 1
     assert "stages" not in compact
     assert len(str(compact)) < 1000
+
+
+def test_pending_title_update_and_quarantine_are_not_controller_blockers():
+    from oss_pr_radar.controller import _final_blockers
+
+    blockers = _final_blockers(
+        {
+            "finalTitles": {"titles": [{"threadId": "thread-1"}], "blocked": []},
+            "finalPrFollowups": {
+                "quarantined": [{"key": "a/b#1"}],
+                "blocked": [],
+                "unresolved": [],
+                "restoreRequired": [],
+            },
+        }
+    )
+
+    assert blockers == []

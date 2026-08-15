@@ -162,8 +162,10 @@ receiving their own worktrees.
   snapshot in the append-only ledger. Later audit refreshes cannot replace that
   parent binding or dispatch a second follow-up while the task is active.
   A follow-up whose managed worktree contains uncommitted changes is isolated
-  as `worktree_dirty`; the bridge preserves those changes and continues to the
-  next serialized candidate instead of failing the whole drain.
+  as `worktree_dirty`; the bridge preserves those changes, reports a quarantine
+  warning, and continues to the next serialized candidate instead of failing
+  the whole drain. A pending lifecycle title is likewise an eventual-sync
+  warning while its task is active, not a controller failure.
   Legacy reservations are repaired
   only when the worktree head is the original PR head or a verifiable
   controller-created base-integration merge. An older incomplete reservation is
