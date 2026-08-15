@@ -6269,6 +6269,41 @@
     ],
     "why": "Issue reports a cost regression in LiteLLM's pricing data for Azure models, with a clear suggested fix. However, a maintainer has indicated that Azure may be updating pricing with a lag, and the reporter's evidence is anecdotal. The open PR and related issue lookups timed out, so duplicate work cannot be excluded. The fix is data-only and requires maintainer confirmation of Azure's official pricing."
   },
+  "38316092d1125ffc525e35ef59ef8d46935cdbb4c4c3ec6aac7f943224c340be": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims 3 GPUs but environment shows 3 A100s; PR #46370 is open and may already fix the issue"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Expert-parallel configuration validation",
+      "num_redundant_experts adjustment logic",
+      "Distributed model loading path"
+    ],
+    "risks": [
+      "Overlap with PR #46370 may make new work redundant",
+      "Root cause may be in model config rather than executor",
+      "Hardware requirement (3 GPUs) limits test accessibility"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 13,
+    "test_plan": [
+      "Reproduce with 3 GPUs and deepseek-v4-flash-0731",
+      "Run existing EP tests with ep_size=3",
+      "Compare behavior with PR #46370 applied"
+    ],
+    "unknowns": [
+      "Whether PR #46370 resolves this exact assertion",
+      "Whether maintainers consider this a duplicate of #36010",
+      "Exact expected behavior for num_redundant_experts with non-divisible ep_size"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "The issue reports a concrete assertion failure in expert-parallel setup with 3 GPUs, but the root cause is not fully diagnosed. Existing PR #46370 overlaps semantically and touches the same model_runner path, and related issue #36010 shares stack signatures. The deterministic gate is HUMAN_REVIEW, and the AI disclosure conflict blocks automatic action. Need maintainer review to confirm root cause and avoid duplicate work."
+  },
   "3869a689a4ac88ee3cd663699f334b613175e4cd5375bedf7806eca3732ff12e": {
     "confidence": 0.85,
     "contradictions": [],
@@ -7144,6 +7179,36 @@
     ],
     "why": "Issue reports four scheduler defects with detailed repro and root-cause analysis; comment confirms two fixed in 1.46.0, one not reproducible, and one real but wider. Existing PR #11110 overlaps scheduler code but lacks tests and does not reference issue. Gate requires HUMAN_REVIEW; maintainer design confirmation needed."
   },
+  "40eea7f0807ac497f6ba600dc4a28b866f28f1b4febd3fa80eae4b8a06791500": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims prefill path is also affected, but commenter argues #34075 fixes both paths on main."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "batch_result_processor.py",
+      "logprob_processor.py"
+    ],
+    "risks": [
+      "PR #34075 may not fully fix the prefill-path variant; need to verify on current main.",
+      "The proposed guard could mask producer-side type inconsistencies; prefer fixing at the producer if possible."
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Run the reproduction from the issue against current main with and without #34075 to confirm whether the crash is already fixed.",
+      "If not fixed, add a regression test with mixed batch (one request with token_ids_logprob, one without) covering both prefill and decode paths."
+    ],
+    "unknowns": [
+      "Whether #34075 is merged or will be merged; whether it fully resolves the crash on current main."
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue provides a clear crash mechanism and reproduction, but an open PR (#34075) already targets the same root cause and is in review. The issue's own commenter notes that #34075 alone may close the crash on main, making the proposed guard a follow-up hardening rather than a required fix. A new PR would risk duplicating existing work."
+  },
   "40f80e72d59499de5f318f6d99c6da6cf3de0653807c9e2e0694e4b56b280365": {
     "confidence": 0.7,
     "contradictions": [
@@ -7826,6 +7891,39 @@
       "Whether maintainers prefer pin bump vs kernel fix; exact impact of quack-kernels version"
     ],
     "why": "Issue provides a deterministic repro and root cause for a startup crash on SM100 with split-KV FA4 warmup. Existing PR #41834 overlaps semantically but is broad and not directly linked; a focused fix (DSL pin bump plus defensive kernel change) is actionable and materially better."
+  },
+  "475812994174c58ec6729cc99a7961a87454b0b8d2f72c4a1e1c016b0e509615": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Refactor ai-agent message handling to store per-request ChatMessages in wrapper.HttpContext",
+      "Update all mutation and completion construction points to use request-local list",
+      "Add regression test for concurrent request interleaving"
+    ],
+    "risks": [
+      "Missing an async mutation path could leave shared state corruption",
+      "Context key collision with existing bare-string keys if not namespaced",
+      "Potential divergence between stored list and first completion request body if not built from same source"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add deterministic regression: pause request A after assistant action, start request B, resume A, assert serialized completions contain only own messages and preserve order",
+      "Run go test ./... -count=1 from plugins/wasm-go/extensions/ai-agent",
+      "Run GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -o /tmp/ai-agent.wasm ./",
+      "Run git diff --check"
+    ],
+    "unknowns": [
+      "Whether assignment has been granted to the proposed owner",
+      "Whether the user has completed the required AI disclosure confirmation"
+    ],
+    "wait_reason": "ASSIGNMENT",
+    "why": "The issue provides a clear design for request-local message isolation with a concrete regression test plan and maintainer approval. However, the repository requires assignment before implementation, and the submission policy mandates AI disclosure confirmation, which are not yet satisfied."
   },
   "477dc03a7b3a67b3c04962c25431fb23ed294c621ee5072c9de53286f237f2c5": {
     "confidence": 0.8,
@@ -17930,6 +18028,40 @@
     ],
     "why": "Issue provides a precise root cause (missing structural tag for kimi_k2 parser forces JSON-array grammar, unbounded whitespace) and a clear regression test (test_kimi_k2_tool_choice_required_pins_current_behavior). However, the deterministic gate is HUMAN_REVIEW, and existing PR #9752 overlaps semantically with the code path (handlers.py) and key terms (max_tokens, tool_choice), requiring maintainer comparison before new work. Also, potential duplicate issue #12876 and external crate dependency (dynamo-parsers) add uncertainty."
   },
+  "9aea0784bdd5a0b1e3a3e7204913c7d37adb54f2fafe91af619f0cffdd1b63a1": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Gate decision is HUMAN_REVIEW but candidate score is high",
+      "Related issue #52407 shares stack signatures but may be a different root cause"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add ParallelLMHead special-case in NVFP4 Marlin quant config",
+      "Ensure output_size_per_partition is set for lm_head",
+      "Add regression test for NVFP4 Marlin with ParallelLMHead"
+    ],
+    "risks": [
+      "Hardware-specific (DGX Spark/Blackwell) may not be available for all contributors",
+      "Potential overlap with issue #52407 could lead to duplicate fixes"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 12,
+    "test_plan": [
+      "Run the provided vllm serve command on DGX Spark with NVFP4 Marlin backend",
+      "Verify no AttributeError and correct output",
+      "Add unit test for ParallelLMHead weight creation in NVFP4 Marlin path"
+    ],
+    "unknowns": [
+      "Maintainer confirmation of root cause and fix direction",
+      "Whether issue #52407 is truly a duplicate or distinct bug"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue reports a concrete AttributeError in ParallelLMHead during NVFP4 Marlin path, with a plausible root cause and executable repro command. However, a potential duplicate issue #52407 shares stack signatures and failure paths, and the maintainer has not confirmed the diagnosis or assigned ownership. The candidate is technically actionable but requires maintainer confirmation to avoid duplicate work."
+  },
   "9b6186d41b23dc14e8161eec43190a7a17d066425808168fb276f0416a5fd6c6": {
     "confidence": 0.85,
     "contradictions": [],
@@ -22181,6 +22313,36 @@
     ],
     "why": "Issue clearly describes a silent truncation bug in RemoteA2aAgent when A2A stream ends before terminal state, with reproduction steps and expected fixes. However, the deterministic gate requires HUMAN_REVIEW, and the submission policy needs assignment, so work should wait for maintainer confirmation."
   },
+  "c404def84d9bc7cd1a8df1ef92e2ff8a4144319ec2d9351518c5c6453ad7305d": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add None guard for extend_prefix_lens in prepare_decode_context_parallel_metadata",
+      "Or populate extend_prefix_lens in dspark_verify.run_non_compact"
+    ],
+    "risks": [
+      "Potential semantic ambiguity: treating None as zero-prefix may mask other bugs",
+      "Existing PR #34432 may already fix this; need to compare implementation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 13,
+    "test_plan": [
+      "Reproduce with Kimi K3, DCP size 8, DSPARK, PD disaggregation; run a single request and observe crash",
+      "Add unit test for prepare_decode_context_parallel_metadata with extend_prefix_lens=None",
+      "Run multi-GPU integration test with DCP+DSPARK to ensure no regression"
+    ],
+    "unknowns": [
+      "Whether PR #34432 actually fixes this issue",
+      "Maintainer preference on approach (guard vs populate)"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue provides a clear root cause and stack trace for a crash in DCP planner when extend_prefix_lens is None during DSPARK target-verify. However, existing PR #34432 has semantic overlap with the code path and key terms, and the issue itself is a bug report without a proposed patch. The deterministic gate is HUMAN_REVIEW, and the open PR assessment indicates semantic overlap requiring manual comparison. Therefore, a maintainer must decide whether the existing PR already addresses this issue or if a new PR is needed."
+  },
   "c4216ecaecf18c02b813e4ad049b170bc4b95e44e6c0c4e75846b7ec1afb2719": {
     "confidence": 0.85,
     "contradictions": [],
@@ -24938,6 +25100,36 @@
     ],
     "wait_reason": "ASSIGNMENT",
     "why": "The issue precisely identifies a fail-open Helm ownership guard in hgctl that can mutate a cluster when helm list fails, with a clear proposed fail-closed behavior and deterministic test plan. Maintainer approval is present, but the repository requires assignment and the contributor must complete AI disclosure before implementation, so work cannot start cleanly."
+  },
+  "d943f855e214e1293c9bbc507bde3f113d2fd6fddd0ed7d725606f5ed978dbb2": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Investigate speculative decoding path in llama.cpp for Metal",
+      "Optimize draft model cost or disable MTP when not beneficial"
+    ],
+    "risks": [
+      "Performance tuning may be hardware-specific and require maintainer design input",
+      "Potential duplicate issue #17765 may split attention"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "test_plan": [
+      "Reproduce with provided prompts and measure tok/s for MTP vs non-MTP",
+      "Add regression benchmark for speculative decoding acceptance rate"
+    ],
+    "unknowns": [
+      "Maintainer acknowledgment or investigation status",
+      "Root cause in code (draft cost vs acceptance rate)",
+      "Whether a fix is already in progress"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "Issue reports a performance regression with MTP variants on Apple Silicon, but lacks code-level root cause and maintainer confirmation. The gate decision is HUMAN_REVIEW, and the issue is a bug report without a proposed fix or clear implementation path."
   },
   "d960266b8096eb9889c11d9586d2cfa232e11b27ad7c08221cee2eed052ea46c": {
     "confidence": 0.85,
