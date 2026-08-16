@@ -183,6 +183,70 @@ def test_invalid_old_candidate_does_not_block_next_review(tmp_path, monkeypatch)
     assert outcome["errors"][0]["key"] == "owner/repo#999"
 
 
+def test_published_task_skips_result_from_retired_context(tmp_path, monkeypatch):
+    control, worktree, result_path, candidate, _base, _head = prepared_task(tmp_path)
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value["contextDigest"] = "old-context"
+    value["followupDigest"] = "old-wake"
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    (worktree / ".oss-pr-radar" / "task-context.json").write_text(
+        json.dumps({"contextDigest": "current-context", "prFollowup": None}),
+        encoding="utf-8",
+    )
+    candidate["stage"] = "CI_GREEN"
+
+    class FakeLedger:
+        def task_result_candidates(self):
+            return [candidate]
+
+    monkeypatch.setattr(module, "RadarLedger", lambda _path: FakeLedger())
+
+    def reviewer(*_args):
+        raise AssertionError("a retired published result must not be reviewed")
+
+    outcome = module.review_once(
+        control,
+        control / "ledger.sqlite3",
+        reviewer=reviewer,
+    )
+
+    assert outcome["ok"] is True
+    assert outcome["updated"] == []
+    assert outcome["errors"] == []
+
+
+def test_active_task_rejects_review_result_from_wrong_context(tmp_path, monkeypatch):
+    control, worktree, result_path, candidate, _base, _head = prepared_task(tmp_path)
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value["contextDigest"] = "old-context"
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    (worktree / ".oss-pr-radar" / "task-context.json").write_text(
+        json.dumps({"contextDigest": "current-context"}),
+        encoding="utf-8",
+    )
+
+    class FakeLedger:
+        def task_result_candidates(self):
+            return [candidate]
+
+    monkeypatch.setattr(module, "RadarLedger", lambda _path: FakeLedger())
+
+    outcome = module.review_once(
+        control,
+        control / "ledger.sqlite3",
+        reviewer=lambda *_args: (_ for _ in ()).throw(AssertionError("must not run")),
+    )
+
+    assert outcome["ok"] is False
+    assert outcome["updated"] == []
+    assert outcome["errors"] == [
+        {
+            "key": "owner/repo#1",
+            "error": "RuntimeError:independent review task result context digest mismatch",
+        }
+    ]
+
+
 def test_review_discards_verdict_when_result_changes_during_review(tmp_path, monkeypatch):
     control, _worktree, result_path, candidate, _base, _head = prepared_task(tmp_path)
 

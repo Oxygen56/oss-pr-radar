@@ -27,6 +27,7 @@ REVIEWABLE_STAGES = {
     "CI_GREEN",
     "MAINTAINER_ACCEPTED",
 }
+PUBLISHED_STAGES = {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED", "MERGED", "CLOSED"}
 BLOCKING_SEVERITIES = {"P0", "P1", "P2"}
 MAX_REVIEW_OUTPUT_BYTES = 128 * 1024
 
@@ -403,6 +404,25 @@ def _candidate_result(candidate: dict[str, Any]) -> tuple[Path, dict[str, Any]] 
     }.items():
         if value.get(key) != expected:
             raise RuntimeError(f"independent review task result mismatch: {key}")
+    context_path = worktree / TASK_PRIVATE_DIR / "task-context.json"
+    if context_path.is_file() and not context_path.is_symlink():
+        context = json.loads(context_path.read_text(encoding="utf-8"))
+        if not isinstance(context, dict):
+            raise RuntimeError("independent review found an invalid task context")
+        context_digest = str(context.get("contextDigest") or "")
+        result_context_digest = str(value.get("contextDigest") or "")
+        if context_digest and result_context_digest and context_digest != result_context_digest:
+            followup = context.get("prFollowup")
+            current_wake_digest = (
+                str(followup.get("wakeDigest") or "") if isinstance(followup, dict) else ""
+            )
+            if current_wake_digest:
+                if str(value.get("followupDigest") or "") != current_wake_digest:
+                    return None
+            elif str(candidate.get("stage") or "") in PUBLISHED_STAGES:
+                return None
+            else:
+                raise RuntimeError("independent review task result context digest mismatch")
     quality = value.get("quality")
     if value.get("stage") != "FIX_READY" or not isinstance(quality, dict):
         return None
