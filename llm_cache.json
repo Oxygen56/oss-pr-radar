@@ -2591,6 +2591,33 @@
     ],
     "why": "The issue identifies a deterministic contract mismatch in the live cloud provisioning smoke script: it expects a 202 with jobId while the shared tier returns 200 with no job, and pairing always fails on shared tier. The proposed fix is concrete: align the script with the shared-runtime contract, add fail-closed staging guards, and add regression tests. No competing PR exists, and the maintainer has not yet responded, but the issue is actionable and well-evidenced."
   },
+  "192aa62388bee8676ee3423f30d90f7de494cebffe13454fce3e3f87c1f64bc5": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify MCP auto-execute loop to skip tool_use blocks not in tool_server_map and pass them through to client",
+      "Add regression test for mixed MCP and client tools"
+    ],
+    "risks": [
+      "Potential behavior change for existing MCP auto-execute flows; need to ensure only non-MCP tools are passed through",
+      "May require coordination with maintainers on expected behavior for unknown tools"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a test that simulates a request with both MCP and client tools, verify client tools are not auto-executed and are returned to client",
+      "Run existing MCP handler unit tests"
+    ],
+    "unknowns": [
+      "No public reproduction trace provided; maintainer confirmation of desired behavior not yet obtained"
+    ],
+    "wait_reason": null,
+    "why": "Issue identifies a concrete bug in MCP auto-execute logic that breaks client-side tools for agentic clients. Root cause is clearly traced to specific code lines and functions, with a clear expected behavior and a minimal fix path. No competing PR or related issue found."
+  },
   "199eeece6509dafa6d3643c1a1ed0572c7dfb71f49fc2fde3ffd8d436aea1762": {
     "confidence": 0.7,
     "contradictions": [
@@ -28189,6 +28216,33 @@
       "Open PR and related issue lookup failed, so duplicate work cannot be excluded"
     ],
     "why": "The issue reports tokenizer misbehavior on Windows CPU but lacks a clear root cause; a collaborator could not reproduce on Linux CPU, suggesting platform-specific or environment-dependent factors. The candidate's algorithm evidence is generic and not tied to a concrete mechanism or validation path."
+  },
+  "ea273a25b80bd763533e993ffb902758db165b698067e645a4771359a960781b": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Issue claims bug exists on 1.96.0; maintainer comment says fixed on main and in 1.97.0."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Backport of commit d39c5577 to 1.96.x if a patch release is planned; otherwise no code changes needed."
+    ],
+    "risks": [
+      "Backport may conflict with 1.96.x code differences; need to verify no other regressions."
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Run the existing regression tests: tests/test_litellm/llms/bedrock/chat/test_converse_transformation.py -k 'tool_choice_type or parallel_tool_calls_with_explicit_tool_choice or parallel_tool_use_merge' on the backport branch."
+    ],
+    "unknowns": [
+      "Whether a 1.96.x patch release is planned; whether the fix works on Opus 4.6 specifically (maintainer notes only tested on Sonnet 5)."
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue is a clear bug with root cause and repro, but a maintainer comment confirms the fix already landed on main via PR #35738 and is released in 1.97.0. The issue is effectively resolved for current versions; only a backport to 1.96.x remains, which is a maintainer decision. Existing PR #32605 also overlaps semantically, requiring duplicate review."
   },
   "ea3ffc20c93271cdcb866f8388b7e1d8c1e9eec0172096f7b5476133e38a5458": {
     "confidence": 0.8,
