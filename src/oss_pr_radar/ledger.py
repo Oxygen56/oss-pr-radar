@@ -2544,6 +2544,7 @@ class RadarLedger:
             if row is None:
                 raise LedgerError("exhausted recovery reservation not found")
             reservation = json.loads(row["payload_json"])
+            now = iso_z(datetime.now(UTC))
             self._event(
                 connection,
                 row["key"],
@@ -2555,8 +2556,34 @@ class RadarLedger:
                     "recoveryKind": reservation.get("recoveryKind"),
                     "followupDigest": reservation.get("followupDigest"),
                 },
-                iso_z(datetime.now(UTC)),
+                now,
             )
+            if reservation.get("recoveryKind") == "VALIDATION_FOLLOWUP_RESULT":
+                result_digest = str(reservation.get("followupDigest") or "")
+                deferred = connection.execute(
+                    """SELECT payload_json FROM events
+                       WHERE opportunity_key=?
+                         AND event_type='TASK_RESULT_VALIDATION_DEFERRED'
+                         AND json_extract(payload_json,'$.resultDigest')=?
+                       ORDER BY id DESC LIMIT 1""",
+                    (row["key"], result_digest),
+                ).fetchone()
+                if deferred is not None:
+                    deferred_payload = json.loads(deferred["payload_json"])
+                    self._event(
+                        connection,
+                        row["key"],
+                        "VALIDATION_FOLLOWUP_NO_PROGRESS",
+                        result_digest,
+                        {
+                            "threadId": thread_id,
+                            "resultDigest": result_digest,
+                            "previousResultDigest": result_digest,
+                            "missing": list(deferred_payload.get("missing") or []),
+                            "reason": "RECOVERY_RETRY_EXHAUSTED",
+                        },
+                        now,
+                    )
 
     def record_validation_deferred(
         self,
@@ -2662,6 +2689,53 @@ class RadarLedger:
 
         marked = 0
         with self.transaction() as connection:
+            exhausted_rows = connection.execute(
+                """SELECT o.key,d.payload_json
+                   FROM opportunities o
+                   JOIN events d ON d.id=(
+                     SELECT MAX(d2.id) FROM events d2
+                     WHERE d2.opportunity_key=o.key
+                       AND d2.event_type='TASK_RESULT_VALIDATION_DEFERRED'
+                   )
+                   WHERE o.stage='VALIDATION_PENDING'
+                     AND EXISTS (
+                       SELECT 1 FROM events exhausted
+                       JOIN events recovery
+                         ON recovery.opportunity_key=exhausted.opportunity_key
+                        AND recovery.event_type='THREAD_RECOVERY_RESERVED'
+                        AND recovery.dedupe_key=exhausted.dedupe_key
+                       WHERE exhausted.opportunity_key=o.key
+                         AND exhausted.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED'
+                         AND json_extract(recovery.payload_json,'$.recoveryKind')=
+                             'VALIDATION_FOLLOWUP_RESULT'
+                         AND json_extract(recovery.payload_json,'$.followupDigest')=
+                             json_extract(d.payload_json,'$.resultDigest')
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events n
+                       WHERE n.opportunity_key=o.key
+                         AND n.event_type='VALIDATION_FOLLOWUP_NO_PROGRESS'
+                         AND n.dedupe_key=json_extract(d.payload_json,'$.resultDigest')
+                     )"""
+            ).fetchall()
+            for row in exhausted_rows:
+                payload = json.loads(row["payload_json"])
+                result_digest = str(payload.get("resultDigest") or "")
+                self._event(
+                    connection,
+                    row["key"],
+                    "VALIDATION_FOLLOWUP_NO_PROGRESS",
+                    result_digest,
+                    {
+                        "threadId": str(payload.get("threadId") or ""),
+                        "resultDigest": result_digest,
+                        "previousResultDigest": result_digest,
+                        "missing": list(payload.get("missing") or []),
+                        "reason": "RECOVERY_RETRY_EXHAUSTED",
+                    },
+                    iso_z(datetime.now(UTC)),
+                )
+                marked += 1
             rows = connection.execute(
                 """SELECT o.key,d.payload_json
                    FROM opportunities o

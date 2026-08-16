@@ -1579,6 +1579,7 @@ def test_repeatedly_interrupted_recovery_is_terminal_and_releases_wip(tmp_path):
     assert store.recovery_candidates(min_age_minutes=0) == []
     assert store.stale_validation_followups(min_age_minutes=90) == []
     assert store.active_task_count() == 0
+    assert store.validation_no_progress()[0]["reason"] == "RECOVERY_RETRY_EXHAUSTED"
 
     store.record_validation_deferred(
         "a/b#1",
@@ -1593,6 +1594,43 @@ def test_repeatedly_interrupted_recovery_is_terminal_and_releases_wip(tmp_path):
 
     assert rearmed[0]["recoveryKind"] == "VALIDATION_FOLLOWUP_RESULT"
     assert rearmed[0]["followupDigest"] == "new-result-digest"
+
+
+def test_reconcile_backfills_exhausted_validation_recovery_no_progress(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+    store.record_stage("a/b#1", "VALIDATION_PENDING")
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest="result-digest",
+        missing=["relevant_tests_green"],
+    )
+    store.reserve_validation_followup(thread_id="thread-1", result_digest="result-digest")
+    store.commit_validation_followup(thread_id="thread-1", result_digest="result-digest")
+    recovery = store.recovery_candidates(min_age_minutes=0)[0]
+    store.reserve_recovery(thread_id="thread-1", nonce=recovery["recoveryNonce"])
+    store.commit_recovery(thread_id="thread-1", nonce=recovery["recoveryNonce"])
+    store.exhaust_recovery(thread_id="thread-1", nonce=recovery["recoveryNonce"])
+    with store.connect() as connection:
+        connection.execute(
+            """DELETE FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type='VALIDATION_FOLLOWUP_NO_PROGRESS'
+                 AND dedupe_key='result-digest'"""
+        )
+
+    assert store.validation_no_progress() == []
+    assert store.reconcile_validation_no_progress() == 1
+    assert store.validation_no_progress()[0]["reason"] == "RECOVERY_RETRY_EXHAUSTED"
 
 
 def test_completed_task_can_enter_controlled_validation(tmp_path):
