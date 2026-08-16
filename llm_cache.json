@@ -109,6 +109,30 @@
     ],
     "why": "The issue provides deep device-level evidence of a spin loop in the TMEM allocation path of the FlashMLA sparse-decode kernel, but explicitly states it is not a root-cause report and asks for maintainer guidance on the correct owner and diagnostic path. The root cause (phase mismatch, visibility, or hardware state) is undetermined, and the fix likely requires changes in FlashMLA or CUTLASS, not vLLM. The issue is a request for guidance, not a concrete patch proposal."
   },
+  "01a0c0fa6eda773ed6c5b205f41589ecd8f05712c704a405ddd83bad3c36be4f": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify exception handling in proxy/_experimental/mcp_server/server.py to catch ProxyException and preserve status code or translate to proper HTTP response."
+    ],
+    "risks": [
+      "Potential behavior change for other ProxyException cases; need to ensure no unintended masking of real errors."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add regression test that sends unauthenticated request to /mcp/<server> and asserts 401 status and error body."
+    ],
+    "unknowns": [
+      "No maintainer confirmation on preferred fix approach; but issue is actionable and no competing PR found."
+    ],
+    "wait_reason": null,
+    "why": "Issue provides a clear, reproducible bug with source-verified root cause: ProxyException not caught by MCP handlers, causing 500 instead of 401. Fix is localized and testable."
+  },
   "0267b19c4abd19e443e2f3eeab6be2707ab6c0860b3e08ef6d22f2e39c27ae60": {
     "confidence": 0.7,
     "contradictions": [
@@ -5909,6 +5933,39 @@
       "Maintainer preference on fix approach and scope"
     ],
     "why": "Issue clearly describes a user-visible bug with a concrete reproduction and root cause analysis, but the deterministic gate requires HUMAN_REVIEW and the issue requests design confirmation. The suggested fix is plausible but needs maintainer input to avoid unintended API changes."
+  },
+  "343505fb465cf8d50d8d2b448dcc3b832eb7d37edc2154fd00385cdab5f66a01": {
+    "confidence": 0.9,
+    "contradictions": [
+      "PR #4543 is marked OPEN and draft, but issue comments claim implementation and verification are done"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "hgctl/pkg/installer/helm_agent.go",
+      "hgctl/pkg/installer/installer_k8s.go",
+      "new tests under hgctl/pkg/installer"
+    ],
+    "risks": [
+      "PR #4543 may be incomplete or have undisclosed issues; needs maintainer review",
+      "Baseline test failures in pkg/plugin/types and pkg/util TestOverlayYAML/blank could affect CI"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Run go test ./pkg/installer -count=1 and go test ./... -count=1 from hgctl",
+      "Verify four deterministic fake-command outcomes: Helm unavailable, non-zero exit, confirmed absence, detected release",
+      "Confirm Install and Upgrade do not call Run or Profile save on ownership-check failure"
+    ],
+    "unknowns": [
+      "Current state and completeness of PR #4543 beyond the provided summary",
+      "Whether the PR's tests fully match the design's verification plan"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "The issue is a well-specified design with maintainer approval and a matching open PR (#4543) that already implements the described changes. The PR is active, has tests, and the issue's own task comments claim completion. This is a duplicate review situation: the candidate work is already in progress and appears to satisfy the design."
   },
   "343ecb161ff61603a678d37a425ddada4991ce36176394b6abf325f7fd45dc70": {
     "confidence": 0.8,
