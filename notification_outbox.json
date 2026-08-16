@@ -280,6 +280,14 @@
       "seenAt": "2026-08-15T18:54:20.445374Z",
       "stateId": "40b74566aa46745858956edd1690686d94d63640c813a54a1e0bcc01f8929840"
     },
+    "review|BerriAI/litellm#37117": {
+      "category": "SEMANTIC_REVIEW_RETRY",
+      "digest": "623c1b8abd498b4ef013a6ee83b0dcd3e897f229f4589f6efded65f69243e222",
+      "kind": "review",
+      "scannerVersion": "oss_pr_radar_v46_semantic_fallback",
+      "seenAt": "2026-08-16T20:45:56.106894Z",
+      "stateId": "551d6312f6f56d8d7a1f2026a6628c54f18224ac09d4662811c543d908a9633a"
+    },
     "review|ComposioHQ/composio#4020": {
       "category": "SEMANTIC_REVIEW_RETRY",
       "digest": "d7d256a18d56fe451ea4db9b851c80a84c661cba413a06d049a7422ef3d33f81",
@@ -2733,14 +2741,14 @@
     },
     "watch|vllm-project/vllm#52298": {
       "category": "PR_FOLLOWUP",
-      "digest": "d66a1cee8edff74935a4bd47c4b8af0d5367c580cdb94a481fc74a7faf821afa",
+      "digest": "bb2c93dd464deb2471f9846d814daf134dfd3a823369bee464b90089185c49c5",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-16T19:41:28.847254Z",
-      "stateId": "72133df9fb463c30a8edc5b8398d211632283442c6e0c66298615670418ddd58"
+      "seenAt": "2026-08-16T20:45:56.448075Z",
+      "stateId": "cb2ff9760f63a1098571ae7e0a3af753fa81c629f27fd1197fc3011eeb9df979"
     }
   },
-  "digest": "29be042bd745d840728357f3d031ba8effefc08b325b00a7fcd5c15f406a944f",
+  "digest": "a1b7c502d7e52a25fce1ce360ef0f1a30925649e67d8d725292df85a8b0b7181",
   "events": [
     {
       "attempts": 1,
@@ -23111,9 +23119,95 @@
       "runId": "pr-followup-1786909049",
       "sentAt": "2026-08-16T19:42:09.421748Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "BerriAI/litellm#37117"
+      ],
+      "candidateStates": [
+        {
+          "category": "SEMANTIC_REVIEW_RETRY",
+          "digest": "623c1b8abd498b4ef013a6ee83b0dcd3e897f229f4589f6efded65f69243e222",
+          "key": "BerriAI/litellm#37117",
+          "kind": "review",
+          "scannerVersion": "oss_pr_radar_v46_semantic_fallback",
+          "stateId": "551d6312f6f56d8d7a1f2026a6628c54f18224ac09d4662811c543d908a9633a"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#37117](https://github.com/BerriAI/litellm/issues/37117) [Bug]: compression_savings_spend and prompt_caching_savings_spend always $0 with cost-based-routing and multiple deployments per model_name**\n建议：SEMANTIC_REVIEW_RETRY | 分数：11\n价值：用户可见 bug/性能问题，合并动机明确；影响面高，适合做可复现修复；已有 PR 与 issue 代码路径和关键语义重合\n改动：先补失败用例，再沿相关 runtime/provider/scheduler 路径做最小修复。\n验证：用 issue 的公开最小复现先建立失败测试，再运行目标 package 的定向单测和静态检查。\n风险：需确认是否已有 maintainer 设计偏好；避免扩大 API 行为变更。；DCO 将自动使用已配置 Git 身份 sign-off；CLA 不阻止创建 PR，但协议接受仍需用户本人完成。；现有 PR 可能已覆盖根因，需先比较实现边界。\n竞争：发现 PR #37116 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 0，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-16T20:45:56.106894Z",
+      "eventId": "afcb18ef03920fd9017421552e34f9d108a3b98999b607dc562f049ac0582738",
+      "idempotencyKey": "afcb18ef03920fd9017421552e34f9d108a3b98999b607dc56",
+      "kind": "review",
+      "runId": "scan-20260816T204221Z-af8223c68e8b",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "vllm-project/vllm#52298"
+      ],
+      "candidateStates": [
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "bb2c93dd464deb2471f9846d814daf134dfd3a823369bee464b90089185c49c5",
+          "key": "vllm-project/vllm#52298",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "cb2ff9760f63a1098571ae7e0a3af753fa81c629f27fd1197fc3011eeb9df979"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#52298](https://github.com/vllm-project/vllm/pull/52298) [Bugfix] Validate guidance tokenizer compatibility before EngineCore**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-16T20:45:56.448075Z",
+      "eventId": "0a87790f5cda975b6469deb43abe85a2b32c5555239b5d4d13d498991a8ff6f4",
+      "idempotencyKey": "0a87790f5cda975b6469deb43abe85a2b32c5555239b5d4d13",
+      "kind": "watch",
+      "runId": "pr-followup-1786912897",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-16T19:41:28.847254Z",
+  "generatedAt": "2026-08-16T20:45:56.448075Z",
   "newEventCount": 1,
   "version": "notification_outbox_v2"
 }
