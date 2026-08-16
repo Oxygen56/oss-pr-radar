@@ -9687,6 +9687,36 @@
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue clearly describes a silent truncation bug in the cmd branch of build_shell_command with a concrete repro and code anchor. However, the submission policy requires assignment and the gate decision is HUMAN_REVIEW, so work cannot start without maintainer confirmation."
   },
+  "512943a907c85bcc1499c34916af35f87c36abc90937acbe67517aa54e50adeb": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix resourceId assignment in session-subscriptions.ts",
+      "Update resolveSubscriptionSession to resolve by sessionId first",
+      "Add regression test for rule-bound work-item sessions"
+    ],
+    "risks": [
+      "Potential behavior change for legacy project-scoped subscriptions",
+      "Need to confirm maintainer design preference for fix approach"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "test_plan": [
+      "Create a failing test that simulates a rule-bound work-item session and verifies PR notification delivery",
+      "Run targeted unit tests for the GitHub integration package"
+    ],
+    "unknowns": [
+      "No public reproduction steps or test case provided",
+      "Maintainer has not confirmed the fix approach or assigned the issue"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "Issue provides a clear root cause and code anchors, but lacks a public reproduction and maintainer confirmation; gate is HUMAN_REVIEW."
+  },
   "5136ffeab45de80a89f012d72bf41262e9efd142937ffac65e96026cf5d71562": {
     "confidence": 0.8,
     "contradictions": [
@@ -30496,6 +30526,33 @@
       "Maintainer design preference for transaction handling is unknown but not blocking"
     ],
     "why": "Issue provides a precise root cause (transaction ownership conflict between begin_nested and update_server's commit), a clear reproduction path, and a security-relevant side effect (API key leak). No competing PR or issue found. The fix is actionable: adjust transaction handling and reorder key creation."
+  },
+  "f857d44cf89091379a15bd0bc2bf059ce66a6ee88b36ddce15327701e478e815": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "daemon-side path resolution in cached_or_walk",
+      "cli_ls integration test un-ignore"
+    ],
+    "risks": [
+      "Potential design preference on path canonicalization semantics",
+      "May require changes to daemon request handling that could affect other commands"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "test_plan": [
+      "Add regression test that runs `lean-ctx ls .` with daemon active and asserts correct output",
+      "Run existing cli_commands::cli_ls test without #[ignore]"
+    ],
+    "unknowns": [
+      "Exact code path and whether maintainer has preferred fix approach"
+    ],
+    "wait_reason": null,
+    "why": "Issue describes a concrete user-visible regression in CLI path resolution when daemon is active, with a clear reproduction and preliminary root cause. No competing PR or issue found. The fix is actionable and testable via the provided reproduction."
   },
   "f8658379e0be3e23bbb4673be8620c5d7cf8322218f640bf87e0b9a319d16673": {
     "confidence": 0.8,
