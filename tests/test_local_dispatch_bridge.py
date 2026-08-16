@@ -3763,7 +3763,23 @@ def test_restore_list_reconciles_already_unarchived_task(monkeypatch, tmp_path):
     assert store.committed is True
 
 
-def test_restore_reconcile_repairs_desktop_archive_drift(monkeypatch, tmp_path):
+def test_restore_list_does_not_bulk_restore_desktop_archive_drift(monkeypatch, tmp_path):
+    registered_store(tmp_path)
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute("CREATE TABLE threads (id TEXT, archived INTEGER, title TEXT)")
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?)",
+            ("thread-1", 1, "[有价值] task"),
+        )
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+
+    result = MODULE.restore_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert result == {"ok": True, "restore": [], "reconciled": [], "blocked": []}
+
+
+def test_restore_reconcile_repairs_targeted_desktop_archive_drift(monkeypatch, tmp_path):
     store, _worktree = registered_store(tmp_path)
     thread_db = tmp_path / "threads.sqlite3"
     with sqlite3.connect(thread_db) as connection:
@@ -3785,7 +3801,9 @@ def test_restore_reconcile_repairs_desktop_archive_drift(monkeypatch, tmp_path):
 
     monkeypatch.setattr(MODULE, "_unarchive_desktop_threads", unarchive)
 
-    result = MODULE.restore_reconcile(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    result = MODULE.restore_reconcile(
+        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3", thread_id="thread-1")
+    )
 
     assert result["ok"] is True
     assert result["restored"][0]["threadId"] == "thread-1"
@@ -3794,6 +3812,43 @@ def test_restore_reconcile_repairs_desktop_archive_drift(monkeypatch, tmp_path):
         assert connection.execute(
             "SELECT archived FROM threads WHERE id='thread-1'"
         ).fetchone()[0] == 0
+    with store.connect() as connection:
+        restored = connection.execute(
+            "SELECT COUNT(*) FROM events WHERE event_type='THREAD_RESTORED'"
+        ).fetchone()[0]
+    assert restored == 1
+
+
+def test_restore_reconcile_trusts_verified_postcondition_over_transport_error(
+    monkeypatch, tmp_path
+):
+    store, _worktree = registered_store(tmp_path)
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute("CREATE TABLE threads (id TEXT, archived INTEGER, title TEXT)")
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?)",
+            ("thread-1", 1, "[有价值] task"),
+        )
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+
+    def partially_successful_unarchive(candidates):
+        with sqlite3.connect(thread_db) as connection:
+            connection.execute(
+                "UPDATE threads SET archived=0 WHERE id=?",
+                (candidates[0]["threadId"],),
+            )
+        return {"thread-1": "app_server_unarchive_failed"}
+
+    monkeypatch.setattr(MODULE, "_unarchive_desktop_threads", partially_successful_unarchive)
+
+    result = MODULE.restore_reconcile(
+        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3", thread_id="thread-1")
+    )
+
+    assert result["ok"] is True
+    assert result["errors"] == []
+    assert result["restored"][0]["threadId"] == "thread-1"
     with store.connect() as connection:
         restored = connection.execute(
             "SELECT COUNT(*) FROM events WHERE event_type='THREAD_RESTORED'"

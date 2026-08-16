@@ -5498,11 +5498,28 @@ def retry_blocked_publication(args: argparse.Namespace) -> dict[str, Any]:
 
 def restore_list(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
-    bindings = (
-        store.restorable_task_bindings()
-        if hasattr(store, "restorable_task_bindings")
-        else store.restore_candidates()
-    )
+    target_thread_id = str(getattr(args, "thread_id", "") or "")
+    if target_thread_id:
+        bindings = (
+            store.restorable_task_bindings()
+            if hasattr(store, "restorable_task_bindings")
+            else store.restore_candidates()
+        )
+        bindings = [item for item in bindings if item["threadId"] == target_thread_id]
+        if not bindings:
+            return {
+                "ok": False,
+                "restore": [],
+                "reconciled": [],
+                "blocked": [
+                    {
+                        "threadId": target_thread_id,
+                        "reason": "restore_target_not_authorized",
+                    }
+                ],
+            }
+    else:
+        bindings = store.restore_candidates()
     connection = sqlite3.connect(THREAD_DB)
     connection.row_factory = sqlite3.Row
     pending: list[dict[str, Any]] = []
@@ -5516,7 +5533,7 @@ def restore_list(args: argparse.Namespace) -> dict[str, Any]:
                 (candidate["threadId"],),
             ).fetchone()
             if row is None:
-                if ledger_archived:
+                if ledger_archived or target_thread_id:
                     blocked.append(candidate | {"reason": "thread_missing"})
                 continue
             if int(row["archived"] or 0) == 0:
@@ -5786,15 +5803,6 @@ def restore_reconcile(args: argparse.Namespace) -> dict[str, Any]:
     for candidate in candidates:
         thread_id = str(candidate["threadId"])
         apply_error = apply_results.get(thread_id)
-        if apply_error:
-            errors.append(
-                {
-                    "key": candidate.get("key"),
-                    "threadId": thread_id,
-                    "error": apply_error,
-                }
-            )
-            continue
         try:
             committed = restore_commit(
                 argparse.Namespace(
@@ -5809,7 +5817,7 @@ def restore_reconcile(args: argparse.Namespace) -> dict[str, Any]:
                 {
                     "key": candidate.get("key"),
                     "threadId": thread_id,
-                    "error": f"{type(exc).__name__}:{str(exc)[:160]}",
+                    "error": apply_error or f"{type(exc).__name__}:{str(exc)[:160]}",
                 }
             )
     return {"ok": not errors, "restored": restored, "errors": errors}
@@ -6423,6 +6431,24 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
             "restored": restored.get("restored") or [],
             "errors": restored.get("errors") or [],
         }
+    restored_items = list(restored.get("restored") or [])
+
+    def restore_target(candidate: dict[str, Any]) -> dict[str, Any] | None:
+        target = restore_reconcile(
+            argparse.Namespace(
+                ledger=args.ledger,
+                thread_id=candidate["threadId"],
+            )
+        )
+        restored_items.extend(target.get("restored") or [])
+        if target.get("ok"):
+            return None
+        return {
+            "ok": False,
+            "action": "restore_failed",
+            "restored": restored_items,
+            "errors": target.get("errors") or [],
+        }
 
     store = ledger(args.ledger)
     rearmed = _rearm_negative_followup_deliveries(store)
@@ -6432,6 +6458,9 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
     pr_state = pr_followup_list(argparse.Namespace(ledger=args.ledger))
     deferred_followups: list[dict[str, Any]] = []
     for candidate in pr_state.get("candidates") or []:
+        restore_failure = restore_target(candidate)
+        if restore_failure:
+            return restore_failure
         reserved = pr_followup_reserve(
             argparse.Namespace(
                 ledger=args.ledger,
@@ -6461,7 +6490,7 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
             "threadId": candidate.get("threadId"),
             "delivery": delivered,
             "deferredFollowups": deferred_followups,
-            "restored": restored.get("restored") or [],
+            "restored": restored_items,
             "rearmed": rearmed,
             "recoveryRetryExhausted": recovery_exhausted,
         }
@@ -6471,6 +6500,9 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
     )
     if validation_state.get("candidates"):
         candidate = validation_state["candidates"][0]
+        restore_failure = restore_target(candidate)
+        if restore_failure:
+            return restore_failure
         validation_followup_reserve(
             argparse.Namespace(
                 ledger=args.ledger,
@@ -6493,7 +6525,7 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
             "threadId": candidate.get("threadId"),
             "delivery": delivered,
             "deferredFollowups": deferred_followups,
-            "restored": restored.get("restored") or [],
+            "restored": restored_items,
             "rearmed": rearmed,
             "recoveryRetryExhausted": recovery_exhausted,
         }
@@ -6507,6 +6539,9 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
     )
     if recovery_state.get("recoverable"):
         candidate = recovery_state["recoverable"][0]
+        restore_failure = restore_target(candidate)
+        if restore_failure:
+            return restore_failure
         recovery_reserve(
             argparse.Namespace(
                 ledger=args.ledger,
@@ -6528,7 +6563,7 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
             "threadId": candidate.get("threadId"),
             "delivery": delivered,
             "deferredFollowups": deferred_followups,
-            "restored": restored.get("restored") or [],
+            "restored": restored_items,
             "rearmed": rearmed,
             "recoveryRetryExhausted": recovery_exhausted,
         }
@@ -6602,7 +6637,7 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
             "terminalized": terminalized,
             "held": held,
             "deferredFollowups": deferred_followups,
-            "restored": restored.get("restored") or [],
+            "restored": restored_items,
             "rearmed": rearmed,
             "recoveryRetryExhausted": recovery_exhausted,
         }
@@ -6613,7 +6648,7 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
         "terminalized": terminalized,
         "held": held,
         "deferredFollowups": deferred_followups,
-        "restored": restored.get("restored") or [],
+        "restored": restored_items,
         "rearmed": rearmed,
         "recoveryRetryExhausted": recovery_exhausted,
     }

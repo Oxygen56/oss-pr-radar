@@ -1634,7 +1634,7 @@ class RadarLedger:
             )
 
     def restorable_task_bindings(self) -> list[dict[str, Any]]:
-        """Return valuable task bindings that must remain available in the desktop UI."""
+        """Return valuable bindings authorized for targeted desktop restoration."""
 
         with self.connect() as connection:
             rows = connection.execute(
