@@ -2557,11 +2557,11 @@
     },
     "watch|esengine/DeepSeek-Reasonix#8510": {
       "category": "PR_FOLLOWUP",
-      "digest": "b39116156bf715e1d4d11e7dea4b1947efefffa7f0529603d4e0d04e5805dc8f",
+      "digest": "e24c6a33c11521fb76a35d7d2b97b74a11fe2286e7d20e95c93adb3bc0ecd555",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-16T11:40:44.039647Z",
-      "stateId": "1b27160280dc6c308f386195c0723d32a80fe1d30ac597b97b16524580e766b0"
+      "seenAt": "2026-08-16T13:03:53.422302Z",
+      "stateId": "7d4e850a582686157b4aa6d672aac6faa518ecdacf15ba1a7c192db186a27bfa"
     },
     "watch|hashicorp/terraform-mcp-server#442": {
       "category": "PR_FOLLOWUP",
@@ -2613,19 +2613,19 @@
     },
     "watch|sgl-project/sglang#30554": {
       "category": "PR_FOLLOWUP",
-      "digest": "970c045f1715a7b7e65e6559145a2e65e73a59bb349c41dc61175a6d8d059557",
+      "digest": "81331a58331fcf4169cfab67d73ff3bc44373890135776f1e70078eaaba8a945",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-16T11:40:44.039647Z",
-      "stateId": "1ee33f21cb91268e9a4ac2b0d1335deb2c779e3bc1ac42eb29d7d1c870f059f5"
+      "seenAt": "2026-08-16T13:03:53.422302Z",
+      "stateId": "bb263553ad4ef0b9e67de9372177f1402274356313457e9dc5bb982063d55d22"
     },
     "watch|sgl-project/sglang#34138": {
       "category": "PR_FOLLOWUP",
-      "digest": "f9d38ac98fa075834f1c27e9011ca6370ea1550741497747a66fc3e0fa6b7529",
+      "digest": "644b5bbb04e9dac74c860a10d12d73a1baf3858b4e3529a31f8acc66188c9010",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-16T11:40:44.039647Z",
-      "stateId": "25a78a6a2def8e5c7d440b8b0c4bbb2ca664da1204467aeedf80753f955c4d63"
+      "seenAt": "2026-08-16T13:03:53.422302Z",
+      "stateId": "d87972381c4a09925415da256ccfaf535d275fe17659e0075872a808aa8ab35c"
     },
     "watch|vllm-project/vllm#52298": {
       "category": "PR_FOLLOWUP",
@@ -2636,54 +2636,8 @@
       "stateId": "c5172eb8e4a4e71f57dadd95d230b3a7811d1d5958d4f7c22b137f596502b3c7"
     }
   },
-  "digest": "74a360353e24b100fc5a872b435ee3142a9802fbf5337d7553550841ad5cf372",
+  "digest": "5bf96ffb02b89c8d7fc379e94429578427142873e3a68b43cd73c999dc27435e",
   "events": [
-    {
-      "attempts": 1,
-      "candidateKeys": [
-        "lidge-jun/opencodex#1354"
-      ],
-      "candidateStates": [
-        {
-          "category": "WAIT_MAINTAINER",
-          "digest": "63e02a36c985d74a4c6c6bc46d0fbd8bcd957884087bd8f36da263d46f81b560",
-          "key": "lidge-jun/opencodex#1354",
-          "kind": "review",
-          "scannerVersion": "oss_pr_radar_v42_terminal_feedback_revoke",
-          "stateId": "5a2b73216dee8950a295e26012d32cbe8a92f419627d7ab9522519407b835bab"
-        }
-      ],
-      "card": {
-        "config": {
-          "wide_screen_mode": true
-        },
-        "elements": [
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[lidge-jun/opencodex#1354](https://github.com/lidge-jun/opencodex/issues/1354) [Bug]: transient code-mode-host process makes catalog staleness check return \"unknown\", emitting a false \"catalog changed after Codex started\" restart prompt (2.11.1, Windows)**\n建议：WAIT_MAINTAINER | 分数：11\n价值：用户可见 bug/性能问题，合并动机明确；命中 agent/inference/RAG 关键路径；影响面高，适合做可复现修复\n改动：先补失败用例，再沿相关 runtime/provider/scheduler 路径做最小修复。\n验证：用 issue 的公开最小复现先建立失败测试，再运行目标 package 的定向单测和静态检查。\n风险：需确认是否已有 maintainer 设计偏好；避免扩大 API 行为变更。\n竞争：未发现相关 open PR\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 10，根因信号 True",
-              "tag": "lark_md"
-            }
-          }
-        ],
-        "header": {
-          "template": "yellow",
-          "title": {
-            "content": "OSS PR Radar: 需要确认",
-            "tag": "plain_text"
-          }
-        }
-      },
-      "createdAt": "2026-08-09T11:52:21.452185Z",
-      "eventId": "48d64c6c97e971706fe3da4dd57e4f55e769955761e438fbbfe808acae2334d5",
-      "idempotencyKey": "48d64c6c97e971706fe3da4dd57e4f55e769955761e438fbbf",
-      "kind": "review",
-      "lastAttemptAt": "2026-08-09T11:52:55.790620Z",
-      "messageId": "om_x100b68b2ef6dcca0b16baf36bc228c3",
-      "runId": "scan-20260809T115038Z-cfc02f588bb9",
-      "sentAt": "2026-08-09T11:52:58.409982Z",
-      "status": "SENT"
-    },
     {
       "attempts": 1,
       "candidateKeys": [
@@ -22584,9 +22538,90 @@
       "runId": "pr-followup-1786880282",
       "sentAt": "2026-08-16T11:41:24.220694Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "esengine/DeepSeek-Reasonix#8510",
+        "sgl-project/sglang#30554",
+        "sgl-project/sglang#34138"
+      ],
+      "candidateStates": [
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "e24c6a33c11521fb76a35d7d2b97b74a11fe2286e7d20e95c93adb3bc0ecd555",
+          "key": "esengine/DeepSeek-Reasonix#8510",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "7d4e850a582686157b4aa6d672aac6faa518ecdacf15ba1a7c192db186a27bfa"
+        },
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "81331a58331fcf4169cfab67d73ff3bc44373890135776f1e70078eaaba8a945",
+          "key": "sgl-project/sglang#30554",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "bb263553ad4ef0b9e67de9372177f1402274356313457e9dc5bb982063d55d22"
+        },
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "644b5bbb04e9dac74c860a10d12d73a1baf3858b4e3529a31f8acc66188c9010",
+          "key": "sgl-project/sglang#34138",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "d87972381c4a09925415da256ccfaf535d275fe17659e0075872a808aa8ab35c"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[esengine/DeepSeek-Reasonix#8510](https://github.com/esengine/DeepSeek-Reasonix/pull/8510) fix(acp): return prompt failures as JSON-RPC errors**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#30554](https://github.com/sgl-project/sglang/pull/30554) [Spec] Size shared logits buffer for adaptive candidates**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#34138](https://github.com/sgl-project/sglang/pull/34138) Bind streaming abort cleanup to request lifecycle**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-16T13:03:53.422302Z",
+      "eventId": "6daf29d62069b5fa9982646bd6f90a1d7aab373ce153d6c2edfff90307c81602",
+      "idempotencyKey": "6daf29d62069b5fa9982646bd6f90a1d7aab373ce153d6c2ed",
+      "kind": "watch",
+      "runId": "pr-followup-1786885249",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-16T11:40:44.039647Z",
+  "generatedAt": "2026-08-16T13:03:53.422302Z",
   "newEventCount": 1,
   "version": "notification_outbox_v2"
 }
