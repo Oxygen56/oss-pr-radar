@@ -5808,6 +5808,36 @@ def test_new_controller_review_feedback_rearms_a_stalled_validation(monkeypatch,
     assert listed["candidates"][0]["resultDigest"] == second_digest
 
 
+def test_dirty_worktree_rearms_a_stalled_validation_result(tmp_path):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        missing_quality=("relevant_tests_green",),
+    )
+    MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    candidate = store.validation_followup_candidates()[0]
+    store.reserve_validation_followup(thread_id="thread-1", result_digest=candidate["resultDigest"])
+    store.commit_validation_followup(thread_id="thread-1", result_digest=candidate["resultDigest"])
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value["evidence"] = {"summary": "the continuation started but was interrupted"}
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    second_digest = hashlib.sha256(result_path.read_bytes()).hexdigest()
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest=second_digest,
+        missing=["relevant_tests_green"],
+    )
+    (worktree / "runtime.py").write_text("value = 3\n", encoding="utf-8")
+
+    listed = MODULE.validation_followup_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert listed["rearmedReviewFeedback"] == [
+        {"key": "a/b#1", "reason": "WORKTREE_PROGRESS_PENDING_RESULT"}
+    ]
+    assert listed["blockedNoProgress"] == []
+    assert listed["candidates"][0]["resultDigest"] == second_digest
+
+
 def test_validation_followup_never_abandons_an_unreceipted_delivery(monkeypatch, tmp_path):
     now = datetime.now(UTC)
     reserved_at = iso_z(now - timedelta(hours=2))
