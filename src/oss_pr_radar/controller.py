@@ -139,6 +139,7 @@ def controller_cycle(
     lifecycle_ready = recovery.get("ok") is not False and not recovery.get("errors")
     if lifecycle_ready:
         bridge("resultIngestion", "ingest-results")
+        bridge("contextSyncBeforeCleanup", "context-sync")
         bridge("restoreReconcile", "restore-reconcile")
         bridge("titleReconcile", "title-reconcile")
         bridge("cleanupReconcile", "cleanup-reconcile")
@@ -177,6 +178,7 @@ def controller_cycle(
     bridge("alerts", "alerts", *alert_args)
 
     for name, operation, arguments in (
+        ("finalContextRecovery", "context-recover", ()),
         ("finalOrphans", "orphan-list", ()),
         ("finalPrFollowups", "pr-followup-list", ()),
         ("finalValidationFollowups", "validation-followup-list", ()),
@@ -288,7 +290,7 @@ def compact_controller_result(
     if result.get("busy"):
         return result
     stages = result.get("stages") or {}
-    recovery = stages.get("contextRecovery") or {}
+    recovery = stages.get("finalContextRecovery") or stages.get("contextRecovery") or {}
     validation = stages.get("finalValidationFollowups") or {}
     pr_followups = stages.get("finalPrFollowups") or {}
     titles = stages.get("finalTitles") or {}

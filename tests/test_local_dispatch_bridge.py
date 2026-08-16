@@ -4307,6 +4307,59 @@ def test_context_sync_closes_legacy_reservation_superseded_by_later_result(tmp_p
     assert (worktree / ".oss-pr-radar" / "task-context.json").is_file()
 
 
+def test_context_sync_terminalizes_obsolete_task_with_missing_worktree(monkeypatch, tmp_path):
+    store, worktree = registered_store(tmp_path)
+    store.record_stage("a/b#1", "FIX_READY", evidence={})
+    shutil.rmtree(worktree)
+    evidence = SimpleNamespace(digest="live-evidence", as_dict=lambda: {"complete": True})
+    verdict = SimpleNamespace(
+        status="BLOCK",
+        reason_code="STRONG_EXISTING_PR",
+        as_dict=lambda: {"status": "BLOCK", "reason_code": "STRONG_EXISTING_PR"},
+    )
+    monkeypatch.setattr(MODULE, "_audit_intent", lambda _intent: (evidence, verdict))
+
+    synced = MODULE.sync_task_contexts(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert synced["ok"] is True
+    assert synced["unavailable"] == []
+    assert synced["revalidationErrors"] == []
+    assert synced["noGo"] == [
+        {
+            "key": "a/b#1",
+            "reason": "STRONG_EXISTING_PR",
+            "source": "missing_worktree_revalidation",
+        }
+    ]
+    context = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )
+    assert context is not None
+    assert context["stage"] == "AUDIT_NO_GO"
+
+
+def test_context_sync_keeps_missing_worktree_when_live_revalidation_fails(
+    monkeypatch, tmp_path
+):
+    store, worktree = registered_store(tmp_path)
+    shutil.rmtree(worktree)
+
+    def fail_revalidation(_intent):
+        raise RuntimeError("GitHub unavailable")
+
+    monkeypatch.setattr(MODULE, "_audit_intent", fail_revalidation)
+
+    synced = MODULE.sync_task_contexts(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert synced["ok"] is True
+    assert synced["errors"] == []
+    assert synced["unavailable"][0]["reason"] == "TASK_WORKTREE_UNAVAILABLE"
+    assert synced["revalidationErrors"] == [
+        {"key": "a/b#1", "error": "RuntimeError:GitHub unavailable"}
+    ]
+
+
 def test_ingest_skips_consumed_result_after_followup_context_refresh(tmp_path):
     store, worktree, _head_sha, _pr_url = _published_followup_store(tmp_path)
     original_path = MODULE.write_task_context(

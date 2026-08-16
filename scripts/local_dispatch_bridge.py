@@ -101,6 +101,14 @@ PUBLISHED_TASK_STAGES = {
     "MERGED",
     "CLOSED",
 }
+MISSING_WORKTREE_TERMINAL_REASONS = {
+    "ALREADY_FIXED",
+    "DUPLICATE",
+    "DUPLICATE_ACTIVE_PR",
+    "ISSUE_ASSIGNED",
+    "ISSUE_NOT_OPEN",
+    "STRONG_EXISTING_PR",
+}
 IMMEDIATE_RECOVERY_ERROR_CODES = {
     "cyber_policy",
     "cyberPolicy",
@@ -4036,6 +4044,7 @@ def sync_task_contexts(args: argparse.Namespace) -> dict[str, Any]:
     refreshed: list[dict[str, str]] = []
     no_go: list[dict[str, str]] = []
     unavailable: list[dict[str, str]] = []
+    revalidation_errors: list[dict[str, str]] = []
     superseded = store.reconcile_superseded_pr_followups()
     prepared_recovered, errors = _recover_unbound_pr_followup_preparations(store)
     preparation_error_keys = {item["key"] for item in errors}
@@ -4045,6 +4054,43 @@ def sync_task_contexts(args: argparse.Namespace) -> dict[str, Any]:
         try:
             worktree = Path(candidate["worktreePath"]).resolve()
             if not worktree.is_dir():
+                if candidate.get("stage") not in PUBLISHED_TASK_STAGES:
+                    try:
+                        evidence, verdict = _audit_intent(candidate["intent"])
+                    except (OSError, RuntimeError, ValueError) as exc:
+                        revalidation_errors.append(
+                            {
+                                "key": candidate["key"],
+                                "error": f"{type(exc).__name__}:{str(exc)[:240]}",
+                            }
+                        )
+                    else:
+                        if (
+                            verdict.status != "ALLOW"
+                            and verdict.reason_code in MISSING_WORKTREE_TERMINAL_REASONS
+                        ):
+                            store.record_stage(
+                                candidate["key"],
+                                "AUDIT_NO_GO",
+                                evidence={
+                                    "authorization": verdict.as_dict(),
+                                    "evidence": evidence.as_dict(),
+                                    "missingWorktreeRevalidation": True,
+                                },
+                                reason=verdict.reason_code,
+                                dedupe_key=(
+                                    f"{candidate['intentId']}:{evidence.digest}:"
+                                    "missing-worktree-no-go"
+                                ),
+                            )
+                            no_go.append(
+                                {
+                                    "key": candidate["key"],
+                                    "reason": verdict.reason_code,
+                                    "source": "missing_worktree_revalidation",
+                                }
+                            )
+                            continue
                 unavailable.append(
                     {
                         "key": candidate["key"],
@@ -4104,6 +4150,7 @@ def sync_task_contexts(args: argparse.Namespace) -> dict[str, Any]:
         "preparedFollowupsRecovered": prepared_recovered,
         "noGo": no_go,
         "unavailable": unavailable,
+        "revalidationErrors": revalidation_errors,
         "errors": errors,
     }
 
