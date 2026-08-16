@@ -223,6 +223,36 @@
     "wait_reason": "DESIGN_CONFIRMATION",
     "why": "Issue reports a real bug but the proposed fix (fail-open) conflicts with an existing design decision documented in the repo. Maintainer comment confirms the fail-closed boundary is intentional and suggests a different fix direction (prompt/catalog mismatch). The correct approach requires maintainer decision between two opposite changes."
   },
+  "0327e5937cab89f0ae65c1d689742a4217d074a77a10d3119458538a6dbbe567": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "mem0/vector_stores/valkey.py",
+      "delete_col/reset behavior to delete documents"
+    ],
+    "risks": [
+      "Potential API behavior change if FLUSHDB is used",
+      "Need to ensure atomicity and compatibility with Valkey versions"
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Run the provided reproduction script to confirm bug",
+      "Add regression test verifying get_all returns empty after reset",
+      "Run existing Valkey vector store tests"
+    ],
+    "unknowns": [
+      "Whether PR #6996 is merged or superseded",
+      "Maintainer preference on implementation approach"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue describes a clear silent correctness bug in Valkey vector store reset, with root cause and reproduction. However, an existing PR #6996 directly addresses the same issue with a complete implementation and tests, so work should not start without reviewing that PR."
+  },
   "033db4eaa987dbdcdf628d97b4c9218228d1661dd30a55733519d8afa15d077f": {
     "confidence": 0.7,
     "contradictions": [
