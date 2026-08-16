@@ -109,6 +109,35 @@
     ],
     "why": "The issue provides deep device-level evidence of a spin loop in the TMEM allocation path of the FlashMLA sparse-decode kernel, but explicitly states it is not a root-cause report and asks for maintainer guidance on the correct owner and diagnostic path. The root cause (phase mismatch, visibility, or hardware state) is undetermined, and the fix likely requires changes in FlashMLA or CUTLASS, not vLLM. The issue is a request for guidance, not a concrete patch proposal."
   },
+  "01a09a9ee3afaabe638e279effd06836ee4834b586ea07d28095b926ed7d06be": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims bug exists; comment claims fixed on main"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Verify fix in MCP handlers for auth errors",
+      "Add regression test for 401 on missing/malformed Authorization"
+    ],
+    "risks": [
+      "Fix may be incomplete or not cover all MCP routes"
+    ],
+    "root_cause_clarity": "high",
+    "score": 5,
+    "test_plan": [
+      "Run repro curl against main to confirm 401",
+      "Add unit test for MCP handler auth failure"
+    ],
+    "unknowns": [
+      "Whether fix #31011 fully addresses all MCP routes and edge cases"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue reports a clear bug with root cause and repro, but a comment claims it is already fixed on main by PR #31011. Need to verify the fix and whether any residual work remains."
+  },
   "01a0c0fa6eda773ed6c5b205f41589ecd8f05712c704a405ddd83bad3c36be4f": {
     "confidence": 0.85,
     "contradictions": [],
@@ -11130,6 +11159,38 @@
       "Maintainer preference on approach"
     ],
     "why": "Issue provides a clear root cause and a verified fix for a user-visible UTF-8 corruption bug, but the deterministic gate requires HUMAN_REVIEW and existing PRs overlap semantically, necessitating maintainer comparison before starting new work."
+  },
+  "5d5f68c2d55b7938c3b90785c089f3745b83c100ff8a033344a29385419c57b2": {
+    "confidence": 0.9,
+    "contradictions": [
+      "PR #4542 is draft but task claims implementation done"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Complete verification tasks in TASK-4532002",
+      "Finalize PR #4542 with structured field-path diff and higressVersion rejection test"
+    ],
+    "risks": [
+      "Baseline test failures in pkg/plugin/types and pkg/util may block CI",
+      "Controlled local-docker test requires disposable environment"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Run controlled local-docker red/green test",
+      "Add explicit test for --set higressVersion rejection",
+      "Run go test ./... after fixing baseline failures"
+    ],
+    "unknowns": [
+      "Whether PR #4542 will be completed and merged",
+      "Exact status of controlled local-docker verification"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "The issue is a well-specified design with maintainer approval and a draft PR (#4542) already implements the core guard with tests. The remaining work is verification and PR completion, not a new implementation. The candidate is essentially a duplicate of the existing PR effort."
   },
   "5d64d72413e54e7bdd5f74b4f10dc09c27a7c87f036086277f7b416fafb73a07": {
     "confidence": 0.9,
