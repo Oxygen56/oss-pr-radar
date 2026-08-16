@@ -260,6 +260,47 @@ def test_event_drain_skips_stale_pr_snapshot_and_continues_to_new_issue(monkeypa
     assert result["deferredFollowups"] == [{"key": "a/b#1", "reason": "live_snapshot_changed"}]
 
 
+def test_event_drain_treats_validation_wip_race_as_a_normal_deferral(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        MODULE, "restore_reconcile", lambda _args: {"ok": True, "restored": [], "errors": []}
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "pr_followup_list",
+        lambda _args: {"candidates": [], "restoreRequired": [], "unresolved": []},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "validation_followup_list",
+        lambda _args: {
+            "candidates": [
+                {
+                    "key": "a/b#1",
+                    "threadId": "thread-1",
+                    "resultDigest": "result-digest",
+                }
+            ]
+        },
+    )
+
+    def reserve(_args):
+        raise RuntimeError("global task WIP limit reached")
+
+    monkeypatch.setattr(MODULE, "validation_followup_reserve", reserve)
+
+    result = MODULE.drain_once(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            project_id="github-project",
+            owner="event-drain",
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["action"] == "none"
+    assert result["held"] == [{"key": "a/b#1", "reason": "global_task_wip_limit"}]
+
+
 @pytest.fixture(autouse=True)
 def disable_live_thread_watchdog(monkeypatch, tmp_path):
     thread_db = tmp_path / "default-codex-db" / "threads.sqlite3"

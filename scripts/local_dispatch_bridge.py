@@ -6754,14 +6754,32 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
         restore_failure = restore_target(candidate)
         if restore_failure:
             return restore_failure
-        validation_followup_reserve(
-            argparse.Namespace(
-                ledger=args.ledger,
-                thread_id=candidate["threadId"],
-                result_digest=candidate["resultDigest"],
-                prefetch_complete=False,
+        try:
+            validation_followup_reserve(
+                argparse.Namespace(
+                    ledger=args.ledger,
+                    thread_id=candidate["threadId"],
+                    result_digest=candidate["resultDigest"],
+                    prefetch_complete=False,
+                )
             )
-        )
+        except RuntimeError as exc:
+            if "global task WIP limit reached" not in str(exc):
+                raise
+            return {
+                "ok": True,
+                "action": "none",
+                "held": [
+                    {
+                        "key": candidate.get("key"),
+                        "reason": "global_task_wip_limit",
+                    }
+                ],
+                "deferredFollowups": deferred_followups,
+                "restored": restored_items,
+                "rearmed": rearmed,
+                "recoveryRetryExhausted": recovery_exhausted,
+            }
         delivered = validation_followup_deliver(
             argparse.Namespace(
                 ledger=args.ledger,
