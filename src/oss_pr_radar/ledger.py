@@ -1973,8 +1973,16 @@ class RadarLedger:
                      WHERE r.event_type='PR_FOLLOWUP_RESERVED'
                        AND NOT EXISTS (
                          SELECT 1 FROM events exhausted
+                         JOIN events recovery
+                           ON recovery.opportunity_key=exhausted.opportunity_key
+                          AND recovery.event_type='THREAD_RECOVERY_RESERVED'
+                          AND recovery.dedupe_key=exhausted.dedupe_key
                          WHERE exhausted.opportunity_key=r.opportunity_key
                            AND exhausted.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED'
+                           AND json_extract(recovery.payload_json,'$.recoveryKind')=
+                               'PR_FOLLOWUP_RESULT'
+                           AND json_extract(recovery.payload_json,'$.followupDigest')=
+                               r.dedupe_key
                        )
                        AND NOT EXISTS (
                          SELECT 1 FROM events result
@@ -1996,10 +2004,18 @@ class RadarLedger:
                        AND o.stage='VALIDATION_PENDING'
                        AND NOT EXISTS (
                          SELECT 1 FROM events exhausted
+                         JOIN events recovery
+                           ON recovery.opportunity_key=exhausted.opportunity_key
+                          AND recovery.event_type='THREAD_RECOVERY_RESERVED'
+                          AND recovery.dedupe_key=exhausted.dedupe_key
                          WHERE exhausted.opportunity_key=r.opportunity_key
                            AND exhausted.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED'
+                           AND json_extract(recovery.payload_json,'$.recoveryKind')=
+                               'VALIDATION_FOLLOWUP_RESULT'
+                           AND json_extract(recovery.payload_json,'$.followupDigest')=
+                               json_extract(r.payload_json,'$.resultDigest')
                        )
-                       AND r.dedupe_key=(
+                       AND json_extract(r.payload_json,'$.resultDigest')=(
                          SELECT json_extract(d.payload_json,'$.resultDigest')
                          FROM events d
                          WHERE d.opportunity_key=r.opportunity_key
@@ -2010,7 +2026,9 @@ class RadarLedger:
                          SELECT 1 FROM events abandoned
                          WHERE abandoned.opportunity_key=r.opportunity_key
                            AND abandoned.event_type='VALIDATION_FOLLOWUP_DELIVERY_ABANDONED'
-                           AND json_extract(abandoned.payload_json,'$.resultDigest')=r.dedupe_key
+                           AND json_extract(abandoned.payload_json,'$.resultDigest')=
+                               json_extract(r.payload_json,'$.resultDigest')
+                           AND json_extract(abandoned.payload_json,'$.reservedAt')=r.created_at
                            AND abandoned.id>r.id
                        )
                    )""",
@@ -2049,9 +2067,15 @@ class RadarLedger:
                      AND d.created_at<=?
                      AND NOT EXISTS (
                        SELECT 1 FROM events exhausted
+                       JOIN events recovery
+                         ON recovery.opportunity_key=exhausted.opportunity_key
+                        AND recovery.event_type='THREAD_RECOVERY_RESERVED'
+                        AND recovery.dedupe_key=exhausted.dedupe_key
                        WHERE exhausted.opportunity_key=o.key
                          AND exhausted.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED'
-                         AND json_extract(exhausted.payload_json,'$.threadId')=i.thread_id
+                         AND json_extract(recovery.payload_json,'$.threadId')=i.thread_id
+                         AND json_extract(recovery.payload_json,'$.recoveryKind')='DISPATCHED_TASK'
+                         AND recovery.created_at>=d.created_at
                      )
                      AND NOT EXISTS (
                        SELECT 1 FROM events e
@@ -2099,9 +2123,16 @@ class RadarLedger:
                      AND s.created_at<=?
                      AND NOT EXISTS (
                        SELECT 1 FROM events exhausted
+                       JOIN events recovery
+                         ON recovery.opportunity_key=exhausted.opportunity_key
+                        AND recovery.event_type='THREAD_RECOVERY_RESERVED'
+                        AND recovery.dedupe_key=exhausted.dedupe_key
                        WHERE exhausted.opportunity_key=o.key
                          AND exhausted.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED'
-                         AND json_extract(exhausted.payload_json,'$.threadId')=i.thread_id
+                         AND json_extract(recovery.payload_json,'$.threadId')=i.thread_id
+                         AND json_extract(recovery.payload_json,'$.recoveryKind')=
+                             'PR_FOLLOWUP_RESULT'
+                         AND json_extract(recovery.payload_json,'$.followupDigest')=s.dedupe_key
                      )
                      AND NOT EXISTS (
                        SELECT 1 FROM events result
@@ -2155,9 +2186,16 @@ class RadarLedger:
                    WHERE o.stage='VALIDATION_PENDING' AND s.created_at<=?
                      AND NOT EXISTS (
                        SELECT 1 FROM events exhausted
+                       JOIN events recovery
+                         ON recovery.opportunity_key=exhausted.opportunity_key
+                        AND recovery.event_type='THREAD_RECOVERY_RESERVED'
+                        AND recovery.dedupe_key=exhausted.dedupe_key
                        WHERE exhausted.opportunity_key=o.key
                          AND exhausted.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED'
-                         AND json_extract(exhausted.payload_json,'$.threadId')=i.thread_id
+                         AND json_extract(recovery.payload_json,'$.threadId')=i.thread_id
+                         AND json_extract(recovery.payload_json,'$.recoveryKind')=
+                             'VALIDATION_FOLLOWUP_RESULT'
+                         AND json_extract(recovery.payload_json,'$.followupDigest')=s.dedupe_key
                      )
                      AND NOT EXISTS (
                        SELECT 1 FROM events result
@@ -2475,7 +2513,7 @@ class RadarLedger:
         )
         with self.transaction() as connection:
             row = connection.execute(
-                """SELECT opportunity_key AS key FROM events
+                """SELECT opportunity_key AS key,payload_json FROM events
                    WHERE event_type='THREAD_RECOVERY_RESERVED'
                      AND json_extract(payload_json,'$.threadId')=?
                      AND json_extract(payload_json,'$.recoveryNonce')=?
@@ -2484,12 +2522,18 @@ class RadarLedger:
             ).fetchone()
             if row is None:
                 raise LedgerError("exhausted recovery reservation not found")
+            reservation = json.loads(row["payload_json"])
             self._event(
                 connection,
                 row["key"],
                 "THREAD_RECOVERY_RETRY_EXHAUSTED",
                 nonce,
-                {"threadId": thread_id, "recoveryNonce": nonce},
+                {
+                    "threadId": thread_id,
+                    "recoveryNonce": nonce,
+                    "recoveryKind": reservation.get("recoveryKind"),
+                    "followupDigest": reservation.get("followupDigest"),
+                },
                 iso_z(datetime.now(UTC)),
             )
 
@@ -2645,12 +2689,15 @@ class RadarLedger:
                      AND NOT EXISTS (
                        SELECT 1 FROM events r WHERE r.opportunity_key=o.key
                          AND r.event_type='VALIDATION_FOLLOWUP_RESERVED'
-                         AND r.dedupe_key=json_extract(d.payload_json,'$.resultDigest')
+                         AND json_extract(r.payload_json,'$.resultDigest')=
+                             json_extract(d.payload_json,'$.resultDigest')
                          AND NOT EXISTS (
                            SELECT 1 FROM events abandoned
                            WHERE abandoned.opportunity_key=r.opportunity_key
                              AND abandoned.event_type='VALIDATION_FOLLOWUP_DELIVERY_ABANDONED'
-                             AND json_extract(abandoned.payload_json,'$.resultDigest')=r.dedupe_key
+                             AND json_extract(abandoned.payload_json,'$.resultDigest')=
+                                 json_extract(r.payload_json,'$.resultDigest')
+                             AND json_extract(abandoned.payload_json,'$.reservedAt')=r.created_at
                              AND abandoned.id>r.id
                          )
                      )
@@ -2749,25 +2796,42 @@ class RadarLedger:
         )
         if candidate is None:
             raise LedgerError("validation follow-up authorization is stale or invalid")
+        now = iso_z(datetime.now(UTC))
         with self.transaction() as connection:
             if max_active is not None and self._active_task_count(
                 connection,
-                now=iso_z(datetime.now(UTC)),
+                now=now,
             ) >= max(0, max_active):
                 raise LedgerError("global task WIP limit reached")
+            prior_attempts = int(
+                connection.execute(
+                    """SELECT COUNT(*) FROM events
+                       WHERE opportunity_key=?
+                         AND event_type='VALIDATION_FOLLOWUP_RESERVED'
+                         AND json_extract(payload_json,'$.threadId')=?
+                         AND json_extract(payload_json,'$.resultDigest')=?""",
+                    (candidate["key"], thread_id, result_digest),
+                ).fetchone()[0]
+            )
+            attempt = prior_attempts + 1
+            reservation_digest = sha256_text(
+                f"{candidate['key']}|{thread_id}|{result_digest}|attempt:{attempt}"
+            )
             self._event(
                 connection,
                 candidate["key"],
                 "VALIDATION_FOLLOWUP_RESERVED",
-                result_digest,
+                reservation_digest,
                 {
                     "threadId": thread_id,
                     "resultDigest": result_digest,
                     "missing": candidate["missing"],
+                    "attempt": attempt,
+                    "reservationDigest": reservation_digest,
                 },
-                iso_z(datetime.now(UTC)),
+                now,
             )
-        return candidate
+        return candidate | {"attempt": attempt, "reservationDigest": reservation_digest}
 
     def commit_validation_followup(self, *, thread_id: str, result_digest: str) -> None:
         now = iso_z(datetime.now(UTC))
@@ -2777,7 +2841,7 @@ class RadarLedger:
                    JOIN intents i ON i.opportunity_key=o.key
                    JOIN events r ON r.opportunity_key=o.key
                      AND r.event_type='VALIDATION_FOLLOWUP_RESERVED'
-                     AND r.dedupe_key=?
+                     AND json_extract(r.payload_json,'$.resultDigest')=?
                    WHERE i.thread_id=?
                      AND NOT EXISTS (
                        SELECT 1 FROM events s WHERE s.opportunity_key=o.key
@@ -2788,7 +2852,9 @@ class RadarLedger:
                        SELECT 1 FROM events abandoned
                        WHERE abandoned.opportunity_key=r.opportunity_key
                          AND abandoned.event_type='VALIDATION_FOLLOWUP_DELIVERY_ABANDONED'
-                         AND json_extract(abandoned.payload_json,'$.resultDigest')=r.dedupe_key
+                         AND json_extract(abandoned.payload_json,'$.resultDigest')=
+                             json_extract(r.payload_json,'$.resultDigest')
+                         AND json_extract(abandoned.payload_json,'$.reservedAt')=r.created_at
                          AND abandoned.id>r.id
                      )
                    ORDER BY r.id DESC LIMIT 1""",
@@ -2822,13 +2888,15 @@ class RadarLedger:
                    WHERE NOT EXISTS (
                      SELECT 1 FROM events s WHERE s.opportunity_key=o.key
                        AND s.event_type='VALIDATION_FOLLOWUP_SENT'
-                       AND s.dedupe_key=r.dedupe_key
+                       AND s.dedupe_key=json_extract(r.payload_json,'$.resultDigest')
                    )
                      AND NOT EXISTS (
                        SELECT 1 FROM events abandoned
                        WHERE abandoned.opportunity_key=r.opportunity_key
                          AND abandoned.event_type='VALIDATION_FOLLOWUP_DELIVERY_ABANDONED'
-                         AND json_extract(abandoned.payload_json,'$.resultDigest')=r.dedupe_key
+                         AND json_extract(abandoned.payload_json,'$.resultDigest')=
+                             json_extract(r.payload_json,'$.resultDigest')
+                         AND json_extract(abandoned.payload_json,'$.reservedAt')=r.created_at
                          AND abandoned.id>r.id
                      ) ORDER BY r.created_at"""
             ).fetchall()
@@ -2859,22 +2927,24 @@ class RadarLedger:
         now = iso_z(current)
         with self.transaction() as connection:
             row = connection.execute(
-                """SELECT r.id,r.opportunity_key AS key,r.created_at
+                """SELECT r.id,r.opportunity_key AS key,r.dedupe_key,r.created_at
                    FROM events r
                    WHERE r.event_type='VALIDATION_FOLLOWUP_RESERVED'
                      AND json_extract(r.payload_json,'$.threadId')=?
-                     AND r.dedupe_key=?
+                     AND json_extract(r.payload_json,'$.resultDigest')=?
                      AND NOT EXISTS (
                        SELECT 1 FROM events sent
                        WHERE sent.opportunity_key=r.opportunity_key
                          AND sent.event_type='VALIDATION_FOLLOWUP_SENT'
-                         AND sent.dedupe_key=r.dedupe_key
+                         AND sent.dedupe_key=json_extract(r.payload_json,'$.resultDigest')
                      )
                      AND NOT EXISTS (
                        SELECT 1 FROM events abandoned
                        WHERE abandoned.opportunity_key=r.opportunity_key
                          AND abandoned.event_type='VALIDATION_FOLLOWUP_DELIVERY_ABANDONED'
-                         AND json_extract(abandoned.payload_json,'$.resultDigest')=r.dedupe_key
+                         AND json_extract(abandoned.payload_json,'$.resultDigest')=
+                             json_extract(r.payload_json,'$.resultDigest')
+                         AND json_extract(abandoned.payload_json,'$.reservedAt')=r.created_at
                          AND abandoned.id>r.id
                      )
                    ORDER BY r.id DESC LIMIT 1""",
@@ -2893,6 +2963,7 @@ class RadarLedger:
                 {
                     "threadId": thread_id,
                     "resultDigest": result_digest,
+                    "reservationDigest": row["dedupe_key"],
                     "reservedAt": row["created_at"],
                     "reason": reason,
                     "minimumAgeMinutes": max(1, min_age_minutes),
@@ -2917,6 +2988,18 @@ class RadarLedger:
                      AND s.event_type='VALIDATION_FOLLOWUP_SENT'
                      AND s.dedupe_key=json_extract(d.payload_json,'$.resultDigest')
                    WHERE o.stage='VALIDATION_PENDING' AND s.created_at<=?
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events exhausted
+                       JOIN events recovery
+                         ON recovery.opportunity_key=exhausted.opportunity_key
+                        AND recovery.event_type='THREAD_RECOVERY_RESERVED'
+                        AND recovery.dedupe_key=exhausted.dedupe_key
+                       WHERE exhausted.opportunity_key=o.key
+                         AND exhausted.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED'
+                         AND json_extract(recovery.payload_json,'$.recoveryKind')=
+                             'VALIDATION_FOLLOWUP_RESULT'
+                         AND json_extract(recovery.payload_json,'$.followupDigest')=s.dedupe_key
+                     )
                    ORDER BY s.created_at""",
                 (cutoff,),
             ).fetchall()

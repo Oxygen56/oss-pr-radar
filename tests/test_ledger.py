@@ -1536,14 +1536,40 @@ def test_repeatedly_interrupted_recovery_is_terminal_and_releases_wip(tmp_path):
     recovery = store.recovery_candidates(min_age_minutes=0)[0]
     store.reserve_recovery(thread_id="thread-1", nonce=recovery["recoveryNonce"])
     store.commit_recovery(thread_id="thread-1", nonce=recovery["recoveryNonce"])
+    with store.connect() as connection:
+        connection.execute(
+            """UPDATE events SET created_at=?
+               WHERE event_type='VALIDATION_FOLLOWUP_SENT'""",
+            (iso_z(datetime.now(UTC) - timedelta(hours=3)),),
+        )
 
     pending = store.sent_recoveries_without_result()
 
     assert pending[0]["threadId"] == "thread-1"
+    assert store.stale_validation_followups(min_age_minutes=90)[0]["threadId"] == "thread-1"
     store.exhaust_recovery(thread_id="thread-1", nonce=recovery["recoveryNonce"])
     assert store.sent_recoveries_without_result() == []
     assert store.recovery_candidates(min_age_minutes=0) == []
+    assert store.stale_validation_followups(min_age_minutes=90) == []
     assert store.active_task_count() == 0
+
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest="new-result-digest",
+        missing=["independent_review_passed"],
+    )
+    store.reserve_validation_followup(
+        thread_id="thread-1", result_digest="new-result-digest"
+    )
+    store.commit_validation_followup(
+        thread_id="thread-1", result_digest="new-result-digest"
+    )
+
+    rearmed = store.recovery_candidates(min_age_minutes=0)
+
+    assert rearmed[0]["recoveryKind"] == "VALIDATION_FOLLOWUP_RESULT"
+    assert rearmed[0]["followupDigest"] == "new-result-digest"
 
 
 def test_completed_task_can_enter_controlled_validation(tmp_path):
@@ -1660,6 +1686,20 @@ def test_validation_followup_unknown_delivery_can_be_safely_abandoned(tmp_path):
 
     assert store.unresolved_validation_followups() == []
     assert store.validation_followup_candidates()[0]["resultDigest"] == "result-digest-1"
+
+    retry = store.reserve_validation_followup(
+        thread_id="thread-1", result_digest="result-digest-1"
+    )
+
+    assert retry["attempt"] == 2
+    assert store.unresolved_validation_followups()[0]["resultDigest"] == "result-digest-1"
+    with store.connect() as connection:
+        reservations = connection.execute(
+            """SELECT COUNT(*) AS total,COUNT(DISTINCT dedupe_key) AS distinct_total
+               FROM events WHERE event_type='VALIDATION_FOLLOWUP_RESERVED'"""
+        ).fetchone()
+    assert reservations["total"] == 2
+    assert reservations["distinct_total"] == 2
 
 
 def test_validation_followup_stops_when_a_new_result_has_the_same_gap(tmp_path):
