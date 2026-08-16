@@ -3363,6 +3363,78 @@ def test_app_server_watchdog_uses_persisted_terminal_probe_when_read_stalls(monk
     assert json.loads(process.stdin.writes[0])["method"] == "thread/read"
 
 
+def test_app_server_watchdog_uses_live_probe_when_rollout_is_stale(monkeypatch):
+    class FakeStdin:
+        def __init__(self):
+            self.writes: list[bytes] = []
+
+        def write(self, value: bytes) -> None:
+            self.writes.append(value)
+
+        def flush(self) -> None:
+            return None
+
+    class FakeStdout:
+        @staticmethod
+        def fileno() -> int:
+            return 123
+
+    class FakeProcess:
+        def __init__(self):
+            self.stdin = FakeStdin()
+            self.stdout = FakeStdout()
+
+        @staticmethod
+        def poll():
+            return None
+
+    class NeverReadySelector:
+        @staticmethod
+        def select(_timeout):
+            return []
+
+    class StepClock:
+        def __init__(self):
+            self.value = -1.0
+
+        def __call__(self):
+            self.value += 1.0
+            return self.value
+
+    monkeypatch.setattr(MODULE, "monotonic", StepClock())
+    monkeypatch.setattr(MODULE, "APP_SERVER_WATCHDOG_INTERVAL_SECONDS", 0.0)
+    monkeypatch.setattr(MODULE, "APP_SERVER_WATCHDOG_STALE_SECONDS", 0.0)
+    monkeypatch.setattr(MODULE, "APP_SERVER_WATCHDOG_EXTERNAL_PROBE_SECONDS", 2.0)
+    monkeypatch.setattr(MODULE, "persisted_thread_turn_state", lambda _thread_id: None)
+    monkeypatch.setattr(
+        MODULE,
+        "live_thread_turn_states",
+        lambda thread_ids: (
+            {
+                "thread-1": {
+                    "turnId": "turn-1",
+                    "status": "interrupted",
+                    "code": "turn_interrupted",
+                    "message": "interrupted",
+                }
+            }
+            if thread_ids == {"thread-1"}
+            else {}
+        ),
+    )
+    process = FakeProcess()
+
+    result = MODULE._wait_for_app_server_terminal_turn(
+        process,
+        NeverReadySelector(),
+        b"",
+        thread_id="thread-1",
+        turn_id="turn-1",
+    )
+
+    assert result == {"turnId": "turn-1", "status": "interrupted", "error": None}
+
+
 def test_app_server_watchdog_reconciles_persisted_terminal_view(monkeypatch):
     class FakeStdin:
         def __init__(self):
@@ -6033,6 +6105,41 @@ def test_string_unverified_dependency_gate_is_environment_blocked(monkeypatch, t
     assert listed["rearmedReviewFeedback"] == []
     assert listed["environmentBlocked"][0]["key"] == "a/b#1"
     assert listed["environmentBlocked"][0]["reason"] == ("DEPENDENCY_ENVIRONMENT_UNAVAILABLE")
+
+
+def test_string_unverified_gate_with_lockfile_builds_prefetch_plan(tmp_path):
+    worktree = tmp_path / "worktree"
+    private = worktree / ".oss-pr-radar"
+    private.mkdir(parents=True)
+    (worktree / "uv.lock").write_text("version = 1\n", encoding="utf-8")
+    (worktree / "pyproject.toml").write_text("[project]\nname = 'x'\n", encoding="utf-8")
+    result = {
+        "changedFiles": ["src/runtime.py"],
+        "tests": [],
+        "evidence": {
+            "unverifiedGates": [
+                "uv run pytest requires 54 uncached packages in the locked environment"
+            ]
+        },
+    }
+    raw = json.dumps(result).encode()
+    (private / "result.json").write_bytes(raw)
+
+    commands, failures = MODULE._validation_prefetch_plan(
+        {
+            "worktreePath": str(worktree),
+            "resultDigest": hashlib.sha256(raw).hexdigest(),
+        }
+    )
+
+    assert len(failures) == 1
+    assert commands == [
+        {
+            "kind": "uv_locked_sync",
+            "cwd": str(worktree.resolve()),
+            "argv": ["uv", "sync", "--frozen", "--no-install-project"],
+        }
+    ]
 
 
 def test_validation_followup_never_abandons_an_unreceipted_delivery(monkeypatch, tmp_path):

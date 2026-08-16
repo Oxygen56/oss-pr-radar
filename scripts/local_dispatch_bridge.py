@@ -1847,6 +1847,8 @@ def _wait_for_app_server_terminal_turn(
         )
         if now >= next_external_probe_at:
             independently_observed = persisted_thread_turn_state(thread_id)
+            if independently_observed is None:
+                independently_observed = live_thread_turn_states({thread_id}).get(thread_id)
             next_external_probe_at = monotonic() + APP_SERVER_WATCHDOG_EXTERNAL_PROBE_SECONDS
             if (
                 independently_observed
@@ -4611,6 +4613,7 @@ VALIDATION_DEPENDENCY_FAILURE_MARKERS = (
     "offline",
     "not cached",
     "uncached dependencies",
+    "uncached packages",
     "incomplete cached environment",
     "incomplete local dependency tree",
     "lacks locked dependency",
@@ -4634,6 +4637,7 @@ VALIDATION_DEPENDENCY_FAILURE_MARKERS = (
     "executable is unavailable",
     "not on path",
     "absent from path",
+    "was not present",
     "no worktree-local prefetched executable",
 )
 
