@@ -2597,19 +2597,19 @@
     },
     "watch|sgl-project/sglang#30554": {
       "category": "PR_FOLLOWUP",
-      "digest": "145cd51b4d8ee09cf2704d900d1948b8d0a96a97a742b3575ae2e2aae8e40e21",
+      "digest": "f91b7d1c6ed6b3c9c7793229c9c4d6eba04f035a4fbf4920cfa3377e9a866a74",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-16T04:56:30.221662Z",
-      "stateId": "48e857bd2dce0bf5b7c9e878e8264d561a245c6783cc815e5d9a9295f3c880bd"
+      "seenAt": "2026-08-16T07:05:46.148482Z",
+      "stateId": "56a0c0988bf12debf2a1b76e59559acfc4aa8aafe5710a1516f844fb5dfc7e43"
     },
     "watch|sgl-project/sglang#34138": {
       "category": "PR_FOLLOWUP",
-      "digest": "ca64e81cdf2f8fe9883f9381388e3b8c36fc30c350bfc12bb72fa79c7d6fa5a5",
+      "digest": "4aecdf49bd3276ccbd96e6a5787c834fceb6829d3558d795fa0fc7e55f3880b8",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-16T04:56:30.221662Z",
-      "stateId": "b1381e0e37bb1c7019250c39b2ad2df7189777f67f61e8b2b467e1a756de3f39"
+      "seenAt": "2026-08-16T07:05:46.148482Z",
+      "stateId": "ccda86f531bb2063d191de9b3201606f788bf0994f83496081acf0f3109ca2dd"
     },
     "watch|vllm-project/vllm#52298": {
       "category": "PR_FOLLOWUP",
@@ -2620,54 +2620,8 @@
       "stateId": "e0c7d0cc96e26ab5aafd77ffcc6e444e3760e4aa7a7535decf8f4b63d8c69400"
     }
   },
-  "digest": "823e685215f671cb820b7e85bee42c96ccc08603d14a817f5528df35bc96b4b5",
+  "digest": "f131093341edf1ec9773397d2318122ecf8fa8e717037eb30ebf8e23ffccf1a1",
   "events": [
-    {
-      "attempts": 1,
-      "candidateKeys": [
-        "kirodotdev/KiroCrew#2319"
-      ],
-      "candidateStates": [
-        {
-          "category": "WAIT_MAINTAINER",
-          "digest": "5fb108d5796dec719a9c5d2dc4cdff6a6af24639c59fc1984e6c95a876edf3c1",
-          "key": "kirodotdev/KiroCrew#2319",
-          "kind": "review",
-          "scannerVersion": "oss_pr_radar_v41_no_code_action_gate",
-          "stateId": "fda1d6b9abb847777ade0d649ccf5ac00f9198488e6b943daa3a2971783b7ec5"
-        }
-      ],
-      "card": {
-        "config": {
-          "wide_screen_mode": true
-        },
-        "elements": [
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[kirodotdev/KiroCrew#2319](https://github.com/kirodotdev/KiroCrew/issues/2319) Subagent completion events not injected back into originating Telegram session**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue describes a reproducible bug in subagent completion event routing, but lacks a clear root cause and requires maintainer design confirmation for the intended session injection behavior.\n改动：session routing logic for subagent completion events；event injection into originating Telegram session\n验证：Reproduce with provided steps and assert completion event appears in Telegram session；Add integration test for spawn_run from Telegram channel\n风险：Changing event routing may affect other channels or dashboard behavior；Potential race conditions in session mapping\n竞争：未发现相关 open PR\n下一步：按正常流程实现并验证；如要求 DCO 则自动 sign-off，PR 创建后报告 CLA 状态。\n证据：复现信号 8，根因信号 True",
-              "tag": "lark_md"
-            }
-          }
-        ],
-        "header": {
-          "template": "yellow",
-          "title": {
-            "content": "OSS PR Radar: 需要确认",
-            "tag": "plain_text"
-          }
-        }
-      },
-      "createdAt": "2026-08-09T06:04:40.531729Z",
-      "eventId": "6e522a401826ccebb762f229391cb475d873b0bdb786ffc1984b78ff97320b42",
-      "idempotencyKey": "6e522a401826ccebb762f229391cb475d873b0bdb786ffc198",
-      "kind": "review",
-      "lastAttemptAt": "2026-08-09T06:05:09.902500Z",
-      "messageId": "om_x100b68b5c7bbbca0dd2f8213f5b1c40",
-      "runId": "scan-20260809T060220Z-b711ae2cb2c3",
-      "sentAt": "2026-08-09T06:05:11.797963Z",
-      "status": "SENT"
-    },
     {
       "attempts": 1,
       "candidateKeys": [
@@ -22479,9 +22433,71 @@
       "runId": "pr-followup-1786855961",
       "sentAt": "2026-08-16T04:57:13.543896Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "sgl-project/sglang#30554",
+        "sgl-project/sglang#34138"
+      ],
+      "candidateStates": [
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "f91b7d1c6ed6b3c9c7793229c9c4d6eba04f035a4fbf4920cfa3377e9a866a74",
+          "key": "sgl-project/sglang#30554",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "56a0c0988bf12debf2a1b76e59559acfc4aa8aafe5710a1516f844fb5dfc7e43"
+        },
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "4aecdf49bd3276ccbd96e6a5787c834fceb6829d3558d795fa0fc7e55f3880b8",
+          "key": "sgl-project/sglang#34138",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "ccda86f531bb2063d191de9b3201606f788bf0994f83496081acf0f3109ca2dd"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#30554](https://github.com/sgl-project/sglang/pull/30554) [Spec] Size shared logits buffer for adaptive candidates**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#34138](https://github.com/sgl-project/sglang/pull/34138) Bind streaming abort cleanup to request lifecycle**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-16T07:05:46.148482Z",
+      "eventId": "ea6eddf89b6011ca85e0926e7280f599e8cca7e821af050ebbe9354317f37720",
+      "idempotencyKey": "ea6eddf89b6011ca85e0926e7280f599e8cca7e821af050ebb",
+      "kind": "watch",
+      "runId": "pr-followup-1786863774",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-16T05:49:14.002929Z",
-  "newEventCount": 0,
+  "generatedAt": "2026-08-16T07:05:46.148482Z",
+  "newEventCount": 1,
   "version": "notification_outbox_v2"
 }
