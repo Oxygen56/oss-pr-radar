@@ -1586,12 +1586,8 @@ def test_repeatedly_interrupted_recovery_is_terminal_and_releases_wip(tmp_path):
         result_digest="new-result-digest",
         missing=["independent_review_passed"],
     )
-    store.reserve_validation_followup(
-        thread_id="thread-1", result_digest="new-result-digest"
-    )
-    store.commit_validation_followup(
-        thread_id="thread-1", result_digest="new-result-digest"
-    )
+    store.reserve_validation_followup(thread_id="thread-1", result_digest="new-result-digest")
+    store.commit_validation_followup(thread_id="thread-1", result_digest="new-result-digest")
 
     rearmed = store.recovery_candidates(min_age_minutes=0)
 
@@ -1714,9 +1710,7 @@ def test_validation_followup_unknown_delivery_can_be_safely_abandoned(tmp_path):
     assert store.unresolved_validation_followups() == []
     assert store.validation_followup_candidates()[0]["resultDigest"] == "result-digest-1"
 
-    retry = store.reserve_validation_followup(
-        thread_id="thread-1", result_digest="result-digest-1"
-    )
+    retry = store.reserve_validation_followup(thread_id="thread-1", result_digest="result-digest-1")
 
     assert retry["attempt"] == 2
     assert store.unresolved_validation_followups()[0]["resultDigest"] == "result-digest-1"

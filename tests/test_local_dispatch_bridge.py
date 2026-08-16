@@ -3708,6 +3708,38 @@ def test_cleanup_commit_removes_managed_bootstrap_context(monkeypatch, tmp_path)
     assert not bootstrap.exists()
 
 
+def test_cleanup_list_reconciles_already_archived_no_go_before_title_sync(monkeypatch, tmp_path):
+    project_root = tmp_path / "github"
+    worktree = project_root / ".oss-pr-radar" / "worktrees" / "task" / "b"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    store, _ = registered_store(tmp_path / "store", worktree=worktree)
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    bootstrap_path = MODULE.shared_context_path("https://github.com/a/b/issues/1")
+    assert context_path.exists()
+    assert bootstrap_path.exists()
+    store.record_stage("a/b#1", "AUDIT_NO_GO", reason="STRONG_EXISTING_PR")
+    assert store.title_candidates()[0]["titleState"] == "AUDIT_NO_GO"
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute("CREATE TABLE threads (id TEXT, archived INTEGER, title TEXT)")
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?)", ("thread-1", 1, "old useful title")
+        )
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+
+    result = MODULE.cleanup_list(SimpleNamespace(ledger=store.path))
+
+    assert result == {"ok": True, "cleanup": []}
+    assert store.cleanup_candidates() == []
+    assert store.cleanup_reconciliation_candidates() == []
+    assert not bootstrap_path.exists()
+
+
 def test_cleanup_reconcile_archives_reconciled_no_go_task(monkeypatch, tmp_path):
     store, _worktree = registered_store(tmp_path)
     store.record_stage("a/b#1", "AUDIT_NO_GO", evidence={})
@@ -3873,9 +3905,10 @@ def test_restore_reconcile_repairs_targeted_desktop_archive_drift(monkeypatch, t
     assert result["restored"][0]["threadId"] == "thread-1"
     assert result["restored"][0]["key"] == "a/b#1"
     with sqlite3.connect(thread_db) as connection:
-        assert connection.execute(
-            "SELECT archived FROM threads WHERE id='thread-1'"
-        ).fetchone()[0] == 0
+        assert (
+            connection.execute("SELECT archived FROM threads WHERE id='thread-1'").fetchone()[0]
+            == 0
+        )
     with store.connect() as connection:
         restored = connection.execute(
             "SELECT COUNT(*) FROM events WHERE event_type='THREAD_RESTORED'"
@@ -4339,9 +4372,7 @@ def test_context_sync_terminalizes_obsolete_task_with_missing_worktree(monkeypat
     assert context["stage"] == "AUDIT_NO_GO"
 
 
-def test_context_sync_keeps_missing_worktree_when_live_revalidation_fails(
-    monkeypatch, tmp_path
-):
+def test_context_sync_keeps_missing_worktree_when_live_revalidation_fails(monkeypatch, tmp_path):
     store, worktree = registered_store(tmp_path)
     shutil.rmtree(worktree)
 

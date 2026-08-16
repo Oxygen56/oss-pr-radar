@@ -30,6 +30,52 @@ def test_active_exact_draft_without_tests_is_still_duplicate():
     assert result[0].relation == "STRONG_EXACT_DUPLICATE"
 
 
+def test_same_repo_reported_issue_with_matching_title_and_tests_is_exact():
+    result = assess_relations(
+        repo="a/b",
+        issue_number=7,
+        issue_title="DSpark ragged CUDA graph request slot geometry mismatch",
+        pull_requests=[
+            {
+                "number": 9,
+                "body": "Reported in #7. Correct the request slot geometry at capture time.",
+                "title": "Fix DSpark ragged CUDA graph request slot geometry",
+                "files": [{"filename": "tests/test_ragged_cuda_graph.py"}],
+                "state": "open",
+                "updated_at": "2099-01-01T00:00:00Z",
+                "_repo": "a/b",
+                "_timeline_event": "cross-referenced",
+            }
+        ],
+    )
+
+    assert result[0].exact_link is True
+    assert result[0].relation == "STRONG_EXACT_DUPLICATE"
+
+
+def test_cross_repo_reported_issue_stays_reference_only_even_with_tests():
+    result = assess_relations(
+        repo="a/b",
+        issue_number=7,
+        issue_title="DSpark ragged CUDA graph request slot geometry mismatch",
+        pull_requests=[
+            {
+                "number": 9,
+                "body": "Reported in a/b#7. Cover the downstream reproduction.",
+                "title": "Fix DSpark ragged CUDA graph request slot geometry",
+                "files": [{"filename": "tests/test_ragged_cuda_graph.py"}],
+                "state": "open",
+                "updated_at": "2099-01-01T00:00:00Z",
+                "_repo": "downstream/e2e",
+                "_timeline_event": "cross-referenced",
+            }
+        ],
+    )
+
+    assert result[0].exact_link is False
+    assert result[0].relation == "REFERENCE_ONLY"
+
+
 def test_stale_exact_pr_without_maintainer_signal_can_be_competitive():
     result = assess_relations(
         repo="a/b",

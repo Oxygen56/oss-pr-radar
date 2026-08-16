@@ -92,18 +92,14 @@ def assess_relations(
         rf"\s*:?[ ]*{issue_targets}",
         re.I,
     )
+    reported_pattern = re.compile(
+        rf"\b(?:reported|reproduced|described)\s+in\s*:?[ ]*{issue_targets}",
+        re.I,
+    )
     reference_pattern = re.compile(issue_targets, re.I)
     for pr in pull_requests:
         body = str(pr.get("body") or "")
         title = str(pr.get("title") or "")
-        timeline_event = str(pr.get("_timeline_event") or "").casefold()
-        # A cross-reference can be created in either direction. In particular,
-        # an issue that cites an older PR as background causes GitHub to emit a
-        # cross-reference from that PR. Only a PR-body coverage verb or a
-        # Development-sidebar connection is strong enough to prove coverage;
-        # a bare issue reference can describe an upstream follow-up instead.
-        exact = timeline_event == "connected" or bool(coverage_pattern.search(body))
-        reference_only = not exact and bool(reference_pattern.search(body))
         overlap = _overlap(issue_title, title)
         files = pr.get("files") or []
         has_tests = any(
@@ -113,6 +109,25 @@ def assess_relations(
             for item in files
             if isinstance(item, dict)
         )
+        timeline_event = str(pr.get("_timeline_event") or "").casefold()
+        pr_repo = str(pr.get("_repo") or repo).casefold()
+        corroborated_report = bool(
+            pr_repo == repo.casefold()
+            and reported_pattern.search(body)
+            and overlap >= 0.45
+            and has_tests
+        )
+        # A cross-reference can be created in either direction. In particular,
+        # an issue that cites an older PR as background causes GitHub to emit a
+        # cross-reference from that PR. A same-repository "reported in" link is
+        # accepted only when matching title semantics and regression tests
+        # independently corroborate that the PR covers the report.
+        exact = (
+            timeline_event == "connected"
+            or bool(coverage_pattern.search(body))
+            or corroborated_report
+        )
+        reference_only = not exact and bool(reference_pattern.search(body))
         checks = pr.get("checks")
         checks_green: bool | None = None
         if isinstance(checks, list) and checks:

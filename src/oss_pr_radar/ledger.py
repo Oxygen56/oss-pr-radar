@@ -5237,13 +5237,15 @@ class RadarLedger:
                     connection, request=request, pr_url=pr_url, now=now
                 )
 
-    def cleanup_candidates(self) -> list[dict[str, Any]]:
+    def _cleanup_candidates(self, *, require_title_sync: bool) -> list[dict[str, Any]]:
+        title_clause = "AND i.title_synced_state='AUDIT_NO_GO'" if require_title_sync else ""
         with self.connect() as connection:
             rows = connection.execute(
-                """SELECT o.key,o.stage,o.updated_at,o.issue_url,i.thread_id,i.worktree_path
+                f"""SELECT o.key,o.stage,o.updated_at,o.issue_url,i.thread_id,i.worktree_path,
+                          i.title_synced_state
                    FROM opportunities o JOIN intents i ON i.opportunity_key=o.key
                    WHERE o.stage='AUDIT_NO_GO' AND i.thread_id IS NOT NULL
-                     AND i.title_synced_state='AUDIT_NO_GO'
+                     {title_clause}
                      AND COALESCE((
                        SELECT lifecycle.event_type FROM events lifecycle
                        WHERE lifecycle.opportunity_key=o.key
@@ -5260,6 +5262,7 @@ class RadarLedger:
                 "threadId": row["thread_id"],
                 "worktreePath": row["worktree_path"],
                 "stage": row["stage"],
+                "titleSyncedState": row["title_synced_state"],
                 "cleanupNonce": sha256_text(
                     f"{row['key']}|{row['thread_id']}|{row['stage']}|{row['updated_at']}"
                 ),
@@ -5267,11 +5270,29 @@ class RadarLedger:
             for row in rows
         ]
 
+    def cleanup_candidates(self) -> list[dict[str, Any]]:
+        return self._cleanup_candidates(require_title_sync=True)
+
+    def cleanup_reconciliation_candidates(self) -> list[dict[str, Any]]:
+        """Include no-go tasks whose desktop thread was archived before title sync."""
+
+        return self._cleanup_candidates(require_title_sync=False)
+
     def commit_cleanup(self, *, thread_id: str, nonce: str) -> None:
         candidates = {item["threadId"]: item for item in self.cleanup_candidates()}
         candidate = candidates.get(thread_id)
         if not candidate or candidate["cleanupNonce"] != nonce:
             raise LedgerError("cleanup authorization is stale or invalid")
+        self._commit_cleanup_candidate(candidate, nonce=nonce)
+
+    def commit_reconciled_cleanup(self, *, thread_id: str, nonce: str) -> None:
+        candidates = {item["threadId"]: item for item in self.cleanup_reconciliation_candidates()}
+        candidate = candidates.get(thread_id)
+        if not candidate or candidate["cleanupNonce"] != nonce:
+            raise LedgerError("cleanup reconciliation authorization is stale or invalid")
+        self._commit_cleanup_candidate(candidate, nonce=nonce)
+
+    def _commit_cleanup_candidate(self, candidate: dict[str, Any], *, nonce: str) -> None:
         now = iso_z(datetime.now(UTC))
         with self.transaction() as connection:
             self._event(
@@ -5279,7 +5300,7 @@ class RadarLedger:
                 candidate["key"],
                 "THREAD_ARCHIVED",
                 nonce,
-                {"threadId": thread_id, "cleanupNonce": nonce},
+                {"threadId": candidate["threadId"], "cleanupNonce": nonce},
                 now,
             )
 

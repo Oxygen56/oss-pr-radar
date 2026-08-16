@@ -5586,7 +5586,9 @@ def restore_list(args: argparse.Namespace) -> dict[str, Any]:
     blocked: list[dict[str, Any]] = []
     try:
         for candidate in bindings:
-            ledger_archived = candidate.get("lifecycleState", "THREAD_ARCHIVED") == "THREAD_ARCHIVED"
+            ledger_archived = (
+                candidate.get("lifecycleState", "THREAD_ARCHIVED") == "THREAD_ARCHIVED"
+            )
             row = connection.execute(
                 "SELECT archived,title FROM threads WHERE id=?",
                 (candidate["threadId"],),
@@ -5653,7 +5655,12 @@ def restore_commit(args: argparse.Namespace) -> dict[str, Any]:
 
 def cleanup_list(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
-    candidates = store.cleanup_candidates()
+    reconciliation_candidates = getattr(store, "cleanup_reconciliation_candidates", None)
+    candidates = (
+        reconciliation_candidates()
+        if callable(reconciliation_candidates)
+        else store.cleanup_candidates()
+    )
     connection = sqlite3.connect(THREAD_DB)
     connection.row_factory = sqlite3.Row
     pending: list[dict[str, Any]] = []
@@ -5666,7 +5673,9 @@ def cleanup_list(args: argparse.Namespace) -> dict[str, Any]:
             if row is None:
                 continue
             if int(row["archived"] or 0) == 1:
-                store.commit_cleanup(
+                commit_reconciled = getattr(store, "commit_reconciled_cleanup", None)
+                commit = commit_reconciled if callable(commit_reconciled) else store.commit_cleanup
+                commit(
                     thread_id=candidate["threadId"],
                     nonce=candidate["cleanupNonce"],
                 )
@@ -5674,6 +5683,8 @@ def cleanup_list(args: argparse.Namespace) -> dict[str, Any]:
                     Path(candidate["worktreePath"])
                 ):
                     shared_context_path(candidate["issueUrl"]).unlink(missing_ok=True)
+                continue
+            if candidate.get("titleSyncedState") not in {None, "AUDIT_NO_GO"}:
                 continue
             pending.append(candidate | {"title": row["title"]})
     finally:
