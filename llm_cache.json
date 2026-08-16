@@ -141,6 +141,35 @@
     ],
     "why": "Issue describes a live-process-only 400 with byte-faithful replays succeeding, pointing to stateful request mutation or encoding artifact. Existing PR #18024 by a maintainer directly addresses unmasking and persisting the failing request, with semantic overlap. The issue itself proposes deploying that PR as the next step, so the path forward depends on maintainer review of #18024 and its CI failures. No independent clean candidate is actionable without comparing to that PR."
   },
+  "02b69f4251cbeba77af8e3c25bcb13812ed3c35a701c35bd3ba9a18cfef74e39": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Proposed fix (drop undeclared tool calls) contradicts documented decision to fail closed; maintainer suggests keeping fail-closed and fixing prompt/catalog mismatch"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "bridge.ts",
+      "tool-catalog-nudge.ts",
+      "subagent prompt construction"
+    ],
+    "risks": [
+      "Changing enforcement boundary may silently drop intended actions or diverge transports; prompt changes may cause workarounds like heredoc edits"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "test_plan": [
+      "Reproduce with sensenova and Kimi K3 routes; assert no 502 and correct tool handling; add regression test for undeclared tool calls in bridged and passthrough paths"
+    ],
+    "unknowns": [
+      "Exact maintainer preference on whether to keep fail-closed or allow tolerance; whether a PR already exists for the alternative fix direction"
+    ],
+    "wait_reason": "DESIGN_CONFIRMATION",
+    "why": "Issue reports a real bug but the proposed fix (fail-open) conflicts with an existing design decision documented in the repo. Maintainer comment confirms the fail-closed boundary is intentional and suggests a different fix direction (prompt/catalog mismatch). The correct approach requires maintainer decision between two opposite changes."
+  },
   "033db4eaa987dbdcdf628d97b4c9218228d1661dd30a55733519d8afa15d077f": {
     "confidence": 0.7,
     "contradictions": [
@@ -12173,6 +12202,38 @@
       "Exact code paths for message writing and webview rendering"
     ],
     "why": "Issue provides a detailed root cause and concrete fix suggestions for a user-visible bug in the VS Code extension, but lacks a deterministic reproduction and maintainer confirmation. The suggested fixes involve persistence and message size limits, which are actionable but require design confirmation to avoid breaking existing behavior."
+  },
+  "651a4dbf17751f9675dfacf1ba5b1474bedc3dffb87ba19ea686c85cfb97ce14": {
+    "confidence": 0.7,
+    "contradictions": [
+      "The issue claims a crash in /v1/messages, but related issue #52398 is about /inference/v1/generate; shared stack signatures may be coincidental"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/entrypoints/anthropic/serving.py: convert tool_reference items to template-safe format or handle them appropriately",
+      "Add regression test for tool_reference in tool_result content"
+    ],
+    "risks": [
+      "Potential duplicate issue #52398 may already cover this; need to confirm maintainer preference",
+      "The fix may need to align with Anthropic API semantics for tool_reference, which could be non-trivial"
+    ],
+    "root_cause_clarity": "high",
+    "score": 13,
+    "test_plan": [
+      "Run the provided minimal repro script against the model tokenizer to confirm the crash",
+      "Add a unit test in vllm/entrypoints/anthropic/ that sends a tool_result with tool_reference and asserts no exception",
+      "Verify the fix works with Qwen3 chat template and other common templates"
+    ],
+    "unknowns": [
+      "Whether issue #52398 is truly a duplicate or just shares environment info",
+      "Maintainer confirmation on the intended handling of tool_reference blocks"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue reports a concrete crash in Anthropic tool_reference handling with a clear root cause and minimal repro, but the supplied evidence flags a potential duplicate issue #52398 sharing stack signatures and code paths, and the deterministic gate is HUMAN_REVIEW. The existing merged PR #40190 added tool_reference support but lacks regression tests, so a new PR could be valuable, but duplicate review is needed first."
   },
   "65df70baa60bb014fa5d15be411e3b5a5cab4e541a456a00eaf51e692ebef185": {
     "confidence": 0.7,
