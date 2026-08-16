@@ -4856,6 +4856,33 @@ def _execute_validation_prefetch(
 def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
     reconciled_no_progress = store.reconcile_validation_no_progress()
+    rearmed_review_feedback: list[dict[str, str]] = []
+    for blocked in store.validation_no_progress():
+        missing = set(blocked.get("missing") or [])
+        if "independent_review_passed" not in missing:
+            continue
+        value = read_json(_task_result_path(blocked), missing={})
+        review = controller_review_result(ROOT, value) if isinstance(value, dict) else None
+        verdict = str(review.get("verdict") or "") if review else ""
+        if missing != {"independent_review_passed"} and verdict not in {"FAIL", "HOLD"}:
+            continue
+        reason = (
+            "CONTROLLER_REVIEW_FEEDBACK_AVAILABLE"
+            if verdict in {"FAIL", "HOLD"}
+            else (
+                "CONTROLLER_REVIEW_PASS_PENDING_INGESTION"
+                if verdict == "PASS"
+                else "CONTROLLER_REVIEW_PENDING"
+            )
+        )
+        review_marker = sha256_json(review) if review else "CONTROLLER_REVIEW_PENDING"
+        if store.rearm_validation_no_progress_for_review(
+            key=str(blocked["key"]),
+            result_digest=str(blocked["resultDigest"]),
+            review_marker=review_marker,
+            reason=reason,
+        ):
+            rearmed_review_feedback.append({"key": str(blocked["key"]), "reason": reason})
     candidates: list[dict[str, Any]] = []
     controller_review_pending: list[dict[str, Any]] = []
     environment_blocked: list[dict[str, Any]] = []
@@ -4982,6 +5009,7 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
         "stale": stale,
         "blockedNoProgress": blocked_no_progress,
         "reconciledNoProgress": reconciled_no_progress,
+        "rearmedReviewFeedback": rearmed_review_feedback,
         "errors": errors,
     }
 

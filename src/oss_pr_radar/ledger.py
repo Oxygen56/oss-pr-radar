@@ -2690,6 +2690,58 @@ class RadarLedger:
                     marked += 1
         return marked
 
+    def rearm_validation_no_progress_for_review(
+        self,
+        *,
+        key: str,
+        result_digest: str,
+        review_marker: str,
+        reason: str,
+    ) -> bool:
+        """Reopen one stalled result when controller-owned review evidence changes."""
+
+        dedupe_key = sha256_text(f"{result_digest}|{review_marker}|{reason}")
+        now = iso_z(datetime.now(UTC))
+        with self.transaction() as connection:
+            row = connection.execute(
+                """SELECT n.id
+                   FROM opportunities o
+                   JOIN events d ON d.id=(
+                     SELECT MAX(d2.id) FROM events d2
+                     WHERE d2.opportunity_key=o.key
+                       AND d2.event_type='TASK_RESULT_VALIDATION_DEFERRED'
+                   )
+                   JOIN events n ON n.opportunity_key=o.key
+                     AND n.event_type='VALIDATION_FOLLOWUP_NO_PROGRESS'
+                     AND n.dedupe_key=json_extract(d.payload_json,'$.resultDigest')
+                   WHERE o.key=?
+                     AND json_extract(d.payload_json,'$.resultDigest')=?
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events rearmed
+                       WHERE rearmed.opportunity_key=o.key
+                         AND rearmed.event_type='VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED'
+                         AND rearmed.dedupe_key=?
+                         AND rearmed.id>n.id
+                     )
+                   ORDER BY n.id DESC LIMIT 1""",
+                (key, result_digest, dedupe_key),
+            ).fetchone()
+            if row is None:
+                return False
+            self._event(
+                connection,
+                key,
+                "VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED",
+                dedupe_key,
+                {
+                    "resultDigest": result_digest,
+                    "reviewMarker": review_marker,
+                    "reason": reason,
+                },
+                now,
+            )
+        return True
+
     def validation_followup_candidates(self) -> list[dict[str, Any]]:
         """Return validation-pending tasks that have not been resumed for this result."""
 
@@ -2726,6 +2778,14 @@ class RadarLedger:
                        SELECT 1 FROM events n WHERE n.opportunity_key=o.key
                          AND n.event_type='VALIDATION_FOLLOWUP_NO_PROGRESS'
                          AND n.dedupe_key=json_extract(d.payload_json,'$.resultDigest')
+                         AND NOT EXISTS (
+                           SELECT 1 FROM events rearmed
+                           WHERE rearmed.opportunity_key=n.opportunity_key
+                             AND rearmed.event_type='VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED'
+                             AND json_extract(rearmed.payload_json,'$.resultDigest')=
+                                 json_extract(d.payload_json,'$.resultDigest')
+                             AND rearmed.id>n.id
+                         )
                      )
                    ORDER BY d.created_at"""
             ).fetchall()
@@ -2766,6 +2826,14 @@ class RadarLedger:
                    JOIN intents i ON i.opportunity_key=o.key
                      AND i.thread_id=json_extract(d.payload_json,'$.threadId')
                    WHERE o.stage='VALIDATION_PENDING'
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events rearmed
+                       WHERE rearmed.opportunity_key=n.opportunity_key
+                         AND rearmed.event_type='VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED'
+                         AND json_extract(rearmed.payload_json,'$.resultDigest')=
+                             json_extract(d.payload_json,'$.resultDigest')
+                         AND rearmed.id>n.id
+                     )
                    ORDER BY n.created_at"""
             ).fetchall()
         blocked: list[dict[str, Any]] = []

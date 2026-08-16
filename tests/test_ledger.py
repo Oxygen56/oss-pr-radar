@@ -1798,6 +1798,27 @@ def test_validation_followup_stops_when_a_new_result_has_the_same_gap(tmp_path):
     assert blocked[0]["reason"] == "UNCHANGED_VALIDATION_GAP"
     assert store.reconcile_validation_no_progress() == 0
 
+    assert (
+        store.rearm_validation_no_progress_for_review(
+            key="a/b#1",
+            result_digest="result-digest-2",
+            review_marker="review-fail-digest",
+            reason="CONTROLLER_REVIEW_FEEDBACK_AVAILABLE",
+        )
+        is True
+    )
+    assert store.validation_no_progress() == []
+    assert store.validation_followup_candidates()[0]["resultDigest"] == "result-digest-2"
+    assert (
+        store.rearm_validation_no_progress_for_review(
+            key="a/b#1",
+            result_digest="result-digest-2",
+            review_marker="review-fail-digest",
+            reason="CONTROLLER_REVIEW_FEEDBACK_AVAILABLE",
+        )
+        is False
+    )
+
 
 def test_first_validation_result_is_not_mistaken_for_no_progress(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")

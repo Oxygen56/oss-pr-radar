@@ -5771,6 +5771,43 @@ def test_validation_followup_list_reconciles_and_reports_unchanged_gap(tmp_path)
     assert listed["blockedNoProgress"][0]["missing"] == ["relevant_tests_green"]
 
 
+def test_new_controller_review_feedback_rearms_a_stalled_validation(monkeypatch, tmp_path):
+    store, _worktree, result_path = _controller_commit_result(
+        tmp_path,
+        missing_quality=("relevant_tests_green", "independent_review_passed"),
+    )
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    first_digest = first["validationDeferred"][0]
+    candidate = store.validation_followup_candidates()[0]
+    store.reserve_validation_followup(thread_id="thread-1", result_digest=candidate["resultDigest"])
+    store.commit_validation_followup(thread_id="thread-1", result_digest=candidate["resultDigest"])
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value["independentReview"] = {"verdict": "FAIL", "summary": "integration path is stale"}
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    raw = result_path.read_bytes()
+    second_digest = hashlib.sha256(raw).hexdigest()
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest=second_digest,
+        missing=["relevant_tests_green", "independent_review_passed"],
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "controller_review_result",
+        lambda _root, _value: {"verdict": "FAIL", "summary": "integration path is stale"},
+    )
+
+    listed = MODULE.validation_followup_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert first_digest["missing"] == ["relevant_tests_green", "independent_review_passed"]
+    assert listed["rearmedReviewFeedback"] == [
+        {"key": "a/b#1", "reason": "CONTROLLER_REVIEW_FEEDBACK_AVAILABLE"}
+    ]
+    assert listed["blockedNoProgress"] == []
+    assert listed["candidates"][0]["resultDigest"] == second_digest
+
+
 def test_validation_followup_never_abandons_an_unreceipted_delivery(monkeypatch, tmp_path):
     now = datetime.now(UTC)
     reserved_at = iso_z(now - timedelta(hours=2))
