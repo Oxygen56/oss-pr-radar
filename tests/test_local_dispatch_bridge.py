@@ -4099,9 +4099,7 @@ def test_ingestion_ignores_stale_result_after_published_context_moves_on(tmp_pat
 
     assert result["ok"] is True
     assert result["ingested"] == []
-    assert result["ignored"] == [
-        {"key": "a/b#1", "reason": "STALE_PUBLISHED_TASK_RESULT"}
-    ]
+    assert result["ignored"] == [{"key": "a/b#1", "reason": "STALE_PUBLISHED_TASK_RESULT"}]
     assert result["errors"] == []
 
 
@@ -4134,9 +4132,7 @@ def test_ingestion_still_rejects_context_mismatch_for_active_task(tmp_path):
 
     assert result["ok"] is False
     assert result.get("ignored", []) == []
-    assert result["errors"] == [
-        {"key": "a/b#1", "error": "task result context digest mismatch"}
-    ]
+    assert result["errors"] == [{"key": "a/b#1", "error": "task result context digest mismatch"}]
 
 
 def _published_followup_store(
@@ -5143,6 +5139,35 @@ def test_child_cannot_self_attest_independent_review(monkeypatch, tmp_path):
     finalized = json.loads(result_path.read_text(encoding="utf-8"))
     assert finalized["quality"]["independent_review_passed"] is False
     assert store.publication_work_items() == []
+
+    listed = MODULE.validation_followup_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    assert listed["candidates"] == []
+    assert listed["controllerReviewPending"][0]["reason"] == "CONTROLLER_REVIEW_PENDING"
+
+
+def test_failed_controller_review_remains_an_actionable_followup(monkeypatch, tmp_path):
+    _store, _worktree, _result_path = _controller_commit_result(tmp_path)
+    review = {
+        "verdict": "FAIL",
+        "summary": "The integration path still forwards the stale payload.",
+        "findings": [
+            {
+                "severity": "P1",
+                "file": "runtime.py",
+                "line": 1,
+                "message": "The caller ignores the mutation.",
+            }
+        ],
+        "evidence": ["The unchanged integration path bypasses the helper output."],
+    }
+    monkeypatch.setattr(MODULE, "controller_review_result", lambda _root, _value: review)
+
+    ingested = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    listed = MODULE.validation_followup_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert ingested["validationDeferred"][0]["missing"] == ["independent_review_passed"]
+    assert listed["controllerReviewPending"] == []
+    assert listed["candidates"][0]["missing"] == ["independent_review_passed"]
 
 
 def test_existing_fix_ready_result_accepts_later_controller_review(monkeypatch, tmp_path):
@@ -6210,9 +6235,7 @@ def test_ingestion_recovers_seen_complete_pr_followup_parent(tmp_path):
         "changedFiles": ["test_runtime.py"],
         "controllerCommitChangedFiles": ["test_runtime.py"],
         "tests": [{"command": "pytest test_runtime.py", "exitCode": 0}],
-        "quality": {
-            field: field != "independent_review_passed" for field in QUALITY_FIELDS
-        },
+        "quality": {field: field != "independent_review_passed" for field in QUALITY_FIELDS},
         "publication": {
             "headOwner": "Oxygen56",
             "baseBranch": "main",

@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from .ledger import RadarLedger
+from .metrics import QUALITY_FIELDS
 from .util import atomic_write_json, sha256_json
 
 TASK_PRIVATE_DIR = ".oss-pr-radar"
@@ -30,6 +31,9 @@ REVIEWABLE_STAGES = {
 PUBLISHED_STAGES = {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED", "MERGED", "CLOSED"}
 BLOCKING_SEVERITIES = {"P0", "P1", "P2"}
 MAX_REVIEW_OUTPUT_BYTES = 128 * 1024
+REVIEW_PREREQUISITE_FIELDS = tuple(
+    field for field in QUALITY_FIELDS if field != "independent_review_passed"
+)
 
 ReviewRunner = Callable[[Path, Path, str, int], dict[str, Any]]
 
@@ -425,6 +429,8 @@ def _candidate_result(candidate: dict[str, Any]) -> tuple[Path, dict[str, Any]] 
                 raise RuntimeError("independent review task result context digest mismatch")
     quality = value.get("quality")
     if value.get("stage") != "FIX_READY" or not isinstance(quality, dict):
+        return None
+    if any(quality.get(field) is not True for field in REVIEW_PREREQUISITE_FIELDS):
         return None
     commit_sha = str(value.get("commitSha") or "")
     if value.get("handoffMode") not in {

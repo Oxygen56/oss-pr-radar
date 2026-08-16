@@ -4,6 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import oss_pr_radar.independent_review as module
+from oss_pr_radar.metrics import QUALITY_FIELDS
 
 
 def git(repo: Path, *args: str) -> str:
@@ -45,10 +46,7 @@ def prepared_task(tmp_path: Path):
         "handoffMode": "controller_commit_complete",
         "commitSha": head,
         "changedFiles": ["service.py"],
-        "quality": {
-            "independent_review_passed": False,
-            "relevant_tests_green": True,
-        },
+        "quality": {field: field != "independent_review_passed" for field in QUALITY_FIELDS},
         "evidence": {"summary": "focused regression passed"},
         "publication": {"baseBranch": "main"},
     }
@@ -136,6 +134,32 @@ def test_review_once_does_not_repeat_unchanged_hold(tmp_path, monkeypatch):
     assert outcome["ok"] is True
     assert outcome["updated"] == []
     assert outcome["skipped"] == [{"key": "owner/repo#1", "reason": "REVIEW_HOLD_ALREADY_APPLIED"}]
+
+
+def test_review_waits_for_child_owned_validation(tmp_path, monkeypatch):
+    control, _worktree, result_path, candidate, _base, _head = prepared_task(tmp_path)
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value["quality"]["relevant_tests_green"] = False
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+
+    class FakeLedger:
+        def task_result_candidates(self):
+            return [candidate]
+
+    monkeypatch.setattr(module, "RadarLedger", lambda _path: FakeLedger())
+
+    def reviewer(*_args):
+        raise AssertionError("review must wait until child-owned validation is complete")
+
+    outcome = module.review_once(
+        control,
+        control / "ledger.sqlite3",
+        reviewer=reviewer,
+    )
+
+    assert outcome["ok"] is True
+    assert outcome["updated"] == []
+    assert outcome["errors"] == []
 
 
 def test_forged_task_pass_has_no_controller_receipt(tmp_path):

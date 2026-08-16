@@ -4857,6 +4857,7 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
     reconciled_no_progress = store.reconcile_validation_no_progress()
     candidates: list[dict[str, Any]] = []
+    controller_review_pending: list[dict[str, Any]] = []
     environment_blocked: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
     for candidate in store.validation_followup_candidates():
@@ -4871,6 +4872,21 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
                     }
                 )
                 continue
+            if set(candidate.get("missing") or []) == {"independent_review_passed"}:
+                value = read_json(_task_result_path(candidate), missing={})
+                review = controller_review_result(ROOT, value) if isinstance(value, dict) else None
+                if not review or review.get("verdict") == "PASS":
+                    controller_review_pending.append(
+                        candidate
+                        | {
+                            "reason": (
+                                "CONTROLLER_REVIEW_PASS_PENDING_INGESTION"
+                                if review
+                                else "CONTROLLER_REVIEW_PENDING"
+                            )
+                        }
+                    )
+                    continue
             commands, dependency_failures = _validation_prefetch_plan(candidate)
             if dependency_failures and not commands:
                 environment_blocked.append(
@@ -4959,6 +4975,7 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "ok": not errors and not unresolved_with_recovery and not stale,
         "candidates": candidates,
+        "controllerReviewPending": controller_review_pending,
         "queuedDeferred": queued_deferred,
         "environmentBlocked": environment_blocked,
         "unresolved": unresolved_with_recovery,
