@@ -10764,6 +10764,35 @@
     ],
     "why": "Issue clearly identifies a validation-before-middleware ordering problem in FunctionTool.invoke, with concrete production examples and a minimal reproduction. However, the proposed fixes (coercion or pre-validation hook) require design confirmation from maintainers, and the deterministic gate is HUMAN_REVIEW."
   },
+  "59b2abad237e73a563901483e0df6ac773ab2893b3536cd79ea63f083bdda1d8": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Fix canonical-model-info path to honor GOOSE_CONTEXT_LIMIT for non-canonical models",
+      "Add regression test for context indicator display"
+    ],
+    "risks": [
+      "Potential behavior change affecting other providers",
+      "Maintainer may have preferred design for context limit precedence"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "test_plan": [
+      "Reproduce with provided steps and assert indicator shows 262k",
+      "Add unit test for canonical-model-info fallback logic"
+    ],
+    "unknowns": [
+      "Maintainer confirmation of root cause",
+      "Whether existing closed PRs are considered sufficient",
+      "Exact code path in current codebase"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "Issue reports a user-visible regression with a clear repro and suspected cause, but no maintainer confirmation or active investigation. Existing PRs are closed and not directly linked, so a new PR could be viable, but the root cause is only hypothesized and requires maintainer validation."
+  },
   "59d15a3247a7bb496205ef093328f5ee525ca92e11a475ebe26d343370876c69": {
     "confidence": 0.8,
     "contradictions": [],
