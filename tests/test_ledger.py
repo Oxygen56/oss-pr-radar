@@ -1580,6 +1580,13 @@ def test_repeatedly_interrupted_recovery_is_terminal_and_releases_wip(tmp_path):
     assert store.stale_validation_followups(min_age_minutes=90) == []
     assert store.active_task_count() == 0
     assert store.validation_no_progress()[0]["reason"] == "RECOVERY_RETRY_EXHAUSTED"
+    assert store.rearm_validation_no_progress_for_review(
+        key="a/b#1",
+        result_digest="result-digest",
+        review_marker="dependency-prefetch",
+        reason="DEPENDENCY_PREFETCH_AVAILABLE",
+    )
+    assert store.validation_followup_candidates()[0]["resultDigest"] == "result-digest"
 
     store.record_validation_deferred(
         "a/b#1",

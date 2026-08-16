@@ -2847,6 +2847,15 @@ class RadarLedger:
                              AND json_extract(abandoned.payload_json,'$.reservedAt')=r.created_at
                              AND abandoned.id>r.id
                          )
+                         AND NOT EXISTS (
+                           SELECT 1 FROM events rearmed
+                           WHERE rearmed.opportunity_key=r.opportunity_key
+                             AND rearmed.event_type=
+                                 'VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED'
+                             AND json_extract(rearmed.payload_json,'$.resultDigest')=
+                                 json_extract(d.payload_json,'$.resultDigest')
+                             AND rearmed.id>r.id
+                         )
                      )
                      AND NOT EXISTS (
                        SELECT 1 FROM events n WHERE n.opportunity_key=o.key
