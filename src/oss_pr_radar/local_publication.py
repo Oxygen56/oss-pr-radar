@@ -120,7 +120,61 @@ def advance_once(
             "errors": ingestion_errors
             or [{"error": "task result ingestion failed before publication"}],
         }
-    ingested = list(ingestion.get("ingested") or [])
+    independent_review = runner(root, "independent-review-run")
+    review_errors = list(independent_review.get("errors") or [])
+    review_updated = bool(independent_review.get("updated"))
+    if (independent_review.get("ok") is False or review_errors) and not review_updated:
+        return {
+            "ok": False,
+            "activity": True,
+            "resultsIngested": list(ingestion.get("ingested") or []),
+            "publicationRequests": list(ingestion.get("publicationRequests") or []),
+            "validationDeferred": list(ingestion.get("validationDeferred") or []),
+            "independentReview": independent_review,
+            "published": [],
+            "contextsSynced": [],
+            "pending": [],
+            "blocked": [],
+            "contextsUnavailable": public_unavailable,
+            "contextsUnavailableCount": len(recovery_unavailable),
+            "errors": review_errors or [{"error": "independent review failed before publication"}],
+        }
+    post_review_ingestion = (
+        runner(root, "ingest-results")
+        if review_updated
+        else {"ok": True, "ingested": [], "publicationRequests": [], "validationDeferred": []}
+    )
+    post_review_errors = list(post_review_ingestion.get("errors") or [])
+    if post_review_ingestion.get("ok") is False or post_review_errors:
+        return {
+            "ok": False,
+            "activity": True,
+            "resultsIngested": [
+                *list(ingestion.get("ingested") or []),
+                *list(post_review_ingestion.get("ingested") or []),
+            ],
+            "publicationRequests": [
+                *list(ingestion.get("publicationRequests") or []),
+                *list(post_review_ingestion.get("publicationRequests") or []),
+            ],
+            "validationDeferred": [
+                *list(ingestion.get("validationDeferred") or []),
+                *list(post_review_ingestion.get("validationDeferred") or []),
+            ],
+            "independentReview": independent_review,
+            "published": [],
+            "contextsSynced": [],
+            "pending": [],
+            "blocked": [],
+            "contextsUnavailable": public_unavailable,
+            "contextsUnavailableCount": len(recovery_unavailable),
+            "errors": post_review_errors
+            or [{"error": "task result ingestion failed after independent review"}],
+        }
+    ingested = [
+        *list(ingestion.get("ingested") or []),
+        *list(post_review_ingestion.get("ingested") or []),
+    ]
     title_reconciliation = runner(root, "title-reconcile")
     cleanup_reconciliation = runner(root, "cleanup-reconcile")
     publication = runner(root, "publication-run")
@@ -130,13 +184,20 @@ def advance_once(
     )
 
     errors = [
+        *review_errors,
         *list(title_reconciliation.get("errors") or []),
         *list(cleanup_reconciliation.get("errors") or []),
         *list(publication.get("errors") or []),
         *list(context_sync.get("errors") or []),
     ]
-    requests = list(ingestion.get("publicationRequests") or [])
-    validation_deferred = list(ingestion.get("validationDeferred") or [])
+    requests = [
+        *list(ingestion.get("publicationRequests") or []),
+        *list(post_review_ingestion.get("publicationRequests") or []),
+    ]
+    validation_deferred = [
+        *list(ingestion.get("validationDeferred") or []),
+        *list(post_review_ingestion.get("validationDeferred") or []),
+    ]
     blocked = list(publication.get("blocked") or [])
     pending = list(publication.get("pending") or [])
     renamed = list(title_reconciliation.get("renamed") or [])
@@ -194,6 +255,7 @@ def advance_once(
         "resultsIngested": ingested,
         "publicationRequests": requests,
         "validationDeferred": validation_deferred,
+        "independentReview": independent_review,
         "titlesRenamed": renamed,
         "threadsArchived": archived,
         "published": published,

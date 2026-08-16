@@ -27,6 +27,10 @@ from oss_pr_radar.decision import authorize  # noqa: E402
 from oss_pr_radar.dispatch import DispatchSigner, canonical_prompt, verify_queue  # noqa: E402
 from oss_pr_radar.evidence import collect_evidence  # noqa: E402
 from oss_pr_radar.github_client import GitHubClient  # noqa: E402
+from oss_pr_radar.independent_review import (  # noqa: E402
+    controller_review_result,
+    review_once,
+)
 from oss_pr_radar.ledger import RadarLedger  # noqa: E402
 from oss_pr_radar.metrics import assess_submit_ready, rolling_quality  # noqa: E402
 from oss_pr_radar.notifier import FeishuClient, NotificationError, candidate_card  # noqa: E402
@@ -1380,9 +1384,11 @@ def _active_task_count(store: Any, *, exclude_intent_id: str | None = None) -> i
     return int(fallback(exclude_intent_id=exclude_intent_id)) if callable(fallback) else 0
 
 
-def _global_task_wip(store: Any) -> tuple[bool, int, int | None]:
+def _global_task_wip(
+    store: Any, *, exclude_intent_id: str | None = None
+) -> tuple[bool, int, int | None]:
     limit = _private_task_limit()
-    active = _active_task_count(store)
+    active = _active_task_count(store, exclude_intent_id=exclude_intent_id)
     return limit is not None and active >= limit, active, limit
 
 
@@ -3853,6 +3859,14 @@ def _finalize_controller_commit(
         finalized = dict(value)
         finalized["controllerCommitChangedFiles"] = commit_changed_files
         finalized["changedFiles"] = publication_changed_files
+        followup = context.get("prFollowup")
+        if isinstance(followup, dict):
+            previous_commit = str(followup.get("preparedHeadSha") or followup.get("headSha") or "")
+            if not re.fullmatch(r"[0-9a-f]{40}", previous_commit):
+                raise RuntimeError("controller commit lacks a valid review parent")
+            finalized["previousCommitSha"] = previous_commit
+        else:
+            finalized.pop("previousCommitSha", None)
         _atomic_json(result_path, finalized)
         return finalized, result_path.read_bytes()
     if value.get("handoffMode") != "controller_commit_required":
@@ -3933,6 +3947,10 @@ def _finalize_controller_commit(
         context=context,
         commit_changed_files=changed_files,
     )
+    if expected_parent:
+        finalized["previousCommitSha"] = expected_parent
+    else:
+        finalized.pop("previousCommitSha", None)
     finalized["handoffMode"] = "controller_commit_complete"
     default_branch = _prepared_default_branch(worktree)
     publication = finalized.get("publication")
@@ -4498,9 +4516,6 @@ def _prepare_pr_followup(candidate: dict[str, Any]) -> dict[str, Any]:
 
 def pr_followup_reserve(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
-    wip_limited, _active_task_count_value, _task_limit = _global_task_wip(store)
-    if wip_limited:
-        raise RuntimeError("global task WIP limit reached")
     candidate = next(
         (
             item
@@ -4511,6 +4526,11 @@ def pr_followup_reserve(args: argparse.Namespace) -> dict[str, Any]:
     )
     if candidate is None:
         raise RuntimeError("PR follow-up authorization is stale or invalid")
+    wip_limited, _active_task_count_value, _task_limit = _global_task_wip(
+        store, exclude_intent_id=str(candidate.get("intentId") or "") or None
+    )
+    if wip_limited:
+        raise RuntimeError("global task WIP limit reached")
     try:
         prepared = _prepare_pr_followup(candidate)
     except PrFollowupSnapshotChanged as exc:
@@ -4537,6 +4557,7 @@ def pr_followup_reserve(args: argparse.Namespace) -> dict[str, Any]:
         prepared_base_sha=prepared.get("preparedBaseSha"),
         merge_conflict_files=prepared.get("mergeConflictFiles"),
         max_active=_private_task_limit(),
+        exclude_intent_id=str(candidate.get("intentId") or "") or None,
     )
     context_path = write_task_context(
         store,
@@ -4994,7 +5015,12 @@ def _validation_followup_prompt(candidate: dict[str, Any]) -> str:
         "需证明修复前失败、修复后通过。不得刷新 GitHub、不得安装依赖、不得请求权限、不得执行提交、推送、"
         "建 PR 或其他公开动作。若仍无法完成验证，保留对应 quality=false 并写清可复核原因；不得把格式检查"
         "当作功能验证。若广泛检查失败，必须在修复前基线使用同一环境复跑；只有失败集合完全属于基线既有问题，"
-        "且改动路径的功能、类型、格式和仓库专用门禁全部通过时，才可将 relevant_tests_green 标为 true。"
+        "且改动路径实际适用的功能、类型、格式和仓库专用门禁全部通过时，才可将 relevant_tests_green 标为 true。"
+        "这里的‘实际适用’以改动路径和仓库明确要求为准：与改动无关、仅因未安装可选 provider/all-extras 而失败的"
+        "全仓注册表或导入检查，应记录为不适用或环境限制，不得反过来阻断已通过的改动路径门禁；但任何触及改动路径、"
+        "共享契约或真实功能行为的失败仍必须保持 false。若 result.json 中已有 independentReview 的 FAIL/HOLD，"
+        "先处理其中的阻断发现并更新代码或证据；任务自身不得把 independent_review_passed 改为 true，该字段只由"
+        "控制器的临时只读独立审查器写入。"
         "不要扫描工作树之外的目录，不要寻找全局替代工具、镜像或缓存；若控制器预取后锁定环境仍缺少必需门禁，"
         "记录该事实、保留 quality=false 并立即结束本轮。"
         "完成后正常结束，由控制器重新接收结果。"
@@ -5003,9 +5029,6 @@ def _validation_followup_prompt(candidate: dict[str, Any]) -> str:
 
 def validation_followup_reserve(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
-    wip_limited, _active_task_count_value, _task_limit = _global_task_wip(store)
-    if wip_limited:
-        raise RuntimeError("global task WIP limit reached")
     candidate = next(
         (
             item
@@ -5016,6 +5039,11 @@ def validation_followup_reserve(args: argparse.Namespace) -> dict[str, Any]:
     )
     if candidate is None:
         raise RuntimeError("validation follow-up authorization is stale or invalid")
+    wip_limited, _active_task_count_value, _task_limit = _global_task_wip(
+        store, exclude_intent_id=str(candidate.get("intentId") or "") or None
+    )
+    if wip_limited:
+        raise RuntimeError("global task WIP limit reached")
     enriched = candidate | {"prefetchCommands": _validation_prefetch_commands(candidate)}
     prefetch = _execute_validation_prefetch(enriched, enriched["prefetchCommands"])
     context_path = write_task_context(
@@ -5028,6 +5056,7 @@ def validation_followup_reserve(args: argparse.Namespace) -> dict[str, Any]:
         thread_id=enriched["threadId"],
         result_digest=enriched["resultDigest"],
         max_active=_private_task_limit(),
+        exclude_intent_id=str(enriched.get("intentId") or "") or None,
     )
     return {
         "ok": True,
@@ -5127,6 +5156,21 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     raise RuntimeError("task result context digest mismatch")
             stage = str(value.get("stage") or "")
             quality = value.get("quality")
+            controller_review_recoverable = False
+            if (
+                stage == "FIX_READY"
+                and isinstance(quality, dict)
+                and value.get("handoffMode")
+                in {"controller_commit_complete", "controller_merge_complete"}
+            ):
+                current_controller_review = controller_review_result(ROOT, value)
+                current_review_passed = bool(
+                    current_controller_review and current_controller_review.get("verdict") == "PASS"
+                )
+                controller_review_recoverable = bool(
+                    quality.get("independent_review_passed") is not current_review_passed
+                    or value.get("independentReview") != current_controller_review
+                )
             policy_followup_exhausted = bool(
                 stage == "FIX_READY"
                 and isinstance(quality, dict)
@@ -5141,7 +5185,12 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 and candidate["stage"] == "FIX_READY"
                 and controller_policy is not None
             )
-            if digest_seen and not policy_followup_exhausted and not controller_policy_recoverable:
+            if (
+                digest_seen
+                and not policy_followup_exhausted
+                and not controller_policy_recoverable
+                and not controller_review_recoverable
+            ):
                 continue
             if candidate["stage"] in {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED"} and (
                 isinstance(context_followup, dict)
@@ -5183,6 +5232,24 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 )
                 quality = value.get("quality")
                 assert isinstance(quality, dict)
+                controller_review = controller_review_result(ROOT, value)
+                controller_review_verified = bool(
+                    controller_review and controller_review.get("verdict") == "PASS"
+                )
+                if (
+                    quality.get("independent_review_passed") is not controller_review_verified
+                    or value.get("independentReview") != controller_review
+                ):
+                    value = dict(value)
+                    quality = dict(quality)
+                    quality["independent_review_passed"] = controller_review_verified
+                    value["quality"] = quality
+                    if controller_review is None:
+                        value.pop("independentReview", None)
+                    else:
+                        value["independentReview"] = controller_review
+                    _atomic_json(result_path, value)
+                    raw = result_path.read_bytes()
                 digest = hashlib.sha256(raw).hexdigest()
                 publication_blocked = _publication_block_reason(context, value)
                 assessment = assess_submit_ready(quality)
@@ -5383,6 +5450,18 @@ def _run_publication_queue_unlocked(args: argparse.Namespace) -> dict[str, Any]:
         request_id = str(item["request_id"])
         request = item["request"]
         try:
+            evidence_path = Path(str(request.get("evidencePath") or "")).resolve()
+            evidence_value = json.loads(evidence_path.read_text(encoding="utf-8"))
+            controller_review = (
+                controller_review_result(ROOT, evidence_value)
+                if isinstance(evidence_value, dict)
+                else None
+            )
+            if not controller_review or controller_review.get("verdict") != "PASS":
+                reason = "CONTROLLER_INDEPENDENT_REVIEW_REQUIRED"
+                store.block_publication_request(request_id, reason)
+                blocked.append({"requestId": request_id, "reason": reason})
+                continue
             ambiguous_push = store.prepare_ambiguous_publication_effect(
                 request_id,
                 action="push",
@@ -6895,6 +6974,7 @@ def main() -> int:
     validation_followup_abandon_parser.add_argument("--reason", required=True)
     validation_followup_abandon_parser.add_argument("--min-age-minutes", type=int, default=90)
     subparsers.add_parser("ingest-results")
+    subparsers.add_parser("independent-review-run")
     subparsers.add_parser("publication-run")
     publication_retry_parser = subparsers.add_parser("publication-retry")
     publication_retry_parser.add_argument("--request-id", required=True)
@@ -7034,6 +7114,8 @@ def main() -> int:
         result = validation_followup_abandon(args)
     elif args.operation == "ingest-results":
         result = ingest_task_results(args)
+    elif args.operation == "independent-review-run":
+        result = review_once(ROOT, args.ledger)
     elif args.operation == "publication-run":
         result = run_publication_queue(args)
     elif args.operation == "publication-retry":

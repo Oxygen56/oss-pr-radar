@@ -44,8 +44,25 @@ def test_controller_cycle_runs_one_ordered_sync_and_drain(tmp_path):
     assert calls.count("queueSync") == 1
     assert calls.count("drain") == 1
     assert calls.index("resultIngestion") < calls.index("drain")
+    assert calls.index("resultIngestion") < calls.index("independentReview")
     assert calls.index("restoreReconcile") < calls.index("drain")
     assert result["summary"]["drainAction"] == "issue_task_dispatched"
+
+
+def test_controller_reingests_an_independently_reviewed_result(tmp_path):
+    calls: list[str] = []
+
+    def runner(_root, stage, _argv, _allowed, _timeout):
+        calls.append(stage)
+        if stage == "independentReview":
+            return {"ok": True, "updated": [{"key": "a/b#1", "verdict": "PASS"}]}
+        return healthy_response(stage)
+
+    result = controller_cycle(tmp_path, runner=runner, notify=False)
+
+    assert result["ok"] is True
+    assert calls.index("independentReview") < calls.index("resultIngestionAfterReview")
+    assert calls.index("resultIngestionAfterReview") < calls.index("publication")
 
 
 def test_controller_cycle_fails_closed_when_context_recovery_fails(tmp_path):

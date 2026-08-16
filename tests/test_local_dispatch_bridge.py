@@ -275,6 +275,22 @@ def disable_live_thread_watchdog(monkeypatch, tmp_path):
     monkeypatch.setattr(MODULE, "active_task_turn_worker", lambda _thread_id: None)
 
 
+@pytest.fixture(autouse=True)
+def preserve_legacy_review_assumptions(monkeypatch):
+    monkeypatch.setattr(
+        MODULE,
+        "controller_review_result",
+        lambda _root, value: (
+            {"verdict": "PASS", "summary": "test controller receipt"}
+            if (
+                isinstance(value.get("quality"), dict)
+                and value["quality"].get("independent_review_passed") is True
+            )
+            else None
+        ),
+    )
+
+
 def run_git(path: Path, *args: str) -> str:
     completed = subprocess.run(
         ["git", *args],
@@ -2779,6 +2795,55 @@ def test_new_validation_followup_is_not_blocked_by_prior_sent_recovery(tmp_path)
     assert reservation["followupDigest"] == second_digest
 
 
+def test_validation_continuation_excludes_its_own_intent_from_wip(monkeypatch, tmp_path):
+    observed = {}
+    candidate = {
+        "key": "a/b#1",
+        "issueUrl": "https://github.com/a/b/issues/1",
+        "threadId": "thread-1",
+        "intentId": "intent-1",
+        "worktreePath": str(tmp_path / "worktree"),
+        "resultDigest": "result-digest",
+        "missing": ["relevant_tests_green"],
+    }
+
+    class Store:
+        def active_task_count(self, *, exclude_intent_id=None):
+            observed["excludeIntentId"] = exclude_intent_id
+            return 0
+
+        def validation_followup_candidates(self):
+            return [candidate]
+
+        def reserve_validation_followup(self, **_kwargs):
+            return candidate
+
+    monkeypatch.setenv("RADAR_MAX_ACTIVE_TASKS", "1")
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+    monkeypatch.setattr(MODULE, "_validation_prefetch_commands", lambda _candidate: [])
+    monkeypatch.setattr(
+        MODULE, "_execute_validation_prefetch", lambda _candidate, _commands: {"ok": True}
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "write_task_context",
+        lambda *_args, **_kwargs: tmp_path / "worktree" / ".oss-pr-radar/task-context.json",
+    )
+
+    reserved = MODULE.validation_followup_reserve(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            thread_id="thread-1",
+            result_digest="result-digest",
+        )
+    )
+
+    assert reserved["ok"] is True
+    assert observed["excludeIntentId"] == "intent-1"
+    assert "provider/all-extras" in reserved["prompt"]
+    assert "任务自身不得把 independent_review_passed 改为 true" in reserved["prompt"]
+
+
 def test_recovery_delivery_preserves_validation_followup_prompt():
     prompt = MODULE._task_turn_prompt(
         "recovery",
@@ -4103,6 +4168,79 @@ def test_pr_followup_reserve_refreshes_context_and_routes_to_shared_context(monk
     assert store.pr_followup_candidates() == []
 
 
+def test_pr_followup_commit_cannot_self_attest_independent_review(monkeypatch, tmp_path):
+    store, worktree, previous_head, _pr_url = _published_followup_store(tmp_path)
+    candidate = store.pr_followup_candidates()[0]
+    store.reserve_pr_followup(
+        thread_id="thread-1",
+        wake_digest=candidate["wakeDigest"],
+        prepared_head_sha=previous_head,
+    )
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+        prepared_followup_head=previous_head,
+    )
+    context = json.loads(context_path.read_text(encoding="utf-8"))
+    (worktree / "runtime.py").write_text("value = 2\n", encoding="utf-8")
+    body_path = worktree / ".oss-pr-radar" / "pr-body.md"
+    body_path.write_text("Fixes #1\n\nCorrect the runtime boundary.\n", encoding="utf-8")
+    quality = {field: True for field in QUALITY_FIELDS}
+    result_path = Path(context["resultPath"])
+    result_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": "radar-task-result-v1",
+                "contextDigest": context["contextDigest"],
+                "key": "a/b#1",
+                "issueUrl": "https://github.com/a/b/issues/1",
+                "threadId": "thread-1",
+                "worktreePath": str(worktree.resolve()),
+                "stage": "FIX_READY",
+                "followupDigest": candidate["wakeDigest"],
+                "handoffMode": "controller_commit_required",
+                "commitSha": None,
+                "branch": "fix/1-runtime",
+                "commitMessage": "fix: address runtime review",
+                "changedFiles": ["runtime.py"],
+                "tests": [{"command": "pytest tests/runtime", "exitCode": 0}],
+                "quality": quality,
+                "publication": {
+                    "headOwner": "Oxygen56",
+                    "baseBranch": "main",
+                    "title": "fix: address runtime review",
+                    "bodyFile": str(body_path.resolve()),
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(MODULE, "controller_review_result", lambda _root, _value: None)
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    finalized = json.loads(result_path.read_text(encoding="utf-8"))
+
+    assert result["publicationRequests"] == []
+    assert result["validationDeferred"][0]["missing"] == ["independent_review_passed"]
+    assert finalized["quality"]["independent_review_passed"] is False
+    assert finalized["previousCommitSha"] == previous_head
+    assert store.publication_work_items() == []
+
+    controller_review = {
+        "verdict": "PASS",
+        "summary": "The exact follow-up commit has no blocking finding.",
+    }
+    monkeypatch.setattr(MODULE, "controller_review_result", lambda _root, _value: controller_review)
+    reviewed = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert len(reviewed["publicationRequests"]) == 1
+    assert json.loads(result_path.read_text(encoding="utf-8"))["independentReview"] == (
+        controller_review
+    )
+
+
 def test_pr_followup_reserve_defers_changed_snapshot_until_fresh_import(monkeypatch, tmp_path):
     store, _worktree, _head_sha, pr_url = _published_followup_store(tmp_path)
     candidate = store.pr_followup_candidates()[0]
@@ -4767,6 +4905,7 @@ def test_followup_commit_preserves_prepared_base_integration_diff(tmp_path):
 
     assert finalized["controllerCommitChangedFiles"] == ["runtime.py"]
     assert finalized["changedFiles"] == ["base.py", "runtime.py"]
+    assert finalized["previousCommitSha"] == prepared_head
     assert run_git(worktree, "rev-list", "--parents", "-n", "1", "HEAD").split()[1:] == [
         prepared_head
     ]
@@ -4905,6 +5044,26 @@ def test_controller_commits_validated_child_patch_and_requests_publication(tmp_p
         ]
         == "FIX_READY"
     )
+
+
+def test_child_cannot_self_attest_independent_review(monkeypatch, tmp_path):
+    store, _worktree, result_path = _controller_commit_result(tmp_path)
+    monkeypatch.setattr(MODULE, "controller_review_result", lambda _root, _value: None)
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert result["ok"] is True
+    assert result["publicationRequests"] == []
+    assert result["validationDeferred"] == [
+        {
+            "key": "a/b#1",
+            "reason": "SUBMIT_READY_EVIDENCE_INCOMPLETE",
+            "missing": ["independent_review_passed"],
+        }
+    ]
+    finalized = json.loads(result_path.read_text(encoding="utf-8"))
+    assert finalized["quality"]["independent_review_passed"] is False
+    assert store.publication_work_items() == []
 
 
 def test_controller_policy_snapshot_satisfies_child_policy_quality(tmp_path):
@@ -5233,7 +5392,7 @@ def test_controller_merge_preserves_child_prepared_resolution(tmp_path):
     result_path = tmp_path / "result.json"
     result_path.write_text(json.dumps(value), encoding="utf-8")
 
-    MODULE._finalize_controller_commit(
+    finalized, _raw = MODULE._finalize_controller_commit(
         candidate={"worktreePath": str(worktree)},
         context={
             "prFollowup": {
@@ -5246,6 +5405,8 @@ def test_controller_merge_preserves_child_prepared_resolution(tmp_path):
     )
 
     assert source.read_text(encoding="utf-8") == "value = 'combined-resolution'\n"
+    assert finalized["previousCommitSha"] == previous_head
+    assert finalized["mergeBaseSha"] == base_sha
     assert run_git(worktree, "rev-list", "--parents", "-n", "1", "HEAD").split()[1:] == [
         previous_head,
         base_sha,
@@ -6254,6 +6415,10 @@ def test_validation_prefetch_failure_does_not_reserve_followup(monkeypatch, tmp_
 def test_privileged_controller_runs_granted_publication_queue(monkeypatch, tmp_path):
     worktree = tmp_path / "worktree"
     worktree.mkdir()
+    evidence_path = worktree / "result.json"
+    evidence_path.write_text(
+        json.dumps({"quality": {"independent_review_passed": True}}), encoding="utf-8"
+    )
 
     class Store:
         def publication_work_items(self):
@@ -6267,6 +6432,7 @@ def test_privileged_controller_runs_granted_publication_queue(monkeypatch, tmp_p
                         "commitSha": "a" * 40,
                         "branch": "fix-runtime",
                         "worktreePath": str(worktree),
+                        "evidencePath": str(evidence_path),
                         "publication": {
                             "headOwner": "Oxygen56",
                             "baseBranch": "main",
@@ -6310,11 +6476,51 @@ def test_privileged_controller_runs_granted_publication_queue(monkeypatch, tmp_p
     assert all(call[2] == ledger_path for call in calls)
 
 
+def test_publication_queue_blocks_legacy_request_without_private_review(monkeypatch, tmp_path):
+    evidence_path = tmp_path / "legacy-result.json"
+    evidence_path.write_text(
+        json.dumps({"quality": {"independent_review_passed": True}}), encoding="utf-8"
+    )
+    recorded = []
+
+    class Store:
+        def publication_work_items(self):
+            return [
+                {
+                    "request_id": "request-1",
+                    "request": {"evidencePath": str(evidence_path)},
+                }
+            ]
+
+        def block_publication_request(self, request_id, reason):
+            recorded.append((request_id, reason))
+
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+    monkeypatch.setattr(MODULE, "controller_review_result", lambda _root, _value: None)
+    monkeypatch.setattr(
+        MODULE,
+        "_executor",
+        lambda *_args, **_kwargs: pytest.fail("unreviewed request must not execute"),
+    )
+
+    result = MODULE.run_publication_queue(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert result["published"] == []
+    assert result["blocked"] == [
+        {"requestId": "request-1", "reason": "CONTROLLER_INDEPENDENT_REVIEW_REQUIRED"}
+    ]
+    assert recorded == [("request-1", "CONTROLLER_INDEPENDENT_REVIEW_REQUIRED")]
+
+
 def test_publication_queue_reconciles_interrupted_push_before_pr_confirmation(
     monkeypatch, tmp_path
 ):
     worktree = tmp_path / "worktree"
     worktree.mkdir()
+    evidence_path = worktree / "result.json"
+    evidence_path.write_text(
+        json.dumps({"quality": {"independent_review_passed": True}}), encoding="utf-8"
+    )
 
     class Store:
         def publication_work_items(self):
@@ -6328,6 +6534,7 @@ def test_publication_queue_reconciles_interrupted_push_before_pr_confirmation(
                         "commitSha": "b" * 40,
                         "branch": "fix-runtime",
                         "worktreePath": str(worktree),
+                        "evidencePath": str(evidence_path),
                         "publication": {
                             "headOwner": "Oxygen56",
                             "baseBranch": "main",

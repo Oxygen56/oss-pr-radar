@@ -200,10 +200,25 @@ receiving their own worktrees.
   validation result for 90 minutes is surfaced in the `stale` list as an
   operational failure; it is not silently treated as healthy or automatically
   sent again.
+  The same intent is excluded from the global WIP count while its validation
+  turn is reserved; another active intent still blocks it. A committed
+  `FIX_READY` result whose independent-review field is incomplete is reviewed by
+  an ephemeral, read-only controller process, including commits that update an
+  existing PR. The isolated reviewer does not load the target repository's
+  project instructions or secret environment variables. The result advances only
+  when the controller-private receipt is bound to the exact commit and evidence
+  digest; the review creates no sidebar task and performs no public action.
+  Pending and granted publication requests are rechecked at the privileged
+  execution boundary, so a legacy request cannot inherit a task-authored pass.
+  Reviewer transport failures persist a fair-rotation cursor and move the next
+  cycle to another candidate; no time-based review cooldown is used.
   Broad validation failures must be compared against the same gate on the
   parent baseline. They may be treated as unrelated only when the failure set
   is entirely pre-existing and all changed-path functional, type, format, and
-  repository-specific gates pass. Explicitly interrupted validation turns are
+  repository-specific gates that actually apply to the changed paths pass.
+  Missing optional provider or all-extras dependencies in an unrelated registry
+  check are recorded as not applicable or environment-limited, not as a changed-
+  path failure. Explicitly interrupted validation turns are
   different: the controller may
   recover the same task as soon as its detached owner has exited and no newer
   result was ingested. The first-turn `root-task-worker` and continuation

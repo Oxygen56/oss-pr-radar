@@ -139,6 +139,15 @@ def controller_cycle(
     lifecycle_ready = recovery.get("ok") is not False and not recovery.get("errors")
     if lifecycle_ready:
         bridge("resultIngestion", "ingest-results")
+        independent_review = bridge(
+            "independentReview",
+            "independent-review-run",
+            timeout=1800,
+        )
+        if independent_review.get("updated"):
+            bridge("resultIngestionAfterReview", "ingest-results")
+        else:
+            stages["resultIngestionAfterReview"] = {"ok": True, "skipped": True}
         bridge("contextSyncBeforeCleanup", "context-sync")
         bridge("restoreReconcile", "restore-reconcile")
         bridge("titleReconcile", "title-reconcile")

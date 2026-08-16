@@ -1619,6 +1619,42 @@ def test_completed_task_can_enter_controlled_validation(tmp_path):
     assert store.validation_followup_candidates()[0]["resultDigest"] == "completed-result"
 
 
+def test_validation_reservation_excludes_its_own_intent_inside_transaction(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest="result-digest",
+        missing=["relevant_tests_green"],
+    )
+    store.record_stage("a/b#1", "VALIDATION_PENDING")
+
+    with pytest.raises(LedgerError, match="does not match the task"):
+        store.reserve_validation_followup(
+            thread_id="thread-1",
+            result_digest="result-digest",
+            max_active=1,
+            exclude_intent_id="another-intent",
+        )
+    reserved = store.reserve_validation_followup(
+        thread_id="thread-1",
+        result_digest="result-digest",
+        max_active=1,
+        exclude_intent_id="intent-1",
+    )
+
+    assert reserved["intentId"] == "intent-1"
+
+
 def test_validation_followup_is_write_ahead_and_rearms_for_a_new_result(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(intent())

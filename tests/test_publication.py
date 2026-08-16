@@ -16,6 +16,11 @@ from oss_pr_radar.publication import (
 from oss_pr_radar.util import iso_z
 
 
+@pytest.fixture(autouse=True)
+def controller_review_receipt(monkeypatch):
+    monkeypatch.setattr(publication, "controller_review_passed", lambda _root, _value: True)
+
+
 def git(*args, cwd):
     result = subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True)
     return result.stdout.strip()
@@ -230,6 +235,18 @@ def test_broker_grants_commit_bound_permit(monkeypatch, tmp_path):
         commit_sha=permit["commit_sha"],
         branch=permit["branch"],
     )
+
+
+def test_broker_blocks_legacy_request_without_private_review(monkeypatch, tmp_path):
+    store, request, _ = prepared_request(tmp_path)
+    monkeypatch.setattr(publication, "controller_review_passed", lambda _root, _value: False)
+    monkeypatch.setattr(publication, "_changed_files", lambda *args: ["file.txt"])
+
+    result = broker_publication_request(store, request["request_id"], client=Client())
+
+    assert result["granted"] is False
+    assert result["audit"]["reason"] == "CONTROLLER_INDEPENDENT_REVIEW_REQUIRED"
+    assert store.publication_request(request["request_id"])["status"] == "BLOCKED"
 
 
 def test_broker_still_blocks_a_new_pr_when_a_strong_competitor_exists(tmp_path):

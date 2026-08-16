@@ -278,7 +278,14 @@ controller first aligns its worktree to the exact live PR head. A subsequent
 validated patch is published only as a fast-forward update to that exact open
 PR, never as a competing replacement PR.
 An independent macOS LaunchAgent runs only the idempotent result-ingestion and
-permit-bound publication path every 20 seconds. When a task result or lifecycle
+permit-bound publication path every 20 seconds. Every committed change awaiting
+publication, including an existing PR update or conflict resolution, is first
+reviewed by an ephemeral read-only process bound to a controller-private receipt.
+The reviewer starts outside the target repository with project instructions and
+secret environment variables disabled; it does not create another Codex sidebar
+task, and a child task cannot self-attest this gate. The privileged publication
+queue rechecks the private receipt even for requests created before an upgrade.
+When a task result or lifecycle
 transition releases capacity, it immediately invokes the same serialized drain
 to advance one next task. An idle cycle does not scan GitHub, invoke an LLM,
 create tasks, or rewrite active task contexts; the hourly controller remains a

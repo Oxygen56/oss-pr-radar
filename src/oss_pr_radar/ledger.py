@@ -1968,9 +1968,18 @@ class RadarLedger:
         exclude_intent_id: str | None = None,
     ) -> int:
         intent_filter = "" if exclude_intent_id is None else "AND intent_id<>?"
+        event_filter = (
+            ""
+            if exclude_intent_id is None
+            else """AND NOT EXISTS (
+                     SELECT 1 FROM intents excluded
+                     WHERE excluded.intent_id=?
+                       AND excluded.opportunity_key=r.opportunity_key
+                   )"""
+        )
         params: list[Any] = [now]
         if exclude_intent_id is not None:
-            params.append(exclude_intent_id)
+            params.extend([exclude_intent_id, exclude_intent_id, exclude_intent_id])
         return int(
             connection.execute(
                 f"""SELECT COUNT(*) FROM (
@@ -1981,6 +1990,7 @@ class RadarLedger:
                      UNION
                      SELECT r.opportunity_key FROM events r
                      WHERE r.event_type='PR_FOLLOWUP_RESERVED'
+                       {event_filter}
                        AND NOT EXISTS (
                          SELECT 1 FROM events exhausted
                          JOIN events recovery
@@ -2012,6 +2022,7 @@ class RadarLedger:
                      JOIN opportunities o ON o.key=r.opportunity_key
                      WHERE r.event_type='VALIDATION_FOLLOWUP_RESERVED'
                        AND o.stage='VALIDATION_PENDING'
+                       {event_filter}
                        AND NOT EXISTS (
                          SELECT 1 FROM events exhausted
                          JOIN events recovery
@@ -2684,7 +2695,7 @@ class RadarLedger:
 
         with self.connect() as connection:
             rows = connection.execute(
-                """SELECT o.key,o.issue_url,o.title,i.thread_id,i.worktree_path,
+                """SELECT o.key,o.issue_url,o.title,i.intent_id,i.thread_id,i.worktree_path,
                           d.payload_json,d.created_at
                    FROM opportunities o
                    JOIN events d ON d.id=(
@@ -2726,6 +2737,7 @@ class RadarLedger:
                     "key": row["key"],
                     "issueUrl": row["issue_url"],
                     "title": row["title"],
+                    "intentId": row["intent_id"],
                     "threadId": row["thread_id"],
                     "worktreePath": row["worktree_path"],
                     "resultDigest": payload.get("resultDigest"),
@@ -2795,6 +2807,7 @@ class RadarLedger:
         thread_id: str,
         result_digest: str,
         max_active: int | None = None,
+        exclude_intent_id: str | None = None,
     ) -> dict[str, Any]:
         candidate = next(
             (
@@ -2806,11 +2819,14 @@ class RadarLedger:
         )
         if candidate is None:
             raise LedgerError("validation follow-up authorization is stale or invalid")
+        if exclude_intent_id is not None and exclude_intent_id != candidate["intentId"]:
+            raise LedgerError("validation follow-up WIP exclusion does not match the task")
         now = iso_z(datetime.now(UTC))
         with self.transaction() as connection:
             if max_active is not None and self._active_task_count(
                 connection,
                 now=now,
+                exclude_intent_id=exclude_intent_id,
             ) >= max(0, max_active):
                 raise LedgerError("global task WIP limit reached")
             prior_attempts = int(
@@ -4545,6 +4561,7 @@ class RadarLedger:
         prepared_base_sha: str | None = None,
         merge_conflict_files: list[str] | None = None,
         max_active: int | None = None,
+        exclude_intent_id: str | None = None,
     ) -> dict[str, Any]:
         candidate = next(
             (
@@ -4556,6 +4573,8 @@ class RadarLedger:
         )
         if candidate is None:
             raise LedgerError("PR follow-up authorization is stale or invalid")
+        if exclude_intent_id is not None and exclude_intent_id != candidate["intentId"]:
+            raise LedgerError("PR follow-up WIP exclusion does not match the task")
         if prepared_head_sha is not None and not re.fullmatch(r"[0-9a-f]{40}", prepared_head_sha):
             raise LedgerError("PR follow-up prepared head is invalid")
         snapshot_candidate = candidate
@@ -4588,6 +4607,7 @@ class RadarLedger:
             if max_active is not None and self._active_task_count(
                 connection,
                 now=iso_z(datetime.now(UTC)),
+                exclude_intent_id=exclude_intent_id,
             ) >= max(0, max_active):
                 raise LedgerError("global task WIP limit reached")
             self._event(

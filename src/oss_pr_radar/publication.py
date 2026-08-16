@@ -14,6 +14,7 @@ from typing import Any
 from .decision import authorize
 from .evidence import collect_evidence
 from .github_client import GitHubClient, GitHubError
+from .independent_review import controller_review_passed
 from .ledger import LedgerError, RadarLedger
 from .metrics import assess_submit_ready
 from .util import sha256_text
@@ -31,6 +32,7 @@ PUBLIC_TOOL_BRANCH_RE = re.compile(
     r"(?:generated|assisted)(?:$|[._/-])",
     re.I,
 )
+CONTROL_ROOT = Path(__file__).parents[2]
 
 
 class PublicationError(RuntimeError):
@@ -299,6 +301,8 @@ def audit_publication_request(
         return PublicationAudit(
             "BLOCK", "SUBMIT_READY_EVIDENCE_INCOMPLETE", request_id, assessment.as_dict()
         )
+    if not controller_review_passed(CONTROL_ROOT, evidence_file):
+        return PublicationAudit("BLOCK", "CONTROLLER_INDEPENDENT_REVIEW_REQUIRED", request_id, {})
     intent = request.get("intent") or {}
     if not (
         intent.get("autoSubmitAuthorized") is True

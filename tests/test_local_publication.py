@@ -16,6 +16,7 @@ def test_fast_publication_runs_ingestion_and_publication_in_order(tmp_path):
             "publicationRequests": [{"requestId": "request-1", "status": "PENDING"}],
             "errors": [],
         },
+        "independent-review-run": {"ok": True, "updated": [], "errors": []},
         "title-reconcile": {
             "ok": True,
             "renamed": [{"key": "a/b#1", "threadId": "thread-1"}],
@@ -56,6 +57,7 @@ def test_fast_publication_runs_ingestion_and_publication_in_order(tmp_path):
     assert [operation for _, operation in calls] == [
         "context-recover",
         "ingest-results",
+        "independent-review-run",
         "title-reconcile",
         "cleanup-reconcile",
         "publication-run",
@@ -219,6 +221,7 @@ def test_fast_publication_surfaces_title_reconciliation_failure(tmp_path):
     assert calls == [
         "context-recover",
         "ingest-results",
+        "independent-review-run",
         "title-reconcile",
         "cleanup-reconcile",
         "publication-run",
@@ -248,6 +251,7 @@ def test_missing_historical_worktree_does_not_stop_fast_publication(tmp_path):
     assert calls == [
         "context-recover",
         "ingest-results",
+        "independent-review-run",
         "title-reconcile",
         "cleanup-reconcile",
         "publication-run",
@@ -256,6 +260,93 @@ def test_missing_historical_worktree_does_not_stop_fast_publication(tmp_path):
     assert result["ok"] is True
     assert result["activity"] is False
     assert result["contextsUnavailable"] == [{"key": "old/repo#1"}]
+
+
+def test_independent_review_update_is_reingested_before_publication(tmp_path):
+    calls = []
+    ingestion_count = 0
+
+    def runner(_root: Path, operation: str):
+        nonlocal ingestion_count
+        calls.append(operation)
+        if operation == "context-recover":
+            return {"ok": True, "verified": 0, "errors": []}
+        if operation == "ingest-results":
+            ingestion_count += 1
+            if ingestion_count == 1:
+                return {
+                    "ok": True,
+                    "ingested": [],
+                    "publicationRequests": [],
+                    "validationDeferred": [],
+                    "errors": [],
+                }
+            return {
+                "ok": True,
+                "ingested": [{"key": "a/b#1", "stage": "FIX_READY"}],
+                "publicationRequests": [{"requestId": "request-1", "status": "PENDING"}],
+                "validationDeferred": [],
+                "errors": [],
+            }
+        if operation == "independent-review-run":
+            return {
+                "ok": True,
+                "updated": [{"key": "a/b#1", "verdict": "PASS"}],
+                "errors": [],
+            }
+        return {"ok": True, "published": [], "pending": [], "blocked": [], "errors": []}
+
+    result = advance_once(tmp_path, runner=runner)
+
+    assert calls[:4] == [
+        "context-recover",
+        "ingest-results",
+        "independent-review-run",
+        "ingest-results",
+    ]
+    assert result["publicationRequests"] == [{"requestId": "request-1", "status": "PENDING"}]
+    assert result["independentReview"]["updated"][0]["verdict"] == "PASS"
+
+
+def test_review_update_is_reingested_even_when_an_older_candidate_is_invalid(tmp_path):
+    calls = []
+    ingestion_count = 0
+
+    def runner(_root: Path, operation: str):
+        nonlocal ingestion_count
+        calls.append(operation)
+        if operation == "context-recover":
+            return {"ok": True, "verified": 0, "errors": []}
+        if operation == "ingest-results":
+            ingestion_count += 1
+            return {
+                "ok": True,
+                "ingested": (
+                    [{"key": "a/b#2", "stage": "FIX_READY"}] if ingestion_count == 2 else []
+                ),
+                "publicationRequests": [],
+                "validationDeferred": [],
+                "errors": [],
+            }
+        if operation == "independent-review-run":
+            return {
+                "ok": False,
+                "updated": [{"key": "a/b#2", "verdict": "PASS"}],
+                "errors": [{"key": "a/b#1", "error": "invalid old result"}],
+            }
+        return {"ok": True, "published": [], "pending": [], "blocked": [], "errors": []}
+
+    result = advance_once(tmp_path, runner=runner)
+
+    assert calls[:4] == [
+        "context-recover",
+        "ingest-results",
+        "independent-review-run",
+        "ingest-results",
+    ]
+    assert result["resultsIngested"] == [{"key": "a/b#2", "stage": "FIX_READY"}]
+    assert result["ok"] is False
+    assert result["errors"] == [{"key": "a/b#1", "error": "invalid old result"}]
 
 
 def test_incomplete_validation_is_healthy_and_quiet(tmp_path):

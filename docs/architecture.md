@@ -124,6 +124,19 @@ limit: scanning, evidence collection, queueing, PR refresh, notifications, and
 publication reconciliation continue independently. When a task releases the
 slot, the local event drain immediately advances the next highest-priority
 item; the hourly heartbeat is only the reconciliation fallback.
+Continuing the same intent for validation or an existing PR update excludes
+that intent from the WIP count, so the safety limit cannot deadlock its own
+continuation. Before any new commit is published, a controller-owned `codex exec`
+review runs ephemerally in a read-only sandbox against the exact committed diff;
+PR follow-up commits and merge-conflict resolutions use their controller-bound
+parent scope. The reviewer starts in an isolated non-repository directory, does
+not load target-repository project instructions, and receives a secret-free
+environment. Its private receipt lives outside the issue worktree; a task-authored
+boolean in `result.json` cannot satisfy the independent-review gate or create a
+publication request. The privileged publication boundary repeats this check for
+all pending or granted requests, including legacy queue entries. A transport
+failure rotates the durable review cursor to the next candidate; there is no
+time-based review cooldown and one broken candidate cannot starve the queue.
 The root-task owner polls persisted turn status as a watchdog, so a lost
 completion notification cannot leave a private app-server alive indefinitely.
 Hourly watch evidence forces a rescan on ownership,
