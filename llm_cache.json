@@ -15349,6 +15349,34 @@
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue reports a streaming continuation regression in Semantic Kernel 1.79, but the only commenter (non-maintainer) argues the relevant code lives in Microsoft.Extensions.AI/OpenAI packages, not Semantic Kernel. No minimal repro or root-cause evidence is provided, and the issue may be a dependency-version artifact rather than an SK bug."
   },
+  "7d3f32c5896b64d52d546622f5e9fcdb9b62127d00961b1f32349782c72a94a9": {
+    "confidence": 0.7,
+    "contradictions": [
+      "PR #46003 has semantic overlap but no test files and stale >30 days; issue claims root cause but lacks exact divergence point."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/v1/spec_decode/llm_base_proposer.py",
+      "vllm/model_executor/models/qwen3_5_mtp.py"
+    ],
+    "risks": [
+      "Overlap with PR #46003 may already fix the issue; duplicate issue #21336 may share root cause; distinguishing real bug from checkpoint-specific quirk requires maintainer input."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 13,
+    "test_plan": [
+      "Reproduce with TP=2 and Qwen3.5 MTP checkpoint; assert drafter weight shapes match expected sharding; add multi-rank regression test."
+    ],
+    "unknowns": [
+      "Whether PR #46003 fully fixes this issue; whether issue #21336 is truly duplicate; maintainer preference on handling overlapping PR."
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue reports a TP>=2 MTP drafter weight shape mismatch with concrete repro and evidence of world-size divergence, but an open PR #46003 overlaps the same code path and semantics without referencing this issue. The issue also shares stack signatures with potential duplicate #21336. Need maintainer comparison of PR coverage and duplicate status before starting new work."
+  },
   "7d854d2a836d3c25b7e8423a0921e67f77f445f63e7ac6ec2d228733d60de1e2": {
     "confidence": 0.85,
     "contradictions": [],
