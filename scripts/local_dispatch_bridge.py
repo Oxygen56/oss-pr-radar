@@ -77,9 +77,19 @@ APP_SERVER_TASK_TURN_MAX_SECONDS = 45 * 60.0
 VALIDATION_PREFETCH_TIMEOUTS = {
     "cargo_locked_fetch": 300,
     "go_locked_download": 300,
-    "uv_locked_sync": 900,
-    "npm_locked_install": 900,
+    "uv_locked_sync": 600,
+    "npm_locked_install": 600,
 }
+
+
+class ValidationPrefetchError(RuntimeError):
+    """A deterministic lockfile prefetch could not complete locally."""
+
+    def __init__(self, failure: dict[str, Any]):
+        super().__init__(str(failure.get("summary") or "validation prefetch failed"))
+        self.failure = failure
+
+
 TITLE_PREFIXES = {
     "GO": "[有价值·GO]",
     "AUDIT_NO_GO": "[无价值]",
@@ -4875,7 +4885,29 @@ def _execute_validation_prefetch(
         if not cwd.is_dir():
             raise RuntimeError("validation prefetch cwd does not exist")
         started = monotonic()
-        command(argv, cwd=cwd, timeout=VALIDATION_PREFETCH_TIMEOUTS[kind])
+        timeout = VALIDATION_PREFETCH_TIMEOUTS[kind]
+        try:
+            command(argv, cwd=cwd, timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            raise ValidationPrefetchError(
+                {
+                    "kind": kind,
+                    "command": " ".join(argv),
+                    "summary": f"locked dependency prefetch timed out after {timeout} seconds",
+                    "failureType": "TIMEOUT",
+                    "timeoutSeconds": timeout,
+                }
+            ) from exc
+        except RuntimeError as exc:
+            raise ValidationPrefetchError(
+                {
+                    "kind": kind,
+                    "command": " ".join(argv),
+                    "summary": str(exc)[:300],
+                    "failureType": "COMMAND_FAILED",
+                    "timeoutSeconds": timeout,
+                }
+            ) from exc
         completed.append(
             {
                 "kind": kind,
@@ -4889,6 +4921,10 @@ def _execute_validation_prefetch(
 def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
     reconciled_no_progress = store.reconcile_validation_no_progress()
+    blocked_reader = getattr(store, "validation_prefetch_blocked", lambda: [])
+    prefetch_blocked = {
+        (str(item["key"]), str(item["resultDigest"])): item for item in blocked_reader()
+    }
     rearmed_review_feedback: list[dict[str, str]] = []
     blocked_environment: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
@@ -4965,6 +5001,21 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
     environment_blocked: list[dict[str, Any]] = list(blocked_environment)
     for candidate in store.validation_followup_candidates():
         try:
+            prefetch_failure = prefetch_blocked.get(
+                (str(candidate["key"]), str(candidate["resultDigest"]))
+            )
+            if prefetch_failure:
+                environment_blocked.append(
+                    candidate
+                    | {
+                        "reason": "DEPENDENCY_PREFETCH_FAILED",
+                        "blockedAt": prefetch_failure.get("blockedAt"),
+                        "dependencyFailures": list(
+                            prefetch_failure.get("dependencyFailures") or []
+                        ),
+                    }
+                )
+                continue
             worktree = Path(candidate["worktreePath"]).resolve()
             if not worktree.is_dir():
                 environment_blocked.append(
@@ -5175,7 +5226,24 @@ def validation_followup_reserve(args: argparse.Namespace) -> dict[str, Any]:
     if wip_limited:
         raise RuntimeError("global task WIP limit reached")
     enriched = candidate | {"prefetchCommands": _validation_prefetch_commands(candidate)}
-    prefetch = _execute_validation_prefetch(enriched, enriched["prefetchCommands"])
+    try:
+        prefetch = _execute_validation_prefetch(enriched, enriched["prefetchCommands"])
+    except ValidationPrefetchError as exc:
+        store.record_validation_prefetch_blocked(
+            key=str(enriched["key"]),
+            thread_id=str(enriched["threadId"]),
+            result_digest=str(enriched["resultDigest"]),
+            dependency_failures=[exc.failure],
+        )
+        return {
+            "ok": True,
+            "blocked": True,
+            "key": enriched["key"],
+            "threadId": enriched["threadId"],
+            "resultDigest": enriched["resultDigest"],
+            "reason": "DEPENDENCY_PREFETCH_FAILED",
+            "dependencyFailures": [exc.failure],
+        }
     context_path = write_task_context(
         store,
         issue_url=enriched["issueUrl"],
@@ -6819,7 +6887,7 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
         if restore_failure:
             return restore_failure
         try:
-            validation_followup_reserve(
+            reserved = validation_followup_reserve(
                 argparse.Namespace(
                     ledger=args.ledger,
                     thread_id=candidate["threadId"],
@@ -6839,6 +6907,18 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
                         "reason": "global_task_wip_limit",
                     }
                 ],
+                "deferredFollowups": deferred_followups,
+                "restored": restored_items,
+                "rearmed": rearmed,
+                "recoveryRetryExhausted": recovery_exhausted,
+            }
+        if reserved.get("blocked"):
+            return {
+                "ok": True,
+                "action": "validation_prefetch_blocked",
+                "key": candidate.get("key"),
+                "threadId": candidate.get("threadId"),
+                "dependencyFailures": reserved.get("dependencyFailures") or [],
                 "deferredFollowups": deferred_followups,
                 "restored": restored_items,
                 "rearmed": rearmed,

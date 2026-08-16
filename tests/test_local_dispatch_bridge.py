@@ -301,6 +301,51 @@ def test_event_drain_treats_validation_wip_race_as_a_normal_deferral(monkeypatch
     assert result["held"] == [{"key": "a/b#1", "reason": "global_task_wip_limit"}]
 
 
+def test_event_drain_terminalizes_validation_prefetch_failure(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        MODULE, "restore_reconcile", lambda _args: {"ok": True, "restored": [], "errors": []}
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "pr_followup_list",
+        lambda _args: {"candidates": [], "restoreRequired": [], "unresolved": []},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "validation_followup_list",
+        lambda _args: {
+            "candidates": [
+                {
+                    "key": "a/b#1",
+                    "threadId": "thread-1",
+                    "resultDigest": "result-digest",
+                }
+            ]
+        },
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "validation_followup_reserve",
+        lambda _args: {
+            "ok": True,
+            "blocked": True,
+            "dependencyFailures": [{"failureType": "TIMEOUT"}],
+        },
+    )
+
+    result = MODULE.drain_once(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            project_id="github-project",
+            owner="event-drain",
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["action"] == "validation_prefetch_blocked"
+    assert result["dependencyFailures"] == [{"failureType": "TIMEOUT"}]
+
+
 @pytest.fixture(autouse=True)
 def disable_live_thread_watchdog(monkeypatch, tmp_path):
     thread_db = tmp_path / "default-codex-db" / "threads.sqlite3"
@@ -6908,6 +6953,30 @@ def test_validation_prefetch_execution_enforces_command_and_worktree_boundaries(
         )
 
 
+def test_validation_prefetch_timeout_has_structured_failure(monkeypatch, tmp_path):
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    command = {
+        "kind": "npm_locked_install",
+        "cwd": str(worktree),
+        "argv": ["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"],
+    }
+
+    def timeout(*_args, **_kwargs):
+        raise subprocess.TimeoutExpired(command["argv"], 600)
+
+    monkeypatch.setattr(MODULE, "command", timeout)
+
+    with pytest.raises(MODULE.ValidationPrefetchError) as raised:
+        MODULE._execute_validation_prefetch(
+            {"worktreePath": str(worktree)},
+            [command],
+        )
+
+    assert raised.value.failure["failureType"] == "TIMEOUT"
+    assert raised.value.failure["timeoutSeconds"] == 600
+
+
 def test_validation_followup_reserve_runs_prefetch_inside_bridge(monkeypatch, tmp_path):
     store, worktree, result_path = _controller_commit_result(
         tmp_path,
@@ -6962,6 +7031,62 @@ def test_validation_followup_reserve_runs_prefetch_inside_bridge(monkeypatch, tm
     assert [item["kind"] for item in executed] == ["npm_locked_install"]
     assert reserved["prefetch"][0]["kind"] == "npm_locked_install"
     assert "已经按锁文件预取缺失依赖" in reserved["prompt"]
+
+
+def test_validation_followup_prefetch_failure_is_blocked_without_delivery(monkeypatch, tmp_path):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        missing_quality=("relevant_tests_green",),
+    )
+    (worktree / "package-lock.json").write_text("{}\n", encoding="utf-8")
+    (worktree / "package.json").write_text("{}\n", encoding="utf-8")
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value["changedFiles"] = ["runtime.ts"]
+    value["tests"] = [
+        {
+            "command": "npm run test",
+            "exitCode": 127,
+            "summary": "node_modules is absent",
+        }
+    ]
+    raw = json.dumps(value).encode()
+    result_path.write_bytes(raw)
+    digest = hashlib.sha256(raw).hexdigest()
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest=digest,
+        missing=["relevant_tests_green"],
+    )
+    store.record_stage("a/b#1", "VALIDATION_PENDING", evidence={})
+    failure = {
+        "kind": "npm_locked_install",
+        "command": "npm ci --ignore-scripts --no-audit --no-fund",
+        "summary": "locked dependency prefetch timed out after 600 seconds",
+        "failureType": "TIMEOUT",
+        "timeoutSeconds": 600,
+    }
+    monkeypatch.setattr(
+        MODULE,
+        "_execute_validation_prefetch",
+        lambda *_args: (_ for _ in ()).throw(MODULE.ValidationPrefetchError(failure)),
+    )
+
+    reserved = MODULE.validation_followup_reserve(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            thread_id="thread-1",
+            result_digest=digest,
+            prefetch_complete=False,
+        )
+    )
+    listed = MODULE.validation_followup_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert reserved["blocked"] is True
+    assert listed["candidates"] == []
+    assert listed["environmentBlocked"][0]["reason"] == "DEPENDENCY_PREFETCH_FAILED"
+    assert listed["environmentBlocked"][0]["dependencyFailures"] == [failure]
+    assert store.unresolved_validation_followups() == []
 
 
 def test_validation_prefetch_failure_does_not_reserve_followup(monkeypatch, tmp_path):

@@ -2625,6 +2625,78 @@ class RadarLedger:
                 missing=missing,
             )
 
+    def record_validation_prefetch_blocked(
+        self,
+        *,
+        key: str,
+        thread_id: str,
+        result_digest: str,
+        dependency_failures: list[dict[str, Any]],
+    ) -> None:
+        """Persist a failed deterministic prefetch so the scheduler does not retry forever."""
+
+        with self.transaction() as connection:
+            row = connection.execute(
+                """SELECT 1 FROM opportunities o
+                   JOIN intents i ON i.opportunity_key=o.key
+                   JOIN events d ON d.opportunity_key=o.key
+                     AND d.event_type='TASK_RESULT_VALIDATION_DEFERRED'
+                     AND json_extract(d.payload_json,'$.resultDigest')=?
+                   WHERE o.key=? AND i.thread_id=?
+                     AND o.stage='VALIDATION_PENDING'
+                   LIMIT 1""",
+                (result_digest, key, thread_id),
+            ).fetchone()
+            if row is None:
+                raise LedgerError("validation prefetch task is not current")
+            self._event(
+                connection,
+                key,
+                "VALIDATION_PREFETCH_BLOCKED",
+                result_digest,
+                {
+                    "threadId": thread_id,
+                    "resultDigest": result_digest,
+                    "dependencyFailures": dependency_failures,
+                },
+                iso_z(datetime.now(UTC)),
+            )
+
+    def validation_prefetch_blocked(self) -> list[dict[str, Any]]:
+        """Return prefetch failures that still apply to the current deferred result."""
+
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT o.key,b.payload_json,b.created_at
+                   FROM opportunities o
+                   JOIN events d ON d.id=(
+                     SELECT MAX(d2.id) FROM events d2
+                     WHERE d2.opportunity_key=o.key
+                       AND d2.event_type='TASK_RESULT_VALIDATION_DEFERRED'
+                   )
+                   JOIN events b ON b.id=(
+                     SELECT MAX(b2.id) FROM events b2
+                     WHERE b2.opportunity_key=o.key
+                       AND b2.event_type='VALIDATION_PREFETCH_BLOCKED'
+                       AND json_extract(b2.payload_json,'$.resultDigest')=
+                           json_extract(d.payload_json,'$.resultDigest')
+                   )
+                   WHERE o.stage='VALIDATION_PENDING'"""
+            ).fetchall()
+        blocked: list[dict[str, Any]] = []
+        for row in rows:
+            payload = json.loads(row["payload_json"])
+            blocked.append(
+                {
+                    "key": row["key"],
+                    "threadId": payload.get("threadId"),
+                    "resultDigest": payload.get("resultDigest"),
+                    "dependencyFailures": list(payload.get("dependencyFailures") or []),
+                    "blockedAt": row["created_at"],
+                }
+            )
+        return blocked
+
     @staticmethod
     def _normalized_validation_missing(missing: Any) -> tuple[str, ...]:
         if not isinstance(missing, list):
