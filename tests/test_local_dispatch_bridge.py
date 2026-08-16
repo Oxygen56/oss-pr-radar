@@ -3489,6 +3489,70 @@ def test_task_turn_delivery_never_restarts_a_live_worker(monkeypatch, tmp_path):
     assert result["workerPid"] == os.getpid()
 
 
+def test_task_turn_preflight_failure_writes_a_negative_receipt(monkeypatch, tmp_path):
+    issue_url = "https://github.com/a/b/issues/1"
+    project_root = tmp_path / "github"
+    worktree = project_root / ".oss-pr-radar" / "worktrees" / "intent" / "b"
+    worktree.mkdir(parents=True)
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "CREATE TABLE threads (id TEXT, cwd TEXT, archived INTEGER, "
+            "first_user_message TEXT, rollout_path TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?,?,?)",
+            ("thread-1", str(project_root), 1, MODULE.issue_prompt(issue_url), None),
+        )
+
+    class Store:
+        def unresolved_validation_followups(self):
+            return [
+                {
+                    "key": "a/b#1",
+                    "issueUrl": issue_url,
+                    "worktreePath": str(worktree),
+                    "threadId": "thread-1",
+                    "resultDigest": "a" * 64,
+                    "missing": ["relevant_tests_green"],
+                    "reservedAt": iso_z(datetime.now(UTC) - timedelta(minutes=2)),
+                }
+            ]
+
+    state = tmp_path / "state"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "STATE", state)
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+
+    with pytest.raises(RuntimeError, match="target is missing or archived"):
+        MODULE.task_turn_deliver(
+            SimpleNamespace(
+                ledger=tmp_path / "ledger.sqlite3",
+                delivery_kind="validation-followup",
+                delivery_token="a" * 64,
+                thread_id="thread-1",
+            )
+        )
+
+    receipt_key = MODULE.sha256_json(
+        {
+            "deliveryKind": "validation-followup",
+            "threadId": "thread-1",
+            "deliveryToken": "a" * 64,
+        }
+    )
+    receipt = json.loads(
+        (state / "task_turn_receipts" / f"{receipt_key}.json").read_text(encoding="utf-8")
+    )
+    assert receipt == {
+        "ok": False,
+        "turnStarted": False,
+        "turnId": None,
+        "error": "RuntimeError:task-turn delivery target is missing or archived",
+    }
+
+
 def test_task_turn_worker_setup_failure_writes_a_negative_receipt(monkeypatch, tmp_path):
     receipt = tmp_path / "receipt.json"
     monkeypatch.setattr(

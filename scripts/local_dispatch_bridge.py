@@ -2809,11 +2809,36 @@ def task_turn_deliver(args: argparse.Namespace) -> dict[str, Any]:
     if candidate is None:
         raise RuntimeError("task-turn delivery reservation is unavailable")
     candidate = candidate | {"threadId": args.thread_id}
-    _cwd, rollout_path = _validated_task_turn_thread(candidate)
-    activity_available, materialized = thread_turn_materialized_after(
-        rollout_path,
-        str(candidate["reservedAt"]),
+    receipt_key = sha256_json(
+        {
+            "deliveryKind": args.delivery_kind,
+            "threadId": args.thread_id,
+            "deliveryToken": args.delivery_token,
+        }
     )
+    receipt_root = STATE / "task_turn_receipts"
+    receipt = receipt_root / f"{receipt_key}.json"
+    launch = receipt_root / f"{receipt_key}.launch.json"
+    log = receipt_root / f"{receipt_key}.log"
+    receipt_root.mkdir(parents=True, exist_ok=True)
+    try:
+        _cwd, rollout_path = _validated_task_turn_thread(candidate)
+        activity_available, materialized = thread_turn_materialized_after(
+            rollout_path,
+            str(candidate["reservedAt"]),
+        )
+    except Exception as exc:
+        if not receipt.exists():
+            _atomic_json(
+                receipt,
+                {
+                    "ok": False,
+                    "turnStarted": False,
+                    "turnId": None,
+                    "error": f"{type(exc).__name__}:{str(exc)[:300]}",
+                },
+            )
+        raise
     if materialized:
         _commit_task_turn_delivery(
             store,
@@ -2828,19 +2853,6 @@ def task_turn_deliver(args: argparse.Namespace) -> dict[str, Any]:
             "reconciled": True,
             "targetTurnMaterialized": True,
         }
-
-    receipt_key = sha256_json(
-        {
-            "deliveryKind": args.delivery_kind,
-            "threadId": args.thread_id,
-            "deliveryToken": args.delivery_token,
-        }
-    )
-    receipt_root = STATE / "task_turn_receipts"
-    receipt = receipt_root / f"{receipt_key}.json"
-    launch = receipt_root / f"{receipt_key}.launch.json"
-    log = receipt_root / f"{receipt_key}.log"
-    receipt_root.mkdir(parents=True, exist_ok=True)
 
     if receipt.exists():
         result = read_json(receipt, missing={})
