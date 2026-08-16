@@ -5966,6 +5966,42 @@ def test_locked_but_absent_node_dependency_builds_npm_prefetch_plan(tmp_path):
     ]
 
 
+def test_unlocked_unverified_gate_is_classified_as_environment_blocked(monkeypatch, tmp_path):
+    store, _worktree, result_path = _controller_commit_result(
+        tmp_path,
+        missing_quality=("relevant_tests_green",),
+    )
+    MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    candidate = store.validation_followup_candidates()[0]
+    store.reserve_validation_followup(thread_id="thread-1", result_digest=candidate["resultDigest"])
+    store.commit_validation_followup(thread_id="thread-1", result_digest=candidate["resultDigest"])
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value["evidence"] = {
+        "unverifiedGates": [
+            {
+                "command": "cd docs && mint broken-links",
+                "reason": "mint is not on PATH and no worktree-local prefetched executable exists",
+            }
+        ]
+    }
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    second_digest = hashlib.sha256(result_path.read_bytes()).hexdigest()
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest=second_digest,
+        missing=list(candidate["missing"]),
+    )
+    monkeypatch.setattr(MODULE, "_local_changed_files", lambda _worktree: [])
+
+    listed = MODULE.validation_followup_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert listed["blockedNoProgress"] == []
+    assert listed["rearmedReviewFeedback"] == []
+    assert listed["environmentBlocked"][0]["key"] == "a/b#1"
+    assert listed["environmentBlocked"][0]["reason"] == ("DEPENDENCY_ENVIRONMENT_UNAVAILABLE")
+
+
 def test_validation_followup_never_abandons_an_unreceipted_delivery(monkeypatch, tmp_path):
     now = datetime.now(UTC)
     reserved_at = iso_z(now - timedelta(hours=2))

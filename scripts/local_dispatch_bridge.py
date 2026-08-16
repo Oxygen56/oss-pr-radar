@@ -4632,6 +4632,8 @@ VALIDATION_DEPENDENCY_FAILURE_MARKERS = (
     "missing numpy",
     "missing torch",
     "executable is unavailable",
+    "not on path",
+    "no worktree-local prefetched executable",
 )
 
 
@@ -4695,6 +4697,18 @@ def _validation_prefetch_plan(
     failed = [
         item for item in tests if isinstance(item, dict) and item.get("exitCode") not in {None, 0}
     ]
+    evidence = result.get("evidence") if isinstance(result, dict) else None
+    unverified = evidence.get("unverifiedGates") if isinstance(evidence, dict) else None
+    if isinstance(unverified, list):
+        failed.extend(
+            {
+                "command": str(item.get("command") or ""),
+                "summary": str(item.get("reason") or item.get("summary") or ""),
+                "exitCode": 127,
+            }
+            for item in unverified
+            if isinstance(item, dict)
+        )
     dependency_failures = [item for item in failed if _is_validation_dependency_failure(item)]
     if not dependency_failures:
         return [], []
@@ -4861,6 +4875,7 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
     reconciled_no_progress = store.reconcile_validation_no_progress()
     rearmed_review_feedback: list[dict[str, str]] = []
+    blocked_environment: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
     for blocked in store.validation_no_progress():
         try:
@@ -4871,11 +4886,27 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
                 review_marker = sha256_json({"dirtyFiles": dirty_files})
             else:
                 prefetch_commands: list[dict[str, Any]] = []
+                dependency_failures: list[dict[str, Any]] = []
                 if _task_result_path(blocked).is_file():
-                    prefetch_commands, _dependency_failures = _validation_prefetch_plan(blocked)
+                    prefetch_commands, dependency_failures = _validation_prefetch_plan(blocked)
                 if prefetch_commands:
                     reason = "DEPENDENCY_PREFETCH_AVAILABLE"
                     review_marker = sha256_json({"prefetchCommands": prefetch_commands})
+                elif dependency_failures:
+                    blocked_environment.append(
+                        blocked
+                        | {
+                            "reason": "DEPENDENCY_ENVIRONMENT_UNAVAILABLE",
+                            "dependencyFailures": [
+                                {
+                                    "command": str(item.get("command") or "")[:300],
+                                    "summary": str(item.get("summary") or "")[:300],
+                                }
+                                for item in dependency_failures
+                            ],
+                        }
+                    )
+                    continue
                 else:
                     missing = set(blocked.get("missing") or [])
                     if "independent_review_passed" not in missing:
@@ -4916,7 +4947,7 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
             )
     candidates: list[dict[str, Any]] = []
     controller_review_pending: list[dict[str, Any]] = []
-    environment_blocked: list[dict[str, Any]] = []
+    environment_blocked: list[dict[str, Any]] = list(blocked_environment)
     for candidate in store.validation_followup_candidates():
         try:
             worktree = Path(candidate["worktreePath"]).resolve()
@@ -5030,7 +5061,12 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
                 value |= retry
         unresolved_with_recovery.append(value)
     stale = store.stale_validation_followups(min_age_minutes=getattr(args, "min_age_minutes", 90))
-    blocked_no_progress = store.validation_no_progress()
+    blocked_environment_keys = {str(item.get("key") or "") for item in blocked_environment}
+    blocked_no_progress = [
+        item
+        for item in store.validation_no_progress()
+        if str(item.get("key") or "") not in blocked_environment_keys
+    ]
     return {
         "ok": not errors and not unresolved_with_recovery and not stale,
         "candidates": candidates,
