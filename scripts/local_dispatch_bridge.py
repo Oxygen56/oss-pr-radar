@@ -4633,6 +4633,7 @@ VALIDATION_DEPENDENCY_FAILURE_MARKERS = (
     "missing torch",
     "executable is unavailable",
     "not on path",
+    "absent from path",
     "no worktree-local prefetched executable",
 )
 
@@ -4700,15 +4701,17 @@ def _validation_prefetch_plan(
     evidence = result.get("evidence") if isinstance(result, dict) else None
     unverified = evidence.get("unverifiedGates") if isinstance(evidence, dict) else None
     if isinstance(unverified, list):
-        failed.extend(
-            {
-                "command": str(item.get("command") or ""),
-                "summary": str(item.get("reason") or item.get("summary") or ""),
-                "exitCode": 127,
-            }
-            for item in unverified
-            if isinstance(item, dict)
-        )
+        for item in unverified:
+            if isinstance(item, dict):
+                failed.append(
+                    {
+                        "command": str(item.get("command") or ""),
+                        "summary": str(item.get("reason") or item.get("summary") or ""),
+                        "exitCode": 127,
+                    }
+                )
+            elif isinstance(item, str):
+                failed.append({"command": "", "summary": item, "exitCode": 127})
     dependency_failures = [item for item in failed if _is_validation_dependency_failure(item)]
     if not dependency_failures:
         return [], []
