@@ -3,7 +3,11 @@ import os
 import time
 from pathlib import Path
 
-from oss_pr_radar.local_publication import advance_once, launch_agent_spec
+from oss_pr_radar.local_publication import (
+    advance_once,
+    compact_advance_result,
+    launch_agent_spec,
+)
 
 
 def test_fast_publication_runs_ingestion_and_publication_in_order(tmp_path):
@@ -427,3 +431,40 @@ def test_launch_agent_uses_local_venv_and_contains_no_credentials(tmp_path):
     assert spec["WorkingDirectory"] == str(root.resolve())
     assert "FEISHU" not in str(spec)
     assert "DEEPSEEK" not in str(spec)
+
+
+def test_compact_result_keeps_counts_and_omits_large_payloads():
+    result = {
+        "ok": False,
+        "activity": True,
+        "resultsIngested": [{"key": "a/b#1", "evidence": "x" * 10_000}],
+        "publicationRequests": [{"requestId": "request-1"}],
+        "validationDeferred": [],
+        "independentReview": {
+            "busy": True,
+            "updated": [{"key": "a/b#1", "details": "y" * 10_000}],
+        },
+        "blocked": [{"key": "a/b#2", "details": "z" * 10_000}],
+        "contextsUnavailable": [{"key": f"old/repo#{index}"} for index in range(20)],
+        "contextsUnavailableCount": 20,
+        "drain": {"ok": True, "action": "none"},
+        "errors": [{"key": "a/b#3", "error": "stale result"}],
+    }
+
+    compact = compact_advance_result(result)
+
+    assert compact["counts"] == {
+        "resultsIngested": 1,
+        "publicationRequests": 1,
+        "validationDeferred": 0,
+        "reviewsUpdated": 1,
+        "titlesRenamed": 0,
+        "threadsArchived": 0,
+        "published": 0,
+        "publicationBlocked": 1,
+        "errors": 1,
+    }
+    assert compact["reviewBusy"] is True
+    assert compact["contextsUnavailableCount"] == 20
+    assert "contextsUnavailable" not in compact
+    assert len(json.dumps(compact)) < 1_000

@@ -4060,6 +4060,85 @@ def test_controller_ingests_workspace_no_go_without_child_ledger_access(tmp_path
     assert task["autoSubmitAuthorized"] is False
 
 
+def test_ingestion_ignores_stale_result_after_published_context_moves_on(tmp_path):
+    store, worktree = registered_store(tmp_path)
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    old_context = json.loads(context_path.read_text(encoding="utf-8"))
+    result_path = Path(old_context["resultPath"])
+    result_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": "radar-task-result-v1",
+                "contextDigest": old_context["contextDigest"],
+                "key": "a/b#1",
+                "issueUrl": "https://github.com/a/b/issues/1",
+                "threadId": "thread-1",
+                "worktreePath": str(worktree.resolve()),
+                "stage": "PR_OPEN",
+                "evidence": {"reviewed": True},
+            }
+        ),
+        encoding="utf-8",
+    )
+    store.record_stage(
+        "a/b#1",
+        "CI_GREEN",
+        evidence={"prUrl": "https://github.com/a/b/pull/2"},
+    )
+    current_context = dict(old_context)
+    current_context["contextDigest"] = "current-published-context"
+    context_path.write_text(json.dumps(current_context), encoding="utf-8")
+    assert current_context.get("prFollowup") is None
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert result["ok"] is True
+    assert result["ingested"] == []
+    assert result["ignored"] == [
+        {"key": "a/b#1", "reason": "STALE_PUBLISHED_TASK_RESULT"}
+    ]
+    assert result["errors"] == []
+
+
+def test_ingestion_still_rejects_context_mismatch_for_active_task(tmp_path):
+    store, worktree = registered_store(tmp_path)
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    context = json.loads(context_path.read_text(encoding="utf-8"))
+    Path(context["resultPath"]).write_text(
+        json.dumps(
+            {
+                "schemaVersion": "radar-task-result-v1",
+                "contextDigest": "wrong-context",
+                "key": "a/b#1",
+                "issueUrl": "https://github.com/a/b/issues/1",
+                "threadId": "thread-1",
+                "worktreePath": str(worktree.resolve()),
+                "stage": "AUDIT_NO_GO",
+                "reason": "STRONG_EXISTING_PR",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert result["ok"] is False
+    assert result.get("ignored", []) == []
+    assert result["errors"] == [
+        {"key": "a/b#1", "error": "task result context digest mismatch"}
+    ]
+
+
 def _published_followup_store(
     tmp_path: Path,
 ) -> tuple[RadarLedger, Path, str, str]:

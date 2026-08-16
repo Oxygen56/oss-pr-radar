@@ -5085,6 +5085,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
     ingested: list[dict[str, Any]] = []
     publication_requests: list[dict[str, Any]] = []
     validation_deferred: list[dict[str, Any]] = []
+    ignored: list[dict[str, str]] = []
     errors: list[dict[str, str]] = []
     for candidate in store.task_result_candidates():
         result_path = _task_result_path(candidate)
@@ -5167,6 +5168,14 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 elif legacy_compatible_result:
                     pass
                 elif current_wake_digest and value.get("followupDigest") != current_wake_digest:
+                    continue
+                elif candidate["stage"] in PUBLISHED_TASK_STAGES:
+                    ignored.append(
+                        {
+                            "key": candidate["key"],
+                            "reason": "STALE_PUBLISHED_TASK_RESULT",
+                        }
+                    )
                     continue
                 else:
                     raise RuntimeError("task result context digest mismatch")
@@ -5379,13 +5388,16 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 raise RuntimeError("unsupported task result stage")
         except (OSError, ValueError, RuntimeError) as exc:
             errors.append({"key": candidate["key"], "error": str(exc)[:300]})
-    return {
+    result = {
         "ok": not errors,
         "ingested": ingested,
         "publicationRequests": publication_requests,
         "validationDeferred": validation_deferred,
         "errors": errors,
     }
+    if ignored:
+        result["ignored"] = ignored
+    return result
 
 
 def ensure_fork_remote(worktree: Path, repo: str, head_owner: str) -> str:

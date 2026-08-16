@@ -271,6 +271,38 @@ def advance_once(
     }
 
 
+def compact_advance_result(result: dict[str, Any]) -> dict[str, Any]:
+    """Keep the LaunchAgent log useful without repeating full controller state."""
+
+    review = result.get("independentReview")
+    review = review if isinstance(review, dict) else {}
+    drain = result.get("drain")
+    drain = drain if isinstance(drain, dict) else {}
+    return {
+        "ok": result.get("ok"),
+        "activity": result.get("activity"),
+        "counts": {
+            "resultsIngested": len(result.get("resultsIngested") or []),
+            "publicationRequests": len(result.get("publicationRequests") or []),
+            "validationDeferred": len(result.get("validationDeferred") or []),
+            "reviewsUpdated": len(review.get("updated") or []),
+            "titlesRenamed": len(result.get("titlesRenamed") or []),
+            "threadsArchived": len(result.get("threadsArchived") or []),
+            "published": len(result.get("published") or []),
+            "publicationBlocked": len(result.get("blocked") or []),
+            "errors": len(result.get("errors") or []),
+        },
+        "reviewBusy": bool(review.get("busy")),
+        "drain": {
+            "ok": drain.get("ok"),
+            "action": drain.get("action"),
+            "key": drain.get("key"),
+        },
+        "contextsUnavailableCount": int(result.get("contextsUnavailableCount") or 0),
+        "errors": list(result.get("errors") or [])[:5],
+    }
+
+
 def launch_agent_spec(root: Path, *, interval_seconds: int, home: Path) -> dict[str, Any]:
     root = root.resolve()
     interval = max(15, min(int(interval_seconds), 300))
@@ -316,8 +348,10 @@ def main() -> int:
         result = advance_once(args.root)
     except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
         result = {"ok": False, "activity": True, "errors": [{"error": str(exc)[:800]}]}
-    if args.json or result.get("activity") or not result.get("ok"):
+    if args.json:
         print(json.dumps(result, ensure_ascii=False))
+    elif result.get("activity") or not result.get("ok"):
+        print(json.dumps(compact_advance_result(result), ensure_ascii=False))
     return 0 if result.get("ok") else 1
 
 
