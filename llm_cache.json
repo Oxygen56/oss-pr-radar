@@ -8275,6 +8275,38 @@
     ],
     "why": "Issue clearly identifies a detached promise causing title loss on serverless runtimes, with a public repro. However, the deterministic gate requires HUMAN_REVIEW, and a contributor has asked for maintainer design direction on whether to await persistence or use a background hook. Existing PR #16218 overlaps the code path but is not directly linked, so manual comparison is needed before starting work."
   },
+  "45f40eed7bc399c120ae528c3e40a211aafcf29d7cd96b6e45557f73645f0652": {
+    "confidence": 0.7,
+    "contradictions": [
+      "PR #32619 title is about ROCm SharedEP backend, not directly about this issue, but semantic overlap is reported"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix draft-extend CUDA graph capture to populate extend_prefix_lens or handle None in _refresh_track_conv_indices",
+      "Add regression test for multi-layer EAGLE with Inkling under CUDA graphs"
+    ],
+    "risks": [
+      "Existing PR #32619 may already fix the issue; duplicating work",
+      "Fix may require design decision on whether to populate extend_prefix_lens or treat as no prefix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Run the provided launch command with CUDA graphs enabled and verify server starts",
+      "Add a unit test that simulates graph capture with extend_prefix_lens=None and asserts no crash",
+      "Run existing MTP/eagle tests with CUDA graphs on GPU"
+    ],
+    "unknowns": [
+      "Whether PR #32619 actually fixes this specific crash",
+      "Maintainer preference on the design question in the issue"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue provides a clear, reproducible crash with traceback and root cause (extend_prefix_lens None during CUDA graph capture). However, an existing open PR (#32619) has semantic overlap with the same code paths and key terms, and the gate decision is HUMAN_REVIEW. The PR may already address the root cause, so a new candidate should not be created without maintainer comparison."
+  },
   "466375b55c855978618afee5f1db78366b196760e6be0bfe98b1535d6d03b0df": {
     "confidence": 0.7,
     "contradictions": [
@@ -11432,6 +11464,37 @@
       "Whether the existing PR #50882 can be improved or superseded"
     ],
     "why": "Issue provides a detailed root cause and a working fix, but the deterministic gate requires HUMAN_REVIEW and the related issue audit timed out. Existing PR #50882 is weak (draft, no tests, failing CI), but a materially better PR is plausible. However, the lack of maintainer confirmation and the unresolved audit block actionability."
+  },
+  "5eca0334d6ee40043c2701508a9255982f8ce5d0428eb69c8b25d880b807bf30": {
+    "confidence": 0.8,
+    "contradictions": [
+      "The issue suggests investigating JSON serialization, but the bot's fix identifies console.error interference as the root cause."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "src/memory/index.ts",
+      "src/memory/__tests__/file-path.test.ts"
+    ],
+    "risks": [
+      "Removing console.error messages may reduce logging for debugging, but this is acceptable for MCP stdio servers.",
+      "The fix may not address other related issues (#3144, #3137) which have different root causes."
+    ],
+    "root_cause_clarity": "high",
+    "score": 5,
+    "test_plan": [
+      "Run existing test suite (42 tests) to verify all pass after removing console.error statements.",
+      "Add a regression test that simulates stdio contamination on Windows to ensure no extra output is written to stdout."
+    ],
+    "unknowns": [
+      "Whether the bot's fix has been merged or is still pending review.",
+      "Whether the maintainer will accept the bot's fix or request changes."
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "The issue describes a real bug with a clear root cause (console.error output contaminating stdio JSON-RPC on Windows). However, a bot has already implemented a fix in commit e9a22f9 and submitted it for maintainer review. The candidate is therefore a duplicate of an existing PR/fix, and the appropriate action is to wait for maintainer review of that fix."
   },
   "5eccfc4ee0f38fe448987cbefee78abf653db439b528d01d637c52d9e173287a": {
     "confidence": 0.8,
