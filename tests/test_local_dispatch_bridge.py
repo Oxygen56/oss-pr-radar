@@ -6122,7 +6122,7 @@ def test_validation_followup_uses_cumulative_files_for_first_publication(tmp_pat
     )
 
 
-def test_validation_followup_normalizes_existing_complete_handoff(tmp_path):
+def test_validation_followup_normalizes_existing_complete_handoff(tmp_path, monkeypatch):
     store, worktree, result_path = _controller_commit_result(
         tmp_path,
         missing_quality=("regression_test_verified", "relevant_tests_green"),
@@ -6160,6 +6160,19 @@ def test_validation_followup_normalizes_existing_complete_handoff(tmp_path):
 
     assert finalized["controllerCommitChangedFiles"] == ["test_runtime.py"]
     assert finalized["changedFiles"] == ["runtime.py", "test_runtime.py"]
+
+    def unexpected_write(*_args, **_kwargs):
+        raise AssertionError("an already normalized handoff must not be rewritten")
+
+    monkeypatch.setattr(MODULE, "_atomic_json", unexpected_write)
+    repeated, _raw = MODULE._finalize_controller_commit(
+        candidate={"worktreePath": str(worktree)},
+        context=context,
+        value=finalized,
+        result_path=result_path,
+        write_if_unchanged=False,
+    )
+    assert repeated == finalized
 
 
 def test_ingestion_recovers_seen_complete_pr_followup_parent(tmp_path):

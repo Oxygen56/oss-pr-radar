@@ -3831,6 +3831,7 @@ def _finalize_controller_commit(
     context: dict[str, Any],
     value: dict[str, Any],
     result_path: Path,
+    write_if_unchanged: bool = True,
 ) -> tuple[dict[str, Any], bytes]:
     if value.get("handoffMode") == "controller_merge_required":
         return _finalize_controller_merge(
@@ -3867,7 +3868,8 @@ def _finalize_controller_commit(
             finalized["previousCommitSha"] = previous_commit
         else:
             finalized.pop("previousCommitSha", None)
-        _atomic_json(result_path, finalized)
+        if write_if_unchanged or finalized != value:
+            _atomic_json(result_path, finalized)
         return finalized, result_path.read_bytes()
     if value.get("handoffMode") != "controller_commit_required":
         return value, result_path.read_bytes()
@@ -5194,6 +5196,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     context=context,
                     value=value,
                     result_path=result_path,
+                    write_if_unchanged=False,
                 )
                 digest_seen = store.task_result_digest_seen(
                     candidate["key"], hashlib.sha256(raw).hexdigest()
