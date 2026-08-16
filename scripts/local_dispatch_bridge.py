@@ -5098,6 +5098,21 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
             if not isinstance(value, dict):
                 raise RuntimeError("task result must be an object")
             initial_quality = value.get("quality")
+            initial_review_recoverable = False
+            if (
+                value.get("stage") == "FIX_READY"
+                and isinstance(initial_quality, dict)
+                and value.get("handoffMode")
+                in {"controller_commit_complete", "controller_merge_complete"}
+            ):
+                initial_controller_review = controller_review_result(ROOT, value)
+                initial_review_passed = bool(
+                    initial_controller_review and initial_controller_review.get("verdict") == "PASS"
+                )
+                initial_review_recoverable = bool(
+                    initial_quality.get("independent_review_passed") is not initial_review_passed
+                    or value.get("independentReview") != initial_controller_review
+                )
             possible_policy_recovery = bool(
                 value.get("stage") == "FIX_READY"
                 and isinstance(initial_quality, dict)
@@ -5108,6 +5123,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 digest_seen
                 and candidate["stage"] != "VALIDATION_PENDING"
                 and not possible_policy_recovery
+                and not initial_review_recoverable
             ):
                 continue
             context_path = result_path.parent / "task-context.json"

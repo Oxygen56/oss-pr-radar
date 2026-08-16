@@ -5066,6 +5066,37 @@ def test_child_cannot_self_attest_independent_review(monkeypatch, tmp_path):
     assert store.publication_work_items() == []
 
 
+def test_existing_fix_ready_result_accepts_later_controller_review(monkeypatch, tmp_path):
+    store, _worktree, result_path = _controller_commit_result(tmp_path)
+    candidate = store.task_result_candidates()[0]
+    context = json.loads((result_path.parent / "task-context.json").read_text(encoding="utf-8"))
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    finalized, _raw = MODULE._finalize_controller_commit(
+        candidate=candidate,
+        context=context,
+        value=value,
+        result_path=result_path,
+    )
+    finalized["quality"]["independent_review_passed"] = False
+    finalized.pop("independentReview", None)
+    result_path.write_text(json.dumps(finalized), encoding="utf-8")
+    digest = hashlib.sha256(result_path.read_bytes()).hexdigest()
+    store.record_stage("a/b#1", "FIX_READY", evidence=finalized["quality"])
+    store.record_task_result_ingested("a/b#1", digest=digest, stage="FIX_READY")
+    controller_review = {
+        "verdict": "PASS",
+        "summary": "The exact committed change has no blocking finding.",
+    }
+    monkeypatch.setattr(MODULE, "controller_review_result", lambda _root, _value: controller_review)
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert len(result["publicationRequests"]) == 1
+    assert json.loads(result_path.read_text(encoding="utf-8"))["independentReview"] == (
+        controller_review
+    )
+
+
 def test_controller_policy_snapshot_satisfies_child_policy_quality(tmp_path):
     store, _worktree, result_path = _controller_commit_result(
         tmp_path,
