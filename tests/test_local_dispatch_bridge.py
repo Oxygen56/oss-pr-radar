@@ -5879,6 +5879,93 @@ def test_dirty_worktree_rearms_a_stalled_validation_result(tmp_path):
     assert listed["candidates"][0]["resultDigest"] == second_digest
 
 
+def test_available_dependency_prefetch_rearms_a_stalled_validation(monkeypatch, tmp_path):
+    store, _worktree, result_path = _controller_commit_result(
+        tmp_path,
+        missing_quality=("relevant_tests_green",),
+    )
+    MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    candidate = store.validation_followup_candidates()[0]
+    store.reserve_validation_followup(thread_id="thread-1", result_digest=candidate["resultDigest"])
+    store.commit_validation_followup(thread_id="thread-1", result_digest=candidate["resultDigest"])
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value["evidence"] = {"summary": "locked validation dependency is absent"}
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    second_digest = hashlib.sha256(result_path.read_bytes()).hexdigest()
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest=second_digest,
+        missing=list(candidate["missing"]),
+    )
+    monkeypatch.setattr(MODULE, "_local_changed_files", lambda _worktree: [])
+    monkeypatch.setattr(
+        MODULE,
+        "_validation_prefetch_plan",
+        lambda _candidate: (
+            [
+                {
+                    "kind": "npm_locked_install",
+                    "cwd": str(tmp_path),
+                    "argv": [
+                        "npm",
+                        "ci",
+                        "--ignore-scripts",
+                        "--no-audit",
+                        "--no-fund",
+                    ],
+                }
+            ],
+            [],
+        ),
+    )
+
+    listed = MODULE.validation_followup_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert listed["rearmedReviewFeedback"] == [
+        {"key": "a/b#1", "reason": "DEPENDENCY_PREFETCH_AVAILABLE"}
+    ]
+    assert listed["blockedNoProgress"] == []
+    assert listed["candidates"][0]["prefetchRequired"] is True
+
+
+def test_locked_but_absent_node_dependency_builds_npm_prefetch_plan(tmp_path):
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    (worktree / "package.json").write_text("{}\n", encoding="utf-8")
+    (worktree / "package-lock.json").write_text("{}\n", encoding="utf-8")
+    private = worktree / ".oss-pr-radar"
+    private.mkdir()
+    result = {
+        "changedFiles": ["open-sse/utils/stream.ts"],
+        "tests": [
+            {
+                "command": "npm run lint:json",
+                "exitCode": 2,
+                "summary": "eslint-config-next 16.3.0 is locked but absent",
+            }
+        ],
+    }
+    raw = json.dumps(result).encode()
+    (private / "result.json").write_bytes(raw)
+
+    commands, failures = MODULE._validation_prefetch_plan(
+        {
+            "worktreePath": str(worktree),
+            "resultDigest": hashlib.sha256(raw).hexdigest(),
+        }
+    )
+
+    assert len(failures) == 1
+    assert commands == [
+        {
+            "kind": "npm_locked_install",
+            "cwd": str(worktree.resolve()),
+            "argv": ["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"],
+        }
+    ]
+
+
 def test_validation_followup_never_abandons_an_unreceipted_delivery(monkeypatch, tmp_path):
     now = datetime.now(UTC)
     reserved_at = iso_z(now - timedelta(hours=2))

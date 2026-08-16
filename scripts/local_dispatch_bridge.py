@@ -4612,7 +4612,9 @@ VALIDATION_DEPENDENCY_FAILURE_MARKERS = (
     "not cached",
     "uncached dependencies",
     "incomplete cached environment",
+    "incomplete local dependency tree",
     "lacks locked dependency",
+    "locked but absent",
     "module lookup disabled",
     "goproxy=off",
     "node_modules",
@@ -4631,6 +4633,15 @@ VALIDATION_DEPENDENCY_FAILURE_MARKERS = (
     "missing torch",
     "executable is unavailable",
 )
+
+
+def _is_validation_dependency_failure(item: dict[str, Any]) -> bool:
+    text = f"{item.get('command', '')}\n{item.get('summary', '')}".casefold()
+    if any(marker in text for marker in VALIDATION_DEPENDENCY_FAILURE_MARKERS):
+        return True
+    return "locked" in text and any(
+        marker in text for marker in (" is absent", " are absent", " missing", "differs from")
+    )
 
 
 def _locked_python_dependency_groups(pyproject: Path, failure_text: str) -> list[str]:
@@ -4684,14 +4695,7 @@ def _validation_prefetch_plan(
     failed = [
         item for item in tests if isinstance(item, dict) and item.get("exitCode") not in {None, 0}
     ]
-    dependency_failures = [
-        item
-        for item in failed
-        if any(
-            marker in f"{item.get('command', '')}\n{item.get('summary', '')}".casefold()
-            for marker in VALIDATION_DEPENDENCY_FAILURE_MARKERS
-        )
-    ]
+    dependency_failures = [item for item in failed if _is_validation_dependency_failure(item)]
     if not dependency_failures:
         return [], []
 
@@ -4866,27 +4870,36 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
                 reason = "WORKTREE_PROGRESS_PENDING_RESULT"
                 review_marker = sha256_json({"dirtyFiles": dirty_files})
             else:
-                missing = set(blocked.get("missing") or [])
-                if "independent_review_passed" not in missing:
-                    continue
-                value = read_json(_task_result_path(blocked), missing={})
-                review = controller_review_result(ROOT, value) if isinstance(value, dict) else None
-                verdict = str(review.get("verdict") or "") if review else ""
-                if missing != {"independent_review_passed"} and verdict not in {
-                    "FAIL",
-                    "HOLD",
-                }:
-                    continue
-                reason = (
-                    "CONTROLLER_REVIEW_FEEDBACK_AVAILABLE"
-                    if verdict in {"FAIL", "HOLD"}
-                    else (
-                        "CONTROLLER_REVIEW_PASS_PENDING_INGESTION"
-                        if verdict == "PASS"
-                        else "CONTROLLER_REVIEW_PENDING"
+                prefetch_commands: list[dict[str, Any]] = []
+                if _task_result_path(blocked).is_file():
+                    prefetch_commands, _dependency_failures = _validation_prefetch_plan(blocked)
+                if prefetch_commands:
+                    reason = "DEPENDENCY_PREFETCH_AVAILABLE"
+                    review_marker = sha256_json({"prefetchCommands": prefetch_commands})
+                else:
+                    missing = set(blocked.get("missing") or [])
+                    if "independent_review_passed" not in missing:
+                        continue
+                    value = read_json(_task_result_path(blocked), missing={})
+                    review = (
+                        controller_review_result(ROOT, value) if isinstance(value, dict) else None
                     )
-                )
-                review_marker = sha256_json(review) if review else "CONTROLLER_REVIEW_PENDING"
+                    verdict = str(review.get("verdict") or "") if review else ""
+                    if missing != {"independent_review_passed"} and verdict not in {
+                        "FAIL",
+                        "HOLD",
+                    }:
+                        continue
+                    reason = (
+                        "CONTROLLER_REVIEW_FEEDBACK_AVAILABLE"
+                        if verdict in {"FAIL", "HOLD"}
+                        else (
+                            "CONTROLLER_REVIEW_PASS_PENDING_INGESTION"
+                            if verdict == "PASS"
+                            else "CONTROLLER_REVIEW_PENDING"
+                        )
+                    )
+                    review_marker = sha256_json(review) if review else "CONTROLLER_REVIEW_PENDING"
             if store.rearm_validation_no_progress_for_review(
                 key=str(blocked["key"]),
                 result_digest=str(blocked["resultDigest"]),
