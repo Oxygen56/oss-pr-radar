@@ -6162,6 +6162,79 @@ def test_validation_followup_normalizes_existing_complete_handoff(tmp_path):
     assert finalized["changedFiles"] == ["runtime.py", "test_runtime.py"]
 
 
+def test_ingestion_recovers_seen_complete_pr_followup_parent(tmp_path):
+    store, worktree, previous_head, _pr_url = _published_followup_store(tmp_path)
+    candidate = store.pr_followup_candidates()[0]
+    store.reserve_pr_followup(
+        thread_id="thread-1",
+        wake_digest=candidate["wakeDigest"],
+        prepared_head_sha=previous_head,
+    )
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+        prepared_followup_head=previous_head,
+    )
+    context = json.loads(context_path.read_text(encoding="utf-8"))
+    (worktree / "test_runtime.py").write_text(
+        "def test_runtime():\n    assert True\n", encoding="utf-8"
+    )
+    run_git(worktree, "add", "test_runtime.py")
+    run_git(worktree, "commit", "-m", "test: cover runtime follow-up")
+    result = {
+        "schemaVersion": "radar-task-result-v1",
+        "contextDigest": context["contextDigest"],
+        "key": "a/b#1",
+        "issueUrl": "https://github.com/a/b/issues/1",
+        "threadId": "thread-1",
+        "worktreePath": str(worktree.resolve()),
+        "stage": "FIX_READY",
+        "handoffMode": "controller_commit_complete",
+        "commitSha": run_git(worktree, "rev-parse", "HEAD"),
+        "branch": "fix/1-runtime",
+        "changedFiles": ["test_runtime.py"],
+        "controllerCommitChangedFiles": ["test_runtime.py"],
+        "tests": [{"command": "pytest test_runtime.py", "exitCode": 0}],
+        "quality": {
+            field: field != "independent_review_passed" for field in QUALITY_FIELDS
+        },
+        "publication": {
+            "headOwner": "Oxygen56",
+            "baseBranch": "main",
+            "title": "test: cover runtime follow-up",
+            "bodyFile": str((worktree / ".oss-pr-radar" / "pr-body.md").resolve()),
+        },
+    }
+    result_path = Path(context["resultPath"])
+    (worktree / ".oss-pr-radar" / "pr-body.md").write_text(
+        "Fixes #1\n\nCover the runtime follow-up.\n", encoding="utf-8"
+    )
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+    store.record_stage("a/b#1", "VALIDATION_PENDING", evidence=result["quality"])
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest=hashlib.sha256(result_path.read_bytes()).hexdigest(),
+        stage="VALIDATION_PENDING",
+    )
+
+    outcome = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    finalized = json.loads(result_path.read_text(encoding="utf-8"))
+
+    assert outcome["ok"] is True
+    assert outcome["errors"] == []
+    assert outcome["validationDeferred"] == [
+        {
+            "key": "a/b#1",
+            "reason": "SUBMIT_READY_EVIDENCE_INCOMPLETE",
+            "missing": ["independent_review_passed"],
+        }
+    ]
+    assert finalized["previousCommitSha"] == previous_head
+    assert finalized["controllerCommitChangedFiles"] == ["test_runtime.py"]
+
+
 def test_validation_prefetch_plan_is_lockfile_scoped(tmp_path):
     worktree = tmp_path / "worktree"
     result_dir = worktree / ".oss-pr-radar"

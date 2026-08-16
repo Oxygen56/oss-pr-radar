@@ -5181,6 +5181,24 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     raise RuntimeError("task result context digest mismatch")
             stage = str(value.get("stage") or "")
             quality = value.get("quality")
+            if (
+                stage == "FIX_READY"
+                and value.get("handoffMode") == "controller_commit_complete"
+                and (
+                    candidate["stage"] == "VALIDATION_PENDING"
+                    or isinstance(context.get("prFollowup"), dict)
+                )
+            ):
+                value, raw = _finalize_controller_commit(
+                    candidate=candidate,
+                    context=context,
+                    value=value,
+                    result_path=result_path,
+                )
+                digest_seen = store.task_result_digest_seen(
+                    candidate["key"], hashlib.sha256(raw).hexdigest()
+                )
+                quality = value.get("quality")
             controller_review_recoverable = False
             if (
                 stage == "FIX_READY"
