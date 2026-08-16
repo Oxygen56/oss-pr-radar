@@ -968,6 +968,33 @@ def test_archived_task_is_restored_when_lifecycle_recovers(tmp_path):
     assert recovered_title["titleState"] == "PR_OPEN"
 
 
+def test_desktop_archive_drift_can_be_reconciled_without_archive_event(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+        title_time="08-16 19:30",
+    )
+
+    assert store.restore_candidates() == []
+    binding = store.restorable_task_bindings()[0]
+    assert binding["lifecycleState"] is None
+
+    store.commit_restore(thread_id="thread-1", nonce=binding["restoreNonce"])
+
+    with store.connect() as connection:
+        restored = connection.execute(
+            """SELECT payload_json FROM events
+               WHERE event_type='THREAD_RESTORED'"""
+        ).fetchone()
+    assert json.loads(restored["payload_json"])["threadId"] == "thread-1"
+
+
 def test_restored_task_can_be_archived_again_after_a_new_no_go(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(intent())

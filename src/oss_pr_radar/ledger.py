@@ -1633,16 +1633,17 @@ class RadarLedger:
                 now,
             )
 
-    def restore_candidates(self) -> list[dict[str, Any]]:
-        """Return current tasks whose archived UI state no longer matches lifecycle."""
+    def restorable_task_bindings(self) -> list[dict[str, Any]]:
+        """Return valuable task bindings that must remain available in the desktop UI."""
 
         with self.connect() as connection:
             rows = connection.execute(
                 """SELECT o.key,o.title,o.stage,o.updated_at,o.issue_url,
                           i.thread_id,i.worktree_path,i.title_time,
-                          archived.id AS archived_event_id
+                          lifecycle.id AS lifecycle_event_id,
+                          lifecycle.event_type AS lifecycle_state
                    FROM opportunities o JOIN intents i ON i.opportunity_key=o.key
-                   JOIN events archived ON archived.id=(
+                   LEFT JOIN events lifecycle ON lifecycle.id=(
                      SELECT lifecycle.id FROM events lifecycle
                      WHERE lifecycle.opportunity_key=o.key
                        AND lifecycle.event_type IN ('THREAD_ARCHIVED','THREAD_RESTORED')
@@ -1656,7 +1657,6 @@ class RadarLedger:
                        SELECT MAX(current.rowid) FROM intents current
                        WHERE current.opportunity_key=o.key
                      )
-                     AND archived.event_type='THREAD_ARCHIVED'
                    ORDER BY o.updated_at"""
             ).fetchall()
         return [
@@ -1668,16 +1668,26 @@ class RadarLedger:
                 "threadId": row["thread_id"],
                 "worktreePath": row["worktree_path"],
                 "titleTime": row["title_time"],
+                "lifecycleState": row["lifecycle_state"],
                 "restoreNonce": sha256_text(
                     f"{row['key']}|{row['thread_id']}|{row['stage']}|"
-                    f"{row['updated_at']}|{row['archived_event_id']}"
+                    f"{row['updated_at']}|{row['lifecycle_event_id'] or 'physical-drift'}"
                 ),
             }
             for row in rows
         ]
 
+    def restore_candidates(self) -> list[dict[str, Any]]:
+        """Return tasks the ledger expects to be archived but lifecycle has made valuable."""
+
+        return [
+            item
+            for item in self.restorable_task_bindings()
+            if item["lifecycleState"] == "THREAD_ARCHIVED"
+        ]
+
     def commit_restore(self, *, thread_id: str, nonce: str) -> None:
-        candidates = {item["threadId"]: item for item in self.restore_candidates()}
+        candidates = {item["threadId"]: item for item in self.restorable_task_bindings()}
         candidate = candidates.get(thread_id)
         if not candidate or candidate["restoreNonce"] != nonce:
             raise LedgerError("restore authorization is stale or invalid")

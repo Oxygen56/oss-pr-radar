@@ -5498,28 +5498,46 @@ def retry_blocked_publication(args: argparse.Namespace) -> dict[str, Any]:
 
 def restore_list(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
+    bindings = (
+        store.restorable_task_bindings()
+        if hasattr(store, "restorable_task_bindings")
+        else store.restore_candidates()
+    )
     connection = sqlite3.connect(THREAD_DB)
     connection.row_factory = sqlite3.Row
     pending: list[dict[str, Any]] = []
     reconciled: list[dict[str, Any]] = []
     blocked: list[dict[str, Any]] = []
     try:
-        for candidate in store.restore_candidates():
+        for candidate in bindings:
+            ledger_archived = candidate.get("lifecycleState", "THREAD_ARCHIVED") == "THREAD_ARCHIVED"
             row = connection.execute(
                 "SELECT archived,title FROM threads WHERE id=?",
                 (candidate["threadId"],),
             ).fetchone()
             if row is None:
-                blocked.append(candidate | {"reason": "thread_missing"})
+                if ledger_archived:
+                    blocked.append(candidate | {"reason": "thread_missing"})
                 continue
             if int(row["archived"] or 0) == 0:
-                store.commit_restore(
-                    thread_id=candidate["threadId"],
-                    nonce=candidate["restoreNonce"],
-                )
-                reconciled.append(candidate | {"title": row["title"]})
+                if ledger_archived:
+                    store.commit_restore(
+                        thread_id=candidate["threadId"],
+                        nonce=candidate["restoreNonce"],
+                    )
+                    reconciled.append(candidate | {"title": row["title"]})
                 continue
-            pending.append(candidate | {"title": row["title"]})
+            pending.append(
+                candidate
+                | {
+                    "title": row["title"],
+                    "reason": (
+                        "ledger_archive_pending_restore"
+                        if ledger_archived
+                        else "desktop_archive_drift"
+                    ),
+                }
+            )
     finally:
         connection.close()
     return {
@@ -5532,7 +5550,12 @@ def restore_list(args: argparse.Namespace) -> dict[str, Any]:
 
 def restore_commit(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
-    candidates = {item["threadId"]: item for item in store.restore_candidates()}
+    bindings = (
+        store.restorable_task_bindings()
+        if hasattr(store, "restorable_task_bindings")
+        else store.restore_candidates()
+    )
+    candidates = {item["threadId"]: item for item in bindings}
     candidate = candidates.get(args.thread_id)
     if candidate is None or candidate["restoreNonce"] != args.restore_nonce:
         raise RuntimeError("restore authorization is stale or invalid")

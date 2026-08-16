@@ -3763,6 +3763,44 @@ def test_restore_list_reconciles_already_unarchived_task(monkeypatch, tmp_path):
     assert store.committed is True
 
 
+def test_restore_reconcile_repairs_desktop_archive_drift(monkeypatch, tmp_path):
+    store, _worktree = registered_store(tmp_path)
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute("CREATE TABLE threads (id TEXT, archived INTEGER, title TEXT)")
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?)",
+            ("thread-1", 1, "[有价值] task"),
+        )
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+
+    def unarchive(candidates):
+        with sqlite3.connect(thread_db) as connection:
+            for candidate in candidates:
+                connection.execute(
+                    "UPDATE threads SET archived=0 WHERE id=?",
+                    (candidate["threadId"],),
+                )
+        return {str(candidate["threadId"]): None for candidate in candidates}
+
+    monkeypatch.setattr(MODULE, "_unarchive_desktop_threads", unarchive)
+
+    result = MODULE.restore_reconcile(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert result["ok"] is True
+    assert result["restored"][0]["threadId"] == "thread-1"
+    assert result["restored"][0]["key"] == "a/b#1"
+    with sqlite3.connect(thread_db) as connection:
+        assert connection.execute(
+            "SELECT archived FROM threads WHERE id='thread-1'"
+        ).fetchone()[0] == 0
+    with store.connect() as connection:
+        restored = connection.execute(
+            "SELECT COUNT(*) FROM events WHERE event_type='THREAD_RESTORED'"
+        ).fetchone()[0]
+    assert restored == 1
+
+
 def test_controller_ingests_workspace_no_go_without_child_ledger_access(tmp_path):
     store, worktree = registered_store(tmp_path)
     context_path = MODULE.write_task_context(
