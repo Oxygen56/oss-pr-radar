@@ -101,14 +101,6 @@ PUBLISHED_TASK_STAGES = {
     "MERGED",
     "CLOSED",
 }
-MISSING_WORKTREE_TERMINAL_REASONS = {
-    "ALREADY_FIXED",
-    "DUPLICATE",
-    "DUPLICATE_ACTIVE_PR",
-    "ISSUE_ASSIGNED",
-    "ISSUE_NOT_OPEN",
-    "STRONG_EXISTING_PR",
-}
 IMMEDIATE_RECOVERY_ERROR_CODES = {
     "cyber_policy",
     "cyberPolicy",
@@ -4065,10 +4057,7 @@ def sync_task_contexts(args: argparse.Namespace) -> dict[str, Any]:
                             }
                         )
                     else:
-                        if (
-                            verdict.status != "ALLOW"
-                            and verdict.reason_code in MISSING_WORKTREE_TERMINAL_REASONS
-                        ):
+                        if verdict.status == "BLOCK":
                             store.record_stage(
                                 candidate["key"],
                                 "AUDIT_NO_GO",

@@ -4340,15 +4340,18 @@ def test_context_sync_closes_legacy_reservation_superseded_by_later_result(tmp_p
     assert (worktree / ".oss-pr-radar" / "task-context.json").is_file()
 
 
-def test_context_sync_terminalizes_obsolete_task_with_missing_worktree(monkeypatch, tmp_path):
+@pytest.mark.parametrize("reason", ["STRONG_EXISTING_PR", "ACTIVE_OR_CONDITIONAL_CLAIM"])
+def test_context_sync_terminalizes_obsolete_task_with_missing_worktree(
+    monkeypatch, tmp_path, reason
+):
     store, worktree = registered_store(tmp_path)
     store.record_stage("a/b#1", "FIX_READY", evidence={})
     shutil.rmtree(worktree)
     evidence = SimpleNamespace(digest="live-evidence", as_dict=lambda: {"complete": True})
     verdict = SimpleNamespace(
         status="BLOCK",
-        reason_code="STRONG_EXISTING_PR",
-        as_dict=lambda: {"status": "BLOCK", "reason_code": "STRONG_EXISTING_PR"},
+        reason_code=reason,
+        as_dict=lambda: {"status": "BLOCK", "reason_code": reason},
     )
     monkeypatch.setattr(MODULE, "_audit_intent", lambda _intent: (evidence, verdict))
 
@@ -4360,7 +4363,7 @@ def test_context_sync_terminalizes_obsolete_task_with_missing_worktree(monkeypat
     assert synced["noGo"] == [
         {
             "key": "a/b#1",
-            "reason": "STRONG_EXISTING_PR",
+            "reason": reason,
             "source": "missing_worktree_revalidation",
         }
     ]
@@ -4370,6 +4373,25 @@ def test_context_sync_terminalizes_obsolete_task_with_missing_worktree(monkeypat
     )
     assert context is not None
     assert context["stage"] == "AUDIT_NO_GO"
+
+
+def test_context_sync_keeps_missing_worktree_for_nonterminal_hold(monkeypatch, tmp_path):
+    store, worktree = registered_store(tmp_path)
+    shutil.rmtree(worktree)
+    evidence = SimpleNamespace(digest="live-evidence", as_dict=lambda: {"complete": False})
+    verdict = SimpleNamespace(
+        status="HOLD",
+        reason_code="EVIDENCE_INCOMPLETE",
+        as_dict=lambda: {"status": "HOLD", "reason_code": "EVIDENCE_INCOMPLETE"},
+    )
+    monkeypatch.setattr(MODULE, "_audit_intent", lambda _intent: (evidence, verdict))
+
+    synced = MODULE.sync_task_contexts(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert synced["ok"] is True
+    assert synced["noGo"] == []
+    assert synced["unavailable"][0]["key"] == "a/b#1"
+    assert synced["revalidationErrors"] == []
 
 
 def test_context_sync_keeps_missing_worktree_when_live_revalidation_fails(monkeypatch, tmp_path):

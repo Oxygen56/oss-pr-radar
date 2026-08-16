@@ -59,6 +59,9 @@ def authorize(candidate: dict[str, Any], evidence: EvidenceBundle) -> Authorizat
     issue = evidence.issue
     if str(issue.get("state") or "").lower() != "open":
         return decision("BLOCK", "ISSUE_NOT_OPEN", "issueState")
+    relations = {item.get("relation") for item in evidence.pull_relations}
+    if relations & {"STRONG_EXACT_DUPLICATE", "STRONG_MERGED_COVERAGE"}:
+        return decision("BLOCK", "STRONG_EXISTING_PR", "duplicate")
     assignees = issue.get("assignees") or []
     if assignees:
         return decision("BLOCK", "ISSUE_ASSIGNED", "ownership")
@@ -90,9 +93,6 @@ def authorize(candidate: dict[str, Any], evidence: EvidenceBundle) -> Authorizat
         return decision("HOLD", "POLICY_UNKNOWN", "policy")
     if policy.get("assignment_required") and not evidence.maintainer_approvals:
         return decision("HOLD", "MAINTAINER_APPROVAL_REQUIRED", "policy")
-    relations = {item.get("relation") for item in evidence.pull_relations}
-    if relations & {"STRONG_EXACT_DUPLICATE", "STRONG_MERGED_COVERAGE"}:
-        return decision("BLOCK", "STRONG_EXISTING_PR", "duplicate")
     if (
         "WEAK_OR_PARTIAL_EXACT" in relations
         and candidate.get("category") != "PR_COMPETITION_OPPORTUNITY"

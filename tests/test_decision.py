@@ -65,6 +65,24 @@ def test_actual_security_vulnerability_is_blocked():
     assert result.reason_code == "SECURITY_SENSITIVE"
 
 
+def test_strong_existing_pr_precedes_contributor_claim():
+    current = evidence("A normal runtime bug report.")
+    value = EvidenceBundle(
+        **{
+            **current.__dict__,
+            "claims": ({"actor": "contributor", "kind": "active"},),
+            "pull_relations": ({"relation": "STRONG_EXACT_DUPLICATE"},),
+        }
+    )
+
+    result = authorize(candidate(), value)
+
+    assert result.status == "BLOCK"
+    assert result.reason_code == "STRONG_EXISTING_PR"
+    assert result.checks["duplicate"] == "BLOCK"
+    assert result.checks["ownership"] == "PASS"
+
+
 def test_security_label_is_blocked_even_when_issue_text_is_generic():
     current = evidence("Tool output is retained longer than expected.")
     value = EvidenceBundle(
