@@ -1,13 +1,55 @@
 import json
 import os
+import signal
+import subprocess
 import time
 from pathlib import Path
+
+import pytest
 
 from oss_pr_radar.local_publication import (
     advance_once,
     compact_advance_result,
     launch_agent_spec,
+    run_bridge,
 )
+
+
+def test_run_bridge_terminates_the_process_group_on_timeout(monkeypatch, tmp_path):
+    calls = []
+
+    class Process:
+        pid = 4321
+        returncode = None
+
+        def __init__(self):
+            self.communications = 0
+
+        def communicate(self, timeout=None):
+            self.communications += 1
+            if self.communications == 1:
+                raise subprocess.TimeoutExpired(["bridge"], timeout)
+            return "", ""
+
+        def wait(self, timeout=None):
+            self.returncode = -signal.SIGTERM
+            return self.returncode
+
+    process = Process()
+
+    def popen(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return process
+
+    killed = []
+    monkeypatch.setattr(subprocess, "Popen", popen)
+    monkeypatch.setattr(os, "killpg", lambda pid, sig: killed.append((pid, sig)))
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        run_bridge(tmp_path, "drain-once", timeout=1)
+
+    assert calls[0][1]["start_new_session"] is True
+    assert killed == [(4321, signal.SIGTERM)]
 
 
 def test_fast_publication_runs_ingestion_and_publication_in_order(tmp_path):

@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import plistlib
+import signal
 import subprocess
 import sys
 import time
@@ -34,15 +35,43 @@ def _python(root: Path) -> Path:
     return candidate if candidate.exists() else Path(sys.executable)
 
 
+def _terminate_process_group(process: subprocess.Popen[str]) -> None:
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            return
+        process.wait(timeout=5)
+
+
 def run_bridge(root: Path, operation: str, *, timeout: int = 900) -> dict[str, Any]:
-    completed = subprocess.run(
-        [str(_python(root)), str(root / "scripts" / "local_dispatch_bridge.py"), operation],
+    argv = [str(_python(root)), str(root / "scripts" / "local_dispatch_bridge.py"), operation]
+    process = subprocess.Popen(
+        argv,
         cwd=root,
-        check=False,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
-        timeout=timeout,
+        start_new_session=True,
     )
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        _terminate_process_group(process)
+        stdout, stderr = process.communicate()
+        raise subprocess.TimeoutExpired(
+            argv,
+            timeout,
+            output=stdout,
+            stderr=stderr,
+        ) from exc
+    completed = subprocess.CompletedProcess(argv, process.returncode, stdout, stderr)
     if completed.returncode != 0:
         detail = completed.stderr or completed.stdout or "local bridge failed"
         raise RuntimeError(f"{operation}: {detail[:800]}")
