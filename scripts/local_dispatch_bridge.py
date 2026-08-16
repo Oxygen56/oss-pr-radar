@@ -73,6 +73,7 @@ APP_SERVER_WATCHDOG_INTERVAL_SECONDS = 5.0
 APP_SERVER_WATCHDOG_STALE_SECONDS = 15.0
 APP_SERVER_WATCHDOG_EXTERNAL_PROBE_SECONDS = 30.0
 APP_SERVER_EVENT_DRAIN_SLICE_SECONDS = 1.0
+APP_SERVER_TASK_TURN_MAX_SECONDS = 45 * 60.0
 VALIDATION_PREFETCH_TIMEOUTS = {
     "cargo_locked_fetch": 300,
     "go_locked_download": 300,
@@ -1836,10 +1837,18 @@ def _wait_for_app_server_terminal_turn(
         return None
     read_request_id: int | None = None
     read_requested_at: float | None = None
-    next_read_at = monotonic() + APP_SERVER_WATCHDOG_INTERVAL_SECONDS
-    next_external_probe_at = monotonic() + APP_SERVER_WATCHDOG_EXTERNAL_PROBE_SECONDS
+    watch_started_at = monotonic()
+    next_read_at = watch_started_at + APP_SERVER_WATCHDOG_INTERVAL_SECONDS
+    next_external_probe_at = watch_started_at + APP_SERVER_WATCHDOG_EXTERNAL_PROBE_SECONDS
+    task_deadline = watch_started_at + APP_SERVER_TASK_TURN_MAX_SECONDS
     while process.poll() is None:
         now = monotonic()
+        if now >= task_deadline:
+            return {
+                "turnId": turn_id,
+                "status": "interrupted",
+                "error": {"message": "task-turn worker exceeded its maximum runtime"},
+            }
         request_stale = (
             read_request_id is not None
             and read_requested_at is not None
@@ -1847,8 +1856,6 @@ def _wait_for_app_server_terminal_turn(
         )
         if now >= next_external_probe_at:
             independently_observed = persisted_thread_turn_state(thread_id)
-            if independently_observed is None:
-                independently_observed = live_thread_turn_states({thread_id}).get(thread_id)
             next_external_probe_at = monotonic() + APP_SERVER_WATCHDOG_EXTERNAL_PROBE_SECONDS
             if (
                 independently_observed
@@ -4631,6 +4638,7 @@ VALIDATION_DEPENDENCY_FAILURE_MARKERS = (
     "no pre-commit executable",
     "no module named pytest",
     "no module named",
+    "modulenotfounderror",
     "is not installed",
     "missing numpy",
     "missing torch",

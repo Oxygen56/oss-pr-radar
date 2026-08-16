@@ -3363,7 +3363,7 @@ def test_app_server_watchdog_uses_persisted_terminal_probe_when_read_stalls(monk
     assert json.loads(process.stdin.writes[0])["method"] == "thread/read"
 
 
-def test_app_server_watchdog_uses_live_probe_when_rollout_is_stale(monkeypatch):
+def test_app_server_watchdog_times_out_without_opening_second_app_server(monkeypatch):
     class FakeStdin:
         def __init__(self):
             self.writes: list[bytes] = []
@@ -3404,22 +3404,14 @@ def test_app_server_watchdog_uses_live_probe_when_rollout_is_stale(monkeypatch):
     monkeypatch.setattr(MODULE, "monotonic", StepClock())
     monkeypatch.setattr(MODULE, "APP_SERVER_WATCHDOG_INTERVAL_SECONDS", 0.0)
     monkeypatch.setattr(MODULE, "APP_SERVER_WATCHDOG_STALE_SECONDS", 0.0)
-    monkeypatch.setattr(MODULE, "APP_SERVER_WATCHDOG_EXTERNAL_PROBE_SECONDS", 2.0)
+    monkeypatch.setattr(MODULE, "APP_SERVER_WATCHDOG_EXTERNAL_PROBE_SECONDS", 0.0)
+    monkeypatch.setattr(MODULE, "APP_SERVER_TASK_TURN_MAX_SECONDS", 2.0)
     monkeypatch.setattr(MODULE, "persisted_thread_turn_state", lambda _thread_id: None)
     monkeypatch.setattr(
         MODULE,
         "live_thread_turn_states",
-        lambda thread_ids: (
-            {
-                "thread-1": {
-                    "turnId": "turn-1",
-                    "status": "interrupted",
-                    "code": "turn_interrupted",
-                    "message": "interrupted",
-                }
-            }
-            if thread_ids == {"thread-1"}
-            else {}
+        lambda _thread_ids: (_ for _ in ()).throw(
+            AssertionError("active task watchdog must not open a second app-server")
         ),
     )
     process = FakeProcess()
@@ -3432,7 +3424,11 @@ def test_app_server_watchdog_uses_live_probe_when_rollout_is_stale(monkeypatch):
         turn_id="turn-1",
     )
 
-    assert result == {"turnId": "turn-1", "status": "interrupted", "error": None}
+    assert result == {
+        "turnId": "turn-1",
+        "status": "interrupted",
+        "error": {"message": "task-turn worker exceeded its maximum runtime"},
+    }
 
 
 def test_app_server_watchdog_reconciles_persisted_terminal_view(monkeypatch):
