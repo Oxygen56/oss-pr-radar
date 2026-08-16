@@ -1192,6 +1192,14 @@
       "seenAt": "2026-08-16T04:56:29.839612Z",
       "stateId": "4a79c827a8005729aebf6347d7ce42b6c7d285715b841e47774ebfc6445a65c1"
     },
+    "review|livekit/agents#6875": {
+      "category": "SEMANTIC_REVIEW_RETRY",
+      "digest": "04164664e77ae348d7af70749a9ced8e91e825c72c340decf69c159f812f967b",
+      "kind": "review",
+      "scannerVersion": "oss_pr_radar_v46_semantic_fallback",
+      "seenAt": "2026-08-16T18:53:49.070810Z",
+      "stateId": "72bf40823943620b25dee37db8262a5f0a2acee82b7e54812143364448854454"
+    },
     "review|mastra-ai/mastra#13846": {
       "category": "WAIT_MAINTAINER",
       "digest": "b6f5415295cfcd6ae5e2582943d750cd4256015be1ce0a55f1b040542183a029",
@@ -2716,100 +2724,8 @@
       "stateId": "2cf1d48068d4d545242e8d0838a5350e10113195e00e4a290c45ef0d045b1300"
     }
   },
-  "digest": "a78675054f9417605774b593d20ecec94dfb49e4092ad94d76af356b5b953b69",
+  "digest": "5ee99c4bffdbb8ab0575de9dbec06153f2da810ec77acf207fa2c96f3e3b5be3",
   "events": [
-    {
-      "attempts": 1,
-      "candidateKeys": [
-        "kirodotdev/KiroCrew#2367"
-      ],
-      "candidateStates": [
-        {
-          "category": "WAIT_MAINTAINER",
-          "digest": "24aca2fdbe43f2568171d45484ed98b071d33e1f0a202fcc5fc75612ef9a51bb",
-          "key": "kirodotdev/KiroCrew#2367",
-          "kind": "review",
-          "scannerVersion": "oss_pr_radar_v42_terminal_feedback_revoke",
-          "stateId": "cd5188ecade315bac3689ca2ba2ae4e979a2c65369567b2cfdcf36b62434fc39"
-        }
-      ],
-      "card": {
-        "config": {
-          "wide_screen_mode": true
-        },
-        "elements": [
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[kirodotdev/KiroCrew#2367](https://github.com/kirodotdev/KiroCrew/issues/2367) macOS desktop app drops the user's PATH and offers no local environment override**\n建议：WAIT_MAINTAINER | 分数：11\n价值：The issue provides a clear root cause (macOS GUI apps inherit a minimal PATH, and the Electron app does not merge user environment) and a concrete reproduction. However, the maintainer explicitly routed it to needs-human because the fix is a product-shape decision with multiple viable approaches (launchctl merge, settings UI, refresh action, shell sourcing) that differ in security boundary, lifecycle, and scope. No maintainer approval or design confirmation exists, so starting implementation without that decision risks wasted or rejected work.\n改动：Electron main process environment handling；Gateway spawn environment construction；Possibly new settings UI and config model for environment overrides；Graceful Gateway restart mechanism\n验证：Reproduce the issue by launching the app with a custom PATH in launchctl and verifying the Gateway child lacks it；Add a regression test that mocks launchctl getenv PATH and asserts the Gateway spawn env includes merged PATH；If settings UI is added, test persistence and refresh behavior\n风险：Implementing the wrong product shape could be rejected by maintainers；Sourcing shell startup files could execute arbitrary code with side effects；Changing environment handling could affect security boundaries if exposed via dashboard API\n竞争：未发现相关 open PR\n下一步：按正常流程实现并验证；如要求 DCO 则自动 sign-off，PR 创建后报告 CLA 状态。\n证据：复现信号 8，根因信号 True",
-              "tag": "lark_md"
-            }
-          }
-        ],
-        "header": {
-          "template": "yellow",
-          "title": {
-            "content": "OSS PR Radar: 需要确认",
-            "tag": "plain_text"
-          }
-        }
-      },
-      "createdAt": "2026-08-09T17:53:50.194289Z",
-      "eventId": "be3feaf6c94ceb4f71bb69f3ad13734550b49e523ca4aac77771d3f0757dc6ce",
-      "idempotencyKey": "be3feaf6c94ceb4f71bb69f3ad13734550b49e523ca4aac777",
-      "kind": "review",
-      "lastAttemptAt": "2026-08-09T17:54:16.909064Z",
-      "messageId": "om_x100b68bfa26ce8a0b24e3bfe0d02bc1",
-      "runId": "scan-20260809T175110Z-1235fb3267bb",
-      "sentAt": "2026-08-09T17:54:18.473576Z",
-      "status": "SENT"
-    },
-    {
-      "attempts": 1,
-      "candidateKeys": [
-        "sgl-project/sglang#34138"
-      ],
-      "candidateStates": [
-        {
-          "category": "PR_FOLLOWUP",
-          "digest": "8b18b432d22c82bfd75b812026136b15202a6dcdf396303c5f5a9f25a367572a",
-          "key": "sgl-project/sglang#34138",
-          "kind": "watch",
-          "scannerVersion": "",
-          "stateId": "3cf56f23f5f45cb447083e07fb8a01d75c8b1c720f6ff832827d101896238b16"
-        }
-      ],
-      "card": {
-        "config": {
-          "wide_screen_mode": true
-        },
-        "elements": [
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[sgl-project/sglang#34138](https://github.com/sgl-project/sglang/pull/34138) Bind streaming abort cleanup to request lifecycle**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
-              "tag": "lark_md"
-            }
-          }
-        ],
-        "header": {
-          "template": "yellow",
-          "title": {
-            "content": "OSS PR Radar: 状态更新",
-            "tag": "plain_text"
-          }
-        }
-      },
-      "createdAt": "2026-08-09T17:53:50.638801Z",
-      "eventId": "edc7ff4b999b85d4540c6597decd07da9d72214ab2f9c5a1595c6a5797bfa8e3",
-      "idempotencyKey": "edc7ff4b999b85d4540c6597decd07da9d72214ab2f9c5a159",
-      "kind": "watch",
-      "lastAttemptAt": "2026-08-09T17:54:18.473599Z",
-      "messageId": "om_x100b68bfa27940a8b1713a7f050c859",
-      "runId": "pr-followup-1786297812",
-      "sentAt": "2026-08-09T17:54:19.667105Z",
-      "status": "SENT"
-    },
     {
       "attempts": 1,
       "candidateKeys": [
@@ -23030,9 +22946,52 @@
       "runId": "pr-followup-1786901842",
       "sentAt": "2026-08-16T17:42:35.644818Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "livekit/agents#6875"
+      ],
+      "candidateStates": [
+        {
+          "category": "SEMANTIC_REVIEW_RETRY",
+          "digest": "04164664e77ae348d7af70749a9ced8e91e825c72c340decf69c159f812f967b",
+          "key": "livekit/agents#6875",
+          "kind": "review",
+          "scannerVersion": "oss_pr_radar_v46_semantic_fallback",
+          "stateId": "72bf40823943620b25dee37db8262a5f0a2acee82b7e54812143364448854454"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[livekit/agents#6875](https://github.com/livekit/agents/issues/6875) AudioArrayBuffer.push_frame() validates frame size before resampling, so upsampled frames raise a numpy broadcast error**\n建议：SEMANTIC_REVIEW_RETRY | 分数：9\n价值：命中 agent/inference/RAG 关键路径\n改动：先补失败用例，再沿相关 runtime/provider/scheduler 路径做最小修复。\n验证：用 issue 的公开最小复现先建立失败测试，再运行目标 package 的定向单测和静态检查。\n风险：需确认是否已有 maintainer 设计偏好；避免扩大 API 行为变更。；DCO 将自动使用已配置 Git 身份 sign-off；CLA 不阻止创建 PR，但协议接受仍需用户本人完成。\n竞争：未发现相关 open PR\n下一步：按正常流程实现并验证；如要求 DCO 则自动 sign-off，PR 创建后报告 CLA 状态。\n证据：复现信号 1，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-16T18:53:49.070810Z",
+      "eventId": "5385c6e0cce38e415ca3a3030522d9699956f69cb8ea4c71aa9ef82572a3a70d",
+      "idempotencyKey": "5385c6e0cce38e415ca3a3030522d9699956f69cb8ea4c71aa",
+      "kind": "review",
+      "runId": "scan-20260816T185025Z-4965ee843418",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-16T17:41:58.892427Z",
-  "newEventCount": 1,
+  "generatedAt": "2026-08-16T18:53:49.399343Z",
+  "newEventCount": 0,
   "version": "notification_outbox_v2"
 }
