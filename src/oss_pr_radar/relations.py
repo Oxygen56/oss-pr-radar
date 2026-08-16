@@ -104,7 +104,9 @@ def assess_relations(
         files = pr.get("files") or []
         has_tests = any(
             re.search(
-                r"(?:^|/)(?:test|tests|spec)(?:/|_|\.)", str(item.get("filename") or ""), re.I
+                r"(?:^|/)(?:test|tests|spec)(?:/|_|\.)",
+                str(item.get("filename") or item.get("path") or ""),
+                re.I,
             )
             for item in files
             if isinstance(item, dict)
@@ -114,7 +116,7 @@ def assess_relations(
         corroborated_report = bool(
             pr_repo == repo.casefold()
             and reported_pattern.search(body)
-            and overlap >= 0.45
+            and overlap >= 0.4
             and has_tests
         )
         # A cross-reference can be created in either direction. In particular,

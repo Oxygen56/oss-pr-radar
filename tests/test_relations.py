@@ -32,18 +32,21 @@ def test_active_exact_draft_without_tests_is_still_duplicate():
 
 def test_same_repo_reported_issue_with_matching_title_and_tests_is_exact():
     result = assess_relations(
-        repo="a/b",
-        issue_number=7,
-        issue_title="DSpark ragged CUDA graph request slot geometry mismatch",
+        repo="sgl-project/sglang",
+        issue_number=34384,
+        issue_title=(
+            "[Bug] DSpark compact ragged CUDA Graph uses incompatible request-slot "
+            "geometry for the same token tier"
+        ),
         pull_requests=[
             {
-                "number": 9,
-                "body": "Reported in #7. Correct the request slot geometry at capture time.",
-                "title": "Fix DSpark ragged CUDA graph request slot geometry",
-                "files": [{"filename": "tests/test_ragged_cuda_graph.py"}],
+                "number": 34636,
+                "body": ("Reported in #34384. Correct the request slot geometry at capture time."),
+                "title": "[Fix] Key DSpark compact ragged CUDA graphs by request-slot geometry",
+                "files": [{"path": "tests/test_ragged_cuda_graph.py"}],
                 "state": "open",
                 "updated_at": "2099-01-01T00:00:00Z",
-                "_repo": "a/b",
+                "_repo": "sgl-project/sglang",
                 "_timeline_event": "cross-referenced",
             }
         ],
