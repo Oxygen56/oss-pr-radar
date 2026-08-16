@@ -938,6 +938,34 @@
     ],
     "why": "Issue clearly identifies a missing capability id hint in a durable-exec error message, with a concrete repro and root cause. However, the deterministic gate says HUMAN_REVIEW, and existing PR #6696 has semantic overlap with the durable_exec leaf-toolset path, requiring maintainer comparison before starting work."
   },
+  "09df473bffb42c7beccea614ed85f2223ff5845edbaa00895f0e256a1acb1bea": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Add a failing regression test that reproduces the intermittent 'Promise was collected' error under page create/close loops.",
+      "Investigate and fix the underlying runtime/provider/scheduler path that causes promise collection during page lifecycle."
+    ],
+    "risks": [
+      "The issue may be timing-sensitive and hard to reproduce deterministically in CI.",
+      "Fix may require changes to core runtime behavior, risking unintended side effects on page lifecycle."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "test_plan": [
+      "Create a test that loops creating a page, setting viewport, navigating, evaluating, and closing, repeated many times, and assert no 'Promise was collected' errors.",
+      "Run the test multiple times to ensure flakiness is captured; then run the full package test suite to check for regressions."
+    ],
+    "unknowns": [
+      "Exact root cause and whether maintainers have a preferred fix direction.",
+      "Whether the issue is already under investigation by maintainers (no comments yet)."
+    ],
+    "wait_reason": null,
+    "why": "Issue reports a reproducible intermittent failure in page.evaluate when pages are created and closed in a loop, with a clear reproduction pattern and comparative data. No existing PR or related issue found, and the gate allows work. Root cause is not identified but the issue provides enough signal for a focused investigation and regression test."
+  },
   "0a4ac8b4b7346ac989d82d68c9156d254bf895bbab86a139e8f3b07b67d42960": {
     "confidence": 0.7,
     "contradictions": [],
@@ -18565,6 +18593,43 @@
     ],
     "why": "Issue identifies a deterministic contract mismatch in a live smoke script, with detailed evidence and proposed fixes. However, the gate decision is HUMAN_REVIEW and open PR lookup failed, so duplicate work cannot be excluded. Maintainer approval is absent, and the issue is a bug report rather than a direct code contribution."
   },
+  "98ef96a0498a5aac66d164c3f7ab6e80576129c08cdf4a1f77042bf3d006002d": {
+    "confidence": 0.8,
+    "contradictions": [
+      "The issue body claims the design was revised to address maintainer comments, but the maintainer's approval is not yet given; the latest comment from maintainer predates the revision summary."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "hgctl/pkg/installer/standalone.go",
+      "hgctl/pkg/installer/standalone_agent.go",
+      "hgctl/pkg/installer/installer_docker.go",
+      "Focused hgctl/pkg/installer tests"
+    ],
+    "risks": [
+      "Potential behavior change in StandaloneComponent.Install if strict read errors are propagated; design must explicitly state intended behavior.",
+      "Risk of persisting overlay or defaulted fields if the stored Profile re-read mechanism is not correctly implemented.",
+      "Risk of incomplete verification if overlay-leak regression test is not added as maintainer requested."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add deterministic tests for successful updater with whitespace in VERSION, updater failure, unreadable/empty/malformed VERSION, and Profile-store save failure.",
+      "Compare saved Profile against pre-upgrade stored Profile field-by-field excluding higressVersion, including an overlay like --set gateway.httpPort=18080 to assert it is not persisted.",
+      "Verify display-only Agent.Upgrade reads remain tolerant while strict path returns errors.",
+      "Run go test ./pkg/installer -count=1 and go test ./... -count=1 from hgctl.",
+      "Run git diff --check before review."
+    ],
+    "unknowns": [
+      "Whether the maintainer has approved the revised design after the latest update.",
+      "Whether the contributor has completed the required AI disclosure and assignment confirmation as per submission policy."
+    ],
+    "wait_reason": "DESIGN_CONFIRMATION",
+    "why": "The design is technically sound and addresses a real bug in local-docker upgrade version metadata persistence. It includes concrete mechanisms (strict version read, re-read stored Profile, narrow write) and a detailed verification plan. However, the maintainer explicitly requested revisions and approval before implementation starts; the latest update claims revisions but the maintainer has not yet re-reviewed. The gate decision is HUMAN_REVIEW, and the submission policy requires assignment and AI disclosure confirmation, which are not yet satisfied."
+  },
   "9a1d3922359df42df141f9bd969988ebe3add0e642ef3ddcb5923727ab1ffb21": {
     "confidence": 0.8,
     "contradictions": [],
@@ -21185,6 +21250,42 @@
     ],
     "wait_reason": "MISSING_EVIDENCE",
     "why": "The issue reports a concrete AttributeError in ParallelLMHead with NVFP4 Marlin backend, and a commenter proposes a plausible root cause (missing ParallelLMHead branch in NVFP4 quant config) with a reference to #40999. However, the root cause is not confirmed by the reporter, and the proposed fix is speculative. The issue is a bug report, not a PR, and the track requires a concrete algorithm mechanism; while the bug touches distributed training and quantization kernels, the actionable code path is not yet established. The presence of a potential duplicate issue #52407 and the lack of maintainer confirmation further reduce actionability."
+  },
+  "b4ad55a4b4d9145dd97b93a70b54f728b49ea84d734a229fe259d547fca3b53e": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Maintainer claims ABI fix in 2.2.4, but reporter cannot verify due to startup crash",
+      "Reporter states OOM not reproducible, yet issue title implies crash"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "mcp-server golang filter memory handling",
+      "Envoy/Go filter ABI compatibility",
+      "input validation for out-of-order MCP requests"
+    ],
+    "risks": [
+      "Root cause may be environmental (thread limits) rather than code",
+      "Fix may require upstream Envoy changes",
+      "Potential behavior change for unsupported inputs"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with documented SSE flow and match_list covering path",
+      "Run with heap profiling to identify allocation growth",
+      "Verify 2.2.4 fix in a clean environment with proper resource limits"
+    ],
+    "unknowns": [
+      "Whether the original OOM reproduces on documented path",
+      "Whether 2.2.4 fix resolves the issue",
+      "Exact memory growth mechanism (filter vs background refresh)"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "Issue reports a crash but explicitly lacks reproducible evidence (single run, no heap profile, root cause unknown). Maintainer claims fix in 2.2.4, but reporter's verification failed at startup with a different crash (pthread_create EAGAIN), leaving the original OOM unresolved and unverified. No open PR or related issue; actionable fix requires maintainer confirmation and additional diagnostics."
   },
   "b4c865ee4f28e46fa5eb1375ba1416e0b94e298336cb0f94e5b180866b839cf9": {
     "confidence": 0.7,
@@ -27264,6 +27365,38 @@
       "Exact scope of changes needed in openai-protocol crate"
     ],
     "why": "Issue clearly identifies a version mismatch between Rust openai-protocol crate and Python protocol.py causing router rejection of custom tool types. However, existing PR #31184 is open but lacks tests and has CI failures, and maintainer approval is absent. The gate decision is HUMAN_REVIEW, so we must wait for maintainer input."
+  },
+  "e270b791cc88123b8fc56f4e0e864430f5e397d5da2883855fb24e307997b52a": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "plugins/wasm-go/extensions/ai-agent/main.go",
+      "plugins/wasm-go/extensions/ai-agent/dashscope/message.go",
+      "ai-agent unit/runtime-host tests"
+    ],
+    "risks": [
+      "Missing one async mutation path could leave shared-state corruption; regression test covers production window.",
+      "Context key collision with existing bare-string keys; maintainer suggested namespaced private constant.",
+      "First completion request body must be built from same request-local source to avoid divergence."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add deterministic A/B interleaving regression: pause request A after assistant action, start request B, resume A, assert serialized completions contain only own messages and preserve order.",
+      "Run go test ./... -count=1 from plugins/wasm-go/extensions/ai-agent.",
+      "Run GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -o /tmp/ai-agent.wasm ./",
+      "Run git diff --check before review."
+    ],
+    "unknowns": [
+      "Whether the repository's assignment requirement has been satisfied for this issue."
+    ],
+    "wait_reason": "ASSIGNMENT",
+    "why": "The issue is a well-specified design with maintainer approval and a concrete regression test plan, but the repository requires assignment before implementation and the candidate has not been assigned. The design is actionable and technically sound, but the assignment gate blocks work start."
   },
   "e29d8c9cea5577e1eeab5a533673e8069891f767a32d654aa4d9fa750dc2adab": {
     "confidence": 0.85,

@@ -936,11 +936,11 @@
     },
     "review|higress-group/higress#4534": {
       "category": "WAIT_MAINTAINER",
-      "digest": "c2d546a548e6ab1ff6a3e13dbb9711e609238ce3a90e1ebaf240e3118db224e2",
+      "digest": "d7590ff9b4546a47a7f83b881720a4d1f7c3644b58a131621e78b292f90a0a76",
       "kind": "review",
       "scannerVersion": "oss_pr_radar_v46_semantic_fallback",
-      "seenAt": "2026-08-15T13:02:55.488628Z",
-      "stateId": "6511c76ffd4654aeae2aeae404f496301fcfb5e11c7b78e13c2536751a10456b"
+      "seenAt": "2026-08-16T07:51:23.097354Z",
+      "stateId": "4e3324145ef3bada45c39a3cc9e02b945742cc8e7393ae85d37190ef4e180af5"
     },
     "review|hiyouga/LlamaFactory#10755": {
       "category": "WAIT_MAINTAINER",
@@ -2541,11 +2541,11 @@
     },
     "watch|esengine/DeepSeek-Reasonix#8510": {
       "category": "PR_FOLLOWUP",
-      "digest": "f84fd4b55a0fdeea2a9dab783f6bdd57a45d468bcb43f0ee4b7ac041c2d65dfc",
+      "digest": "0547a50cfb9184eb297ccb999a0409c18dcde38c2c83f9161c1344317aecdc27",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-16T03:14:12.750877Z",
-      "stateId": "6038c81607af3d705dd981037ea5b02a6b4c74acdf2a6cfea7eece82268fc5ea"
+      "seenAt": "2026-08-16T07:51:23.347091Z",
+      "stateId": "74c4aaaf4a149c43fb2b6299a61f2b0165cda9b27dd487125745c8adf6970ff1"
     },
     "watch|hashicorp/terraform-mcp-server#442": {
       "category": "PR_FOLLOWUP",
@@ -2597,19 +2597,19 @@
     },
     "watch|sgl-project/sglang#30554": {
       "category": "PR_FOLLOWUP",
-      "digest": "f91b7d1c6ed6b3c9c7793229c9c4d6eba04f035a4fbf4920cfa3377e9a866a74",
+      "digest": "7080a359abe229b1b47e322943fac958ad0119f2f6712a2f50dae7280b4f0ecf",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-16T07:05:46.148482Z",
-      "stateId": "56a0c0988bf12debf2a1b76e59559acfc4aa8aafe5710a1516f844fb5dfc7e43"
+      "seenAt": "2026-08-16T07:51:23.347091Z",
+      "stateId": "8691fa970ac65c48357883ec3d54d5c0574af97057afeb46e4cfed1834270583"
     },
     "watch|sgl-project/sglang#34138": {
       "category": "PR_FOLLOWUP",
-      "digest": "4aecdf49bd3276ccbd96e6a5787c834fceb6829d3558d795fa0fc7e55f3880b8",
+      "digest": "228eb215e32a98043fafa7ec704cb8ebe1495bdb12c6f78df47cda88ff97b91d",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-16T07:05:46.148482Z",
-      "stateId": "ccda86f531bb2063d191de9b3201606f788bf0994f83496081acf0f3109ca2dd"
+      "seenAt": "2026-08-16T07:51:23.347091Z",
+      "stateId": "9334ebf18537e2d6d8ea422f47a62ba8d1df266561a0b1ca424500e5d9351e30"
     },
     "watch|vllm-project/vllm#52298": {
       "category": "PR_FOLLOWUP",
@@ -2620,7 +2620,7 @@
       "stateId": "e0c7d0cc96e26ab5aafd77ffcc6e444e3760e4aa7a7535decf8f4b63d8c69400"
     }
   },
-  "digest": "63e147735391315c1243131ef4e1e4b5db58623c0b853d0877d948dca6ebe2e6",
+  "digest": "02bb49b4990f32a1b4758e86bd0b6851b78226c793aa853ae4b8689de4d4caf9",
   "events": [
     {
       "attempts": 1,
@@ -22498,9 +22498,133 @@
       "runId": "pr-followup-1786863774",
       "sentAt": "2026-08-16T07:06:25.751815Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "higress-group/higress#4534"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "d7590ff9b4546a47a7f83b881720a4d1f7c3644b58a131621e78b292f90a0a76",
+          "key": "higress-group/higress#4534",
+          "kind": "review",
+          "scannerVersion": "oss_pr_radar_v46_semantic_fallback",
+          "stateId": "4e3324145ef3bada45c39a3cc9e02b945742cc8e7393ae85d37190ef4e180af5"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[higress-group/higress#4534](https://github.com/higress-group/higress/issues/4534) Design: Synchronize local-docker version metadata after a successful upgrade**\n建议：WAIT_MAINTAINER | 分数：8\n价值：The design is technically sound and addresses a real bug in local-docker upgrade version metadata persistence. It includes concrete mechanisms (strict version read, re-read stored Profile, narrow write) and a detailed verification plan. However, the maintainer explicitly requested revisions and approval before implementation starts; the latest update claims revisions but the maintainer has not yet re-reviewed. The gate decision is HUMAN_REVIEW, and the submission policy requires assignment and AI disclosure confirmation, which are not yet satisfied.\n改动：hgctl/pkg/installer/standalone.go；hgctl/pkg/installer/standalone_agent.go；hgctl/pkg/installer/installer_docker.go；Focused hgctl/pkg/installer tests\n验证：Add deterministic tests for successful updater with whitespace in VERSION, updater failure, unreadable/empty/malformed VERSION, and Profile-store save failure.；Compare saved Profile against pre-upgrade stored Profile field-by-field excluding higressVersion, including an overlay like --set gateway.httpPort=18080 to assert it is not persisted.；Verify display-only Agent.Upgrade reads remain tolerant while strict path returns errors.；Run go test ./pkg/installer -count=1 and go test ./... -count=1 from hgctl.；Run git diff --check before review.\n风险：Potential behavior change in StandaloneComponent.Install if strict read errors are propagated; design must explicitly state intended behavior.；Risk of persisting overlay or defaulted fields if the stored Profile re-read mechanism is not correctly implemented.；Risk of incomplete verification if overlay-leak regression test is not added as maintainer requested.\n竞争：未发现相关 open PR\n下一步：先等待维护者分配/确认方案；即使获批，公开 PR 的 AI 复核/披露确认仍必须由用户本人处理。\n证据：复现信号 0，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-16T07:51:23.097354Z",
+      "eventId": "2a58358b1dc914a30c4fc1c5cc4568e51bed0ce58f464f92bbbc67f5b0827195",
+      "idempotencyKey": "2a58358b1dc914a30c4fc1c5cc4568e51bed0ce58f464f92bb",
+      "kind": "review",
+      "runId": "scan-20260816T074905Z-cea5ffaa354e",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "esengine/DeepSeek-Reasonix#8510",
+        "sgl-project/sglang#30554",
+        "sgl-project/sglang#34138"
+      ],
+      "candidateStates": [
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "0547a50cfb9184eb297ccb999a0409c18dcde38c2c83f9161c1344317aecdc27",
+          "key": "esengine/DeepSeek-Reasonix#8510",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "74c4aaaf4a149c43fb2b6299a61f2b0165cda9b27dd487125745c8adf6970ff1"
+        },
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "7080a359abe229b1b47e322943fac958ad0119f2f6712a2f50dae7280b4f0ecf",
+          "key": "sgl-project/sglang#30554",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "8691fa970ac65c48357883ec3d54d5c0574af97057afeb46e4cfed1834270583"
+        },
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "228eb215e32a98043fafa7ec704cb8ebe1495bdb12c6f78df47cda88ff97b91d",
+          "key": "sgl-project/sglang#34138",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "9334ebf18537e2d6d8ea422f47a62ba8d1df266561a0b1ca424500e5d9351e30"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[esengine/DeepSeek-Reasonix#8510](https://github.com/esengine/DeepSeek-Reasonix/pull/8510) fix(acp): return prompt failures as JSON-RPC errors**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#30554](https://github.com/sgl-project/sglang/pull/30554) [Spec] Size shared logits buffer for adaptive candidates**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#34138](https://github.com/sgl-project/sglang/pull/34138) Bind streaming abort cleanup to request lifecycle**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-16T07:51:23.347091Z",
+      "eventId": "2697d9c3ae23c7c3b264bbb6fcea90c9b797dd236640a40e28e2bcaeef804011",
+      "idempotencyKey": "2697d9c3ae23c7c3b264bbb6fcea90c9b797dd236640a40e28",
+      "kind": "watch",
+      "runId": "pr-followup-1786866493",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-16T07:05:46.148482Z",
+  "generatedAt": "2026-08-16T07:51:23.347091Z",
   "newEventCount": 1,
   "version": "notification_outbox_v2"
 }
