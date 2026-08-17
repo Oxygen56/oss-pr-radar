@@ -2988,8 +2988,10 @@ def test_validation_continuation_excludes_its_own_intent_from_wip(monkeypatch, t
 
     assert reserved["ok"] is True
     assert observed["excludeIntentId"] == "intent-1"
-    assert "provider/all-extras" in reserved["prompt"]
-    assert "任务自身不得把 independent_review_passed 改为 true" in reserved["prompt"]
+    assert "核心回归必须证明修复前失败、修复后通过" in reserved["prompt"]
+    assert "自动复核结论只能由系统写入" in reserved["prompt"]
+    assert "provider/all-extras" not in reserved["prompt"]
+    assert "independent_review_passed" not in reserved["prompt"]
 
 
 def test_recovery_delivery_preserves_validation_followup_prompt():
@@ -3018,6 +3020,9 @@ def test_validation_followup_prompt_translates_internal_gaps_for_the_user():
     assert "自动复核还没完成或发现了问题" in prompt
     assert MODULE.VALIDATION_POLICY_REVISION in prompt
     assert "第一句只说清楚 PR 是否已经创建" in prompt
+    assert "relevant_tests_green" not in prompt
+    assert "independent_review_passed" not in prompt
+    assert ".oss-pr-radar" not in prompt
 
 
 def test_recovery_serializes_multiple_terminal_failures(monkeypatch, tmp_path):
@@ -5922,7 +5927,10 @@ def test_controller_defers_blocked_local_fix_with_incomplete_validation(tmp_path
         )
     )
     assert reserved["ok"] is True
-    assert "regression_test_verified" in reserved["prompt"]
+    assert "回归测试证据还不完整" in reserved["prompt"]
+    assert "相关正式测试还没完成或没通过" in reserved["prompt"]
+    assert "regression_test_verified" not in reserved["prompt"]
+    assert "relevant_tests_green" not in reserved["prompt"]
     assert (
         MODULE.validation_followup_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))[
             "unresolved"
@@ -7245,7 +7253,7 @@ def test_validation_followup_reserve_runs_prefetch_inside_bridge(monkeypatch, tm
 
     assert [item["kind"] for item in executed] == ["npm_locked_install"]
     assert reserved["prefetch"][0]["kind"] == "npm_locked_install"
-    assert "已经按锁文件预取缺失依赖" in reserved["prompt"]
+    assert "系统已按项目锁文件补齐缺失依赖" in reserved["prompt"]
 
 
 def test_validation_followup_prefetch_failure_is_blocked_without_delivery(monkeypatch, tmp_path):

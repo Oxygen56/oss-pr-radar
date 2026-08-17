@@ -88,7 +88,7 @@ PLAIN_LANGUAGE_STATUS_PROMPT = (
     "随后最多四个短项说明已完成、未发布原因、下一步和用户是否需要操作。"
     "除非用户追问技术细节，不要展示内部字段名、真假值、阶段名、文件路径、提交哈希、"
     "分支名、命令行，或使用‘门禁’‘回执’‘结构化交接’等内部术语。"
-    "没有 publicationReceipt.prUrl 就必须直说 GitHub 上还没有 PR；有该 URL 才能说 PR 已创建并附链接。"
+    "任务上下文中没有确切的 PR URL 就必须直说 GitHub 上还没有 PR；有确切 URL 才能说 PR 已创建并附链接。"
 )
 
 
@@ -146,11 +146,9 @@ BENIGN_POLICY_RECOVERY_PROMPT = (
     "Protocol 结构化交接；不要访问网络，不要执行公开操作。" + PLAIN_LANGUAGE_STATUS_PROMPT
 )
 VALIDATION_RECOVERY_PROMPT = (
-    "这是同一受控任务的验证续跑中断恢复，不要创建新任务或重新实现。"
-    "不要重新读取技能文件或重放完整历史；沿用首轮已经加载的协议。重新读取工作树内的 "
-    ".oss-pr-radar/task-context.json 和 result.json，只补齐仍缺失的验证证据并正常完成交接。"
-    "不要恢复上一轮遗留的 shell/exec 会话；对未完成的命令在当前工作树中新开进程重新执行。"
-    "不得刷新 GitHub、安装依赖、请求权限、提交、推送、创建 PR 或执行其他公开动作。"
+    "系统续跑：继续验证同一个修复，你无需操作。不要创建新任务或重新实现。"
+    "读取当前任务文件，只补仍缺少的验证；未完成的检查重新运行，不恢复旧进程。"
+    "保持离线，不安装依赖，不请求权限，也不执行任何 GitHub 公开操作。"
     + PLAIN_LANGUAGE_STATUS_PROMPT
 )
 issue_prompt = canonical_prompt
@@ -5436,35 +5434,22 @@ def _validation_gap_summary(candidate: dict[str, Any]) -> str:
 
 
 def _validation_followup_prompt(candidate: dict[str, Any]) -> str:
-    missing = "、".join(str(item) for item in candidate.get("missing") or [])
     missing_summary = _validation_gap_summary(candidate)
     prefetch = bool(candidate.get("prefetchCommands"))
     dependency_note = (
-        "控制器已经按锁文件预取缺失依赖；继续保持离线，使用项目虚拟环境或锁文件工具重新运行相关测试。"
+        "系统已按项目锁文件补齐缺失依赖，请重新运行相关检查。"
         if prefetch
-        else "无需新增依赖；直接补齐缺失证据并重新运行相关检查。"
+        else "无需新增依赖，请直接重新判断并补齐证据。"
     )
     return (
-        "这是同一任务的验证续跑，不要创建新任务或重新实现。"
-        "不要重新读取技能文件或重放完整历史；沿用首轮已经加载的协议。重新读取工作树内的 "
-        ".oss-pr-radar/task-context.json，并只在其中记录的 worktreePath 继续。\n\n"
+        "系统续跑：继续验证同一个修复，你无需操作。不要创建新任务或重新实现。"
+        "读取当前任务文件，并只在已绑定的工作区继续。\n\n"
         f"本轮需要解决：{missing_summary}。{dependency_note}\n\n"
-        f"内部待补字段为 {missing}。本轮使用验证策略 {VALIDATION_POLICY_REVISION}；完成时必须将该值写入 "
-        "result.json 的 evidence.validationPolicyRevision。\n\n"
-        "必须依据真实运行结果更新 .oss-pr-radar/result.json：补充针对性回归测试；如以测试作为复现证据，"
-        "需证明修复前失败、修复后通过。不得刷新 GitHub、不得安装依赖、不得请求权限、不得执行提交、推送、"
-        "建 PR 或其他公开动作。若仍无法完成验证，保留对应 quality=false 并写清可复核原因；不得把格式检查"
-        "当作功能验证。若广泛检查失败，必须在修复前基线使用同一环境复跑；只有失败集合完全属于基线既有问题，"
-        "且改动路径实际适用的功能、类型、格式和仓库专用门禁全部通过时，才可将 relevant_tests_green 标为 true。"
-        "这里的‘实际适用’以改动路径和仓库明确要求为准：与改动无关、仅因未安装可选 provider/all-extras 而失败的"
-        "全仓注册表或导入检查，应记录为不适用或环境限制，不得反过来阻断已通过的改动路径门禁；但任何触及改动路径、"
-        "共享契约或真实功能行为的失败仍必须保持 false。若 result.json 中已有 independentReview 的 FAIL/HOLD，"
-        "先处理其中的阻断发现并更新代码或证据；任务自身不得把 independent_review_passed 改为 true，该字段只由"
-        "控制器的临时只读独立审查器写入。"
-        "不要扫描工作树之外的目录，不要寻找全局替代工具、镜像或缓存；若控制器预取后锁定环境仍缺少必需门禁，"
-        "先按技能中的 CI 委托规则判断：只有广泛包装器、可选依赖、GPU/模型检查可在满足全部条件时委托远端 CI；"
-        "改动路径的真实失败、缺少生成产物或已知分支问题仍必须保留 quality=false。无法满足委托条件时记录事实并立即结束。"
-        "完成后正常结束，由控制器重新接收结果。" + PLAIN_LANGUAGE_STATUS_PROMPT
+        "按已加载的受控任务规则更新结果：核心回归必须证明修复前失败、修复后通过；"
+        "广泛检查、可选依赖或 GPU/模型检查只有在核心检查完整通过时才可明确交给远端 CI。"
+        "任何真实失败、缺少生成产物或已知分支问题仍会阻止发布。自动复核结论只能由系统写入。"
+        f"把最新规则版本 {VALIDATION_POLICY_REVISION} 记录进结果文件。保持离线，不安装依赖，"
+        "不请求权限，也不执行任何 GitHub 公开操作。完成后正常结束。" + PLAIN_LANGUAGE_STATUS_PROMPT
     )
 
 
