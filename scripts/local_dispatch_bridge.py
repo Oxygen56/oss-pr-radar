@@ -4902,6 +4902,24 @@ def _prepare_pr_followup(candidate: dict[str, Any]) -> dict[str, Any]:
     return {"preparedHeadSha": prepared, "preparedBaseSha": base_sha}
 
 
+def _rollback_pr_followup_preparation(candidate: dict[str, Any], *, prepared_head_sha: str) -> None:
+    worktree = Path(candidate["worktreePath"]).resolve()
+    original_head = str(candidate.get("headSha") or "")
+    branch = str(candidate.get("branch") or "")
+    if not re.fullmatch(r"[0-9a-f]{40}", original_head) or not public_branch_is_safe(branch):
+        raise RuntimeError("PR follow-up rollback lacks a safe original snapshot")
+    current_head = command(["git", "rev-parse", "HEAD"], cwd=worktree)
+    if current_head != prepared_head_sha:
+        raise RuntimeError("PR follow-up rollback found unexpected concurrent changes")
+    if command(["git", "status", "--porcelain"], cwd=worktree):
+        raise RuntimeError("PR follow-up rollback found a dirty worktree")
+    if current_head == original_head:
+        return
+    command(["git", "switch", "--detach", original_head], cwd=worktree)
+    command(["git", "branch", "-f", branch, original_head], cwd=worktree)
+    command(["git", "switch", branch], cwd=worktree)
+
+
 def pr_followup_reserve(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
     candidate = next(
@@ -4938,15 +4956,19 @@ def pr_followup_reserve(args: argparse.Namespace) -> dict[str, Any]:
             "checkedAt": deferred["checkedAt"],
         }
     prepared_head = str(prepared["preparedHeadSha"])
-    reserved = store.reserve_pr_followup(
-        thread_id=candidate["threadId"],
-        wake_digest=candidate["wakeDigest"],
-        prepared_head_sha=prepared_head,
-        prepared_base_sha=prepared.get("preparedBaseSha"),
-        merge_conflict_files=prepared.get("mergeConflictFiles"),
-        max_active=_private_task_limit(),
-        exclude_intent_id=str(candidate.get("intentId") or "") or None,
-    )
+    try:
+        reserved = store.reserve_pr_followup(
+            thread_id=candidate["threadId"],
+            wake_digest=candidate["wakeDigest"],
+            prepared_head_sha=prepared_head,
+            prepared_base_sha=prepared.get("preparedBaseSha"),
+            merge_conflict_files=prepared.get("mergeConflictFiles"),
+            max_active=_private_task_limit(),
+            exclude_intent_id=str(candidate.get("intentId") or "") or None,
+        )
+    except Exception:
+        _rollback_pr_followup_preparation(candidate, prepared_head_sha=prepared_head)
+        raise
     context_path = write_task_context(
         store,
         issue_url=candidate["issueUrl"],

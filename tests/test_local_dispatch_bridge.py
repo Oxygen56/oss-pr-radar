@@ -4630,6 +4630,37 @@ def test_pr_followup_reserve_refreshes_context_and_routes_to_shared_context(monk
     assert store.pr_followup_candidates() == []
 
 
+def test_pr_followup_reserve_rolls_back_unrecorded_preparation(monkeypatch, tmp_path):
+    _store, worktree, original_head, _pr_url = _published_followup_store(tmp_path)
+    candidate_store = RadarLedger(tmp_path / "ledger.sqlite3")
+    candidate = candidate_store.pr_followup_candidates()[0]
+
+    def prepare(_value):
+        (worktree / "prepared.py").write_text("prepared = True\n", encoding="utf-8")
+        run_git(worktree, "add", "prepared.py")
+        run_git(worktree, "commit", "-m", "merge: prepare updated base")
+        return {"preparedHeadSha": run_git(worktree, "rev-parse", "HEAD")}
+
+    def fail_reservation(_self, **_kwargs):
+        raise RuntimeError("simulated ledger failure")
+
+    monkeypatch.setattr(MODULE, "_prepare_pr_followup", prepare)
+    monkeypatch.setattr(RadarLedger, "reserve_pr_followup", fail_reservation)
+
+    with pytest.raises(RuntimeError, match="simulated ledger failure"):
+        MODULE.pr_followup_reserve(
+            SimpleNamespace(
+                ledger=tmp_path / "ledger.sqlite3",
+                thread_id="thread-1",
+                wake_digest=candidate["wakeDigest"],
+            )
+        )
+
+    assert run_git(worktree, "rev-parse", "HEAD") == original_head
+    assert run_git(worktree, "symbolic-ref", "--short", "HEAD") == "fix/1-runtime"
+    assert run_git(worktree, "status", "--porcelain") == ""
+
+
 def test_pr_followup_commit_cannot_self_attest_independent_review(monkeypatch, tmp_path):
     store, worktree, previous_head, _pr_url = _published_followup_store(tmp_path)
     candidate = store.pr_followup_candidates()[0]
