@@ -79,7 +79,17 @@ re-audit held candidates every 20 seconds when nothing changed.
 
 ## User-facing output
 
-- When `ok=true`, return one short Chinese sentence with health, drain action,
-  pending count, and any policy warning.
-- When `ok=false`, name only the exact failed stage or final blocker and the
-  affected issue/task. Do not paste logs, credentials, prompts, or the full JSON.
+- Write for a user who does not know this system's internal vocabulary. Never
+  expose queue counts or say controller, drain, dispatch, follow-up, recovery,
+  validation environment, quarantine, terminal blocker, receipt, stage, WIP,
+  or worktree in the user-facing message.
+- When `ok=true` and one issue advanced, say only which issue started or
+  continued, whether a PR already exists, and `你无需操作`. Translate every
+  internal action into one of: `已开始处理`, `已继续检查现有 PR`, or
+  `正在完成发布前检查`.
+- When `ok=true` and no issue advanced, return exactly one useful sentence:
+  `运行正常；当前没有需要你处理的事情。` Do not report ordinary backlog or
+  harmless waiting states.
+- When `ok=false`, describe the real user-visible impact and affected issue in
+  plain Chinese. Mention an internal name only if there is no accurate plain
+  description. Do not paste logs, credentials, prompts, or the full JSON.

@@ -42,3 +42,11 @@ def test_controller_protocol_reports_final_truth_only():
     assert "finalBlockers" in PROTOCOL
     assert "failures" in PROTOCOL
     assert "Do not paste logs" in PROTOCOL
+
+
+def test_controller_protocol_keeps_heartbeat_summary_plain():
+    assert "运行正常；当前没有需要你处理的事情。" in PROTOCOL
+    assert "Never\n  expose queue counts" in PROTOCOL
+    assert "已开始处理" in PROTOCOL
+    assert "已继续检查现有 PR" in PROTOCOL
+    assert "你无需操作" in PROTOCOL
