@@ -108,6 +108,8 @@ def existing_pr(repo: str, head_owner: str, branch: str) -> dict[str, Any] | Non
             "number": value.get("number"),
             "url": value.get("html_url"),
             "state": str(value.get("state") or "").upper(),
+            "title": str(value.get("title") or ""),
+            "body": str(value.get("body") or ""),
             "headRefOid": head.get("sha"),
             "headRefName": head.get("ref"),
             "headRepositoryOwner": {"login": owner},
@@ -128,6 +130,58 @@ def wait_for_existing_pr(repo: str, head_owner: str, branch: str) -> dict[str, A
         sleep(delay)
         found = existing_pr(repo, head_owner, branch)
     return found
+
+
+def reconcile_pr_metadata(
+    *,
+    repo: str,
+    head_owner: str,
+    branch: str,
+    found: dict[str, Any],
+    commit_sha: str,
+    title: str,
+    body: str,
+    worktree: Path,
+) -> tuple[dict[str, Any], bool, bool]:
+    """Apply permit-bound metadata and verify the exact open PR reflects it."""
+
+    metadata_known = isinstance(found.get("title"), str) and isinstance(found.get("body"), str)
+    if not metadata_known or (found.get("title") == title and found.get("body") == body):
+        return found, False, False
+    number = found.get("number")
+    if not isinstance(number, int) or number <= 0:
+        raise RuntimeError("existing pull request number is unavailable")
+    proc = run(
+        [
+            "gh",
+            "api",
+            "--method",
+            "PATCH",
+            f"repos/{repo}/pulls/{number}",
+            "--raw-field",
+            f"title={title}",
+            "--raw-field",
+            f"body={body}",
+        ],
+        cwd=worktree,
+        timeout=180,
+    )
+    current = found
+    for delay in (0.0, 1.0, 3.0, 7.0):
+        if delay:
+            sleep(delay)
+        current = existing_pr(repo, head_owner, branch) or current
+        if (
+            current.get("url") == found.get("url")
+            and str(current.get("state") or "").upper() == "OPEN"
+            and current.get("headRefOid") == commit_sha
+            and current.get("title") == title
+            and current.get("body") == body
+        ):
+            return current, True, proc.returncode != 0
+    detail = output(proc)[:300]
+    suffix = f": {detail}" if detail else ""
+    raise RuntimeError(f"pull-request metadata update could not be reconciled{suffix}")
 
 
 def ensure_permit(
@@ -454,6 +508,30 @@ def create_pr(args: argparse.Namespace, store: RadarLedger) -> dict[str, Any]:
         result = {"ok": False, "reason": "EXISTING_PR_HEAD_MISMATCH", "pr": found}
         store.complete_publication_effect(effect["effect_id"], status="FAILED", result=result)
         raise RuntimeError("existing PR head does not match the permitted commit")
+    metadata_updated = False
+    metadata_reconciled = False
+    if found and publication_request.get("publicationKind") == "PR_UPDATE":
+        try:
+            found, metadata_updated, metadata_reconciled = reconcile_pr_metadata(
+                repo=args.repo,
+                head_owner=args.head_owner,
+                branch=args.branch,
+                found=found,
+                commit_sha=args.commit_sha,
+                title=args.title,
+                body=body,
+                worktree=worktree,
+            )
+        except RuntimeError as exc:
+            result = {
+                "ok": False,
+                "reason": "PR_METADATA_RECONCILIATION_REQUIRED",
+                "detail": str(exc)[:300],
+            }
+            store.complete_publication_effect(
+                effect["effect_id"], status="RECONCILE_REQUIRED", result=result
+            )
+            raise
     if state == "reconcile_only" and not found:
         raise RuntimeError("previous PR creation attempt is not visible for the exact head branch")
     proc = None
@@ -492,7 +570,8 @@ def create_pr(args: argparse.Namespace, store: RadarLedger) -> dict[str, Any]:
     if found and found.get("headRefOid") == args.commit_sha:
         result = {
             "ok": True,
-            "reconciled": bool(proc and proc.returncode != 0),
+            "reconciled": bool(proc and proc.returncode != 0) or metadata_reconciled,
+            "metadataUpdated": metadata_updated,
             "prUrl": found["url"],
             "state": found.get("state"),
         }

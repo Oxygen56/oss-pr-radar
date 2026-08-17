@@ -3067,6 +3067,8 @@ def test_validation_continuation_excludes_its_own_intent_from_wip(monkeypatch, t
     assert observed["excludeIntentId"] == "intent-1"
     assert "核心回归必须证明修复前失败、修复后通过" in reserved["prompt"]
     assert "自动复核结论只能由系统写入" in reserved["prompt"]
+    assert "验证段落只保留本轮最新事实" in reserved["prompt"]
+    assert "删除已经被新结果推翻" in reserved["prompt"]
     assert "provider/all-extras" not in reserved["prompt"]
     assert "independent_review_passed" not in reserved["prompt"]
 

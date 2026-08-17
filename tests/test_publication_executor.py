@@ -225,6 +225,62 @@ def test_create_pr_update_reuses_exact_existing_pr_without_creating_another(monk
     assert store.succeeded[0]["pr_url"] == result["prUrl"]
 
 
+def test_create_pr_update_reconciles_permit_bound_title_and_body(monkeypatch, tmp_path):
+    args = pr_args(tmp_path)
+    store = ActiveStore()
+    configure_permit(monkeypatch, args)
+    monkeypatch.setattr(
+        MODULE,
+        "ensure_permit",
+        lambda *_args, **_kwargs: {"status": "ACTIVE", "request_id": "request-1"},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "permit_request",
+        lambda *_args: {
+            "publicationKind": "PR_UPDATE",
+            "existingPrUrl": "https://github.com/example/project/pull/2",
+        },
+    )
+    monkeypatch.setattr(MODULE, "recheck_new_effect", lambda *_args: None)
+    body = Path(args.body_file).read_text(encoding="utf-8")
+    stale = {
+        "number": 2,
+        "url": "https://github.com/example/project/pull/2",
+        "state": "OPEN",
+        "headRefOid": args.commit_sha,
+        "title": "fix: stale title",
+        "body": "Checks could not run.\n",
+    }
+    current = {**stale, "title": args.title, "body": body}
+    results = iter([stale, current])
+    monkeypatch.setattr(MODULE, "existing_pr", lambda *_args: next(results))
+    calls = []
+
+    def fake_run(command, **_kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, "{}", "")
+
+    monkeypatch.setattr(MODULE, "run", fake_run)
+
+    result = MODULE.create_pr(args, store)
+
+    assert result["ok"] is True
+    assert result["metadataUpdated"] is True
+    assert result["reconciled"] is False
+    assert len(calls) == 1
+    assert calls[0][:5] == [
+        "gh",
+        "api",
+        "--method",
+        "PATCH",
+        "repos/example/project/pulls/2",
+    ]
+    assert f"title={args.title}" in calls[0]
+    assert f"body={body}" in calls[0]
+    assert "pr" not in calls[0]
+
+
 def test_post_push_recheck_accepts_the_permitted_target_head(monkeypatch):
     store = ActiveStore()
     captured = {}
@@ -538,6 +594,8 @@ def test_existing_pr_uses_exact_rest_head_filter(monkeypatch):
                 "number": 2,
                 "html_url": "https://github.com/example/project/pull/2",
                 "state": "open",
+                "title": "fix: one",
+                "body": "Fixes #1\n",
                 "head": {
                     "ref": "fix-one",
                     "sha": "a" * 40,
@@ -552,6 +610,8 @@ def test_existing_pr_uses_exact_rest_head_filter(monkeypatch):
     found = MODULE.existing_pr("example/project", "Oxygen56", "fix-one")
 
     assert found["url"] == "https://github.com/example/project/pull/2"
+    assert found["title"] == "fix: one"
+    assert found["body"] == "Fixes #1\n"
     assert calls[0][:4] == ["gh", "api", "--method", "GET"]
     assert "head=Oxygen56:fix-one" in calls[0]
 
