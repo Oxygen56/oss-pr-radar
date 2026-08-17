@@ -4429,7 +4429,7 @@ class RadarLedger:
         evidence: dict[str, Any],
         ttl_minutes: int = 10,
     ) -> dict[str, Any]:
-        """Reauthorize an exact effect after live state proves it did not happen."""
+        """Reauthorize an exact idempotent effect after live state proves no effect."""
 
         current = datetime.now(UTC)
         now = iso_z(current)
@@ -4447,8 +4447,8 @@ class RadarLedger:
                 raise LedgerError("publication retry binding mismatch")
             if effect["status"] != "RECONCILE_REQUIRED":
                 raise LedgerError("publication effect is not awaiting reconciliation")
-            if effect["action"] != "push":
-                raise LedgerError("only an idempotent push effect may be retried")
+            if effect["action"] not in {"push", "create_pr"}:
+                raise LedgerError("publication effect is not safely retryable")
             if permit["status"] not in {"ACTIVE", "EXPIRED"}:
                 raise LedgerError("publication permit is not retryable")
             connection.execute(
@@ -4521,7 +4521,8 @@ class RadarLedger:
                 request = json.loads(request_row["request_json"])
             except json.JSONDecodeError:
                 return None
-            if request.get("publicationKind") != "PR_UPDATE":
+            publication_kind = request.get("publicationKind")
+            if publication_kind not in {"PR_CREATE", "PR_UPDATE"}:
                 return None
             permit = connection.execute(
                 """SELECT * FROM publication_permits WHERE request_id=?
@@ -4544,6 +4545,10 @@ class RadarLedger:
                    ORDER BY updated_at DESC LIMIT 1""",
                 (permit["permit_id"],),
             ).fetchone()
+            if publication_kind == "PR_CREATE" and (
+                confirmation is None or confirmation["status"] != "RECONCILE_REQUIRED"
+            ):
+                return None
             if confirmation is not None and confirmation["status"] == "FAILED":
                 try:
                     failure = json.loads(confirmation["result_json"])
@@ -4570,7 +4575,7 @@ class RadarLedger:
                        WHERE effect_id=?""",
                     (now, confirmation["effect_id"]),
                 )
-            if confirmation is None:
+            if confirmation is None or publication_kind == "PR_CREATE":
                 expires_at = iso_z(current + timedelta(minutes=10))
                 connection.execute(
                     """UPDATE publication_permits SET status='ACTIVE',expires_at=?,updated_at=?

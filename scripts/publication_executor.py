@@ -564,10 +564,23 @@ def create_pr(args: argparse.Namespace, store: RadarLedger) -> dict[str, Any]:
     retry_create = bool(
         state == "reconcile_only"
         and not found
-        and permit["status"] == "ACTIVE"
+        and permit["status"] in {"ACTIVE", "EXPIRED"}
         and effect is not None
         and retryable_pr_creation_failure(effect)
     )
+    if retry_create:
+        audit = audit_publication_request(store, str(permit["request_id"]))
+        if audit.status != "ALLOW":
+            raise RuntimeError(f"live publication recheck failed: {audit.reason}")
+        permit = store.retry_publication_effect_after_noop(
+            effect_id=str(effect["effect_id"]),
+            permit_id=args.permit_id,
+            evidence={
+                "exactHeadPrAbsent": True,
+                "liveAuditReason": audit.reason,
+            },
+        )
+        state = "retry"
     if state == "reconcile_only" and not found and not retry_create:
         raise RuntimeError("previous PR creation attempt is not visible for the exact head branch")
     proc = None

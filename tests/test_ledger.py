@@ -2444,6 +2444,74 @@ def test_interrupted_push_effect_can_retry_after_confirmed_noop(tmp_path):
     assert pending["pending"] is True
 
 
+def test_transient_pr_creation_effect_can_refresh_and_retry_after_confirmed_noop(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    old = iso_z(datetime.now(UTC) - timedelta(minutes=10))
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO publication_requests
+               (request_id,opportunity_key,thread_id,commit_sha,branch,worktree_path,
+                evidence_digest,status,request_json,created_at,updated_at)
+               VALUES ('request-1','a/b#1','thread-1',?,'fix/runtime','/tmp/worktree',
+                       'evidence','GRANTED',?,?,?)""",
+            (
+                "b" * 40,
+                json.dumps({"publicationKind": "PR_CREATE"}),
+                old,
+                old,
+            ),
+        )
+        connection.execute(
+            """INSERT INTO publication_permits
+               (permit_id,request_id,issue_url,commit_sha,branch,status,expires_at,
+                evidence_json,created_at,updated_at)
+               VALUES ('permit-1','request-1','https://github.com/a/b/issues/1',?,
+                       'fix/runtime','EXPIRED',?,'{}',?,?)""",
+            ("b" * 40, old, old, old),
+        )
+        connection.execute(
+            """INSERT INTO publication_effects
+               (effect_id,permit_id,action,request_digest,status,result_json,created_at,updated_at)
+               VALUES ('push-1','permit-1','push','push-digest','SUCCEEDED','{}',?,?)""",
+            (old, old),
+        )
+        connection.execute(
+            """INSERT INTO publication_effects
+               (effect_id,permit_id,action,request_digest,status,result_json,created_at,updated_at)
+               VALUES ('create-1','permit-1','create_pr','create-digest',
+                       'RECONCILE_REQUIRED',?, ?, ?)""",
+            (
+                json.dumps(
+                    {
+                        "ok": False,
+                        "reason": "PR_CREATION_NOT_RECONCILED",
+                        "detail": "HTTP 503: service unavailable",
+                    }
+                ),
+                old,
+                old,
+            ),
+        )
+
+    permit = store.prepare_post_push_reconciliation("request-1")
+
+    assert permit["status"] == "ACTIVE"
+    assert parse_time(permit["expires_at"]) > datetime.now(UTC)
+    retried = store.retry_publication_effect_after_noop(
+        effect_id="create-1",
+        permit_id="permit-1",
+        evidence={"exactHeadPrAbsent": True},
+    )
+    assert retried["status"] == "ACTIVE"
+    with store.connect() as connection:
+        effect = connection.execute(
+            "SELECT status,result_json FROM publication_effects WHERE effect_id='create-1'"
+        ).fetchone()
+    assert effect["status"] == "ATTEMPTED"
+    assert json.loads(effect["result_json"])["reason"] == "RETRY_AFTER_CONFIRMED_NO_EFFECT"
+
+
 def test_deferred_publication_preflight_is_rearmed_without_ambiguous_effect(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     insert_publication_preflight(store)

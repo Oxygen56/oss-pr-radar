@@ -19,6 +19,7 @@ class ReconcileStore:
     def __init__(self, *, effect_status="RECONCILE_REQUIRED", effect_result=None):
         self.succeeded = []
         self.completed = []
+        self.retried = []
         self.effect_status = effect_status
         self.effect_result = effect_result or {
             "ok": True,
@@ -41,6 +42,10 @@ class ReconcileStore:
 
     def complete_publication_effect(self, effect_id, *, status, result):
         self.completed.append((effect_id, status, result))
+
+    def retry_publication_effect_after_noop(self, *, effect_id, permit_id, evidence):
+        self.retried.append((effect_id, permit_id, evidence))
+        return {"status": "ACTIVE", "request_id": "request-1"}
 
 
 class ActiveStore:
@@ -176,6 +181,13 @@ def test_create_pr_retries_transient_503_after_exact_head_is_still_absent(
         "ensure_permit",
         lambda *_args, **_kwargs: {"status": "ACTIVE", "request_id": "request-1"},
     )
+    monkeypatch.setattr(
+        MODULE,
+        "audit_publication_request",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            status="ALLOW", reason="LIVE_PUBLICATION_GATES_PASSED"
+        ),
+    )
     found = iter(
         [
             None,
@@ -201,9 +213,19 @@ def test_create_pr_retries_transient_503_after_exact_head_is_still_absent(
     assert result["prUrl"] == "https://github.com/example/project/pull/2"
     assert len(calls) == 1
     assert calls[0][:3] == ["gh", "pr", "create"]
+    assert store.retried == [
+        (
+            "effect-1",
+            "permit-1",
+            {
+                "exactHeadPrAbsent": True,
+                "liveAuditReason": "LIVE_PUBLICATION_GATES_PASSED",
+            },
+        )
+    ]
 
 
-def test_create_pr_does_not_retry_transient_failure_with_inactive_permit(
+def test_create_pr_does_not_retry_when_live_state_no_longer_allows_publication(
     monkeypatch, tmp_path
 ):
     args = pr_args(tmp_path)
@@ -215,15 +237,26 @@ def test_create_pr_does_not_retry_transient_failure_with_inactive_permit(
         }
     )
     configure_permit(monkeypatch, args)
+    monkeypatch.setattr(
+        MODULE,
+        "ensure_permit",
+        lambda *_args, **_kwargs: {"status": "EXPIRED", "request_id": "request-1"},
+    )
     monkeypatch.setattr(MODULE, "existing_pr", lambda *_args: None)
+    monkeypatch.setattr(
+        MODULE,
+        "audit_publication_request",
+        lambda *_args, **_kwargs: SimpleNamespace(status="DEFER", reason="ISSUE_CHANGED"),
+    )
     monkeypatch.setattr(
         MODULE,
         "run",
         lambda *_args, **_kwargs: pytest.fail("an inactive permit cannot retry publication"),
     )
 
-    with pytest.raises(RuntimeError, match="not visible"):
+    with pytest.raises(RuntimeError, match="live publication recheck failed: ISSUE_CHANGED"):
         MODULE.create_pr(args, store)
+    assert store.retried == []
 
 
 def test_create_pr_replays_consumed_success_without_remote_lookup(monkeypatch, tmp_path):
