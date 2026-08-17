@@ -4696,7 +4696,7 @@ def _prepare_pr_followup(candidate: dict[str, Any]) -> dict[str, Any]:
                 ).returncode
                 == 0
             )
-            if evidence.get("baseIntegrationRequired") is True or not fast_forward:
+            if not fast_forward:
                 raise PrFollowupSnapshotChanged(
                     "PR_BASE_CHANGED",
                     expectedBaseSha=base_sha,

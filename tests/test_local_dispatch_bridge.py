@@ -5170,7 +5170,9 @@ def test_prepare_conflicted_pr_followup_requires_signed_base_snapshot(monkeypatc
         )
 
 
-def test_prepare_pr_followup_creates_local_base_integration_commit(monkeypatch, tmp_path):
+def test_prepare_pr_followup_refreshes_fast_forwarded_base_before_integration(
+    monkeypatch, tmp_path
+):
     worktree = tmp_path / "worktree"
     remote = tmp_path / "remote.git"
     worktree.mkdir()
@@ -5212,7 +5214,7 @@ def test_prepare_pr_followup_creates_local_base_integration_commit(monkeypatch, 
                 "mergeConflict": False,
                 "baseIntegrationRequired": True,
                 "baseRefName": "main",
-                "baseSha": live_base,
+                "baseSha": baseline,
             },
         }
     )
