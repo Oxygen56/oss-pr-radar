@@ -406,11 +406,19 @@ def audit_publication_request(
             return PublicationAudit(
                 "BLOCK", "ISSUE_ASSIGNED_TO_ANOTHER_CONTRIBUTOR", request_id, {}
             )
+        required_evidence_complete = all(
+            value == "COMPLETE"
+            for name, value in evidence.completeness.items()
+            if name != "relatedPullRequests"
+        )
         authorization_evidence = replace(
             evidence,
+            complete=required_evidence_complete,
             issue=evidence.issue | {"assignees": []},
             # Duplicate PRs prevent new submissions, but must not freeze a
-            # fully bound update to this controller's already-open PR.
+            # fully bound update to this controller's already-open PR. The
+            # direct PR binding above also makes best-effort enrichment of
+            # other related PRs optional for this update only.
             pull_relations=(),
         )
     elif publication_kind != "PR_CREATE":
@@ -433,7 +441,7 @@ def audit_publication_request(
         "publicationKind": publication_kind,
         "existingPr": existing_pr,
     }
-    if not evidence.complete:
+    if not authorization_evidence.complete:
         return PublicationAudit("DEFER", "LIVE_EVIDENCE_INCOMPLETE", request_id, live)
     if verdict.status != "ALLOW":
         return PublicationAudit("BLOCK", verdict.reason_code, request_id, live)
