@@ -3085,6 +3085,8 @@ def test_recovery_delivery_preserves_validation_followup_prompt():
     assert "GitHub 上还没有 PR" in prompt
     assert "任务仍在处理中" in prompt
     assert "禁止用" in prompt
+    assert "不要等待或轮询系统复核、发布" in prompt
+    assert "只有在本轮结束后才能继续" in prompt
 
 
 def test_validation_followup_prompt_translates_internal_gaps_for_the_user():
@@ -3105,9 +3107,20 @@ def test_validation_followup_prompt_translates_internal_gaps_for_the_user():
     assert "不要在用户可见回复中提技能名" in prompt
     assert "不得描述成代码测试失败" in prompt
     assert "你：无需操作" in prompt
+    assert "不要等待或轮询系统复核、发布" in prompt
+    assert "写完有效结果后立即给出最终回复并结束本轮" in prompt
     assert "relevant_tests_green" not in prompt
     assert "independent_review_passed" not in prompt
     assert ".oss-pr-radar" not in prompt
+
+
+def test_pr_followup_prompt_ends_before_controller_work_can_continue():
+    prompt = MODULE._pr_followup_prompt(
+        {"issueUrl": "https://github.com/a/b/issues/1"}
+    )
+
+    assert "不要等待或轮询系统复核、发布" in prompt
+    assert "只有在本轮结束后才能继续" in prompt
 
 
 def test_recovery_serializes_multiple_terminal_failures(monkeypatch, tmp_path):

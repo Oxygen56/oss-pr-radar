@@ -109,6 +109,10 @@ PLAIN_LANGUAGE_STATUS_PROMPT = (
     "不得描述成代码测试失败。"
     "没有用户专属操作时，最后写‘你：无需操作。’"
 )
+END_RESULT_TURN_PROMPT = (
+    "写完有效结果后立即给出最终回复并结束本轮。不要等待或轮询系统复核、发布、"
+    "在线检查、会话命名或归档；这些步骤只有在本轮结束后才能继续。"
+)
 
 
 class ValidationPrefetchError(RuntimeError):
@@ -162,12 +166,15 @@ IMMEDIATE_RECOVERY_ERROR_CODES = {
 BENIGN_POLICY_RECOVERY_PROMPT = (
     "这是一个普通开源软件的本地 GPU 张量生命周期修复续办，不是网络安全任务。"
     "保留现有工作树和已完成改动，直接完成离线测试、独立复核以及 Workspace Result "
-    "Protocol 结构化交接；不要访问网络，不要执行公开操作。" + PLAIN_LANGUAGE_STATUS_PROMPT
+    "Protocol 结构化交接；不要访问网络，不要执行公开操作。"
+    + END_RESULT_TURN_PROMPT
+    + PLAIN_LANGUAGE_STATUS_PROMPT
 )
 VALIDATION_RECOVERY_PROMPT = (
     "系统续跑：继续验证同一个修复，你无需操作。不要创建新任务或重新实现。"
     "读取当前任务文件，只补仍缺少的验证；未完成的检查重新运行，不恢复旧进程。"
     "保持离线，不安装依赖，不请求权限，也不执行任何 GitHub 公开操作。"
+    + END_RESULT_TURN_PROMPT
     + PLAIN_LANGUAGE_STATUS_PROMPT
 )
 issue_prompt = canonical_prompt
@@ -4886,6 +4893,7 @@ def _pr_followup_prompt(candidate: dict[str, Any]) -> str:
         f"直接读取并验证 {context_path}，再进入其中记录的 worktreePath 继续；"
         "不要在当前入口目录等待 .oss-pr-radar/task-context.json。"
         "只处理该上下文绑定的最新 PR 快照、审查意见、冲突和检查，完成后按技能协议更新结果。"
+        + END_RESULT_TURN_PROMPT
         + PLAIN_LANGUAGE_STATUS_PROMPT
     )
 
@@ -5738,7 +5746,9 @@ def _validation_followup_prompt(candidate: dict[str, Any]) -> str:
         "广泛检查、可选依赖或 GPU/模型检查只有在核心检查完整通过时才可明确交给远端 CI。"
         "任何真实失败、缺少生成产物或已知分支问题仍会阻止发布。自动复核结论只能由系统写入。"
         f"把最新规则版本 {VALIDATION_POLICY_REVISION} 记录进结果文件。保持离线，不安装依赖，"
-        "不请求权限，也不执行任何 GitHub 公开操作。完成后正常结束。" + PLAIN_LANGUAGE_STATUS_PROMPT
+        "不请求权限，也不执行任何 GitHub 公开操作。"
+        + END_RESULT_TURN_PROMPT
+        + PLAIN_LANGUAGE_STATUS_PROMPT
     )
 
 
