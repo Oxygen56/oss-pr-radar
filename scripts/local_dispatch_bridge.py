@@ -6803,7 +6803,7 @@ def ensure_fork_remote(worktree: Path, repo: str, head_owner: str) -> str:
 
 
 def _executor(operation: str, arguments: list[str], *, ledger_path: Path) -> dict[str, Any]:
-    raw = command(
+    completed = subprocess.run(
         [
             sys.executable,
             str(ROOT / "scripts" / "publication_executor.py"),
@@ -6812,8 +6812,15 @@ def _executor(operation: str, arguments: list[str], *, ledger_path: Path) -> dic
             operation,
             *arguments,
         ],
-        timeout=420,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=600,
     )
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "publication executor failed").strip()
+        raise RuntimeError(detail[-500:])
+    raw = completed.stdout.strip()
     value = json.loads(raw)
     if not isinstance(value, dict) or value.get("ok") is not True:
         raise RuntimeError("publication executor returned an invalid result")

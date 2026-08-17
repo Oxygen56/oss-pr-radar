@@ -259,6 +259,65 @@ def test_create_pr_does_not_retry_when_live_state_no_longer_allows_publication(
     assert store.retried == []
 
 
+def test_create_pr_falls_back_to_rest_when_gh_graphql_is_temporarily_unavailable(
+    monkeypatch, tmp_path
+):
+    args = pr_args(tmp_path)
+    store = ActiveStore()
+    configure_permit(monkeypatch, args)
+    monkeypatch.setattr(
+        MODULE,
+        "ensure_permit",
+        lambda *_args, **_kwargs: {"status": "ACTIVE", "request_id": "request-1"},
+    )
+    monkeypatch.setattr(MODULE, "recheck_new_effect", lambda *_args: None)
+    found = iter(
+        [
+            None,
+            {
+                "url": "https://github.com/example/project/pull/2",
+                "state": "OPEN",
+                "headRefOid": args.commit_sha,
+            },
+        ]
+    )
+    monkeypatch.setattr(MODULE, "existing_pr", lambda *_args: next(found))
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        if command[:3] == ["gh", "pr", "create"]:
+            return subprocess.CompletedProcess(
+                command,
+                1,
+                "",
+                "HTTP 503: No server is currently available (https://api.github.com/graphql)",
+            )
+        return subprocess.CompletedProcess(command, 0, '{"html_url":"ignored"}', "")
+
+    monkeypatch.setattr(MODULE, "run", fake_run)
+
+    result = MODULE.create_pr(args, store)
+
+    assert result["prUrl"] == "https://github.com/example/project/pull/2"
+    assert calls[0][0][:3] == ["gh", "pr", "create"]
+    assert calls[1][0] == [
+        "gh",
+        "api",
+        "--method",
+        "POST",
+        "repos/example/project/pulls",
+        "--input",
+        "-",
+    ]
+    assert json.loads(calls[1][1]["input_text"]) == {
+        "title": args.title,
+        "head": "Oxygen56:fix-one",
+        "base": "main",
+        "body": "Fixes #1\n",
+    }
+
+
 def test_create_pr_replays_consumed_success_without_remote_lookup(monkeypatch, tmp_path):
     args = pr_args(tmp_path)
     store = ReconcileStore(effect_status="SUCCEEDED")

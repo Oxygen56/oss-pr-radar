@@ -8294,6 +8294,22 @@ def test_publication_queue_returns_immediately_when_another_executor_holds_lock(
     }
 
 
+def test_publication_executor_failure_reports_the_useful_tail(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        MODULE.subprocess,
+        "run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            ["python"],
+            1,
+            "",
+            "Traceback\n" + "x" * 700 + "\nRuntimeError: exact publication failure",
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="exact publication failure"):
+        MODULE._executor("push", [], ledger_path=tmp_path / "ledger.sqlite3")
+
+
 def test_task_context_self_reconciles_exact_async_handoff(monkeypatch, tmp_path):
     issue_url = "https://github.com/a/b/issues/1"
     worktree = tmp_path / "worktree"

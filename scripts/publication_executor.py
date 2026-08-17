@@ -32,7 +32,13 @@ class PublicationBlocked(RuntimeError):
     pass
 
 
-def run(args: list[str], *, cwd: Path, timeout: int = 180) -> subprocess.CompletedProcess[str]:
+def run(
+    args: list[str],
+    *,
+    cwd: Path,
+    timeout: int = 180,
+    input_text: str | None = None,
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         args,
         cwd=cwd,
@@ -40,6 +46,7 @@ def run(args: list[str], *, cwd: Path, timeout: int = 180) -> subprocess.Complet
         capture_output=True,
         text=True,
         timeout=timeout,
+        input=input_text,
     )
 
 
@@ -312,6 +319,22 @@ def retryable_pr_creation_failure(effect: dict[str, Any]) -> bool:
             "bad gateway",
             "connection reset",
             "connection timed out",
+            "no server is currently available",
+            "service unavailable",
+            "temporarily unavailable",
+        )
+    )
+
+
+def transient_github_graphql_failure(detail: str) -> bool:
+    lowered = detail.casefold()
+    return "graphql" in lowered and any(
+        marker in lowered
+        for marker in (
+            "http 502",
+            "http 503",
+            "http 504",
+            "bad gateway",
             "no server is currently available",
             "service unavailable",
             "temporarily unavailable",
@@ -604,6 +627,28 @@ def create_pr(args: argparse.Namespace, store: RadarLedger) -> dict[str, Any]:
             cwd=worktree,
             timeout=180,
         )
+        if proc.returncode != 0 and transient_github_graphql_failure(output(proc)):
+            proc = run(
+                [
+                    "gh",
+                    "api",
+                    "--method",
+                    "POST",
+                    f"repos/{args.repo}/pulls",
+                    "--input",
+                    "-",
+                ],
+                cwd=worktree,
+                timeout=180,
+                input_text=json.dumps(
+                    {
+                        "title": args.title,
+                        "head": f"{args.head_owner}:{args.branch}",
+                        "base": args.base,
+                        "body": body,
+                    }
+                ),
+            )
         try:
             found = wait_for_existing_pr(args.repo, args.head_owner, args.branch)
         except RuntimeError as exc:
