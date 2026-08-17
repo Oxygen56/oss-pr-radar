@@ -3101,6 +3101,9 @@ def test_validation_followup_prompt_translates_internal_gaps_for_the_user():
     assert "系统正在做最后检查或发现了问题" in prompt
     assert MODULE.VALIDATION_POLICY_REVISION in prompt
     assert "第一句必须严格二选一" in prompt
+    assert "为什么还没开 PR" in prompt
+    assert "已有 PR 时使用‘现在’‘GitHub 状态’" in prompt
+    assert "不要再写‘为什么还没发布’" in prompt
     assert "等待维护者启动完整检查" in prompt
     assert "发现一处可能引发错误执行的风险，正在修正" in prompt
     assert "项目的在线检查会继续完成" in prompt
