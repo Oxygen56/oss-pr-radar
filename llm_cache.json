@@ -8959,6 +8959,42 @@
     ],
     "why": "The issue reports a real bug with public reproductions and maintainer acknowledgment, but the maintainer has already routed it to 0.9.1-rc and requested retesting on RC1. The latest comment confirms the fix works on RC1, so the issue is effectively resolved. The remaining concerns (latency, watch scope, edge nondeterminism) are separate and not actionable without maintainer direction."
   },
+  "4b07de3be9a81c4b3fa0a41ed2c5ec72a30c41669a2edf1f17c00d5f24561166": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims SWA host pool never wired, but startup log shows host allocation for SWA pool",
+      "Eviction paradox suggests pool usage low yet high churn, possibly explained by unmatchable nodes"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "SWA component match validation",
+      "full-to-SWA mapping in allocator/swa.py",
+      "HiCache host pool wiring for SWA"
+    ],
+    "risks": [
+      "Root cause may be partially addressed by existing PR #35116 or related PRs",
+      "Floating-point or random variation could confound numerical tests",
+      "Fix may require coordination with upstream vLLM sibling engine"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 12,
+    "test_plan": [
+      "Replay two captured Anthropic-protocol requests with >64K prompt to reproduce #cached-token: 0",
+      "Add unit test for SWA tombstone match validation with device-only HiCache",
+      "Numerical regression test for full-to-SWA mapping across chunked prefill chunks"
+    ],
+    "unknowns": [
+      "Whether PR #35116 already fixes the root cause",
+      "Maintainer confirmation of the proposed causal chain",
+      "Exact code version and whether fixes landed after v0.5.17"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue provides a detailed causal chain for zero cache hits in long DSV4 sessions, with code anchors and a reproduction path. However, the supplied gate decision is HUMAN_REVIEW and the open PR assessment flags semantic overlap with PR #35116 that requires manual comparison. The candidate is not clearly actionable until maintainers confirm the root cause and whether existing PRs already address it."
+  },
   "4b0badf5edf7dbf279a741191bcdd0788b1d6ebc29684ddb3836786c9eb329bc": {
     "confidence": 0.7,
     "contradictions": [],
@@ -10483,6 +10519,37 @@
       "Maintainer confirmation on the proposed fix approach."
     ],
     "why": "The issue identifies a concrete bug in Anthropic usage calculation where provider-reported thinking_tokens are ignored, leading to incorrect reasoning_tokens. The proposed fix is clear and testable. However, the deterministic gate requires HUMAN_REVIEW, and open PR/related issue lookups timed out, so duplicate work cannot be excluded. Maintainer confirmation is needed before starting."
+  },
+  "5573e5448489563d7a0c233fdca1dcb9f9f749323a7937d1878060c5c2da9395": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Command batching logic to respect explicit sequential instructions",
+      "Shell quoting/escaping for paths with special characters",
+      "Error handling to avoid stuck 'Skipped/Thinking' state"
+    ],
+    "risks": [
+      "May require changes to core execution flow, potential regressions",
+      "Need to handle different shells and platforms"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "test_plan": [
+      "Create a test with a path containing parentheses and Git Bash, verify quoting",
+      "Test that explicit sequential instruction prevents batching",
+      "Simulate command failure and verify recovery from 'Skipped/Thinking' state"
+    ],
+    "unknowns": [
+      "Exact code location for batching and quoting logic",
+      "Maintainer design preferences on execution strategy"
+    ],
+    "wait_reason": null,
+    "why": "Issue reports a concrete, reproducible bug in Cline's command execution: explicit sequential instruction ignored, unquoted shell paths cause Git Bash failure, and subsequent hang. This is actionable for agent infra, with clear repro steps and expected behavior. No competing PR found."
   },
   "55da9ba2f74413c87a68d276301056a834cd5426e1d657baefb75b0ff3c074e7": {
     "confidence": 0.7,
@@ -17230,6 +17297,35 @@
     ],
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue clearly describes a bug where CodeGraph configuration ignores user-selected agents, with concrete repro steps and code pointers. However, the repository requires linked issues to have status:approved before PRs are accepted, and this issue lacks maintainer approval. The gate decision is HUMAN_REVIEW, and there is no maintainer confirmation or design approval. The suggested fix is actionable but requires maintainer sign-off."
+  },
+  "86ea08fd2d38be56b60e7a69d5530e2b7d5e195258e5ac3dda4189392afc5e4f": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Fix qwen3 reasoning parser in sgl-model-gateway to correctly extract reasoning_content",
+      "Add regression test for gateway parser with Qwen3 output format"
+    ],
+    "risks": [
+      "Potential differences in parser behavior across model variants",
+      "Need to ensure compatibility with existing gateway API"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "test_plan": [
+      "Reproduce with provided docker-compose and curl command",
+      "Add unit test for gateway parser using sample Qwen3 output with think tags",
+      "Verify reasoning_content is populated and content excludes thinking"
+    ],
+    "unknowns": [
+      "Exact root cause in gateway parser code",
+      "Whether maintainers have already started work on this"
+    ],
+    "wait_reason": null,
+    "why": "Issue reports a concrete user-visible bug: reasoning_content is null when using the sgl-model-gateway with --reasoning-parser qwen3, while the worker-side parser works. Reproduction steps and environment are provided, making it actionable. No competing PR or issue found. The root cause is likely in the gateway's parser implementation or integration, but not yet identified."
   },
   "871598ca2c382e296de994fbc08de68de4755825ae6c11e89dafa3226bdb6f6e": {
     "confidence": 0.8,
@@ -28794,6 +28890,35 @@
       "Whether existing PR #33449 can be improved or should be superseded"
     ],
     "why": "Issue provides a clear root cause and reproduction, but the deterministic gate requires HUMAN_REVIEW and the related issue audit timed out. An existing PR (#33449) directly addresses the issue but has failing CI, so maintainer guidance is needed before starting a competing PR."
+  },
+  "e67f1bd33ff7f2e65c747ae891152f507d9ee0f01f440c2a81b61162d9cfcc01": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify llm-mapping-step.ts to flush successfulResults before bailing for pending client tools",
+      "Add regression test for mixed server/client tool steps"
+    ],
+    "risks": [
+      "Changing the emission condition may affect error handling or HITL behavior",
+      "Potential unintended side effects on message history persistence"
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Reproduce with the provided sketch and assert tool-output-available is streamed for the completed server tool",
+      "Run existing streaming and agentic loop tests"
+    ],
+    "unknowns": [
+      "Maintainer design preference on the suggested fix",
+      "Whether the existing PR #21068 or #15279 partially addresses this issue"
+    ],
+    "wait_reason": "DESIGN_CONFIRMATION",
+    "why": "Issue provides a precise root cause and a concrete fix suggestion for a user-visible bug in the agentic loop. However, the maintainer has not approved the approach, and the issue is labeled 'needs triage'. The suggested fix changes control flow in a critical path, so design confirmation is required before implementation."
   },
   "e690926ca418b012ee44d16e34f6199c08691059ef21157f342766bbd7805233": {
     "confidence": 0.7,
