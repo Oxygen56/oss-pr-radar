@@ -6235,12 +6235,14 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                         result_digest=digest,
                         stage=stage,
                     )
-            elif stage == "PR_OPEN":
+            elif stage in {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED"}:
                 if candidate["stage"] not in {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED"}:
-                    raise RuntimeError("PR_OPEN result is only valid for an existing PR follow-up")
+                    raise RuntimeError(
+                        "published result is only valid for an existing PR continuation"
+                    )
                 evidence = value.get("evidence")
                 if not isinstance(evidence, dict):
-                    raise RuntimeError("PR_OPEN follow-up result requires evidence")
+                    raise RuntimeError("published continuation result requires evidence")
                 digest = hashlib.sha256(raw).hexdigest()
                 store.record_task_result_ingested(candidate["key"], digest=digest, stage=stage)
                 if current_wake_digest:

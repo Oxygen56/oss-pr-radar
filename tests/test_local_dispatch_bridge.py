@@ -4587,6 +4587,39 @@ def _published_followup_store(
     return store, worktree, head_sha, pr_url
 
 
+def test_ingestion_accepts_current_ci_green_continuation_result(tmp_path):
+    store, worktree, _head_sha, _pr_url = _published_followup_store(tmp_path)
+    store.record_stage("a/b#1", "CI_GREEN", evidence={"checks": "green"})
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    context = json.loads(context_path.read_text(encoding="utf-8"))
+    Path(context["resultPath"]).write_text(
+        json.dumps(
+            {
+                "schemaVersion": "radar-task-result-v1",
+                "contextDigest": context["contextDigest"],
+                "key": "a/b#1",
+                "issueUrl": "https://github.com/a/b/issues/1",
+                "threadId": "thread-1",
+                "worktreePath": str(worktree.resolve()),
+                "stage": "CI_GREEN",
+                "followupDigest": context["prFollowup"]["wakeDigest"],
+                "evidence": {"verified": True},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert result["ok"] is True, result["errors"]
+    assert result["ingested"] == [{"key": "a/b#1", "stage": "CI_GREEN"}]
+
+
 def test_pr_followup_reserve_refreshes_context_and_routes_to_shared_context(monkeypatch, tmp_path):
     store, worktree, _head_sha, pr_url = _published_followup_store(tmp_path)
     project_root = tmp_path / "github"
