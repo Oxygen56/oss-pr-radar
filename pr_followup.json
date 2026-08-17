@@ -1,13 +1,639 @@
 {
-  "digest": "3f61c8a3f6d862eebc196e879237b0ae5dca8c3bf15c03899dd6fc364dbc843e",
-  "generatedAt": "2026-08-17T14:47:38.481659Z",
+  "digest": "3f3b65d4ac73333af4ff2b4b8f11ae6a57fb7b6a3e888eb5dd6f8ae52432e1b1",
+  "generatedAt": "2026-08-17T16:17:21.279482Z",
   "items": [
+    {
+      "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
+      "actions": [],
+      "baseRefName": "litellm_internal_staging",
+      "baseSha": "973329e9864154d429a7d739fb6a552fe03a9b3e",
+      "checkedAt": "2026-08-17T16:17:21.279482Z",
+      "draft": false,
+      "evidence": {
+        "actionableCheckNames": [],
+        "baseCompareError": null,
+        "baseCompareStatus": null,
+        "baseIntegrationRequired": false,
+        "baseMergeBaseSha": null,
+        "baseRefName": "litellm_internal_staging",
+        "baseSha": "973329e9864154d429a7d739fb6a552fe03a9b3e",
+        "changedFiles": [
+          "litellm/llms/azure/responses/transformation.py",
+          "tests/test_litellm/llms/azure/response/test_azure_transformation.py"
+        ],
+        "failingChecks": [],
+        "headSha": "5d08d5e3096c1751f79905098b8b1c8d3dce5a44",
+        "mergeConflict": false,
+        "mergeConflictPreparationVersion": null,
+        "requestedChanges": [],
+        "unresolvedReviewThreads": []
+      },
+      "headSha": "5d08d5e3096c1751f79905098b8b1c8d3dce5a44",
+      "key": "BerriAI/litellm#36372",
+      "mergeConflict": false,
+      "mergeableState": "blocked",
+      "number": 36372,
+      "repo": "BerriAI/litellm",
+      "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
+      "taskActions": [],
+      "taskFollowupRequired": false,
+      "title": "fix(azure): normalize empty namespace tool descriptions",
+      "url": "https://github.com/BerriAI/litellm/pull/36372"
+    },
+    {
+      "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
+      "actions": [],
+      "baseRefName": "litellm_internal_staging",
+      "baseSha": "973329e9864154d429a7d739fb6a552fe03a9b3e",
+      "checkedAt": "2026-08-17T16:17:21.279482Z",
+      "draft": false,
+      "evidence": {
+        "actionableCheckNames": [],
+        "baseCompareError": null,
+        "baseCompareStatus": null,
+        "baseIntegrationRequired": false,
+        "baseMergeBaseSha": null,
+        "baseRefName": "litellm_internal_staging",
+        "baseSha": "973329e9864154d429a7d739fb6a552fe03a9b3e",
+        "changedFiles": [
+          "ui/litellm-dashboard/src/app/(dashboard)/mcp-servers/_components/mcp_server_edit.test.tsx",
+          "ui/litellm-dashboard/src/app/(dashboard)/mcp-servers/_components/mcp_server_edit.tsx"
+        ],
+        "failingChecks": [],
+        "headSha": "29fcded639ff5cd5a7b6ef105bf3411699983dd8",
+        "mergeConflict": false,
+        "mergeConflictPreparationVersion": null,
+        "requestedChanges": [],
+        "unresolvedReviewThreads": []
+      },
+      "headSha": "29fcded639ff5cd5a7b6ef105bf3411699983dd8",
+      "key": "BerriAI/litellm#36374",
+      "mergeConflict": false,
+      "mergeableState": "blocked",
+      "number": 36374,
+      "repo": "BerriAI/litellm",
+      "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
+      "taskActions": [],
+      "taskFollowupRequired": false,
+      "title": "fix(ui): preserve stdio MCP environment variables on edit",
+      "url": "https://github.com/BerriAI/litellm/pull/36374"
+    },
+    {
+      "actionDigest": "0ed150a180c23f199d02b5747dc17f162f49cea0f5f2318e28f7010ed843240c",
+      "actions": [
+        "CI 检查失败",
+        "存在未解决审查线程"
+      ],
+      "baseRefName": "litellm_internal_staging",
+      "baseSha": "973329e9864154d429a7d739fb6a552fe03a9b3e",
+      "checkedAt": "2026-08-17T16:17:21.279482Z",
+      "draft": false,
+      "evidence": {
+        "actionableCheckNames": [
+          "lint"
+        ],
+        "baseCompareError": null,
+        "baseCompareStatus": "diverged",
+        "baseIntegrationRequired": true,
+        "baseMergeBaseSha": "d86336a7c6f5c97b5fb46413a8a1c9d77f426220",
+        "baseRefName": "litellm_internal_staging",
+        "baseSha": "973329e9864154d429a7d739fb6a552fe03a9b3e",
+        "changedFiles": [
+          "litellm/llms/anthropic/experimental_pass_through/messages/streaming_iterator.py",
+          "litellm/proxy/pass_through_endpoints/streaming_handler.py",
+          "litellm/router.py",
+          "tests/test_litellm/proxy/pass_through_endpoints/test_streaming_handler_interrupt.py",
+          "tests/test_litellm/test_router.py"
+        ],
+        "failingChecks": [
+          {
+            "annotations": [
+              {
+                "endLine": 2,
+                "level": "warning",
+                "message": "Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830, actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955, actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runne",
+                "path": ".github",
+                "startLine": 2
+              },
+              {
+                "endLine": 104,
+                "level": "failure",
+                "message": "Process completed with exit code 1.",
+                "path": ".github",
+                "startLine": 104
+              }
+            ],
+            "conclusion": "failure",
+            "name": "code-quality",
+            "url": "https://github.com/BerriAI/litellm/actions/runs/31723385923/job/94525656793"
+          },
+          {
+            "annotations": [
+              {
+                "endLine": 2,
+                "level": "warning",
+                "message": "Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830, actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955, actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runne",
+                "path": ".github",
+                "startLine": 2
+              },
+              {
+                "endLine": 26,
+                "level": "failure",
+                "message": "Process completed with exit code 1.",
+                "path": ".github",
+                "startLine": 26
+              }
+            ],
+            "conclusion": "failure",
+            "name": "lint",
+            "url": "https://github.com/BerriAI/litellm/actions/runs/31723385901/job/94525656623"
+          },
+          {
+            "annotations": [
+              {
+                "endLine": 2,
+                "level": "warning",
+                "message": "Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/",
+                "path": ".github",
+                "startLine": 2
+              },
+              {
+                "endLine": 23,
+                "level": "failure",
+                "message": "Process completed with exit code 1.",
+                "path": ".github",
+                "startLine": 23
+              }
+            ],
+            "conclusion": "failure",
+            "name": "osv-scan",
+            "url": "https://github.com/BerriAI/litellm/actions/runs/31723385926/job/94525657175"
+          }
+        ],
+        "headSha": "f24a24547bc3300f86336d67ef54fb59c46ff67c",
+        "mergeConflict": false,
+        "mergeConflictPreparationVersion": null,
+        "requestedChanges": [],
+        "unresolvedReviewThreads": [
+          {
+            "association": "CONTRIBUTOR",
+            "authorType": "Bot",
+            "createdAt": "2026-08-13T17:04:39Z",
+            "path": "litellm/llms/anthropic/experimental_pass_through/messages/streaming_iterator.py",
+            "reviewer": "veria-ai",
+            "summary": "**Low: Unbounded SSE buffering enables denial of service** An attacker controlling a custom upstream can send an unlimited sequence of chunks without a frame separator. This line retains the entire sequence and copies the growing buffer for every chunk, causing unbounded memory use and quadratic CPU work; `buffered_frames` in the router similarly retains unlimited pre-content frames such as pings.",
+            "url": "https://github.com/BerriAI/litellm/pull/36791#discussion_r3777457993"
+          },
+          {
+            "association": "CONTRIBUTOR",
+            "authorType": "Bot",
+            "createdAt": "2026-08-13T17:02:32Z",
+            "path": "litellm/proxy/pass_through_endpoints/streaming_handler.py",
+            "reviewer": "greptile-apps",
+            "summary": "<a href=\"#\"><img alt=\"P1\" src=\"https://greptile-static-assets.s3.amazonaws.com/badges/p1.svg?v=9\" align=\"top\"></a> **Stream failures lose accounting** When an HTTP-200 stream raises or emits an SSE error, this guard suppresses success logging without dispatching failure handlers, dropping spend and monitoring records",
+            "url": "https://github.com/BerriAI/litellm/pull/36791#discussion_r3777443914"
+          },
+          {
+            "association": "CONTRIBUTOR",
+            "authorType": "Bot",
+            "createdAt": "2026-08-13T17:02:32Z",
+            "path": "litellm/router.py",
+            "reviewer": "greptile-apps",
+            "summary": "<a href=\"#\"><img alt=\"P2\" src=\"https://greptile-static-assets.s3.amazonaws.com/badges/p2.svg?v=9\" align=\"top\"></a> **Provider logic enters shared Router** These methods decode Anthropic events and define protocol commit boundaries in shared routing code, splitting provider behavior across layers and increasing maintenance coupling **Rule Used:** What: Avoid writing provider-specific code outside..",
+            "url": "https://github.com/BerriAI/litellm/pull/36791#discussion_r3777443920"
+          },
+          {
+            "association": "CONTRIBUTOR",
+            "authorType": "Bot",
+            "createdAt": "2026-08-13T17:02:32Z",
+            "path": "litellm/router.py",
+            "reviewer": "greptile-apps",
+            "summary": "<a href=\"#\"><img alt=\"P2\" src=\"https://greptile-static-assets.s3.amazonaws.com/badges/p2.svg?v=9\" align=\"top\"></a> **Proxy errors leak into SDK** This proxy-oriented fallback message is raised from shared Router code, exposing endpoint implementation details to SDK callers using the same routing surface **Rule Used:** Don’t add stuff to router.py that is error message... ([source](https://app.grep",
+            "url": "https://github.com/BerriAI/litellm/pull/36791#discussion_r3777443924"
+          }
+        ]
+      },
+      "headSha": "f24a24547bc3300f86336d67ef54fb59c46ff67c",
+      "key": "BerriAI/litellm#36791",
+      "mergeConflict": false,
+      "mergeableState": "blocked",
+      "number": 36791,
+      "repo": "BerriAI/litellm",
+      "taskActionDigest": "99b520b0a29ce288ef0b8245f288bf4e86cf7864ef5c6d6001c002dc2fac597f",
+      "taskActions": [
+        "当前分支检查失败",
+        "存在未解决审查线程"
+      ],
+      "taskFollowupRequired": true,
+      "title": "fix(router): support anthropic messages streaming fallback",
+      "url": "https://github.com/BerriAI/litellm/pull/36791"
+    },
+    {
+      "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
+      "actions": [],
+      "baseRefName": "main",
+      "baseSha": "a7dc1ea28445555d5944066936fdf6e1b21d27ea",
+      "checkedAt": "2026-08-17T16:17:21.279482Z",
+      "draft": false,
+      "evidence": {
+        "actionableCheckNames": [],
+        "baseCompareError": null,
+        "baseCompareStatus": null,
+        "baseIntegrationRequired": false,
+        "baseMergeBaseSha": null,
+        "baseRefName": "main",
+        "baseSha": "a7dc1ea28445555d5944066936fdf6e1b21d27ea",
+        "changedFiles": [
+          ".changeset/bright-crons-stream.md",
+          "docs/en/reference/kimi-acp.md",
+          "docs/zh/reference/kimi-acp.md",
+          "packages/acp-server/src/session.ts",
+          "packages/acp-server/test/e2e-turn.test.ts"
+        ],
+        "failingChecks": [],
+        "headSha": "a67c8e68a9adeeb04e56c78608534c00b3a3e319",
+        "mergeConflict": false,
+        "mergeConflictPreparationVersion": null,
+        "requestedChanges": [],
+        "unresolvedReviewThreads": []
+      },
+      "headSha": "a67c8e68a9adeeb04e56c78608534c00b3a3e319",
+      "key": "MoonshotAI/kimi-code#3004",
+      "mergeConflict": false,
+      "mergeableState": "unstable",
+      "number": 3004,
+      "repo": "MoonshotAI/kimi-code",
+      "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
+      "taskActions": [],
+      "taskFollowupRequired": false,
+      "title": "fix(acp): stream scheduled turn activity",
+      "url": "https://github.com/MoonshotAI/kimi-code/pull/3004"
+    },
+    {
+      "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
+      "actions": [],
+      "baseRefName": "main",
+      "baseSha": "944172f6c0d0f90fdc1921fd38c1dcae62c48592",
+      "checkedAt": "2026-08-17T16:17:21.279482Z",
+      "draft": false,
+      "evidence": {
+        "actionableCheckNames": [],
+        "baseCompareError": null,
+        "baseCompareStatus": null,
+        "baseIntegrationRequired": false,
+        "baseMergeBaseSha": null,
+        "baseRefName": "main",
+        "baseSha": "944172f6c0d0f90fdc1921fd38c1dcae62c48592",
+        "changedFiles": [
+          "examples/agent-generated-support/developer/factories.py",
+          "examples/agent-generated-support/developer/schema.yml",
+          "examples/agent-generated-support/evidence/manifest.json",
+          "examples/agent-generated-support/evidence/negative-validation.json",
+          "examples/agent-generated-support/evidence/normalized-metadata.json",
+          "examples/agent-generated-support/evidence/validation.json",
+          "examples/agent-generated-support/negative/broken_foreign_key/accounts.csv",
+          "examples/agent-generated-support/negative/broken_foreign_key/ticket_events.csv",
+          "examples/agent-generated-support/negative/broken_foreign_key/tickets.csv",
+          "examples/agent-generated-support/valid/csv/accounts.csv",
+          "examples/agent-generated-support/valid/csv/ticket_events.csv",
+          "examples/agent-generated-support/valid/csv/tickets.csv",
+          "examples/agent-generated-support/valid/parquet/accounts.parquet",
+          "examples/agent-generated-support/valid/parquet/ticket_events.parquet",
+          "examples/agent-generated-support/valid/parquet/tickets.parquet"
+        ],
+        "failingChecks": [],
+        "headSha": "15b99c96808644db890e98796ef11453d37233f9",
+        "mergeConflict": false,
+        "mergeConflictPreparationVersion": null,
+        "requestedChanges": [],
+        "unresolvedReviewThreads": []
+      },
+      "headSha": "15b99c96808644db890e98796ef11453d37233f9",
+      "key": "Oxygen56/fixtureforge#1",
+      "mergeConflict": false,
+      "mergeableState": "clean",
+      "number": 1,
+      "repo": "Oxygen56/fixtureforge",
+      "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
+      "taskActions": [],
+      "taskFollowupRequired": false,
+      "title": "Agent-generated support fixtures from live DataHub metadata",
+      "url": "https://github.com/Oxygen56/fixtureforge/pull/1"
+    },
+    {
+      "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
+      "actions": [],
+      "baseRefName": "main",
+      "baseSha": "944172f6c0d0f90fdc1921fd38c1dcae62c48592",
+      "checkedAt": "2026-08-17T16:17:21.279482Z",
+      "draft": true,
+      "evidence": {
+        "actionableCheckNames": [],
+        "baseCompareError": null,
+        "baseCompareStatus": null,
+        "baseIntegrationRequired": false,
+        "baseMergeBaseSha": null,
+        "baseRefName": "main",
+        "baseSha": "944172f6c0d0f90fdc1921fd38c1dcae62c48592",
+        "changedFiles": [
+          "README.md",
+          "buidl/BUIDL_SUBMISSION.md",
+          "buidl/SUBMISSION_CHECKLIST.md",
+          "docs/live-video-narration.txt",
+          "docs/submission-copy.md",
+          "fixtures/fiction_support.metadata.json",
+          "reports/adversarial-schema-evaluation.json",
+          "reports/adversarial-schema-evaluation.md",
+          "reports/final-validation.md",
+          "reports/judging-scorecard.md",
+          "scripts/adversarial_schema_eval.py",
+          "src/fixtureforge/datahub_integration.py",
+          "src/fixtureforge/emitter.py",
+          "src/fixtureforge/mcp_normalizer.py",
+          "src/fixtureforge/models.py",
+          "tests/test_mcp_normalizer.py"
+        ],
+        "failingChecks": [],
+        "headSha": "a4703f01ac6c9011f3ac1f01845c6f459b9b0076",
+        "mergeConflict": false,
+        "mergeConflictPreparationVersion": null,
+        "requestedChanges": [],
+        "unresolvedReviewThreads": []
+      },
+      "headSha": "a4703f01ac6c9011f3ac1f01845c6f459b9b0076",
+      "key": "Oxygen56/fixtureforge#2",
+      "mergeConflict": false,
+      "mergeableState": "clean",
+      "number": 2,
+      "repo": "Oxygen56/fixtureforge",
+      "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
+      "taskActions": [],
+      "taskFollowupRequired": false,
+      "title": "feat: add ownership-aware adversarial evidence",
+      "url": "https://github.com/Oxygen56/fixtureforge/pull/2"
+    },
+    {
+      "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
+      "actions": [],
+      "baseRefName": "main",
+      "baseSha": "1eea001187afc7cbbdd055f6bc1347917e7b509a",
+      "checkedAt": "2026-08-17T16:17:21.279482Z",
+      "draft": false,
+      "evidence": {
+        "actionableCheckNames": [],
+        "baseCompareError": null,
+        "baseCompareStatus": null,
+        "baseIntegrationRequired": false,
+        "baseMergeBaseSha": null,
+        "baseRefName": "main",
+        "baseSha": "1eea001187afc7cbbdd055f6bc1347917e7b509a",
+        "changedFiles": [
+          "docs/docs/core-abilities/fetching_ticket_context.md",
+          "pr_agent/settings/.secrets_template.toml",
+          "pr_agent/settings/configuration.toml",
+          "pr_agent/tools/ticket_pr_compliance_check.py",
+          "tests/unittest/test_ticket_compliance.py"
+        ],
+        "failingChecks": [],
+        "headSha": "5f3f33bac5b21fe12d245f3f6835bd0e87332283",
+        "mergeConflict": false,
+        "mergeConflictPreparationVersion": null,
+        "requestedChanges": [],
+        "unresolvedReviewThreads": []
+      },
+      "headSha": "5f3f33bac5b21fe12d245f3f6835bd0e87332283",
+      "key": "The-PR-Agent/pr-agent#2430",
+      "mergeConflict": false,
+      "mergeableState": "blocked",
+      "number": 2430,
+      "repo": "The-PR-Agent/pr-agent",
+      "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
+      "taskActions": [],
+      "taskFollowupRequired": false,
+      "title": "feat: add Asana ticket detection to ticket compliance check",
+      "url": "https://github.com/The-PR-Agent/pr-agent/pull/2430"
+    },
+    {
+      "actionDigest": "9a15cd5e9304e9f599e98c0431482b9375352b3278dcc4a039eb838e733863c5",
+      "actions": [
+        "分支存在合并冲突"
+      ],
+      "baseRefName": "main",
+      "baseSha": "8d689a4c334b09bbe33f3e2c50ee1a3b8bcf30af",
+      "checkedAt": "2026-08-17T16:17:21.279482Z",
+      "draft": false,
+      "evidence": {
+        "actionableCheckNames": [],
+        "baseCompareError": null,
+        "baseCompareStatus": null,
+        "baseIntegrationRequired": false,
+        "baseMergeBaseSha": null,
+        "baseRefName": "main",
+        "baseSha": "8d689a4c334b09bbe33f3e2c50ee1a3b8bcf30af",
+        "changedFiles": [
+          "src/qwenpaw/drivers/handlers/mcp_stateful_client.py",
+          "tests/unit/drivers/handlers/test_mcp_stateful_client.py"
+        ],
+        "failingChecks": [],
+        "headSha": "2f480ca99e72fe9e76b2ab3523bdc682334a2332",
+        "mergeConflict": true,
+        "mergeConflictPreparationVersion": "conflict_files_v1",
+        "requestedChanges": [],
+        "unresolvedReviewThreads": []
+      },
+      "headSha": "2f480ca99e72fe9e76b2ab3523bdc682334a2332",
+      "key": "agentscope-ai/QwenPaw#6825",
+      "mergeConflict": true,
+      "mergeableState": "dirty",
+      "number": 6825,
+      "repo": "agentscope-ai/QwenPaw",
+      "taskActionDigest": "0247248a27ff30434bb96c54af4b61508b95515c24d8f2ffb2e5e9203ab1a797",
+      "taskActions": [
+        "分支存在合并冲突"
+      ],
+      "taskFollowupRequired": true,
+      "title": "fix(mcp): apply configured timeout to client sessions",
+      "url": "https://github.com/agentscope-ai/QwenPaw/pull/6825"
+    },
+    {
+      "actionDigest": "aaebebd5a95421c0c823ac3b3b327b31eb76e2996635c0e35c8490f3e9bea84e",
+      "actions": [
+        "存在未解决审查线程"
+      ],
+      "baseRefName": "main",
+      "baseSha": "f6f99696d2b0f83820ee81ae0588e208f117f675",
+      "checkedAt": "2026-08-17T16:17:21.279482Z",
+      "draft": false,
+      "evidence": {
+        "actionableCheckNames": [],
+        "baseCompareError": null,
+        "baseCompareStatus": null,
+        "baseIntegrationRequired": false,
+        "baseMergeBaseSha": null,
+        "baseRefName": "main",
+        "baseSha": "f6f99696d2b0f83820ee81ae0588e208f117f675",
+        "changedFiles": [
+          "deploy/inference-gateway/epp/pkg/plugins/disagg/decode_scorer.go",
+          "deploy/inference-gateway/epp/pkg/plugins/disagg/decode_scorer_test.go",
+          "deploy/inference-gateway/epp/pkg/plugins/disagg/prefill_scorer.go",
+          "deploy/inference-gateway/epp/pkg/plugins/disagg/profile_handler.go",
+          "deploy/inference-gateway/epp/pkg/plugins/disagg/reservation_test.go",
+          "deploy/inference-gateway/epp/pkg/plugins/disagg/shared.go",
+          "deploy/inference-gateway/epp/pkg/plugins/dynamo_kv_scorer/plugin.go",
+          "deploy/inference-gateway/epp/pkg/plugins/dynamo_kv_scorer/plugin_test.go",
+          "deploy/inference-gateway/ext-proc/src/epp.rs",
+          "lib/bindings/c/src/lib.rs",
+          "lib/llm/src/kv_router.rs",
+          "lib/llm/src/kv_router/prefill_router/activation.rs",
+          "lib/llm/src/kv_router/prefill_router/mod.rs",
+          "lib/llm/src/kv_router/prefill_router/query.rs"
+        ],
+        "failingChecks": [],
+        "headSha": "bfb560ea9403f47d3dc1450a40735bed1da32510",
+        "mergeConflict": false,
+        "mergeConflictPreparationVersion": null,
+        "requestedChanges": [],
+        "unresolvedReviewThreads": [
+          {
+            "association": "CONTRIBUTOR",
+            "authorType": "Bot",
+            "createdAt": "2026-08-09T10:12:27Z",
+            "path": "deploy/inference-gateway/ext-proc/src/epp.rs",
+            "reviewer": "coderabbitai",
+            "summary": "_🩺 Stability & Availability_ | _🟠 Major_ | _⚡ Quick win_ **`tokio::spawn` in `Drop` panics if no runtime is active.** `RoutingReservationGuard::drop` calls `tokio::spawn`. During runtime shutdown, a pending `pick()` future can be dropped outside an active runtime context, and `tokio::spawn` then panics inside `Drop`. A panic in `Drop` during unwinding aborts the process. Guard the spawn with `toki",
+            "url": "https://github.com/ai-dynamo/dynamo/pull/12907#discussion_r3743421091"
+          },
+          {
+            "association": "CONTRIBUTOR",
+            "authorType": "Bot",
+            "createdAt": "2026-08-09T10:13:14Z",
+            "path": "deploy/inference-gateway/ext-proc/src/epp.rs",
+            "reviewer": "devin-ai-integration",
+            "summary": "<!-- devin-review-comment {\"id\": \"ANALYSIS_pr-review-job-ac60945860ab412f876da81a390e9aee_0001\", \"file_path\": \"deploy/inference-gateway/ext-proc/src/epp.rs\", \"start_line\": 1156, \"end_line\": 1166, \"side\": \"RIGHT\"} --> 🔍 **Prefill routing errors and queue rejections now fail the request instead of falling back to aggregated serving** Previously any error from `route_prefill` (including policy-class ",
+            "url": "https://github.com/ai-dynamo/dynamo/pull/12907#discussion_r3743422875"
+          },
+          {
+            "association": "CONTRIBUTOR",
+            "authorType": "Bot",
+            "createdAt": "2026-08-09T10:12:27Z",
+            "path": "lib/bindings/c/src/lib.rs",
+            "reviewer": "coderabbitai",
+            "summary": "_🩺 Stability & Availability_ | _🟡 Minor_ | _⚡ Quick win_ <details> <summary>🧩 Analysis chain</summary> 🏁 Script executed: ```shell #!/bin/bash # Inspect prefill/decode mark_prefill_completed implementations for repeat-call behavior. fd -t f 'multi_worker.rs' lib/kv-router/src | xargs rg -n -C 6 'fn mark_prefill_completed' rg -n -C 8 'fn mark_prefill_completed' lib/llm/src/kv_router.rs ``` Reposito",
+            "url": "https://github.com/ai-dynamo/dynamo/pull/12907#discussion_r3743421102"
+          },
+          {
+            "association": "CONTRIBUTOR",
+            "authorType": "Bot",
+            "createdAt": "2026-08-09T10:13:15Z",
+            "path": "lib/llm/src/kv_router/prefill_router/query.rs",
+            "reviewer": "devin-ai-integration",
+            "summary": "<!-- devin-review-comment {\"id\": \"ANALYSIS_pr-review-job-ac60945860ab412f876da81a390e9aee_0003\", \"file_path\": \"lib/llm/src/kv_router/prefill_router/query.rs\", \"start_line\": 176, \"end_line\": 197, \"side\": \"RIGHT\"} --> 🔍 **Prefill reservation holds an active-request slot for the whole decode duration** `reserve_prefill_worker` books the request in the prefill router's sequence tracker; `mark_prefill_",
+            "url": "https://github.com/ai-dynamo/dynamo/pull/12907#discussion_r3743422896"
+          }
+        ]
+      },
+      "headSha": "bfb560ea9403f47d3dc1450a40735bed1da32510",
+      "key": "ai-dynamo/dynamo#12907",
+      "mergeConflict": false,
+      "mergeableState": "blocked",
+      "number": 12907,
+      "repo": "ai-dynamo/dynamo",
+      "taskActionDigest": "34c5006168ea2be5ef212113029018db3a3058a375acfd018fc6f32abbc0755d",
+      "taskActions": [
+        "存在未解决审查线程"
+      ],
+      "taskFollowupRequired": true,
+      "title": "fix(epp): account for prefill load during routing",
+      "url": "https://github.com/ai-dynamo/dynamo/pull/12907"
+    },
+    {
+      "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
+      "actions": [],
+      "baseRefName": "main",
+      "baseSha": "d416278da98d61261fab0305036eacf19aa83ebc",
+      "checkedAt": "2026-08-17T16:17:21.279482Z",
+      "draft": false,
+      "evidence": {
+        "actionableCheckNames": [],
+        "baseCompareError": null,
+        "baseCompareStatus": null,
+        "baseIntegrationRequired": false,
+        "baseMergeBaseSha": null,
+        "baseRefName": "main",
+        "baseSha": "d416278da98d61261fab0305036eacf19aa83ebc",
+        "changedFiles": [
+          "src/claude_agent_sdk/_internal/client.py",
+          "src/claude_agent_sdk/_internal/transport/subprocess_cli.py",
+          "src/claude_agent_sdk/client.py",
+          "tests/test_query.py"
+        ],
+        "failingChecks": [],
+        "headSha": "6862581deb82fcfcd9c993199109676bf4615f3a",
+        "mergeConflict": false,
+        "mergeConflictPreparationVersion": null,
+        "requestedChanges": [],
+        "unresolvedReviewThreads": []
+      },
+      "headSha": "6862581deb82fcfcd9c993199109676bf4615f3a",
+      "key": "anthropics/claude-agent-sdk-python#1008",
+      "mergeConflict": false,
+      "mergeableState": "blocked",
+      "number": 1008,
+      "repo": "anthropics/claude-agent-sdk-python",
+      "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
+      "taskActions": [],
+      "taskFollowupRequired": false,
+      "title": "Fix deferred tool resume executing without re-running PreToolUse callback",
+      "url": "https://github.com/anthropics/claude-agent-sdk-python/pull/1008"
+    },
+    {
+      "actionDigest": "592af169733ef449a1672a84ce4cd2c43f611f9121b12a558e14c123c45730b6",
+      "actions": [
+        "分支存在合并冲突"
+      ],
+      "baseRefName": "main",
+      "baseSha": "89dcaa3a283f79ed84fd8fe53e2208b9442a6427",
+      "checkedAt": "2026-08-17T16:17:21.279482Z",
+      "draft": false,
+      "evidence": {
+        "actionableCheckNames": [],
+        "baseCompareError": null,
+        "baseCompareStatus": null,
+        "baseIntegrationRequired": false,
+        "baseMergeBaseSha": null,
+        "baseRefName": "main",
+        "baseSha": "89dcaa3a283f79ed84fd8fe53e2208b9442a6427",
+        "changedFiles": [
+          "skills/pptx/scripts/keynote_sanitize.py",
+          "skills/pptx/scripts/office/pack.py"
+        ],
+        "failingChecks": [],
+        "headSha": "fa2055c658cd78905e417fb5754f0c4cb17143c2",
+        "mergeConflict": true,
+        "mergeConflictPreparationVersion": "conflict_files_v1",
+        "requestedChanges": [],
+        "unresolvedReviewThreads": []
+      },
+      "headSha": "fa2055c658cd78905e417fb5754f0c4cb17143c2",
+      "key": "anthropics/skills#1231",
+      "mergeConflict": true,
+      "mergeableState": "dirty",
+      "number": 1231,
+      "repo": "anthropics/skills",
+      "taskActionDigest": "070e4a3401ce24b0e4a9a8979795b983ab6fe6ae9dc3d904b36253ca9d939422",
+      "taskActions": [
+        "分支存在合并冲突"
+      ],
+      "taskFollowupRequired": true,
+      "title": "fix(pptx): add Keynote/macOS OOXML compliance sanitizer",
+      "url": "https://github.com/anthropics/skills/pull/1231"
+    },
     {
       "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
       "actions": [],
       "baseRefName": "main",
       "baseSha": "195a2a38bcde3e51befdacb1ddacb68a21f87006",
-      "checkedAt": "2026-08-17T14:47:38.481659Z",
+      "checkedAt": "2026-08-17T16:17:21.279482Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -40,6 +666,1834 @@
       "taskFollowupRequired": false,
       "title": "fix: add group_id to StartSessionRequest for online GRPO session grouping",
       "url": "https://github.com/areal-project/AReaL/pull/1392"
+    },
+    {
+      "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
+      "actions": [],
+      "baseRefName": "main",
+      "baseSha": "eb4126921bea3373f91afc49fb4b59d6eda7fed6",
+      "checkedAt": "2026-08-17T16:17:21.279482Z",
+      "draft": false,
+      "evidence": {
+        "actionableCheckNames": [],
+        "baseCompareError": null,
+        "baseCompareStatus": null,
+        "baseIntegrationRequired": false,
+        "baseMergeBaseSha": null,
+        "baseRefName": "main",
+        "baseSha": "eb4126921bea3373f91afc49fb4b59d6eda7fed6",
+        "changedFiles": [
+          "browser_use/browser/events.py",
+          "browser_use/browser/watchdogs/default_action_watchdog.py",
+          "browser_use/tools/service.py",
+          "browser_use/tools/views.py"
+        ],
+        "failingChecks": [],
+        "headSha": "76c92cd0d77514ea0f0c145aacf4d75eccf87877",
+        "mergeConflict": false,
+        "mergeConflictPreparationVersion": null,
+        "requestedChanges": [],
+        "unresolvedReviewThreads": []
+      },
+      "headSha": "76c92cd0d77514ea0f0c145aacf4d75eccf87877",
+      "key": "browser-use/browser-use#4976",
+      "mergeConflict": false,
+      "mergeableState": "behind",
+      "number": 4976,
+      "repo": "browser-use/browser-use",
+      "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
+      "taskActions": [],
+      "taskFollowupRequired": false,
+      "title": "feat: add hover action for triggering CSS :hover patterns",
+      "url": "https://github.com/browser-use/browser-use/pull/4976"
+    },
+    {
+      "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
+      "actions": [],
+      "baseRefName": "main",
+      "baseSha": "eb4126921bea3373f91afc49fb4b59d6eda7fed6",
+      "checkedAt": "2026-08-17T16:17:21.279482Z",
+      "draft": false,
+      "evidence": {
+        "actionableCheckNames": [],
+        "baseCompareError": null,
+        "baseCompareStatus": null,
+        "baseIntegrationRequired": false,
+        "baseMergeBaseSha": null,
+        "baseRefName": "main",
+        "baseSha": "eb4126921bea3373f91afc49fb4b59d6eda7fed6",
+        "changedFiles": [
+          "browser_use/agent/service.py",
+          "browser_use/dom/serializer/clickable_elements.py",
+          "browser_use/dom/service.py",
+          "browser_use/dom/utils.py",
+          "browser_use/dom/views.py",
+          "browser_use/tools/utils.py"
+        ],
+        "failingChecks": [],
+        "headSha": "a718a41c685cf1e761832fcb31964f5255df8473",
+        "mergeConflict": false,
+        "mergeConflictPreparationVersion": null,
+        "requestedChanges": [],
+        "unresolvedReviewThreads": []
+      },
+      "headSha": "a718a41c685cf1e761832fcb31964f5255df8473",
+      "key": "browser-use/browser-use#4977",
+      "mergeConflict": false,
+      "mergeableState": "behind",
+      "number": 4977,
+      "repo": "browser-use/browser-use",
+      "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
+      "taskActions": [],
+      "taskFollowupRequired": false,
+      "title": "fix: improve icon-only button detection using tooltips and aria-labels",
+      "url": "https://github.com/browser-use/browser-use/pull/4977"
+    },
+    {
+      "actionDigest": "8b3891c2721c77829977c381c23b674c68d791b8b163b92ab7873d5c9eb40ff9",
+      "actions": [
+        "存在未解决审查线程"
+      ],
+      "baseRefName": "main",
+      "baseSha": "0af36da900cf669b6d18a0a144ee119789f8f7de",
+      "checkedAt": "2026-08-17T16:17:21.279482Z",
+      "draft": false,
+      "evidence": {
+        "actionableCheckNames": [],
+        "baseCompareError": null,
+        "baseCompareStatus": null,
+        "baseIntegrationRequired": false,
+        "baseMergeBaseSha": null,
+        "baseRefName": "main",
+        "baseSha": "0af36da900cf669b6d18a0a144ee119789f8f7de",
+        "changedFiles": [
+          ".changeset/steady-page-evaluation.md",
+          "packages/extension/tests/page-evaluate-promise-lifetime.test.ts",
+          "packages/extension/understudy/frame.ts",
+          "packages/extension/understudy/page.ts",
+          "packages/sdk-go/internal/extensionassets/stagehand-extension.zip"
+        ],
+        "failingChecks": [],
+        "headSha": "d1f487c75c8b532ca56ed3dd8914398c5592eee6",
+        "mergeConflict": false,
+        "mergeConflictPreparationVersion": null,
+        "requestedChanges": [],
+        "unresolvedReviewThreads": [
+          {
+            "association": "CONTRIBUTOR",
+            "authorType": "Bot",
+            "createdAt": "2026-08-17T11:01:18Z",
+            "path": "packages/extension/understudy/frame.ts",
+            "reviewer": "cubic-dev-ai",
+            "summary": "<!-- cubic:v=fe4dbf85-7db4-47f5-8d4b-147260b19ca0 --> <!-- cubic:review-run=96c5097d-9070-4d06-9895-31cf48cdfbb4 --> <!-- metadata:{\"confidence\":5} --> P2: The new materialization step (`Runtime.awaitPromise`/`Runtime.callFunctionOn`) runs against the retained `objectId` outside the try/catch that retries `Runtime.evaluate` on \"Cannot find context with specified id\". When page churn recreates the ",
+            "url": "https://github.com/browserbase/stagehand/pull/2751#discussion_r3795778970"
+          },
+          {
+            "association": "CONTRIBUTOR",
+            "authorType": "Bot",
+            "createdAt": "2026-08-17T11:01:18Z",
+            "path": "packages/extension/understudy/frame.ts",
+            "reviewer": "cubic-dev-ai",
+            "summary": "<!-- cubic:v=2b8e05c4-0550-4389-b746-bb1fec8967ba --> <!-- cubic:review-run=b1437fe8-92d5-4ca7-a8c2-5cb73f6c5794 --> <!-- metadata:{\"confidence\":7} --> P2: Custom agent: **Exception and error message sanitization** `Frame.evaluate` throws a generic `new Error(...)` that bubbles to users through `Page.evaluate`. Replace it with a typed error class and remove the raw `exceptionDetails.exception?.des",
+            "url": "https://github.com/browserbase/stagehand/pull/2751#discussion_r3795778973"
+          }
+        ]
+      },
+      "headSha": "d1f487c75c8b532ca56ed3dd8914398c5592eee6",
+      "key": "browserbase/stagehand#2751",
+      "mergeConflict": false,
+      "mergeableState": "blocked",
+      "number": 2751,
+      "repo": "browserbase/stagehand",
+      "taskActionDigest": "b1c8f0defd62c1f832582ccc455d1b44395c5a39d65e4c14ba7ab2456700d154",
+      "taskActions": [
+        "存在未解决审查线程"
+      ],
+      "taskFollowupRequired": true,
+      "title": "fix: prevent page.evaluate promises from being collected",
+      "url": "https://github.com/browserbase/stagehand/pull/2751"
+    },
+    {
+      "actionDigest": "263d0c5f5de4eb6a6a7b430cba81fa6e9385b51a3621deb6a6252814706b9e29",
+      "actions": [
+        "CI 检查失败"
+      ],
+      "baseRefName": "main",
+      "baseSha": "041afb718bcdfe50eabd90d060e5335ef98e2d16",
+      "checkedAt": "2026-08-17T16:17:21.279482Z",
+      "draft": false,
+      "evidence": {
+        "actionableCheckNames": [
+          "Test (ubuntu-latest, Node 24.x)",
+          "Test (windows-latest, Node 24.x)"
+        ],
+        "baseCompareError": null,
+        "baseCompareStatus": "diverged",
+        "baseIntegrationRequired": true,
+        "baseMergeBaseSha": "0cfd0bbe0563c3ca0df04d86198f17a5c60b6695",
+        "baseRefName": "main",
+        "baseSha": "041afb718bcdfe50eabd90d060e5335ef98e2d16",
+        "changedFiles": [
+          "sdk/packages/llms/src/providers/model-facts.ts",
+          "sdk/packages/llms/src/providers/routing/provider-options.test.ts"
+        ],
+        "failingChecks": [
+          {
+            "annotations": [
+              {
+                "endLine": 2,
+                "level": "warning",
+                "message": "Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/",
+                "path": ".github",
+                "startLine": 2
+              },
+              {
+                "endLine": 635,
+                "level": "failure",
+                "message": "Process completed with exit code 130.",
+                "path": ".github",
+                "startLine": 635
+              }
+            ],
+            "conclusion": "failure",
+            "name": "Test (ubuntu-latest, Node 24.x)",
+            "url": "https://github.com/cline/cline/actions/runs/28964414511/job/85944239412"
+          },
+          {
+            "annotations": [
+              {
+                "endLine": 2,
+                "level": "warning",
+                "message": "Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/",
+                "path": ".github",
+                "startLine": 2
+              },
+              {
+                "endLine": 629,
+                "level": "failure",
+                "message": "Process completed with exit code 1.",
+                "path": ".github",
+                "startLine": 629
+              }
+            ],
+            "conclusion": "failure",
+            "name": "Test (windows-latest, Node 24.x)",
+            "url": "https://github.com/cline/cline/actions/runs/28964414511/job/85944239374"
+          }
+        ],
+        "headSha": "678849da82caf5a0db3258fb304ae79a2e94571b",
+        "mergeConflict": false,
+        "mergeConflictPreparationVersion": null,
+        "requestedChanges": [],
+        "unresolvedReviewThreads": []
+      },
+      "headSha": "678849da82caf5a0db3258fb304ae79a2e94571b",
+      "key": "cline/cline#11317",
+      "mergeConflict": false,
+      "mergeableState": "blocked",
+      "number": 11317,
+      "repo": "cline/cline",
+      "taskActionDigest": "d05bdec139465ce36c989febfdc15e3074b8a83c1e16636b406246916cda9f5a",
+      "taskActions": [
+        "当前分支检查失败"
+      ],
+      "taskFollowupRequired": true,
+      "title": "fix: add DeepSeek V4 support to OpenAI-compatible handler + provider-neutral mistake-limit message",
+      "url": "https://github.com/cline/cline/pull/11317"
+    },
+    {
+      "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
+      "actions": [],
+      "baseRefName": "main",
+      "baseSha": "041afb718bcdfe50eabd90d060e5335ef98e2d16",
+      "checkedAt": "2026-08-17T16:17:21.279482Z",
+      "draft": false,
+      "evidence": {
+        "actionableCheckNames": [],
+        "baseCompareError": null,
+        "baseCompareStatus": null,
+        "baseIntegrationRequired": false,
+        "baseMergeBaseSha": null,
+        "baseRefName": "main",
+        "baseSha": "041afb718bcdfe50eabd90d060e5335ef98e2d16",
+        "changedFiles": [
+          "apps/vscode/src/shared/services/Logger.test.ts",
+          "apps/vscode/src/shared/services/Logger.ts"
+        ],
+        "failingChecks": [],
+        "headSha": "cf14b4143080c2975e352dc8789826a9542b46b1",
+        "mergeConflict": false,
+        "mergeConflictPreparationVersion": null,
+        "requestedChanges": [],
+        "unresolvedReviewThreads": []
+      },
+      "headSha": "cf14b4143080c2975e352dc8789826a9542b46b1",
+      "key": "cline/cline#13082",
+      "mergeConflict": false,
+      "mergeableState": "blocked",
+      "number": 13082,
+      "repo": "cline/cline",
+      "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
+      "taskActions": [],
+      "taskFollowupRequired": false,
+      "title": "fix(vscode): preserve error details in release logs",
+      "url": "https://github.com/cline/cline/pull/13082"
+    },
+    {
+      "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
+      "actions": [],
+      "baseRefName": "main",
+      "baseSha": "041afb718bcdfe50eabd90d060e5335ef98e2d16",
+      "checkedAt": "2026-08-17T16:17:21.279482Z",
+      "draft": false,
+      "evidence": {
+        "actionableCheckNames": [],
+        "baseCompareError": null,
+        "baseCompareStatus": null,
+        "baseIntegrationRequired": false,
+        "baseMergeBaseSha": null,
+        "baseRefName": "main",
+        "baseSha": "041afb718bcdfe50eabd90d060e5335ef98e2d16",
+        "changedFiles": [
+          "apps/cli/src/acp/acpAgent.test.ts",
+          "apps/cli/src/acp/acpAgent.ts"
+        ],
+        "failingChecks": [],
+        "headSha": "5010154331b2d6f19b409f8cb52cdb4d2819a30b",
+        "mergeConflict": false,
+        "mergeConflictPreparationVersion": null,
+        "requestedChanges": [],
+        "unresolvedReviewThreads": []
+      },
+      "headSha": "5010154331b2d6f19b409f8cb52cdb4d2819a30b",
+      "key": "cline/cline#13088",
+      "mergeConflict": false,
+      "mergeableState": "blocked",
+      "number": 13088,
+      "repo": "cline/cline",
+      "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
+      "taskActions": [],
+      "taskFollowupRequired": false,
+      "title": "fix(cli): apply ACP mode changes to initialized sessions",
+      "url": "https://github.com/cline/cline/pull/13088"
+    },
+    {
+      "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
+      "actions": [],
+      "baseRefName": "main",
+      "baseSha": "041afb718bcdfe50eabd90d060e5335ef98e2d16",
+      "checkedAt": "2026-08-17T16:17:21.279482Z",
+      "draft": false,
+      "evidence": {
+        "actionableCheckNames": [],
+        "baseCompareError": null,
+        "baseCompareStatus": null,
+        "baseIntegrationRequired": false,
+        "baseMergeBaseSha": null,
+        "baseRefName": "main",
+        "baseSha": "041afb718bcdfe50eabd90d060e5335ef98e2d16",
+        "changedFiles": [
+          "apps/vscode/src/sdk/vscode-run-commands-tool.test.ts",
+          "apps/vscode/src/sdk/vscode-run-commands-tool.ts"
+        ],
+        "failingChecks": [],
+        "headSha": "4dfca4899a0adcf9ebf99a5e39a10579e9859676",
+        "mergeConflict": false,
+        "mergeConflictPreparationVersion": null,
+        "requestedChanges": [],
+        "unresolvedReviewThreads": []
+      },
+      "headSha": "4dfca4899a0adcf9ebf99a5e39a10579e9859676",
+      "key": "cline/cline#13303",
+      "mergeConflict": false,
+      "mergeableState": "blocked",
+      "number": 13303,
+      "repo": "cline/cline",
+      "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
+      "taskActions": [],
+      "taskFollowupRequired": false,
+      "title": "fix(vscode): normalize omitted-args background commands",
+      "url": "https://github.com/cline/cline/pull/13303"
+    },
+    {
+      "actionDigest": "dd153bb24cc2b0045df70a069085578f4c815861f71e638bf627694f12154922",
+      "actions": [
+        "CI 检查失败"
+      ],
+      "baseRefName": "main",
+      "baseSha": "041afb718bcdfe50eabd90d060e5335ef98e2d16",
+      "checkedAt": "2026-08-17T16:17:21.279482Z",
+      "draft": false,
+      "evidence": {
+        "actionableCheckNames": [
+          "Test (ubuntu-latest, Node 24.x)",
+          "Test (windows-latest, Node 24.x)"
+        ],
+        "baseCompareError": null,
+        "baseCompareStatus": "ahead",
+        "baseIntegrationRequired": false,
+        "baseMergeBaseSha": "041afb718bcdfe50eabd90d060e5335ef98e2d16",
+        "baseRefName": "main",
+        "baseSha": "041afb718bcdfe50eabd90d060e5335ef98e2d16",
+        "changedFiles": [
+          "sdk/packages/core/src/extensions/tools/definitions.test.ts",
+          "sdk/packages/core/src/extensions/tools/definitions.ts"
+        ],
+        "failingChecks": [
+          {
+            "annotations": [
+              {
+                "endLine": 2,
+                "level": "warning",
+                "message": "Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/",
+                "path": ".github",
+                "startLine": 2
+              },
+              {
+                "endLine": 738,
+                "level": "failure",
+                "message": "Process completed with exit code 130.",
+                "path": ".github",
+                "startLine": 738
+              }
+            ],
+            "conclusion": "failure",
+            "name": "Test (ubuntu-latest, Node 24.x)",
+            "url": "https://github.com/cline/cline/actions/runs/32038734474/job/95414513531"
+          },
+          {
+            "annotations": [
+              {
+                "endLine": 2,
+                "level": "warning",
+                "message": "Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/",
+                "path": ".github",
+                "startLine": 2
+              },
+              {
+                "endLine": 704,
+                "level": "failure",
+                "message": "Process completed with exit code 1.",
+                "path": ".github",
+                "startLine": 704
+              }
+            ],
+            "conclusion": "failure",
+            "name": "Test (windows-latest, Node 24.x)",
+            "url": "https://github.com/cline/cline/actions/runs/32038734474/job/95414513361"
+          }
+        ],
+        "headSha": "ddc5222071e2fe4d401d834da675e527726b263a",
+        "mergeConflict": false,
+        "mergeConflictPreparationVersion": null,
+        "requestedChanges": [],
+        "unresolvedReviewThreads": []
+      },
+      "headSha": "ddc5222071e2fe4d401d834da675e527726b263a",
+      "key": "cline/cline#13307",
+      "mergeConflict": false,
+      "mergeableState": "blocked",
+      "number": 13307,
+      "repo": "cline/cline",
+      "taskActionDigest": "d0e096348084bf44f4a50e477cc465389e51031adec4a0169a7a9d3b65ec0bdb",
+      "taskActions": [
+        "当前分支检查失败"
+      ],
+      "taskFollowupRequired": true,
+      "title": "fix(core): respect explicit command sequencing",
+      "url": "https://github.com/cline/cline/pull/13307"
+    },
+    {
+      "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
+      "actions": [],
+      "baseRefName": "main",
+      "baseSha": "9b1f4938f02671d2066e336c8bfdcfb2f27c99ee",
+      "checkedAt": "2026-08-17T16:17:21.279482Z",
+      "draft": false,
+      "evidence": {
+        "actionableCheckNames": [],
+        "baseCompareError": null,
+        "baseCompareStatus": null,
+        "baseIntegrationRequired": false,
+        "baseMergeBaseSha": null,
+        "baseRefName": "main",
+        "baseSha": "9b1f4938f02671d2066e336c8bfdcfb2f27c99ee",
+        "changedFiles": [
+          "lib/crewai/src/crewai/agents/tools_handler.py",
+          "lib/crewai/src/crewai/tools/tool_usage.py",
+          "lib/crewai/src/crewai/utilities/idempotency_backend.py",
+          "lib/crewai/tests/tools/test_tool_idempotency.py"
+        ],
+        "failingChecks": [],
+        "headSha": "fbb6274e6827cb2e25f6a0cc1c469b078c51f311",
+        "mergeConflict": false,
+        "mergeConflictPreparationVersion": null,
+        "requestedChanges": [],
+        "unresolvedReviewThreads": []
+      },
+      "headSha": "fbb6274e6827cb2e25f6a0cc1c469b078c51f311",
+      "key": "crewAIInc/crewAI#6048",
+      "mergeConflict": false,
+      "mergeableState": "behind",
+      "number": 6048,
+      "repo": "crewAIInc/crewAI",
+      "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
+      "taskActions": [],
+      "taskFollowupRequired": false,
+      "title": "feat: add tool execution idempotency guard to prevent duplicate side effects on task retry",
+      "url": "https://github.com/crewAIInc/crewAI/pull/6048"
+    },
+    {
+      "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
+      "actions": [],
+      "baseRefName": "main",
+      "baseSha": "c3c76a6d26d7ed61cb875219ffa82a50cd144a93",
+      "checkedAt": "2026-08-17T16:17:21.279482Z",
+      "draft": true,
+      "evidence": {
+        "actionableCheckNames": [],
+        "baseCompareError": null,
+        "baseCompareStatus": null,
+        "baseIntegrationRequired": false,
+        "baseMergeBaseSha": null,
+        "baseRefName": "main",
+        "baseSha": "c3c76a6d26d7ed61cb875219ffa82a50cd144a93",
+        "changedFiles": [
+          "README.md",
+          "skills/datahub-fixture-generation/SKILL.md",
+          "skills/datahub-fixture-generation/templates/evidence-summary.md",
+          "skills/using-datahub/SKILL.md"
+        ],
+        "failingChecks": [],
+        "headSha": "654153167654291c93b93a051967dd4688c0a403",
+        "mergeConflict": false,
+        "mergeConflictPreparationVersion": null,
+        "requestedChanges": [],
+        "unresolvedReviewThreads": []
+      },
+      "headSha": "654153167654291c93b93a051967dd4688c0a403",
+      "key": "datahub-project/datahub-skills#127",
+      "mergeConflict": false,
+      "mergeableState": "behind",
+      "number": 127,
+      "repo": "datahub-project/datahub-skills",
+      "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
+      "taskActions": [],
+      "taskFollowupRequired": false,
+      "title": "feat: add DataHub fixture generation skill",
+      "url": "https://github.com/datahub-project/datahub-skills/pull/127"
+    },
+    {
+      "actionDigest": "4acadacf198070f0efba19fc6481cef6b2e213775f4cd5b6ff7dc05f0cd69e34",
+      "actions": [
+        "分支存在合并冲突"
+      ],
+      "baseRefName": "main-v2",
+      "baseSha": "3debe37c35d645fff341739538974db96daa0610",
+      "checkedAt": "2026-08-17T16:17:21.279482Z",
+      "draft": false,
+      "evidence": {
+        "actionableCheckNames": [],
+        "baseCompareError": null,
+        "baseCompareStatus": null,
+        "baseIntegrationRequired": false,
+        "baseMergeBaseSha": null,
+        "baseRefName": "main-v2",
+        "baseSha": "3debe37c35d645fff341739538974db96daa0610",
+        "changedFiles": [
+          "docs/ACP.md",
+          "docs/ACP.zh-CN.md",
+          "internal/acp/prompt_result.go",
+          "internal/acp/prompt_result_test.go",
+          "internal/acp/prompt_result_unit_test.go",
+          "internal/acp/protocol.go",
+          "internal/acp/server_test.go",
+          "internal/acp/service.go",
+          "internal/acp/status.go",
+          "internal/acp/status_text.go"
+        ],
+        "failingChecks": [],
+        "headSha": "6537ed4c478c435a1e99148ac7e124405eb3b7fb",
+        "mergeConflict": true,
+        "mergeConflictPreparationVersion": "conflict_files_v1",
+        "requestedChanges": [],
+        "unresolvedReviewThreads": []
+      },
+      "headSha": "6537ed4c478c435a1e99148ac7e124405eb3b7fb",
+      "key": "esengine/DeepSeek-Reasonix#8510",
+      "mergeConflict": true,
+      "mergeableState": "dirty",
+      "number": 8510,
+      "repo": "esengine/DeepSeek-Reasonix",
+      "taskActionDigest": "847542b164a4bd7c7e1a924dca7c8e3cd3e8f27a62eaed868aeaa1c1518333d8",
+      "taskActions": [
+        "分支存在合并冲突"
+      ],
+      "taskFollowupRequired": true,
+      "title": "fix(acp): return prompt failures as JSON-RPC errors",
+      "url": "https://github.com/esengine/DeepSeek-Reasonix/pull/8510"
+    },
+    {
+      "actionDigest": "fbf6dfb327215524a39402a39435bdfb5c020a8394871c371340166bc81519a2",
+      "actions": [
+        "分支存在合并冲突"
+      ],
+      "baseRefName": "main",
+      "baseSha": "407136375bcc64a40342ecf4ad6603eeab2f3e69",
+      "checkedAt": "2026-08-17T16:17:21.279482Z",
+      "draft": false,
+      "evidence": {
+        "actionableCheckNames": [],
+        "baseCompareError": null,
+        "baseCompareStatus": null,
+        "baseIntegrationRequired": false,
+        "baseMergeBaseSha": null,
+        "baseRefName": "main",
+        "baseSha": "407136375bcc64a40342ecf4ad6603eeab2f3e69",
+        "changedFiles": [
+          "CHANGELOG.md",
+          "pkg/tools/tfe/create_no_code_workspace.go",
+          "pkg/tools/tfe/create_no_code_workspace_test.go"
+        ],
+        "failingChecks": [],
+        "headSha": "2f875bd8418eae0c5e77f654185d2bb5ff93d6f9",
+        "mergeConflict": true,
+        "mergeConflictPreparationVersion": "conflict_files_v1",
+        "requestedChanges": [],
+        "unresolvedReviewThreads": []
+      },
+      "headSha": "2f875bd8418eae0c5e77f654185d2bb5ff93d6f9",
+      "key": "hashicorp/terraform-mcp-server#442",
+      "mergeConflict": true,
+      "mergeableState": "dirty",
+      "number": 442,
+      "repo": "hashicorp/terraform-mcp-server",
+      "taskActionDigest": "147170603b1b9cf07b92320acddbd7b18ff2f0b44a8a69332ce5aeef5671b403",
+      "taskActions": [
+        "分支存在合并冲突"
+      ],
+      "taskFollowupRequired": true,
+      "title": "fix: honor optional no-code module variables",
+      "url": "https://github.com/hashicorp/terraform-mcp-server/pull/442"
+    },
+    {
+      "actionDigest": "05fffd07c80ea621dcfb6fd70cc49c5823ff44c20aa4caf5ce1a54ff4a06640e",
+      "actions": [
+        "CI 检查失败",
+        "分支存在合并冲突",
+        "存在未解决审查线程"
+      ],
+      "baseRefName": "main",
+      "baseSha": "dc39e2a72409a14404b2baf9dcb6c25f01b0dd08",
+      "checkedAt": "2026-08-17T16:17:21.279482Z",
+      "draft": false,
+      "evidence": {
+        "actionableCheckNames": [],
+        "baseCompareError": null,
+        "baseCompareStatus": null,
+        "baseIntegrationRequired": false,
+        "baseMergeBaseSha": null,
+        "baseRefName": "main",
+        "baseSha": "dc39e2a72409a14404b2baf9dcb6c25f01b0dd08",
+        "changedFiles": [
+          "src/backend/base/langflow/initial_setup/starter_projects/Content Aggregator.json",
+          "src/backend/base/langflow/initial_setup/starter_projects/Deep Research Agent.json",
+          "src/backend/base/langflow/initial_setup/starter_projects/Instagram Copywriter.json",
+          "src/backend/base/langflow/initial_setup/starter_projects/Market Research.json",
+          "src/backend/base/langflow/initial_setup/starter_projects/Price Deal Finder.json",
+          "src/backend/base/langflow/initial_setup/starter_projects/Sequential Tasks Agents.json",
+          "src/backend/base/langflow/initial_setup/starter_projects/Simple Agent.json",
+          "src/backend/base/langflow/initial_setup/starter_projects/Social Media Agent.json",
+          "src/backend/base/langflow/initial_setup/starter_projects/Travel Planning Agents.json",
+          "src/backend/tests/unit/components/data_source/test_web_search.py",
+          "src/lfx/src/lfx/_assets/component_index.json",
+          "src/lfx/src/lfx/components/data_source/web_search.py"
+        ],
+        "failingChecks": [
+          {
+            "annotations": [],
+            "conclusion": "failure",
+            "name": "CI Success",
+            "url": "https://github.com/langflow-ai/langflow/actions/runs/31286297589/job/93178531336"
+          }
+        ],
+        "headSha": "26bfaccd9cd3fb099ec990c89d7d2664bc9c33e8",
+        "mergeConflict": true,
+        "mergeConflictPreparationVersion": "conflict_files_v1",
+        "requestedChanges": [],
+        "unresolvedReviewThreads": [
+          {
+            "association": "CONTRIBUTOR",
+            "authorType": "Bot",
+            "createdAt": "2026-08-08T17:52:08Z",
+            "path": "src/backend/tests/unit/components/data_source/test_web_search.py",
+            "reviewer": "coderabbitai",
+            "summary": "_🎯 Functional Correctness_ | _🟡 Minor_ | _⚡ Quick win_ **Test zero and negative limits.** The implementation clamps both limits to zero. This test only covers positive values. Add cases for `max_results=0`, `max_results=-1`, `max_content_length=0`, and `max_content_length=-1`. Assert that a zero result limit fetches no result pages and that a zero content limit returns empty content. As per coding",
+            "url": "https://github.com/langflow-ai/langflow/pull/14470#discussion_r3741245440"
+          }
+        ]
+      },
+      "headSha": "26bfaccd9cd3fb099ec990c89d7d2664bc9c33e8",
+      "key": "langflow-ai/langflow#14470",
+      "mergeConflict": true,
+      "mergeableState": "dirty",
+      "number": 14470,
+      "repo": "langflow-ai/langflow",
+      "taskActionDigest": "340aa567f94afce7ed9ef4c9abe209ee0a782a1b1c03086300451e84909303b4",
+      "taskActions": [
+        "分支存在合并冲突",
+        "存在未解决审查线程"
+      ],
+      "taskFollowupRequired": true,
+      "title": "fix: bound web search result content",
+      "url": "https://github.com/langflow-ai/langflow/pull/14470"
+    },
+    {
+      "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
+      "actions": [],
+      "baseRefName": "main",
+      "baseSha": "001c235229be8795e3834520467bd0d661ed8f34",
+      "checkedAt": "2026-08-17T16:17:21.279482Z",
+      "draft": false,
+      "evidence": {
+        "actionableCheckNames": [],
+        "baseCompareError": null,
+        "baseCompareStatus": null,
+        "baseIntegrationRequired": false,
+        "baseMergeBaseSha": null,
+        "baseRefName": "main",
+        "baseSha": "001c235229be8795e3834520467bd0d661ed8f34",
+        "changedFiles": [
+          "mem0/memory/main.py",
+          "tests/test_memory.py"
+        ],
+        "failingChecks": [],
+        "headSha": "3d75815b89c8eec37851c1aba504d006e8ed8c79",
+        "mergeConflict": false,
+        "mergeConflictPreparationVersion": null,
+        "requestedChanges": [],
+        "unresolvedReviewThreads": []
+      },
+      "headSha": "3d75815b89c8eec37851c1aba504d006e8ed8c79",
+      "key": "mem0ai/mem0#6776",
+      "mergeConflict": false,
+      "mergeableState": "blocked",
+      "number": 6776,
+      "repo": "mem0ai/mem0",
+      "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
+      "taskActions": [],
+      "taskFollowupRequired": false,
+      "title": "fix(memory): prevent long-conversation retrieval overflow",
+      "url": "https://github.com/mem0ai/mem0/pull/6776"
+    },
+    {
+      "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
+      "actions": [],
+      "baseRefName": "main",
+      "baseSha": "001c235229be8795e3834520467bd0d661ed8f34",
+      "checkedAt": "2026-08-17T16:17:21.279482Z",
+      "draft": false,
+      "evidence": {
+        "actionableCheckNames": [],
+        "baseCompareError": null,
+        "baseCompareStatus": null,
+        "baseIntegrationRequired": false,
+        "baseMergeBaseSha": null,
+        "baseRefName": "main",
+        "baseSha": "001c235229be8795e3834520467bd0d661ed8f34",
+        "changedFiles": [
+          "mem0/llms/openai.py",
+          "tests/llms/test_openai.py"
+        ],
+        "failingChecks": [],
+        "headSha": "9da34d15f8cd66576b58e047c87b028d4c60fd5a",
+        "mergeConflict": false,
+        "mergeConflictPreparationVersion": null,
+        "requestedChanges": [],
+        "unresolvedReviewThreads": []
+      },
+      "headSha": "9da34d15f8cd66576b58e047c87b028d4c60fd5a",
+      "key": "mem0ai/mem0#6967",
+      "mergeConflict": false,
+      "mergeableState": "blocked",
+      "number": 6967,
+      "repo": "mem0ai/mem0",
+      "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
+      "taskActions": [],
+      "taskFollowupRequired": false,
+      "title": "fix: use max_output_tokens for Gemma 4",
+      "url": "https://github.com/mem0ai/mem0/pull/6967"
+    },
+    {
+      "actionDigest": "f63e4bc76315a688db7647098e33f0eb2e3d76aed7005f7773eac6b9acefb65d",
+      "actions": [
+        "CI 检查失败",
+        "存在未解决审查线程"
+      ],
+      "baseRefName": "main",
+      "baseSha": "047ec7eaffab0d85306d85d7771cdfbc87d66e18",
+      "checkedAt": "2026-08-17T16:17:21.279482Z",
+      "draft": false,
+      "evidence": {
+        "actionableCheckNames": [],
+        "baseCompareError": null,
+        "baseCompareStatus": null,
+        "baseIntegrationRequired": false,
+        "baseMergeBaseSha": null,
+        "baseRefName": "main",
+        "baseSha": "047ec7eaffab0d85306d85d7771cdfbc87d66e18",
+        "changedFiles": [
+          "python/packages/foundry_hosting/agent_framework_foundry_hosting/_toolbox.py",
+          "python/packages/foundry_hosting/tests/test_toolbox.py"
+        ],
+        "failingChecks": [
+          {
+            "annotations": [
+              {
+                "endLine": 38,
+                "level": "failure",
+                "message": "Failed to download archive 'https://codeload.github.com/actions/github-script/tar.gz/ed597411d8f924073f98dfc5c65a23a2325f34cd' after 3 attempts.",
+                "path": ".github",
+                "startLine": 38
+              },
+              {
+                "endLine": 37,
+                "level": "failure",
+                "message": "Response status code does not indicate success: 429 (Too Many Requests).",
+                "path": ".github",
+                "startLine": 37
+              },
+              {
+                "endLine": 36,
+                "level": "warning",
+                "message": "Back off 20.529 seconds before retry.",
+                "path": ".github",
+                "startLine": 36
+              },
+              {
+                "endLine": 35,
+                "level": "warning",
+                "message": "Failed to download action 'https://codeload.github.com/actions/github-script/tar.gz/ed597411d8f924073f98dfc5c65a23a2325f34cd'. Error: Response status code does not indicate success: 429 (Too Many Requests). B040:23A81A:16DC71B:16E9AC9:6A832CF2",
+                "path": ".github",
+                "startLine": 35
+              },
+              {
+                "endLine": 34,
+                "level": "warning",
+                "message": "Back off 12.886 seconds before retry.",
+                "path": ".github",
+                "startLine": 34
+              },
+              {
+                "endLine": 33,
+                "level": "warning",
+                "message": "Failed to download action 'https://codeload.github.com/actions/github-script/tar.gz/ed597411d8f924073f98dfc5c65a23a2325f34cd'. Error: Response status code does not indicate success: 429 (Too Many Requests). B040:23A81A:16734A9:168073C:6A832CD9",
+                "path": ".github",
+                "startLine": 33
+              }
+            ],
+            "conclusion": "failure",
+            "name": "limit_open_prs",
+            "url": "https://github.com/microsoft/agent-framework/actions/runs/32043243673/job/95426282572"
+          }
+        ],
+        "headSha": "51388546c0a2630b4f2ae0c4598ce4975264fbda",
+        "mergeConflict": false,
+        "mergeConflictPreparationVersion": null,
+        "requestedChanges": [],
+        "unresolvedReviewThreads": [
+          {
+            "association": "CONTRIBUTOR",
+            "authorType": "Bot",
+            "createdAt": "2026-08-17T15:45:55Z",
+            "path": "python/packages/foundry_hosting/agent_framework_foundry_hosting/_toolbox.py",
+            "reviewer": "copilot-pull-request-reviewer",
+            "summary": "`_features_header` is computed once at `_ToolboxAuth` construction time, so changes to `FOUNDRY_AGENT_TOOLSET_FEATURES` after the auth object is created won’t be reflected (e.g., long-lived clients in tests, workers that reload config dynamically). If runtime updates are expected, compute the header at request time (in `_apply_headers`) or lazily read the env var each call; if runtime updates are ",
+            "url": "https://github.com/microsoft/agent-framework/pull/7696#discussion_r3797110307"
+          },
+          {
+            "association": "CONTRIBUTOR",
+            "authorType": "Bot",
+            "createdAt": "2026-08-17T15:45:55Z",
+            "path": "python/packages/foundry_hosting/agent_framework_foundry_hosting/_toolbox.py",
+            "reviewer": "copilot-pull-request-reviewer",
+            "summary": "The environment variable name `FOUNDRY_AGENT_TOOLSET_FEATURES` is currently a hard-coded string at the call site. To reduce duplication and make future renames safer, define a module-level constant (e.g., `_TOOLSET_FEATURES_ENV_VAR`) and use it here (and anywhere else it may be referenced).",
+            "url": "https://github.com/microsoft/agent-framework/pull/7696#discussion_r3797110322"
+          },
+          {
+            "association": "CONTRIBUTOR",
+            "authorType": "Bot",
+            "createdAt": "2026-08-17T15:45:55Z",
+            "path": "python/packages/foundry_hosting/agent_framework_foundry_hosting/_toolbox.py",
+            "reviewer": "copilot-pull-request-reviewer",
+            "summary": "New behavior injects `Foundry-Features` via `_apply_headers`, which affects both `async_auth_flow` and `sync_auth_flow`. The added tests validate the async path only; please add a corresponding sync auth-flow test asserting `Foundry-Features` is set (and merged correctly) when using `sync_auth_flow`.",
+            "url": "https://github.com/microsoft/agent-framework/pull/7696#discussion_r3797110334"
+          }
+        ]
+      },
+      "headSha": "51388546c0a2630b4f2ae0c4598ce4975264fbda",
+      "key": "microsoft/agent-framework#7696",
+      "mergeConflict": false,
+      "mergeableState": "blocked",
+      "number": 7696,
+      "repo": "microsoft/agent-framework",
+      "taskActionDigest": "ccaf470071f82cbdec1cdcdc502a18d2941c1be0145400f2a68588efc6995ee7",
+      "taskActions": [
+        "存在未解决审查线程"
+      ],
+      "taskFollowupRequired": true,
+      "title": "Python: Add Foundry-Features header to toolbox requests",
+      "url": "https://github.com/microsoft/agent-framework/pull/7696"
+    },
+    {
+      "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
+      "actions": [],
+      "baseRefName": "main",
+      "baseSha": "944000d5f1c88c7d78d0a0a404f8304bb4bd7d8c",
+      "checkedAt": "2026-08-17T16:17:21.279482Z",
+      "draft": false,
+      "evidence": {
+        "actionableCheckNames": [],
+        "baseCompareError": null,
+        "baseCompareStatus": null,
+        "baseIntegrationRequired": false,
+        "baseMergeBaseSha": null,
+        "baseRefName": "main",
+        "baseSha": "944000d5f1c88c7d78d0a0a404f8304bb4bd7d8c",
+        "changedFiles": [
+          "Documentation.md",
+          "install.sh",
+          "package-lock.json",
+          "package.json",
+          "src/__tests__/telemetry.test.ts",
+          "src/telemetry.ts",
+          "src/tools/__tests__/memory.test.ts",
+          "test/memory.test.ts",
+          "test/telemetry-init.test.ts"
+        ],
+        "failingChecks": [],
+        "headSha": "885dd4c9f0e32c9f4d85e12ded855761eb70497a",
+        "mergeConflict": false,
+        "mergeConflictPreparationVersion": null,
+        "requestedChanges": [],
+        "unresolvedReviewThreads": []
+      },
+      "headSha": "885dd4c9f0e32c9f4d85e12ded855761eb70497a",
+      "key": "open-gitagent/gitagent#54",
+      "mergeConflict": false,
+      "mergeableState": "clean",
+      "number": 54,
+      "repo": "open-gitagent/gitagent",
+      "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
+      "taskActions": [],
+      "taskFollowupRequired": false,
+      "title": "fix: update npm package name and Node version; test: implement memory and telemetry tests",
+      "url": "https://github.com/open-gitagent/gitagent/pull/54"
+    },
+    {
+      "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
+      "actions": [],
+      "baseRefName": "master",
+      "baseSha": "f31de1201e8c03ccaab2cae425c39782a964ca19",
+      "checkedAt": "2026-08-17T16:17:21.279482Z",
+      "draft": false,
+      "evidence": {
+        "actionableCheckNames": [],
+        "baseCompareError": null,
+        "baseCompareStatus": null,
+        "baseIntegrationRequired": false,
+        "baseMergeBaseSha": null,
+        "baseRefName": "master",
+        "baseSha": "f31de1201e8c03ccaab2cae425c39782a964ca19",
+        "changedFiles": [
+          "docs/articles_en/get-started/install-openvino/install-openvino-apt.rst",
+          "docs/sphinx_setup/_static/selector-tool/assets/selector-oxnzcw97.js"
+        ],
+        "failingChecks": [],
+        "headSha": "b48da3a82f21657b09483cadaaaf98ffc5e64a4a",
+        "mergeConflict": false,
+        "mergeConflictPreparationVersion": null,
+        "requestedChanges": [],
+        "unresolvedReviewThreads": []
+      },
+      "headSha": "b48da3a82f21657b09483cadaaaf98ffc5e64a4a",
+      "key": "openvinotoolkit/openvino#36146",
+      "mergeConflict": false,
+      "mergeableState": "blocked",
+      "number": 36146,
+      "repo": "openvinotoolkit/openvino",
+      "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
+      "taskActions": [],
+      "taskFollowupRequired": false,
+      "title": "docs: update APT install instructions to use modern signed-by approach",
+      "url": "https://github.com/openvinotoolkit/openvino/pull/36146"
+    },
+    {
+      "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
+      "actions": [],
+      "baseRefName": "main",
+      "baseSha": "691d69a8c62fadeef1e7299ee7e70b4b0c83d705",
+      "checkedAt": "2026-08-17T16:17:21.279482Z",
+      "draft": false,
+      "evidence": {
+        "actionableCheckNames": [],
+        "baseCompareError": null,
+        "baseCompareStatus": null,
+        "baseIntegrationRequired": false,
+        "baseMergeBaseSha": null,
+        "baseRefName": "main",
+        "baseSha": "691d69a8c62fadeef1e7299ee7e70b4b0c83d705",
+        "changedFiles": [
+          "changelog/5344.fixed.md",
+          "src/pipecat/turns/user_mute/mute_until_first_bot_complete_user_mute_strategy.py",
+          "tests/test_user_mute_strategy.py"
+        ],
+        "failingChecks": [],
+        "headSha": "5df8f373e0181c4acc7366bb3e1a8898617e0e98",
+        "mergeConflict": false,
+        "mergeConflictPreparationVersion": null,
+        "requestedChanges": [],
+        "unresolvedReviewThreads": []
+      },
+      "headSha": "5df8f373e0181c4acc7366bb3e1a8898617e0e98",
+      "key": "pipecat-ai/pipecat#5346",
+      "mergeConflict": false,
+      "mergeableState": "blocked",
+      "number": 5346,
+      "repo": "pipecat-ai/pipecat",
+      "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
+      "taskActions": [],
+      "taskFollowupRequired": false,
+      "title": "fix(turns): release initial user mute on pipeline errors",
+      "url": "https://github.com/pipecat-ai/pipecat/pull/5346"
+    },
+    {
+      "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
+      "actions": [],
+      "baseRefName": "develop",
+      "baseSha": "ba7a9ce0d92a46f2458b82b1fcdd000f887f651a",
+      "checkedAt": "2026-08-17T16:17:21.279482Z",
+      "draft": false,
+      "evidence": {
+        "actionableCheckNames": [],
+        "baseCompareError": null,
+        "baseCompareStatus": null,
+        "baseIntegrationRequired": false,
+        "baseMergeBaseSha": null,
+        "baseRefName": "develop",
+        "baseSha": "ba7a9ce0d92a46f2458b82b1fcdd000f887f651a",
+        "changedFiles": [
+          "docs/contributing/TECHNICAL.md",
+          "docs/guide/getting-started/installation.md",
+          "docs/guide/getting-started/supported-agents.md",
+          "docs/guide/resources/troubleshooting.md",
+          "hooks/README.md",
+          "src/hooks/README.md",
+          "src/hooks/constants.rs",
+          "src/hooks/hook_check.rs",
+          "src/hooks/init.rs",
+          "src/hooks/integrity.rs",
+          "src/hooks/mod.rs"
+        ],
+        "failingChecks": [],
+        "headSha": "787b41dcab195d57d3666c36af56bfd4fff98aaa",
+        "mergeConflict": false,
+        "mergeConflictPreparationVersion": null,
+        "requestedChanges": [],
+        "unresolvedReviewThreads": []
+      },
+      "headSha": "787b41dcab195d57d3666c36af56bfd4fff98aaa",
+      "key": "rtk-ai/rtk#3483",
+      "mergeConflict": false,
+      "mergeableState": "blocked",
+      "number": 3483,
+      "repo": "rtk-ai/rtk",
+      "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
+      "taskActions": [],
+      "taskFollowupRequired": false,
+      "title": "fix(hook): register Claude hook without shell wrapper",
+      "url": "https://github.com/rtk-ai/rtk/pull/3483"
+    },
+    {
+      "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
+      "actions": [],
+      "baseRefName": "main",
+      "baseSha": "3759b52cfb88dd966f9c4b0301a5583a6180ad1b",
+      "checkedAt": "2026-08-17T16:17:21.279482Z",
+      "draft": false,
+      "evidence": {
+        "actionableCheckNames": [],
+        "baseCompareError": null,
+        "baseCompareStatus": null,
+        "baseIntegrationRequired": false,
+        "baseMergeBaseSha": null,
+        "baseRefName": "main",
+        "baseSha": "3759b52cfb88dd966f9c4b0301a5583a6180ad1b",
+        "changedFiles": [
+          "llama-index-core/llama_index/core/agent/workflow/base_agent.py",
+          "llama-index-core/llama_index/core/agent/workflow/codeact_agent.py",
+          "llama-index-core/llama_index/core/agent/workflow/multi_agent_workflow.py"
+        ],
+        "failingChecks": [],
+        "headSha": "3fbd0449c3a1629b881dfb4e64a321df92182ab2",
+        "mergeConflict": false,
+        "mergeConflictPreparationVersion": null,
+        "requestedChanges": [],
+        "unresolvedReviewThreads": []
+      },
+      "headSha": "3fbd0449c3a1629b881dfb4e64a321df92182ab2",
+      "key": "run-llama/llama_index#21892",
+      "mergeConflict": false,
+      "mergeableState": "blocked",
+      "number": 21892,
+      "repo": "run-llama/llama_index",
+      "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
+      "taskActions": [],
+      "taskFollowupRequired": false,
+      "title": "feat: add structured Pydantic output support to AgentWorkflow",
+      "url": "https://github.com/run-llama/llama_index/pull/21892"
+    },
+    {
+      "actionDigest": "023e0eecd99d839fd8be38a6ab7b71a10201fc1c0a5079758eea25e561f19a1c",
+      "actions": [
+        "CI 检查失败",
+        "分支存在合并冲突"
+      ],
+      "baseRefName": "main",
+      "baseSha": "2e7c85da68a6c4729754f4efe12fa32aab573d24",
+      "checkedAt": "2026-08-17T16:17:21.279482Z",
+      "draft": false,
+      "evidence": {
+        "actionableCheckNames": [],
+        "baseCompareError": null,
+        "baseCompareStatus": null,
+        "baseIntegrationRequired": false,
+        "baseMergeBaseSha": null,
+        "baseRefName": "main",
+        "baseSha": "2e7c85da68a6c4729754f4efe12fa32aab573d24",
+        "changedFiles": [
+          "python/sglang/srt/managers/io_struct.py",
+          "python/sglang/srt/managers/tokenizer_manager.py",
+          "test/registered/unit/managers/test_tokenizer_manager_rid_cleanup.py"
+        ],
+        "failingChecks": [
+          {
+            "annotations": [],
+            "conclusion": "failure",
+            "name": "call-gate / pr-gate",
+            "url": "https://github.com/sgl-project/sglang/actions/runs/31280235673/job/93160238218"
+          },
+          {
+            "annotations": [
+              {
+                "endLine": 10,
+                "level": "failure",
+                "message": "Process completed with exit code 1.",
+                "path": ".github",
+                "startLine": 10
+              }
+            ],
+            "conclusion": "failure",
+            "name": "call-gate / pr-gate",
+            "url": "https://github.com/sgl-project/sglang/actions/runs/31280235687/job/93160263868"
+          },
+          {
+            "annotations": [
+              {
+                "endLine": 10,
+                "level": "failure",
+                "message": "Process completed with exit code 1.",
+                "path": ".github",
+                "startLine": 10
+              }
+            ],
+            "conclusion": "failure",
+            "name": "call-gate / pr-gate",
+            "url": "https://github.com/sgl-project/sglang/actions/runs/31280235806/job/93160263217"
+          },
+          {
+            "annotations": [],
+            "conclusion": "failure",
+            "name": "call-gate / pr-gate",
+            "url": "https://github.com/sgl-project/sglang/actions/runs/31280235807/job/93160238577"
+          },
+          {
+            "annotations": [],
+            "conclusion": "failure",
+            "name": "pr-gate / pr-gate",
+            "url": "https://github.com/sgl-project/sglang/actions/runs/31280235672/job/93160257747"
+          },
+          {
+            "annotations": [],
+            "conclusion": "failure",
+            "name": "pr-gate / pr-gate",
+            "url": "https://github.com/sgl-project/sglang/actions/runs/31280235677/job/93160256178"
+          },
+          {
+            "annotations": [],
+            "conclusion": "failure",
+            "name": "pr-gate / pr-gate",
+            "url": "https://github.com/sgl-project/sglang/actions/runs/31280235682/job/93160254956"
+          },
+          {
+            "annotations": [],
+            "conclusion": "failure",
+            "name": "pr-gate / pr-gate",
+            "url": "https://github.com/sgl-project/sglang/actions/runs/31280235685/job/93160256359"
+          },
+          {
+            "annotations": [],
+            "conclusion": "failure",
+            "name": "pr-gate / pr-gate",
+            "url": "https://github.com/sgl-project/sglang/actions/runs/31280235689/job/93160254778"
+          },
+          {
+            "annotations": [
+              {
+                "endLine": 10,
+                "level": "failure",
+                "message": "Process completed with exit code 1.",
+                "path": ".github",
+                "startLine": 10
+              }
+            ],
+            "conclusion": "failure",
+            "name": "pr-gate / pr-gate",
+            "url": "https://github.com/sgl-project/sglang/actions/runs/31280235696/job/93160258033"
+          },
+          {
+            "annotations": [],
+            "conclusion": "failure",
+            "name": "pr-test-amd-extra-finish",
+            "url": "https://github.com/sgl-project/sglang/actions/runs/31280235673/job/93160251086"
+          },
+          {
+            "annotations": [
+              {
+                "endLine": 124,
+                "level": "failure",
+                "message": "Process completed with exit code 1.",
+                "path": ".github",
+                "startLine": 124
+              }
+            ],
+            "conclusion": "failure",
+            "name": "pr-test-amd-finish",
+            "url": "https://github.com/sgl-project/sglang/actions/runs/31280235807/job/93160273237"
+          },
+          {
+            "annotations": [
+              {
+                "endLine": 77,
+                "level": "failure",
+                "message": "Process completed with exit code 1.",
+                "path": ".github",
+                "startLine": 77
+              }
+            ],
+            "conclusion": "failure",
+            "name": "pr-test-extra-finish",
+            "url": "https://github.com/sgl-project/sglang/actions/runs/31280235687/job/93160276583"
+          },
+          {
+            "annotations": [
+              {
+                "endLine": 134,
+                "level": "failure",
+                "message": "Process completed with exit code 1.",
+                "path": ".github",
+                "startLine": 134
+              }
+            ],
+            "conclusion": "failure",
+            "name": "pr-test-finish",
+            "url": "https://github.com/sgl-project/sglang/actions/runs/31280235806/job/93160273301"
+          },
+          {
+            "annotations": [
+              {
+                "endLine": 38,
+                "level": "failure",
+                "message": "Process completed with exit code 1.",
+                "path": ".github",
+                "startLine": 38
+              }
+            ],
+            "conclusion": "failure",
+            "name": "pr-test-mlx-finish",
+            "url": "https://github.com/sgl-project/sglang/actions/runs/31280235672/job/93160266920"
+          },
+          {
+            "annotations": [
+              {
+                "endLine": 58,
+                "level": "failure",
+                "message": "Process completed with exit code 1.",
+                "path": ".github",
+                "startLine": 58
+              }
+            ],
+            "conclusion": "failure",
+            "name": "pr-test-musa-finish",
+            "url": "https://github.com/sgl-project/sglang/actions/runs/31280235689/job/93160263785"
+          }
+        ],
+        "headSha": "8b46aad59b4be76dbc71d94db7ccd58f25a2152d",
+        "mergeConflict": true,
+        "mergeConflictPreparationVersion": "conflict_files_v1",
+        "requestedChanges": [],
+        "unresolvedReviewThreads": []
+      },
+      "headSha": "8b46aad59b4be76dbc71d94db7ccd58f25a2152d",
+      "key": "sgl-project/sglang#34138",
+      "mergeConflict": true,
+      "mergeableState": "dirty",
+      "number": 34138,
+      "repo": "sgl-project/sglang",
+      "taskActionDigest": "4a0bb5d355845f7c98f3779b540418b1b5a34ea51b24a1768a7d0c6db9d50dee",
+      "taskActions": [
+        "分支存在合并冲突"
+      ],
+      "taskFollowupRequired": true,
+      "title": "Bind streaming abort cleanup to request lifecycle",
+      "url": "https://github.com/sgl-project/sglang/pull/34138"
+    },
+    {
+      "actionDigest": "5d6db7ee8785cd2f65d69e2cf0ba177a444d7fc097a79cf2831f5f1a3477171b",
+      "actions": [
+        "CI 检查失败"
+      ],
+      "baseRefName": "main",
+      "baseSha": "2e7c85da68a6c4729754f4efe12fa32aab573d24",
+      "checkedAt": "2026-08-17T16:17:21.279482Z",
+      "draft": false,
+      "evidence": {
+        "actionableCheckNames": [],
+        "baseCompareError": null,
+        "baseCompareStatus": null,
+        "baseIntegrationRequired": false,
+        "baseMergeBaseSha": null,
+        "baseRefName": "main",
+        "baseSha": "2e7c85da68a6c4729754f4efe12fa32aab573d24",
+        "changedFiles": [
+          "python/sglang/multimodal_gen/configs/sample/teacache.py",
+          "python/sglang/multimodal_gen/runtime/cache/teacache.py",
+          "python/sglang/multimodal_gen/runtime/models/dits/wanvideo.py",
+          "python/sglang/multimodal_gen/test/unit/test_teacache.py"
+        ],
+        "failingChecks": [
+          {
+            "annotations": [],
+            "conclusion": "failure",
+            "name": "call-gate / pr-gate",
+            "url": "https://github.com/sgl-project/sglang/actions/runs/32017194609/job/95349086339"
+          },
+          {
+            "annotations": [
+              {
+                "endLine": 10,
+                "level": "failure",
+                "message": "Process completed with exit code 1.",
+                "path": ".github",
+                "startLine": 10
+              }
+            ],
+            "conclusion": "failure",
+            "name": "call-gate / pr-gate",
+            "url": "https://github.com/sgl-project/sglang/actions/runs/32017194672/job/95349168390"
+          },
+          {
+            "annotations": [
+              {
+                "endLine": 10,
+                "level": "failure",
+                "message": "Process completed with exit code 1.",
+                "path": ".github",
+                "startLine": 10
+              }
+            ],
+            "conclusion": "failure",
+            "name": "call-gate / pr-gate",
+            "url": "https://github.com/sgl-project/sglang/actions/runs/32017195085/job/95349087834"
+          },
+          {
+            "annotations": [
+              {
+                "endLine": 10,
+                "level": "failure",
+                "message": "Process completed with exit code 1.",
+                "path": ".github",
+                "startLine": 10
+              }
+            ],
+            "conclusion": "failure",
+            "name": "call-gate / pr-gate",
+            "url": "https://github.com/sgl-project/sglang/actions/runs/32017195313/job/95349192896"
+          },
+          {
+            "annotations": [
+              {
+                "endLine": 10,
+                "level": "failure",
+                "message": "Process completed with exit code 1.",
+                "path": ".github",
+                "startLine": 10
+              }
+            ],
+            "conclusion": "failure",
+            "name": "pr-gate / pr-gate",
+            "url": "https://github.com/sgl-project/sglang/actions/runs/32017194571/job/95349145483"
+          },
+          {
+            "annotations": [
+              {
+                "endLine": 39,
+                "level": "failure",
+                "message": "Process completed with exit code 1.",
+                "path": ".github",
+                "startLine": 39
+              }
+            ],
+            "conclusion": "failure",
+            "name": "pr-test-amd-extra-finish",
+            "url": "https://github.com/sgl-project/sglang/actions/runs/32017194609/job/95349128374"
+          },
+          {
+            "annotations": [
+              {
+                "endLine": 132,
+                "level": "failure",
+                "message": "Process completed with exit code 1.",
+                "path": ".github",
+                "startLine": 132
+              }
+            ],
+            "conclusion": "failure",
+            "name": "pr-test-amd-rocm720-finish",
+            "url": "https://github.com/sgl-project/sglang/actions/runs/32017195085/job/95349171399"
+          },
+          {
+            "annotations": [
+              {
+                "endLine": 77,
+                "level": "failure",
+                "message": "Process completed with exit code 1.",
+                "path": ".github",
+                "startLine": 77
+              }
+            ],
+            "conclusion": "failure",
+            "name": "pr-test-extra-finish",
+            "url": "https://github.com/sgl-project/sglang/actions/runs/32017194672/job/95349203456"
+          },
+          {
+            "annotations": [
+              {
+                "endLine": 134,
+                "level": "failure",
+                "message": "Process completed with exit code 1.",
+                "path": ".github",
+                "startLine": 134
+              }
+            ],
+            "conclusion": "failure",
+            "name": "pr-test-finish",
+            "url": "https://github.com/sgl-project/sglang/actions/runs/32017195313/job/95349221531"
+          }
+        ],
+        "headSha": "e2b5efeb1ef3d9fdcf57e47dea09fa06a4b1a2e3",
+        "mergeConflict": false,
+        "mergeConflictPreparationVersion": null,
+        "requestedChanges": [],
+        "unresolvedReviewThreads": []
+      },
+      "headSha": "e2b5efeb1ef3d9fdcf57e47dea09fa06a4b1a2e3",
+      "key": "sgl-project/sglang#35136",
+      "mergeConflict": false,
+      "mergeableState": "blocked",
+      "number": 35136,
+      "repo": "sgl-project/sglang",
+      "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
+      "taskActions": [],
+      "taskFollowupRequired": false,
+      "title": "[diffusion] Fix TeaCache CFG state lifecycle",
+      "url": "https://github.com/sgl-project/sglang/pull/35136"
+    },
+    {
+      "actionDigest": "c66d297d2bcabbc5d3dfa2c65726ed625cbad9ff6a3aa4c649e591db8d938244",
+      "actions": [
+        "CI 检查失败"
+      ],
+      "baseRefName": "main",
+      "baseSha": "2e7c85da68a6c4729754f4efe12fa32aab573d24",
+      "checkedAt": "2026-08-17T16:17:21.279482Z",
+      "draft": false,
+      "evidence": {
+        "actionableCheckNames": [],
+        "baseCompareError": null,
+        "baseCompareStatus": null,
+        "baseIntegrationRequired": false,
+        "baseMergeBaseSha": null,
+        "baseRefName": "main",
+        "baseSha": "2e7c85da68a6c4729754f4efe12fa32aab573d24",
+        "changedFiles": [
+          "python/sglang/multimodal_gen/runtime/cache/spectrum.py",
+          "python/sglang/multimodal_gen/test/unit/test_spectrum.py"
+        ],
+        "failingChecks": [
+          {
+            "annotations": [
+              {
+                "endLine": 10,
+                "level": "failure",
+                "message": "Process completed with exit code 1.",
+                "path": ".github",
+                "startLine": 10
+              }
+            ],
+            "conclusion": "failure",
+            "name": "call-gate / pr-gate",
+            "url": "https://github.com/sgl-project/sglang/actions/runs/32029266885/job/95385418269"
+          },
+          {
+            "annotations": [],
+            "conclusion": "failure",
+            "name": "call-gate / pr-gate",
+            "url": "https://github.com/sgl-project/sglang/actions/runs/32029267120/job/95385340014"
+          },
+          {
+            "annotations": [
+              {
+                "endLine": 10,
+                "level": "failure",
+                "message": "Process completed with exit code 1.",
+                "path": ".github",
+                "startLine": 10
+              }
+            ],
+            "conclusion": "failure",
+            "name": "call-gate / pr-gate",
+            "url": "https://github.com/sgl-project/sglang/actions/runs/32029267253/job/95385447572"
+          },
+          {
+            "annotations": [
+              {
+                "endLine": 10,
+                "level": "failure",
+                "message": "Process completed with exit code 1.",
+                "path": ".github",
+                "startLine": 10
+              }
+            ],
+            "conclusion": "failure",
+            "name": "call-gate / pr-gate",
+            "url": "https://github.com/sgl-project/sglang/actions/runs/32029267287/job/95385340159"
+          },
+          {
+            "annotations": [
+              {
+                "endLine": 10,
+                "level": "failure",
+                "message": "Process completed with exit code 1.",
+                "path": ".github",
+                "startLine": 10
+              }
+            ],
+            "conclusion": "failure",
+            "name": "pr-gate / pr-gate",
+            "url": "https://github.com/sgl-project/sglang/actions/runs/32029266941/job/95385399708"
+          },
+          {
+            "annotations": [
+              {
+                "endLine": 39,
+                "level": "failure",
+                "message": "Process completed with exit code 1.",
+                "path": ".github",
+                "startLine": 39
+              }
+            ],
+            "conclusion": "failure",
+            "name": "pr-test-amd-extra-finish",
+            "url": "https://github.com/sgl-project/sglang/actions/runs/32029267287/job/95385373900"
+          },
+          {
+            "annotations": [
+              {
+                "endLine": 132,
+                "level": "failure",
+                "message": "Process completed with exit code 1.",
+                "path": ".github",
+                "startLine": 132
+              }
+            ],
+            "conclusion": "failure",
+            "name": "pr-test-amd-rocm720-finish",
+            "url": "https://github.com/sgl-project/sglang/actions/runs/32029267120/job/95385439517"
+          },
+          {
+            "annotations": [
+              {
+                "endLine": 77,
+                "level": "failure",
+                "message": "Process completed with exit code 1.",
+                "path": ".github",
+                "startLine": 77
+              }
+            ],
+            "conclusion": "failure",
+            "name": "pr-test-extra-finish",
+            "url": "https://github.com/sgl-project/sglang/actions/runs/32029266885/job/95385463569"
+          },
+          {
+            "annotations": [
+              {
+                "endLine": 134,
+                "level": "failure",
+                "message": "Process completed with exit code 1.",
+                "path": ".github",
+                "startLine": 134
+              }
+            ],
+            "conclusion": "failure",
+            "name": "pr-test-finish",
+            "url": "https://github.com/sgl-project/sglang/actions/runs/32029267253/job/95385477693"
+          }
+        ],
+        "headSha": "fb8e3555c6179c0d5a6826c94351738bca4d8e01",
+        "mergeConflict": false,
+        "mergeConflictPreparationVersion": null,
+        "requestedChanges": [],
+        "unresolvedReviewThreads": []
+      },
+      "headSha": "fb8e3555c6179c0d5a6826c94351738bca4d8e01",
+      "key": "sgl-project/sglang#35140",
+      "mergeConflict": false,
+      "mergeableState": "blocked",
+      "number": 35140,
+      "repo": "sgl-project/sglang",
+      "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
+      "taskActions": [],
+      "taskFollowupRequired": false,
+      "title": "[Diffusion] Fix Spectrum state reset for CFG-parallel branches",
+      "url": "https://github.com/sgl-project/sglang/pull/35140"
+    },
+    {
+      "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
+      "actions": [],
+      "baseRefName": "main",
+      "baseSha": "017e9f4448b700e85ee16023287b025693c72b9e",
+      "checkedAt": "2026-08-17T16:17:21.279482Z",
+      "draft": false,
+      "evidence": {
+        "actionableCheckNames": [],
+        "baseCompareError": null,
+        "baseCompareStatus": null,
+        "baseIntegrationRequired": false,
+        "baseMergeBaseSha": null,
+        "baseRefName": "main",
+        "baseSha": "017e9f4448b700e85ee16023287b025693c72b9e",
+        "changedFiles": [
+          "tests/v1/worker/test_mamba_utils.py",
+          "vllm/v1/worker/mamba_utils.py"
+        ],
+        "failingChecks": [],
+        "headSha": "8d88c60b8085e58a46b99c0f53bf7a0ec4345476",
+        "mergeConflict": false,
+        "mergeConflictPreparationVersion": null,
+        "requestedChanges": [],
+        "unresolvedReviewThreads": []
+      },
+      "headSha": "8d88c60b8085e58a46b99c0f53bf7a0ec4345476",
+      "key": "vllm-project/vllm#48109",
+      "mergeConflict": false,
+      "mergeableState": "blocked",
+      "number": 48109,
+      "repo": "vllm-project/vllm",
+      "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
+      "taskActions": [],
+      "taskFollowupRequired": false,
+      "title": "[Bugfix][XPU] Fix Mamba state pointer overflow",
+      "url": "https://github.com/vllm-project/vllm/pull/48109"
+    },
+    {
+      "actionDigest": "f12350f04de6a8929f1e431c58f3a0a500667b0cf199a292b2aa5ff55b1384d3",
+      "actions": [
+        "CI 检查失败"
+      ],
+      "baseRefName": "main",
+      "baseSha": "017e9f4448b700e85ee16023287b025693c72b9e",
+      "checkedAt": "2026-08-17T16:17:21.279482Z",
+      "draft": false,
+      "evidence": {
+        "actionableCheckNames": [],
+        "baseCompareError": null,
+        "baseCompareStatus": null,
+        "baseIntegrationRequired": false,
+        "baseMergeBaseSha": null,
+        "baseRefName": "main",
+        "baseSha": "017e9f4448b700e85ee16023287b025693c72b9e",
+        "changedFiles": [
+          "tests/v1/kv_connector/unit/offloading_connector/test_scheduler.py",
+          "vllm/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py"
+        ],
+        "failingChecks": [
+          {
+            "annotations": [],
+            "conclusion": "cancelled",
+            "name": "pre-commit",
+            "url": "https://github.com/vllm-project/vllm/actions/runs/31778835421/job/94699960980"
+          },
+          {
+            "annotations": [],
+            "conclusion": "cancelled",
+            "name": "pre-run-check",
+            "url": "https://github.com/vllm-project/vllm/actions/runs/31778835421/job/94699956721"
+          },
+          {
+            "annotations": [
+              {
+                "endLine": 31,
+                "level": "failure",
+                "message": "PR must have the 'verified', 'ready', or 'ready-run-all-tests' label to run pre-commit, or the author must have at least 4 merged PRs (found 3).",
+                "path": ".github",
+                "startLine": 31
+              }
+            ],
+            "conclusion": "failure",
+            "name": "pre-run-check",
+            "url": "https://github.com/vllm-project/vllm/actions/runs/31778801884/job/94699850680"
+          },
+          {
+            "annotations": [
+              {
+                "endLine": 31,
+                "level": "failure",
+                "message": "PR must have the 'verified', 'ready', or 'ready-run-all-tests' label to run pre-commit, or the author must have at least 4 merged PRs (found 3).",
+                "path": ".github",
+                "startLine": 31
+              }
+            ],
+            "conclusion": "failure",
+            "name": "pre-run-check",
+            "url": "https://github.com/vllm-project/vllm/actions/runs/31778836297/job/94699961805"
+          }
+        ],
+        "headSha": "24d210e8105fcbc004ef78dbaf597bf8d5844a06",
+        "mergeConflict": false,
+        "mergeConflictPreparationVersion": null,
+        "requestedChanges": [],
+        "unresolvedReviewThreads": []
+      },
+      "headSha": "24d210e8105fcbc004ef78dbaf597bf8d5844a06",
+      "key": "vllm-project/vllm#52287",
+      "mergeConflict": false,
+      "mergeableState": "blocked",
+      "number": 52287,
+      "repo": "vllm-project/vllm",
+      "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
+      "taskActions": [],
+      "taskFollowupRequired": false,
+      "title": "[Bugfix] Preserve SWA replay windows after EAGLE tail pop",
+      "url": "https://github.com/vllm-project/vllm/pull/52287"
+    },
+    {
+      "actionDigest": "479a5f28d156cde699a2cece8902ff9de0305b99c1ab1f7ae7174e66d009adb0",
+      "actions": [
+        "CI 检查失败"
+      ],
+      "baseRefName": "main",
+      "baseSha": "017e9f4448b700e85ee16023287b025693c72b9e",
+      "checkedAt": "2026-08-17T16:17:21.279482Z",
+      "draft": true,
+      "evidence": {
+        "actionableCheckNames": [],
+        "baseCompareError": null,
+        "baseCompareStatus": null,
+        "baseIntegrationRequired": false,
+        "baseMergeBaseSha": null,
+        "baseRefName": "main",
+        "baseSha": "017e9f4448b700e85ee16023287b025693c72b9e",
+        "changedFiles": [
+          "tests/v1/kv_offload/cpu/test_gpu_worker.py",
+          "vllm/v1/kv_offload/cpu/gpu_worker.py"
+        ],
+        "failingChecks": [
+          {
+            "annotations": [
+              {
+                "endLine": 31,
+                "level": "failure",
+                "message": "PR must have the 'verified', 'ready', or 'ready-run-all-tests' label to run pre-commit, or the author must have at least 4 merged PRs (found 3).",
+                "path": ".github",
+                "startLine": 31
+              }
+            ],
+            "conclusion": "failure",
+            "name": "pre-run-check",
+            "url": "https://github.com/vllm-project/vllm/actions/runs/31783401260/job/94713855009"
+          }
+        ],
+        "headSha": "3036472185bfcc23b0148fe3ae22666c6d379279",
+        "mergeConflict": false,
+        "mergeConflictPreparationVersion": null,
+        "requestedChanges": [],
+        "unresolvedReviewThreads": []
+      },
+      "headSha": "3036472185bfcc23b0148fe3ae22666c6d379279",
+      "key": "vllm-project/vllm#52296",
+      "mergeConflict": false,
+      "mergeableState": "blocked",
+      "number": 52296,
+      "repo": "vllm-project/vllm",
+      "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
+      "taskActions": [],
+      "taskFollowupRequired": false,
+      "title": "[Bugfix][KV Offload] Coordinate mmap host registration",
+      "url": "https://github.com/vllm-project/vllm/pull/52296"
+    },
+    {
+      "actionDigest": "09775146fc87ea8b932d47010327fc9b6fdd5dd1b88d443e417be0da79ca699f",
+      "actions": [
+        "分支存在合并冲突"
+      ],
+      "baseRefName": "main",
+      "baseSha": "017e9f4448b700e85ee16023287b025693c72b9e",
+      "checkedAt": "2026-08-17T16:17:21.279482Z",
+      "draft": false,
+      "evidence": {
+        "actionableCheckNames": [],
+        "baseCompareError": null,
+        "baseCompareStatus": null,
+        "baseIntegrationRequired": false,
+        "baseMergeBaseSha": null,
+        "baseRefName": "main",
+        "baseSha": "017e9f4448b700e85ee16023287b025693c72b9e",
+        "changedFiles": [
+          "tests/v1/structured_output/test_validation.py",
+          "vllm/sampling_params.py",
+          "vllm/v1/structured_output/backend_guidance.py"
+        ],
+        "failingChecks": [],
+        "headSha": "f5b8dee33268bf8511784c94742d6ec33653a07d",
+        "mergeConflict": true,
+        "mergeConflictPreparationVersion": "conflict_files_v1",
+        "requestedChanges": [],
+        "unresolvedReviewThreads": []
+      },
+      "headSha": "f5b8dee33268bf8511784c94742d6ec33653a07d",
+      "key": "vllm-project/vllm#52298",
+      "mergeConflict": true,
+      "mergeableState": "dirty",
+      "number": 52298,
+      "repo": "vllm-project/vllm",
+      "taskActionDigest": "e16b27787b7752ffdeceb3fec646632a703bc9c05aaf0d6c90d87947648045ee",
+      "taskActions": [
+        "分支存在合并冲突"
+      ],
+      "taskFollowupRequired": true,
+      "title": "[Bugfix] Validate guidance tokenizer compatibility before EngineCore",
+      "url": "https://github.com/vllm-project/vllm/pull/52298"
     }
   ],
   "version": "pr_followup_v3"

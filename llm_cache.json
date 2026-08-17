@@ -6283,6 +6283,36 @@
     ],
     "why": "The issue reports a user-visible bug in tool_choice='auto' handling on the Rust frontend path, with a clear reproduction and expected behavior. However, the root cause is not identified, and the issue itself asks a design question about whether 'auto' should work without frontend --enable-auto-tool-choice. The deterministic gate is HUMAN_REVIEW, and there is no maintainer confirmation or active investigation. The open PRs are not directly competing, but the lack of root cause clarity and design confirmation makes this a WAIT_MAINTAINER."
   },
+  "3618fc6631bd2ec5805249e1a2b613ccf7e2f1802235c727e8ee840603967358": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Investigate and fix hybrid cache state reconciliation in MooncakeStoreConnector/MultiConnector for Kimi-K3",
+      "Ensure KDA recurrent state and attention KV correspond to same token boundary on external prefix hits"
+    ],
+    "risks": [
+      "Root cause may be in external Mooncake service or network, not vLLM code",
+      "Floating-point or nondeterminism could confound A/B results"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 12,
+    "test_plan": [
+      "Reproduce with provided A/B configuration using small model and fixed seed",
+      "Add regression test for multi-rank PD with MooncakeStoreConnector and MultiConnector verifying output equivalence to NIXL-only baseline"
+    ],
+    "unknowns": [
+      "Exact root cause and code path",
+      "Maintainer confirmation of issue validity and desired fix direction",
+      "Whether a PR already exists that addresses this issue"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "The issue reports a reproducible silent output corruption in Kimi-K3 with MooncakeStoreConnector+MultiConnector, with a clear A/B control and suspected invariant violation. However, the root cause is not identified, no code path is anchored, and the issue is a bug report without a proposed fix. The algorithmic mechanism is plausible but unverified, and the repository requires public AI-use disclosure which is blocked, so work cannot start without maintainer confirmation."
+  },
   "36286eadb37df4052246c1ee3125bff942c8c95e2ca233326955b817908760c1": {
     "confidence": 0.7,
     "contradictions": [],
@@ -9314,6 +9344,37 @@
       "Exact API shape and naming for the nested approval envelope require maintainer/planner agreement."
     ],
     "why": "Issue describes a high-impact consent/UI bug with a clear root cause in the streaming agent-as-tool seam, but the fix requires design confirmation on the nested approval envelope shape and naming. The triage bot explicitly flags open product/API questions and maintainer agreement, and the deterministic gate is HUMAN_REVIEW. No competing PR exists, but the design decision blocks a clean candidate."
+  },
+  "4c728b16da8895875ffe531b59aa389f90d1798fa6fca5ba8b857b0eef0ef09d": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims tensor parallel size 1 but algorithm evidence lists tensor parallel as a mechanism"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix FSM advancement in backend_xgrammar.py under concurrent speculative decoding",
+      "Ensure scheduler.py rejects tokens consistently with xgrammar state"
+    ],
+    "risks": [
+      "Root cause may be in xgrammar integration rather than vLLM core",
+      "Concurrency-dependent failure may be hard to reproduce deterministically"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 13,
+    "test_plan": [
+      "Run the attached repro_ngram_gpu_xgrammar.py on vLLM 0.27.1 to confirm 21/24 HTTP 500",
+      "Add a regression test that sends concurrent structured requests with ngram_gpu and asserts all succeed"
+    ],
+    "unknowns": [
+      "Whether PR #51338 actually fixes this issue",
+      "Exact token rejection mechanism and whether it is a race condition or state corruption"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "The issue provides a concrete reproduction script and isolates the failure to ngram_gpu + xgrammar under concurrency, but the root cause is not yet identified. Existing PR #51338 has semantic overlap and is still a draft, requiring maintainer comparison before new work."
   },
   "4c9eec9cd4e3f26b34e7a46ae3af8a0747d9f30bc734606dee18c93cb8092074": {
     "confidence": 0.6,
@@ -12852,6 +12913,38 @@
       "Whether the user confirmed the suggested configuration works; open PR/related issue status unknown due to lookup failures."
     ],
     "why": "The issue is a user configuration problem, not a LiteLLM bug. A commenter identified that VS Code appends '/models' to the configured URL, so the user should set the base URL instead. No code change in LiteLLM is needed. The deterministic gate is HUMAN_REVIEW, and open PR/related issue lookups failed, so we cannot rule out duplicates. Maintainer confirmation is required before any action."
+  },
+  "64777f4041b32cb6bd8ed0c6ea0c2622ffc2bba077be25e109193915bcbe61be": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Inherit shared fields (collections, hierarchical) when creating translations in handleTaxonomyCreate",
+      "Reject or ignore name mismatch when translationOf is present in handleTaxonomyCreate and handleMenuCreate",
+      "Set translation_group in MenuRepository.setItems",
+      "Use locale-specific definition in handleTermList instead of alphabetically first"
+    ],
+    "risks": [
+      "Larger schema migration (option 3) may conflict with immediate fixes",
+      "Changing behavior may break existing users relying on per-locale structural fields"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add integration test reproducing taxonomy translation drift (A) and verify inherited fields",
+      "Add test for menu_set_items preserving translation_group (B)",
+      "Add test for term listing with locale-specific hierarchical flag (C)"
+    ],
+    "unknowns": [
+      "Exact maintainer assignment and milestone confirmation",
+      "Whether immediate fixes should be submitted as separate PRs or combined"
+    ],
+    "wait_reason": "ASSIGNMENT",
+    "why": "The issue identifies concrete, verified bugs with clear root causes and proposes immediate fixes (reject name mismatch, set translation_group in setItems) that are actionable. However, the maintainer explicitly requests separating immediate fixes from a larger storage decision and assigning them to the 1.0 milestone, indicating a need for maintainer assignment and design confirmation before implementation."
   },
   "64cc70c942f8fe6a88061b32a08632c4ca6375755cc173c16c930fc203e7e0e9": {
     "confidence": 0.7,
@@ -23860,6 +23953,35 @@
     ],
     "why": "The issue provides a deterministic reproduction and a fully isolated root cause with a clear failure chain. However, the deterministic gate is HUMAN_REVIEW, and the existing PR #20642 is closed unmerged with mergeable state blocked, indicating maintainer design decisions are pending. The fix requires choosing among vendoring, bundling, or upstream patching, which needs maintainer confirmation."
   },
+  "c00b852711549918b0249cb1fb320f462430076bc74f790fa41b53dd46e22239": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Investigate timeout in streamable HTTP transport initialization",
+      "Potentially adjust timeout handling or transport lifecycle"
+    ],
+    "risks": [
+      "Changing timeout behavior may affect existing users",
+      "Root cause may be server-side or configuration issue"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Create a minimal mock server that reproduces the timeout",
+      "Add a regression test for streamable HTTP transport initialization timeout"
+    ],
+    "unknowns": [
+      "Server endpoint implementation details",
+      "Whether the issue is reproducible with a standard MCP server",
+      "Maintainer's design preferences on timeout handling"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "Issue reports a timeout in streamable HTTP transport initialization but lacks a complete reproducible example (server endpoint not provided) and no maintainer investigation or design confirmation. The stack trace points to a timeout in a map operator, but root cause is unclear. No competing PR exists, but actionability is limited by missing repro and maintainer input."
+  },
   "c01732eb70a4057aa379888deca4dd9c277c1de40952f96e007559269415f31d": {
     "confidence": 0.7,
     "contradictions": [],
@@ -28453,6 +28575,34 @@
     ],
     "wait_reason": "DESIGN_CONFIRMATION",
     "why": "Issue clearly describes a user-visible bug in CondensePlusContextChatEngine.astream_chat where zero retrieved nodes short-circuit to a hardcoded 'Empty Response'. However, a maintainer explicitly stated the desired fix must be an opt-in option, not default behavior, and multiple closed PRs exist with overlapping fixes. The deterministic gate is HUMAN_REVIEW, and design confirmation is required before starting new work."
+  },
+  "e021154c474f13f5d69760fb1b23e3a19f211dd77b5cf53b15ad8db7cc8c7eaf": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify /report navigation logic to recursively traverse subagent hierarchy",
+      "Add regression test for nested subagent navigation"
+    ],
+    "risks": [
+      "Potential impact on existing single-level navigation behavior",
+      "Need to confirm maintainer design preferences for handling deep hierarchies"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "test_plan": [
+      "Reproduce the issue using the provided steps (orchestrator -> subagent -> sub-subagent) and verify /report can navigate into all levels",
+      "Add a unit test for the session-tree traversal function covering multi-level nesting"
+    ],
+    "unknowns": [
+      "Exact code location and implementation details of /report navigation",
+      "Maintainer's preferred approach for handling deep nesting (e.g., recursive vs. iterative)"
+    ],
+    "wait_reason": null,
+    "why": "Issue reports a concrete functional bug in /report navigation for nested subagents, with clear reproduction steps and expected vs actual behavior. No competing PR or related issue found. The fix is likely localized to session-tree traversal logic, making it actionable."
   },
   "e03a166acc822a28dafd0201f359f54bf36b7dc610b2205fc92d1497d90d2476": {
     "confidence": 0.8,
