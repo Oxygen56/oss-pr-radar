@@ -1843,6 +1843,14 @@
       "seenAt": "2026-08-16T17:41:58.558980Z",
       "stateId": "7b233f0374f486ce2c488e2218ae8d1a003157fa8cde746bf98e377009b53ce8"
     },
+    "review|modelcontextprotocol/typescript-sdk#1562": {
+      "category": "WAIT_MAINTAINER",
+      "digest": "81ed961c61efdb1102389bb44a896f87f27a4eeab357e5cfc8e088977653cd0e",
+      "kind": "review",
+      "scannerVersion": "oss_pr_radar_v46_semantic_fallback",
+      "seenAt": "2026-08-17T20:50:10.605614Z",
+      "stateId": "c52237b66c8f4fc5ff99e64b6c469b8b63207ef52eda827c5d4a349c56123a2b"
+    },
     "review|modelcontextprotocol/typescript-sdk#2628": {
       "category": "WAIT_MAINTAINER",
       "digest": "7402510ef933dac41e6162584f8a75f6a0fa2d6408e0db344c07233165e0eb6c",
@@ -2804,11 +2812,11 @@
     },
     "watch|BerriAI/litellm#36791": {
       "category": "PR_FOLLOWUP",
-      "digest": "23e1e395839dd6647ad503ef17a8fc5756911a5d3c56156fc754bf99489c3caa",
+      "digest": "b1232345b7443ec4380a1753d447c043f4166224a1475272861ab0c498e9511f",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-17T19:49:44.944997Z",
-      "stateId": "6d90b662e8b6cc7de86ace332d52abaed4cbed861a6bd1cc807f84b6be14f029"
+      "seenAt": "2026-08-17T20:50:10.986140Z",
+      "stateId": "27f060fe655e5c42a1d90497ef22a102521d3ce180b9f2c5bcf11eceb81c9a65"
     },
     "watch|SWE-bench/SWE-bench#593": {
       "category": "PR_FOLLOWUP",
@@ -2996,14 +3004,14 @@
     },
     "watch|vllm-project/vllm#52298": {
       "category": "PR_FOLLOWUP",
-      "digest": "0489a0c6d04d81ded8bb4087d042fafbe4ae8d311363ac3f103487f54c24755d",
+      "digest": "612dca23675a91738134157e8cc14837a647cfb837668a9838fa4088e7299fae",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-17T19:49:44.944997Z",
-      "stateId": "437a3e3ae3366033693807c17f480540ba73aa66f74dd7bb47e6c4e3c66fffc5"
+      "seenAt": "2026-08-17T20:50:10.986140Z",
+      "stateId": "50a5fe8a1c2579a2307ab04e9fda5f2afe776c3483fd1ed05925a342e5d33573"
     }
   },
-  "digest": "992e09ecceb7453334c4c535571a4b790120e6f2befffb6af1867e4380ed9651",
+  "digest": "db20754ac0905fd4405510a648593ae249709017939af40484e2c863f6db8710",
   "events": [
     {
       "attempts": 1,
@@ -25605,9 +25613,114 @@
       "runId": "pr-followup-1786995937",
       "sentAt": "2026-08-17T19:50:32.485347Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "modelcontextprotocol/typescript-sdk#1562"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "81ed961c61efdb1102389bb44a896f87f27a4eeab357e5cfc8e088977653cd0e",
+          "key": "modelcontextprotocol/typescript-sdk#1562",
+          "kind": "review",
+          "scannerVersion": "oss_pr_radar_v46_semantic_fallback",
+          "stateId": "c52237b66c8f4fc5ff99e64b6c469b8b63207ef52eda827c5d4a349c56123a2b"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[modelcontextprotocol/typescript-sdk#1562](https://github.com/modelcontextprotocol/typescript-sdk/issues/1562) schemaToJson() produces $ref in tool inputSchema, causing LLM failures**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue clearly describes a real bug with root cause and repro, but an existing PR #1563 directly addresses it and is open with changes requested. The issue itself is a discussion/design confirmation before PR submission, and the maintainer has already triaged and pointed to #1563. Starting new work would duplicate existing effort.\n改动：dereferenceLocalRefs() in standardSchemaToJsonSchema()；inline local $ref and strip $defs\n验证：Use repro.ts to assert no $ref in output for z.globalRegistry and z.lazy schemas；Add unit tests for cycle handling and sibling keywords\n风险：Potential API behavior change if not scoped carefully；Need to align with existing PR #1563 and maintainer preferences\n竞争：已有直接关联但证据不完整的 PR #1563：已有 changes requested; 超过 30 天未更新；只有能补足根因、测试或关键路径覆盖时才值得竞争\n下一步：先请求维护者分配/确认方案，获批后再开 PR。\n证据：复现信号 0，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-17T20:50:10.605614Z",
+      "eventId": "513d842fdabc2a4988329d58cb0d136c6fc409682eb653119b289f061ad5df32",
+      "idempotencyKey": "513d842fdabc2a4988329d58cb0d136c6fc409682eb653119b",
+      "kind": "review",
+      "runId": "scan-20260817T204751Z-b096e2ebf1eb",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "BerriAI/litellm#36791",
+        "vllm-project/vllm#52298"
+      ],
+      "candidateStates": [
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "b1232345b7443ec4380a1753d447c043f4166224a1475272861ab0c498e9511f",
+          "key": "BerriAI/litellm#36791",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "27f060fe655e5c42a1d90497ef22a102521d3ce180b9f2c5bcf11eceb81c9a65"
+        },
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "612dca23675a91738134157e8cc14837a647cfb837668a9838fa4088e7299fae",
+          "key": "vllm-project/vllm#52298",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "50a5fe8a1c2579a2307ab04e9fda5f2afe776c3483fd1ed05925a342e5d33573"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#36791](https://github.com/BerriAI/litellm/pull/36791) fix(router): support anthropic messages streaming fallback**\n建议：PR_FOLLOWUP\n价值：当前分支检查失败；存在未解决审查线程\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#52298](https://github.com/vllm-project/vllm/pull/52298) [Bugfix] Validate guidance tokenizer compatibility before EngineCore**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-17T20:50:10.986140Z",
+      "eventId": "1e5ea3ac0d98ce91ee207178756fba26d43851fd9ca89c022e163a392267ebce",
+      "idempotencyKey": "1e5ea3ac0d98ce91ee207178756fba26d43851fd9ca89c022e",
+      "kind": "watch",
+      "runId": "pr-followup-1786999614",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-17T19:49:44.944997Z",
+  "generatedAt": "2026-08-17T20:50:10.986140Z",
   "newEventCount": 1,
   "version": "notification_outbox_v2"
 }

@@ -8529,6 +8529,39 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue provides a clear, reproducible crash with traceback and root cause (extend_prefix_lens None during CUDA graph capture). However, an existing open PR (#32619) has semantic overlap with the same code paths and key terms, and the gate decision is HUMAN_REVIEW. The PR may already address the root cause, so a new candidate should not be created without maintainer comparison."
   },
+  "4606325dc856c28f8ac680cdcb76743c329031124850f5acd35f31e4572724d6": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue claims AzureProvider 3.4.7 generates bad URL; maintainer's trace shows v3.4.7 should not produce that URL.",
+      "Reporter's environment uses mcp==1.29.0 and no standalone fastmcp, conflicting with the issue's fastmcp 3.4.7 claim."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "AzureProvider authorization flow",
+      "OAuthProxy resource/scope handling"
+    ],
+    "risks": [
+      "Fix may target wrong package if reporter is using MCP SDK's fastmcp module.",
+      "Changing resource forwarding could break existing OAuth flows."
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with standalone fastmcp 3.4.7 and the provided AzureProvider config; assert generated authorize URL contains scoped resource and no conflicting resource parameter.",
+      "Add regression test for Entra resource/scope matching."
+    ],
+    "unknowns": [
+      "Actual installed package and version in the deployed container.",
+      "Whether the bug reproduces with standalone fastmcp 3.4.7.",
+      "Exact code path that reintroduces the resource parameter."
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "The issue reports a concrete Azure OAuth failure, but the maintainer's diagnostic suggests a version/import mismatch: the reporter may be using mcp.server.fastmcp from the MCP SDK rather than the standalone fastmcp package. The reporter has not yet confirmed the actual code path or provided the requested traceback. Root cause is unconfirmed and the fix location is ambiguous."
+  },
   "466375b55c855978618afee5f1db78366b196760e6be0bfe98b1535d6d03b0df": {
     "confidence": 0.7,
     "contradictions": [
@@ -9109,6 +9142,33 @@
       "Whether the maintainer will close the issue or keep it open for documentation follow-ups."
     ],
     "why": "The issue reports a real bug with public reproductions and maintainer acknowledgment, but the maintainer has already routed it to 0.9.1-rc and requested retesting on RC1. The latest comment confirms the fix works on RC1, so the issue is effectively resolved. The remaining concerns (latency, watch scope, edge nondeterminism) are separate and not actionable without maintainer direction."
+  },
+  "4b0147ea8f38558996c888858b534a19394e60bf313573626cd1c12b839627f3": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Add failing tests for unknown event variants and non-JSON stream chunks",
+      "Fix Responses stream event parser to handle reasoning_text and tolerate non-JSON lines"
+    ],
+    "risks": [
+      "Changing parser behavior may affect other providers; need to avoid breaking valid Responses streams"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Create a unit test feeding a stream with a reasoning_text event and assert no parse error",
+      "Create a unit test feeding a stream with a non-JSON line like 'id:1' and assert graceful handling"
+    ],
+    "unknowns": [
+      "Exact parser code location and current handling of unknown variants",
+      "Whether maintainers have a preferred fix approach or consider this a provider-specific issue"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "Issue reports two distinct streaming parse failures for OpenAI Responses API with DeepSeek and Alibaba providers. Root cause is likely in the Responses stream event parser, but the issue lacks a minimal code-level reproduction and the maintainer has not confirmed the design or assigned work. The repository requires assignment, and the gate decision is HUMAN_REVIEW."
   },
   "4b07de3be9a81c4b3fa0a41ed2c5ec72a30c41669a2edf1f17c00d5f24561166": {
     "confidence": 0.7,
@@ -21089,6 +21149,36 @@
       "Exact LiteLLM version and behavior of modify_params in async contexts"
     ],
     "why": "Issue identifies a clear performance bug: a class-level threading.Lock serializes all LLM calls, causing severe GPU idle time for local models. Root cause is precisely located in code, with concrete proposed solutions and a reproducible scenario. No competing PR or issue found, and the fix is localized and testable."
+  },
+  "a551971f231973f231bb8f91fde810c4dd85dd2ee5edb3183d8c1d9a7651227e": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Issue proposes new PR but maintainer already points to #1563"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "dereferenceLocalRefs() in standardSchemaToJsonSchema()",
+      "inline local $ref and strip $defs"
+    ],
+    "risks": [
+      "Potential API behavior change if not scoped carefully",
+      "Need to align with existing PR #1563 and maintainer preferences"
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Use repro.ts to assert no $ref in output for z.globalRegistry and z.lazy schemas",
+      "Add unit tests for cycle handling and sibling keywords"
+    ],
+    "unknowns": [
+      "Whether #1563 will be merged or needs a new PR after rebase"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue clearly describes a real bug with root cause and repro, but an existing PR #1563 directly addresses it and is open with changes requested. The issue itself is a discussion/design confirmation before PR submission, and the maintainer has already triaged and pointed to #1563. Starting new work would duplicate existing effort."
   },
   "a57ce1d2ab337e3257aa76c6286e7979a6bb0088294130d9c6e7488a6550d8d0": {
     "confidence": 0.8,
