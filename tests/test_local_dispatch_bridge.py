@@ -3024,6 +3024,8 @@ def test_validation_followup_prompt_translates_internal_gaps_for_the_user():
     assert "自动复核还没完成或发现了问题" in prompt
     assert MODULE.VALIDATION_POLICY_REVISION in prompt
     assert "第一句只说清楚 PR 是否已经创建" in prompt
+    assert "等待维护者启动完整检查" in prompt
+    assert "不得描述成代码测试失败" in prompt
     assert "relevant_tests_green" not in prompt
     assert "independent_review_passed" not in prompt
     assert ".oss-pr-radar" not in prompt
