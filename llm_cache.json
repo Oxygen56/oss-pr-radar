@@ -9693,6 +9693,37 @@
     ],
     "why": "The issue reports a real bug with independent reproductions and a fix in RC1, but the maintainer has requested retesting on RC1/current main and the issue is marked awaiting-reporter. The fix appears already implemented, so the remaining work is verification and potential regression tests, not a new code contribution."
   },
+  "4febd7235fc52ac34d19f7cfbc2610e2e5682b5e6260964c2798218ae360687a": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims beta precision mismatch is a real contributor, but changing softplus expression regresses results, suggesting sensitivity to codegen rather than a clear semantic error."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "dspark_verify.py",
+      "fused_sigmoid_gating_recurrent.py",
+      "SSM state commit/scatter logic"
+    ],
+    "risks": [
+      "Numerical differences may be inherent to Triton codegen and not a bug; distinguishing root cause from floating-point sensitivity is difficult.",
+      "Existing PR #34905 may already address the root cause, making duplicate work."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 12,
+    "test_plan": [
+      "Reproduce with provided INPUT_IDS and forced-rejection patch; compare Base vs DSpark token sequences and first divergence index.",
+      "Run with FP32 SSM state and beta alignment to isolate drift; add per-layer state comparison instrumentation."
+    ],
+    "unknowns": [
+      "Whether PR #34905 or related issues #34899/#34297 already fix the drift; maintainer confirmation on intended correctness invariant for GDN TARGET_VERIFY."
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue reports a concrete numerical divergence in DSpark TARGET_VERIFY with forced rejection, providing reproducible steps and a plausible root cause (accumulated GDN recurrent-state drift). However, the supplied open PR #34905 has semantic overlap in code paths and key semantics, and the issue itself references related state-correctness work (#34899, #34297). The deterministic gate is HUMAN_REVIEW, and the candidate is not clearly actionable without comparing against existing PRs and confirming maintainer direction."
+  },
   "4fed907c6616aaa5b79ce811ecf447db8d1ae1d50d20f065e7eb6a23a1cdaa3f": {
     "confidence": 0.9,
     "contradictions": [],
@@ -27076,6 +27107,30 @@
       "Exact behavior of globalRunRegistry across all execution engines and edge cases (e.g., runs in remote workers)"
     ],
     "why": "Issue describes a clear shutdown-ordering bug in durable agent execution: SIGTERM closes the PG pool before in-flight runs can persist snapshots, causing failures instead of suspend-and-recover. Root cause is traced to specific code paths (deployer SIGTERM handler, Mastra.shutdown, storage.close) and the globalRunRegistry provides a natural hook for draining. No competing PR exists; the only open PR is unrelated and draft. The issue is actionable with a concrete fix direction and testable via a shutdown-during-run scenario."
+  },
+  "d9ae12b7e2b1a438c49aa1ac6032bded7dcf04a248260783b0ef9a27471257a4": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify _toolbox.py to add Foundry-Features header with default 'Toolboxes=V1Preview' and merge FOUNDRY_AGENT_TOOLSET_FEATURES values, mirroring .NET FoundryToolboxService.cs."
+    ],
+    "risks": [
+      "Potential behavior change if service expects exact header format; need to confirm default value and merging semantics with maintainers."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add a unit test that constructs FoundryToolbox, sends a request, and asserts the Foundry-Features header is present with expected value when env var is unset and set."
+    ],
+    "unknowns": [
+      "Exact expected header format when env var is set (e.g., comma-separated values) and whether default should be overridden or merged."
+    ],
+    "wait_reason": null,
+    "why": "Issue identifies a concrete behavioral gap between Python and .NET FoundryToolbox implementations: missing mandatory Foundry-Features header and ignored FOUNDRY_AGENT_TOOLSET_FEATURES env var. Code anchors and reproduction steps are provided, making the fix actionable. No competing PR or issue found."
   },
   "d9b2dea9ec4a04817c3fddee1e4ec999361926ba0075c802a84dc5dea712c64c": {
     "confidence": 0.85,
