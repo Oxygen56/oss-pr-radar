@@ -434,7 +434,7 @@ def test_lifecycle_title_keeps_timestamp_and_value_prefix():
     result = MODULE.lifecycle_title(
         "FIX_READY", "08-04 05:25", "repo/project#42", "Runtime correctness"
     )
-    assert result.startswith("[有价值·本地修复就绪] 08-04 05:25 repo/project#42")
+    assert result.startswith("[有价值·准备提交] 08-04 05:25 repo/project#42")
     assert len(result) <= 59
 
 
@@ -442,7 +442,7 @@ def test_validation_pending_title_remains_visibly_valuable():
     result = MODULE.lifecycle_title(
         "VALIDATION_PENDING", "08-09 05:25", "repo/project#42", "Runtime correctness"
     )
-    assert result.startswith("[有价值·待验证] 08-09 05:25 repo/project#42")
+    assert result.startswith("[有价值·检查中] 08-09 05:25 repo/project#42")
 
 
 def test_no_go_title_is_visibly_marked_before_archive():
@@ -8209,7 +8209,7 @@ def test_orphan_list_recovers_unique_async_worktree_task(monkeypatch, tmp_path):
     assert result["ok"] is True
     assert result["blocked"] == []
     assert result["candidates"][0]["threadId"] == "thread-1"
-    assert result["candidates"][0]["desiredTitle"].startswith("[有价值·GO]")
+    assert result["candidates"][0]["desiredTitle"].startswith("[有价值·处理中]")
 
 
 def test_duplicate_task_list_only_returns_stale_unbound_raw_tasks(monkeypatch, tmp_path):

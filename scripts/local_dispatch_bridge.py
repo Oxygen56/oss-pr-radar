@@ -131,11 +131,11 @@ class ValidationPrefetchError(RuntimeError):
 
 
 TITLE_PREFIXES = {
-    "GO": "[有价值·GO]",
+    "GO": "[有价值·处理中]",
     "AUDIT_NO_GO": "[无价值]",
-    "VALIDATION_PENDING": "[有价值·待验证]",
-    "FIX_READY": "[有价值·本地修复就绪]",
-    "PUBLICATION_REQUEST": "[有价值·存在发布请求]",
+    "VALIDATION_PENDING": "[有价值·检查中]",
+    "FIX_READY": "[有价值·准备提交]",
+    "PUBLICATION_REQUEST": "[有价值·准备提交]",
     "PR_OPEN": "[有价值·PR已开]",
     "MERGED": "[有价值·已合并]",
 }
