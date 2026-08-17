@@ -1,13 +1,13 @@
 {
-  "digest": "755cab9fdb04a1da82e55cf3d74c6e12f97dbe2b1105b9ad0a093029c0f20c16",
-  "generatedAt": "2026-08-17T13:55:54.517786Z",
+  "digest": "3f61c8a3f6d862eebc196e879237b0ae5dca8c3bf15c03899dd6fc364dbc843e",
+  "generatedAt": "2026-08-17T14:47:38.481659Z",
   "items": [
     {
       "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
       "actions": [],
       "baseRefName": "main",
-      "baseSha": "017e9f4448b700e85ee16023287b025693c72b9e",
-      "checkedAt": "2026-08-17T13:55:54.517786Z",
+      "baseSha": "195a2a38bcde3e51befdacb1ddacb68a21f87006",
+      "checkedAt": "2026-08-17T14:47:38.481659Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -16,29 +16,30 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "017e9f4448b700e85ee16023287b025693c72b9e",
+        "baseSha": "195a2a38bcde3e51befdacb1ddacb68a21f87006",
         "changedFiles": [
-          "tests/v1/worker/test_mamba_utils.py",
-          "vllm/v1/worker/mamba_utils.py"
+          "areal/v2/inference_service/controller/workflow.py",
+          "areal/v2/inference_service/data_proxy/app.py",
+          "areal/v2/inference_service/data_proxy/session.py"
         ],
         "failingChecks": [],
-        "headSha": "8d88c60b8085e58a46b99c0f53bf7a0ec4345476",
+        "headSha": "bee29dd4ad46f0b5b7defc813dab06a2b7026c6a",
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "requestedChanges": [],
         "unresolvedReviewThreads": []
       },
-      "headSha": "8d88c60b8085e58a46b99c0f53bf7a0ec4345476",
-      "key": "vllm-project/vllm#48109",
+      "headSha": "bee29dd4ad46f0b5b7defc813dab06a2b7026c6a",
+      "key": "areal-project/AReaL#1392",
       "mergeConflict": false,
       "mergeableState": "blocked",
-      "number": 48109,
-      "repo": "vllm-project/vllm",
+      "number": 1392,
+      "repo": "areal-project/AReaL",
       "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
       "taskActions": [],
       "taskFollowupRequired": false,
-      "title": "[Bugfix][XPU] Fix Mamba state pointer overflow",
-      "url": "https://github.com/vllm-project/vllm/pull/48109"
+      "title": "fix: add group_id to StartSessionRequest for online GRPO session grouping",
+      "url": "https://github.com/areal-project/AReaL/pull/1392"
     }
   ],
   "version": "pr_followup_v3"

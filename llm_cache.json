@@ -11032,6 +11032,35 @@
     ],
     "why": "Issue provides a clear root cause and reproduction, but the supplied gate decision is HUMAN_REVIEW and the related issue audit failed (timeout). An existing PR #35791 directly addresses the issue but has failing CI checks, making it a weak competition opportunity. Maintainer confirmation is needed before starting work."
   },
+  "58a01aa3b57cc00ba52b52467cb5288066c0491525d3cf0204b9c7b220cf5fe6": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Desktop app project list state management",
+      "Agent file-creation event handling"
+    ],
+    "risks": [
+      "Changing project list behavior may affect user consent and privacy",
+      "Potential conflicts with existing project picker flow"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Manual reproduction: create project via agent in desktop chat, verify sidebar list",
+      "Unit test for project list update logic"
+    ],
+    "unknowns": [
+      "Maintainer design preference for auto-add vs prompt",
+      "Exact code path for agent-created directories",
+      "Whether a minimal fix is feasible without broader refactor"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "The issue describes a real UX gap but lacks a concrete reproduction script, code-level root cause, or maintainer confirmation. The suggested fix (auto-add or prompt) requires design decisions and touches app-side state management, which is not clearly actionable without maintainer input."
+  },
   "58a57835b86c5a1e9abb73195817299e5c4b36b004e8394725c47aeee873c557": {
     "confidence": 0.7,
     "contradictions": [
@@ -22536,6 +22565,31 @@
       "Exact implementation details of existing PR #3260 to avoid duplication."
     ],
     "why": "The issue clearly identifies a client-side bug where expired DCR client secrets are never invalidated, causing permanent auth failure. The existing PR #3260 is a draft with incomplete evidence and lacks a deterministic reproduction, leaving room for a stronger PR with a failing test and robust fix."
+  },
+  "b733419b3096d69ec38edd5dcabf803766d1e788fc7cf2f66b6d557bdbf589ee": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Possibly modify monitoring.py to route Rich console output through Python logging or provide a public API for dual console logging."
+    ],
+    "risks": [
+      "Changing console output behavior could affect existing users; need to preserve Rich formatting and avoid breaking terminal output."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Create a minimal reproduction script that configures logging and runs an agent, then assert that thinking output appears in the log file."
+    ],
+    "unknowns": [
+      "Maintainer intent on whether to integrate logging or document workaround; exact code changes expected; whether a PR would be accepted."
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "Issue reports that console output is handled by Rich rather than Python logging, with a workaround. It lacks a concrete root cause analysis, maintainer confirmation, or a clear code path for a minimal fix. The proposed change is ambiguous: either integrate Rich output with logging or provide a documented pattern. No maintainer approval or help-wanted signal."
   },
   "b737f6157602e445b20acff50f070ccd739ce36716f8a1963ebb89068acb169f": {
     "confidence": 0.8,
