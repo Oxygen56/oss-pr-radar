@@ -2306,6 +2306,14 @@ class RadarLedger:
                            )=r.dedupe_key
                        AND abandoned.id>r.id
                    )
+                     AND NOT EXISTS (
+                     SELECT 1 FROM events result
+                     WHERE result.opportunity_key=o.key
+                       AND result.id>r.id
+                       AND result.event_type IN (
+                         'TASK_RESULT_INGESTED','PR_FOLLOWUP_RESULT_INGESTED'
+                       )
+                   )
                    ORDER BY r.created_at"""
             ).fetchall()
         return [

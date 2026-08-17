@@ -1566,12 +1566,15 @@ def test_interrupted_validation_followup_can_enter_controlled_recovery(tmp_path)
     assert candidate["threadId"] == "thread-1"
     assert candidate["recoveryKind"] == "VALIDATION_FOLLOWUP_RESULT"
     assert candidate["followupDigest"] == "result-digest"
+    store.reserve_recovery(thread_id="thread-1", nonce=candidate["recoveryNonce"])
+    assert store.unresolved_recoveries()[0]["threadId"] == "thread-1"
 
     store.record_task_result_ingested(
         "a/b#1", digest="new-result-digest", stage="VALIDATION_PENDING"
     )
 
     assert store.recovery_candidates(min_age_minutes=0) == []
+    assert store.unresolved_recoveries() == []
 
 
 def test_repeatedly_interrupted_recovery_is_terminal_and_releases_wip(tmp_path):
