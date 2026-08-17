@@ -1971,7 +1971,29 @@ def _wait_for_app_server_terminal_turn(
     next_read_at = watch_started_at + APP_SERVER_WATCHDOG_INTERVAL_SECONDS
     next_external_probe_at = watch_started_at + APP_SERVER_WATCHDOG_EXTERNAL_PROBE_SECONDS
     task_deadline = watch_started_at + APP_SERVER_TASK_TURN_MAX_SECONDS
-    while process.poll() is None:
+    while True:
+        # A very short turn can finish in the same read that returned the
+        # turn/start response. Consume those already-buffered notifications
+        # before waiting for another app-server event.
+        while b"\n" in buffer:
+            raw, buffer = buffer.split(b"\n", 1)
+            try:
+                message = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            terminal = _app_server_terminal_turn(
+                message,
+                thread_id=thread_id,
+                turn_id=turn_id,
+                read_request_id=read_request_id,
+            )
+            if read_request_id is not None and message.get("id") == read_request_id:
+                read_request_id = None
+                read_requested_at = None
+            if terminal:
+                return terminal
+        if process.poll() is not None:
+            break
         now = monotonic()
         if now >= task_deadline:
             return {
@@ -2027,23 +2049,6 @@ def _wait_for_app_server_terminal_turn(
         if not chunk:
             break
         buffer += chunk
-        while b"\n" in buffer:
-            raw, buffer = buffer.split(b"\n", 1)
-            try:
-                message = json.loads(raw)
-            except json.JSONDecodeError:
-                continue
-            terminal = _app_server_terminal_turn(
-                message,
-                thread_id=thread_id,
-                turn_id=turn_id,
-                read_request_id=read_request_id,
-            )
-            if read_request_id is not None and message.get("id") == read_request_id:
-                read_request_id = None
-                read_requested_at = None
-            if terminal:
-                return terminal
     return None
 
 

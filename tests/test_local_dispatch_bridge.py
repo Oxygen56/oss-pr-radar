@@ -3464,6 +3464,51 @@ def test_app_server_terminal_turn_ignores_in_progress_or_unrelated_turns():
     )
 
 
+def test_app_server_watchdog_consumes_buffered_terminal_before_select():
+    class FakeStdin:
+        @staticmethod
+        def write(_value: bytes) -> None:
+            raise AssertionError("a terminal turn must not trigger another request")
+
+        @staticmethod
+        def flush() -> None:
+            return None
+
+    class FakeStdout:
+        @staticmethod
+        def fileno() -> int:
+            return 123
+
+    class FakeProcess:
+        def __init__(self):
+            self.stdin = FakeStdin()
+            self.stdout = FakeStdout()
+
+        @staticmethod
+        def poll():
+            return None
+
+    class NeverSelect:
+        @staticmethod
+        def select(_timeout):
+            raise AssertionError("a buffered terminal event must be consumed immediately")
+
+    buffered = (
+        b'{"method":"turn/completed","params":{"threadId":"thread-1",'
+        b'"turn":{"id":"turn-1","status":"interrupted"}}}\n'
+    )
+
+    result = MODULE._wait_for_app_server_terminal_turn(
+        FakeProcess(),
+        NeverSelect(),
+        buffered,
+        thread_id="thread-1",
+        turn_id="turn-1",
+    )
+
+    assert result == {"turnId": "turn-1", "status": "interrupted", "error": None}
+
+
 def test_app_server_watchdog_polls_on_wall_clock_despite_continuous_events(monkeypatch):
     class FakeStdin:
         def __init__(self):
