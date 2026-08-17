@@ -2497,3 +2497,47 @@ def test_legacy_failed_live_recheck_is_recovered_for_retry(tmp_path):
         ).fetchone()
     assert permit["status"] == "EXPIRED"
     assert effect is None
+
+
+def test_publication_feedback_is_reserved_retried_and_sent_once(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "controller")
+    store.commit_dispatch(
+        "intent-1",
+        owner="controller",
+        thread_id="thread-1",
+        project_id="github",
+        worktree_path="/tmp/worktree",
+    )
+    pr_url = "https://github.com/a/b/pull/9"
+    store.record_stage("a/b#1", "PR_OPEN", evidence={"prUrl": pr_url}, dedupe_key=pr_url)
+
+    candidate = store.publication_feedback_candidates()[0]
+    reserved = store.reserve_publication_feedback(
+        thread_id=candidate["threadId"],
+        pr_url=candidate["prUrl"],
+    )
+
+    assert store.publication_feedback_candidates() == []
+    assert store.unresolved_publication_feedback()[0]["reservationNonce"] == reserved[
+        "reservationNonce"
+    ]
+    with pytest.raises(LedgerError, match="stale or already reserved"):
+        store.reserve_publication_feedback(thread_id="thread-1", pr_url=pr_url)
+
+    store.abandon_publication_feedback(
+        thread_id="thread-1",
+        reservation_nonce=reserved["reservationNonce"],
+        reason="VISIBLE_STATUS_DELIVERY_INCOMPLETE",
+        min_age_minutes=0,
+    )
+    retry = store.reserve_publication_feedback(thread_id="thread-1", pr_url=pr_url)
+    assert retry["reservationNonce"] != reserved["reservationNonce"]
+
+    store.commit_publication_feedback(
+        thread_id="thread-1",
+        reservation_nonce=retry["reservationNonce"],
+    )
+    assert store.publication_feedback_candidates() == []
+    assert store.unresolved_publication_feedback() == []

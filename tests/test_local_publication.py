@@ -85,6 +85,12 @@ def test_fast_publication_runs_ingestion_and_publication_in_order(tmp_path):
             "written": [{"key": "a/b#1", "path": "/tmp/task-context.json"}],
             "errors": [],
         },
+        "publication-feedback-list": {
+            "ok": True,
+            "candidates": [],
+            "unresolved": [],
+            "reconciled": [],
+        },
         "recovery-list": {"ok": True, "recoverable": []},
         "drain-once": {
             "ok": True,
@@ -108,6 +114,7 @@ def test_fast_publication_runs_ingestion_and_publication_in_order(tmp_path):
         "cleanup-reconcile",
         "publication-run",
         "context-sync",
+        "publication-feedback-list",
         "recovery-list",
         "drain-once",
     ]
@@ -163,6 +170,38 @@ def test_fast_publication_is_quiet_when_no_result_or_request_exists(tmp_path):
 
     assert result["ok"] is True
     assert result["activity"] is False
+
+
+def test_fast_publication_drains_pending_visible_pr_feedback(tmp_path):
+    calls = []
+
+    def runner(_root: Path, operation: str):
+        calls.append(operation)
+        if operation == "context-recover":
+            return {"ok": True, "verified": 0, "errors": []}
+        if operation == "ingest-results":
+            return {"ok": True, "ingested": [], "publicationRequests": [], "errors": []}
+        if operation == "publication-feedback-list":
+            return {
+                "ok": True,
+                "candidates": [{"key": "a/b#1", "threadId": "thread-1"}],
+                "unresolved": [],
+                "reconciled": [],
+            }
+        if operation == "drain-once":
+            return {
+                "ok": True,
+                "action": "publication_feedback_dispatched",
+                "key": "a/b#1",
+                "threadId": "thread-1",
+            }
+        return {"ok": True, "published": [], "pending": [], "blocked": [], "errors": []}
+
+    result = advance_once(tmp_path, runner=runner)
+
+    assert calls[-2:] == ["recovery-list", "drain-once"]
+    assert result["drain"]["action"] == "publication_feedback_dispatched"
+    assert result["activity"] is True
 
 
 def test_fast_publication_retries_an_old_negative_turn_receipt(tmp_path):
@@ -271,6 +310,7 @@ def test_fast_publication_surfaces_title_reconciliation_failure(tmp_path):
         "title-reconcile",
         "cleanup-reconcile",
         "publication-run",
+        "publication-feedback-list",
     ]
     assert result["ok"] is False
     assert result["errors"] == [{"error": "rename failed"}]
@@ -301,6 +341,7 @@ def test_missing_historical_worktree_does_not_stop_fast_publication(tmp_path):
         "title-reconcile",
         "cleanup-reconcile",
         "publication-run",
+        "publication-feedback-list",
         "recovery-list",
     ]
     assert result["ok"] is True
@@ -503,6 +544,8 @@ def test_compact_result_keeps_counts_and_omits_large_payloads():
         "titlesRenamed": 0,
         "threadsArchived": 0,
         "published": 0,
+        "publicationFeedbackPending": 0,
+        "publicationFeedbackReconciled": 0,
         "publicationBlocked": 1,
         "errors": 1,
     }

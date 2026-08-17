@@ -211,6 +211,7 @@ def advance_once(
     context_sync = (
         runner(root, "context-sync") if published else {"ok": True, "written": [], "errors": []}
     )
+    publication_feedback = runner(root, "publication-feedback-list")
 
     errors = [
         *review_errors,
@@ -239,6 +240,7 @@ def advance_once(
         and cleanup_reconciliation.get("ok") is not False
         and publication.get("ok") is not False
         and context_sync.get("ok") is not False
+        and publication_feedback.get("ok") is not False
     )
     recovery = (
         runner(root, "recovery-list") if lifecycle_healthy else {"ok": False, "recoverable": []}
@@ -249,6 +251,8 @@ def advance_once(
         or validation_deferred
         or archived
         or published
+        or publication_feedback.get("candidates")
+        or publication_feedback.get("unresolved")
         or recoverable
         or retryable_delivery_pending(root)
     )
@@ -268,6 +272,7 @@ def advance_once(
         or renamed
         or archived
         or published
+        or publication_feedback.get("reconciled")
         or blocked
         or errors
         or drain_activity
@@ -278,6 +283,7 @@ def advance_once(
         and cleanup_reconciliation.get("ok") is not False
         and publication.get("ok") is not False
         and context_sync.get("ok") is not False
+        and publication_feedback.get("ok") is not False
         and drain.get("ok") is not False
         and terminal_feedback.get("ok") is not False,
         "activity": activity,
@@ -289,6 +295,7 @@ def advance_once(
         "threadsArchived": archived,
         "published": published,
         "contextsSynced": list(context_sync.get("written") or []),
+        "publicationFeedback": publication_feedback,
         "recoverable": recoverable,
         "drain": drain,
         "terminalFeedback": terminal_feedback,
@@ -318,6 +325,12 @@ def compact_advance_result(result: dict[str, Any]) -> dict[str, Any]:
             "titlesRenamed": len(result.get("titlesRenamed") or []),
             "threadsArchived": len(result.get("threadsArchived") or []),
             "published": len(result.get("published") or []),
+            "publicationFeedbackPending": len(
+                (result.get("publicationFeedback") or {}).get("candidates") or []
+            ),
+            "publicationFeedbackReconciled": len(
+                (result.get("publicationFeedback") or {}).get("reconciled") or []
+            ),
             "publicationBlocked": len(result.get("blocked") or []),
             "errors": len(result.get("errors") or []),
         },

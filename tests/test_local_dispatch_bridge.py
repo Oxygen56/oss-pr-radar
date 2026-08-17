@@ -8928,3 +8928,150 @@ def test_orphan_list_matches_late_thread_for_creating_intent(monkeypatch, tmp_pa
     assert result["blocked"] == []
     assert result["unmatched"] == []
     assert result["candidates"][0]["threadId"] == "thread-late"
+
+
+def test_publication_feedback_prompt_reuses_plain_problem_and_requires_exact_reply(tmp_path):
+    rollout = tmp_path / "rollout.jsonl"
+    rollout.write_text(
+        json.dumps(
+            {
+                "type": "event_msg",
+                "payload": {
+                    "type": "agent_message",
+                    "message": (
+                        "GitHub 上还没有 PR。\n\n"
+                        "- 问题：会把逐条命令合并，导致执行失败。\n"
+                        "- 进展：修复已完成。"
+                    ),
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    pr_url = "https://github.com/a/b/pull/9"
+
+    previous = MODULE.latest_agent_message(str(rollout))
+    prompt = MODULE.publication_feedback_prompt(pr_url=pr_url, previous_message=previous)
+
+    assert "- 问题：会把逐条命令合并，导致执行失败。" in prompt
+    assert f"PR 已创建：{pr_url}" in prompt
+    assert MODULE.publication_feedback_materialized(str(rollout), pr_url) is False
+    with rollout.open("a", encoding="utf-8") as handle:
+        handle.write(
+            "\n"
+            + json.dumps(
+                {
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "agent_message",
+                        "message": f"PR 已创建：{pr_url}\n\n- 你：无需操作。",
+                    },
+                },
+                ensure_ascii=False,
+            )
+        )
+    assert MODULE.publication_feedback_materialized(str(rollout), pr_url) is True
+
+
+def test_publication_feedback_list_reconciles_an_existing_visible_reply(monkeypatch, tmp_path):
+    pr_url = "https://github.com/a/b/pull/9"
+    rollout = tmp_path / "rollout.jsonl"
+    rollout.write_text(
+        json.dumps(
+            {
+                "type": "event_msg",
+                "payload": {
+                    "type": "agent_message",
+                    "message": f"PR 已创建：{pr_url}\n\n- 你：无需操作。",
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    thread_db = tmp_path / "state.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, archived INTEGER, rollout_path TEXT)"
+        )
+        connection.execute("INSERT INTO threads VALUES ('thread-1',0,?)", (str(rollout),))
+    acknowledgements = []
+
+    class Store:
+        def publication_feedback_candidates(self):
+            return [
+                {
+                    "key": "a/b#1",
+                    "issueUrl": "https://github.com/a/b/issues/1",
+                    "threadId": "thread-1",
+                    "worktreePath": "/tmp/worktree",
+                    "prUrl": pr_url,
+                    "publishedAt": "2026-08-17T00:00:00Z",
+                }
+            ]
+
+        def unresolved_publication_feedback(self):
+            return []
+
+        def acknowledge_publication_feedback(self, **kwargs):
+            acknowledgements.append(kwargs)
+
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+
+    result = MODULE.publication_feedback_list(SimpleNamespace(ledger=tmp_path / "ledger"))
+
+    assert result["candidates"] == []
+    assert result["reconciled"][0]["prUrl"] == pr_url
+    assert acknowledgements == [{"thread_id": "thread-1", "pr_url": pr_url}]
+
+
+def test_event_drain_prioritizes_visible_publication_feedback(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        MODULE, "restore_reconcile", lambda _args: {"ok": True, "restored": [], "errors": []}
+    )
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: object())
+    monkeypatch.setattr(MODULE, "_rearm_negative_followup_deliveries", lambda _store: [])
+    monkeypatch.setattr(
+        MODULE, "_rearm_interrupted_recovery_turns", lambda _store: ([], [])
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "publication_feedback_list",
+        lambda _args: {
+            "candidates": [
+                {
+                    "key": "a/b#1",
+                    "threadId": "thread-1",
+                    "prUrl": "https://github.com/a/b/pull/9",
+                }
+            ]
+        },
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "publication_feedback_reserve",
+        lambda _args: {"ok": True, "reservationNonce": "nonce-1"},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "publication_feedback_deliver",
+        lambda _args: {"ok": True, "visibleReplyVerified": True},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "pr_followup_list",
+        lambda _args: pytest.fail("PR work must wait until the visible link is synced"),
+    )
+
+    result = MODULE.drain_once(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            project_id="github",
+            owner="event-drain",
+        )
+    )
+
+    assert result["action"] == "publication_feedback_dispatched"
+    assert result["prUrl"] == "https://github.com/a/b/pull/9"

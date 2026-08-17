@@ -124,6 +124,96 @@ END_RESULT_TURN_PROMPT = (
 )
 
 
+def latest_agent_message(rollout_path: str | None, *, max_bytes: int = 2_000_000) -> str:
+    """Return the newest visible assistant message from a task rollout."""
+
+    if not rollout_path:
+        return ""
+    path = Path(rollout_path)
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as handle:
+            offset = max(0, size - max_bytes)
+            handle.seek(offset)
+            if offset:
+                handle.readline()
+            raw_lines = handle.readlines()
+    except OSError:
+        return ""
+
+    latest = ""
+    for raw in raw_lines:
+        try:
+            item = json.loads(raw)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        payload = item.get("payload") if isinstance(item, dict) else None
+        if not isinstance(payload, dict):
+            continue
+        if item.get("type") == "event_msg" and payload.get("type") == "agent_message":
+            message = payload.get("message")
+            if isinstance(message, str) and message.strip():
+                latest = message.strip()
+            continue
+        if (
+            item.get("type") == "response_item"
+            and payload.get("type") == "message"
+            and payload.get("role") == "assistant"
+        ):
+            content = payload.get("content")
+            if not isinstance(content, list):
+                continue
+            text = "".join(
+                str(part.get("text") or "")
+                for part in content
+                if isinstance(part, dict) and part.get("type") == "output_text"
+            ).strip()
+            if text:
+                latest = text
+    return latest
+
+
+def publication_feedback_prompt(*, pr_url: str, previous_message: str) -> str:
+    """Build a no-work status turn after the controller has actually published a PR."""
+
+    if not PULL_URL.fullmatch(pr_url):
+        raise RuntimeError("publication feedback has an invalid PR URL")
+    problem = "这个问题会影响正常使用。"
+    match = re.search(r"(?m)^- 问题：\s*(.+?)\s*$", previous_message)
+    if match:
+        candidate = match.group(1).strip()
+        if candidate and len(candidate) <= 30:
+            problem = candidate
+    reply = (
+        f"PR 已创建：{pr_url}\n\n"
+        f"- 问题：{problem}\n"
+        "- 进展：PR 已创建，最新修改已上传。\n"
+        "- 还差：等待在线检查和维护者审阅。\n"
+        "- 你：无需操作。"
+    )
+    return (
+        "这是状态同步，不要读取文件、运行命令、修改内容或继续任务。"
+        "请只原样回复下面内容，不要添加任何说明：\n\n"
+        f"{reply}"
+    )
+
+
+def publication_feedback_materialized(rollout_path: str | None, pr_url: str) -> bool:
+    """Require the visible assistant reply, not merely a started status turn."""
+
+    if not PULL_URL.fullmatch(pr_url):
+        return False
+    message = latest_agent_message(rollout_path)
+    first_line = message.splitlines()[0].strip() if message else ""
+    return first_line == f"PR 已创建：{pr_url}"
+
+
+def publication_feedback_link_visible(rollout_path: str | None, pr_url: str) -> bool:
+    """Treat any already-visible exact PR link as sufficient for legacy reconciliation."""
+
+    return bool(PULL_URL.fullmatch(pr_url) and pr_url in latest_agent_message(rollout_path))
+
+
 class ValidationPrefetchError(RuntimeError):
     """A deterministic lockfile prefetch could not complete locally."""
 
@@ -2363,6 +2453,17 @@ def _task_turn_reservation(
             ),
             None,
         )
+    if delivery_kind == "publication-feedback":
+        candidate = next(
+            (
+                item
+                for item in store.unresolved_publication_feedback()
+                if item.get("threadId") == thread_id
+                and item.get("reservationNonce") == delivery_token
+            ),
+            None,
+        )
+        return candidate | {"statusOnly": True} if candidate else None
     if delivery_kind == "recovery":
         return next(
             (
@@ -2379,6 +2480,19 @@ def _task_turn_reservation(
 def _task_turn_prompt(delivery_kind: str, candidate: dict[str, Any]) -> str:
     if delivery_kind == "validation-followup":
         return _validation_followup_prompt(candidate)
+    if delivery_kind == "publication-feedback":
+        connection = sqlite3.connect(THREAD_DB)
+        try:
+            row = connection.execute(
+                "SELECT rollout_path FROM threads WHERE id=?",
+                (candidate["threadId"],),
+            ).fetchone()
+        finally:
+            connection.close()
+        return publication_feedback_prompt(
+            pr_url=str(candidate.get("prUrl") or ""),
+            previous_message=latest_agent_message(row[0] if row else None),
+        )
     issue_url = str(candidate.get("issueUrl") or "")
     if not ISSUE_URL.fullmatch(issue_url):
         raise RuntimeError("task-turn delivery has an invalid issue URL")
@@ -2416,7 +2530,7 @@ def _validated_task_turn_thread(candidate: dict[str, Any]) -> tuple[Path, str | 
     if not thread_id or not worktree_value:
         raise RuntimeError("task-turn delivery lacks its task identity")
     worktree = Path(str(worktree_value)).resolve()
-    if not worktree.is_dir():
+    if not worktree.is_dir() and not candidate.get("statusOnly"):
         raise RuntimeError("task-turn delivery worktree is unavailable")
     connection = sqlite3.connect(THREAD_DB)
     connection.row_factory = sqlite3.Row
@@ -2451,6 +2565,11 @@ def _commit_task_turn_delivery(
         store.commit_pr_followup(thread_id=thread_id, wake_digest=delivery_token)
     elif delivery_kind == "validation-followup":
         store.commit_validation_followup(thread_id=thread_id, result_digest=delivery_token)
+    elif delivery_kind == "publication-feedback":
+        store.commit_publication_feedback(
+            thread_id=thread_id,
+            reservation_nonce=delivery_token,
+        )
     elif delivery_kind == "recovery":
         store.commit_recovery(thread_id=thread_id, nonce=delivery_token)
     else:
@@ -2603,12 +2722,6 @@ def _app_server_task_turn_worker(args: argparse.Namespace) -> dict[str, Any]:
                     turn_id = str(((message.get("result") or {}).get("turn") or {}).get("id") or "")
             if not turn_id:
                 raise RuntimeError("app server did not receipt the task turn")
-            _commit_task_turn_delivery(
-                store,
-                delivery_kind=args.delivery_kind,
-                thread_id=args.thread_id,
-                delivery_token=args.delivery_token,
-            )
             receipt = {
                 "ok": True,
                 "threadId": args.thread_id,
@@ -2616,7 +2729,14 @@ def _app_server_task_turn_worker(args: argparse.Namespace) -> dict[str, Any]:
                 "deliveryKind": args.delivery_kind,
                 "deliveryToken": args.delivery_token,
             }
-            _atomic_json(Path(args.receipt), receipt)
+            if args.delivery_kind != "publication-feedback":
+                _commit_task_turn_delivery(
+                    store,
+                    delivery_kind=args.delivery_kind,
+                    thread_id=args.thread_id,
+                    delivery_token=args.delivery_token,
+                )
+                _atomic_json(Path(args.receipt), receipt)
 
             terminal = _wait_for_app_server_terminal_turn(
                 process,
@@ -2625,6 +2745,45 @@ def _app_server_task_turn_worker(args: argparse.Namespace) -> dict[str, Any]:
                 thread_id=args.thread_id,
                 turn_id=turn_id,
             )
+            if args.delivery_kind == "publication-feedback":
+                visible = False
+                if terminal and terminal["status"] == "completed":
+                    visibility_deadline = monotonic() + 5
+                    while monotonic() < visibility_deadline:
+                        if publication_feedback_materialized(
+                            _rollout_path,
+                            str(candidate.get("prUrl") or ""),
+                        ):
+                            visible = True
+                            break
+                        sleep(0.1)
+                if visible:
+                    _commit_task_turn_delivery(
+                        store,
+                        delivery_kind=args.delivery_kind,
+                        thread_id=args.thread_id,
+                        delivery_token=args.delivery_token,
+                    )
+                    terminal_receipt = receipt | {
+                        "turnStatus": "completed",
+                        "visibleReplyVerified": True,
+                    }
+                    _atomic_json(Path(args.receipt), terminal_receipt)
+                    return terminal_receipt
+                store.abandon_publication_feedback(
+                    thread_id=args.thread_id,
+                    reservation_nonce=args.delivery_token,
+                    reason="VISIBLE_STATUS_REPLY_MISSING",
+                    min_age_minutes=0,
+                )
+                retry_receipt = receipt | {
+                    "delivered": False,
+                    "retryable": True,
+                    "turnStatus": (terminal or {}).get("status") or "unknown",
+                    "reason": "VISIBLE_STATUS_REPLY_MISSING",
+                }
+                _atomic_json(Path(args.receipt), retry_receipt)
+                return retry_receipt
             if terminal:
                 terminal_receipt = receipt | {"turnStatus": terminal["status"]}
                 _atomic_json(Path(args.receipt), terminal_receipt)
@@ -2865,6 +3024,11 @@ def _reserved_task_turn_materialized(
         connection.close()
     if row is None:
         return False
+    if delivery_kind == "publication-feedback":
+        return publication_feedback_materialized(
+            row[0],
+            str(candidate.get("prUrl") or ""),
+        )
     _available, materialized = thread_prompt_materialized_after(
         row[0], reserved_at, str(handoff["prompt"])
     )
@@ -2876,6 +3040,72 @@ def _rearm_negative_followup_deliveries(store: RadarLedger) -> list[dict[str, An
 
     rearmed: list[dict[str, Any]] = []
     now = datetime.now(UTC)
+    for item in getattr(store, "unresolved_publication_feedback", lambda: [])():
+        thread_id = str(item.get("threadId") or "")
+        token = str(item.get("reservationNonce") or "")
+        if _reserved_task_turn_materialized(
+            delivery_kind="publication-feedback",
+            candidate=item,
+            delivery_token=token,
+        ):
+            store.commit_publication_feedback(
+                thread_id=thread_id,
+                reservation_nonce=token,
+            )
+            _discard_negative_task_turn_receipt(
+                delivery_kind="publication-feedback",
+                thread_id=thread_id,
+                delivery_token=token,
+            )
+            rearmed.append(
+                {
+                    "kind": "publication-feedback",
+                    "key": item.get("key"),
+                    "threadId": thread_id,
+                    "reconciledVisibleReply": True,
+                }
+            )
+            continue
+        if active_task_turn_worker(thread_id) is not None:
+            continue
+        receipt_key = sha256_json(
+            {
+                "deliveryKind": "publication-feedback",
+                "threadId": thread_id,
+                "deliveryToken": token,
+            }
+        )
+        receipt_path = STATE / "task_turn_receipts" / f"{receipt_key}.json"
+        receipt = read_json(receipt_path, missing={})
+        age = now - parse_time(str(item["reservedAt"]))
+        proved_incomplete = bool(receipt) and (
+            receipt.get("ok") is False
+            or receipt.get("turnStatus") in {"failed", "interrupted"}
+        )
+        launch_path = STATE / "task_turn_receipts" / f"{receipt_key}.launch.json"
+        abandoned_worker = launch_path.exists() and age >= timedelta(minutes=5)
+        if age < timedelta(minutes=1) or not (proved_incomplete or abandoned_worker):
+            continue
+        store.abandon_publication_feedback(
+            thread_id=thread_id,
+            reservation_nonce=token,
+            reason="VISIBLE_STATUS_DELIVERY_INCOMPLETE",
+            min_age_minutes=1,
+        )
+        _discard_negative_task_turn_receipt(
+            delivery_kind="publication-feedback",
+            thread_id=thread_id,
+            delivery_token=token,
+        )
+        rearmed.append(
+            {
+                "kind": "publication-feedback",
+                "key": item.get("key"),
+                "threadId": thread_id,
+                "reason": "VISIBLE_STATUS_DELIVERY_INCOMPLETE",
+            }
+        )
+
     for item in store.unresolved_pr_followups():
         thread_id = str(item.get("thread_id") or "")
         token = str(item.get("wake_digest") or "")
@@ -3154,11 +3384,18 @@ def task_turn_deliver(args: argparse.Namespace) -> dict[str, Any]:
     try:
         _cwd, rollout_path = _validated_task_turn_thread(candidate)
         prompt = _task_turn_prompt(args.delivery_kind, candidate)
-        activity_available, materialized = thread_prompt_materialized_after(
-            rollout_path,
-            str(candidate["reservedAt"]),
-            prompt,
-        )
+        if args.delivery_kind == "publication-feedback":
+            activity_available = bool(rollout_path and Path(rollout_path).is_file())
+            materialized = publication_feedback_materialized(
+                rollout_path,
+                str(candidate.get("prUrl") or ""),
+            )
+        else:
+            activity_available, materialized = thread_prompt_materialized_after(
+                rollout_path,
+                str(candidate["reservedAt"]),
+                prompt,
+            )
     except Exception as exc:
         if not receipt.exists():
             _atomic_json(
@@ -3299,6 +3536,12 @@ def pr_followup_deliver(args: argparse.Namespace) -> dict[str, Any]:
 def validation_followup_deliver(args: argparse.Namespace) -> dict[str, Any]:
     args.delivery_kind = "validation-followup"
     args.delivery_token = args.result_digest
+    return task_turn_deliver(args)
+
+
+def publication_feedback_deliver(args: argparse.Namespace) -> dict[str, Any]:
+    args.delivery_kind = "publication-feedback"
+    args.delivery_token = args.reservation_nonce
     return task_turn_deliver(args)
 
 
@@ -4623,6 +4866,125 @@ def sync_task_contexts(args: argparse.Namespace) -> dict[str, Any]:
         "unavailable": unavailable,
         "revalidationErrors": revalidation_errors,
         "errors": errors,
+    }
+
+
+def publication_feedback_list(args: argparse.Namespace) -> dict[str, Any]:
+    """Find published tasks whose visible final reply still lacks the real PR URL."""
+
+    store = ledger(args.ledger)
+    candidates = store.publication_feedback_candidates()
+    unresolved = store.unresolved_publication_feedback()
+    thread_ids = sorted(
+        {
+            str(item.get("threadId") or "")
+            for item in [*candidates, *unresolved]
+            if item.get("threadId")
+        }
+    )
+    rows: dict[str, tuple[int, str | None]] = {}
+    if thread_ids and THREAD_DB.is_file():
+        placeholders = ",".join("?" for _ in thread_ids)
+        connection = sqlite3.connect(THREAD_DB)
+        try:
+            values = connection.execute(
+                f"SELECT id,archived,rollout_path FROM threads WHERE id IN ({placeholders})",
+                thread_ids,
+            ).fetchall()
+            rows = {str(row[0]): (int(row[1] or 0), row[2]) for row in values}
+        finally:
+            connection.close()
+
+    ready: list[dict[str, Any]] = []
+    active_deferred: list[dict[str, Any]] = []
+    blocked: list[dict[str, Any]] = []
+    reconciled: list[dict[str, Any]] = []
+    for candidate in candidates:
+        thread_id = str(candidate["threadId"])
+        thread = rows.get(thread_id)
+        if thread is None:
+            blocked.append(candidate | {"reason": "thread_missing"})
+            continue
+        if thread[0] != 0:
+            blocked.append(candidate | {"reason": "thread_archived"})
+            continue
+        pr_url = str(candidate["prUrl"])
+        if publication_feedback_link_visible(thread[1], pr_url):
+            store.acknowledge_publication_feedback(
+                thread_id=thread_id,
+                pr_url=pr_url,
+            )
+            reconciled.append(
+                {
+                    "key": candidate["key"],
+                    "threadId": thread_id,
+                    "prUrl": candidate["prUrl"],
+                }
+            )
+            continue
+        if parse_time(str(candidate["publishedAt"])) < datetime.now(UTC) - timedelta(hours=24):
+            store.acknowledge_publication_feedback(
+                thread_id=thread_id,
+                pr_url=pr_url,
+                reason="STALE_STATUS_BACKFILL_SKIPPED",
+            )
+            reconciled.append(
+                {
+                    "key": candidate["key"],
+                    "threadId": thread_id,
+                    "prUrl": candidate["prUrl"],
+                    "reason": "STALE_STATUS_BACKFILL_SKIPPED",
+                }
+            )
+            continue
+        worker = active_task_turn_worker(thread_id)
+        if worker is not None:
+            active_deferred.append(candidate | {"reason": "thread_active", "worker": worker})
+            continue
+        ready.append(candidate)
+
+    unresolved_values: list[dict[str, Any]] = []
+    for candidate in unresolved:
+        thread = rows.get(str(candidate["threadId"]))
+        unresolved_values.append(
+            candidate
+            | {
+                "visibleReplyVerified": bool(
+                    thread
+                    and publication_feedback_materialized(
+                        thread[1],
+                        str(candidate["prUrl"]),
+                    )
+                )
+            }
+        )
+    return {
+        "ok": True,
+        "candidates": ready,
+        "activeDeferred": active_deferred,
+        "unresolved": unresolved_values,
+        "reconciled": reconciled,
+        "blocked": blocked,
+    }
+
+
+def publication_feedback_reserve(args: argparse.Namespace) -> dict[str, Any]:
+    candidate = ledger(args.ledger).reserve_publication_feedback(
+        thread_id=args.thread_id,
+        pr_url=args.pr_url,
+    )
+    return {"ok": True, **candidate}
+
+
+def publication_feedback_commit(args: argparse.Namespace) -> dict[str, Any]:
+    ledger(args.ledger).commit_publication_feedback(
+        thread_id=args.thread_id,
+        reservation_nonce=args.reservation_nonce,
+    )
+    return {
+        "ok": True,
+        "threadId": args.thread_id,
+        "reservationNonce": args.reservation_nonce,
     }
 
 
@@ -7692,6 +8054,37 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
     recovery_rearmed, recovery_exhausted = _rearm_interrupted_recovery_turns(store)
     rearmed.extend(recovery_rearmed)
 
+    publication_feedback_state = publication_feedback_list(
+        argparse.Namespace(ledger=args.ledger)
+    )
+    if publication_feedback_state.get("candidates"):
+        candidate = publication_feedback_state["candidates"][0]
+        reserved = publication_feedback_reserve(
+            argparse.Namespace(
+                ledger=args.ledger,
+                thread_id=candidate["threadId"],
+                pr_url=candidate["prUrl"],
+            )
+        )
+        delivered = publication_feedback_deliver(
+            argparse.Namespace(
+                ledger=args.ledger,
+                thread_id=candidate["threadId"],
+                reservation_nonce=reserved["reservationNonce"],
+            )
+        )
+        return {
+            "ok": bool(delivered.get("ok")),
+            "action": "publication_feedback_dispatched",
+            "key": candidate.get("key"),
+            "threadId": candidate.get("threadId"),
+            "prUrl": candidate.get("prUrl"),
+            "delivery": delivered,
+            "restored": restored_items,
+            "rearmed": rearmed,
+            "recoveryRetryExhausted": recovery_exhausted,
+        }
+
     pr_state = pr_followup_list(argparse.Namespace(ledger=args.ledger))
     deferred_followups: list[dict[str, Any]] = []
     for candidate in pr_state.get("candidates") or []:
@@ -8077,6 +8470,22 @@ def main() -> int:
     subparsers.add_parser("restore-reconcile")
     subparsers.add_parser("context-recover")
     subparsers.add_parser("context-sync")
+    subparsers.add_parser("publication-feedback-list")
+    publication_feedback_reserve_parser = subparsers.add_parser(
+        "publication-feedback-reserve"
+    )
+    publication_feedback_reserve_parser.add_argument("--thread-id", required=True)
+    publication_feedback_reserve_parser.add_argument("--pr-url", required=True)
+    publication_feedback_deliver_parser = subparsers.add_parser(
+        "publication-feedback-deliver"
+    )
+    publication_feedback_deliver_parser.add_argument("--thread-id", required=True)
+    publication_feedback_deliver_parser.add_argument("--reservation-nonce", required=True)
+    publication_feedback_commit_parser = subparsers.add_parser(
+        "publication-feedback-commit"
+    )
+    publication_feedback_commit_parser.add_argument("--thread-id", required=True)
+    publication_feedback_commit_parser.add_argument("--reservation-nonce", required=True)
     pr_followup_list_parser = subparsers.add_parser("pr-followup-list")
     pr_followup_list_parser.add_argument(
         "--min-age-minutes",
@@ -8163,7 +8572,12 @@ def main() -> int:
     task_turn_worker_parser.add_argument(
         "--delivery-kind",
         required=True,
-        choices=("pr-followup", "validation-followup", "recovery"),
+        choices=(
+            "pr-followup",
+            "validation-followup",
+            "publication-feedback",
+            "recovery",
+        ),
     )
     task_turn_worker_parser.add_argument("--thread-id", required=True)
     task_turn_worker_parser.add_argument("--delivery-token", required=True)
@@ -8239,6 +8653,14 @@ def main() -> int:
         result = recover_task_contexts(args)
     elif args.operation == "context-sync":
         result = sync_task_contexts(args)
+    elif args.operation == "publication-feedback-list":
+        result = publication_feedback_list(args)
+    elif args.operation == "publication-feedback-reserve":
+        result = publication_feedback_reserve(args)
+    elif args.operation == "publication-feedback-deliver":
+        result = publication_feedback_deliver(args)
+    elif args.operation == "publication-feedback-commit":
+        result = publication_feedback_commit(args)
     elif args.operation == "pr-followup-list":
         result = pr_followup_list(args)
     elif args.operation == "pr-followup-reserve":

@@ -5554,6 +5554,304 @@ class RadarLedger:
                     connection, request=request, pr_url=pr_url, now=now
                 )
 
+    def publication_feedback_candidates(self) -> list[dict[str, Any]]:
+        """Return published tasks whose visible task reply does not yet reflect the PR."""
+
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT o.key,o.issue_url,i.thread_id,i.worktree_path,
+                          COALESCE(
+                            json_extract(opened.payload_json,'$.prUrl'),opened.dedupe_key
+                          ) AS pr_url,opened.created_at AS published_at
+                   FROM opportunities o
+                   JOIN intents i ON i.intent_id=(
+                     SELECT i2.intent_id FROM intents i2
+                     WHERE i2.opportunity_key=o.key
+                       AND i2.thread_id IS NOT NULL AND i2.worktree_path IS NOT NULL
+                     ORDER BY i2.updated_at DESC,i2.intent_id DESC LIMIT 1
+                   )
+                   JOIN events opened ON opened.id=(
+                     SELECT MAX(e.id) FROM events e
+                     WHERE e.opportunity_key=o.key AND e.event_type='PR_OPEN'
+                   )
+                   WHERE o.stage IN ('PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED')
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events sent
+                       WHERE sent.opportunity_key=o.key
+                         AND sent.event_type='THREAD_PUBLICATION_STATUS_SENT'
+                         AND sent.dedupe_key=COALESCE(
+                           json_extract(opened.payload_json,'$.prUrl'),opened.dedupe_key
+                         )
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events reserved
+                       WHERE reserved.opportunity_key=o.key
+                         AND reserved.event_type='THREAD_PUBLICATION_STATUS_RESERVED'
+                         AND json_extract(reserved.payload_json,'$.prUrl')=COALESCE(
+                           json_extract(opened.payload_json,'$.prUrl'),opened.dedupe_key
+                         )
+                         AND NOT EXISTS (
+                           SELECT 1 FROM events abandoned
+                           WHERE abandoned.opportunity_key=o.key
+                             AND abandoned.event_type='THREAD_PUBLICATION_STATUS_ABANDONED'
+                             AND abandoned.dedupe_key=reserved.dedupe_key
+                         )
+                     )
+                   ORDER BY opened.created_at"""
+            ).fetchall()
+        return [
+            {
+                "key": row["key"],
+                "issueUrl": row["issue_url"],
+                "threadId": row["thread_id"],
+                "worktreePath": row["worktree_path"],
+                "prUrl": row["pr_url"],
+                "publishedAt": row["published_at"],
+            }
+            for row in rows
+        ]
+
+    def unresolved_publication_feedback(self) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT o.key,o.issue_url,i.thread_id,i.worktree_path,
+                          json_extract(reserved.payload_json,'$.prUrl') AS pr_url,
+                          reserved.dedupe_key AS reservation_nonce,
+                          reserved.created_at AS reserved_at
+                   FROM opportunities o
+                   JOIN intents i ON i.intent_id=(
+                     SELECT i2.intent_id FROM intents i2
+                     WHERE i2.opportunity_key=o.key
+                       AND i2.thread_id IS NOT NULL AND i2.worktree_path IS NOT NULL
+                     ORDER BY i2.updated_at DESC,i2.intent_id DESC LIMIT 1
+                   )
+                   JOIN events reserved ON reserved.opportunity_key=o.key
+                     AND reserved.event_type='THREAD_PUBLICATION_STATUS_RESERVED'
+                   WHERE NOT EXISTS (
+                     SELECT 1 FROM events sent
+                     WHERE sent.opportunity_key=o.key
+                       AND sent.event_type='THREAD_PUBLICATION_STATUS_SENT'
+                       AND sent.dedupe_key=json_extract(reserved.payload_json,'$.prUrl')
+                   )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events abandoned
+                       WHERE abandoned.opportunity_key=o.key
+                         AND abandoned.event_type='THREAD_PUBLICATION_STATUS_ABANDONED'
+                         AND abandoned.dedupe_key=reserved.dedupe_key
+                   )
+                   ORDER BY reserved.created_at"""
+            ).fetchall()
+        return [
+            {
+                "key": row["key"],
+                "issueUrl": row["issue_url"],
+                "threadId": row["thread_id"],
+                "worktreePath": row["worktree_path"],
+                "prUrl": row["pr_url"],
+                "reservationNonce": row["reservation_nonce"],
+                "reservedAt": row["reserved_at"],
+            }
+            for row in rows
+        ]
+
+    def reserve_publication_feedback(self, *, thread_id: str, pr_url: str) -> dict[str, Any]:
+        now = iso_z(datetime.now(UTC))
+        nonce = sha256_text(
+            f"{thread_id}|{pr_url}|{now}|{secrets.token_hex(16)}"
+        )
+        with self.transaction() as connection:
+            row = connection.execute(
+                """SELECT o.key,o.issue_url,i.thread_id,i.worktree_path,
+                          opened.created_at AS published_at
+                   FROM opportunities o
+                   JOIN intents i ON i.intent_id=(
+                     SELECT i2.intent_id FROM intents i2
+                     WHERE i2.opportunity_key=o.key
+                       AND i2.thread_id=? AND i2.worktree_path IS NOT NULL
+                     ORDER BY i2.updated_at DESC,i2.intent_id DESC LIMIT 1
+                   )
+                   JOIN events opened ON opened.id=(
+                     SELECT MAX(e.id) FROM events e
+                     WHERE e.opportunity_key=o.key AND e.event_type='PR_OPEN'
+                       AND COALESCE(json_extract(e.payload_json,'$.prUrl'),e.dedupe_key)=?
+                   )
+                   WHERE o.stage IN ('PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED')
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events sent
+                       WHERE sent.opportunity_key=o.key
+                         AND sent.event_type='THREAD_PUBLICATION_STATUS_SENT'
+                         AND sent.dedupe_key=?
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events reserved
+                       WHERE reserved.opportunity_key=o.key
+                         AND reserved.event_type='THREAD_PUBLICATION_STATUS_RESERVED'
+                         AND json_extract(reserved.payload_json,'$.prUrl')=?
+                         AND NOT EXISTS (
+                           SELECT 1 FROM events abandoned
+                           WHERE abandoned.opportunity_key=o.key
+                             AND abandoned.event_type='THREAD_PUBLICATION_STATUS_ABANDONED'
+                             AND abandoned.dedupe_key=reserved.dedupe_key
+                         )
+                     )""",
+                (thread_id, pr_url, pr_url, pr_url),
+            ).fetchone()
+            if row is None:
+                raise LedgerError("publication feedback is stale or already reserved")
+            self._event(
+                connection,
+                row["key"],
+                "THREAD_PUBLICATION_STATUS_RESERVED",
+                nonce,
+                {"threadId": thread_id, "prUrl": pr_url, "reservationNonce": nonce},
+                now,
+            )
+        return {
+            "key": row["key"],
+            "issueUrl": row["issue_url"],
+            "threadId": row["thread_id"],
+            "worktreePath": row["worktree_path"],
+            "prUrl": pr_url,
+            "publishedAt": row["published_at"],
+            "reservationNonce": nonce,
+            "reservedAt": now,
+        }
+
+    def commit_publication_feedback(self, *, thread_id: str, reservation_nonce: str) -> None:
+        now = iso_z(datetime.now(UTC))
+        with self.transaction() as connection:
+            row = connection.execute(
+                """SELECT reserved.opportunity_key,
+                          json_extract(reserved.payload_json,'$.prUrl') AS pr_url
+                   FROM events reserved
+                   JOIN intents i ON i.opportunity_key=reserved.opportunity_key
+                     AND i.thread_id=?
+                   WHERE reserved.event_type='THREAD_PUBLICATION_STATUS_RESERVED'
+                     AND reserved.dedupe_key=?
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events sent
+                       WHERE sent.opportunity_key=reserved.opportunity_key
+                         AND sent.event_type='THREAD_PUBLICATION_STATUS_SENT'
+                         AND sent.dedupe_key=json_extract(reserved.payload_json,'$.prUrl')
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events abandoned
+                       WHERE abandoned.opportunity_key=reserved.opportunity_key
+                         AND abandoned.event_type='THREAD_PUBLICATION_STATUS_ABANDONED'
+                         AND abandoned.dedupe_key=reserved.dedupe_key
+                     )
+                   LIMIT 1""",
+                (thread_id, reservation_nonce),
+            ).fetchone()
+            if row is None:
+                raise LedgerError("publication feedback reservation is unavailable")
+            self._event(
+                connection,
+                row["opportunity_key"],
+                "THREAD_PUBLICATION_STATUS_SENT",
+                row["pr_url"],
+                {
+                    "threadId": thread_id,
+                    "prUrl": row["pr_url"],
+                    "reservationNonce": reservation_nonce,
+                },
+                now,
+            )
+
+    def abandon_publication_feedback(
+        self,
+        *,
+        thread_id: str,
+        reservation_nonce: str,
+        reason: str,
+        min_age_minutes: int = 1,
+    ) -> None:
+        now_dt = datetime.now(UTC)
+        now = iso_z(now_dt)
+        with self.transaction() as connection:
+            row = connection.execute(
+                """SELECT reserved.opportunity_key,reserved.created_at
+                   FROM events reserved
+                   JOIN intents i ON i.opportunity_key=reserved.opportunity_key
+                     AND i.thread_id=?
+                   WHERE reserved.event_type='THREAD_PUBLICATION_STATUS_RESERVED'
+                     AND reserved.dedupe_key=?
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events sent
+                       WHERE sent.opportunity_key=reserved.opportunity_key
+                         AND sent.event_type='THREAD_PUBLICATION_STATUS_SENT'
+                         AND sent.dedupe_key=json_extract(reserved.payload_json,'$.prUrl')
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events abandoned
+                       WHERE abandoned.opportunity_key=reserved.opportunity_key
+                         AND abandoned.event_type='THREAD_PUBLICATION_STATUS_ABANDONED'
+                         AND abandoned.dedupe_key=reserved.dedupe_key
+                     )
+                   LIMIT 1""",
+                (thread_id, reservation_nonce),
+            ).fetchone()
+            if row is None:
+                raise LedgerError("publication feedback reservation is unavailable")
+            if parse_time(str(row["created_at"])) + timedelta(minutes=min_age_minutes) > now_dt:
+                raise LedgerError("publication feedback reservation is too recent to abandon")
+            self._event(
+                connection,
+                row["opportunity_key"],
+                "THREAD_PUBLICATION_STATUS_ABANDONED",
+                reservation_nonce,
+                {
+                    "threadId": thread_id,
+                    "reservationNonce": reservation_nonce,
+                    "reason": reason,
+                },
+                now,
+            )
+
+    def acknowledge_publication_feedback(
+        self,
+        *,
+        thread_id: str,
+        pr_url: str,
+        reason: str | None = None,
+    ) -> None:
+        """Record that the existing final task reply already contains the exact PR URL."""
+        now = iso_z(datetime.now(UTC))
+        with self.transaction() as connection:
+            row = connection.execute(
+                """SELECT opened.opportunity_key
+                   FROM events opened
+                   JOIN intents i ON i.opportunity_key=opened.opportunity_key
+                     AND i.thread_id=?
+                   WHERE opened.event_type='PR_OPEN'
+                     AND COALESCE(
+                       json_extract(opened.payload_json,'$.prUrl'),opened.dedupe_key
+                     )=?
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events sent
+                       WHERE sent.opportunity_key=opened.opportunity_key
+                         AND sent.event_type='THREAD_PUBLICATION_STATUS_SENT'
+                         AND sent.dedupe_key=opened.dedupe_key
+                     )
+                   LIMIT 1""",
+                (thread_id, pr_url),
+            ).fetchone()
+            if row is None:
+                return
+            self._event(
+                connection,
+                row["opportunity_key"],
+                "THREAD_PUBLICATION_STATUS_SENT",
+                pr_url,
+                {
+                    "threadId": thread_id,
+                    "prUrl": pr_url,
+                    "reconciledExistingReply": reason is None,
+                    "reason": reason,
+                },
+                now,
+            )
+
     def succeed_pull_request_effect(
         self,
         *,
