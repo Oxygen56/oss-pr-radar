@@ -6077,6 +6077,13 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 and candidate["stage"] == "FIX_READY"
                 and controller_policy is not None
             )
+            if digest_seen and current_wake_digest and candidate["stage"] == "VALIDATION_PENDING":
+                store.record_followup_result(
+                    candidate["key"],
+                    wake_digest=current_wake_digest,
+                    result_digest=hashlib.sha256(raw).hexdigest(),
+                    stage="VALIDATION_PENDING",
+                )
             if (
                 digest_seen
                 and not policy_followup_exhausted

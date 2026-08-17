@@ -7278,7 +7278,7 @@ def test_controller_rejects_changed_commit_behind_an_old_receipt(tmp_path):
         )
 
 
-def test_ingestion_recovers_seen_complete_pr_followup_parent(tmp_path):
+def test_ingestion_recovers_seen_complete_pr_followup_parent(tmp_path, monkeypatch):
     store, worktree, previous_head, _pr_url = _published_followup_store(tmp_path)
     candidate = store.pr_followup_candidates()[0]
     store.reserve_pr_followup(
@@ -7347,6 +7347,19 @@ def test_ingestion_recovers_seen_complete_pr_followup_parent(tmp_path):
     ]
     assert finalized["previousCommitSha"] == previous_head
     assert finalized["controllerCommitChangedFiles"] == ["test_runtime.py"]
+    assert store.active_task_count() == 0
+
+    with store.connect() as connection:
+        connection.execute(
+            "DELETE FROM events WHERE opportunity_key='a/b#1' "
+            "AND event_type='PR_FOLLOWUP_RESULT_INGESTED'"
+        )
+    assert store.active_task_count() == 1
+    monkeypatch.setattr(MODULE, "controller_review_result", lambda *_args: None)
+
+    repeated = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert repeated["ingested"] == []
     assert store.active_task_count() == 0
 
 
