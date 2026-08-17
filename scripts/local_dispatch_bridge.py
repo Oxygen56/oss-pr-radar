@@ -4124,6 +4124,30 @@ def _validation_publication_changed_files(
     return cumulative
 
 
+def _stable_patch_id(worktree: Path, commit_sha: str) -> str:
+    if not re.fullmatch(r"[0-9a-f]{40}", commit_sha):
+        raise RuntimeError("controller commit receipt is invalid")
+    shown = subprocess.run(
+        ["git", "show", "--pretty=format:", "--binary", commit_sha],
+        cwd=worktree,
+        check=True,
+        capture_output=True,
+        timeout=30,
+    )
+    identified = subprocess.run(
+        ["git", "patch-id", "--stable"],
+        cwd=worktree,
+        input=shown.stdout,
+        check=True,
+        capture_output=True,
+        timeout=30,
+    )
+    parts = identified.stdout.decode("utf-8", errors="strict").split()
+    if not parts or not re.fullmatch(r"[0-9a-f]{40}", parts[0]):
+        raise RuntimeError("controller commit has no stable patch identity")
+    return parts[0]
+
+
 def _finalize_controller_commit(
     *,
     candidate: dict[str, Any],
@@ -4146,8 +4170,6 @@ def _finalize_controller_commit(
         )
         commit_sha = str(value.get("commitSha") or "")
         head_sha = command(["git", "rev-parse", "HEAD"], cwd=worktree)
-        if commit_sha != head_sha:
-            raise RuntimeError("controller commit receipt does not match HEAD")
         actual_commit_files = _validated_changed_files(
             [
                 line
@@ -4158,6 +4180,21 @@ def _finalize_controller_commit(
                 if line
             ]
         )
+        if commit_sha != head_sha:
+            receipt_commit_files = _validated_changed_files(
+                [
+                    line
+                    for line in command(
+                        ["git", "show", "--pretty=format:", "--name-only", commit_sha],
+                        cwd=worktree,
+                    ).splitlines()
+                    if line
+                ]
+            )
+            if receipt_commit_files != actual_commit_files or _stable_patch_id(
+                worktree, commit_sha
+            ) != _stable_patch_id(worktree, head_sha):
+                raise RuntimeError("controller commit receipt does not match HEAD")
         is_validation_continuation = context.get("stage") == "VALIDATION_PENDING" or isinstance(
             context.get("prFollowup"), dict
         )
@@ -4169,9 +4206,10 @@ def _finalize_controller_commit(
             )
             declared_publication_files = _validated_changed_files(value.get("changedFiles"))
             allowed_snapshots = {tuple(actual_commit_files), tuple(publication_changed_files)}
-            if tuple(declared_commit_files) not in allowed_snapshots or tuple(
-                declared_publication_files
-            ) not in allowed_snapshots:
+            if (
+                tuple(declared_commit_files) not in allowed_snapshots
+                or tuple(declared_publication_files) not in allowed_snapshots
+            ):
                 raise RuntimeError("controller commit receipt does not match validation files")
             commit_changed_files = actual_commit_files
         else:
@@ -4182,6 +4220,8 @@ def _finalize_controller_commit(
             if not set(commit_changed_files).issubset(publication_changed_files):
                 raise RuntimeError("controller commit files are missing from publication evidence")
         finalized = dict(value)
+        finalized["commitSha"] = head_sha
+        finalized["branch"] = command(["git", "symbolic-ref", "--short", "HEAD"], cwd=worktree)
         finalized["controllerCommitChangedFiles"] = commit_changed_files
         finalized["changedFiles"] = publication_changed_files
         followup = context.get("prFollowup")

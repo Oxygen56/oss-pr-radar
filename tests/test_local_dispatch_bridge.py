@@ -3117,9 +3117,7 @@ def test_validation_followup_prompt_translates_internal_gaps_for_the_user():
 
 
 def test_pr_followup_prompt_ends_before_controller_work_can_continue():
-    prompt = MODULE._pr_followup_prompt(
-        {"issueUrl": "https://github.com/a/b/issues/1"}
-    )
+    prompt = MODULE._pr_followup_prompt({"issueUrl": "https://github.com/a/b/issues/1"})
 
     assert "不要等待或轮询系统复核、发布" in prompt
     assert "只有在本轮结束后才能继续" in prompt
@@ -4808,6 +4806,46 @@ def test_pr_followup_reserve_binds_controller_verified_conflict_files(tmp_path):
     ]
     assert worktree.is_dir()
     assert store.unresolved_pr_followups()
+
+
+def test_pr_followup_reserve_binds_fast_forwarded_integration_base(tmp_path):
+    store, _worktree, head_sha, pr_url = _published_followup_store(tmp_path)
+    now = iso_z(datetime.now(UTC))
+    store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": now,
+            "items": [
+                {
+                    "url": pr_url,
+                    "headSha": head_sha,
+                    "actionDigest": "base-action",
+                    "taskActionDigest": "base-task-action",
+                    "taskFollowupRequired": True,
+                    "taskActions": ["当前分支需要更新项目主分支"],
+                    "evidence": {
+                        "mergeConflict": False,
+                        "baseIntegrationRequired": True,
+                        "baseRefName": "main",
+                        "baseSha": "a" * 40,
+                    },
+                    "checkedAt": now,
+                }
+            ],
+        }
+    )
+    candidate = store.pr_followup_candidates()[0]
+
+    store.reserve_pr_followup(
+        thread_id="thread-1",
+        wake_digest=candidate["wakeDigest"],
+        prepared_head_sha=head_sha,
+        prepared_base_sha="b" * 40,
+    )
+    context = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+
+    assert context["prFollowup"]["evidence"]["baseAdvancedFromSha"] == "a" * 40
+    assert context["prFollowup"]["evidence"]["baseSha"] == "b" * 40
 
 
 def test_context_sync_recovers_legacy_prepared_followup_binding(tmp_path):
@@ -7081,6 +7119,62 @@ def test_validation_followup_recovers_a_committed_cumulative_file_handoff(tmp_pa
     assert finalized["handoffMode"] == "controller_commit_complete"
     assert finalized["controllerCommitChangedFiles"] == ["replacement.py", "runtime.py"]
     assert finalized["changedFiles"] == ["replacement.py"]
+
+
+def test_controller_accepts_equivalent_rebased_commit_receipt(tmp_path):
+    _store, worktree, result_path = _controller_commit_result(tmp_path)
+    context = json.loads(
+        (worktree / ".oss-pr-radar" / "task-context.json").read_text(encoding="utf-8")
+    )
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    finalized, _raw = MODULE._finalize_controller_commit(
+        candidate={"worktreePath": str(worktree)},
+        context=context,
+        value=value,
+        result_path=result_path,
+    )
+    receipt_commit = finalized["commitSha"]
+
+    run_git(worktree, "commit", "--amend", "-m", "fix: preserve rebased runtime boundary")
+    rebased_commit = run_git(worktree, "rev-parse", "HEAD")
+    assert rebased_commit != receipt_commit
+
+    normalized, _raw = MODULE._finalize_controller_commit(
+        candidate={"worktreePath": str(worktree)},
+        context=context,
+        value=finalized,
+        result_path=result_path,
+    )
+
+    assert normalized["commitSha"] == rebased_commit
+    assert normalized["controllerCommitChangedFiles"] == ["runtime.py"]
+    assert normalized["changedFiles"] == ["runtime.py"]
+
+
+def test_controller_rejects_changed_commit_behind_an_old_receipt(tmp_path):
+    _store, worktree, result_path = _controller_commit_result(tmp_path)
+    context = json.loads(
+        (worktree / ".oss-pr-radar" / "task-context.json").read_text(encoding="utf-8")
+    )
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    finalized, _raw = MODULE._finalize_controller_commit(
+        candidate={"worktreePath": str(worktree)},
+        context=context,
+        value=value,
+        result_path=result_path,
+    )
+
+    (worktree / "runtime.py").write_text("value = 3\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "--amend", "-m", "fix: change runtime behavior")
+
+    with pytest.raises(RuntimeError, match="controller commit receipt does not match HEAD"):
+        MODULE._finalize_controller_commit(
+            candidate={"worktreePath": str(worktree)},
+            context=context,
+            value=finalized,
+            result_path=result_path,
+        )
 
 
 def test_ingestion_recovers_seen_complete_pr_followup_parent(tmp_path):

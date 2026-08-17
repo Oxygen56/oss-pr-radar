@@ -4301,10 +4301,7 @@ class RadarLedger:
             except json.JSONDecodeError:
                 return False
             detail = str(failure.get("detail") or "")
-            if (
-                failure.get("reason") != "LIVE_RECHECK_FAILED"
-                or detail not in transient_reasons
-            ):
+            if failure.get("reason") != "LIVE_RECHECK_FAILED" or detail not in transient_reasons:
                 return False
             connection.execute(
                 "DELETE FROM publication_effects WHERE effect_id=?",
@@ -4933,7 +4930,11 @@ class RadarLedger:
                 raise LedgerError("PR follow-up prepared base is invalid")
             evidence = dict(candidate["evidence"])
             original_base_sha = str(evidence.get("baseSha") or "")
-            if evidence.get("mergeConflict") is not True:
+            accepts_fast_forwarded_base = (
+                evidence.get("mergeConflict") is True
+                or evidence.get("baseIntegrationRequired") is True
+            )
+            if not accepts_fast_forwarded_base:
                 if prepared_base_sha != original_base_sha:
                     raise LedgerError("PR follow-up prepared base changed unexpectedly")
             elif prepared_base_sha != original_base_sha:
