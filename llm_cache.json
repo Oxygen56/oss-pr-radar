@@ -13298,6 +13298,37 @@
     ],
     "why": "The issue reports a reproducible hang with tokenizer-worker-num 2 and provides a clear A/B comparison, but the root cause is only hypothesized (routing of AbortReq responses). The deterministic gate requires HUMAN_REVIEW, and open PR/related issue lookups failed, so duplicate work cannot be excluded. The track is llm_algorithm but the bug is operational (request routing) rather than an algorithm mechanism; no concrete training objective or numerical method is involved."
   },
+  "671bd8feff80b5972892681eefb5f0dc2e1696d097525594af14c26edb297f60": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims latest main includes fixes #48425, #49499, #49502, #50344, but maintainer suggests PR #51358 may be needed"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix MooncakeStoreConnector/MultiConnector hybrid cache state reconciliation for Kimi-K3",
+      "Ensure KDA recurrent state and attention KV correspond to same token boundary on external cache hits"
+    ],
+    "risks": [
+      "Root cause may be in upstream PR #51358 or other recent fixes; duplicate effort",
+      "Floating-point or random variation could confound corruption detection"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "test_plan": [
+      "Reproduce with provided A/B configuration and sustained concurrent traffic",
+      "Verify fix with PR #51358 or new patch; run numerical regression comparing outputs with and without Mooncake"
+    ],
+    "unknowns": [
+      "Whether PR #51358 resolves the issue",
+      "Exact root cause and code path responsible for state mismatch"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "The issue provides a clear A/B reproduction and identifies a plausible invariant violation in hybrid cache state reconciliation, but lacks a confirmed root cause and maintainer approval. The suggested PR #51358 may already address the issue, requiring verification before new work."
+  },
   "6764cb66725f476268731538f36a6518989c4ca40f3498fb6827fda07103cf40": {
     "confidence": 0.7,
     "contradictions": [],
@@ -16018,6 +16049,36 @@
       "Whether PR #36292 actually resolves the issue for gemini-3.5-flash"
     ],
     "why": "Issue reports a concrete bug with a clear repro and plausible root cause (Gemini 3.5 API change). Existing PR #36292 overlaps semantically but is not linked to the issue and may not fully address the root cause. A new PR that directly fixes the mapping and adds a regression test could be materially better."
+  },
+  "79ed7d67199ec28efaf241e85952f821075d837fc9d5ffcc1b0c6a57929a7cd8": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify provider.ts to select sdk.deepseek() for Azure DeepSeek models",
+      "Add regression tests for reasoningEffort variants"
+    ],
+    "risks": [
+      "Potential overlap with closed PR #29775",
+      "Behavior change may affect non-DeepSeek Azure deployments"
+    ],
+    "root_cause_clarity": "high",
+    "score": 12,
+    "test_plan": [
+      "Reproduce with provided steps and assert failure",
+      "Add unit test verifying adapter selection for DeepSeek models",
+      "Run existing provider tests"
+    ],
+    "unknowns": [
+      "Maintainer intent regarding closed PR #29775",
+      "Whether the closed PR's approach is considered acceptable"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue clearly identifies a bug in Azure provider adapter selection with a concrete root cause and reproduction steps. However, an existing PR (#29775) directly addresses the same routing problem but was closed unmerged, and the issue itself references it. The candidate's value depends on whether the maintainers intend to reopen or supersede that PR, requiring maintainer review."
   },
   "7a433a046ec698544ac5a0b3645938c74f695c63b0b3d94a5fee9331c3c00fd6": {
     "confidence": 0.85,
@@ -23066,6 +23127,37 @@
       "Whether maintainers have already assigned or are investigating (no maintainer activity signals)"
     ],
     "why": "Issue identifies a deterministic compile failure in FA4 SM100 split-KV kernels with a clear root cause and a minimal repro. However, the deterministic gate is HUMAN_REVIEW, and the open PR and related issue lookups timed out, so duplicate work cannot be excluded. The suggested fix (bump DSL pin) is a dependency change, not an algorithm change, and the kernel fix is in a separate repo (vllm-flash-attn), requiring maintainer coordination."
+  },
+  "b8c62deb26639f53e9023549b26a80e469d2fcb2d168c4590987156fdcac19d3": {
+    "confidence": 0.7,
+    "contradictions": [
+      "PR #7656 has semantic overlap but does not reference the issue; issue is under active investigation by contributor atty57."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "python/packages/core/agent_framework/_mcp.py",
+      "python/packages/core/tests/core/test_mcp_http_auth_error_surface.py"
+    ],
+    "risks": [
+      "Existing PR #7656 may already fix the root cause; need to compare implementation boundaries.",
+      "Potential API behavior changes if error handling is broadened."
+    ],
+    "root_cause_clarity": "high",
+    "score": 14,
+    "test_plan": [
+      "Add failing test that mocks session.initialize to raise CancelledError and asserts ToolException includes HTTP 401 status.",
+      "Run targeted unit tests for MCP HTTP auth error surface."
+    ],
+    "unknowns": [
+      "Whether PR #7656 actually addresses the 401 error surfacing or only ping error handling.",
+      "Maintainer's preferred design for error propagation."
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue is a well-reproduced bug with clear root cause and suggested fix, but PR #7656 overlaps in code paths and semantics, requiring manual comparison to avoid duplicate work. Maintainer has not approved or confirmed design, and the issue is under active investigation by a contributor."
   },
   "b8fa56b900fcce5f52f773e3686fffd6e998e62cdf3b7abe28f53f985f90d25d": {
     "confidence": 0.85,
