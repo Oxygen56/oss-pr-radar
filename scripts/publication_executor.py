@@ -290,6 +290,35 @@ def begin_effect(
     return effect, "new"
 
 
+def retryable_pr_creation_failure(effect: dict[str, Any]) -> bool:
+    """Return whether an absent PR may be retried after a transient API failure."""
+
+    try:
+        result = json.loads(str(effect.get("result_json") or "{}"))
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(result, dict) or result.get("reason") not in {
+        "PR_CREATION_NOT_RECONCILED",
+        "PR_RECONCILIATION_FAILED",
+    }:
+        return False
+    detail = str(result.get("detail") or "").casefold()
+    return any(
+        marker in detail
+        for marker in (
+            "http 502",
+            "http 503",
+            "http 504",
+            "bad gateway",
+            "connection reset",
+            "connection timed out",
+            "no server is currently available",
+            "service unavailable",
+            "temporarily unavailable",
+        )
+    )
+
+
 def push(args: argparse.Namespace, store: RadarLedger) -> dict[str, Any]:
     worktree = Path(args.worktree).resolve()
     if not public_branch_is_safe(args.branch):
@@ -532,10 +561,17 @@ def create_pr(args: argparse.Namespace, store: RadarLedger) -> dict[str, Any]:
                 effect["effect_id"], status="RECONCILE_REQUIRED", result=result
             )
             raise
-    if state == "reconcile_only" and not found:
+    retry_create = bool(
+        state == "reconcile_only"
+        and not found
+        and permit["status"] == "ACTIVE"
+        and effect is not None
+        and retryable_pr_creation_failure(effect)
+    )
+    if state == "reconcile_only" and not found and not retry_create:
         raise RuntimeError("previous PR creation attempt is not visible for the exact head branch")
     proc = None
-    if not found:
+    if not found and (state == "new" or retry_create):
         proc = run(
             [
                 "gh",

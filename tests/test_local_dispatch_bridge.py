@@ -3135,9 +3135,8 @@ def test_recovery_delivery_preserves_validation_followup_prompt():
     )
 
     assert prompt == MODULE.VALIDATION_RECOVERY_PROMPT
-    assert "GitHub 上还没有 PR" in prompt
-    assert "任务仍在处理中" in prompt
-    assert "禁止用" in prompt
+    assert "正在处理，暂未创建 PR" in prompt
+    assert "修改已完成，正在创建 PR" in prompt
     assert "不要等待或轮询系统复核、发布" in prompt
     assert "只有在本轮结束后才能继续" in prompt
 
@@ -3153,23 +3152,23 @@ def test_validation_followup_prompt_translates_internal_gaps_for_the_user():
     assert "和这次修改直接相关的检查还没全部通过" in prompt
     assert "还需确认这次修改不会引入新问题" in prompt
     assert MODULE.VALIDATION_POLICY_REVISION in prompt
-    assert "第一句必须严格二选一" in prompt
-    assert "固定使用‘问题’‘进展’‘还差’‘你’" in prompt
+    assert "第一句按真实状态选择" in prompt
+    assert "固定使用‘这次在修’‘当前状态’‘下一步’" in prompt
     assert "一句不超过三十个汉字的大白话" in prompt
     assert "不能复述 issue 标题" in prompt
-    assert "已有 PR 后也必须使用这四项" in prompt
-    assert "不要写‘为什么还没发布’" in prompt
+    assert "只有拿到准确链接后才能写" in prompt
+    assert "不能只写‘继续处理’" in prompt
     assert "等待维护者启动完整检查" in prompt
     assert "发现一处可能引发错误执行的风险，正在修正" in prompt
     assert "项目的在线检查会继续完成" in prompt
     assert "不要罗列测试名称、测试数量、工具名称或构建产物" in prompt
-    assert "整轮最多发送两次中间进度" in prompt
+    assert "整轮默认不发送中间进度" in prompt
     assert "不要直播排查步骤、猜测、尝试过的方案" in prompt
     assert "最终回复只回答五件事" in prompt
     assert "不重复播报未变状态" in prompt
     assert "不要在用户可见回复中提技能名" in prompt
     assert "不得描述成代码测试失败" in prompt
-    assert "你：无需操作" in prompt
+    assert "你无需操作" in prompt
     assert "不要等待或轮询系统复核、发布" in prompt
     assert "写完有效结果后立即给出最终回复并结束本轮" in prompt
     assert "relevant_tests_green" not in prompt
@@ -8939,9 +8938,9 @@ def test_publication_feedback_prompt_reuses_plain_problem_and_requires_exact_rep
                 "payload": {
                     "type": "agent_message",
                     "message": (
-                        "GitHub 上还没有 PR。\n\n"
-                        "- 问题：会把逐条命令合并，导致执行失败。\n"
-                        "- 进展：修复已完成。"
+                        "修改已完成，正在创建 PR。\n\n"
+                        "这次在修：会把逐条命令合并，导致执行失败。\n"
+                        "当前状态：本地检查已通过。"
                     ),
                 },
             },
@@ -8954,7 +8953,7 @@ def test_publication_feedback_prompt_reuses_plain_problem_and_requires_exact_rep
     previous = MODULE.latest_agent_message(str(rollout))
     prompt = MODULE.publication_feedback_prompt(pr_url=pr_url, previous_message=previous)
 
-    assert "- 问题：会把逐条命令合并，导致执行失败。" in prompt
+    assert "这次修复：会把逐条命令合并，导致执行失败。" in prompt
     assert f"PR 已创建：{pr_url}" in prompt
     assert MODULE.publication_feedback_materialized(str(rollout), pr_url) is False
     with rollout.open("a", encoding="utf-8") as handle:
@@ -8965,7 +8964,7 @@ def test_publication_feedback_prompt_reuses_plain_problem_and_requires_exact_rep
                     "type": "event_msg",
                     "payload": {
                         "type": "agent_message",
-                        "message": f"PR 已创建：{pr_url}\n\n- 你：无需操作。",
+                        "message": f"PR 已创建：{pr_url}\n\n你无需操作。",
                     },
                 },
                 ensure_ascii=False,
@@ -8983,7 +8982,7 @@ def test_publication_feedback_list_reconciles_an_existing_visible_reply(monkeypa
                 "type": "event_msg",
                 "payload": {
                     "type": "agent_message",
-                    "message": f"PR 已创建：{pr_url}\n\n- 你：无需操作。",
+                    "message": f"PR 已创建：{pr_url}\n\n你无需操作。",
                 },
             },
             ensure_ascii=False,

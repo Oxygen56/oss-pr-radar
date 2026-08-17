@@ -16,18 +16,21 @@ SPEC.loader.exec_module(MODULE)
 
 
 class ReconcileStore:
-    def __init__(self, *, effect_status="RECONCILE_REQUIRED"):
+    def __init__(self, *, effect_status="RECONCILE_REQUIRED", effect_result=None):
         self.succeeded = []
+        self.completed = []
         self.effect_status = effect_status
+        self.effect_result = effect_result or {
+            "ok": True,
+            "prUrl": "https://github.com/example/project/pull/2",
+        }
 
     def publication_effect(self, **_kwargs):
         return {
             "created": False,
             "effect_id": "effect-1",
             "status": self.effect_status,
-            "result_json": json.dumps(
-                {"ok": True, "prUrl": "https://github.com/example/project/pull/2"}
-            ),
+            "result_json": json.dumps(self.effect_result),
         }
 
     def publication_effect_by_request(self, **kwargs):
@@ -35,6 +38,9 @@ class ReconcileStore:
 
     def succeed_pull_request_effect(self, **kwargs):
         self.succeeded.append(kwargs)
+
+    def complete_publication_effect(self, effect_id, *, status, result):
+        self.completed.append((effect_id, status, result))
 
 
 class ActiveStore:
@@ -151,6 +157,73 @@ def test_create_pr_keeps_ambiguous_attempt_when_remote_result_is_still_missing(
         MODULE.create_pr(args, store)
 
     assert store.succeeded == []
+
+
+def test_create_pr_retries_transient_503_after_exact_head_is_still_absent(
+    monkeypatch, tmp_path
+):
+    args = pr_args(tmp_path)
+    store = ReconcileStore(
+        effect_result={
+            "ok": False,
+            "reason": "PR_CREATION_NOT_RECONCILED",
+            "detail": "HTTP 503: No server is currently available",
+        }
+    )
+    configure_permit(monkeypatch, args)
+    monkeypatch.setattr(
+        MODULE,
+        "ensure_permit",
+        lambda *_args, **_kwargs: {"status": "ACTIVE", "request_id": "request-1"},
+    )
+    found = iter(
+        [
+            None,
+            {
+                "url": "https://github.com/example/project/pull/2",
+                "state": "OPEN",
+                "headRefOid": args.commit_sha,
+            },
+        ]
+    )
+    monkeypatch.setattr(MODULE, "existing_pr", lambda *_args: next(found))
+    calls = []
+
+    def fake_run(command, **_kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(MODULE, "run", fake_run)
+
+    result = MODULE.create_pr(args, store)
+
+    assert result["ok"] is True
+    assert result["prUrl"] == "https://github.com/example/project/pull/2"
+    assert len(calls) == 1
+    assert calls[0][:3] == ["gh", "pr", "create"]
+
+
+def test_create_pr_does_not_retry_transient_failure_with_inactive_permit(
+    monkeypatch, tmp_path
+):
+    args = pr_args(tmp_path)
+    store = ReconcileStore(
+        effect_result={
+            "ok": False,
+            "reason": "PR_CREATION_NOT_RECONCILED",
+            "detail": "HTTP 503: No server is currently available",
+        }
+    )
+    configure_permit(monkeypatch, args)
+    monkeypatch.setattr(MODULE, "existing_pr", lambda *_args: None)
+    monkeypatch.setattr(
+        MODULE,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail("an inactive permit cannot retry publication"),
+    )
+
+    with pytest.raises(RuntimeError, match="not visible"):
+        MODULE.create_pr(args, store)
 
 
 def test_create_pr_replays_consumed_success_without_remote_lookup(monkeypatch, tmp_path):
