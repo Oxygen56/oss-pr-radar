@@ -5369,9 +5369,15 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
         try:
             worktree = Path(blocked["worktreePath"]).resolve()
             dirty_files = _local_changed_files(worktree) if worktree.is_dir() else []
+            value = read_json(_task_result_path(blocked), missing={})
+            review = controller_review_result(ROOT, value) if isinstance(value, dict) else None
+            verdict = str(review.get("verdict") or "") if review else ""
             if dirty_files:
                 reason = "WORKTREE_PROGRESS_PENDING_RESULT"
                 review_marker = sha256_json({"dirtyFiles": dirty_files})
+            elif verdict in {"FAIL", "HOLD"}:
+                reason = "CONTROLLER_REVIEW_FEEDBACK_AVAILABLE"
+                review_marker = sha256_json(review)
             else:
                 prefetch_commands: list[dict[str, Any]] = []
                 dependency_failures: list[dict[str, Any]] = []
@@ -5424,17 +5430,7 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
                         else:
                             continue
                     else:
-                        value = read_json(_task_result_path(blocked), missing={})
-                        review = (
-                            controller_review_result(ROOT, value)
-                            if isinstance(value, dict)
-                            else None
-                        )
-                        verdict = str(review.get("verdict") or "") if review else ""
-                        if verdict in {"FAIL", "HOLD"}:
-                            reason = "CONTROLLER_REVIEW_FEEDBACK_AVAILABLE"
-                            review_marker = sha256_json(review)
-                        elif _validation_policy_reassessment_needed(blocked):
+                        if _validation_policy_reassessment_needed(blocked):
                             reason = "VALIDATION_POLICY_UPDATE_AVAILABLE"
                             review_marker = VALIDATION_POLICY_REVISION
                         elif missing != {"independent_review_passed"}:
@@ -5509,6 +5505,16 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
             } and not _local_changed_files(worktree):
                 value = read_json(_task_result_path(candidate), missing={})
                 review = controller_review_result(ROOT, value) if isinstance(value, dict) else None
+                if review and review.get("verdict") in {"FAIL", "HOLD"}:
+                    candidates.append(
+                        candidate
+                        | {
+                            "prefetchRequired": False,
+                            "prefetchMode": "none",
+                            "nextOperation": "validation-followup-reserve",
+                        }
+                    )
+                    continue
                 if not review or review.get("verdict") == "PASS":
                     controller_review_pending.append(
                         candidate
@@ -7556,6 +7562,24 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
             "key": candidate.get("key"),
             "threadId": candidate.get("threadId"),
             "delivery": delivered,
+            "deferredFollowups": deferred_followups,
+            "restored": restored_items,
+            "rearmed": rearmed,
+            "recoveryRetryExhausted": recovery_exhausted,
+        }
+
+    if deferred_followups:
+        return {
+            "ok": True,
+            "action": "none",
+            "terminalized": [],
+            "held": [
+                {
+                    "key": item.get("key"),
+                    "reason": "higher_priority_followup_refresh_required",
+                }
+                for item in deferred_followups
+            ],
             "deferredFollowups": deferred_followups,
             "restored": restored_items,
             "rearmed": rearmed,

@@ -208,7 +208,7 @@ def test_event_drain_lock_suppresses_overlapping_trigger(tmp_path):
     assert result == {"ok": True, "busy": True, "action": "drain_already_running"}
 
 
-def test_event_drain_skips_stale_pr_snapshot_and_continues_to_new_issue(monkeypatch, tmp_path):
+def test_event_drain_holds_new_issue_when_pr_snapshot_needs_refresh(monkeypatch, tmp_path):
     monkeypatch.setattr(
         MODULE, "restore_reconcile", lambda _args: {"ok": True, "restored": [], "errors": []}
     )
@@ -229,24 +229,7 @@ def test_event_drain_skips_stale_pr_snapshot_and_continues_to_new_issue(monkeypa
     monkeypatch.setattr(
         MODULE,
         "list_pending",
-        lambda _path: {"pending": [{"intentId": "intent-2", "key": "a/b#2"}]},
-    )
-    monkeypatch.setattr(
-        MODULE,
-        "claim_intent",
-        lambda _args: {
-            "authorized": True,
-            "claimed": True,
-            "sourceRepoPath": "/tmp/source",
-            "worktreePath": "/tmp/worktree",
-            "titleTime": "08-15 03:00",
-        },
-    )
-    monkeypatch.setattr(MODULE, "creation_start", lambda _args: {"creationToken": "token-2"})
-    monkeypatch.setattr(
-        MODULE,
-        "root_task_create",
-        lambda _args: {"threadId": "new-thread", "turnId": "new-turn"},
+        lambda _path: pytest.fail("new issues must wait for the higher-priority PR refresh"),
     )
 
     result = MODULE.drain_once(
@@ -255,9 +238,11 @@ def test_event_drain_skips_stale_pr_snapshot_and_continues_to_new_issue(monkeypa
         )
     )
 
-    assert result["action"] == "issue_task_dispatched"
-    assert result["threadId"] == "new-thread"
+    assert result["action"] == "none"
     assert result["deferredFollowups"] == [{"key": "a/b#1", "reason": "live_snapshot_changed"}]
+    assert result["held"] == [
+        {"key": "a/b#1", "reason": "higher_priority_followup_refresh_required"}
+    ]
 
 
 def test_event_drain_treats_validation_wip_race_as_a_normal_deferral(monkeypatch, tmp_path):
@@ -5505,7 +5490,16 @@ def test_child_cannot_self_attest_independent_review(monkeypatch, tmp_path):
 
 
 def test_failed_controller_review_remains_an_actionable_followup(monkeypatch, tmp_path):
-    _store, _worktree, _result_path = _controller_commit_result(tmp_path)
+    _store, _worktree, result_path = _controller_commit_result(tmp_path)
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value["tests"] = [
+        {
+            "command": "pnpm test",
+            "exitCode": 127,
+            "summary": "node_modules unavailable in the locked environment",
+        }
+    ]
+    result_path.write_text(json.dumps(value), encoding="utf-8")
     review = {
         "verdict": "FAIL",
         "summary": "The integration path still forwards the stale payload.",
@@ -5527,6 +5521,7 @@ def test_failed_controller_review_remains_an_actionable_followup(monkeypatch, tm
     assert ingested["validationDeferred"][0]["missing"] == ["independent_review_passed"]
     assert listed["controllerReviewPending"] == []
     assert listed["candidates"][0]["missing"] == ["independent_review_passed"]
+    assert listed["environmentBlocked"] == []
 
 
 def test_existing_fix_ready_result_accepts_later_controller_review(monkeypatch, tmp_path):
