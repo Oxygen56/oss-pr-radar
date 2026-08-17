@@ -7197,6 +7197,45 @@ def test_validation_followup_uses_cumulative_files_for_first_publication(tmp_pat
     )
 
 
+def test_validation_followup_accepts_cumulative_files_with_local_correction(tmp_path):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        missing_quality=("regression_test_verified", "relevant_tests_green"),
+    )
+    MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    context = json.loads(context_path.read_text(encoding="utf-8"))
+    (worktree / "test_runtime.py").write_text(
+        "def test_runtime():\n    assert True\n", encoding="utf-8"
+    )
+    followup = json.loads(result_path.read_text(encoding="utf-8"))
+    followup.update(
+        {
+            "contextDigest": context["contextDigest"],
+            "handoffMode": "controller_commit_required",
+            "commitSha": None,
+            "commitMessage": "test: cover runtime boundary",
+            "changedFiles": ["runtime.py", "test_runtime.py"],
+            "quality": {field: True for field in QUALITY_FIELDS},
+        }
+    )
+    followup.pop("controllerCommitChangedFiles", None)
+    result_path.write_text(json.dumps(followup), encoding="utf-8")
+
+    advanced = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert advanced["ok"] is True
+    assert advanced["ingested"] == [{"key": "a/b#1", "stage": "FIX_READY"}]
+    finalized = json.loads(result_path.read_text(encoding="utf-8"))
+    assert finalized["controllerCommitChangedFiles"] == ["test_runtime.py"]
+    assert finalized["changedFiles"] == ["runtime.py", "test_runtime.py"]
+
+
 def test_validation_followup_normalizes_existing_complete_handoff(tmp_path, monkeypatch):
     store, worktree, result_path = _controller_commit_result(
         tmp_path,

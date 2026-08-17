@@ -4136,6 +4136,39 @@ def _validation_publication_changed_files(
     return cumulative
 
 
+def _prospective_validation_changed_files(*, worktree: Path, context: dict[str, Any]) -> list[str]:
+    """Return the cumulative PR diff including the current uncommitted correction."""
+
+    followup = context.get("prFollowup")
+    if isinstance(followup, dict):
+        base = str(followup.get("headSha") or "")
+        if not re.fullmatch(r"[0-9a-f]{40}", base):
+            raise RuntimeError("PR follow-up lacks the signed previous head")
+    else:
+        if context.get("stage") != "VALIDATION_PENDING":
+            raise RuntimeError("prospective validation diff requires a validation continuation")
+        default_branch = _prepared_default_branch(worktree)
+        if not default_branch:
+            raise RuntimeError("validation continuation lacks a prepared default branch")
+        base = command(
+            ["git", "merge-base", "HEAD", f"refs/remotes/origin/{default_branch}"],
+            cwd=worktree,
+        )
+    tracked = {
+        line
+        for line in command(["git", "diff", "--name-only", base, "--"], cwd=worktree).splitlines()
+        if line
+    }
+    untracked = {
+        line
+        for line in command(
+            ["git", "ls-files", "--others", "--exclude-standard"], cwd=worktree
+        ).splitlines()
+        if line
+    }
+    return _validated_changed_files(sorted(tracked | untracked))
+
+
 def _stable_patch_id(worktree: Path, commit_sha: str) -> str:
     if not re.fullmatch(r"[0-9a-f]{40}", commit_sha):
         raise RuntimeError("controller commit receipt is invalid")
@@ -4265,29 +4298,42 @@ def _finalize_controller_commit(
 
     actual = _local_changed_files(worktree)
     followup = context.get("prFollowup")
+    is_validation_continuation = context.get("stage") == "VALIDATION_PENDING" or isinstance(
+        followup, dict
+    )
     expected_parent = ""
     if isinstance(followup, dict):
         expected_parent = str(followup.get("preparedHeadSha") or followup.get("headSha") or "")
         if not re.fullmatch(r"[0-9a-f]{40}", expected_parent):
             raise RuntimeError("controller commit lacks a valid PR follow-up parent")
     if actual:
+        commit_changed_files = changed_files
         if actual != changed_files:
-            raise RuntimeError(
-                "controller commit changedFiles mismatch: "
-                f"expected={changed_files!r} actual={actual!r}"
-            )
+            if not is_validation_continuation:
+                raise RuntimeError(
+                    "controller commit changedFiles mismatch: "
+                    f"expected={changed_files!r} actual={actual!r}"
+                )
+            prospective = _prospective_validation_changed_files(worktree=worktree, context=context)
+            if prospective != changed_files:
+                raise RuntimeError(
+                    "controller commit cumulative changedFiles mismatch: "
+                    f"expected={changed_files!r} actual={prospective!r}"
+                )
+            commit_changed_files = actual
         _switch_controller_branch(worktree, branch)
         if (
             expected_parent
             and command(["git", "rev-parse", "HEAD"], cwd=worktree) != expected_parent
         ):
             raise RuntimeError("controller commit parent drifted from the prepared PR follow-up")
-        command(["git", "add", "--", *changed_files], cwd=worktree)
+        command(["git", "add", "--", *commit_changed_files], cwd=worktree)
         _require_git_identity(worktree, context, value)
         command(
             _commit_args(context=context, value=value, commit_message=commit_message), cwd=worktree
         )
     else:
+        commit_changed_files = changed_files
         # Recover idempotently if the process stopped after the commit but before
         # rewriting result.json.
         _switch_controller_branch(worktree, branch)
@@ -4309,7 +4355,7 @@ def _finalize_controller_commit(
                 )
                 if cumulative != changed_files:
                     raise RuntimeError("controller commit handoff has no matching local changes")
-                changed_files = committed
+                commit_changed_files = committed
             else:
                 raise RuntimeError("controller commit handoff has no matching local changes")
 
@@ -4323,18 +4369,24 @@ def _finalize_controller_commit(
         ).splitlines()
         if line
     )
-    if committed != changed_files:
+    if committed != commit_changed_files:
         raise RuntimeError("controller commit does not match changedFiles")
 
     finalized = dict(value)
     finalized["commitSha"] = command(["git", "rev-parse", "HEAD"], cwd=worktree)
     finalized["branch"] = command(["git", "symbolic-ref", "--short", "HEAD"], cwd=worktree)
-    finalized["controllerCommitChangedFiles"] = changed_files
-    finalized["changedFiles"] = _validation_publication_changed_files(
+    finalized["controllerCommitChangedFiles"] = commit_changed_files
+    publication_changed_files = _validation_publication_changed_files(
         worktree=worktree,
         context=context,
-        commit_changed_files=changed_files,
+        commit_changed_files=commit_changed_files,
     )
+    if is_validation_continuation and tuple(changed_files) not in {
+        tuple(commit_changed_files),
+        tuple(publication_changed_files),
+    }:
+        raise RuntimeError("controller commit receipt does not match validation files")
+    finalized["changedFiles"] = publication_changed_files
     if expected_parent:
         finalized["previousCommitSha"] = expected_parent
     else:
