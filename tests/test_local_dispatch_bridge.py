@@ -3100,6 +3100,9 @@ def test_validation_followup_prompt_translates_internal_gaps_for_the_user():
     assert MODULE.VALIDATION_POLICY_REVISION in prompt
     assert "第一句必须严格二选一" in prompt
     assert "等待维护者启动完整检查" in prompt
+    assert "发现一处可能引发错误执行的风险，正在修正" in prompt
+    assert "项目的在线检查会继续完成" in prompt
+    assert "不要在用户可见回复中提技能名" in prompt
     assert "不得描述成代码测试失败" in prompt
     assert "你：无需操作" in prompt
     assert "relevant_tests_green" not in prompt
