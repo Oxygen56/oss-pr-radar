@@ -2600,6 +2600,7 @@ class RadarLedger:
         thread_id: str,
         result_digest: str,
         missing: list[str],
+        progress_marker: str | None = None,
     ) -> None:
         """Record a substantive result that needs validation, not task recovery."""
 
@@ -2612,16 +2613,19 @@ class RadarLedger:
             ).fetchone()
             if row is None:
                 raise LedgerError("validation-deferred task is not dispatched")
+            payload: dict[str, Any] = {
+                "threadId": thread_id,
+                "resultDigest": result_digest,
+                "missing": missing,
+            }
+            if progress_marker:
+                payload["progressMarker"] = progress_marker
             self._event(
                 connection,
                 key,
                 "TASK_RESULT_VALIDATION_DEFERRED",
                 result_digest,
-                {
-                    "threadId": thread_id,
-                    "resultDigest": result_digest,
-                    "missing": missing,
-                },
+                payload,
                 iso_z(datetime.now(UTC)),
             )
 
@@ -2631,6 +2635,7 @@ class RadarLedger:
                 thread_id=thread_id,
                 result_digest=result_digest,
                 missing=missing,
+                progress_marker=progress_marker,
             )
 
     def record_validation_prefetch_blocked(
@@ -2719,6 +2724,7 @@ class RadarLedger:
         thread_id: str,
         result_digest: str,
         missing: list[str],
+        progress_marker: str | None = None,
     ) -> bool:
         """Stop repeat continuations when a completed continuation changed no gap."""
 
@@ -2748,6 +2754,10 @@ class RadarLedger:
             != normalized_missing
         ):
             return False
+        previous_progress = str(previous_payload.get("progressMarker") or "")
+        current_progress = str(progress_marker or "")
+        if current_progress and previous_progress != current_progress:
+            return False
         self._event(
             connection,
             key,
@@ -2758,6 +2768,7 @@ class RadarLedger:
                 "resultDigest": result_digest,
                 "previousResultDigest": previous["dedupe_key"],
                 "missing": list(normalized_missing),
+                "progressMarker": current_progress or None,
                 "reason": "UNCHANGED_VALIDATION_GAP",
             },
             iso_z(datetime.now(UTC)),
@@ -2840,6 +2851,7 @@ class RadarLedger:
                     thread_id=str(payload.get("threadId") or ""),
                     result_digest=str(payload.get("resultDigest") or ""),
                     missing=list(payload.get("missing") or []),
+                    progress_marker=str(payload.get("progressMarker") or "") or None,
                 ):
                     marked += 1
         return marked
@@ -3019,6 +3031,7 @@ class RadarLedger:
                     "resultDigest": payload.get("resultDigest"),
                     "previousResultDigest": no_progress.get("previousResultDigest"),
                     "missing": list(no_progress.get("missing") or []),
+                    "progressMarker": no_progress.get("progressMarker"),
                     "reason": no_progress.get("reason"),
                     "blockedAt": row["created_at"],
                 }

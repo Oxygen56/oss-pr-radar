@@ -5509,6 +5509,10 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
             value = read_json(_task_result_path(blocked), missing={})
             review = controller_review_result(ROOT, value) if isinstance(value, dict) else None
             verdict = str(review.get("verdict") or "") if review else ""
+            current_progress_marker = (
+                _validation_progress_marker(value) if isinstance(value, dict) else None
+            )
+            recorded_progress_marker = str(blocked.get("progressMarker") or "")
             if dirty_files:
                 reason = "WORKTREE_PROGRESS_PENDING_RESULT"
                 review_marker = sha256_json({"dirtyFiles": dirty_files})
@@ -5560,7 +5564,13 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
                         continue
                 else:
                     missing = set(blocked.get("missing") or [])
-                    if "independent_review_passed" not in missing:
+                    if (
+                        current_progress_marker
+                        and current_progress_marker != recorded_progress_marker
+                    ):
+                        reason = "VALIDATION_PROGRESS_EVIDENCE_AVAILABLE"
+                        review_marker = current_progress_marker
+                    elif "independent_review_passed" not in missing:
                         if _validation_policy_reassessment_needed(blocked):
                             reason = "VALIDATION_POLICY_UPDATE_AVAILABLE"
                             review_marker = VALIDATION_POLICY_REVISION
@@ -5864,6 +5874,29 @@ def _validation_followup_prompt(candidate: dict[str, Any]) -> str:
         + END_RESULT_TURN_PROMPT
         + PLAIN_LANGUAGE_STATUS_PROMPT
     )
+
+
+def _validation_progress_marker(value: dict[str, Any]) -> str | None:
+    """Fingerprint stable check outcomes so new evidence is not treated as a loop."""
+
+    checks: list[dict[str, Any]] = []
+    for item in value.get("tests") or []:
+        if not isinstance(item, dict):
+            continue
+        command_text = " ".join(str(item.get("command") or "").split())
+        if not command_text:
+            continue
+        check: dict[str, Any] = {"command": command_text}
+        if isinstance(item.get("exitCode"), int):
+            check["exitCode"] = item["exitCode"]
+        for key in ("status", "outcome", "result"):
+            if item.get(key) is not None:
+                check[key] = str(item[key]).strip().casefold()
+        checks.append(check)
+    if not checks:
+        return None
+    checks.sort(key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":")))
+    return sha256_json({"checks": checks})
 
 
 def validation_followup_reserve(args: argparse.Namespace) -> dict[str, Any]:
@@ -6177,6 +6210,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                             thread_id=candidate["threadId"],
                             result_digest=digest,
                             missing=missing,
+                            progress_marker=_validation_progress_marker(value),
                         )
                         store.record_stage(
                             candidate["key"],

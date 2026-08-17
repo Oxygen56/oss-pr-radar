@@ -3509,6 +3509,36 @@ def test_app_server_watchdog_consumes_buffered_terminal_before_select():
     assert result == {"turnId": "turn-1", "status": "interrupted", "error": None}
 
 
+def test_validation_progress_marker_tracks_check_outcomes_not_wording():
+    first = MODULE._validation_progress_marker(
+        {
+            "tests": [
+                {"command": "pnpm  test", "exitCode": 1, "summary": "first wording"},
+                {"command": "pnpm lint", "exitCode": 0},
+            ]
+        }
+    )
+    rewritten = MODULE._validation_progress_marker(
+        {
+            "tests": [
+                {"command": "pnpm lint", "exitCode": 0},
+                {"command": "pnpm test", "exitCode": 1, "summary": "new wording"},
+            ]
+        }
+    )
+    fixed = MODULE._validation_progress_marker(
+        {
+            "tests": [
+                {"command": "pnpm test", "exitCode": 0},
+                {"command": "pnpm lint", "exitCode": 0},
+            ]
+        }
+    )
+
+    assert first == rewritten
+    assert fixed != first
+
+
 def test_app_server_watchdog_polls_on_wall_clock_despite_continuous_events(monkeypatch):
     class FakeStdin:
         def __init__(self):
@@ -6390,6 +6420,39 @@ def test_dirty_worktree_rearms_a_stalled_validation_result(tmp_path):
 
     assert listed["rearmedReviewFeedback"] == [
         {"key": "a/b#1", "reason": "WORKTREE_PROGRESS_PENDING_RESULT"}
+    ]
+    assert listed["blockedNoProgress"] == []
+    assert listed["candidates"][0]["resultDigest"] == second_digest
+
+
+def test_new_check_outcome_rearms_a_stalled_validation_result(tmp_path):
+    store, _worktree, result_path = _controller_commit_result(
+        tmp_path,
+        missing_quality=("relevant_tests_green",),
+    )
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value["tests"] = [{"command": "pnpm test", "exitCode": 1}]
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    candidate = store.validation_followup_candidates()[0]
+    store.reserve_validation_followup(thread_id="thread-1", result_digest=candidate["resultDigest"])
+    store.commit_validation_followup(thread_id="thread-1", result_digest=candidate["resultDigest"])
+
+    value["evidence"] = {"summary": "the same gap remains"}
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    second_digest = hashlib.sha256(result_path.read_bytes()).hexdigest()
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest=second_digest,
+        missing=["relevant_tests_green"],
+    )
+
+    listed = MODULE.validation_followup_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert first["validationDeferred"][0]["missing"] == ["relevant_tests_green"]
+    assert listed["rearmedReviewFeedback"] == [
+        {"key": "a/b#1", "reason": "VALIDATION_PROGRESS_EVIDENCE_AVAILABLE"}
     ]
     assert listed["blockedNoProgress"] == []
     assert listed["candidates"][0]["resultDigest"] == second_digest
