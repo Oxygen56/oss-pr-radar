@@ -7347,6 +7347,7 @@ def test_ingestion_recovers_seen_complete_pr_followup_parent(tmp_path):
     ]
     assert finalized["previousCommitSha"] == previous_head
     assert finalized["controllerCommitChangedFiles"] == ["test_runtime.py"]
+    assert store.active_task_count() == 0
 
 
 def test_validation_prefetch_plan_is_lockfile_scoped(tmp_path):

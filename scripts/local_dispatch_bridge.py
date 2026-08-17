@@ -6190,6 +6190,13 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                                 "reason": "SUBMIT_READY_EVIDENCE_INCOMPLETE",
                             }
                         )
+                        if current_wake_digest:
+                            store.record_followup_result(
+                                candidate["key"],
+                                wake_digest=current_wake_digest,
+                                result_digest=digest,
+                                stage="VALIDATION_PENDING",
+                            )
                         continue
                     store.record_stage(
                         candidate["key"],
