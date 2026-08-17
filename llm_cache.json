@@ -4135,6 +4135,35 @@
     ],
     "why": "Issue provides a precise root cause (web passes raw icon id instead of icon_url) and a minimal fix. Existing PR #37405 overlaps semantically but is stale and not directly linked, leaving room for a better PR."
   },
+  "2396832b1136cb113e598b2ea0ce6684ab3d447f121e1fb64613e9b4c775c2e6": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Tool-call permission gating for destructive commands",
+      "User confirmation flow for agent-initiated deletions"
+    ],
+    "risks": [
+      "Overly restrictive blocking may break legitimate workflows",
+      "Policy changes may require user-facing configuration and documentation"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Create a test harness that simulates agent tool calls and verifies destructive commands are blocked without user approval"
+    ],
+    "unknowns": [
+      "No maintainer response or acknowledgment",
+      "No existing code anchor or design for tool-call gating",
+      "No clear assignment or help-wanted signal"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "Issue reports an AI agent executing destructive commands without confirmation, but lacks a concrete code path or reproducible test. The proposed fix (blocking rm commands) is a policy change requiring design confirmation and is not directly actionable without maintainer input."
+  },
   "23b4e2712235abca92ceeaf6876af231a3bebb04de081433d7ccf3f65180f593": {
     "confidence": 0.7,
     "contradictions": [],
@@ -10781,6 +10810,40 @@
       "Maintainer stance on the proposed fix and whether PR #35791 is salvageable."
     ],
     "why": "Issue provides a clear root cause and reproduction, but the supplied gate decision is HUMAN_REVIEW and the related issue audit failed (timeout). An existing PR #35791 directly addresses the issue but has failing CI checks, making it a weak competition opportunity. Maintainer confirmation is needed before starting work."
+  },
+  "58a57835b86c5a1e9abb73195817299e5c4b36b004e8394725c47aeee873c557": {
+    "confidence": 0.7,
+    "contradictions": [
+      "PR #13365 title mentions metrics, not the bug, but semantic overlap is high"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add regression test for scorer fallback without worker-ID header",
+      "Fix DynDecodeScorer/DynPrefillScorer to propagate FFI errors or set header on fallback",
+      "Possibly align with Rust EPP migration"
+    ],
+    "risks": [
+      "Overlap with PR #13365 may lead to duplicate work",
+      "Rust EPP migration may invalidate Go EPP fix",
+      "Root cause for multimodal trigger unconfirmed"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 11,
+    "test_plan": [
+      "Create a failing test that simulates route_decode_request error and asserts worker-ID header is set or request fails explicitly",
+      "Run existing Go EPP unit tests and Rust FFI tests"
+    ],
+    "unknowns": [
+      "Whether PR #13365 actually fixes this bug",
+      "Whether maintainers prefer fixing Go EPP or waiting for Rust EPP",
+      "Exact failing stage for multimodal requests"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue describes a real silent-failure bug in Go EPP scorers with a clear root cause (missing worker-ID header on FFI error) and a concrete repro path. However, open PR #13365 overlaps semantically and touches the same code paths, and the issue itself notes an in-flight migration to Rust EPP that may change the fix location. The exact trigger for multimodal requests is unconfirmed, requiring maintainer input or logs. Given the overlapping PR and unresolved design questions, a new PR should not be started without maintainer review."
   },
   "58fc1e0adbeea4894177270f3c549b0789c865557588337f5a3b444a13ceee49": {
     "confidence": 0.7,
@@ -19563,6 +19626,35 @@
     ],
     "why": "Issue identifies a clear correctness bug from inconsistent inference_mode usage, with reproduction and maintainer discussion. However, open PR lookup timed out and related issue audit failed, so duplicate/competing work cannot be excluded. Maintainer comment asks for design alignment, indicating need for maintainer decision."
   },
+  "a08005de470f5ffd226c49d2956600f182b092332c0fd1db663a9b5cb057ae18": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims V1 stable but comment reports V1 also leaks with VLLM_USE_V2_MODEL_RUNNER=0"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "V2 runner request lifecycle cleanup",
+      "prefix caching metadata management",
+      "scheduler state retention"
+    ],
+    "risks": [
+      "Potential duplicate with issue #49224; root cause may be in shared code path; memory leak may be environment-specific"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 13,
+    "test_plan": [
+      "Reproduce with provided vllm serve command and long-running workload; monitor host memory via /sys/fs/cgroup/memory.stat; compare V1 vs V2; test with and without prefix caching; use small model and fixed seed for regression test"
+    ],
+    "unknowns": [
+      "Whether issue #49224 is truly duplicate; maintainer confirmation of root cause; exact code path responsible"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "The issue reports a reproducible host memory leak in V2 runner with Qwen3 models, with strong evidence and a concrete reproduction path. However, the supplied data indicates a potential duplicate issue #49224 sharing stack/failure signatures, and the deterministic gate is HUMAN_REVIEW. The root cause is not yet identified, and maintainer investigation is not active. The candidate is actionable but requires duplicate review and maintainer confirmation before work starts."
+  },
   "a085e03d1f08d5e571fc1a291113199310a17cad9cb689caf1467743ac571d8a": {
     "confidence": 0.7,
     "contradictions": [],
@@ -21987,6 +22079,37 @@
     ],
     "why": "Issue provides a detailed root cause analysis with specific code locations in the shipped extension bundle, a clear multi-root workspace scenario, and reproducible steps. The bug is in the agent's workspace path handling, which is core to agent infrastructure. No competing PR or issue found, and the gate allows work."
   },
+  "b7cf6580cbb55efb0cd2a3a9094cb8d8bdb4c0a95c655675b675e20c921aaaf2": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue suggests empty-state handling or serialization bug, while bot claims stderr interference; no direct reproduction evidence in issue"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Remove or redirect console.error calls in src/memory/index.ts",
+      "Update tests in src/memory/__tests__/file-path.test.ts"
+    ],
+    "risks": [
+      "Root cause may be incomplete; other stderr writes or environment-specific behavior could persist",
+      "Removing console.error may reduce observability for legitimate diagnostics"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Run existing memory server tests on Windows with cmd /c npx to reproduce the JSON parsing error",
+      "Add a regression test that captures stderr output and verifies stdout remains clean JSON-RPC"
+    ],
+    "unknowns": [
+      "Whether the proposed fix commit has been reviewed or merged",
+      "Whether the root cause is confirmed by maintainers or only by the bot investigation"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "The issue reports a systemic JSON parsing failure in the Memory MCP server. A maintainer-triggered bot investigation claims a root cause (console.error stderr interference on Windows) and a fix commit, but the fix is not yet merged and the issue remains open. The candidate is actionable but requires maintainer review of the proposed fix and confirmation of the root cause before new work starts."
+  },
   "b8133a2661a9e9af8a3267fc2547c0bd80c412a716a798af6e93281c631b15fc": {
     "confidence": 0.7,
     "contradictions": [],
@@ -22548,6 +22671,38 @@
       "Maintainer preference on whether to patch upstream or workaround locally"
     ],
     "why": "Issue provides a clear root cause and minimal reproducer, but the fix requires coordination with upstream blockbuster and maintainer preference on test ordering vs. upstream patch. No existing PR, but the deterministic gate says HUMAN_REVIEW, so we wait for maintainer direction."
+  },
+  "bc9e9b7e51aff67e8c703b161a3a170dd939e572895bce7983a072347d187207": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims bug but commenter cannot reproduce; workaround with ChatDeepSeek works"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix in prebuilt chat_agent_executor.py to handle thinking content blocks",
+      "Potential fix in langchain-openai or langchain-deepseek for reasoning_content handling"
+    ],
+    "risks": [
+      "Provider-specific behavior may not be reproducible without API access",
+      "Changing message handling could affect other models"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Create minimal reproducer with DeepSeek API and react_agent",
+      "Add regression test for thinking mode response parsing"
+    ],
+    "unknowns": [
+      "Exact code to reproduce",
+      "Root cause confirmation",
+      "Maintainer preference on fix approach"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "Issue reports a runtime 400 error when using extra_body thinking with DeepSeek via react_agent, but lacks a minimal reproducible example and exact code. Comments suggest possible conversion issue but no confirmed root cause. Existing PR #8580 is closed and not merged, and repository requires assignment. No maintainer confirmation or design direction."
   },
   "bd16fa6543025bd6e070c62faf33f5c43b5d15c9729c875c43b6b745771465d4": {
     "confidence": 0.7,
