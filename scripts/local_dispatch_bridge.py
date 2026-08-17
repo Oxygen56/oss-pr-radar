@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import fcntl
 import hashlib
+import html
 import json
 import os
 import re
@@ -464,7 +465,7 @@ def thread_prompt_materialized_after(
             data = handle.read().decode("utf-8", errors="ignore")
     except (OSError, ValueError):
         return False, False
-    delegated_prompt = f"<input>{prompt}</input>"
+    expected_prompt = canonical_prompt(html.unescape(prompt)).strip()
     for raw_line in data.splitlines():
         try:
             record = json.loads(raw_line)
@@ -485,7 +486,9 @@ def thread_prompt_materialized_after(
                 ]
             elif record.get("type") == "event_msg" and payload.get("type") == "user_message":
                 texts = [str(payload.get("message") or "")]
-            if any(text.strip() == prompt.strip() or delegated_prompt in text for text in texts):
+            if any(
+                canonical_prompt(html.unescape(text)).strip() == expected_prompt for text in texts
+            ):
                 return True, True
         except (json.JSONDecodeError, ValueError):
             continue

@@ -6833,6 +6833,40 @@ def test_materialized_desktop_handoff_is_committed_without_resending(monkeypatch
     ]
 
 
+def test_html_escaped_delegated_prompt_is_recognized_as_materialized(tmp_path):
+    rollout = tmp_path / "rollout.jsonl"
+    prompt = "PR 已创建：<准确链接>"
+    rollout.write_text(
+        json.dumps(
+            {
+                "timestamp": "2026-08-17T00:01:00Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": (
+                                "<codex_delegation><input>"
+                                "PR 已创建：&lt;准确链接&gt;"
+                                "</input></codex_delegation>"
+                            ),
+                        }
+                    ],
+                },
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert MODULE.thread_prompt_materialized_after(
+        str(rollout), "2026-08-17T00:00:00Z", prompt
+    ) == (True, True)
+
+
 def test_negative_recovery_receipt_rearms_the_same_task(monkeypatch, tmp_path):
     reserved_at = iso_z(datetime.now(UTC) - timedelta(minutes=2))
     calls = []
