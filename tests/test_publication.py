@@ -407,14 +407,15 @@ def test_broker_allows_bound_update_despite_a_competing_pr(monkeypatch, tmp_path
             (json.dumps(recovered_intent, sort_keys=True),),
         )
     worktree = tmp_path / "worktree"
-    (worktree / "file.txt").write_text("fixed again\n", encoding="utf-8")
-    git("add", "file.txt", cwd=worktree)
+    (worktree / "second.txt").write_text("follow-up fix\n", encoding="utf-8")
+    git("add", "second.txt", cwd=worktree)
     git("commit", "-m", "Refine streaming fix", cwd=worktree)
     current = git("rev-parse", "HEAD", cwd=worktree)
     quality = {field: True for field in QUALITY_FIELDS}
     store.record_stage("example/project#7", "FIX_READY", evidence=quality)
     evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
     evidence["commitSha"] = current
+    evidence["changedFiles"] = ["file.txt", "second.txt"]
     evidence_path.write_text(json.dumps(evidence, sort_keys=True), encoding="utf-8")
     update = request_publication(
         store,
@@ -466,10 +467,15 @@ def test_broker_allows_bound_update_despite_a_competing_pr(monkeypatch, tmp_path
         def check_runs(self, repo, ref):
             return []
 
-    monkeypatch.setattr(publication, "_changed_files_since", lambda *args: ["file.txt"])
+    monkeypatch.setattr(publication, "_changed_files_since", lambda *args: ["second.txt"])
+    monkeypatch.setattr(
+        publication, "_changed_files", lambda *args: ["file.txt", "second.txt"]
+    )
     result = broker_publication_request(store, update["request_id"], client=UpdateClient())
 
     assert result["granted"] is True
+    assert result["audit"]["evidence"]["changedFiles"] == ["file.txt", "second.txt"]
+    assert result["audit"]["evidence"]["updateChangedFiles"] == ["second.txt"]
     assert update["request"]["intent"]["recoveredFromTaskContext"] is True
     assert "scanGate" not in update["request"]["intent"]
     assert result["audit"]["evidence"]["publicationKind"] == "PR_UPDATE"
@@ -551,6 +557,7 @@ def test_broker_allows_bound_update_when_related_pr_enrichment_is_partial(
             }
 
     monkeypatch.setattr(publication, "_changed_files_since", lambda *args: ["file.txt"])
+    monkeypatch.setattr(publication, "_changed_files", lambda *args: ["file.txt"])
     result = broker_publication_request(
         store, update["request_id"], client=PartialRelationsClient()
     )

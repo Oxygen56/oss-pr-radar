@@ -462,22 +462,37 @@ def audit_publication_request(
     expected_actor = os.environ.get("RADAR_GITHUB_ACTOR", "Oxygen56")
     if publication["headOwner"].casefold() != expected_actor.casefold():
         return PublicationAudit("BLOCK", "FORK_OWNER_MISMATCH", request_id, live)
+    update_changed_files: list[str] = []
     try:
-        changed_files = (
-            _changed_files_for_pr_update(worktree, str(request["previousCommitSha"]), evidence_file)
-            if publication_kind == "PR_UPDATE"
-            else _changed_files(worktree, repo, default_branch)
-        )
+        if publication_kind == "PR_UPDATE":
+            update_changed_files = _changed_files_for_pr_update(
+                worktree, str(request["previousCommitSha"]), evidence_file
+            )
+            changed_files = (
+                update_changed_files
+                if evidence_file.get("handoffMode") == "controller_merge_complete"
+                else _changed_files(worktree, repo, default_branch)
+            )
+        else:
+            changed_files = _changed_files(worktree, repo, default_branch)
     except PublicationError as exc:
         return PublicationAudit(
             "DEFER", "DIFF_REVALIDATION_FAILED", request_id, live | {"error": str(exc)[:200]}
         )
-    if not changed_files or changed_files != sorted(evidence_file.get("changedFiles") or []):
+    if (
+        not changed_files
+        or (publication_kind == "PR_UPDATE" and not update_changed_files)
+        or changed_files != sorted(evidence_file.get("changedFiles") or [])
+    ):
         return PublicationAudit(
             "BLOCK",
             "CHANGED_FILES_MISMATCH",
             request_id,
-            live | {"changedFiles": changed_files},
+            live
+            | {
+                "changedFiles": changed_files,
+                "updateChangedFiles": update_changed_files,
+            },
         )
     if evidence.policy.get("dco"):
         try:
@@ -495,7 +510,12 @@ def audit_publication_request(
         "ALLOW",
         "LIVE_PUBLICATION_GATES_PASSED",
         request_id,
-        live | {"changedFiles": changed_files, "defaultBranch": default_branch},
+        live
+        | {
+            "changedFiles": changed_files,
+            "updateChangedFiles": update_changed_files,
+            "defaultBranch": default_branch,
+        },
     )
 
 
