@@ -39,6 +39,13 @@ This command is the only hourly orchestration entry point. It deterministically:
 9. sends deduplicated Feishu notifications and dispatch alerts;
 10. runs a final fixed-point audit and emits one JSON result.
 
+The single exception is an explicit `desktopHandoff` in the compact result. It
+means the Codex desktop app already owns that existing task, so a second local
+app server cannot resume it. Send exactly `desktopHandoff.prompt` to
+`desktopHandoff.threadId` with the desktop thread tool, once, then stop. The
+next controller cycle reconciles the materialized turn and continues the same
+task; do not create a replacement task or manually commit the reservation.
+
 The command uses controller and drain locks. `controller_already_running` and
 `drain_already_running` are healthy overlap suppression, not failures. Do not
 repeat individual lifecycle operations after the command returns.
@@ -51,6 +58,8 @@ Use only the final JSON as the run result:
 - `summary.drainAction`: the one action advanced in this run, or `none`.
 - `summary.pendingCount`: ordinary signed queue backlog, not a failure.
 - `finalBlockers`: exact durable queues that still require recovery.
+- `desktopHandoff`: one idempotent existing-task continuation that must use the
+  desktop thread tool because the task has an active desktop writer.
 - `failures`: actual failed stages from their latest execution.
 - `stages.workflowHealth`: current scheduler and fallback evidence.
 - `stages.quality`: SubmitReady, filter-miss, and hard-gate metrics.

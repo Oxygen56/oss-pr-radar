@@ -305,6 +305,7 @@ def compact_controller_result(
     titles = stages.get("finalTitles") or {}
     publication = stages.get("publication") or {}
     feedback = stages.get("terminalFeedbackBeforeSync") or {}
+    desktop_handoff = _pending_desktop_handoff(stages)
     compact = {
         "ok": result.get("ok"),
         "checkedAt": result.get("checkedAt"),
@@ -321,6 +322,25 @@ def compact_controller_result(
             "terminalFeedbackDeferred": len(feedback.get("deferred") or []),
         },
     }
+    if desktop_handoff is not None:
+        compact["desktopHandoff"] = desktop_handoff
     if report_path is not None:
         compact["reportPath"] = str(report_path)
     return compact
+
+
+def _pending_desktop_handoff(stages: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
+    drain_handoff = ((stages.get("drain") or {}).get("delivery") or {}).get("desktopHandoff")
+    if (
+        isinstance(drain_handoff, dict)
+        and drain_handoff.get("threadId")
+        and drain_handoff.get("prompt")
+    ):
+        return drain_handoff
+    for stage_name in ("finalPrFollowups", "finalValidationFollowups", "finalRecovery"):
+        stage = stages.get(stage_name) or {}
+        for item in stage.get("unresolved") or []:
+            handoff = item.get("desktopHandoff")
+            if isinstance(handoff, dict) and handoff.get("threadId") and handoff.get("prompt"):
+                return handoff
+    return None

@@ -419,6 +419,50 @@ def thread_turn_materialized_after(rollout_path: str | None, reserved_at: str) -
     return True, False
 
 
+def thread_prompt_materialized_after(
+    rollout_path: str | None, reserved_at: str, prompt: str
+) -> tuple[bool, bool]:
+    """Return whether the exact reserved prompt reached the target task."""
+
+    if not rollout_path or not prompt:
+        return False, False
+    path = Path(rollout_path)
+    try:
+        threshold = parse_time(reserved_at)
+        with path.open("rb") as handle:
+            size = handle.seek(0, os.SEEK_END)
+            handle.seek(max(0, size - 8 * 1024 * 1024))
+            data = handle.read().decode("utf-8", errors="ignore")
+    except (OSError, ValueError):
+        return False, False
+    delegated_prompt = f"<input>{prompt}</input>"
+    for raw_line in data.splitlines():
+        try:
+            record = json.loads(raw_line)
+            timestamp = record.get("timestamp")
+            if not timestamp or parse_time(str(timestamp)) < threshold:
+                continue
+            payload = record.get("payload") or {}
+            texts: list[str] = []
+            if (
+                record.get("type") == "response_item"
+                and payload.get("type") == "message"
+                and payload.get("role") == "user"
+            ):
+                texts = [
+                    str(item.get("text") or "")
+                    for item in payload.get("content") or []
+                    if isinstance(item, dict) and item.get("type") == "input_text"
+                ]
+            elif record.get("type") == "event_msg" and payload.get("type") == "user_message":
+                texts = [str(payload.get("message") or "")]
+            if any(text.strip() == prompt.strip() or delegated_prompt in text for text in texts):
+                return True, True
+        except (json.JSONDecodeError, ValueError):
+            continue
+    return True, False
+
+
 def _is_immediate_recovery(state: dict[str, Any] | None) -> bool:
     if not state:
         return False
@@ -2237,13 +2281,13 @@ def _task_turn_reservation(
 
 
 def _task_turn_prompt(delivery_kind: str, candidate: dict[str, Any]) -> str:
+    if delivery_kind == "validation-followup":
+        return _validation_followup_prompt(candidate)
     issue_url = str(candidate.get("issueUrl") or "")
     if not ISSUE_URL.fullmatch(issue_url):
         raise RuntimeError("task-turn delivery has an invalid issue URL")
     if delivery_kind == "pr-followup":
         return _pr_followup_prompt({"issueUrl": issue_url})
-    if delivery_kind == "validation-followup":
-        return _validation_followup_prompt(candidate)
     if delivery_kind == "recovery":
         recovery_kind = str(
             candidate.get("recoveryKind")
@@ -2315,6 +2359,13 @@ def _commit_task_turn_delivery(
         store.commit_recovery(thread_id=thread_id, nonce=delivery_token)
     else:
         raise RuntimeError("unsupported task-turn delivery kind")
+
+
+def _app_server_task_error(message: dict[str, Any], *, action: str) -> RuntimeError:
+    detail = str(((message.get("error") or {}).get("message") or "")).strip()
+    if "already has an active writer" in detail:
+        return RuntimeError(f"DESKTOP_ACTIVE_WRITER:{detail[:240]}")
+    return RuntimeError(f"APP_SERVER_{action.upper()}_FAILED:{detail[:240] or 'unknown error'}")
 
 
 def _app_server_task_turn_worker(args: argparse.Namespace) -> dict[str, Any]:
@@ -2404,7 +2455,7 @@ def _app_server_task_turn_worker(args: argparse.Namespace) -> dict[str, Any]:
                     if message.get("id") != 1:
                         continue
                     if message.get("error"):
-                        raise RuntimeError("app server could not resume the task")
+                        raise _app_server_task_error(message, action="resume")
                     resumed_thread_id = str(
                         ((message.get("result") or {}).get("thread") or {}).get("id") or ""
                     )
@@ -2452,7 +2503,7 @@ def _app_server_task_turn_worker(args: argparse.Namespace) -> dict[str, Any]:
                     if message.get("id") != 2:
                         continue
                     if message.get("error"):
-                        raise RuntimeError("app server could not start the task turn")
+                        raise _app_server_task_error(message, action="start")
                     turn_id = str(((message.get("result") or {}).get("turn") or {}).get("id") or "")
             if not turn_id:
                 raise RuntimeError("app server did not receipt the task turn")
@@ -2634,10 +2685,42 @@ def retryable_negative_task_turn_receipt(
         return None
     if active_task_turn_worker(thread_id) is not None:
         return None
+    delivery_error = str(receipt.get("error") or "task-turn delivery failed")[:300]
+    if "DESKTOP_ACTIVE_WRITER" in delivery_error:
+        return {
+            "retryable": True,
+            "retryReason": "DESKTOP_ACTIVE_WRITER",
+            "deliveryError": delivery_error,
+            "desktopHandoffRequired": True,
+        }
     return {
         "retryable": True,
         "retryReason": "NEGATIVE_RECEIPT_NO_TURN_STARTED",
-        "deliveryError": str(receipt.get("error") or "task-turn delivery failed")[:300],
+        "deliveryError": delivery_error,
+    }
+
+
+def _desktop_task_handoff(
+    *, delivery_kind: str, candidate: dict[str, Any], delivery_token: str
+) -> dict[str, Any]:
+    normalized = dict(candidate)
+    issue_url = candidate.get("issueUrl") or candidate.get("issue_url")
+    key_match = re.fullmatch(r"([^/]+/[^#]+)#(\d+)", str(candidate.get("key") or ""))
+    if not issue_url and key_match:
+        issue_url = f"https://github.com/{key_match.group(1)}/issues/{key_match.group(2)}"
+    normalized["issueUrl"] = issue_url
+    if delivery_kind == "pr-followup":
+        normalized |= {
+            "threadId": candidate.get("thread_id"),
+            "issueUrl": issue_url,
+            "worktreePath": candidate.get("worktree_path"),
+            "reservedAt": candidate.get("created_at"),
+        }
+    return {
+        "deliveryKind": delivery_kind,
+        "threadId": str(normalized.get("threadId") or ""),
+        "deliveryToken": delivery_token,
+        "prompt": _task_turn_prompt(delivery_kind, normalized),
     }
 
 
@@ -2658,6 +2741,40 @@ def _discard_negative_task_turn_receipt(
     (receipt_root / f"{receipt_key}.launch.json").unlink(missing_ok=True)
 
 
+def _reserved_task_turn_materialized(
+    *, delivery_kind: str, candidate: dict[str, Any], delivery_token: str
+) -> bool:
+    if not THREAD_DB.is_file():
+        return False
+    handoff = _desktop_task_handoff(
+        delivery_kind=delivery_kind,
+        candidate=candidate,
+        delivery_token=delivery_token,
+    )
+    thread_id = str(handoff["threadId"])
+    reserved_at = str(
+        candidate.get("reservedAt")
+        or candidate.get("created_at")
+        or candidate.get("createdAt")
+        or ""
+    )
+    if not thread_id or not reserved_at:
+        return False
+    connection = sqlite3.connect(THREAD_DB)
+    try:
+        row = connection.execute(
+            "SELECT rollout_path FROM threads WHERE id=?", (thread_id,)
+        ).fetchone()
+    finally:
+        connection.close()
+    if row is None:
+        return False
+    _available, materialized = thread_prompt_materialized_after(
+        row[0], reserved_at, str(handoff["prompt"])
+    )
+    return materialized
+
+
 def _rearm_negative_followup_deliveries(store: RadarLedger) -> list[dict[str, Any]]:
     """Release reservations whose durable receipt proves that no turn started."""
 
@@ -2666,11 +2783,33 @@ def _rearm_negative_followup_deliveries(store: RadarLedger) -> list[dict[str, An
     for item in store.unresolved_pr_followups():
         thread_id = str(item.get("thread_id") or "")
         token = str(item.get("wake_digest") or "")
+        if _reserved_task_turn_materialized(
+            delivery_kind="pr-followup",
+            candidate=item,
+            delivery_token=token,
+        ):
+            store.commit_pr_followup(thread_id=thread_id, wake_digest=token)
+            _discard_negative_task_turn_receipt(
+                delivery_kind="pr-followup",
+                thread_id=thread_id,
+                delivery_token=token,
+            )
+            rearmed.append(
+                {
+                    "kind": "pr-followup",
+                    "key": item.get("opportunity_key") or item.get("key"),
+                    "threadId": thread_id,
+                    "reconciledDesktopHandoff": True,
+                }
+            )
+            continue
         retry = retryable_negative_task_turn_receipt(
             delivery_kind="pr-followup",
             thread_id=thread_id,
             delivery_token=token,
         )
+        if retry and retry.get("desktopHandoffRequired"):
+            continue
         if not retry or parse_time(str(item["created_at"])) + timedelta(minutes=1) > now:
             continue
         replacement = store.abandon_pr_followup_delivery(
@@ -2696,11 +2835,33 @@ def _rearm_negative_followup_deliveries(store: RadarLedger) -> list[dict[str, An
     for item in store.unresolved_validation_followups():
         thread_id = str(item.get("threadId") or "")
         token = str(item.get("resultDigest") or "")
+        if _reserved_task_turn_materialized(
+            delivery_kind="validation-followup",
+            candidate=item,
+            delivery_token=token,
+        ):
+            store.commit_validation_followup(thread_id=thread_id, result_digest=token)
+            _discard_negative_task_turn_receipt(
+                delivery_kind="validation-followup",
+                thread_id=thread_id,
+                delivery_token=token,
+            )
+            rearmed.append(
+                {
+                    "kind": "validation-followup",
+                    "key": item.get("key"),
+                    "threadId": thread_id,
+                    "reconciledDesktopHandoff": True,
+                }
+            )
+            continue
         retry = retryable_negative_task_turn_receipt(
             delivery_kind="validation-followup",
             thread_id=thread_id,
             delivery_token=token,
         )
+        if retry and retry.get("desktopHandoffRequired"):
+            continue
         if not retry or parse_time(str(item["reservedAt"])) + timedelta(minutes=1) > now:
             continue
         store.abandon_validation_followup_delivery(
@@ -2726,11 +2887,33 @@ def _rearm_negative_followup_deliveries(store: RadarLedger) -> list[dict[str, An
     for item in getattr(store, "unresolved_recoveries", lambda: [])():
         thread_id = str(item.get("threadId") or "")
         token = str((item.get("reservation") or {}).get("recoveryNonce") or "")
+        if _reserved_task_turn_materialized(
+            delivery_kind="recovery",
+            candidate=item,
+            delivery_token=token,
+        ):
+            store.commit_recovery(thread_id=thread_id, nonce=token)
+            _discard_negative_task_turn_receipt(
+                delivery_kind="recovery",
+                thread_id=thread_id,
+                delivery_token=token,
+            )
+            rearmed.append(
+                {
+                    "kind": "recovery",
+                    "key": item.get("key"),
+                    "threadId": thread_id,
+                    "reconciledDesktopHandoff": True,
+                }
+            )
+            continue
         retry = retryable_negative_task_turn_receipt(
             delivery_kind="recovery",
             thread_id=thread_id,
             delivery_token=token,
         )
+        if retry and retry.get("desktopHandoffRequired"):
+            continue
         if not retry or parse_time(str(item["reservedAt"])) + timedelta(minutes=1) > now:
             continue
         store.abandon_recovery_delivery(
@@ -2855,11 +3038,30 @@ def task_turn_deliver(args: argparse.Namespace) -> dict[str, Any]:
     launch = receipt_root / f"{receipt_key}.launch.json"
     log = receipt_root / f"{receipt_key}.log"
     receipt_root.mkdir(parents=True, exist_ok=True)
+
+    def desktop_handoff_result(result: dict[str, Any]) -> dict[str, Any] | None:
+        if "DESKTOP_ACTIVE_WRITER" not in str(result.get("error") or ""):
+            return None
+        return {
+            "ok": True,
+            "pending": True,
+            "requiresDesktopHandoff": True,
+            "threadId": args.thread_id,
+            "deliveryKind": args.delivery_kind,
+            "desktopHandoff": _desktop_task_handoff(
+                delivery_kind=args.delivery_kind,
+                candidate=candidate,
+                delivery_token=args.delivery_token,
+            ),
+        }
+
     try:
         _cwd, rollout_path = _validated_task_turn_thread(candidate)
-        activity_available, materialized = thread_turn_materialized_after(
+        prompt = _task_turn_prompt(args.delivery_kind, candidate)
+        activity_available, materialized = thread_prompt_materialized_after(
             rollout_path,
             str(candidate["reservedAt"]),
+            prompt,
         )
     except Exception as exc:
         if not receipt.exists():
@@ -2892,6 +3094,9 @@ def task_turn_deliver(args: argparse.Namespace) -> dict[str, Any]:
         result = read_json(receipt, missing={})
         if result.get("ok"):
             return result
+        desktop_result = desktop_handoff_result(result)
+        if desktop_result is not None:
+            return desktop_result
         if result.get("turnStarted"):
             return {
                 "ok": False,
@@ -2965,6 +3170,9 @@ def task_turn_deliver(args: argparse.Namespace) -> dict[str, Any]:
             result = read_json(receipt, missing={})
             if result.get("ok"):
                 return result
+            desktop_result = desktop_handoff_result(result)
+            if desktop_result is not None:
+                return desktop_result
             if result.get("turnStarted"):
                 return {
                     "ok": False,
@@ -4288,9 +4496,15 @@ def pr_followup_list(args: argparse.Namespace) -> dict[str, Any]:
         reserved_at = parse_time(str(item["created_at"]))
         age_minutes = max(0, int((now - reserved_at).total_seconds() // 60))
         thread_updated_at = activity.get(str(item.get("thread_id") or ""), 0)
-        activity_available, target_turn_materialized = thread_turn_materialized_after(
+        handoff = _desktop_task_handoff(
+            delivery_kind="pr-followup",
+            candidate=item,
+            delivery_token=str(item.get("wake_digest") or ""),
+        )
+        activity_available, target_turn_materialized = thread_prompt_materialized_after(
             rollout_paths.get(str(item.get("thread_id") or "")),
             str(item["created_at"]),
+            str(handoff["prompt"]),
         )
         value = item | {
             "ageMinutes": age_minutes,
@@ -4308,6 +4522,12 @@ def pr_followup_list(args: argparse.Namespace) -> dict[str, Any]:
             )
             if retry:
                 value |= retry
+                if retry.get("desktopHandoffRequired"):
+                    value["desktopHandoff"] = _desktop_task_handoff(
+                        delivery_kind="pr-followup",
+                        candidate=item,
+                        delivery_token=str(item.get("wake_digest") or ""),
+                    )
         unresolved_with_recovery.append(value)
     return {
         "ok": not unresolved_with_recovery and not blocked,
@@ -5338,9 +5558,15 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
         reserved_at = parse_time(str(item["reservedAt"]))
         age_minutes = max(0, int((now - reserved_at).total_seconds() // 60))
         thread_updated_at = activity.get(str(item.get("threadId") or ""), 0)
-        turn_activity_available, target_turn_materialized = thread_turn_materialized_after(
+        handoff = _desktop_task_handoff(
+            delivery_kind="validation-followup",
+            candidate=item,
+            delivery_token=str(item.get("resultDigest") or ""),
+        )
+        turn_activity_available, target_turn_materialized = thread_prompt_materialized_after(
             rollout_paths.get(str(item.get("threadId") or "")),
             str(item["reservedAt"]),
+            str(handoff["prompt"]),
         )
         value = item | {
             "ageMinutes": age_minutes,
@@ -5358,6 +5584,12 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
             )
             if retry:
                 value |= retry
+                if retry.get("desktopHandoffRequired"):
+                    value["desktopHandoff"] = _desktop_task_handoff(
+                        delivery_kind="validation-followup",
+                        candidate=item,
+                        delivery_token=str(item.get("resultDigest") or ""),
+                    )
         unresolved_with_recovery.append(value)
     stale = store.stale_validation_followups(min_age_minutes=getattr(args, "min_age_minutes", 90))
     blocked_environment_keys = {str(item.get("key") or "") for item in blocked_environment}
@@ -6905,9 +7137,15 @@ def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
                 0,
                 int((now - parse_time(str(item["reservedAt"]))).total_seconds() // 60),
             )
-            activity_available, materialized = thread_turn_materialized_after(
+            handoff = _desktop_task_handoff(
+                delivery_kind="recovery",
+                candidate=item,
+                delivery_token=str(item.get("recoveryNonce") or ""),
+            )
+            activity_available, materialized = thread_prompt_materialized_after(
                 row["rollout_path"] if row else None,
                 str(item["reservedAt"]),
+                str(handoff["prompt"]),
             )
             value = item | {
                 "ageMinutes": age_minutes,
@@ -6925,6 +7163,12 @@ def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
                 )
                 if retry:
                     value |= retry
+                    if retry.get("desktopHandoffRequired"):
+                        value["desktopHandoff"] = _desktop_task_handoff(
+                            delivery_kind="recovery",
+                            candidate=item,
+                            delivery_token=str(item.get("recoveryNonce") or ""),
+                        )
             unresolved_with_recovery.append(value)
     finally:
         connection.close()

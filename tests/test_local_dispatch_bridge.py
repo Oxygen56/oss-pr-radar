@@ -2478,13 +2478,17 @@ def test_pr_followup_never_abandons_an_unreceipted_delivery(monkeypatch, tmp_pat
 def test_pr_followup_keeps_unknown_delivery_when_target_thread_updated(monkeypatch, tmp_path):
     now = datetime.now(UTC)
     reserved_at = now - timedelta(hours=2)
+    issue_url = "https://github.com/a/b/issues/1"
     rollout = tmp_path / "rollout.jsonl"
     rollout.write_text(
         json.dumps(
             {
                 "timestamp": iso_z(reserved_at + timedelta(minutes=1)),
-                "type": "turn_context",
-                "payload": {"turn_id": "turn-1"},
+                "type": "event_msg",
+                "payload": {
+                    "type": "user_message",
+                    "message": MODULE._pr_followup_prompt({"issueUrl": issue_url}),
+                },
             }
         )
         + "\n",
@@ -3660,8 +3664,11 @@ def test_task_turn_delivery_reconciles_a_materialized_turn_without_resending(mon
         json.dumps(
             {
                 "timestamp": iso_z(reserved_at + timedelta(seconds=1)),
-                "type": "turn_context",
-                "payload": {"turn_id": "turn-new"},
+                "type": "event_msg",
+                "payload": {
+                    "type": "user_message",
+                    "message": MODULE._pr_followup_prompt({"issueUrl": issue_url}),
+                },
             }
         )
         + "\n",
@@ -3702,6 +3709,20 @@ def test_task_turn_delivery_reconciles_a_materialized_turn_without_resending(mon
     monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
     monkeypatch.setattr(MODULE, "STATE", tmp_path / "state")
     monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    rollout.write_text(
+        json.dumps(
+            {
+                "timestamp": iso_z(reserved_at + timedelta(seconds=1)),
+                "type": "event_msg",
+                "payload": {
+                    "type": "user_message",
+                    "message": MODULE._pr_followup_prompt({"issueUrl": issue_url}),
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     monkeypatch.setattr(
         MODULE.subprocess,
         "Popen",
@@ -3872,6 +3893,42 @@ def test_task_turn_worker_setup_failure_writes_a_negative_receipt(monkeypatch, t
         "turnId": None,
         "error": "RuntimeError:setup failed",
     }
+
+
+def test_app_server_active_writer_error_is_machine_classified():
+    error = MODULE._app_server_task_error(
+        {
+            "error": {
+                "message": "thread thread-1 already has an active writer",
+            }
+        },
+        action="resume",
+    )
+
+    assert str(error).startswith("DESKTOP_ACTIVE_WRITER:")
+
+
+def test_exact_prompt_reconciliation_ignores_unrelated_user_turn(tmp_path):
+    reserved_at = datetime.now(UTC) - timedelta(minutes=5)
+    rollout = tmp_path / "rollout.jsonl"
+    rollout.write_text(
+        json.dumps(
+            {
+                "timestamp": iso_z(reserved_at + timedelta(seconds=1)),
+                "type": "event_msg",
+                "payload": {"type": "user_message", "message": "看不懂，什么意思"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    available, materialized = MODULE.thread_prompt_materialized_after(
+        str(rollout), iso_z(reserved_at), "系统续跑：继续验证同一个修复。"
+    )
+
+    assert available is True
+    assert materialized is False
 
 
 def test_negative_task_turn_receipt_is_retryable_after_worker_exit(monkeypatch, tmp_path):
@@ -6370,7 +6427,7 @@ def test_validation_followup_never_abandons_an_unreceipted_delivery(monkeypatch,
         )
 
 
-def test_validation_followup_retries_an_explicit_no_turn_receipt(monkeypatch, tmp_path):
+def test_validation_followup_exposes_active_writer_as_desktop_handoff(monkeypatch, tmp_path):
     now = datetime.now(UTC)
     reserved_at = iso_z(now - timedelta(hours=2))
     thread_db = tmp_path / "threads.sqlite3"
@@ -6392,6 +6449,7 @@ def test_validation_followup_retries_an_explicit_no_turn_receipt(monkeypatch, tm
             return [
                 {
                     "key": "a/b#1",
+                    "issueUrl": "https://github.com/a/b/issues/1",
                     "threadId": "thread-1",
                     "resultDigest": "a" * 64,
                     "missing": ["independent_review_passed"],
@@ -6421,7 +6479,10 @@ def test_validation_followup_retries_an_explicit_no_turn_receipt(monkeypatch, tm
                 "ok": False,
                 "turnStarted": False,
                 "turnId": None,
-                "error": "RuntimeError:app server could not resume the task",
+                "error": (
+                    "RuntimeError:DESKTOP_ACTIVE_WRITER:"
+                    "thread thread-1 already has an active writer"
+                ),
             }
         ),
         encoding="utf-8",
@@ -6435,7 +6496,11 @@ def test_validation_followup_retries_an_explicit_no_turn_receipt(monkeypatch, tm
     )["unresolved"][0]
 
     assert unresolved["retryable"] is True
-    assert unresolved["retryReason"] == "NEGATIVE_RECEIPT_NO_TURN_STARTED"
+    assert unresolved["retryReason"] == "DESKTOP_ACTIVE_WRITER"
+    assert unresolved["desktopHandoffRequired"] is True
+    assert unresolved["desktopHandoff"]["threadId"] == "thread-1"
+    assert "系统续跑" in unresolved["desktopHandoff"]["prompt"]
+    assert "independent_review_passed" not in unresolved["desktopHandoff"]["prompt"]
     assert unresolved["commitReady"] is False
     assert unresolved["abandonable"] is False
 
@@ -6500,6 +6565,92 @@ def test_negative_validation_receipt_rearms_the_same_result(monkeypatch, tmp_pat
     ]
     assert not receipt.exists()
     assert not launch.exists()
+
+
+def test_active_writer_receipt_waits_for_desktop_handoff_instead_of_rearming(monkeypatch, tmp_path):
+    reserved_at = iso_z(datetime.now(UTC) - timedelta(minutes=2))
+    calls = []
+
+    class Store:
+        def unresolved_pr_followups(self):
+            return []
+
+        def unresolved_validation_followups(self):
+            return [
+                {
+                    "key": "a/b#1",
+                    "threadId": "thread-1",
+                    "resultDigest": "a" * 64,
+                    "reservedAt": reserved_at,
+                }
+            ]
+
+        def abandon_validation_followup_delivery(self, **kwargs):
+            calls.append(kwargs)
+
+    state = tmp_path / "state"
+    receipt_root = state / "task_turn_receipts"
+    receipt_root.mkdir(parents=True)
+    receipt_key = MODULE.sha256_json(
+        {
+            "deliveryKind": "validation-followup",
+            "threadId": "thread-1",
+            "deliveryToken": "a" * 64,
+        }
+    )
+    receipt = receipt_root / f"{receipt_key}.json"
+    receipt.write_text(
+        json.dumps(
+            {
+                "ok": False,
+                "turnStarted": False,
+                "error": "RuntimeError:DESKTOP_ACTIVE_WRITER:active writer",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(MODULE, "STATE", state)
+    monkeypatch.setattr(MODULE, "THREAD_DB", tmp_path / "missing.sqlite3")
+
+    assert MODULE._rearm_negative_followup_deliveries(Store()) == []
+    assert calls == []
+    assert receipt.exists()
+
+
+def test_materialized_desktop_handoff_is_committed_without_resending(monkeypatch, tmp_path):
+    committed = []
+
+    class Store:
+        def unresolved_pr_followups(self):
+            return []
+
+        def unresolved_validation_followups(self):
+            return [
+                {
+                    "key": "a/b#1",
+                    "threadId": "thread-1",
+                    "resultDigest": "a" * 64,
+                    "reservedAt": "2026-08-17T00:00:00Z",
+                }
+            ]
+
+        def commit_validation_followup(self, **kwargs):
+            committed.append(kwargs)
+
+    monkeypatch.setattr(MODULE, "STATE", tmp_path / "state")
+    monkeypatch.setattr(MODULE, "_reserved_task_turn_materialized", lambda *args, **kwargs: True)
+
+    reconciled = MODULE._rearm_negative_followup_deliveries(Store())
+
+    assert committed == [{"thread_id": "thread-1", "result_digest": "a" * 64}]
+    assert reconciled == [
+        {
+            "kind": "validation-followup",
+            "key": "a/b#1",
+            "threadId": "thread-1",
+            "reconciledDesktopHandoff": True,
+        }
+    ]
 
 
 def test_negative_recovery_receipt_rearms_the_same_task(monkeypatch, tmp_path):

@@ -162,3 +162,28 @@ def test_pending_title_update_and_quarantine_are_not_controller_blockers():
     )
 
     assert blockers == []
+
+
+def test_compact_controller_result_exposes_one_desktop_handoff():
+    handoff = {
+        "deliveryKind": "validation-followup",
+        "threadId": "thread-1",
+        "deliveryToken": "digest-1",
+        "prompt": "系统续跑：继续验证同一个修复，你无需操作。",
+    }
+    result = {
+        "ok": False,
+        "checkedAt": "2026-08-17T00:00:00Z",
+        "summary": {"drainAction": "none"},
+        "failures": [],
+        "finalBlockers": [{"stage": "finalValidationFollowups", "queue": "unresolved", "count": 1}],
+        "stages": {
+            "finalValidationFollowups": {
+                "unresolved": [{"desktopHandoff": handoff}],
+            }
+        },
+    }
+
+    compact = compact_controller_result(result)
+
+    assert compact["desktopHandoff"] == handoff
