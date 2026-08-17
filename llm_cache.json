@@ -4401,6 +4401,35 @@
     ],
     "why": "Issue clearly identifies a security-relevant bug in a shared download path with a verified repro and concrete fix direction. However, the existing PR #7162 is closed and the repository requires assignment, so maintainer confirmation is needed before starting new work."
   },
+  "25bf7edb3f692a190b07b44e0ff1c31eb8cc0cef3d5c858bbc83e4fa5a9a8486": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify ensureSandboxUncoalesced and reattachSandbox to check provider status after start() and treat non-running sandbox as failed reattach",
+      "Optionally invalidate workspace binding on code 1008 in tool layer"
+    ],
+    "risks": [
+      "Changing start() to reject on DESTROYED may affect other callers",
+      "Potential race conditions when clearing sandboxId and re-provisioning"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a failing test that simulates a DESTROYED sandbox and verifies that ensureSandbox re-provisions a new sandbox",
+      "Add unit tests for RailwaySandbox.start() behavior on DESTROYED status"
+    ],
+    "unknowns": [
+      "Maintainer design preference on whether to change provider start() or check status in fleet",
+      "Whether there is an existing internal design for sandbox lifecycle management"
+    ],
+    "wait_reason": "DESIGN_CONFIRMATION",
+    "why": "Issue clearly identifies a concrete bug in sandbox reattachment logic with a reproducible failure mode and suggests a fix, but the maintainer has not yet triaged or approved the approach, and the suggested fix involves API behavior changes (e.g., making start() reject on DESTROYED) that need design confirmation."
+  },
   "25e07f8d71cf1262698d4add8de8c6dcf8d12432d8f0832ff2a72b1383d794cc": {
     "confidence": 0.7,
     "contradictions": [],

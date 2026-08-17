@@ -1575,6 +1575,14 @@
       "seenAt": "2026-08-17T10:27:43.305551Z",
       "stateId": "4432a64f7d7ec6028658408f37f951d8d6300a16b1f65a6cda5fba0f105f9c18"
     },
+    "review|mastra-ai/mastra#21642": {
+      "category": "WAIT_MAINTAINER",
+      "digest": "8f65eedb0328b54eb8c065b86c37d2a4e3f51c4925701273bb5ace3c74747090",
+      "kind": "review",
+      "scannerVersion": "oss_pr_radar_v46_semantic_fallback",
+      "seenAt": "2026-08-17T14:06:55.653327Z",
+      "stateId": "c03753d0d31a2a497b8c1811321d83d21b2c5a51ba9defc2a267f44eb7e0ab9f"
+    },
     "review|mastra-ai/mastra#21657": {
       "category": "WAIT_MAINTAINER",
       "digest": "107f9787d61224f2655191be97535527b0918663b23a6dac5bfe9289b9253324",
@@ -2923,7 +2931,7 @@
       "stateId": "378106ea8121a541f37a4bf0a0de086df4d54f8e600ea1b5eb8538ce11c35ac8"
     }
   },
-  "digest": "f705baffcc2b5a59e0cef9842df8f7611a3a9eb2c3c3da828f1d5a0c1e6926e9",
+  "digest": "d79f25911063831508a559164b187f503d29202c3982247a387f30512cc5fdb8",
   "events": [
     {
       "attempts": 1,
@@ -24685,9 +24693,52 @@
       "runId": "pr-followup-1786972174",
       "sentAt": "2026-08-17T13:15:16.642987Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "mastra-ai/mastra#21642"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "8f65eedb0328b54eb8c065b86c37d2a4e3f51c4925701273bb5ace3c74747090",
+          "key": "mastra-ai/mastra#21642",
+          "kind": "review",
+          "scannerVersion": "oss_pr_radar_v46_semantic_fallback",
+          "stateId": "c03753d0d31a2a497b8c1811321d83d21b2c5a51ba9defc2a267f44eb7e0ab9f"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[mastra-ai/mastra#21642](https://github.com/mastra-ai/mastra/issues/21642) @mastra/factory: a session whose sandbox hit the idle timeout can never recover — `ensureSandbox` reattaches by stored id, `RailwaySandbox.start()` on a DESTROYED sandbox does not throw, so every later tool call fails with `Sandbox is not running (status: DESTROYED)`**\n建议：WAIT_MAINTAINER | 分数：10\n价值：Issue clearly identifies a concrete bug in sandbox reattachment logic with a reproducible failure mode and suggests a fix, but the maintainer has not yet triaged or approved the approach, and the suggested fix involves API behavior changes (e.g., making start() reject on DESTROYED) that need design confirmation.\n改动：Modify ensureSandboxUncoalesced and reattachSandbox to check provider status after start() and treat non-running sandbox as failed reattach；Optionally invalidate workspace binding on code 1008 in tool layer\n验证：Create a failing test that simulates a DESTROYED sandbox and verifies that ensureSandbox re-provisions a new sandbox；Add unit tests for RailwaySandbox.start() behavior on DESTROYED status\n风险：Changing start() to reject on DESTROYED may affect other callers；Potential race conditions when clearing sandboxId and re-provisioning\n竞争：仅发现未直接关联、无代码路径或强机制重合的 PR #21555；保留为搜索上下文，不阻止实现\n下一步：先在 issue 下请求分配/确认方案，获批后再开 PR。\n证据：复现信号 0，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-17T14:06:55.653327Z",
+      "eventId": "6c416e4b230f395dc5b900c5f65e5d1d241f4dcedbe031df2baf58521e283d1c",
+      "idempotencyKey": "6c416e4b230f395dc5b900c5f65e5d1d241f4dcedbe031df2b",
+      "kind": "review",
+      "runId": "scan-20260817T140100Z-31d3340b3dd3",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-17T13:14:37.549131Z",
-  "newEventCount": 1,
+  "generatedAt": "2026-08-17T14:06:56.142480Z",
+  "newEventCount": 0,
   "version": "notification_outbox_v2"
 }
