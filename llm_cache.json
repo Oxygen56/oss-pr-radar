@@ -7771,6 +7771,48 @@
     ],
     "why": "Issue describes a clear load-balancing bug with a concrete root cause identified in comments (no prefill booking, no active-block tracking). However, an existing PR #12890 overlaps semantically and requires maintainer comparison to avoid duplicate work. The deterministic gate is HUMAN_REVIEW, and the candidate lacks maintainer approval or design confirmation."
   },
+  "412e70e959344af665b2e195ff65d8094ca2a2d8bb663ec928f94c8d1eb91761": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Report cites fs/policy.ts path that does not exist; maintainer notes actual location in core/src/memory/paths.ts"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Implement segment-aware containment helper for dotdot-prefix checks",
+      "Delete or repurpose dead LruCache module",
+      "Implement or remove diff suppression hooks in DiffManager",
+      "Fix v1-to-v2 migration for folderTrustFeature with precedence rule",
+      "Move IPC handler registrations out of !isClientOnly block",
+      "Fix Java Session subtype parsing and thread daemon flags",
+      "Update statusline schema prose and regenerate schema"
+    ],
+    "risks": [
+      "Security-sensitive changes to containment checks require careful review",
+      "Changing migration behavior may affect existing users",
+      "Removing dead code may conflict with staged work",
+      "Implementing diff suppression may alter UX unexpectedly"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "test_plan": [
+      "Add regression tests for dotdot-prefix containment with legitimate '..'-prefixed names",
+      "Add migration test for folderTrustFeature collision precedence",
+      "Add unit tests for Java Session subtype parsing and thread daemon behavior",
+      "Add integration test for thin-client IPC handlers",
+      "Add tests for diff suppression hooks if implemented"
+    ],
+    "unknowns": [
+      "Maintainer preference on implement-vs-remove for dead code and diff hooks",
+      "Exact precedence rule for folderTrustFeature migration collision",
+      "Whether thin-client workspace mutations should target remote config"
+    ],
+    "wait_reason": "DESIGN_CONFIRMATION",
+    "why": "The issue is a report-only meta-report with 8 confirmed latent bugs, each requiring maintainer design decisions (e.g., shared containment helper, dead code removal vs. implementation, migration precedence rule, thin-client remote config semantics). The maintainer has already acknowledged and confirmed the findings, but no implementation direction has been approved. The candidate is actionable but blocked on design confirmation for several items."
+  },
   "4155990f90121f056f9f0a29597537263685b079e4d774a54068758e55da37ec": {
     "confidence": 0.8,
     "contradictions": [
@@ -12105,6 +12147,33 @@
     ],
     "why": "Issue reports a Dify Cloud MCP server error with a clear SQLAlchemy transaction symptom, but the root cause is only inferred by a bot comment, not confirmed by maintainers. The fix likely involves a small change in api/controllers/mcp/mcp.py, but the repository has a submission policy requiring AI disclosure, which conflicts with automatic public actions. No open PR directly addresses this issue, and the existing merged PRs are related but not directly linked. Given the need for maintainer confirmation on the root cause and the policy conflict, this is not a clean candidate for immediate work."
   },
+  "61a0b44af332bd910173fecb92339ec5f33bde91319a07c867fd2d874d9d6b5b": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Emit session/update or _meta notifications on scheduled turn start/end",
+      "Optionally stream scheduled-turn activity as session/update gated by client capability"
+    ],
+    "risks": [
+      "Potential API behavior change affecting clients that assume updates only during prompt turns; mitigate with capability flag"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a failing test that starts a scheduled turn and asserts a session/update is emitted",
+      "Run targeted unit tests for the scheduler and ACP notification paths"
+    ],
+    "unknowns": [
+      "Maintainer design preference for minimal vs. streaming approach; no explicit maintainer approval or help-wanted signal"
+    ],
+    "wait_reason": null,
+    "why": "Issue clearly identifies a missing event emission for scheduled turns in ACP, with a concrete reproduction timeline and two actionable fix options. No competing PR or issue found; PR #2906 is keyword-only and not a material competitor. The fix is a targeted runtime behavior change with a clear test path."
+  },
   "62388b41d2dc80d7f79b9ee063b1570cd6d45c9cd6738f7822e22b9d94f5a8ca": {
     "confidence": 0.7,
     "contradictions": [
@@ -14925,6 +14994,36 @@
       "Whether an existing PR or issue already addresses this; maintainer design preferences on error format"
     ],
     "why": "Issue clearly identifies a concrete bug in error response format with a proposed fix, but the deterministic gate requires HUMAN_REVIEW and open PR/related issue lookups timed out, so duplicate work cannot be excluded."
+  },
+  "75d7d6b07033b671fe214ffe910f9ecc0c758c6c28f00a32d127ab7faa1aa7cc": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Update CLI cwd handling to propagate mid-session directory changes to downstream consumers or document startup-only behavior",
+      "Add paths glob evaluation to core rule loader, porting VS Code's evaluatePathsConditional logic"
+    ],
+    "risks": [
+      "Changing cwd propagation may affect sandbox and provider settings persistence; need to ensure backward compatibility",
+      "Porting VS Code logic may introduce behavioral differences if evaluation context differs between CLI and VS Code"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce B2: start CLI, /cwd to a different directory, verify rules/skills resolve from new workspace root",
+      "Reproduce B3: create a rule with paths: ['src/**'], run CLI in a context where file is outside src, verify rule is not applied",
+      "Add unit tests for paths conditional evaluation covering omitted, empty, and non-string patterns"
+    ],
+    "unknowns": [
+      "Maintainer design preference on whether cwd should be dynamic or documented as startup-only",
+      "Exact evaluation context available in CLI for paths matching (e.g., workspace-relative path source)"
+    ],
+    "wait_reason": null,
+    "why": "Issue identifies two concrete, well-scoped bugs in CLI/core rule handling: stale cwd propagation and missing paths frontmatter gating. Both have clear code anchors and expected behavior, with a reference implementation in VS Code for the paths gating. No competing PR or issue found, and the gate allows work."
   },
   "75fe853124018b0e842d52d9ba9df42f41a9a1cb3a0585088cf014f11ab0ccf5": {
     "confidence": 0.7,
@@ -20856,6 +20955,35 @@
     ],
     "why": "The issue provides a clear, reproducible bug with a precise root cause: the streaming path in the ollama/ completion transformation never reconstructs tool calls, unlike the non-streaming path. However, the deterministic gate is HUMAN_REVIEW, and open PR and related issue lookups timed out, so we cannot rule out existing implementations or maintainer preferences. The submission policy also conflicts with AI disclosure requirements, blocking automatic action."
   },
+  "ab337aa79e3d8706966980c3bb2e376e1b494a02109fe45191ec5fa6c1cb4f88": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "sdk/packages/core/src/extensions/tools/executors/bash.ts",
+      "run_commands executor PowerShell handling"
+    ],
+    "risks": [
+      "Existing PR #13179 may already address the root cause; overlapping changes could conflict",
+      "Changing PowerShell command handling may affect other nested shell scenarios"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "test_plan": [
+      "Add a regression test using the issue's minimal reproducer to assert no hang and correct output",
+      "Run targeted unit tests for the executor package"
+    ],
+    "unknowns": [
+      "Whether PR #13179 actually fixes the reported issue",
+      "Maintainer design preferences for the fix approach"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue provides a clear root cause and a concrete fix location, but an open PR (#13179) by a collaborator overlaps the same code path and semantics, requiring manual comparison before new work starts."
+  },
   "ab5dd67ef1ce40a078db778eb4e323e0d29842cd1d9f54178ba2e19a3ad93475": {
     "confidence": 0.7,
     "contradictions": [],
@@ -24465,6 +24593,42 @@
       "Maintainer confirmation of root cause and desired fix approach"
     ],
     "why": "Issue reports deterministic SWA KV position corruption in hierarchical cache for DeepSeek-V4, with kv-canary evidence and a plausible root cause in draft-SWA backup/restore. However, open PR and related issue lookups timed out, and a merged PR #30393 may already address the problem, requiring verification. Maintainer has not confirmed the diagnosis or assigned work."
+  },
+  "c82fa2d14484be7dbb9706a972a537a21189940b80810b2ae2b69bf7724fb12a": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims sdd-verify lacks Write, but recent comment from Matere413 describes sdd-verify-validate command unavailable, which may be a different root cause",
+      "Issue #1976 is reported closed but installed agent still lacks Engram read tools, suggesting possible stale install or regression"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Claude Code agent generator templates for sdd-explore and sdd-verify",
+      "Possibly add Edit to sdd-explore for parity",
+      "Update frontmatter tools: lines to include Write (and possibly Edit) based on approved ownership contract"
+    ],
+    "risks": [
+      "Conflict with open PR #3398 and #3023 that touch related code paths",
+      "Potential conflict with issue #1976 which modifies the same frontmatter line for sdd-explore",
+      "Design decision may require narrowing write authority for all phases, expanding scope beyond simple Write addition"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "test_plan": [
+      "Add regression test that generates agent frontmatter and asserts Write is present for sdd-explore and sdd-verify",
+      "Run SDD explore/verify with openspec or hybrid store mode and verify artifact is created by the agent without orchestrator intervention",
+      "Run existing unit tests for agent generation and sync pipeline"
+    ],
+    "unknowns": [
+      "Whether maintainer will approve the proposed ownership contract or prefer a simpler fix",
+      "Exact scope of changes needed to avoid conflicts with existing PRs and #1976",
+      "Whether the fix should also address the sdd-verify-validate availability issue mentioned in comments"
+    ],
+    "wait_reason": "DESIGN_CONFIRMATION",
+    "why": "Issue clearly identifies a capability gap: sdd-explore and sdd-verify lack Write tool while their skills require artifact creation. Maintainer explicitly set needs-design and requested backend ownership contract and minimum capabilities per phase. A contributor proposed a detailed contract, but no maintainer approval yet. Existing PRs overlap semantically but do not reference this issue, and the fix may conflict with #1976. Work is actionable but requires design confirmation before implementation."
   },
   "c88577243fe2d90b662fa589f31b0f88f870ad880e4736d30d8401b59e0e5b11": {
     "confidence": 0.8,
@@ -31160,6 +31324,35 @@
       "Exact handling of the AI disclosure policy conflict for public contribution"
     ],
     "why": "The issue precisely identifies a runner-level gap in fc_agent_runner.py where zero tool calls with plain-text terminal answers are accepted as success, and the signal (tool_responses empty, function_call_state False) is available. However, the proposed fix requires design decisions (per-tool vs per-agent flag, retry vs error, error surface) that need maintainer input, and the repository's AI disclosure policy conflicts with automated public contribution. The issue is a feature request with no maintainer approval or help-wanted signal, and the discussion reveals a second failure mode (wrong parameter on genuine tool call) that broadens scope. Actionability is high technically but blocked by design confirmation and policy constraints."
+  },
+  "f8fe1e116e3711a23280d07715d865e221688f8b49f5da6478d56a98c0206174": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Agent.stream validation logic",
+      "Memory storage atomic ownership check"
+    ],
+    "risks": [
+      "Changing error semantics may break existing consumers",
+      "Atomic storage enforcement may require storage-specific changes"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 14,
+    "test_plan": [
+      "Reproduce with provided PostgreSQL script and mock model",
+      "Add regression test for mismatched resource/thread pair"
+    ],
+    "unknowns": [
+      "Maintainer preference on error type (throw vs stream error)",
+      "Storage API capabilities for atomic ownership check"
+    ],
+    "wait_reason": "DESIGN_CONFIRMATION",
+    "why": "The issue provides a clear reproduction and expected behavior, but the fix requires design confirmation on the error semantics (throw vs stream error) and atomic storage enforcement. The maintainer has not approved or triaged, and the bot explicitly requests waiting for triage before opening a PR."
   },
   "f919d62193ad7f61a52ee9d5a7aa76fe4e73a039e58dac2c0672b79ba444b98c": {
     "confidence": 0.9,
