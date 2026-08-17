@@ -97,10 +97,12 @@ PLAIN_LANGUAGE_STATUS_PROMPT = (
     "用户可见的进度和最终回复必须使用通俗中文。第一句必须严格二选一："
     "没有准确 PR 链接时写‘GitHub 上还没有 PR。’；有准确链接时写‘PR 已创建：<准确链接>’。"
     "禁止用‘任务仍在处理中’‘修复已完成’或内部阶段代替第一句。"
-    "随后最多四个短项。还没有 PR 时使用‘现在’‘为什么还没开 PR’‘接下来’‘你’；"
-    "已有 PR 时使用‘现在’‘GitHub 状态’‘接下来’‘你’，不要再写‘为什么还没发布’。"
-    "每项只说一个用户可感知的结果，例如正在复现、正在修改并验证、本地检查已通过、"
-    "系统正在做最后检查、等待维护者启动完整检查，或这个 issue 不值得继续。"
+    "随后最多四个短项，并固定使用‘问题’‘进展’‘还差’‘你’。"
+    "‘问题’必须用一句不超过三十个汉字的大白话说明用户会遇到什么，不能复述 issue 标题；"
+    "‘进展’只说已复现、正在修改并验证、本地检查已通过、PR 已更新，或这个 issue 不值得继续；"
+    "‘还差’必须具体说清尚未完成的一件事，例如确认修改不会影响其他功能、等待维护者启动完整检查、"
+    "等待在线检查或等待维护者审阅；全部完成时写‘没有，等待维护者审阅’。"
+    "‘你’只写用户现在是否需要操作。已有 PR 后也必须使用这四项，不要写‘为什么还没发布’。"
     "不要在用户可见回复中提技能名或系统组件名，也不要使用‘外壳解析’‘直接执行边界’"
     "‘兼容输入’‘回归证据’‘远端环境’‘语义’等需要工程背景的表达。"
     "安全审查问题统一说‘发现一处可能引发错误执行的风险，正在修正’；"
@@ -109,7 +111,7 @@ PLAIN_LANGUAGE_STATUS_PROMPT = (
     "是否仍有真实失败。整轮最多发送两次中间进度；没有用户可感知的新变化就不要发。"
     "不要直播排查步骤、猜测、尝试过的方案或接下来准备查看什么。"
     "每次更新只说相对上次新增的用户可见变化，不重复播报未变状态。"
-    "最终回复只回答四件事：PR 是否已创建、现在完成了什么、还差什么、用户是否要操作。"
+    "最终回复只回答五件事：PR 是否已创建、问题会造成什么、现在完成了什么、还差什么、用户是否要操作。"
     "除非用户追问技术细节，不要展示内部字段名、真假值、阶段名、文件路径、提交哈希、"
     "分支名、命令行，或使用‘门禁’‘回执’‘结构化交接’‘自动复核’等内部术语。"
     "如果红色状态只是维护者尚未添加 CI 标签或批准运行，必须说‘等待维护者启动完整检查’，"
@@ -1155,6 +1157,7 @@ def publish_terminal_feedback(args: argparse.Namespace) -> dict[str, Any]:
             "stateChanged": False,
             "publishAttempts": 0,
             "deferred": [],
+            "warnings": [],
             "errors": [],
         }
 
@@ -1162,6 +1165,7 @@ def publish_terminal_feedback(args: argparse.Namespace) -> dict[str, Any]:
     analyzed = iso_z(datetime.now(UTC))
     published: list[dict[str, Any]] = []
     deferred: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
     updates: dict[str, dict[str, Any]] = {}
     for row in rows:
@@ -1194,7 +1198,26 @@ def publish_terminal_feedback(args: argparse.Namespace) -> dict[str, Any]:
             }
             published.append({"key": key, "stage": row["stage"]})
         except (KeyError, OSError, RuntimeError, ValueError) as exc:
-            errors.append({"key": key, "error": str(exc)[:240]})
+            message = str(exc)[:240]
+            normalized = message.casefold()
+            transient_http = re.search(r"\bhttp\s+(?:408|429|5\d\d)\b", normalized)
+            transient_network = any(
+                marker in normalized
+                for marker in (
+                    "timed out",
+                    "timeout",
+                    "temporarily unavailable",
+                    "connection reset",
+                    "connection refused",
+                    "tls handshake timeout",
+                    "unexpected eof",
+                )
+            )
+            if transient_http or transient_network:
+                deferred.append({"key": key, "reason": "github_temporarily_unavailable"})
+                warnings.append({"key": key, "warning": message})
+            else:
+                errors.append({"key": key, "error": message})
 
     state_changed = False
     publish_attempts = 0
@@ -1206,6 +1229,7 @@ def publish_terminal_feedback(args: argparse.Namespace) -> dict[str, Any]:
         "stateChanged": state_changed,
         "publishAttempts": publish_attempts,
         "deferred": deferred,
+        "warnings": warnings,
         "errors": errors,
     }
 
@@ -5894,7 +5918,7 @@ VALIDATION_GAP_LABELS = {
     "minimal_fix_verified": "修复范围还没确认",
     "regression_test_verified": "回归测试证据还不完整",
     "relevant_tests_green": "和这次修改直接相关的检查还没全部通过",
-    "independent_review_passed": "系统正在做最后检查或发现了问题",
+    "independent_review_passed": "还需确认这次修改不会引入新问题",
 }
 
 

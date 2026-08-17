@@ -687,6 +687,57 @@ def test_terminal_feedback_defers_when_issue_changed_after_dispatch(monkeypatch,
     assert not (state / "controller_terminal_feedback.json").exists()
 
 
+def test_terminal_feedback_treats_transient_github_failure_as_deferred(monkeypatch, tmp_path):
+    store, _worktree = registered_store(tmp_path)
+    store.record_stage("a/b#1", "AUDIT_NO_GO", reason="ALREADY_FIXED")
+    state = tmp_path / "state"
+    state.mkdir()
+
+    class GitHub:
+        def issue(self, _repo, _number):
+            raise RuntimeError("gh: Gateway Time-out (HTTP 504)")
+
+    monkeypatch.setattr(MODULE, "STATE", state)
+    monkeypatch.setattr(MODULE, "GitHubClient", GitHub)
+
+    result = MODULE.publish_terminal_feedback(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert result["ok"] is True
+    assert result["errors"] == []
+    assert result["deferred"] == [
+        {"key": "a/b#1", "reason": "github_temporarily_unavailable"}
+    ]
+    assert result["warnings"] == [
+        {"key": "a/b#1", "warning": "gh: Gateway Time-out (HTTP 504)"}
+    ]
+
+
+def test_terminal_feedback_keeps_nontransient_github_failure_fatal(monkeypatch, tmp_path):
+    store, _worktree = registered_store(tmp_path)
+    store.record_stage("a/b#1", "AUDIT_NO_GO", reason="ALREADY_FIXED")
+    state = tmp_path / "state"
+    state.mkdir()
+
+    class GitHub:
+        def issue(self, _repo, _number):
+            raise RuntimeError("gh: Resource not accessible by integration (HTTP 403)")
+
+    monkeypatch.setattr(MODULE, "STATE", state)
+    monkeypatch.setattr(MODULE, "GitHubClient", GitHub)
+
+    result = MODULE.publish_terminal_feedback(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert result["ok"] is False
+    assert result["deferred"] == []
+    assert result["warnings"] == []
+    assert result["errors"] == [
+        {
+            "key": "a/b#1",
+            "error": "gh: Resource not accessible by integration (HTTP 403)",
+        }
+    ]
+
+
 def test_terminal_feedback_uses_latest_terminal_recheck_time(monkeypatch, tmp_path):
     store, _worktree = registered_store(tmp_path)
     store.record_stage("a/b#1", "AUDIT_NO_GO", reason="INITIAL_NO_GO")
@@ -3100,19 +3151,21 @@ def test_validation_followup_prompt_translates_internal_gaps_for_the_user():
     )
 
     assert "和这次修改直接相关的检查还没全部通过" in prompt
-    assert "系统正在做最后检查或发现了问题" in prompt
+    assert "还需确认这次修改不会引入新问题" in prompt
     assert MODULE.VALIDATION_POLICY_REVISION in prompt
     assert "第一句必须严格二选一" in prompt
-    assert "为什么还没开 PR" in prompt
-    assert "已有 PR 时使用‘现在’‘GitHub 状态’" in prompt
-    assert "不要再写‘为什么还没发布’" in prompt
+    assert "固定使用‘问题’‘进展’‘还差’‘你’" in prompt
+    assert "一句不超过三十个汉字的大白话" in prompt
+    assert "不能复述 issue 标题" in prompt
+    assert "已有 PR 后也必须使用这四项" in prompt
+    assert "不要写‘为什么还没发布’" in prompt
     assert "等待维护者启动完整检查" in prompt
     assert "发现一处可能引发错误执行的风险，正在修正" in prompt
     assert "项目的在线检查会继续完成" in prompt
     assert "不要罗列测试名称、测试数量、工具名称或构建产物" in prompt
     assert "整轮最多发送两次中间进度" in prompt
     assert "不要直播排查步骤、猜测、尝试过的方案" in prompt
-    assert "最终回复只回答四件事" in prompt
+    assert "最终回复只回答五件事" in prompt
     assert "不重复播报未变状态" in prompt
     assert "不要在用户可见回复中提技能名" in prompt
     assert "不得描述成代码测试失败" in prompt
