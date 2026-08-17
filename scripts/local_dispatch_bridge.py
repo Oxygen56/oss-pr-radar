@@ -79,7 +79,17 @@ VALIDATION_PREFETCH_TIMEOUTS = {
     "go_locked_download": 300,
     "uv_locked_sync": 600,
     "npm_locked_install": 600,
+    "pnpm_locked_install": 600,
 }
+VALIDATION_POLICY_REVISION = "ci_delegation_v1"
+
+PLAIN_LANGUAGE_STATUS_PROMPT = (
+    "用户可见的进度和最终回复必须使用通俗中文：第一句只说清楚 PR 是否已经创建；"
+    "随后最多四个短项说明已完成、未发布原因、下一步和用户是否需要操作。"
+    "除非用户追问技术细节，不要展示内部字段名、真假值、阶段名、文件路径、提交哈希、"
+    "分支名、命令行，或使用‘门禁’‘回执’‘结构化交接’等内部术语。"
+    "没有 publicationReceipt.prUrl 就必须直说 GitHub 上还没有 PR；有该 URL 才能说 PR 已创建并附链接。"
+)
 
 
 class ValidationPrefetchError(RuntimeError):
@@ -133,7 +143,7 @@ IMMEDIATE_RECOVERY_ERROR_CODES = {
 BENIGN_POLICY_RECOVERY_PROMPT = (
     "这是一个普通开源软件的本地 GPU 张量生命周期修复续办，不是网络安全任务。"
     "保留现有工作树和已完成改动，直接完成离线测试、独立复核以及 Workspace Result "
-    "Protocol 结构化交接；不要访问网络，不要执行公开操作。"
+    "Protocol 结构化交接；不要访问网络，不要执行公开操作。" + PLAIN_LANGUAGE_STATUS_PROMPT
 )
 VALIDATION_RECOVERY_PROMPT = (
     "这是同一受控任务的验证续跑中断恢复，不要创建新任务或重新实现。"
@@ -141,6 +151,7 @@ VALIDATION_RECOVERY_PROMPT = (
     ".oss-pr-radar/task-context.json 和 result.json，只补齐仍缺失的验证证据并正常完成交接。"
     "不要恢复上一轮遗留的 shell/exec 会话；对未完成的命令在当前工作树中新开进程重新执行。"
     "不得刷新 GitHub、安装依赖、请求权限、提交、推送、创建 PR 或执行其他公开动作。"
+    + PLAIN_LANGUAGE_STATUS_PROMPT
 )
 issue_prompt = canonical_prompt
 
@@ -4606,6 +4617,7 @@ def _pr_followup_prompt(candidate: dict[str, Any]) -> str:
         f"直接读取并验证 {context_path}，再进入其中记录的 worktreePath 继续；"
         "不要在当前入口目录等待 .oss-pr-radar/task-context.json。"
         "只处理该上下文绑定的最新 PR 快照、审查意见、冲突和检查，完成后按技能协议更新结果。"
+        + PLAIN_LANGUAGE_STATUS_PROMPT
     )
 
 
@@ -4689,8 +4701,12 @@ def _unresolved_validation_dependency_failures(
             covered = "cargo_locked_fetch" in kinds
         elif re.search(r"(?:^|\s)go\s+(?:test|vet|build|run)\b", command_text):
             covered = "go_locked_download" in kinds
+        elif "pnpm" in command_text:
+            covered = "pnpm_locked_install" in kinds
         elif "npm " in command_text:
             covered = "npm_locked_install" in kinds
+        elif any(marker in text for marker in ("pnpm", "node_modules", "dependency tree")):
+            covered = "pnpm_locked_install" in kinds
         elif any(
             marker in text
             for marker in (
@@ -4810,6 +4826,22 @@ def _validation_prefetch_plan(
                 )
                 if manifest_root is not None:
                     roots.add(manifest_root)
+        for failure in dependency_failures:
+            working_directory = failure.get("workingDirectory") or failure.get("cwd")
+            if not isinstance(working_directory, str) or not working_directory.strip():
+                continue
+            candidate_root = Path(working_directory)
+            if not candidate_root.is_absolute():
+                candidate_root = worktree / candidate_root
+            try:
+                candidate_root = candidate_root.resolve()
+            except OSError:
+                continue
+            if candidate_root != worktree and worktree not in candidate_root.parents:
+                continue
+            manifest_root = _nearest_manifest_root(candidate_root, stop=worktree, manifest="go.mod")
+            if manifest_root is not None:
+                roots.add(manifest_root)
         for root in sorted(roots, key=str):
             commands.append(
                 {
@@ -4867,12 +4899,110 @@ def _validation_prefetch_plan(
                     ],
                 }
             )
+    if (
+        "pnpm" in failure_text.casefold()
+        or "node_modules" in failure_text.casefold()
+        or "dependency tree" in failure_text.casefold()
+    ):
+        roots: set[Path] = set()
+        changed_files = result.get("changedFiles")
+        if isinstance(changed_files, list):
+            for relative in changed_files:
+                if not isinstance(relative, str) or not relative.endswith(
+                    (".js", ".jsx", ".ts", ".tsx", ".json", ".md")
+                ):
+                    continue
+                manifest_root = _nearest_manifest_root(
+                    worktree / relative, stop=worktree, manifest="pnpm-lock.yaml"
+                )
+                if manifest_root is not None and (manifest_root / "package.json").is_file():
+                    roots.add(manifest_root)
+        if (
+            not roots
+            and (worktree / "pnpm-lock.yaml").is_file()
+            and (worktree / "package.json").is_file()
+        ):
+            roots.add(worktree)
+        for root in sorted(roots, key=str):
+            commands.append(
+                {
+                    "kind": "pnpm_locked_install",
+                    "cwd": str(root),
+                    "argv": [
+                        "pnpm",
+                        "install",
+                        "--frozen-lockfile",
+                        "--ignore-scripts",
+                        "--prefer-offline",
+                    ],
+                }
+            )
     return commands, dependency_failures
 
 
 def _validation_prefetch_commands(candidate: dict[str, Any]) -> list[dict[str, Any]]:
     commands, _dependency_failures = _validation_prefetch_plan(candidate)
     return commands
+
+
+def _validation_policy_reassessment_needed(candidate: dict[str, Any]) -> bool:
+    if "relevant_tests_green" not in set(candidate.get("missing") or []):
+        return False
+    value = read_json(_task_result_path(candidate), missing={})
+    if not isinstance(value, dict):
+        return False
+    evidence = value.get("evidence")
+    if (
+        isinstance(evidence, dict)
+        and evidence.get("validationPolicyRevision") == VALIDATION_POLICY_REVISION
+    ):
+        return False
+    quality = value.get("quality")
+    if not isinstance(quality, dict) or any(
+        quality.get(field) is not True
+        for field in (
+            "reproduction_verified",
+            "root_cause_verified",
+            "minimal_fix_verified",
+            "regression_test_verified",
+        )
+    ):
+        return False
+    tests = value.get("tests")
+    has_passing_test = isinstance(tests, list) and any(
+        isinstance(item, dict) and item.get("exitCode") == 0 for item in tests
+    )
+    if not has_passing_test or not isinstance(evidence, dict):
+        return False
+    unverified = evidence.get("unverifiedGates")
+    if not isinstance(unverified, list):
+        return False
+    evidence_text = "\n".join(
+        (
+            f"{item.get('command', '')}\n{item.get('reason', '')}\n{item.get('summary', '')}"
+            if isinstance(item, dict)
+            else str(item)
+        )
+        for item in unverified
+    ).casefold()
+    if any(
+        marker in evidence_text
+        for marker in ("generated artifact", "generated bundle", "not rebuilt", "not synchronized")
+    ):
+        return False
+    return any(
+        marker in evidence_text
+        for marker in (
+            "run_suite.py",
+            "authoritative multimodal-gen unit suite",
+            "repository-wide suite",
+            "full-project",
+            "gpu accuracy",
+            "gpu/model",
+            "model-level",
+            "hardware-only",
+        )
+    )
 
 
 def _execute_validation_prefetch(
@@ -4890,6 +5020,13 @@ def _execute_validation_prefetch(
             "--ignore-scripts",
             "--no-audit",
             "--no-fund",
+        ],
+        "pnpm_locked_install": [
+            "pnpm",
+            "install",
+            "--frozen-lockfile",
+            "--ignore-scripts",
+            "--prefer-offline",
         ],
     }
     completed: list[dict[str, Any]] = []
@@ -4990,56 +5127,73 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
                     prefetch_commands, dependency_failures
                 )
                 if unresolved_dependency_failures:
-                    blocked_environment.append(
-                        blocked
-                        | {
-                            "reason": "DEPENDENCY_ENVIRONMENT_UNAVAILABLE",
-                            "dependencyFailures": [
-                                _validation_dependency_failure_summary(item)
-                                for item in unresolved_dependency_failures
-                            ],
-                        }
-                    )
-                    continue
-                if prefetch_commands:
+                    if _validation_policy_reassessment_needed(blocked):
+                        reason = "VALIDATION_POLICY_UPDATE_AVAILABLE"
+                        review_marker = VALIDATION_POLICY_REVISION
+                    else:
+                        blocked_environment.append(
+                            blocked
+                            | {
+                                "reason": "DEPENDENCY_ENVIRONMENT_UNAVAILABLE",
+                                "dependencyFailures": [
+                                    _validation_dependency_failure_summary(item)
+                                    for item in unresolved_dependency_failures
+                                ],
+                            }
+                        )
+                        continue
+                elif prefetch_commands:
                     reason = "DEPENDENCY_PREFETCH_AVAILABLE"
                     review_marker = sha256_json({"prefetchCommands": prefetch_commands})
                 elif dependency_failures:
-                    blocked_environment.append(
-                        blocked
-                        | {
-                            "reason": "DEPENDENCY_ENVIRONMENT_UNAVAILABLE",
-                            "dependencyFailures": [
-                                _validation_dependency_failure_summary(item)
-                                for item in dependency_failures
-                            ],
-                        }
-                    )
-                    continue
+                    if _validation_policy_reassessment_needed(blocked):
+                        reason = "VALIDATION_POLICY_UPDATE_AVAILABLE"
+                        review_marker = VALIDATION_POLICY_REVISION
+                    else:
+                        blocked_environment.append(
+                            blocked
+                            | {
+                                "reason": "DEPENDENCY_ENVIRONMENT_UNAVAILABLE",
+                                "dependencyFailures": [
+                                    _validation_dependency_failure_summary(item)
+                                    for item in dependency_failures
+                                ],
+                            }
+                        )
+                        continue
                 else:
                     missing = set(blocked.get("missing") or [])
                     if "independent_review_passed" not in missing:
-                        continue
-                    value = read_json(_task_result_path(blocked), missing={})
-                    review = (
-                        controller_review_result(ROOT, value) if isinstance(value, dict) else None
-                    )
-                    verdict = str(review.get("verdict") or "") if review else ""
-                    if missing != {"independent_review_passed"} and verdict not in {
-                        "FAIL",
-                        "HOLD",
-                    }:
-                        continue
-                    reason = (
-                        "CONTROLLER_REVIEW_FEEDBACK_AVAILABLE"
-                        if verdict in {"FAIL", "HOLD"}
-                        else (
-                            "CONTROLLER_REVIEW_PASS_PENDING_INGESTION"
-                            if verdict == "PASS"
-                            else "CONTROLLER_REVIEW_PENDING"
+                        if _validation_policy_reassessment_needed(blocked):
+                            reason = "VALIDATION_POLICY_UPDATE_AVAILABLE"
+                            review_marker = VALIDATION_POLICY_REVISION
+                        else:
+                            continue
+                    else:
+                        value = read_json(_task_result_path(blocked), missing={})
+                        review = (
+                            controller_review_result(ROOT, value)
+                            if isinstance(value, dict)
+                            else None
                         )
-                    )
-                    review_marker = sha256_json(review) if review else "CONTROLLER_REVIEW_PENDING"
+                        verdict = str(review.get("verdict") or "") if review else ""
+                        if verdict in {"FAIL", "HOLD"}:
+                            reason = "CONTROLLER_REVIEW_FEEDBACK_AVAILABLE"
+                            review_marker = sha256_json(review)
+                        elif _validation_policy_reassessment_needed(blocked):
+                            reason = "VALIDATION_POLICY_UPDATE_AVAILABLE"
+                            review_marker = VALIDATION_POLICY_REVISION
+                        elif missing != {"independent_review_passed"}:
+                            continue
+                        else:
+                            reason = (
+                                "CONTROLLER_REVIEW_PASS_PENDING_INGESTION"
+                                if verdict == "PASS"
+                                else "CONTROLLER_REVIEW_PENDING"
+                            )
+                            review_marker = (
+                                sha256_json(review) if review else "CONTROLLER_REVIEW_PENDING"
+                            )
             rearmed = store.rearm_validation_no_progress_for_review(
                 key=str(blocked["key"]),
                 result_digest=str(blocked["resultDigest"]),
@@ -5118,16 +5272,27 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
                 commands, dependency_failures
             )
             if unresolved_dependency_failures or (dependency_failures and not commands):
-                failures = unresolved_dependency_failures or dependency_failures
-                environment_blocked.append(
-                    candidate
-                    | {
-                        "reason": "DEPENDENCY_ENVIRONMENT_UNAVAILABLE",
-                        "dependencyFailures": [
-                            _validation_dependency_failure_summary(item) for item in failures
-                        ],
-                    }
-                )
+                if _validation_policy_reassessment_needed(candidate):
+                    candidates.append(
+                        candidate
+                        | {
+                            "prefetchRequired": bool(commands),
+                            "prefetchMode": "bridge_managed" if commands else "none",
+                            "policyReassessment": VALIDATION_POLICY_REVISION,
+                            "nextOperation": "validation-followup-reserve",
+                        }
+                    )
+                else:
+                    failures = unresolved_dependency_failures or dependency_failures
+                    environment_blocked.append(
+                        candidate
+                        | {
+                            "reason": "DEPENDENCY_ENVIRONMENT_UNAVAILABLE",
+                            "dependencyFailures": [
+                                _validation_dependency_failure_summary(item) for item in failures
+                            ],
+                        }
+                    )
                 continue
             candidates.append(
                 candidate
@@ -5249,8 +5414,30 @@ def validation_followup_abandon(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+VALIDATION_GAP_LABELS = {
+    "fresh_state_verified": "任务状态还没重新确认",
+    "ownership_verified": "是否仍无人认领还没确认",
+    "policy_verified": "仓库贡献规则还没确认",
+    "reproduction_verified": "问题还没可靠复现",
+    "root_cause_verified": "根因还没确认",
+    "minimal_fix_verified": "修复范围还没确认",
+    "regression_test_verified": "回归测试证据还不完整",
+    "relevant_tests_green": "相关正式测试还没完成或没通过",
+    "independent_review_passed": "自动复核还没完成或发现了问题",
+}
+
+
+def _validation_gap_summary(candidate: dict[str, Any]) -> str:
+    labels = [
+        VALIDATION_GAP_LABELS.get(str(item), "仍有一项发布检查未完成")
+        for item in candidate.get("missing") or []
+    ]
+    return "；".join(dict.fromkeys(labels))
+
+
 def _validation_followup_prompt(candidate: dict[str, Any]) -> str:
     missing = "、".join(str(item) for item in candidate.get("missing") or [])
+    missing_summary = _validation_gap_summary(candidate)
     prefetch = bool(candidate.get("prefetchCommands"))
     dependency_note = (
         "控制器已经按锁文件预取缺失依赖；继续保持离线，使用项目虚拟环境或锁文件工具重新运行相关测试。"
@@ -5261,7 +5448,9 @@ def _validation_followup_prompt(candidate: dict[str, Any]) -> str:
         "这是同一任务的验证续跑，不要创建新任务或重新实现。"
         "不要重新读取技能文件或重放完整历史；沿用首轮已经加载的协议。重新读取工作树内的 "
         ".oss-pr-radar/task-context.json，并只在其中记录的 worktreePath 继续。\n\n"
-        f"当前缺失发布证据：{missing}。{dependency_note}\n\n"
+        f"本轮需要解决：{missing_summary}。{dependency_note}\n\n"
+        f"内部待补字段为 {missing}。本轮使用验证策略 {VALIDATION_POLICY_REVISION}；完成时必须将该值写入 "
+        "result.json 的 evidence.validationPolicyRevision。\n\n"
         "必须依据真实运行结果更新 .oss-pr-radar/result.json：补充针对性回归测试；如以测试作为复现证据，"
         "需证明修复前失败、修复后通过。不得刷新 GitHub、不得安装依赖、不得请求权限、不得执行提交、推送、"
         "建 PR 或其他公开动作。若仍无法完成验证，保留对应 quality=false 并写清可复核原因；不得把格式检查"
@@ -5273,8 +5462,9 @@ def _validation_followup_prompt(candidate: dict[str, Any]) -> str:
         "先处理其中的阻断发现并更新代码或证据；任务自身不得把 independent_review_passed 改为 true，该字段只由"
         "控制器的临时只读独立审查器写入。"
         "不要扫描工作树之外的目录，不要寻找全局替代工具、镜像或缓存；若控制器预取后锁定环境仍缺少必需门禁，"
-        "记录该事实、保留 quality=false 并立即结束本轮。"
-        "完成后正常结束，由控制器重新接收结果。"
+        "先按技能中的 CI 委托规则判断：只有广泛包装器、可选依赖、GPU/模型检查可在满足全部条件时委托远端 CI；"
+        "改动路径的真实失败、缺少生成产物或已知分支问题仍必须保留 quality=false。无法满足委托条件时记录事实并立即结束。"
+        "完成后正常结束，由控制器重新接收结果。" + PLAIN_LANGUAGE_STATUS_PROMPT
     )
 
 

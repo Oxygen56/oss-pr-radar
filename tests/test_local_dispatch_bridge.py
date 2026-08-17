@@ -3003,6 +3003,21 @@ def test_recovery_delivery_preserves_validation_followup_prompt():
     )
 
     assert prompt == MODULE.VALIDATION_RECOVERY_PROMPT
+    assert "PR 是否已经创建" in prompt
+
+
+def test_validation_followup_prompt_translates_internal_gaps_for_the_user():
+    prompt = MODULE._validation_followup_prompt(
+        {
+            "missing": ["relevant_tests_green", "independent_review_passed"],
+            "prefetchCommands": [],
+        }
+    )
+
+    assert "相关正式测试还没完成或没通过" in prompt
+    assert "自动复核还没完成或发现了问题" in prompt
+    assert MODULE.VALIDATION_POLICY_REVISION in prompt
+    assert "第一句只说清楚 PR 是否已经创建" in prompt
 
 
 def test_recovery_serializes_multiple_terminal_failures(monkeypatch, tmp_path):
@@ -6908,6 +6923,58 @@ def test_validation_prefetch_recognizes_go_vet_and_python_tool_environment_gaps(
     assert [item["kind"] for item in commands] == ["go_locked_download", "uv_locked_sync"]
 
 
+def test_validation_prefetch_supports_pnpm_and_go_failure_working_directory(tmp_path):
+    worktree = tmp_path / "worktree"
+    result_dir = worktree / ".oss-pr-radar"
+    go_module = worktree / "packages" / "sdk-go"
+    source_dir = worktree / "packages" / "extension"
+    result_dir.mkdir(parents=True)
+    go_module.mkdir(parents=True)
+    source_dir.mkdir(parents=True)
+    (worktree / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n", encoding="utf-8")
+    (worktree / "package.json").write_text("{}\n", encoding="utf-8")
+    (go_module / "go.mod").write_text("module example.com/sdk\n", encoding="utf-8")
+    (source_dir / "runtime.ts").write_text("export const value = 1;\n", encoding="utf-8")
+    result = {
+        "changedFiles": ["packages/extension/runtime.ts"],
+        "tests": [
+            {
+                "command": "GOPROXY=off go test ./...",
+                "workingDirectory": "packages/sdk-go",
+                "exitCode": 1,
+                "summary": "module lookup disabled by GOPROXY=off",
+            }
+        ],
+        "evidence": {
+            "unverifiedGates": [
+                "The pnpm checks were unavailable because node_modules has an incomplete dependency tree."
+            ]
+        },
+    }
+    raw = json.dumps(result).encode()
+    (result_dir / "result.json").write_bytes(raw)
+
+    commands = MODULE._validation_prefetch_commands(
+        {
+            "worktreePath": str(worktree),
+            "resultDigest": hashlib.sha256(raw).hexdigest(),
+        }
+    )
+
+    assert [item["kind"] for item in commands] == [
+        "go_locked_download",
+        "pnpm_locked_install",
+    ]
+    assert commands[0]["cwd"] == str(go_module.resolve())
+    assert commands[1]["argv"] == [
+        "pnpm",
+        "install",
+        "--frozen-lockfile",
+        "--ignore-scripts",
+        "--prefer-offline",
+    ]
+
+
 def test_validation_prefetch_includes_locked_group_that_provides_missing_pytest(tmp_path):
     worktree = tmp_path / "worktree"
     result_dir = worktree / ".oss-pr-radar"
@@ -6990,6 +7057,48 @@ def test_validation_followup_blocks_missing_python_dependencies_without_lockfile
     assert listed["candidates"] == []
     assert listed["environmentBlocked"][0]["key"] == "a/b#1"
     assert listed["environmentBlocked"][0]["reason"] == "DEPENDENCY_ENVIRONMENT_UNAVAILABLE"
+
+
+def test_validation_followup_reassesses_ci_delegation_once(tmp_path):
+    store, _worktree, result_path = _controller_commit_result(
+        tmp_path,
+        missing_quality=("relevant_tests_green", "independent_review_passed"),
+    )
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value["evidence"] = {
+        "unverifiedGates": [
+            {
+                "command": "pre-commit run --files runtime.py",
+                "reason": "pre-commit is not installed in the prepared environment",
+            },
+            "The repository-wide GPU/model suite can run only in remote CI.",
+        ]
+    }
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+
+    ingested = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    assert ingested["validationDeferred"]
+
+    listed = MODULE.validation_followup_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert [item["key"] for item in listed["candidates"]] == ["a/b#1"]
+    assert listed["candidates"][0]["policyReassessment"] == (MODULE.VALIDATION_POLICY_REVISION)
+    assert listed["environmentBlocked"] == []
+
+    finalized = json.loads(result_path.read_text(encoding="utf-8"))
+    finalized.setdefault("evidence", {})["validationPolicyRevision"] = (
+        MODULE.VALIDATION_POLICY_REVISION
+    )
+    result_path.write_text(json.dumps(finalized), encoding="utf-8")
+    assert (
+        MODULE._validation_policy_reassessment_needed(
+            {
+                "worktreePath": str(Path(finalized["worktreePath"])),
+                "missing": ["relevant_tests_green"],
+            }
+        )
+        is False
+    )
 
 
 def test_validation_prefetch_execution_enforces_command_and_worktree_boundaries(
