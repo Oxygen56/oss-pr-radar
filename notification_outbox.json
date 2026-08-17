@@ -1185,6 +1185,14 @@
       "seenAt": "2026-08-15T07:52:31.494043Z",
       "stateId": "67d66c3f02c1eece0fce91ebecbbde6505e58691a823c9bcebab2240a1ce962e"
     },
+    "review|langchain-ai/langgraph#8475": {
+      "category": "WAIT_MAINTAINER",
+      "digest": "1ee0e349404d59a0b2698759a9a6f104df955e92056f4cd9ac0e4dbcd3c0a8cd",
+      "kind": "review",
+      "scannerVersion": "oss_pr_radar_v46_semantic_fallback",
+      "seenAt": "2026-08-17T19:49:44.596049Z",
+      "stateId": "d185078d5bdea14135e055b77f8e111dbb817883af7c4371887c2b91dc4b5ec9"
+    },
     "review|langchain-ai/langgraph#8582": {
       "category": "WAIT_MAINTAINER",
       "digest": "0b883a2deee297fa5314e121ee9628b0bce03e705e5a494c91f5c18080053191",
@@ -2796,11 +2804,11 @@
     },
     "watch|BerriAI/litellm#36791": {
       "category": "PR_FOLLOWUP",
-      "digest": "5e882cdc1a8d579132055d6bc346ca7fb90dbb308e17692b9789400569e08e7b",
+      "digest": "23e1e395839dd6647ad503ef17a8fc5756911a5d3c56156fc754bf99489c3caa",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-17T19:05:17.004483Z",
-      "stateId": "317478cd66eb716bc833900f7d45667c038246fe0095eb6b8d544c872d6e8db8"
+      "seenAt": "2026-08-17T19:49:44.944997Z",
+      "stateId": "6d90b662e8b6cc7de86ace332d52abaed4cbed861a6bd1cc807f84b6be14f029"
     },
     "watch|SWE-bench/SWE-bench#593": {
       "category": "PR_FOLLOWUP",
@@ -2988,14 +2996,14 @@
     },
     "watch|vllm-project/vllm#52298": {
       "category": "PR_FOLLOWUP",
-      "digest": "2363edcc616262c1a398b7f6908cfcc10d2a7e8dfc95a3aace98087f8a7e8a56",
+      "digest": "0489a0c6d04d81ded8bb4087d042fafbe4ae8d311363ac3f103487f54c24755d",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-17T19:05:17.004483Z",
-      "stateId": "5940c8c7c3c2132e737e3caf4388cd0cb24fb87fbe5e4fcea83f1775d8aad478"
+      "seenAt": "2026-08-17T19:49:44.944997Z",
+      "stateId": "437a3e3ae3366033693807c17f480540ba73aa66f74dd7bb47e6c4e3c66fffc5"
     }
   },
-  "digest": "6bb3a81bc18399fcdddab819ea90c222621aa5ca61cb3b5bfe80e03abd6612d7",
+  "digest": "2f931349a665cba27579b5a6b36d51979217456b0dd26fd81cae6ad406a91f7a",
   "events": [
     {
       "attempts": 1,
@@ -25486,9 +25494,114 @@
       "runId": "pr-followup-1786993270",
       "sentAt": "2026-08-17T19:06:04.097921Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "langchain-ai/langgraph#8475"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "1ee0e349404d59a0b2698759a9a6f104df955e92056f4cd9ac0e4dbcd3c0a8cd",
+          "key": "langchain-ai/langgraph#8475",
+          "kind": "review",
+          "scannerVersion": "oss_pr_radar_v46_semantic_fallback",
+          "stateId": "d185078d5bdea14135e055b77f8e111dbb817883af7c4371887c2b91dc4b5ec9"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[langchain-ai/langgraph#8475](https://github.com/langchain-ai/langgraph/issues/8475) langgraph-api injects private CONFIG_KEY_RUNTIME (__pregel_runtime) into factory-visible config; factories that re-bind it crash with '_ReadRuntime' has no 'override'**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue clearly identifies a runtime crash caused by langgraph-api injecting a private runtime object into factory-visible config, with a minimal repro and three suggested fixes. However, the proposed fix approach (reusing foreign-runtime coercion) needs maintainer confirmation, and the issue is not assigned. The gate decision is HUMAN_REVIEW, and the submission policy requires assignment.\n改动：langgraph_api/graph.py；langgraph/pregel/_algo.py；langgraph/runtime/__init__.py\n验证：Add regression tests for get_graph()/aget_graph() with factory-visible config containing _ReadRuntime；Run existing langgraph and langgraph-api test suites\n风险：Changing config injection may break existing factory patterns；Sanitizing runtime may mask legitimate uses\n竞争：仅发现未直接关联、无代码路径或强机制重合的 PR #8110；保留为搜索上下文，不阻止实现\n下一步：先请求维护者分配/确认方案，获批后再开 PR。\n证据：复现信号 1，根因信号 False",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-17T19:49:44.596049Z",
+      "eventId": "895e38e4f2acd048254b36a4a6d31c4421b3c286a15514e0f3ac04345262594a",
+      "idempotencyKey": "895e38e4f2acd048254b36a4a6d31c4421b3c286a15514e0f3",
+      "kind": "review",
+      "runId": "scan-20260817T194634Z-48a72692b711",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "BerriAI/litellm#36791",
+        "vllm-project/vllm#52298"
+      ],
+      "candidateStates": [
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "23e1e395839dd6647ad503ef17a8fc5756911a5d3c56156fc754bf99489c3caa",
+          "key": "BerriAI/litellm#36791",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "6d90b662e8b6cc7de86ace332d52abaed4cbed861a6bd1cc807f84b6be14f029"
+        },
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "0489a0c6d04d81ded8bb4087d042fafbe4ae8d311363ac3f103487f54c24755d",
+          "key": "vllm-project/vllm#52298",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "437a3e3ae3366033693807c17f480540ba73aa66f74dd7bb47e6c4e3c66fffc5"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[BerriAI/litellm#36791](https://github.com/BerriAI/litellm/pull/36791) fix(router): support anthropic messages streaming fallback**\n建议：PR_FOLLOWUP\n价值：当前分支检查失败；存在未解决审查线程\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#52298](https://github.com/vllm-project/vllm/pull/52298) [Bugfix] Validate guidance tokenizer compatibility before EngineCore**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-17T19:49:44.944997Z",
+      "eventId": "56c2c0527279136a4eeab3eb24dc292417b7eaf5a98901d1dc46108b5afee03d",
+      "idempotencyKey": "56c2c0527279136a4eeab3eb24dc292417b7eaf5a98901d1dc",
+      "kind": "watch",
+      "runId": "pr-followup-1786995937",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-17T19:05:17.004483Z",
+  "generatedAt": "2026-08-17T19:49:44.944997Z",
   "newEventCount": 1,
   "version": "notification_outbox_v2"
 }

@@ -967,6 +967,39 @@
     ],
     "why": "The issue reports a reproducible multi-node TP deadlock with strong evidence of NCCL collective desync, but the root cause is not definitively identified; multiple orthogonal causes (NCCL build, FlashInfer kernel livelock, TP-divergence) are discussed. The deterministic gate requires HUMAN_REVIEW, and open PR/related issue lookups failed, so duplicate work cannot be excluded."
   },
+  "09658bbf48a2c35e197367c0eec5898d2ec01c4ad1c0bc4b0faceb737f80d851": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue claims flaky but reproduction on H100 passed 6/6; no H200 reproduction evidence"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Reproduce the flaky failure in a single pytest session on H200",
+      "Identify the antecedent CUDA error that invalidates capture",
+      "Fix state leakage or capture logic in vllm/compilation/cuda_graph.py or model_runner"
+    ],
+    "risks": [
+      "Failure may be hardware-specific (H200) and not reproducible on available hardware",
+      "Root cause may be in upstream PyTorch or CUDA, requiring external fix"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Run the full test_full_graph.py file in a single session on H200 to reproduce",
+      "Add a regression test that runs the failing config after other tests to expose cross-test state issues"
+    ],
+    "unknowns": [
+      "Whether the failure reproduces on H200 in a full session",
+      "The antecedent CUDA error that caused capture invalidation",
+      "Whether maintainers are actively investigating or have a preferred fix"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "Issue reports a flaky CI failure with cudaErrorStreamCaptureInvalidated but no root cause identified; reproduction attempts on H100 passed, and the failure may be H200-specific or due to cross-test state. No maintainer investigation or design confirmation exists, and the issue is disclosure-only with no actionable code path."
+  },
   "09781cee75435ba3d10d4eca11d08d1b0697587d32058faa625331c17ae7cdac": {
     "confidence": 0.7,
     "contradictions": [],
@@ -19389,6 +19422,37 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue provides a detailed root cause and a sound fix proposal for a real resource leak, but an existing PR (#2982) directly references the issue and overlaps semantically, requiring maintainer review to avoid duplicate work. The issue also carries a HUMAN_REVIEW gate and needs maintainer confirmation."
   },
+  "969a63ac9e6cce272d2ee269b285308201797baf7fe9817f4e7f242342f352a5": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None"
+    ],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add compat block to cpp/kernels/moe/f16_cutedsl/cuteDslF16MoeRunner.h",
+      "Possibly add a regression test or CI check for CUDA 12.6 builds"
+    ],
+    "risks": [
+      "The fix is a local patch; maintainer may prefer a different approach (e.g., updating artifact generation)",
+      "Potential ABI or runtime issues if the compat shim is not exactly matching the CUDA runtime expectations"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce the build failure using the documented JetPack 6.2+ Orin CMake command with ENABLE_CUTE_DSL=ALL and CUDA_CTK_VERSION=12.6",
+      "Apply the patch and verify the build completes successfully",
+      "Add a compile-time regression test that checks for the presence of the compat block or builds the f16_moe kernel with CUDA 12.6"
+    ],
+    "unknowns": [
+      "Maintainer interest in accepting the fix; whether a PR would be merged"
+    ],
+    "wait_reason": null,
+    "why": "Issue identifies a concrete build blocker with a clear root cause: missing compat shim for cudaLibrary_t in cuteDslF16MoeRunner.h, which is inconsistent with sibling headers. The proposed fix is minimal and verified locally. Although the issue is a build fix, it directly affects the correctness of the MoE kernel path (f16_moe) and is actionable with a clear regression test."
+  },
   "970d4daf80b2955b05797ac24f9928557ac7c0a41971d5b00c3aa1e6c420ff77": {
     "confidence": 0.6,
     "contradictions": [
@@ -29803,6 +29867,36 @@
     ],
     "why": "Issue reports stale get_episodes results; maintainer comment attributes to queue latency, but user analysis identifies a concrete root cause: get_episodes uses keyset pagination with ORDER BY uuid DESC, returning arbitrary stable subset instead of most recent episodes. Existing PR #1726 addresses this but has failing CI and lacks full evidence. A materially better PR with robust tests and root-cause analysis is plausible."
   },
+  "e804d6fc98d9e952a2ef6fe2ac963f4db525c752e462b3f160a37d49729345bc": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "langgraph_api/graph.py",
+      "langgraph/pregel/_algo.py",
+      "langgraph/runtime/__init__.py"
+    ],
+    "risks": [
+      "Changing config injection may break existing factory patterns",
+      "Sanitizing runtime may mask legitimate uses"
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Add regression tests for get_graph()/aget_graph() with factory-visible config containing _ReadRuntime",
+      "Run existing langgraph and langgraph-api test suites"
+    ],
+    "unknowns": [
+      "Maintainer preference among the three suggested fixes",
+      "Whether assignment is required for contribution"
+    ],
+    "wait_reason": "DESIGN_CONFIRMATION",
+    "why": "Issue clearly identifies a runtime crash caused by langgraph-api injecting a private runtime object into factory-visible config, with a minimal repro and three suggested fixes. However, the proposed fix approach (reusing foreign-runtime coercion) needs maintainer confirmation, and the issue is not assigned. The gate decision is HUMAN_REVIEW, and the submission policy requires assignment."
+  },
   "e81d18c0ff31fa299bfd98be67cc38ee75971616fc0e4583a2c8f64bc84a7151": {
     "confidence": 0.8,
     "contradictions": [
@@ -30128,6 +30222,34 @@
       "Whether FlashInfer maintainers are willing to add topk=192 instantiation"
     ],
     "why": "The issue identifies a concrete kernel dispatch gap (topk=192 missing for decode-dsv4 on SM120) with a clear root cause and reproduction, but the proposed padding workaround was withdrawn due to intermittent text corruption, and the remaining fix (FlashInfer instantiation) requires maintainer coordination. The existing PR #33986 is closed and lacks tests, so a new PR could be viable, but the corruption risk and need for maintainer approval on the correct fix path make this a WAIT_MAINTAINER."
+  },
+  "e9da93b4158b282e0f2700b04a5d5aa7bcc0247d91595f4e5c72dff0ad59c8c8": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "agent/tools/deepl.py: port DeepL to ToolBase/_invoke, add get_meta, use set_output and _ERROR",
+      "agent/tools/deepl.py: add regression tests for get_meta and _invoke"
+    ],
+    "risks": [
+      "Potential maintainer preference on tool interface details; avoid changing frontend options or SDK behavior beyond necessary port"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Run the minimal repro from the issue to confirm AttributeError and NotImplementedError before fix",
+      "Add unit tests for DeepLParam.get_meta() and DeepL._invoke() with mocked deepl SDK",
+      "Run existing agent tool tests to ensure no regressions"
+    ],
+    "unknowns": [
+      "Exact deepl SDK version and API used; maintainer design preferences for tool meta schema"
+    ],
+    "wait_reason": null,
+    "why": "Issue provides a precise, reproducible bug with two independent failure modes, exact code anchors, and a minimal repro. The fix is a clear port to the ToolBase/_invoke interface with regression tests, matching prior fixes for similar tools. No competing PR exists."
   },
   "e9fef21c6a2cfd201e804e6659ac954075fd8fac688ee74d93ab9b56aa1cd9a0": {
     "confidence": 0.8,
