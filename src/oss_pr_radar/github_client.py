@@ -232,12 +232,20 @@ class GitHubClient:
         return [item for item in value if isinstance(item, dict)]
 
     def check_runs(self, repo: str, ref: str) -> list[dict[str, Any]]:
-        value = self.api(
+        pages = self.api(
             f"repos/{repo}/commits/{quote(ref, safe='')}/check-runs",
             params={"per_page": 100},
+            paginate=True,
             accept="application/vnd.github+json",
         )
-        return [item for item in value.get("check_runs", []) if isinstance(item, dict)]
+        runs: list[dict[str, Any]] = []
+        for page in pages:
+            if not isinstance(page, dict):
+                continue
+            values = page.get("check_runs")
+            if isinstance(values, list):
+                runs.extend(item for item in values if isinstance(item, dict))
+        return runs
 
     def check_annotations(self, repo: str, check_run_id: int) -> list[dict[str, Any]]:
         value = self.api(

@@ -82,3 +82,31 @@ def test_compare_reads_base_relationship(monkeypatch):
 
     assert result["status"] == "diverged"
     assert calls == ["repos/a/b/compare/release%2Fnext...feature%2Fhead"]
+
+
+def test_check_runs_reads_every_paginated_page(monkeypatch):
+    client = GitHubClient()
+    calls = []
+
+    def api(endpoint, **kwargs):
+        calls.append((endpoint, kwargs))
+        return [
+            {"total_count": 101, "check_runs": [{"id": 1, "name": "gate"}]},
+            {"total_count": 101, "check_runs": [{"id": 2, "name": "lint"}]},
+        ]
+
+    monkeypatch.setattr(client, "api", api)
+
+    result = client.check_runs("a/b", "feature/head")
+
+    assert result == [{"id": 1, "name": "gate"}, {"id": 2, "name": "lint"}]
+    assert calls == [
+        (
+            "repos/a/b/commits/feature%2Fhead/check-runs",
+            {
+                "params": {"per_page": 100},
+                "paginate": True,
+                "accept": "application/vnd.github+json",
+            },
+        )
+    ]
