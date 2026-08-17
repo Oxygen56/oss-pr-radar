@@ -4910,9 +4910,6 @@ def publication_feedback_list(args: argparse.Namespace) -> dict[str, Any]:
         if thread is None:
             blocked.append(candidate | {"reason": "thread_missing"})
             continue
-        if thread[0] != 0:
-            blocked.append(candidate | {"reason": "thread_archived"})
-            continue
         pr_url = str(candidate["prUrl"])
         if publication_feedback_link_visible(thread[1], pr_url):
             store.acknowledge_publication_feedback(
@@ -4941,6 +4938,9 @@ def publication_feedback_list(args: argparse.Namespace) -> dict[str, Any]:
                     "reason": "STALE_STATUS_BACKFILL_SKIPPED",
                 }
             )
+            continue
+        if thread[0] != 0:
+            blocked.append(candidate | {"reason": "thread_archived"})
             continue
         worker = active_task_turn_worker(thread_id)
         if worker is not None:

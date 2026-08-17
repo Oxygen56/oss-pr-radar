@@ -9042,6 +9042,58 @@ def test_publication_feedback_list_reconciles_an_existing_visible_reply(monkeypa
     assert acknowledgements == [{"thread_id": "thread-1", "pr_url": pr_url}]
 
 
+def test_publication_feedback_list_reconciles_stale_archived_history(monkeypatch, tmp_path):
+    pr_url = "https://github.com/a/b/pull/9"
+    thread_db = tmp_path / "state.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, archived INTEGER, rollout_path TEXT)"
+        )
+        connection.execute("INSERT INTO threads VALUES ('thread-1',1,NULL)")
+    acknowledgements = []
+
+    class Store:
+        def publication_feedback_candidates(self):
+            return [
+                {
+                    "key": "a/b#1",
+                    "issueUrl": "https://github.com/a/b/issues/1",
+                    "threadId": "thread-1",
+                    "worktreePath": "/tmp/worktree",
+                    "prUrl": pr_url,
+                    "publishedAt": iso_z(datetime.now(UTC) - timedelta(days=2)),
+                }
+            ]
+
+        def unresolved_publication_feedback(self):
+            return []
+
+        def acknowledge_publication_feedback(self, **kwargs):
+            acknowledgements.append(kwargs)
+
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+
+    result = MODULE.publication_feedback_list(SimpleNamespace(ledger=tmp_path / "ledger"))
+
+    assert result["blocked"] == []
+    assert result["reconciled"] == [
+        {
+            "key": "a/b#1",
+            "threadId": "thread-1",
+            "prUrl": pr_url,
+            "reason": "STALE_STATUS_BACKFILL_SKIPPED",
+        }
+    ]
+    assert acknowledgements == [
+        {
+            "thread_id": "thread-1",
+            "pr_url": pr_url,
+            "reason": "STALE_STATUS_BACKFILL_SKIPPED",
+        }
+    ]
+
+
 def test_event_drain_prioritizes_visible_publication_feedback(monkeypatch, tmp_path):
     monkeypatch.setattr(
         MODULE, "restore_reconcile", lambda _args: {"ok": True, "restored": [], "errors": []}
