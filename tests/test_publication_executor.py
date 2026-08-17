@@ -251,6 +251,73 @@ def test_post_push_recheck_accepts_the_permitted_target_head(monkeypatch):
     }
 
 
+def test_live_recheck_deferral_is_retryable_before_external_action(monkeypatch):
+    class Store(ActiveStore):
+        def __init__(self):
+            super().__init__()
+            self.resolved = []
+
+        def resolve_publication_preflight(self, effect_id, *, disposition, reason):
+            self.resolved.append((effect_id, disposition, reason))
+
+    store = Store()
+    monkeypatch.setattr(
+        MODULE,
+        "permit_request",
+        lambda *_args: {"publicationKind": "PR_CREATE"},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "audit_publication_request",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            status="DEFER", reason="LIVE_EVIDENCE_INCOMPLETE"
+        ),
+    )
+
+    with pytest.raises(MODULE.PublicationDeferred, match="LIVE_EVIDENCE_INCOMPLETE"):
+        MODULE.recheck_new_effect(store, {"request_id": "request-1"}, "effect-1")
+
+    assert store.resolved == [
+        ("effect-1", "DEFER", "LIVE_EVIDENCE_INCOMPLETE")
+    ]
+    assert store.completed == []
+
+
+def test_live_recheck_block_is_recorded_before_external_action(monkeypatch):
+    class Store(ActiveStore):
+        def __init__(self):
+            super().__init__()
+            self.resolved = []
+
+        def resolve_publication_preflight(self, effect_id, *, disposition, reason):
+            self.resolved.append((effect_id, disposition, reason))
+
+    store = Store()
+    monkeypatch.setattr(
+        MODULE,
+        "permit_request",
+        lambda *_args: {"publicationKind": "PR_CREATE"},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "audit_publication_request",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            status="BLOCK", reason="ISSUE_ASSIGNED_TO_ANOTHER_CONTRIBUTOR"
+        ),
+    )
+
+    with pytest.raises(
+        MODULE.PublicationBlocked,
+        match="ISSUE_ASSIGNED_TO_ANOTHER_CONTRIBUTOR",
+    ):
+        MODULE.recheck_new_effect(store, {"request_id": "request-1"}, "effect-1")
+
+    assert store.resolved == [
+        ("effect-1", "BLOCK", "ISSUE_ASSIGNED_TO_ANOTHER_CONTRIBUTOR")
+    ]
+    assert store.completed == []
+
+
 def test_push_allows_only_fast_forward_update_of_exact_existing_pr(monkeypatch, tmp_path):
     args = pr_args(tmp_path)
     args.remote = "radar-fork"

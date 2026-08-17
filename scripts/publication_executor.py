@@ -24,6 +24,14 @@ from oss_pr_radar.publication import (  # noqa: E402
 from oss_pr_radar.util import sha256_json, sha256_text  # noqa: E402
 
 
+class PublicationDeferred(RuntimeError):
+    pass
+
+
+class PublicationBlocked(RuntimeError):
+    pass
+
+
 def run(args: list[str], *, cwd: Path, timeout: int = 180) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         args,
@@ -164,12 +172,15 @@ def recheck_new_effect(store: RadarLedger, permit: dict[str, Any], effect_id: st
     )
     if audit.status == "ALLOW":
         return
-    store.complete_publication_effect(
+    disposition = "DEFER" if audit.status == "DEFER" else "BLOCK"
+    store.resolve_publication_preflight(
         effect_id,
-        status="FAILED",
-        result={"ok": False, "reason": "LIVE_RECHECK_FAILED", "detail": audit.reason},
+        disposition=disposition,
+        reason=audit.reason,
     )
-    raise RuntimeError(f"live publication recheck failed: {audit.reason}")
+    if disposition == "DEFER":
+        raise PublicationDeferred(audit.reason)
+    raise PublicationBlocked(audit.reason)
 
 
 def permit_publication(permit: dict[str, Any]) -> dict[str, str]:
@@ -524,7 +535,12 @@ def main() -> int:
     pr_parser.add_argument("--body-file", required=True)
     args = parser.parse_args()
     store = RadarLedger(args.ledger)
-    result = push(args, store) if args.operation == "push" else create_pr(args, store)
+    try:
+        result = push(args, store) if args.operation == "push" else create_pr(args, store)
+    except PublicationDeferred as exc:
+        result = {"ok": True, "pending": True, "reason": str(exc)}
+    except PublicationBlocked as exc:
+        result = {"ok": True, "blocked": True, "reason": str(exc)}
     print(json.dumps(result, ensure_ascii=False))
     return 0
 

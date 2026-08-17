@@ -82,6 +82,15 @@ VALIDATION_PREFETCH_TIMEOUTS = {
     "pnpm_locked_install": 600,
 }
 VALIDATION_POLICY_REVISION = "ci_delegation_v1"
+TRANSIENT_PUBLICATION_AUDIT_REASONS = {
+    "DCO_REVALIDATION_FAILED",
+    "DEFAULT_BRANCH_UNKNOWN",
+    "DIFF_REVALIDATION_FAILED",
+    "EXISTING_PR_BASE_UNAVAILABLE",
+    "EXISTING_PR_UNAVAILABLE",
+    "LIVE_EVIDENCE_INCOMPLETE",
+    "REPOSITORY_METADATA_UNAVAILABLE",
+}
 
 PLAIN_LANGUAGE_STATUS_PROMPT = (
     "用户可见的进度和最终回复必须使用通俗中文：第一句只说清楚 PR 是否已经创建；"
@@ -6172,6 +6181,12 @@ def _run_publication_queue_unlocked(args: argparse.Namespace) -> dict[str, Any]:
         request_id = str(item["request_id"])
         request = item["request"]
         try:
+            for action in ("push", "create_pr"):
+                store.recover_failed_publication_preflight(
+                    request_id,
+                    action=action,
+                    transient_reasons=TRANSIENT_PUBLICATION_AUDIT_REASONS,
+                )
             evidence_path = Path(str(request.get("evidencePath") or "")).resolve()
             evidence_value = json.loads(evidence_path.read_text(encoding="utf-8"))
             controller_review = (
@@ -6252,6 +6267,22 @@ def _run_publication_queue_unlocked(args: argparse.Namespace) -> dict[str, Any]:
                     ledger_path=args.ledger,
                 )
             )
+            if push_result.get("pending"):
+                pending.append(
+                    {
+                        "requestId": request_id,
+                        "reason": push_result.get("reason"),
+                    }
+                )
+                continue
+            if push_result.get("blocked"):
+                blocked.append(
+                    {
+                        "requestId": request_id,
+                        "reason": push_result.get("reason"),
+                    }
+                )
+                continue
             if recovering_push:
                 reconciled_permit = store.prepare_post_push_reconciliation(request_id)
                 if reconciled_permit is None:
@@ -6272,6 +6303,22 @@ def _run_publication_queue_unlocked(args: argparse.Namespace) -> dict[str, Any]:
                 ],
                 ledger_path=args.ledger,
             )
+            if pr_result.get("pending"):
+                pending.append(
+                    {
+                        "requestId": request_id,
+                        "reason": pr_result.get("reason"),
+                    }
+                )
+                continue
+            if pr_result.get("blocked"):
+                blocked.append(
+                    {
+                        "requestId": request_id,
+                        "reason": pr_result.get("reason"),
+                    }
+                )
+                continue
             published.append(
                 {
                     "requestId": request_id,

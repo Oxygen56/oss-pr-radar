@@ -7528,6 +7528,9 @@ def test_privileged_controller_runs_granted_publication_queue(monkeypatch, tmp_p
                 }
             ]
 
+        def recover_failed_publication_preflight(self, *_args, **_kwargs):
+            return False
+
         def prepare_ambiguous_publication_effect(self, _request_id, *, action):
             assert action == "push"
             return None
@@ -7576,6 +7579,9 @@ def test_publication_queue_blocks_legacy_request_without_private_review(monkeypa
                     "request": {"evidencePath": str(evidence_path)},
                 }
             ]
+
+        def recover_failed_publication_preflight(self, *_args, **_kwargs):
+            return False
 
         def block_publication_request(self, request_id, reason):
             recorded.append((request_id, reason))
@@ -7629,6 +7635,9 @@ def test_publication_queue_reconciles_interrupted_push_before_pr_confirmation(
                     },
                 }
             ]
+
+        def recover_failed_publication_preflight(self, *_args, **_kwargs):
+            return False
 
         def prepare_ambiguous_publication_effect(self, _request_id, *, action):
             assert action == "push"

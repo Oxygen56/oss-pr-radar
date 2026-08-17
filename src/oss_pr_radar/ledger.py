@@ -4214,6 +4214,119 @@ class RadarLedger:
                 "created": True,
             }
 
+    def resolve_publication_preflight(
+        self,
+        effect_id: str,
+        *,
+        disposition: str,
+        reason: str,
+    ) -> None:
+        """Resolve a live recheck before any external publication action ran."""
+
+        if disposition not in {"DEFER", "BLOCK"}:
+            raise LedgerError("invalid publication preflight disposition")
+        now = iso_z(datetime.now(UTC))
+        with self.transaction() as connection:
+            row = connection.execute(
+                """SELECT e.*,p.request_id,r.opportunity_key
+                   FROM publication_effects e
+                   JOIN publication_permits p ON p.permit_id=e.permit_id
+                   JOIN publication_requests r ON r.request_id=p.request_id
+                   WHERE e.effect_id=?""",
+                (effect_id,),
+            ).fetchone()
+            if row is None or row["status"] != "ATTEMPTED":
+                raise LedgerError("publication preflight effect is not active")
+            connection.execute(
+                "DELETE FROM publication_effects WHERE effect_id=?",
+                (effect_id,),
+            )
+            connection.execute(
+                """UPDATE publication_permits SET status='EXPIRED',updated_at=?
+                   WHERE permit_id=? AND status='ACTIVE'""",
+                (now, row["permit_id"]),
+            )
+            request_status = "PENDING" if disposition == "DEFER" else "BLOCKED"
+            connection.execute(
+                """UPDATE publication_requests SET status=?,reason=?,updated_at=?
+                   WHERE request_id=?""",
+                (request_status, reason, now, row["request_id"]),
+            )
+            self._event(
+                connection,
+                row["opportunity_key"],
+                f"PUBLICATION_PREFLIGHT_{disposition}",
+                f"{effect_id}:{reason}",
+                {
+                    "requestId": row["request_id"],
+                    "effectId": effect_id,
+                    "action": row["action"],
+                    "reason": reason,
+                },
+                now,
+            )
+
+    def recover_failed_publication_preflight(
+        self,
+        request_id: str,
+        *,
+        action: str,
+        transient_reasons: set[str],
+    ) -> bool:
+        """Repair legacy live-recheck deferrals that were recorded as failures."""
+
+        now = iso_z(datetime.now(UTC))
+        with self.transaction() as connection:
+            row = connection.execute(
+                """SELECT e.*,p.request_id,r.opportunity_key
+                   FROM publication_effects e
+                   JOIN publication_permits p ON p.permit_id=e.permit_id
+                   JOIN publication_requests r ON r.request_id=p.request_id
+                   WHERE p.request_id=? AND e.action=? AND e.status='FAILED'
+                   ORDER BY e.updated_at DESC LIMIT 1""",
+                (request_id, action),
+            ).fetchone()
+            if row is None:
+                return False
+            try:
+                failure = json.loads(row["result_json"])
+            except json.JSONDecodeError:
+                return False
+            detail = str(failure.get("detail") or "")
+            if (
+                failure.get("reason") != "LIVE_RECHECK_FAILED"
+                or detail not in transient_reasons
+            ):
+                return False
+            connection.execute(
+                "DELETE FROM publication_effects WHERE effect_id=?",
+                (row["effect_id"],),
+            )
+            connection.execute(
+                """UPDATE publication_permits SET status='EXPIRED',updated_at=?
+                   WHERE permit_id=?""",
+                (now, row["permit_id"]),
+            )
+            connection.execute(
+                """UPDATE publication_requests SET status='PENDING',reason=?,updated_at=?
+                   WHERE request_id=?""",
+                (detail, now, request_id),
+            )
+            self._event(
+                connection,
+                row["opportunity_key"],
+                "PUBLICATION_PREFLIGHT_RECOVERED",
+                row["effect_id"],
+                {
+                    "requestId": request_id,
+                    "effectId": row["effect_id"],
+                    "action": action,
+                    "reason": detail,
+                },
+                now,
+            )
+            return True
+
     def prepare_ambiguous_publication_effect(
         self,
         request_id: str,

@@ -74,6 +74,40 @@ def published_task_context(**updates):
     return value
 
 
+def insert_publication_preflight(
+    store: RadarLedger,
+    *,
+    effect_status: str = "ATTEMPTED",
+    effect_result: dict | None = None,
+) -> None:
+    store.enqueue(intent())
+    now = iso_z(datetime.now(UTC))
+    expires_at = iso_z(datetime.now(UTC) + timedelta(minutes=10))
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO publication_requests
+               (request_id,opportunity_key,thread_id,commit_sha,branch,worktree_path,
+                evidence_digest,status,request_json,created_at,updated_at)
+               VALUES ('request-1','a/b#1','thread-1',?,'fix/runtime','/tmp/worktree',
+                       'evidence','GRANTED','{}',?,?)""",
+            ("b" * 40, now, now),
+        )
+        connection.execute(
+            """INSERT INTO publication_permits
+               (permit_id,request_id,issue_url,commit_sha,branch,status,expires_at,
+                evidence_json,created_at,updated_at)
+               VALUES ('permit-1','request-1','https://github.com/a/b/issues/1',?,
+                       'fix/runtime','ACTIVE',?,'{}',?,?)""",
+            ("b" * 40, expires_at, now, now),
+        )
+        connection.execute(
+            """INSERT INTO publication_effects
+               (effect_id,permit_id,action,request_digest,status,result_json,created_at,updated_at)
+               VALUES ('effect-1','permit-1','push','digest',?,?,?,?)""",
+            (effect_status, json.dumps(effect_result or {}), now, now),
+        )
+
+
 def test_lease_is_exclusive_and_commit_is_idempotent(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     assert store.enqueue(intent()) is True
@@ -2371,3 +2405,58 @@ def test_interrupted_push_effect_can_retry_after_confirmed_noop(tmp_path):
         action="push",
     )
     assert pending["pending"] is True
+
+
+def test_deferred_publication_preflight_is_rearmed_without_ambiguous_effect(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    insert_publication_preflight(store)
+
+    store.resolve_publication_preflight(
+        "effect-1",
+        disposition="DEFER",
+        reason="LIVE_EVIDENCE_INCOMPLETE",
+    )
+
+    request = store.publication_request("request-1")
+    assert request["status"] == "PENDING"
+    assert request["reason"] == "LIVE_EVIDENCE_INCOMPLETE"
+    with store.connect() as connection:
+        permit = connection.execute(
+            "SELECT status FROM publication_permits WHERE permit_id='permit-1'"
+        ).fetchone()
+        effect = connection.execute(
+            "SELECT 1 FROM publication_effects WHERE effect_id='effect-1'"
+        ).fetchone()
+    assert permit["status"] == "EXPIRED"
+    assert effect is None
+
+
+def test_legacy_failed_live_recheck_is_recovered_for_retry(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    insert_publication_preflight(
+        store,
+        effect_status="FAILED",
+        effect_result={
+            "ok": False,
+            "reason": "LIVE_RECHECK_FAILED",
+            "detail": "LIVE_EVIDENCE_INCOMPLETE",
+        },
+    )
+
+    recovered = store.recover_failed_publication_preflight(
+        "request-1",
+        action="push",
+        transient_reasons={"LIVE_EVIDENCE_INCOMPLETE"},
+    )
+
+    assert recovered is True
+    assert store.publication_request("request-1")["status"] == "PENDING"
+    with store.connect() as connection:
+        permit = connection.execute(
+            "SELECT status FROM publication_permits WHERE permit_id='permit-1'"
+        ).fetchone()
+        effect = connection.execute(
+            "SELECT 1 FROM publication_effects WHERE effect_id='effect-1'"
+        ).fetchone()
+    assert permit["status"] == "EXPIRED"
+    assert effect is None
