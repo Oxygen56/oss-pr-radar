@@ -1700,6 +1700,67 @@ def test_private_task_dispatch_defaults_to_one_active_task(monkeypatch, tmp_path
     assert result["reason"] == "task_wip_limit"
 
 
+def test_independent_review_defers_while_issue_task_is_active(monkeypatch, tmp_path):
+    class Store:
+        @staticmethod
+        def active_task_count(**_kwargs):
+            return 1
+
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+    monkeypatch.setattr(
+        MODULE,
+        "review_once",
+        lambda *_args, **_kwargs: pytest.fail(
+            "independent review must not interrupt an active issue task"
+        ),
+    )
+
+    result = MODULE.independent_review_run(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert result == {
+        "ok": True,
+        "deferred": True,
+        "reason": "active_issue_task",
+        "activeTaskCount": 1,
+        "updated": [],
+        "skipped": [],
+        "errors": [],
+    }
+
+
+def test_new_issue_priority_includes_pending_independent_review(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        MODULE,
+        "pr_followup_list",
+        lambda _args: {
+            "candidates": [],
+            "restoreRequired": [],
+            "unresolved": [],
+        },
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "validation_followup_list",
+        lambda _args: {
+            "candidates": [],
+            "controllerReviewPending": [{"key": "a/b#1"}],
+            "unresolved": [],
+        },
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "recovery_list",
+        lambda _args: {"recoverable": [], "unresolved": []},
+    )
+
+    result = MODULE._higher_priority_existing_work(
+        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"),
+        intent_key="a/b#2",
+    )
+
+    assert result == [{"kind": "independent_review", "key": "a/b#1"}]
+
+
 def test_new_issue_claim_defers_to_existing_validation_work(monkeypatch, tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     now = datetime.now(UTC)
@@ -3009,7 +3070,9 @@ def test_recovery_delivery_preserves_validation_followup_prompt():
     )
 
     assert prompt == MODULE.VALIDATION_RECOVERY_PROMPT
-    assert "PR 是否已经创建" in prompt
+    assert "GitHub 上还没有 PR" in prompt
+    assert "任务仍在处理中" in prompt
+    assert "禁止用" in prompt
 
 
 def test_validation_followup_prompt_translates_internal_gaps_for_the_user():
@@ -3020,12 +3083,13 @@ def test_validation_followup_prompt_translates_internal_gaps_for_the_user():
         }
     )
 
-    assert "相关正式测试还没完成或没通过" in prompt
-    assert "自动复核还没完成或发现了问题" in prompt
+    assert "和这次修改直接相关的检查还没全部通过" in prompt
+    assert "系统正在做最后检查或发现了问题" in prompt
     assert MODULE.VALIDATION_POLICY_REVISION in prompt
-    assert "第一句只说清楚 PR 是否已经创建" in prompt
+    assert "第一句必须严格二选一" in prompt
     assert "等待维护者启动完整检查" in prompt
     assert "不得描述成代码测试失败" in prompt
+    assert "你：无需操作" in prompt
     assert "relevant_tests_green" not in prompt
     assert "independent_review_passed" not in prompt
     assert ".oss-pr-radar" not in prompt
@@ -5987,7 +6051,7 @@ def test_controller_defers_blocked_local_fix_with_incomplete_validation(tmp_path
     )
     assert reserved["ok"] is True
     assert "回归测试证据还不完整" in reserved["prompt"]
-    assert "相关正式测试还没完成或没通过" in reserved["prompt"]
+    assert "和这次修改直接相关的检查还没全部通过" in reserved["prompt"]
     assert "regression_test_verified" not in reserved["prompt"]
     assert "relevant_tests_green" not in reserved["prompt"]
     assert (

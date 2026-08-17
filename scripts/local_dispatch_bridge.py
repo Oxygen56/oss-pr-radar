@@ -93,13 +93,17 @@ TRANSIENT_PUBLICATION_AUDIT_REASONS = {
 }
 
 PLAIN_LANGUAGE_STATUS_PROMPT = (
-    "用户可见的进度和最终回复必须使用通俗中文：第一句只说清楚 PR 是否已经创建；"
-    "随后最多四个短项说明已完成、未发布原因、下一步和用户是否需要操作。"
+    "用户可见的进度和最终回复必须使用通俗中文。第一句必须严格二选一："
+    "没有准确 PR 链接时写‘GitHub 上还没有 PR。’；有准确链接时写‘PR 已创建：<准确链接>’。"
+    "禁止用‘任务仍在处理中’‘修复已完成’或内部阶段代替第一句。"
+    "随后最多四个短项，只使用容易理解的标签：‘现在’‘为什么还没发布’‘接下来’‘你’。"
+    "每项只说一个用户可感知的结果，例如正在复现、正在修改并验证、本地检查已通过、"
+    "系统正在做最后检查、等待维护者启动完整检查，或这个 issue 不值得继续。"
     "除非用户追问技术细节，不要展示内部字段名、真假值、阶段名、文件路径、提交哈希、"
-    "分支名、命令行，或使用‘门禁’‘回执’‘结构化交接’等内部术语。"
+    "分支名、命令行，或使用‘门禁’‘回执’‘结构化交接’‘自动复核’等内部术语。"
     "如果红色状态只是维护者尚未添加 CI 标签或批准运行，必须说‘等待维护者启动完整检查’，"
     "不得描述成代码测试失败。"
-    "任务上下文中没有确切的 PR URL 就必须直说 GitHub 上还没有 PR；有确切 URL 才能说 PR 已创建并附链接。"
+    "没有用户专属操作时，最后写‘你：无需操作。’"
 )
 
 
@@ -1467,6 +1471,24 @@ def _global_task_wip(
     return limit is not None and active >= limit, active, limit
 
 
+def independent_review_run(args: argparse.Namespace) -> dict[str, Any]:
+    """Never start a second model turn while an issue task owns the desktop writer."""
+
+    store = ledger(args.ledger)
+    active = _active_task_count(store)
+    if active:
+        return {
+            "ok": True,
+            "deferred": True,
+            "reason": "active_issue_task",
+            "activeTaskCount": active,
+            "updated": [],
+            "skipped": [],
+            "errors": [],
+        }
+    return review_once(ROOT, args.ledger)
+
+
 def _higher_priority_existing_work(
     args: argparse.Namespace,
     *,
@@ -1490,6 +1512,9 @@ def _higher_priority_existing_work(
     for item in [*validation_state["candidates"], *validation_state["unresolved"]]:
         if item.get("key") != intent_key:
             priorities.append({"kind": "validation_followup", "key": str(item.get("key") or "")})
+    for item in validation_state.get("controllerReviewPending") or []:
+        if item.get("key") != intent_key:
+            priorities.append({"kind": "independent_review", "key": str(item.get("key") or "")})
 
     recovery_state = recovery_list(argparse.Namespace(ledger=args.ledger, min_age_minutes=90))
     for item in [*recovery_state["recoverable"], *recovery_state["unresolved"]]:
@@ -5663,8 +5688,8 @@ VALIDATION_GAP_LABELS = {
     "root_cause_verified": "根因还没确认",
     "minimal_fix_verified": "修复范围还没确认",
     "regression_test_verified": "回归测试证据还不完整",
-    "relevant_tests_green": "相关正式测试还没完成或没通过",
-    "independent_review_passed": "自动复核还没完成或发现了问题",
+    "relevant_tests_green": "和这次修改直接相关的检查还没全部通过",
+    "independent_review_passed": "系统正在做最后检查或发现了问题",
 }
 
 
@@ -7946,7 +7971,7 @@ def main() -> int:
     elif args.operation == "ingest-results":
         result = ingest_task_results(args)
     elif args.operation == "independent-review-run":
-        result = review_once(ROOT, args.ledger)
+        result = independent_review_run(args)
     elif args.operation == "publication-run":
         result = run_publication_queue(args)
     elif args.operation == "publication-retry":

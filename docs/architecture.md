@@ -126,8 +126,12 @@ slot, the local event drain immediately advances the next highest-priority
 item; the hourly heartbeat is only the reconciliation fallback.
 Continuing the same intent for validation or an existing PR update excludes
 that intent from the WIP count, so the safety limit cannot deadlock its own
-continuation. Before any new commit is published, a controller-owned `codex exec`
-review runs ephemerally in a read-only sandbox against the exact committed diff;
+continuation. The independent reviewer shares this same single-writer lane: it
+is deferred while any issue task owns an active turn, and a result waiting only
+for that review blocks dispatch of a new issue task. This prevents a background
+review from interrupting the user-visible issue conversation. Before any new
+commit is published, a controller-owned `codex exec` review runs ephemerally in
+a read-only sandbox against the exact committed diff;
 PR follow-up commits and merge-conflict resolutions use their controller-bound
 parent scope. The reviewer starts in an isolated non-repository directory, does
 not load target-repository project instructions, and receives a secret-free
