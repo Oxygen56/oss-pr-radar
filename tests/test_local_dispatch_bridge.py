@@ -970,6 +970,33 @@ def test_shared_context_recovery_verifies_an_existing_dispatched_task(monkeypatc
     ]
 
 
+def test_shared_context_recovery_ignores_context_removed_by_cleanup(monkeypatch, tmp_path):
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, _ = registered_store(tmp_path / "original", worktree=worktree)
+    run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
+    MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    original_verify = MODULE._verified_shared_task_context
+
+    def remove_before_verify(path):
+        path.unlink()
+        return original_verify(path)
+
+    monkeypatch.setattr(MODULE, "_verified_shared_task_context", remove_before_verify)
+
+    recovered = MODULE.recover_shared_task_contexts(store)
+
+    assert recovered["verified"] == 0
+    assert recovered["restored"] == []
+    assert recovered["errors"] == []
+
+
 def test_shared_context_recovery_does_not_block_on_a_missing_historical_worktree(
     monkeypatch, tmp_path
 ):

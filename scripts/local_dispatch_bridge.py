@@ -765,7 +765,11 @@ def ledger(path: Path = LEDGER_PATH) -> RadarLedger:
 
 
 def _verified_shared_task_context(path: Path) -> tuple[dict[str, Any], str]:
-    if path.is_symlink() or not path.is_file():
+    if path.is_symlink():
+        raise RuntimeError("shared task context is not a regular file")
+    if not path.is_file():
+        if not path.exists():
+            raise FileNotFoundError(path)
         raise RuntimeError("shared task context is not a regular file")
     if path.stat().st_mode & 0o022:
         raise RuntimeError("shared task context is group or world writable")
@@ -1010,6 +1014,13 @@ def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
                     "reason": exc.reason,
                 }
             )
+        except FileNotFoundError as exc:
+            # Cleanup may remove a terminal task context after glob() has
+            # enumerated it. Only treat that exact disappearance as benign;
+            # malformed paths and other missing files remain errors.
+            if not path.exists() and not path.is_symlink():
+                continue
+            errors.append({"path": str(path), "error": str(exc)[:300]})
         except (OSError, RuntimeError, ValueError) as exc:
             errors.append({"path": str(path), "error": str(exc)[:300]})
     return {
