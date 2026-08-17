@@ -3104,6 +3104,8 @@ def test_validation_followup_prompt_translates_internal_gaps_for_the_user():
     assert "等待维护者启动完整检查" in prompt
     assert "发现一处可能引发错误执行的风险，正在修正" in prompt
     assert "项目的在线检查会继续完成" in prompt
+    assert "不要罗列测试名称、测试数量、工具名称或构建产物" in prompt
+    assert "不重复播报未变状态" in prompt
     assert "不要在用户可见回复中提技能名" in prompt
     assert "不得描述成代码测试失败" in prompt
     assert "你：无需操作" in prompt
