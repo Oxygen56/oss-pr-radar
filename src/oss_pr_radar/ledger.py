@@ -2846,11 +2846,17 @@ class RadarLedger:
     ) -> bool:
         """Reopen one stalled result when controller-owned review evidence changes."""
 
-        dedupe_key = sha256_text(f"{result_digest}|{review_marker}|{reason}")
+        one_shot_prefetch = reason == "DEPENDENCY_PREFETCH_AVAILABLE"
+        dedupe_key = sha256_text(
+            f"{review_marker}|{reason}"
+            if one_shot_prefetch
+            else f"{result_digest}|{review_marker}|{reason}"
+        )
         now = iso_z(datetime.now(UTC))
         with self.transaction() as connection:
+            rearm_after_no_progress = "" if one_shot_prefetch else "AND rearmed.id>n.id"
             row = connection.execute(
-                """SELECT n.id
+                f"""SELECT n.id
                    FROM opportunities o
                    JOIN events d ON d.id=(
                      SELECT MAX(d2.id) FROM events d2
@@ -2867,7 +2873,7 @@ class RadarLedger:
                        WHERE rearmed.opportunity_key=o.key
                          AND rearmed.event_type='VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED'
                          AND rearmed.dedupe_key=?
-                         AND rearmed.id>n.id
+                         {rearm_after_no_progress}
                      )
                    ORDER BY n.id DESC LIMIT 1""",
                 (key, result_digest, dedupe_key),

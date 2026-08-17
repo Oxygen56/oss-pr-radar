@@ -2749,6 +2749,68 @@ def test_recovery_immediately_resumes_an_interrupted_validation_followup(monkeyp
     assert reserved["prompt"] == MODULE.VALIDATION_RECOVERY_PROMPT
 
 
+def test_recovery_resumes_completed_validation_turn_without_a_new_result(monkeypatch, tmp_path):
+    store, worktree = registered_store(tmp_path)
+    run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
+    result_path = worktree / ".oss-pr-radar" / "result.json"
+    result_path.parent.mkdir(parents=True, exist_ok=True)
+    result_path.write_text("{}\n", encoding="utf-8")
+    result_digest = hashlib.sha256(result_path.read_bytes()).hexdigest()
+    store.record_stage("a/b#1", "VALIDATION_PENDING")
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest=result_digest,
+        missing=["relevant_tests_green"],
+    )
+    store.reserve_validation_followup(thread_id="thread-1", result_digest=result_digest)
+    store.commit_validation_followup(thread_id="thread-1", result_digest=result_digest)
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            """CREATE TABLE threads (
+                id TEXT, archived INTEGER, title TEXT, first_user_message TEXT,
+                cwd TEXT, git_origin_url TEXT, updated_at INTEGER, rollout_path TEXT
+            )"""
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?,?,?,?,?,?)",
+            (
+                "thread-1",
+                0,
+                "task",
+                MODULE.issue_prompt("https://github.com/a/b/issues/1"),
+                str(worktree),
+                "https://github.com/a/b.git",
+                int(datetime.now(UTC).timestamp()),
+                None,
+            ),
+        )
+
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    monkeypatch.setattr(
+        MODULE,
+        "latest_thread_turn_state",
+        lambda _rollout_path: {
+            "status": "completed",
+            "code": None,
+            "message": "",
+            "turnId": "turn-validation",
+        },
+    )
+    monkeypatch.setattr(MODULE, "active_task_turn_worker", lambda _thread_id: None)
+
+    listed = MODULE.recovery_list(
+        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3", min_age_minutes=90)
+    )
+
+    assert listed["activeDeferred"] == []
+    assert listed["recoverable"][0]["recoveryKind"] == "VALIDATION_FOLLOWUP_RESULT"
+    assert listed["recoverable"][0]["immediateRecovery"] is True
+    assert listed["recoverable"][0]["completionWithoutResult"] is True
+
+
 def test_interrupted_recovery_turn_is_rearmed_once(monkeypatch, tmp_path):
     thread_db = tmp_path / "threads.sqlite3"
     with sqlite3.connect(thread_db) as connection:
@@ -6146,6 +6208,50 @@ def test_string_unverified_dependency_gate_is_environment_blocked(monkeypatch, t
     assert listed["rearmedReviewFeedback"] == []
     assert listed["environmentBlocked"][0]["key"] == "a/b#1"
     assert listed["environmentBlocked"][0]["reason"] == ("DEPENDENCY_ENVIRONMENT_UNAVAILABLE")
+
+
+def test_mixed_prefetchable_and_unavailable_gates_stop_without_followup(tmp_path):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        missing_quality=("relevant_tests_green", "independent_review_passed"),
+    )
+    (worktree / "go.mod").write_text("module example.test/runtime\n", encoding="utf-8")
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value["changedFiles"] = ["service.go"]
+    value["tests"] = [
+        {
+            "command": "GOPROXY=off go vet ./...",
+            "exitCode": 1,
+            "outcome": "blocked_by_uncached_dependencies",
+        },
+        {
+            "command": "golangci-lint version",
+            "exitCode": 127,
+            "outcome": "required_gate_unavailable_after_locked_prefetch",
+        },
+    ]
+    raw = json.dumps(value).encode()
+    result_path.write_bytes(raw)
+    digest = hashlib.sha256(raw).hexdigest()
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest=digest,
+        missing=["relevant_tests_green", "independent_review_passed"],
+    )
+    store.record_stage("a/b#1", "VALIDATION_PENDING", evidence={})
+
+    listed = MODULE.validation_followup_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert listed["candidates"] == []
+    assert listed["rearmedReviewFeedback"] == []
+    assert listed["environmentBlocked"][0]["reason"] == ("DEPENDENCY_ENVIRONMENT_UNAVAILABLE")
+    assert listed["environmentBlocked"][0]["dependencyFailures"] == [
+        {
+            "command": "golangci-lint version",
+            "summary": "required_gate_unavailable_after_locked_prefetch",
+        }
+    ]
 
 
 def test_string_unverified_gate_with_lockfile_builds_prefetch_plan(tmp_path):

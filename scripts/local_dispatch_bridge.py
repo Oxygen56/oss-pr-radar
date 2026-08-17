@@ -4657,16 +4657,62 @@ VALIDATION_DEPENDENCY_FAILURE_MARKERS = (
     "absent from path",
     "was not present",
     "no worktree-local prefetched executable",
+    "required_gate_unavailable",
 )
 
 
 def _is_validation_dependency_failure(item: dict[str, Any]) -> bool:
-    text = f"{item.get('command', '')}\n{item.get('summary', '')}".casefold()
+    text = (
+        f"{item.get('command', '')}\n{item.get('summary', '')}\n{item.get('outcome', '')}"
+    ).casefold()
     if any(marker in text for marker in VALIDATION_DEPENDENCY_FAILURE_MARKERS):
         return True
     return "locked" in text and any(
         marker in text for marker in (" is absent", " are absent", " missing", "differs from")
     )
+
+
+def _unresolved_validation_dependency_failures(
+    commands: list[dict[str, Any]], failures: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Return required tools that none of the deterministic prefetches can provide."""
+
+    kinds = {str(item.get("kind") or "") for item in commands}
+    unresolved: list[dict[str, Any]] = []
+    for failure in failures:
+        command_text = str(failure.get("command") or "").casefold()
+        text = (
+            f"{command_text}\n{failure.get('summary', '')}\n{failure.get('outcome', '')}"
+        ).casefold()
+        covered = False
+        if re.search(r"(?:^|\s)cargo\s", command_text):
+            covered = "cargo_locked_fetch" in kinds
+        elif re.search(r"(?:^|\s)go\s+(?:test|vet|build|run)\b", command_text):
+            covered = "go_locked_download" in kinds
+        elif "npm " in command_text:
+            covered = "npm_locked_install" in kinds
+        elif any(
+            marker in text
+            for marker in (
+                "pytest",
+                "pyright",
+                "ruff",
+                "pre-commit",
+                "no module named",
+                "modulenotfounderror",
+            )
+        ) or re.search(r"(?:^|\s)(?:python|python3|uv)\s", command_text):
+            covered = "uv_locked_sync" in kinds
+        if not covered:
+            unresolved.append(failure)
+    return unresolved
+
+
+def _validation_dependency_failure_summary(item: dict[str, Any]) -> dict[str, str]:
+    return {
+        "command": str(item.get("command") or "")[:300],
+        "summary": str(item.get("summary") or item.get("outcome") or "")[:300],
+    }
 
 
 def _locked_python_dependency_groups(pyproject: Path, failure_text: str) -> list[str]:
@@ -4940,6 +4986,21 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
                 dependency_failures: list[dict[str, Any]] = []
                 if _task_result_path(blocked).is_file():
                     prefetch_commands, dependency_failures = _validation_prefetch_plan(blocked)
+                unresolved_dependency_failures = _unresolved_validation_dependency_failures(
+                    prefetch_commands, dependency_failures
+                )
+                if unresolved_dependency_failures:
+                    blocked_environment.append(
+                        blocked
+                        | {
+                            "reason": "DEPENDENCY_ENVIRONMENT_UNAVAILABLE",
+                            "dependencyFailures": [
+                                _validation_dependency_failure_summary(item)
+                                for item in unresolved_dependency_failures
+                            ],
+                        }
+                    )
+                    continue
                 if prefetch_commands:
                     reason = "DEPENDENCY_PREFETCH_AVAILABLE"
                     review_marker = sha256_json({"prefetchCommands": prefetch_commands})
@@ -4949,10 +5010,7 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
                         | {
                             "reason": "DEPENDENCY_ENVIRONMENT_UNAVAILABLE",
                             "dependencyFailures": [
-                                {
-                                    "command": str(item.get("command") or "")[:300],
-                                    "summary": str(item.get("summary") or "")[:300],
-                                }
+                                _validation_dependency_failure_summary(item)
                                 for item in dependency_failures
                             ],
                         }
@@ -4982,13 +5040,25 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
                         )
                     )
                     review_marker = sha256_json(review) if review else "CONTROLLER_REVIEW_PENDING"
-            if store.rearm_validation_no_progress_for_review(
+            rearmed = store.rearm_validation_no_progress_for_review(
                 key=str(blocked["key"]),
                 result_digest=str(blocked["resultDigest"]),
                 review_marker=review_marker,
                 reason=reason,
-            ):
+            )
+            if rearmed:
                 rearmed_review_feedback.append({"key": str(blocked["key"]), "reason": reason})
+            elif reason == "DEPENDENCY_PREFETCH_AVAILABLE":
+                blocked_environment.append(
+                    blocked
+                    | {
+                        "reason": "DEPENDENCY_PREFETCH_NO_PROGRESS",
+                        "dependencyFailures": [
+                            _validation_dependency_failure_summary(item)
+                            for item in dependency_failures
+                        ],
+                    }
+                )
         except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
             errors.append(
                 {
@@ -5044,17 +5114,17 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
                     )
                     continue
             commands, dependency_failures = _validation_prefetch_plan(candidate)
-            if dependency_failures and not commands:
+            unresolved_dependency_failures = _unresolved_validation_dependency_failures(
+                commands, dependency_failures
+            )
+            if unresolved_dependency_failures or (dependency_failures and not commands):
+                failures = unresolved_dependency_failures or dependency_failures
                 environment_blocked.append(
                     candidate
                     | {
                         "reason": "DEPENDENCY_ENVIRONMENT_UNAVAILABLE",
                         "dependencyFailures": [
-                            {
-                                "command": str(item.get("command") or "")[:300],
-                                "summary": str(item.get("summary") or "")[:300],
-                            }
-                            for item in dependency_failures
+                            _validation_dependency_failure_summary(item) for item in failures
                         ],
                     }
                 )
@@ -6577,7 +6647,24 @@ def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
                 if turn_state and turn_state.get("status") in {"failed", "interrupted"}
                 else None
             )
-            immediate_recovery = _is_immediate_recovery(turn_state)
+            completed_validation_without_result = False
+            if (
+                candidate.get("recoveryKind") == "VALIDATION_FOLLOWUP_RESULT"
+                and turn_state
+                and turn_state.get("status") == "completed"
+                and int(row["updated_at"] or 0)
+                >= int(parse_time(str(candidate["dispatchedAt"])).timestamp())
+            ):
+                result_path = _task_result_path(candidate)
+                try:
+                    completed_validation_without_result = result_path.is_file() and hashlib.sha256(
+                        result_path.read_bytes()
+                    ).hexdigest() == str(candidate.get("followupDigest") or "")
+                except OSError:
+                    completed_validation_without_result = False
+            immediate_recovery = (
+                _is_immediate_recovery(turn_state) or completed_validation_without_result
+            )
             turn_worker = (
                 active_task_turn_worker(candidate["threadId"]) if immediate_recovery else None
             )
@@ -6616,6 +6703,7 @@ def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
                 "threadUpdatedAt": row["updated_at"],
                 "terminalError": terminal_error,
                 "immediateRecovery": immediate_recovery,
+                "completionWithoutResult": completed_validation_without_result,
             }
             if active_deferred or recoverable:
                 queued_deferred.append(eligible | {"reason": "serialized_recovery_queue"})

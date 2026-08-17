@@ -1865,6 +1865,59 @@ def test_validation_followup_stops_when_a_new_result_has_the_same_gap(tmp_path):
     )
 
 
+def test_validation_dependency_prefetch_rearm_is_one_shot_across_result_digests(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest="result-digest-1",
+        missing=["relevant_tests_green"],
+    )
+    store.record_stage("a/b#1", "VALIDATION_PENDING")
+    store.reserve_validation_followup(thread_id="thread-1", result_digest="result-digest-1")
+    store.commit_validation_followup(thread_id="thread-1", result_digest="result-digest-1")
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest="result-digest-2",
+        missing=["relevant_tests_green"],
+    )
+    assert store.rearm_validation_no_progress_for_review(
+        key="a/b#1",
+        result_digest="result-digest-2",
+        review_marker="same-prefetch-plan",
+        reason="DEPENDENCY_PREFETCH_AVAILABLE",
+    )
+    store.reserve_validation_followup(thread_id="thread-1", result_digest="result-digest-2")
+    store.commit_validation_followup(thread_id="thread-1", result_digest="result-digest-2")
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest="result-digest-3",
+        missing=["relevant_tests_green"],
+    )
+
+    assert (
+        store.rearm_validation_no_progress_for_review(
+            key="a/b#1",
+            result_digest="result-digest-3",
+            review_marker="same-prefetch-plan",
+            reason="DEPENDENCY_PREFETCH_AVAILABLE",
+        )
+        is False
+    )
+    assert store.validation_no_progress()[0]["resultDigest"] == "result-digest-3"
+
+
 def test_first_validation_result_is_not_mistaken_for_no_progress(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(intent())

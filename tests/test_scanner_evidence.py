@@ -546,6 +546,40 @@ def test_issue_template_and_label_approval_gate_prevents_auto_spawn(tmp_path):
     assert candidate["actionability_evidence"]["needs_confirmation"] is True
 
 
+def test_help_wanted_does_not_turn_an_unsplit_rfc_into_a_clean_candidate(tmp_path):
+    radar = Radar(
+        datetime.now(UTC),
+        2,
+        tmp_path / "seen.json",
+        "",
+        dry_run=True,
+    )
+    base = {
+        "repo": "example/project",
+        "num": 388,
+        "title": "[RFC]: Fail fast across every runtime path",
+        "url": "https://github.com/example/project/issues/388",
+        "_explicit_recheck": True,
+    }
+    issue = {
+        "state": "open",
+        "title": base["title"],
+        "body": (
+            "This roadmap proposes a repository-wide policy. "
+            "One possible anchor is runtime/config.py:42, but the implementation split "
+            "has not been approved."
+        ),
+        "labels": [{"name": "bug"}, {"name": "help wanted"}],
+        "assignees": [],
+        "user": {"login": "maintainer"},
+    }
+
+    candidate, reason = radar.score_issue(base, issue, [])
+
+    assert candidate is None
+    assert reason == "rfc_or_roadmap_without_maintainer_split"
+
+
 def test_offer_to_send_small_pr_blocks_cloud_candidate(tmp_path):
     radar = Radar(
         datetime.now(UTC),

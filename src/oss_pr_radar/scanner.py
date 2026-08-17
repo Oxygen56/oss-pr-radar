@@ -3426,7 +3426,7 @@ class Radar:
         if ACTIVE_RE.search(body) or claims:
             return None, "someone_active"
         if RFC_RE.search(title + "\n" + labels_text + "\n" + body[:1200]) and not (
-            maintainer_approved or help_wanted
+            maintainer_approved
         ):
             return None, "rfc_or_roadmap_without_maintainer_split"
         if PROMOTIONAL_UPDATE_RE.search(title + "\n" + body[:600]) and not (
