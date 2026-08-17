@@ -12614,6 +12614,34 @@
     ],
     "why": "Issue reports a reproducible MCP error with a clear root cause (SQLAlchemy session transaction conflict) and a known fix pattern from merged PRs. However, the issue is Cloud-specific and the fix likely requires maintainer coordination; the candidate is a bug fix with local scope, not a new algorithm. The deterministic gate allows private work but the lack of maintainer approval and the need for design confirmation on the MCP controller fix make it premature to start."
   },
+  "63c2c6842dfb53aac8ec95ce8573fe20c92283820baaab480a1bbf4f08ed924d": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify MuteUntilFirstBotCompleteUserMuteStrategy to handle error frames or add timeout",
+      "Possibly update base strategy or related tests"
+    ],
+    "risks": [
+      "Potential API design changes need maintainer input",
+      "Timeout behavior may affect user experience if not tuned"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a test that simulates TTS failure before BotStoppedSpeakingFrame and assert mute is released",
+      "Run existing unit tests for user_mute strategies"
+    ],
+    "unknowns": [
+      "Maintainer preference on timeout vs error handling",
+      "Exact failure modes of TTS in the system"
+    ],
+    "wait_reason": null,
+    "why": "Issue clearly identifies a concrete bug in mute release logic with a specific code path and expected behavior, no competing PR or issue found, and the fix is actionable."
+  },
   "63d0ea285346a6354120831ba3f9efdfe72116cd8eea544a069239f515173ce4": {
     "confidence": 0.85,
     "contradictions": [],
