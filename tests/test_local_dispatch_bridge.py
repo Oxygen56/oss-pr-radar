@@ -7000,6 +7000,89 @@ def test_validation_followup_normalizes_existing_complete_handoff(tmp_path, monk
     assert repeated == finalized
 
 
+def test_validation_followup_allows_a_revision_to_remove_rejected_files(tmp_path):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        missing_quality=("regression_test_verified", "relevant_tests_green"),
+    )
+    MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    context = json.loads(context_path.read_text(encoding="utf-8"))
+
+    (worktree / "runtime.py").write_text("value = 1\n", encoding="utf-8")
+    (worktree / "replacement.py").write_text("value = 2\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py", "replacement.py")
+    run_git(worktree, "commit", "-m", "fix: narrow runtime correction")
+
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value.update(
+        {
+            "contextDigest": context["contextDigest"],
+            "handoffMode": "controller_commit_complete",
+            "commitSha": run_git(worktree, "rev-parse", "HEAD"),
+            "changedFiles": ["replacement.py"],
+            "controllerCommitChangedFiles": ["replacement.py"],
+        }
+    )
+
+    finalized, _raw = MODULE._finalize_controller_commit(
+        candidate={"worktreePath": str(worktree)},
+        context=context,
+        value=value,
+        result_path=result_path,
+    )
+
+    assert finalized["controllerCommitChangedFiles"] == ["replacement.py", "runtime.py"]
+    assert finalized["changedFiles"] == ["replacement.py"]
+
+
+def test_validation_followup_recovers_a_committed_cumulative_file_handoff(tmp_path):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        missing_quality=("regression_test_verified", "relevant_tests_green"),
+    )
+    MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    context = json.loads(context_path.read_text(encoding="utf-8"))
+
+    (worktree / "runtime.py").write_text("value = 1\n", encoding="utf-8")
+    (worktree / "replacement.py").write_text("value = 2\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py", "replacement.py")
+    run_git(worktree, "commit", "-m", "fix: narrow runtime correction")
+
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value.update(
+        {
+            "contextDigest": context["contextDigest"],
+            "handoffMode": "controller_commit_required",
+            "commitSha": None,
+            "changedFiles": ["replacement.py"],
+        }
+    )
+    value.pop("controllerCommitChangedFiles", None)
+
+    finalized, _raw = MODULE._finalize_controller_commit(
+        candidate={"worktreePath": str(worktree)},
+        context=context,
+        value=value,
+        result_path=result_path,
+    )
+
+    assert finalized["handoffMode"] == "controller_commit_complete"
+    assert finalized["controllerCommitChangedFiles"] == ["replacement.py", "runtime.py"]
+    assert finalized["changedFiles"] == ["replacement.py"]
+
+
 def test_ingestion_recovers_seen_complete_pr_followup_parent(tmp_path):
     store, worktree, previous_head, _pr_url = _published_followup_store(tmp_path)
     candidate = store.pr_followup_candidates()[0]

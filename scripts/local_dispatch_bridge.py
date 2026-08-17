@@ -4097,8 +4097,11 @@ def _validation_publication_changed_files(
                 if line
             ]
         )
-        if not set(commit_changed_files).issubset(cumulative):
-            raise RuntimeError("PR follow-up commit files are missing from the cumulative diff")
+        # A corrective commit may restore an earlier pending file to its published
+        # contents. That file belongs to the commit audit trail but intentionally
+        # disappears from the final PR diff.
+        if not cumulative:
+            raise RuntimeError("PR follow-up leaves no cumulative publication diff")
         return cumulative
     if context.get("stage") != "VALIDATION_PENDING":
         return commit_changed_files
@@ -4116,8 +4119,8 @@ def _validation_publication_changed_files(
             if line
         ]
     )
-    if not set(commit_changed_files).issubset(cumulative):
-        raise RuntimeError("validation commit files are missing from the cumulative diff")
+    if not cumulative:
+        raise RuntimeError("validation continuation leaves no cumulative publication diff")
     return cumulative
 
 
@@ -4138,21 +4141,46 @@ def _finalize_controller_commit(
         )
     if value.get("handoffMode") == "controller_commit_complete":
         worktree = Path(candidate["worktreePath"]).resolve()
-        commit_changed_files = _validated_changed_files(
+        declared_commit_files = _validated_changed_files(
             value.get("controllerCommitChangedFiles") or value.get("changedFiles")
         )
-        publication_changed_files = (
-            _validation_publication_changed_files(
+        commit_sha = str(value.get("commitSha") or "")
+        head_sha = command(["git", "rev-parse", "HEAD"], cwd=worktree)
+        if commit_sha != head_sha:
+            raise RuntimeError("controller commit receipt does not match HEAD")
+        actual_commit_files = _validated_changed_files(
+            [
+                line
+                for line in command(
+                    ["git", "show", "--pretty=format:", "--name-only", "HEAD"],
+                    cwd=worktree,
+                ).splitlines()
+                if line
+            ]
+        )
+        is_validation_continuation = context.get("stage") == "VALIDATION_PENDING" or isinstance(
+            context.get("prFollowup"), dict
+        )
+        if is_validation_continuation:
+            publication_changed_files = _validation_publication_changed_files(
                 worktree=worktree,
                 context=context,
-                commit_changed_files=commit_changed_files,
+                commit_changed_files=actual_commit_files,
             )
-            if context.get("stage") == "VALIDATION_PENDING"
-            or isinstance(context.get("prFollowup"), dict)
-            else _validated_changed_files(value.get("changedFiles"))
-        )
-        if not set(commit_changed_files).issubset(publication_changed_files):
-            raise RuntimeError("controller commit files are missing from publication evidence")
+            declared_publication_files = _validated_changed_files(value.get("changedFiles"))
+            allowed_snapshots = {tuple(actual_commit_files), tuple(publication_changed_files)}
+            if tuple(declared_commit_files) not in allowed_snapshots or tuple(
+                declared_publication_files
+            ) not in allowed_snapshots:
+                raise RuntimeError("controller commit receipt does not match validation files")
+            commit_changed_files = actual_commit_files
+        else:
+            if actual_commit_files != declared_commit_files:
+                raise RuntimeError("controller commit receipt does not match committed files")
+            commit_changed_files = declared_commit_files
+            publication_changed_files = _validated_changed_files(value.get("changedFiles"))
+            if not set(commit_changed_files).issubset(publication_changed_files):
+                raise RuntimeError("controller commit files are missing from publication evidence")
         finalized = dict(value)
         finalized["controllerCommitChangedFiles"] = commit_changed_files
         finalized["changedFiles"] = publication_changed_files
@@ -4221,7 +4249,17 @@ def _finalize_controller_commit(
             if line
         )
         if committed != changed_files:
-            raise RuntimeError("controller commit handoff has no matching local changes")
+            if context.get("stage") == "VALIDATION_PENDING" or isinstance(followup, dict):
+                cumulative = _validation_publication_changed_files(
+                    worktree=worktree,
+                    context=context,
+                    commit_changed_files=committed,
+                )
+                if cumulative != changed_files:
+                    raise RuntimeError("controller commit handoff has no matching local changes")
+                changed_files = committed
+            else:
+                raise RuntimeError("controller commit handoff has no matching local changes")
 
     status = command(["git", "status", "--porcelain"], cwd=worktree)
     if status:
