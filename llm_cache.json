@@ -2612,6 +2612,37 @@
     ],
     "why": "Issue provides a clear root cause and minimal reproduction for a user-visible bug in Qwen parser routing. However, an existing PR #50955 directly references this issue but has failing CI and incomplete evidence, and the deterministic gate requires HUMAN_REVIEW. Maintainer design preference is unconfirmed, so work should wait for maintainer guidance."
   },
+  "17947b971caa289edfb609b011dfba7b7a77a98bfc87ea9293e05858cb9aef75": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue title mentions vLLM 0.26.0 but body also reproduces on 0.27.1"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Update lm-format-enforcer integration to use new vLLM tokenizer path",
+      "Possibly add compatibility shim in vLLM"
+    ],
+    "risks": [
+      "Fix may be rejected if maintainers prefer upstream fix in lm-format-enforcer",
+      "Potential duplicate issue #52620 may cause confusion"
+    ],
+    "root_cause_clarity": "high",
+    "score": 5,
+    "test_plan": [
+      "Run the provided minimal reproduction script to confirm import failure",
+      "Start vLLM server with lm-format-enforcer backend and send structured output request to verify HTTP 500"
+    ],
+    "unknowns": [
+      "Whether vLLM maintainers consider this a vLLM bug or an upstream lm-format-enforcer issue",
+      "Whether issue #52620 is truly related despite low semantic overlap"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "The issue clearly identifies a stale import path in lm-format-enforcer 0.11.3 causing a ModuleNotFoundError and HTTP 500. However, the fix likely belongs upstream in lm-format-enforcer, not vLLM, and the issue is a bug report without a proposed patch. The deterministic gate is HUMAN_REVIEW, and there is a potential duplicate issue #52620 with shared stack signatures, though semantic overlap is low. Actionability is limited without maintainer direction on where to fix."
+  },
   "17bfb7d2862fda69852a00db7e6ba38f84f96a67aadd79e1f0fa8ff6102d4acf": {
     "confidence": 0.85,
     "contradictions": [
@@ -3960,6 +3991,34 @@
       "Maintainer preference on scope (images only vs all media types) and whether to allow unfamiliar image MIME types."
     ],
     "why": "Issue clearly identifies a security-relevant bug in shared download path with verified repro and suggested fix direction. However, existing PR #7334 is closed pending assignment and repository requires assignment, so maintainer action is needed before new work."
+  },
+  "22bc58af1de3779e4e8f58253e1fa0ba42f0419b36bb3fe52e67ba066ea5beae": {
+    "confidence": 0.7,
+    "contradictions": [
+      "The issue title focuses on execute-task, but comments expand the scope to run-uat and other unit types, suggesting a more general fix may be needed."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "prompts/execute-task.md",
+      "orchestrator recovery routing"
+    ],
+    "risks": [
+      "Changing prompt behavior may affect agent performance in other scenarios; orchestrator routing changes may have broader impact."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 13,
+    "test_plan": [
+      "Create a failing test that reproduces the HARD BLOCK when a task plan requires gsd_requirement_* or slice-closure tools, then verify the agent calls gsd_task_complete with blockerDiscovered: true without a failed attempt."
+    ],
+    "unknowns": [
+      "Maintainer's preferred fix location (prompt vs orchestrator) and whether a general fix is desired."
+    ],
+    "wait_reason": "DESIGN_CONFIRMATION",
+    "why": "The issue describes a real, recurring bug in agent tool-surface handling with concrete reproduction steps and multiple occurrences, but the proposed fix is documentation/prompt-level and the maintainer has not confirmed the desired design. The issue is labeled needs-maintainer-review and needs-design-confirmation, and the maintainer has not approved or actively investigated. The fix direction is plausible but requires maintainer confirmation on whether to patch the prompt, the orchestrator routing, or both."
   },
   "22cec6b71fe5192a3d5124e1f2ed1d6aa47907424bf0acbe89de6d75c06604de": {
     "confidence": 0.7,
@@ -10723,6 +10782,35 @@
       "Whether an open PR already addresses this issue; maintainer's preferred fix approach"
     ],
     "why": "The issue reports a reproducible server-side bug (leading space in model name) with strong evidence, but the deterministic gate requires HUMAN_REVIEW and open PR/related issue lookups failed, so duplicate work cannot be excluded."
+  },
+  "56353b888b4ae17328ed5e56b7395b3dbd8b7a8d877624275936d9b3bda1388b": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "python/packages/core/agent_framework/_mcp.py",
+      "python/packages/core/tests/core/test_mcp_http_auth_error_surface.py"
+    ],
+    "risks": [
+      "Changing error propagation may affect existing cancellation handling in _connect_on_owner and _safe_close_exit_stack.",
+      "Coordinating with upstream mcp SDK may delay fix and require version bump."
+    ],
+    "root_cause_clarity": "high",
+    "score": 14,
+    "test_plan": [
+      "Add regression test that mocks session.initialize to raise CancelledError('Cancelled via cancel scope ...') and asserts ToolException includes HTTP 401 status.",
+      "Run targeted unit tests in python/packages/core/tests/core/test_mcp.py and the new test file."
+    ],
+    "unknowns": [
+      "Maintainer preference between unwrapping ExceptionGroup vs. upstream SDK change.",
+      "Whether the proposed API change (ToolException with HTTP status) is acceptable to maintainers."
+    ],
+    "wait_reason": "DESIGN_CONFIRMATION",
+    "why": "Issue provides a clear root cause (MCP SDK task group cancellation swallows HTTP 401) and a concrete repro, but the suggested fix has two design options (unwrap ExceptionGroup vs. upstream SDK change) and requires maintainer confirmation on preferred approach and API behavior. The deterministic gate is HUMAN_REVIEW, and no maintainer approval or design confirmation is present."
   },
   "5642f05e6c9aaf635583758b5785782037a95198fc210dffcd00422436bf69b9": {
     "confidence": 0.7,
@@ -20412,6 +20500,34 @@
       "Exact preferred fallback string (e.g., 'functions' or tool name) is not specified; maintainer may have a preference, but this is a minor design detail that can be decided during implementation."
     ],
     "why": "The issue clearly identifies a user-visible bug in the Azure Responses path where empty namespace descriptions are forwarded unchanged, causing Azure to reject requests. The root cause is localized to the transform function, and the issue provides a concrete reproduction and expected behavior. No existing PR directly addresses this specific failure, and the issue is actionable with a clear code path."
+  },
+  "a160d4a34a405ef96ed00009e26b819a2c6dea4d75a9f906979ca5b662233233": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify Liger kernel integration in TRL to avoid global monkey-patching, e.g., patch only the specific model instance or add CPU tensor guard in Triton kernel.",
+      "Add regression test to ensure Liger patching does not affect subsequent models in same process."
+    ],
+    "risks": [
+      "Changing Liger patching scope may affect performance or behavior of Liger kernel usage in training.",
+      "Potential need to coordinate with Liger kernel upstream for proper CPU fallback."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce by running tests/test_utils.py::TestUseAdapter after tests/test_distillation_trainer.py::TestDistillationTrainer::test_liger_allows_none_logit_scale in same process.",
+      "Add a test that instantiates a Qwen3 model with use_liger_kernel=True, then runs a CPU model forward pass to ensure no Triton CPU error.",
+      "Run full test suite with pytest -n auto to verify transient failure is resolved."
+    ],
+    "unknowns": [
+      "Exact fix approach not yet decided; maintainer input may be needed."
+    ],
+    "wait_reason": null,
+    "why": "Issue identifies a concrete, reproducible CI failure caused by global monkey-patching of Qwen3 RMSNorm by Liger kernel, leading to CPU tensor errors in subsequent tests. Root cause is clearly explained with code references and test pollution mechanism. This is a kernel/algorithm integration bug with a clear fix path: scope Liger patching to instance or ensure CPU fallback. Actionable and testable."
   },
   "a1699a59cd4149a3041b4fc141d76c4011b34c515734205b73546ee1f93d8d25": {
     "confidence": 0.8,

@@ -7062,12 +7062,12 @@
     "title": "**\"CRITICAL: Desktop v1.45.0 (Windows) — launch crash-loop, config rewrite, registry/updater 404s — blocks all work\"**"
   },
   "aaif-goose/goose#10906": {
-    "analyzed": "2026-08-13T10:31:31Z",
-    "issue_updated": "2026-08-13T09:55:42Z",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "issue_updated": "2026-08-17T16:56:56Z",
     "status": "skip_prefilter",
     "title": "p2p Goose Mobile/web ↔ Goose Desktop",
-    "scanner_version": "oss_pr_radar_v44_disclosure_tasks_resolve_uncertainty",
-    "decision_contract_digest": "3055f8aa2bf39e97c4ac4e981fa468506f59dfa03a5d2f84dfdaf91e2ffed8fc"
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "aaif-goose/goose#10909": {
     "analyzed": "2026-08-04T17:40:02Z",
@@ -9111,12 +9111,12 @@
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "ai-dynamo/dynamo#12803": {
-    "analyzed": "2026-08-14T03:02:19Z",
+    "analyzed": "2026-08-17T17:49:06Z",
     "status": "someone_active",
     "title": "[CONTRIBUTION]: Protect warm-request latency from long cache-miss prefills with an opt-in cold worker pool",
-    "issue_updated": "2026-08-14T02:10:18Z",
-    "scanner_version": "oss_pr_radar_v45_disclosure_only_wait",
-    "decision_contract_digest": "955f95d5376531c4ba62c65ae2aaf5314eb8bb99fb17c1824f9ecdcd38eed980"
+    "issue_updated": "2026-08-17T17:28:18Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "ai-dynamo/dynamo#12816": {
     "analyzed": "2026-08-07T13:43:21Z",
@@ -22113,10 +22113,10 @@
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "langchain-ai/langgraph#8558": {
-    "analyzed": "2026-08-17T09:04:26Z",
+    "analyzed": "2026-08-17T17:49:06Z",
     "status": "someone_active",
     "title": "AsyncSqliteSaver.alist blocks checkpoint writes while iteration is paused",
-    "issue_updated": "2026-08-17T06:40:52Z",
+    "issue_updated": "2026-08-17T17:30:33Z",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
@@ -27535,10 +27535,10 @@
     "title": "Add `transportContextProvider` to `McpClient.AsyncSpec`"
   },
   "modelcontextprotocol/java-sdk#1081": {
-    "analyzed": "2026-08-17T10:51:49Z",
+    "analyzed": "2026-08-17T17:49:06Z",
     "status": "bot_or_stale_refresh",
     "title": "McpServerSession never sends a response when a request handler's Mono completes empty — violates JSON-RPC 2.0's one-response-per-request contract",
-    "issue_updated": "2026-08-17T10:39:44Z",
+    "issue_updated": "2026-08-17T17:11:17Z",
     "notification_digest": "0a0294064ccb670c8c06ef674246454b07b863e38b0f3e34a9639a3099055a3f",
     "notification_scanner_version": "oss_pr_radar_v42_terminal_feedback_revoke",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
@@ -27950,20 +27950,27 @@
     "title": "streamable HTTP server: no duplicate-in-flight request-id guard — concurrent POSTs with the same JSON-RPC id cross-wire responses"
   },
   "modelcontextprotocol/typescript-sdk#2612": {
-    "analyzed": "2026-08-05T06:46:01Z",
-    "decision_contract_digest": "33f3c521c7b8ce27230f9780df8cde1275f14fdc86917b0a8488f57fb92394fe",
-    "issue_updated": "2026-08-05T05:29:49Z",
-    "scanner_version": "oss_pr_radar_v26_issues_only_policy_guard",
-    "status": "someone_active",
-    "title": "Client.callTool() throws -32602 after tools/list_changed replaces an in-flight call's output schema"
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": "someone_active",
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "Client.callTool() throws -32602 after tools/list_changed replaces an in-flight call's output schema",
+    "url": "https://github.com/modelcontextprotocol/typescript-sdk/issues/2612",
+    "issue_updated": "2026-08-17T17:08:41Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "modelcontextprotocol/typescript-sdk#2614": {
-    "analyzed": "2026-08-04T21:40:29Z",
-    "decision_contract_digest": "33f3c521c7b8ce27230f9780df8cde1275f14fdc86917b0a8488f57fb92394fe",
-    "issue_updated": "2026-08-04T20:53:44Z",
-    "scanner_version": "oss_pr_radar_v26_issues_only_policy_guard",
-    "status": "someone_active",
-    "title": "Client.listTools() corrupts its cached tool metadata when an output schema fails to compile"
+    "analyzed": "2026-08-17T17:49:06Z",
+    "status": "bot_or_stale_refresh",
+    "title": "Client.listTools() corrupts its cached tool metadata when an output schema fails to compile",
+    "issue_updated": "2026-08-17T17:12:09Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "modelcontextprotocol/typescript-sdk#2615": {
     "analyzed": "2026-08-07T21:04:11Z",
@@ -27984,20 +27991,27 @@
     "title": "[v2] versionNegotiation: 2xx server/discover response with an empty or unparseable body fails connect() instead of falling back to legacy initialize"
   },
   "modelcontextprotocol/typescript-sdk#2622": {
-    "analyzed": "2026-08-08T20:05:10Z",
-    "decision_contract_digest": "99e1e622e934b01aa1453f4909b5602d73892ee8280416d41c80fc98536fe0d8",
-    "issue_updated": "2026-08-08T18:09:28Z",
-    "scanner_version": "oss_pr_radar_v32_bounded_duplicate_audit",
-    "status": "someone_active",
-    "title": "McpServer constructor capabilities.tools.listChanged is silently overridden by setToolRequestHandlers()"
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": "someone_active",
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "McpServer constructor capabilities.tools.listChanged is silently overridden by setToolRequestHandlers()",
+    "url": "https://github.com/modelcontextprotocol/typescript-sdk/issues/2622",
+    "issue_updated": "2026-08-17T17:07:11Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "modelcontextprotocol/typescript-sdk#2623": {
-    "analyzed": "2026-08-13T12:02:45Z",
-    "issue_updated": "2026-08-13T11:05:10Z",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "issue_updated": "2026-08-17T17:08:36Z",
     "status": "skip_prefilter",
     "title": "oauthMetadataResponse requires a full AS metadata document to read one field from it",
-    "scanner_version": "oss_pr_radar_v44_disclosure_tasks_resolve_uncertainty",
-    "decision_contract_digest": "3055f8aa2bf39e97c4ac4e981fa468506f59dfa03a5d2f84dfdaf91e2ffed8fc"
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "modelcontextprotocol/typescript-sdk#2624": {
     "analyzed": "2026-08-08T22:14:30Z",
@@ -32325,10 +32339,10 @@
     "title": "[Feature] deepseek_v2.py Refactor"
   },
   "sgl-project/sglang#17050": {
-    "analyzed": "2026-08-17T16:18:09Z",
+    "analyzed": "2026-08-17T17:49:06Z",
     "status": "bot_or_stale_refresh",
     "title": "[Tracking] CI Test Failures and Fixes",
-    "issue_updated": "2026-08-17T16:02:56Z",
+    "issue_updated": "2026-08-17T16:57:48Z",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
@@ -36361,12 +36375,19 @@
     "title": "[Bug]: QWEN3.5-27B fails to mount LoRA"
   },
   "vllm-project/vllm#40896": {
-    "analyzed": "2026-08-08T09:05:36Z",
-    "decision_contract_digest": "02cb20205a1f217e6b29afec0a55c2446f87878e03f171cd767443ede8fd0d91",
-    "issue_updated": "2026-08-08T02:12:25Z",
-    "scanner_version": "oss_pr_radar_v30_security_and_readiness_gates",
-    "status": "someone_active",
-    "title": "[Bug]:  vLLM v1 with prefix caching: first request differs from subsequent identical requests at temperature=0"
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": "someone_active",
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "[Bug]:  vLLM v1 with prefix caching: first request differs from subsequent identical requests at temperature=0",
+    "url": "https://github.com/vllm-project/vllm/issues/40896",
+    "issue_updated": "2026-08-17T17:06:09Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "vllm-project/vllm#40901": {
     "analyzed": "2026-08-04T03:45:21Z",
@@ -36425,19 +36446,19 @@
     "title": "[Installation]: GH200 nodes"
   },
   "vllm-project/vllm#41390": {
-    "analyzed": "2026-08-14T18:40:19Z",
-    "requeued_at": "2026-08-12T03:15:28Z",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
     "first_deferred_at": "2026-08-12T02:54:44Z",
-    "defer_count": 2,
+    "defer_count": 3,
     "deferred_from_status": "reactivated_stale_without_recent_maintainer_confirmation",
     "score": null,
-    "status": "deferred_expired",
-    "reason": "recheck_freshness_expired",
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
     "title": "[Performance]: Llama-Nemotron embedding is slower than Transformers for offline batch-32 pooling after compile-cache warmup",
     "url": "https://github.com/vllm-project/vllm/issues/41390",
-    "issue_updated": "2026-08-11T18:46:31Z",
-    "scanner_version": "oss_pr_radar_v45_disclosure_only_wait",
-    "decision_contract_digest": "955f95d5376531c4ba62c65ae2aaf5314eb8bb99fb17c1824f9ecdcd38eed980"
+    "issue_updated": "2026-08-17T17:03:16Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "vllm-project/vllm#41447": {
     "analyzed": "2026-08-04T03:45:21Z",
@@ -37487,13 +37508,19 @@
     "title": "[Bug]: sm_120 + local CUDA toolkit < 12.9: FlashInfer JIT failures kill engine init in three default paths (sampler, fused-MoE, FP8 KV) instead of falling back"
   },
   "vllm-project/vllm#50706": {
-    "analyzed": "2026-08-03T21:58:25Z",
-    "issue_updated": "2026-08-03T19:56:34Z",
-    "pr": "https://github.com/vllm-project/vllm/pull/50752",
-    "pr_assessment": "已有 2 个活跃直接关联 PR（#50752, #45525）；竞争已饱和，不应再创建重复实现",
-    "scanner_version": "oss_pr_radar_v14_trust_core",
-    "status": "skip_open_pr_competition_saturated",
-    "title": "[Bug]: Mistral3 (HF format): default text-only LLM() init fails in multimodal profiling — \"Failed to apply PixtralProcessor on data={'text': '[IMG]'}\""
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": "skip_open_pr_competition_saturated",
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "[Bug]: Mistral3 (HF format): default text-only LLM() init fails in multimodal profiling — \"Failed to apply PixtralProcessor on data={'text': '[IMG]'}\"",
+    "url": "https://github.com/vllm-project/vllm/issues/50706",
+    "issue_updated": "2026-08-17T17:43:15Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "vllm-project/vllm#50709": {
     "analyzed": "2026-08-05T05:12:03Z",
@@ -41873,11 +41900,11 @@
     "decision_contract_digest": "9e3ff3fd84281e2e3354078eeaff6facbd972a1f546a92ff25b1d80b99ab7a14"
   },
   "aiur-team/aiur#1635": {
-    "analyzed": "2026-08-17T09:04:26Z",
+    "analyzed": "2026-08-17T17:49:06Z",
     "status": "skip_repo_quality",
     "reason": "low_stars:3",
     "title": "Three more shared-state flakes: CoreTest agent-runner interrupt, ExtensionsTest workflow store, AgentControlCLITest build-gate contention",
-    "issue_updated": "2026-08-17T08:44:28Z",
+    "issue_updated": "2026-08-17T17:24:42Z",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
@@ -43700,12 +43727,12 @@
     "decision_contract_digest": "036ed53b8cd027a2697f896dc42bacf1c72c7c900d6a30a058a59daa1507764c"
   },
   "modelcontextprotocol/typescript-sdk#2627": {
-    "analyzed": "2026-08-11T13:47:49Z",
-    "status": "someone_active",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "issue_updated": "2026-08-17T17:10:04Z",
+    "status": "skip_prefilter",
     "title": "Docs: passing z.object() as inputSchema on v1 fails silently (empty schema) or cryptically (tools/list crash) — not covered in troubleshooting or migration guide",
-    "issue_updated": "2026-08-10T21:27:43Z",
-    "scanner_version": "oss_pr_radar_v42_terminal_feedback_revoke",
-    "decision_contract_digest": "036ed53b8cd027a2697f896dc42bacf1c72c7c900d6a30a058a59daa1507764c"
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "OpenHands/OpenHands#16450": {
     "analyzed": "2026-08-09T14:56:06Z",
@@ -44041,14 +44068,21 @@
     "decision_contract_digest": "036ed53b8cd027a2697f896dc42bacf1c72c7c900d6a30a058a59daa1507764c"
   },
   "modelcontextprotocol/typescript-sdk#2628": {
-    "analyzed": "2026-08-10T06:36:53Z",
-    "status": "someone_active",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": "someone_active",
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
     "title": "Low-level Server API publishes inputSchema in tools/list but does not enforce it on tools/call",
-    "issue_updated": "2026-08-10T05:52:45Z",
+    "url": "https://github.com/modelcontextprotocol/typescript-sdk/issues/2628",
+    "issue_updated": "2026-08-17T17:07:05Z",
     "notification_digest": "7402510ef933dac41e6162584f8a75f6a0fa2d6408e0db344c07233165e0eb6c",
     "notification_scanner_version": "oss_pr_radar_v42_terminal_feedback_revoke",
-    "scanner_version": "oss_pr_radar_v42_terminal_feedback_revoke",
-    "decision_contract_digest": "036ed53b8cd027a2697f896dc42bacf1c72c7c900d6a30a058a59daa1507764c"
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "sgl-project/sglang#34177": {
     "analyzed": "2026-08-12T03:43:34Z",
@@ -53058,17 +53092,10 @@
     "decision_contract_digest": "955f95d5376531c4ba62c65ae2aaf5314eb8bb99fb17c1824f9ecdcd38eed980"
   },
   "langchain-ai/langgraph#8589": {
-    "analyzed": "2026-08-17T09:04:26Z",
-    "requeued_at": "2026-08-17T07:20:08Z",
-    "first_deferred_at": "2026-08-12T02:54:44Z",
-    "defer_count": 3,
-    "deferred_from_status": "someone_active",
-    "score": null,
-    "status": "deferred_expired",
-    "reason": "recheck_freshness_expired",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "status": "someone_active",
     "title": "checkpoint-sqlite: TTL sweepers outlive `from_conn_string` contexts",
-    "url": "https://github.com/langchain-ai/langgraph/issues/8589",
-    "issue_updated": "2026-08-17T06:42:35Z",
+    "issue_updated": "2026-08-17T17:34:53Z",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
@@ -53168,19 +53195,19 @@
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "ai-dynamo/dynamo#12998": {
-    "analyzed": "2026-08-14T18:40:19Z",
-    "requeued_at": "2026-08-12T03:15:28Z",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
     "first_deferred_at": "2026-08-12T02:54:44Z",
-    "defer_count": 2,
+    "defer_count": 3,
     "deferred_from_status": "rfc_or_roadmap_without_maintainer_split",
     "score": null,
-    "status": "deferred_expired",
-    "reason": "recheck_freshness_expired",
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
     "title": "DEP: Unify LLM routing behind one strategy pipeline",
     "url": "https://github.com/ai-dynamo/dynamo/issues/12998",
-    "issue_updated": "2026-08-11T04:30:47Z",
-    "scanner_version": "oss_pr_radar_v45_disclosure_only_wait",
-    "decision_contract_digest": "955f95d5376531c4ba62c65ae2aaf5314eb8bb99fb17c1824f9ecdcd38eed980"
+    "issue_updated": "2026-08-17T17:12:38Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "BerriAI/litellm#36493": {
     "analyzed": "2026-08-14T19:18:31Z",
@@ -53260,18 +53287,25 @@
     "decision_contract_digest": "955f95d5376531c4ba62c65ae2aaf5314eb8bb99fb17c1824f9ecdcd38eed980"
   },
   "modelcontextprotocol/typescript-sdk#2637": {
-    "analyzed": "2026-08-11T21:08:26Z",
-    "status": "no_bug_or_maintainer_actionability",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": "no_bug_or_maintainer_actionability",
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
     "title": "[v2] Tasks extension: tools/call rejects CreateTaskResult but accepts an omitted discriminator as complete",
-    "issue_updated": "2026-08-10T22:28:14Z",
-    "scanner_version": "oss_pr_radar_v42_terminal_feedback_revoke",
-    "decision_contract_digest": "036ed53b8cd027a2697f896dc42bacf1c72c7c900d6a30a058a59daa1507764c"
+    "url": "https://github.com/modelcontextprotocol/typescript-sdk/issues/2637",
+    "issue_updated": "2026-08-17T17:07:01Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "modelcontextprotocol/typescript-sdk#2636": {
-    "analyzed": "2026-08-15T22:42:43Z",
-    "status": "someone_active",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "issue_updated": "2026-08-17T17:08:31Z",
+    "status": "skip_prefilter",
     "title": "zod v4: \"additionalProperties: false\" missing",
-    "issue_updated": "2026-08-15T22:23:23Z",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
@@ -53333,12 +53367,19 @@
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "modelcontextprotocol/typescript-sdk#2598": {
-    "analyzed": "2026-08-11T21:08:26Z",
-    "status": "no_bug_or_maintainer_actionability",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": "no_bug_or_maintainer_actionability",
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
     "title": "v2: extension methods shadowed by legacy spec-method registry — custom tasks/get & tasks/cancel handlers unreachable (-32601 before handler lookup)",
-    "issue_updated": "2026-08-10T22:34:10Z",
-    "scanner_version": "oss_pr_radar_v42_terminal_feedback_revoke",
-    "decision_contract_digest": "036ed53b8cd027a2697f896dc42bacf1c72c7c900d6a30a058a59daa1507764c"
+    "url": "https://github.com/modelcontextprotocol/typescript-sdk/issues/2598",
+    "issue_updated": "2026-08-17T17:08:50Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "anomalyco/opencode#35071": {
     "analyzed": "2026-08-11T21:08:26Z",
@@ -53359,12 +53400,12 @@
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "modelcontextprotocol/typescript-sdk#2639": {
-    "analyzed": "2026-08-12T17:16:39Z",
-    "status": "bot_or_stale_refresh",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "issue_updated": "2026-08-17T17:09:59Z",
+    "status": "skip_prefilter",
     "title": "[v2] No supported way to emit Mcp-Param-* headers on a legacy-era connection, but GitHub's hosted server requires them there",
-    "issue_updated": "2026-08-12T17:04:27Z",
-    "scanner_version": "oss_pr_radar_v44_disclosure_tasks_resolve_uncertainty",
-    "decision_contract_digest": "3055f8aa2bf39e97c4ac4e981fa468506f59dfa03a5d2f84dfdaf91e2ffed8fc"
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "BerriAI/litellm#36483": {
     "analyzed": "2026-08-11T22:08:46Z",
@@ -57341,19 +57382,19 @@
     "decision_contract_digest": "955f95d5376531c4ba62c65ae2aaf5314eb8bb99fb17c1824f9ecdcd38eed980"
   },
   "vllm-project/vllm#49349": {
-    "analyzed": "2026-08-14T18:40:19Z",
-    "requeued_at": "2026-08-12T03:15:28Z",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
     "first_deferred_at": "2026-08-11T13:20:44Z",
-    "defer_count": 3,
+    "defer_count": 4,
     "deferred_from_status": "inspection_budget_deferred",
     "score": null,
-    "status": "deferred_expired",
-    "reason": "recheck_freshness_expired",
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
     "title": "Zero JIT compilation during runtime",
     "url": "https://github.com/vllm-project/vllm/issues/49349",
-    "issue_updated": "2026-08-11T12:00:59Z",
-    "scanner_version": "oss_pr_radar_v45_disclosure_only_wait",
-    "decision_contract_digest": "955f95d5376531c4ba62c65ae2aaf5314eb8bb99fb17c1824f9ecdcd38eed980"
+    "issue_updated": "2026-08-17T17:12:28Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "vllm-project/vllm#49533": {
     "analyzed": "2026-08-14T18:40:19Z",
@@ -61140,10 +61181,10 @@
     "decision_contract_digest": "955f95d5376531c4ba62c65ae2aaf5314eb8bb99fb17c1824f9ecdcd38eed980"
   },
   "crewAIInc/crewAI#5802": {
-    "analyzed": "2026-08-17T14:01:00Z",
+    "analyzed": "2026-08-17T17:49:06Z",
     "status": "someone_active",
     "title": "Tool re-execution on task retry has no idempotency guard — duplicate payments, emails, trades possible",
-    "issue_updated": "2026-08-17T13:49:30Z",
+    "issue_updated": "2026-08-17T17:24:44Z",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
@@ -63221,8 +63262,8 @@
     "decision_contract_digest": "3055f8aa2bf39e97c4ac4e981fa468506f59dfa03a5d2f84dfdaf91e2ffed8fc"
   },
   "QwenLM/qwen-code#7167": {
-    "analyzed": "2026-08-17T16:50:09Z",
-    "issue_updated": "2026-08-17T16:32:35Z",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "issue_updated": "2026-08-17T17:02:59Z",
     "status": "skip_prefilter",
     "title": "Fleet Shepherd Dashboard",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
@@ -66707,10 +66748,17 @@
     "decision_contract_digest": "3055f8aa2bf39e97c4ac4e981fa468506f59dfa03a5d2f84dfdaf91e2ffed8fc"
   },
   "modelcontextprotocol/typescript-sdk#2650": {
-    "analyzed": "2026-08-14T23:41:33Z",
-    "status": "bot_or_stale_refresh",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": "bot_or_stale_refresh",
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
     "title": "[v2] subscriptions/listen holds a stream open even when it has honoured nothing",
-    "issue_updated": "2026-08-14T23:13:17Z",
+    "url": "https://github.com/modelcontextprotocol/typescript-sdk/issues/2650",
+    "issue_updated": "2026-08-17T17:13:55Z",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
@@ -75352,12 +75400,12 @@
     "decision_contract_digest": "955f95d5376531c4ba62c65ae2aaf5314eb8bb99fb17c1824f9ecdcd38eed980"
   },
   "modelcontextprotocol/typescript-sdk#2604": {
-    "analyzed": "2026-08-13T12:02:45Z",
-    "issue_updated": "2026-08-13T11:05:45Z",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "issue_updated": "2026-08-17T17:08:47Z",
     "status": "skip_prefilter",
     "title": "CODEOWNERS auth paths do not resolve on main, so the auth team is never auto-requested",
-    "scanner_version": "oss_pr_radar_v44_disclosure_tasks_resolve_uncertainty",
-    "decision_contract_digest": "3055f8aa2bf39e97c4ac4e981fa468506f59dfa03a5d2f84dfdaf91e2ffed8fc"
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "vllm-project/vllm#50282": {
     "analyzed": "2026-08-14T18:40:19Z",
@@ -77453,10 +77501,10 @@
     "decision_contract_digest": "3055f8aa2bf39e97c4ac4e981fa468506f59dfa03a5d2f84dfdaf91e2ffed8fc"
   },
   "langchain-ai/langgraph#8608": {
-    "analyzed": "2026-08-17T10:13:22Z",
+    "analyzed": "2026-08-17T17:49:06Z",
     "status": "probe_contract_incomplete",
     "title": "error_handler runs but the original exception is still raised (parallel nodes, custom/messages streaming, subgraphs=True)",
-    "issue_updated": "2026-08-17T10:08:03Z",
+    "issue_updated": "2026-08-17T17:30:31Z",
     "notification_digest": "c5e6a2e710d09db97311fcf05d3f08678a6fd18cb44ca865b8f7aba7102557c4",
     "notification_scanner_version": "oss_pr_radar_v44_disclosure_tasks_resolve_uncertainty",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
@@ -77819,10 +77867,17 @@
     "decision_contract_digest": "955f95d5376531c4ba62c65ae2aaf5314eb8bb99fb17c1824f9ecdcd38eed980"
   },
   "modelcontextprotocol/typescript-sdk#2656": {
-    "analyzed": "2026-08-16T17:38:01Z",
-    "status": "bot_or_stale_refresh",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": "bot_or_stale_refresh",
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
     "title": "tools/call has no path to a protocol-level \"Server errors\" response, even for unhandled exceptions",
-    "issue_updated": "2026-08-16T17:08:53Z",
+    "url": "https://github.com/modelcontextprotocol/typescript-sdk/issues/2656",
+    "issue_updated": "2026-08-17T17:13:54Z",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
@@ -79817,10 +79872,10 @@
     "decision_contract_digest": "955f95d5376531c4ba62c65ae2aaf5314eb8bb99fb17c1824f9ecdcd38eed980"
   },
   "modelcontextprotocol/typescript-sdk#2657": {
-    "analyzed": "2026-08-15T17:39:56Z",
-    "status": "bot_or_stale_refresh",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "issue_updated": "2026-08-17T17:19:45Z",
+    "status": "skip_prefilter",
     "title": "[v2] classifyNetworkError passes { cause } into SdkError's data slot, so the underlying network error never reaches Error.cause",
-    "issue_updated": "2026-08-15T17:06:30Z",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
@@ -82677,10 +82732,10 @@
     "decision_contract_digest": "3055f8aa2bf39e97c4ac4e981fa468506f59dfa03a5d2f84dfdaf91e2ffed8fc"
   },
   "modelcontextprotocol/python-sdk#3305": {
-    "analyzed": "2026-08-16T13:06:05Z",
-    "status": "someone_active",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "status": "bot_or_stale_refresh",
     "title": "A tool returning an empty list produces a CallToolResult with zero content blocks",
-    "issue_updated": "2026-08-16T12:14:47Z",
+    "issue_updated": "2026-08-17T17:11:15Z",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
@@ -83345,10 +83400,17 @@
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "modelcontextprotocol/typescript-sdk#2659": {
-    "analyzed": "2026-08-15T17:39:56Z",
-    "status": "bot_or_stale_refresh",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": "bot_or_stale_refresh",
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
     "title": "[v2] StreamableHTTPClientTransport drops SSE stream provenance, so a server-initiated request cannot be attributed to the client request that provoked it",
-    "issue_updated": "2026-08-15T17:06:26Z",
+    "url": "https://github.com/modelcontextprotocol/typescript-sdk/issues/2659",
+    "issue_updated": "2026-08-17T17:11:20Z",
     "notification_digest": "91a07c2075da7efc0033819a6d1760b4952d5c630780e491be2d927976dcf0b3",
     "notification_scanner_version": "oss_pr_radar_v46_semantic_fallback",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
@@ -84282,12 +84344,12 @@
     "decision_contract_digest": "955f95d5376531c4ba62c65ae2aaf5314eb8bb99fb17c1824f9ecdcd38eed980"
   },
   "anomalyco/opencode#42451": {
-    "analyzed": "2026-08-14T08:37:11Z",
-    "issue_updated": "2026-08-14T07:40:24Z",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "issue_updated": "2026-08-17T17:32:29Z",
     "status": "skip_prefilter",
     "title": "Legacy plugin loader pushes non-Hooks return values, corrupting plugin loading and crashing startup",
-    "scanner_version": "oss_pr_radar_v45_disclosure_only_wait",
-    "decision_contract_digest": "955f95d5376531c4ba62c65ae2aaf5314eb8bb99fb17c1824f9ecdcd38eed980"
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "anomalyco/opencode#42448": {
     "analyzed": "2026-08-17T13:10:36Z",
@@ -84899,10 +84961,10 @@
     "decision_contract_digest": "955f95d5376531c4ba62c65ae2aaf5314eb8bb99fb17c1824f9ecdcd38eed980"
   },
   "modelcontextprotocol/typescript-sdk#2661": {
-    "analyzed": "2026-08-14T21:44:37Z",
-    "status": "no_bug_or_maintainer_actionability",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "issue_updated": "2026-08-17T17:16:47Z",
+    "status": "skip_prefilter",
     "title": "Streamable HTTP SSE tests assume multiple events share one fetch chunk",
-    "issue_updated": "2026-08-14T02:33:33Z",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
@@ -86091,11 +86153,11 @@
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "langgenius/dify#40768": {
-    "analyzed": "2026-08-17T16:18:09Z",
+    "analyzed": "2026-08-17T17:49:06Z",
     "status": "status_update",
     "reason": "comments_lookup_failed",
     "requeue_reason": "critical_evidence_fetch_failure",
-    "requeued_at": "2026-08-17T16:18:09Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
     "title": "Feature: persistent memory for agents (custom OpenAPI tool)",
     "issue_updated": "2026-08-14T12:05:00Z",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
@@ -91755,10 +91817,10 @@
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "vercel/ai#17082": {
-    "analyzed": "2026-08-14T20:49:25Z",
-    "status": "bot_or_stale_refresh",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "status": "someone_active",
     "title": "@ai-sdk/harness-claude-code: user message file/image parts are rejected (HarnessCapabilityUnsupportedError) — no vision input path through HarnessAgent",
-    "issue_updated": "2026-08-14T19:35:22Z",
+    "issue_updated": "2026-08-17T16:56:58Z",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
@@ -92402,10 +92464,10 @@
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "langfuse/langfuse#16170": {
-    "analyzed": "2026-08-14T23:41:33Z",
-    "status": "assigned",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "issue_updated": "2026-08-17T17:00:59Z",
+    "status": "skip_prefilter",
     "title": "Feature request: git-style branching, merging & approval gates for Prompt Management",
-    "issue_updated": "2026-08-14T23:41:40Z",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
@@ -92930,12 +92992,10 @@
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "tenstorrent/tt-metal#53210": {
-    "analyzed": "2026-08-15T01:53:34Z",
-    "status": "skip_open_pr_strong",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "status": "someone_active",
     "title": "[tt-train] moe_group: counts NOC write raced by staging-buffer reuse; unaligned page stride corrupts grouped on BH; grouped tail uninitialized despite pre-zeroed contract",
-    "pr": "https://github.com/tenstorrent/tt-metal/pull/53220",
-    "pr_assessment": "已有活跃且直接关联 issue 的 PR #53220；CI 状态只作诊断，不能据此自动创建竞争 PR",
-    "issue_updated": "2026-08-15T01:26:41Z",
+    "issue_updated": "2026-08-17T17:18:25Z",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
@@ -97802,8 +97862,8 @@
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "QwenLM/qwen-code#9250": {
-    "analyzed": "2026-08-17T16:50:09Z",
-    "issue_updated": "2026-08-17T16:49:11Z",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "issue_updated": "2026-08-17T17:00:50Z",
     "status": "skip_prefilter",
     "title": "qwen serve host writer hard-codes new-file mode 0600 (writeTextFile): ignores umask, no configuration",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
@@ -98631,10 +98691,17 @@
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "modelcontextprotocol/typescript-sdk#2036": {
-    "analyzed": "2026-08-15T23:39:37Z",
-    "status": "no_bug_or_maintainer_actionability",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": "no_bug_or_maintainer_actionability",
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
     "title": "Bump hono and fast-uri to versions covering published GHSA advisories",
-    "issue_updated": "2026-08-15T22:43:15Z",
+    "url": "https://github.com/modelcontextprotocol/typescript-sdk/issues/2036",
+    "issue_updated": "2026-08-17T17:09:30Z",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
@@ -98711,16 +98778,16 @@
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "langfuse/langfuse#13751": {
-    "analyzed": "2026-08-16T02:01:53Z",
-    "issue_updated": "2026-08-16T02:01:23Z",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "issue_updated": "2026-08-17T16:57:26Z",
     "status": "skip_prefilter",
     "title": "UI bug: Truncated span names when the trace in depth",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "langfuse/langfuse#13759": {
-    "analyzed": "2026-08-16T02:01:53Z",
-    "issue_updated": "2026-08-16T02:01:22Z",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "issue_updated": "2026-08-17T16:59:22Z",
     "status": "skip_prefilter",
     "title": "Cursor MCP fails on self-hosted 3.118.0: SSE invalid content-type, /api/public/mcp returns 404,Helm values upgrade guidance",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
@@ -99174,11 +99241,11 @@
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "vjt/grappa-irc#1336": {
-    "analyzed": "2026-08-16T03:12:20Z",
+    "analyzed": "2026-08-17T17:49:06Z",
     "status": "skip_repo_quality",
-    "reason": "low_stars:6",
+    "reason": "low_stars:7",
     "title": "epic: the e2e suite's own instruments are not deterministic (9 consolidated reports)",
-    "issue_updated": "2026-08-16T02:44:57Z",
+    "issue_updated": "2026-08-17T17:42:08Z",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
@@ -100240,10 +100307,10 @@
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "langchain-ai/langgraph#8629": {
-    "analyzed": "2026-08-17T10:13:22Z",
+    "analyzed": "2026-08-17T17:49:06Z",
     "status": "someone_active",
     "title": "Toggling `defer` on a single-predecessor node breaks resumed threads: TypeError unpacking the branch channel",
-    "issue_updated": "2026-08-17T06:41:15Z",
+    "issue_updated": "2026-08-17T17:34:27Z",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
@@ -100920,10 +100987,10 @@
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "cline/cline#13277": {
-    "analyzed": "2026-08-17T11:45:00Z",
-    "issue_updated": "2026-08-17T11:31:53Z",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "issue_updated": "2026-08-17T17:03:12Z",
     "status": "skip_prefilter",
-    "title": "Hooks no longer fire in 4.1.10 (worked in 4.1.9)",
+    "title": "Claude Code provider: hooks don't attach (legacy parity gap); 4.1.10 also hid its tool activity",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
@@ -103148,8 +103215,8 @@
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "langfuse/langfuse#16185": {
-    "analyzed": "2026-08-17T13:10:36Z",
-    "issue_updated": "2026-08-17T13:04:57Z",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "issue_updated": "2026-08-17T17:07:11Z",
     "status": "skip_prefilter",
     "title": "feat(redis): support Microsoft Entra ID authentication",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
@@ -104347,8 +104414,8 @@
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "langfuse/langfuse#16189": {
-    "analyzed": "2026-08-17T01:58:19Z",
-    "issue_updated": "2026-08-17T00:44:53Z",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "issue_updated": "2026-08-17T16:56:28Z",
     "status": "skip_prefilter",
     "title": "Feature: label filter for GitHub Repository Dispatch prompt automation",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
@@ -104957,8 +105024,8 @@
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "langfuse/langfuse#12984": {
-    "analyzed": "2026-08-17T03:11:03Z",
-    "issue_updated": "2026-08-17T02:00:32Z",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "issue_updated": "2026-08-17T16:54:05Z",
     "status": "skip_prefilter",
     "title": "bug: trace input/output remain null due to missing root observation",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
@@ -105987,10 +106054,17 @@
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "crewAIInc/crewAI#7011": {
-    "analyzed": "2026-08-17T14:01:00Z",
-    "status": "someone_active",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": "someone_active",
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
     "title": "Prevent Margin Leaks & Surprise LLM Bills: Add a Hybrid Spend Firewall",
-    "issue_updated": "2026-08-17T13:25:23Z",
+    "url": "https://github.com/crewAIInc/crewAI/issues/7011",
+    "issue_updated": "2026-08-17T17:46:57Z",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
@@ -107371,12 +107445,17 @@
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "vllm-project/vllm#45785": {
-    "analyzed": "2026-08-17T13:10:36Z",
-    "status": "skip_open_pr_strong",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": "skip_open_pr_strong",
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
     "title": "[Bug]: DSV4-Flash MooncakeStoreConnector save never triggers when MTP speculative decoding is enabled",
-    "pr": "https://github.com/vllm-project/vllm/pull/49069",
-    "pr_assessment": "已有较强 PR：#49069 score=83，明确关联 issue; 包含测试文件 1 个; 已有成功 CI/check; 已有 review approval",
-    "issue_updated": "2026-08-17T08:28:20Z",
+    "url": "https://github.com/vllm-project/vllm/issues/45785",
+    "issue_updated": "2026-08-17T17:10:07Z",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
@@ -107421,20 +107500,25 @@
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "vllm-project/vllm#48645": {
-    "analyzed": "2026-08-17T10:51:49Z",
-    "status": "skip_open_pr_strong",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": "skip_open_pr_strong",
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
     "title": "[Bug]: deepseek_v4 parser: reply without </think> routes the whole answer to reasoning_content (content empty), trailing EOS not stripped",
-    "pr": "https://github.com/vllm-project/vllm/pull/50580",
-    "pr_assessment": "已有活跃且直接关联 issue 的 PR #50580；CI 状态只作诊断，不能据此自动创建竞争 PR",
-    "issue_updated": "2026-08-17T10:49:19Z",
+    "url": "https://github.com/vllm-project/vllm/issues/48645",
+    "issue_updated": "2026-08-17T17:42:45Z",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "modelcontextprotocol/typescript-sdk#2677": {
-    "analyzed": "2026-08-17T16:18:09Z",
+    "analyzed": "2026-08-17T17:49:06Z",
     "status": "bot_or_stale_refresh",
     "title": "tools/list emits draft-07 $schema for Zod v4 schemas: toJsonSchemaCompat is called without a target, and mapMiniTarget defaults to 'draft-7'",
-    "issue_updated": "2026-08-17T15:13:10Z",
+    "issue_updated": "2026-08-17T17:19:16Z",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
@@ -107617,17 +107701,10 @@
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "vllm-project/vllm#52590": {
-    "analyzed": "2026-08-17T16:18:09Z",
-    "requeued_at": "2026-08-17T16:18:09Z",
-    "first_deferred_at": "2026-08-17T16:18:09Z",
-    "defer_count": 1,
-    "deferred_from_status": "probe_contract_incomplete",
-    "score": null,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "status": "someone_active",
     "title": "[Bug]: num_blocks division is a no-op in get_moe_wna16_block_config because block_size_k is reassigned first",
-    "url": "https://github.com/vllm-project/vllm/issues/52590",
-    "issue_updated": "2026-08-17T15:50:03Z",
+    "issue_updated": "2026-08-17T16:53:26Z",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
@@ -107656,13 +107733,17 @@
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "NVIDIA/TensorRT-Edge-LLM#183": {
-    "analyzed": "2026-08-17T16:50:09Z",
-    "notified": false,
-    "status": "queued_outbox",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": "queued_outbox",
     "score": 11,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
     "title": "fix: Jetson Orin + JetPack 6.2 (CUDA 12.6, listed as Compatible platform) fails to build with ENABLE_CUTE_DSL=ALL — missing cudaLibrary_t compat shim in cuteDslF16MoeRunner.h",
     "url": "https://github.com/NVIDIA/TensorRT-Edge-LLM/issues/183",
-    "issue_updated": "2026-08-17T07:43:56Z",
+    "issue_updated": "2026-08-17T17:36:22Z",
     "notification_digest": "74bcf2dde8a339a021985ebf49b7f421f0e63b8c0d2598e6426c92c91c10fa03",
     "notification_scanner_version": "oss_pr_radar_v46_semantic_fallback",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
@@ -107975,10 +108056,17 @@
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "vllm-project/vllm#52599": {
-    "analyzed": "2026-08-17T14:50:01Z",
-    "status": "probe_contract_incomplete",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": "probe_contract_incomplete",
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
     "title": "[Bug]: GPT-OSS reasoning retains matched stop string when include_stop_str_in_output=false",
-    "issue_updated": "2026-08-17T09:08:07Z",
+    "url": "https://github.com/vllm-project/vllm/issues/52599",
+    "issue_updated": "2026-08-17T17:39:51Z",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
@@ -108734,8 +108822,8 @@
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "vllm-project/vllm#52607": {
-    "analyzed": "2026-08-17T11:45:00Z",
-    "issue_updated": "2026-08-17T11:05:29Z",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "issue_updated": "2026-08-17T16:59:54Z",
     "status": "skip_prefilter",
     "title": "[Doc]: vLLM's default NIXL connector is ~100× slower than the push connector on non-RDMA hardware, and the fix is undocumented",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
@@ -108967,10 +109055,17 @@
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "NeoFreeBird/app#115": {
-    "analyzed": "2026-08-17T16:18:09Z",
-    "status": "incomplete_issue_template",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": "incomplete_issue_template",
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
     "title": "Can't tweet anything starting today",
-    "issue_updated": "2026-08-17T12:54:39Z",
+    "url": "https://github.com/NeoFreeBird/app/issues/115",
+    "issue_updated": "2026-08-17T16:50:05Z",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
@@ -109244,28 +109339,21 @@
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "vllm-project/vllm#52614": {
-    "analyzed": "2026-08-17T16:50:09Z",
-    "status": "status_update",
-    "reason": "open_pr_lookup_failed",
-    "requeue_reason": "critical_evidence_fetch_failure",
-    "requeued_at": "2026-08-17T16:50:09Z",
-    "first_deferred_at": "2026-08-17T13:10:36Z",
-    "defer_count": 3,
-    "deferred_from_status": "inspection_budget_deferred",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "status": "llm_score_low",
     "title": "[Bug]: lm-format-enforcer 0.11.3 integration is incompatible with vLLM 0.26.0 due to stale MistralTokenizer import path",
     "url": "https://github.com/vllm-project/vllm/issues/52614",
     "issue_updated": "2026-08-17T12:18:22Z",
+    "llm_decision": "WAIT_MAINTAINER",
+    "llm_score": 5,
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "vllm-project/vllm#52620": {
-    "analyzed": "2026-08-17T16:18:09Z",
-    "notified": false,
-    "status": "queued_outbox",
-    "score": 13,
+    "analyzed": "2026-08-17T17:49:06Z",
+    "status": "someone_active",
     "title": "[Bug]: `ngram_gpu` speculative decoding with xgrammar returns HTTP 500 under concurrent structured-output requests",
-    "url": "https://github.com/vllm-project/vllm/issues/52620",
-    "issue_updated": "2026-08-17T13:04:31Z",
+    "issue_updated": "2026-08-17T16:59:19Z",
     "notification_digest": "a695d308a740db61946244521cb44bc0ce425dad5c3d273d64c96b8c86654807",
     "notification_scanner_version": "oss_pr_radar_v46_semantic_fallback",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
@@ -109703,31 +109791,17 @@
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "openclaw/openclaw#108555": {
-    "analyzed": "2026-08-17T14:01:00Z",
-    "requeued_at": "2026-08-17T14:01:00Z",
-    "first_deferred_at": "2026-08-17T14:01:00Z",
-    "defer_count": 1,
-    "deferred_from_status": null,
-    "score": null,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "status": "incomplete_issue_template",
     "title": "Subagent runtime: exec-tool stalls inside subagent sessions while write-tool and LLM traffic continue to function",
-    "url": "https://github.com/openclaw/openclaw/issues/108555",
     "issue_updated": "2026-08-17T13:56:57Z",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "e2b-dev/E2B#1352": {
-    "analyzed": "2026-08-17T14:01:00Z",
-    "requeued_at": "2026-08-17T14:01:00Z",
-    "first_deferred_at": "2026-08-17T14:01:00Z",
-    "defer_count": 1,
-    "deferred_from_status": null,
-    "score": null,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "status": "probe_contract_incomplete",
     "title": "commands.connect to a resumed sandbox stops delivering stdout after a large response",
-    "url": "https://github.com/e2b-dev/E2B/issues/1352",
     "issue_updated": "2026-08-17T13:59:20Z",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
@@ -109781,10 +109855,10 @@
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "google/adk-python#6762": {
-    "analyzed": "2026-08-17T14:50:01Z",
-    "status": "no_bug_or_maintainer_actionability",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "status": "bot_or_stale_refresh",
     "title": "Workflow output_schema is dropped when exposed via to_a2a(); artifact contains only the last agent node's text output",
-    "issue_updated": "2026-08-17T14:17:39Z",
+    "issue_updated": "2026-08-17T17:00:46Z",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
@@ -109898,11 +109972,11 @@
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "aiur-team/aiur#2073": {
-    "analyzed": "2026-08-17T16:50:09Z",
+    "analyzed": "2026-08-17T17:49:06Z",
     "status": "skip_repo_quality",
     "reason": "low_stars:3",
     "title": "GitHub state cache: one store, viewing never fetches, mutations write through",
-    "issue_updated": "2026-08-17T16:46:00Z",
+    "issue_updated": "2026-08-17T17:34:44Z",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
@@ -109965,14 +110039,15 @@
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "open-gsd/gsd-pi#1693": {
-    "analyzed": "2026-08-17T14:50:01Z",
-    "status": "status_update",
-    "reason": "issue_fetch_failed",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "notified": false,
+    "status": "queued_outbox",
+    "score": 13,
     "title": "[Bug]: execute-task prompt has no documented blocker path for tasks whose plan needs gsd_requirement_*/slice-closure tools outside its surface — every occurrence burns a full failed-attempt → abort → manual gsd_task_recovery_resume cycle",
     "url": "https://github.com/open-gsd/gsd-pi/issues/1693",
     "issue_updated": "2026-08-17T14:41:06Z",
-    "requeue_reason": "critical_evidence_fetch_failure",
-    "requeued_at": "2026-08-17T14:50:01Z",
+    "notification_digest": "71b247506a6d82a7156638d5382f66e3855ca3b3f27980f13eb74b7b034f3ee2",
+    "notification_scanner_version": "oss_pr_radar_v46_semantic_fallback",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
@@ -110210,31 +110285,17 @@
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "anomalyco/opencode#43088": {
-    "analyzed": "2026-08-17T16:18:09Z",
-    "requeued_at": "2026-08-17T16:18:09Z",
-    "first_deferred_at": "2026-08-17T16:18:09Z",
-    "defer_count": 1,
-    "deferred_from_status": null,
-    "score": null,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "status": "rfc_or_roadmap_without_maintainer_split",
     "title": "[FEATURE]: Make V2 App prompt submit and newline shortcuts configurable",
-    "url": "https://github.com/anomalyco/opencode/issues/43088",
     "issue_updated": "2026-08-17T16:06:33Z",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "anomalyco/opencode#43085": {
-    "analyzed": "2026-08-17T16:18:09Z",
-    "requeued_at": "2026-08-17T16:18:09Z",
-    "first_deferred_at": "2026-08-17T16:18:09Z",
-    "defer_count": 1,
-    "deferred_from_status": null,
-    "score": null,
-    "status": "inspection_budget_deferred",
-    "reason": "inspection_budget_deferred",
+    "analyzed": "2026-08-17T17:49:06Z",
+    "status": "no_bug_or_maintainer_actionability",
     "title": "Forbidden: {model:big-pickle} - model not available for account",
-    "url": "https://github.com/anomalyco/opencode/issues/43085",
     "issue_updated": "2026-08-17T15:49:54Z",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
@@ -110351,13 +110412,17 @@
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   },
   "vllm-project/vllm#52627": {
-    "analyzed": "2026-08-17T16:18:09Z",
-    "notified": false,
-    "status": "queued_outbox",
-    "score": 12,
+    "analyzed": "2026-08-17T17:49:06Z",
+    "status": "status_update",
+    "reason": "open_pr_lookup_failed",
+    "requeue_reason": "critical_evidence_fetch_failure",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": "queued_outbox",
     "title": "[Bug]: Kimi-K3 silent output corruption with MooncakeStoreConnector + MultiConnector; NIXL-only PD is stable",
     "url": "https://github.com/vllm-project/vllm/issues/52627",
-    "issue_updated": "2026-08-17T15:09:21Z",
+    "issue_updated": "2026-08-17T17:15:08Z",
     "notification_digest": "aff2c827d0b80adb0f1a72d47320e4f31d3cd69543574bdc57856f62bba5ced3",
     "notification_scanner_version": "oss_pr_radar_v46_semantic_fallback",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
@@ -110514,6 +110579,810 @@
     "status": "no_bug_or_maintainer_actionability",
     "title": "Mark Cerebras zai-glm-4.7 as deprecated",
     "issue_updated": "2026-08-17T16:28:14Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "sgl-project/sglang#31458": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "issue_updated": "2026-08-17T16:53:11Z",
+    "status": "skip_prefilter",
+    "title": "[Feature] RFC: SGLang KV Indexer for Distributed KV Cache Placement Metadata",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "OpenHands/OpenHands#16658": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "issue_updated": "2026-08-17T17:16:10Z",
+    "status": "skip_prefilter",
+    "title": "[Feature]: Linux desktop build (AppImage + deb) — CI workflow and release artifacts",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "modelcontextprotocol/typescript-sdk#2551": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "issue_updated": "2026-08-17T17:09:08Z",
+    "status": "skip_prefilter",
+    "title": "[SECURITY] 依赖过时 @hono/node-server@1.x (CVE-2024-55550)",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "anomalyco/opencode#43102": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "issue_updated": "2026-08-17T17:48:01Z",
+    "status": "skip_prefilter",
+    "title": "Opencode is unavailable - Upstream request failed: Endpoint is unavailable.",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "anomalyco/opencode#43104": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "issue_updated": "2026-08-17T17:47:44Z",
+    "status": "skip_prefilter",
+    "title": "Session stopped working and ate up all my prompt work.",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "anomalyco/opencode#43105": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "issue_updated": "2026-08-17T17:46:40Z",
+    "status": "skip_prefilter",
+    "title": "BUG: enpoint error",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "anomalyco/opencode#36696": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "issue_updated": "2026-08-17T17:10:30Z",
+    "status": "skip_prefilter",
+    "title": "[Bug] Cmdlet permissions not working on Windows",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "anomalyco/opencode#36681": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "issue_updated": "2026-08-17T17:10:15Z",
+    "status": "skip_prefilter",
+    "title": "[Bug] Windows path references and permissions on external directory path not working",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "anomalyco/opencode#43098": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "issue_updated": "2026-08-17T17:00:34Z",
+    "status": "skip_prefilter",
+    "title": "[DecimalError] Invalid argument: [object Object] — non-numeric provider cost field aborts the turn (fatal on `opencode acp`)",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "anomalyco/opencode#43097": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "issue_updated": "2026-08-17T16:59:57Z",
+    "status": "skip_prefilter",
+    "title": "cli: build dirties package.json by reordering dependencies",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "himanshu-45naik/Network-intrusion-detection#1": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "status": "skip_repo_quality",
+    "reason": "low_stars:0",
+    "title": "Features are scaled twice (pipeline step + per-model StandardScaler)",
+    "issue_updated": "2026-08-17T17:47:21Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "chairman2s/ChairPhoto#71": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "status": "skip_repo_quality",
+    "reason": "low_stars:0",
+    "title": "Grid renders no tiles after the left panel is toggled",
+    "issue_updated": "2026-08-17T17:45:47Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "mistersilver-uk/fabricate#1224": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "status": "skip_repo_quality",
+    "reason": "low_stars:6",
+    "title": "fix: the Valid Id Basis gate is specified but unimplemented, so a partial corpus prunes actor data",
+    "issue_updated": "2026-08-17T17:42:28Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "VforVitorio/F1-StratLab#974": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "status": "skip_repo_quality",
+    "reason": "low_stars:17",
+    "title": "fix(agents): the guardrail line is rendered from a field no producer can populate",
+    "issue_updated": "2026-08-17T17:35:42Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "matiaszanolli/ByroRedux#3037": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "status": "skip_repo_quality",
+    "reason": "low_stars:10",
+    "title": "FNV-2026-08-16-D6-01: every female and child FNV NPC spawns with the male body mesh",
+    "issue_updated": "2026-08-17T17:34:43Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "icsharpcode/ILSpy#3352": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "status": "skip_repo_quality",
+    "reason": "no_code_surface",
+    "title": "Tuple name doesn't exist",
+    "issue_updated": "2026-08-17T17:34:31Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "4laric/er-archipelago#641": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "status": "skip_repo_quality",
+    "reason": "low_stars:4",
+    "title": "region_grace_unlock: nothing in logic reads the grace tier, so `entrance`/`landmarks` can strand progression behind a walk the player cannot make",
+    "issue_updated": "2026-08-17T17:27:05Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "elgansayer/workout-agent#804": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "status": "skip_repo_quality",
+    "reason": "low_stars:0",
+    "title": "Block activation of programmes that violate profile constraints",
+    "issue_updated": "2026-08-17T17:21:52Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "baldwinSPC/glimmer-burnin#280": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "status": "skip_repo_quality",
+    "reason": "low_stars:0",
+    "title": "thermal-soak is SIGKILLed at 81 C on a healthy GB10 and never completes a run",
+    "issue_updated": "2026-08-17T17:21:19Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "noonghunna/club-3090#1036": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "status": "skip_repo_quality",
+    "reason": "no_code_surface",
+    "title": "[bug] Not able to start using  vllm/qwen38-27b-dual-max",
+    "issue_updated": "2026-08-17T16:59:30Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "mattias800/prosper#1765": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "status": "skip_repo_quality",
+    "reason": "low_stars:20",
+    "title": "Windows: sceVideoOutWaitVblank can quantize to ~31 ms (≈32 Hz pacing), and test_videoout is not built on Windows to catch it",
+    "issue_updated": "2026-08-17T16:40:33Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "modelcontextprotocol/typescript-sdk#2605": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "Memory leak: `AjvJsonSchemaValidator.getValidator()` recompiles schemas without `$id` on every call",
+    "url": "https://github.com/modelcontextprotocol/typescript-sdk/issues/2605",
+    "issue_updated": "2026-08-17T17:07:16Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "modelcontextprotocol/typescript-sdk#2100": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "Tool inputSchema generation emits $ref for reused Zod instances · breaks strict MCP clients (kimi)",
+    "url": "https://github.com/modelcontextprotocol/typescript-sdk/issues/2100",
+    "issue_updated": "2026-08-17T17:09:28Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "modelcontextprotocol/typescript-sdk#209": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "/token endpoint should validate redirect_uri matches",
+    "url": "https://github.com/modelcontextprotocol/typescript-sdk/issues/209",
+    "issue_updated": "2026-08-17T17:06:49Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "modelcontextprotocol/typescript-sdk#2526": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "Bug/Feature Request: Node 26 fetch HTTP/2 SSE stream buffering hangs MCP connections",
+    "url": "https://github.com/modelcontextprotocol/typescript-sdk/issues/2526",
+    "issue_updated": "2026-08-17T17:14:23Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "modelcontextprotocol/typescript-sdk#2525": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "Bug/Feature Request: Node 26 fetch HTTP/2 SSE stream buffering hangs MCP connections",
+    "url": "https://github.com/modelcontextprotocol/typescript-sdk/issues/2525",
+    "issue_updated": "2026-08-17T17:10:36Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "modelcontextprotocol/typescript-sdk#2499": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "Bug: Resumption token dropped when a resumed SSE stream disconnects before any id-bearing event",
+    "url": "https://github.com/modelcontextprotocol/typescript-sdk/issues/2499",
+    "issue_updated": "2026-08-17T17:07:52Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "modelcontextprotocol/typescript-sdk#2575": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "codemod v1-to-v2 hoists rewritten imports above the file's license header",
+    "url": "https://github.com/modelcontextprotocol/typescript-sdk/issues/2575",
+    "issue_updated": "2026-08-17T17:07:24Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "modelcontextprotocol/typescript-sdk#1562": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "schemaToJson() produces $ref in tool inputSchema, causing LLM failures",
+    "url": "https://github.com/modelcontextprotocol/typescript-sdk/issues/1562",
+    "issue_updated": "2026-08-17T17:06:06Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "modelcontextprotocol/typescript-sdk#2580": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "`_onprogress` raises a protocol error for a race servers cannot avoid (progress notification arriving with the response)",
+    "url": "https://github.com/modelcontextprotocol/typescript-sdk/issues/2580",
+    "issue_updated": "2026-08-17T17:07:20Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "modelcontextprotocol/typescript-sdk#2568": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "normalizeHeaders references the bare global `HeadersInit`, breaking Node-only consumers with skipLibCheck: false",
+    "url": "https://github.com/modelcontextprotocol/typescript-sdk/issues/2568",
+    "issue_updated": "2026-08-17T17:08:56Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "modelcontextprotocol/typescript-sdk#2560": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "InMemoryEventStore: standalone-stream resume broken by getStreamIdFromEventId split",
+    "url": "https://github.com/modelcontextprotocol/typescript-sdk/issues/2560",
+    "issue_updated": "2026-08-17T17:07:31Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "modelcontextprotocol/typescript-sdk#2553": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "Web-standard SSE responses override the HTTP server keep-alive lifetime",
+    "url": "https://github.com/modelcontextprotocol/typescript-sdk/issues/2553",
+    "issue_updated": "2026-08-17T17:14:17Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "modelcontextprotocol/typescript-sdk#2532": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "Default JSON Schema validators reject declared draft-07, which the spec permits",
+    "url": "https://github.com/modelcontextprotocol/typescript-sdk/issues/2532",
+    "issue_updated": "2026-08-17T17:07:41Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "modelcontextprotocol/typescript-sdk#2562": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "Streamable HTTP: pre-existing hardening items from the #2547 review",
+    "url": "https://github.com/modelcontextprotocol/typescript-sdk/issues/2562",
+    "issue_updated": "2026-08-17T17:07:29Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "modelcontextprotocol/typescript-sdk#2559": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "Streamable HTTP: JSON-response-mode stream mappings never complete their lifecycle",
+    "url": "https://github.com/modelcontextprotocol/typescript-sdk/issues/2559",
+    "issue_updated": "2026-08-17T17:09:00Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "modelcontextprotocol/typescript-sdk#2558": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "Streamable HTTP: close replayed request streams once no in-flight requests remain",
+    "url": "https://github.com/modelcontextprotocol/typescript-sdk/issues/2558",
+    "issue_updated": "2026-08-17T17:10:24Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "modelcontextprotocol/typescript-sdk#2548": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "Widen @hono/node-server range to ^1.19.9 || ^2 so GHSA-frvp-7c67-39w9 is reachable (npm suggests a breaking downgrade)",
+    "url": "https://github.com/modelcontextprotocol/typescript-sdk/issues/2548",
+    "issue_updated": "2026-08-17T17:09:10Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "modelcontextprotocol/typescript-sdk#2536": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "stdio.ts/ReadBuffer retains consumed input and copies the next stdio chunk",
+    "url": "https://github.com/modelcontextprotocol/typescript-sdk/issues/2536",
+    "issue_updated": "2026-08-17T17:07:39Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "modelcontextprotocol/typescript-sdk#2531": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "Widen `@hono/node-server` range: `^1.19.9` cannot resolve past GHSA-frvp-7c67-39w9 (no patched 1.x)",
+    "url": "https://github.com/modelcontextprotocol/typescript-sdk/issues/2531",
+    "issue_updated": "2026-08-17T17:12:34Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "modelcontextprotocol/typescript-sdk#235": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "Revoke tokens if authorization code presented a second time",
+    "url": "https://github.com/modelcontextprotocol/typescript-sdk/issues/235",
+    "issue_updated": "2026-08-17T17:06:09Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "vllm-project/vllm#52640": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "[Feature]: Optional content fallback policy for length-truncated reasoning responses",
+    "url": "https://github.com/vllm-project/vllm/issues/52640",
+    "issue_updated": "2026-08-17T17:38:00Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "langchain-ai/langgraph#8475": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "langgraph-api injects private CONFIG_KEY_RUNTIME (__pregel_runtime) into factory-visible config; factories that re-bind it crash with '_ReadRuntime' has no 'override'",
+    "url": "https://github.com/langchain-ai/langgraph/issues/8475",
+    "issue_updated": "2026-08-17T17:34:56Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "modelcontextprotocol/typescript-sdk#2569": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "subscriptions/listen cannot carry extension notifications (blocks notifications/tasks)",
+    "url": "https://github.com/modelcontextprotocol/typescript-sdk/issues/2569",
+    "issue_updated": "2026-08-17T17:07:26Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "vllm-project/vllm#52638": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "[Documentation]: Clarify FileStore vs TCPStore security behavior by executor and version",
+    "url": "https://github.com/vllm-project/vllm/issues/52638",
+    "issue_updated": "2026-08-17T17:47:08Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "mastra-ai/mastra#21668": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "[BUG] CachingPubSub's `localOnly` cache bypass is unreachable — nothing sets the flag before the cache, so workflow.events.v2 is still RPUSHed to shared Redis",
+    "url": "https://github.com/mastra-ai/mastra/issues/21668",
+    "issue_updated": "2026-08-17T17:08:42Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "modelcontextprotocol/typescript-sdk#2507": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "Add a high-level MCP operation interceptor seam",
+    "url": "https://github.com/modelcontextprotocol/typescript-sdk/issues/2507",
+    "issue_updated": "2026-08-17T17:10:40Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "huggingface/smolagents#1886": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "Question: CodeAgent's remote executor never propagates non-default initialization parameters in tools?",
+    "url": "https://github.com/huggingface/smolagents/issues/1886",
+    "issue_updated": "2026-08-17T17:17:52Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "anomalyco/opencode#43101": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "Endpoint error",
+    "url": "https://github.com/anomalyco/opencode/issues/43101",
+    "issue_updated": "2026-08-17T17:41:48Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "alibaba/page-agent#674": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "[Feature] 出一个桌面版的",
+    "url": "https://github.com/alibaba/page-agent/issues/674",
+    "issue_updated": "2026-08-17T17:22:37Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "modelcontextprotocol/typescript-sdk#2576": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "Implement SEP-1933: Workload Identity Federation (Extension)",
+    "url": "https://github.com/modelcontextprotocol/typescript-sdk/issues/2576",
+    "issue_updated": "2026-08-17T17:08:52Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "modelcontextprotocol/typescript-sdk#2505": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "v2: setRequestHandler/setNotificationHandler require a method-string literal — re-accept the schema object (or export typed method tokens)",
+    "url": "https://github.com/modelcontextprotocol/typescript-sdk/issues/2505",
+    "issue_updated": "2026-08-17T17:09:25Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "openclaw/openclaw#125358": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "[Bug]: sessions_spawn: MCP/plugin tools never reach the child's \"inherited tools\" ceiling",
+    "url": "https://github.com/openclaw/openclaw/issues/125358",
+    "issue_updated": "2026-08-17T17:44:53Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "warpdotdev/warp#15233": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "requeued_at": "2026-08-17T17:49:06Z",
+    "first_deferred_at": "2026-08-17T17:49:06Z",
+    "defer_count": 1,
+    "deferred_from_status": null,
+    "score": null,
+    "status": "inspection_budget_deferred",
+    "reason": "inspection_budget_deferred",
+    "title": "403 Forbidden error when using Warp AI/Agent",
+    "url": "https://github.com/warpdotdev/warp/issues/15233",
+    "issue_updated": "2026-08-17T17:41:37Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "huggingface/diffusers#14518": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "status": "probe_contract_incomplete",
+    "title": "[Krea-2] `enable_gqa` + `attn_mask` produces high usage of VRAM",
+    "issue_updated": "2026-08-17T17:21:32Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "NVIDIA/Megatron-LM#6585": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "status": "someone_active",
+    "title": "[BUG] pretrain_vlm.py silently ignores --rotary-base: LLaVAModel always uses the default 10000",
+    "issue_updated": "2026-08-17T17:30:37Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "huggingface/transformers#34019": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "status": "someone_active",
+    "title": "Add Loss Functions for QFormer Training in BLIP-2 Model (ITC, ITM, and ITG)",
+    "issue_updated": "2026-08-17T17:33:17Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "modelcontextprotocol/typescript-sdk#2510": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "status": "bot_or_stale_refresh",
+    "title": "Mid-session re-auth after refresh-token expiry dead-ends: send() gets \"REDIRECT\" and throws UnauthorizedError without ever exchanging the new code",
+    "issue_updated": "2026-08-17T17:09:20Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "langgenius/dify#40899": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "status": "off_topic",
+    "title": "security(api): GET /model-providers/{provider}/credentials and /models/credentials missing admin and RBAC permission decorators",
+    "issue_updated": "2026-08-17T17:25:05Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "modelcontextprotocol/typescript-sdk#2607": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "status": "bot_or_stale_refresh",
+    "title": "createMcpHandler: reused McpServer instance grows an unbounded onclose chain — memory leak, then uncatchable RangeError after ~20k requests",
+    "issue_updated": "2026-08-17T17:10:11Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "ai-dynamo/dynamo#13373": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "status": "probe_contract_incomplete",
+    "title": "bug(c-api): init after shutdown reuses canceled runtime and stale publisher",
+    "issue_updated": "2026-08-17T17:01:15Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "ai-dynamo/dynamo#13372": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "status": "probe_contract_incomplete",
+    "title": "bug(request-trace): sink workers cannot restart after runtime shutdown",
+    "issue_updated": "2026-08-17T17:01:27Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "ai-dynamo/dynamo#13374": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "status": "probe_contract_incomplete",
+    "title": "bug(kv-router): retired served-indexer service blocks mode changes",
+    "issue_updated": "2026-08-17T17:01:52Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "langgenius/dify#40898": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "status": "someone_active",
+    "title": "Two logger calls in api/controllers produce no usable log output due to malformed format strings",
+    "issue_updated": "2026-08-17T17:22:01Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "modelcontextprotocol/servers#4651": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "status": "someone_active",
+    "title": "sequential-thinking: nextThoughtNeeded missing from inputSchema.required but required at runtime (regression from #3533)",
+    "issue_updated": "2026-08-17T17:36:45Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "sgl-project/sglang#35189": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "status": "someone_active",
+    "title": "[Bug] NIXL/UCX prefill segfault (nixlUcxSharedThread -> cuEventQuery) is not fixed — reproduces on v0.5.17 / CUDA 13.0 / B200; #23489 and #23499 were closed without a root cause",
+    "issue_updated": "2026-08-17T17:34:59Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "BerriAI/litellm#37188": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "status": "probe_contract_incomplete",
+    "title": "[Bug]: POST /reload/model_cost_map is not reliably propagated to all proxy replicas",
+    "issue_updated": "2026-08-17T16:54:29Z",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "huggingface/trl#6778": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "notified": false,
+    "status": "queued_outbox",
+    "score": 9,
+    "title": "CI fails: ValueError: Pointer argument cannot be accessed from Triton (cpu tensor?)",
+    "url": "https://github.com/huggingface/trl/issues/6778",
+    "issue_updated": "2026-08-17T17:48:13Z",
+    "notification_digest": "4d21e5d4e9d1b9961eba0ad94ed2a5a91176ca623c81ff677c44907ba745eba6",
+    "notification_scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "scanner_version": "oss_pr_radar_v46_semantic_fallback",
+    "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
+  },
+  "microsoft/agent-framework#7699": {
+    "analyzed": "2026-08-17T17:49:06Z",
+    "notified": false,
+    "status": "queued_outbox",
+    "score": 14,
+    "title": "Python: [Bug]: MCP HTTP auth failures (401) surface as \"Cancelled via cancel scope ...\" instead of the actual error",
+    "url": "https://github.com/microsoft/agent-framework/issues/7699",
+    "issue_updated": "2026-08-17T16:57:52Z",
+    "notification_digest": "854d1eb3421a6c5333fa1ae26af28fe7c60c6d46c30363ff3ce98d3770632d63",
+    "notification_scanner_version": "oss_pr_radar_v46_semantic_fallback",
     "scanner_version": "oss_pr_radar_v46_semantic_fallback",
     "decision_contract_digest": "ddb925b8494755df829d5a12c6a850f9c91b0dd8023fdc23510f4c0493f6c294"
   }
