@@ -10816,6 +10816,27 @@
     ],
     "why": "Issue clearly identifies a silent data-corruption bug in tool-call repair path with concrete repro and root cause. However, existing PR #12835 has semantic overlap and is still draft; maintainer design preference is unconfirmed. Gate requires HUMAN_REVIEW."
   },
+  "57c3c54411085929c2a2fb61d71a6c31972612d6379db7d08a70e3208c96c6d3": {
+    "confidence": 0.8,
+    "contradictions": [
+      "candidate claims algorithm mechanism but issue is a version check failure"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [],
+    "risks": [],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [],
+    "unknowns": [
+      "Whether the user's environment can be fixed by installing the correct TRL version; no maintainer response or further investigation"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "The issue is a user bug report about a TRL version incompatibility in LLaMA-Factory's PPO training. The traceback clearly shows a version check failure (trl==0.24.0 vs required >=0.8.6,<=0.9.6). This is an environment/dependency issue, not an algorithm defect. The candidate's claim of an LLM algorithm mechanism is not substantiated; the error is operational and the fix is to install the correct TRL version or disable the check. No concrete algorithm improvement or validation path is provided."
+  },
   "57d21a79a02e2144ac6e390c4883d4d842ef83ea8ee2ee8264820ae55549d435": {
     "confidence": 0.85,
     "contradictions": [],
@@ -15073,6 +15094,32 @@
     ],
     "why": "Issue clearly identifies a stale-fact retrieval bug in mem0 v3 ADD-only extraction, with concrete reproduction and community confirmation. However, multiple closed PRs already attempt fixes (e.g., #4969 soft-supersede, #4965 restore CRUD), and maintainer direction is unclear. The deterministic gate requires HUMAN_REVIEW, and the AI disclosure conflict blocks automated action."
   },
+  "74e32ee5627a1a5af61f604a6c2c39148b21cc19b92258924555cfc9f6ae3065": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/v1/sample/thinking_budget_state.py",
+      "add regression tests for budget forcing with tool calls"
+    ],
+    "risks": [
+      "Behavior change may affect models that do not start tool calls inside <think>; need to ensure compatibility with existing reasoning parsers"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Use repro.py with small model and fixed seed to reproduce corruption; add unit test for _update_think_state with <tool_call> token; run differential test with low vs high budget to verify no corruption"
+    ],
+    "unknowns": [
+      "Exact token id for <tool_call> in Qwen3.5+ models; maintainer preference for fix approach"
+    ],
+    "wait_reason": null,
+    "why": "Issue identifies a concrete algorithmic bug in ThinkingBudgetStateHolder: it fails to treat <tool_call> as an implicit reasoning end, causing forced reasoning_end tokens to corrupt tool-call arguments. Existing PRs #44689/#44690 are weak (no tests, stale, CI failures), so a materially better PR with regression tests is plausible."
+  },
   "757f74065dd04d0c1b894743a4393d3f5786549b755b07fe7111e0658cd613a7": {
     "confidence": 0.8,
     "contradictions": [],
@@ -15926,6 +15973,38 @@
       "Whether an open PR already fixes this issue; whether maintainers have confirmed the root cause or have a preferred fix path."
     ],
     "why": "The issue provides strong evidence of a server-side forwarding bug (leading space in model name) with reproducible steps and cross-client verification. However, the deterministic gate requires HUMAN_REVIEW, and the open PR and related issue lookups timed out, so duplicate work cannot be excluded. The root cause is plausible but not yet confirmed by maintainers."
+  },
+  "7bc0424f85af99b4112bb7a8436340396adb95d8f6f13708359e3d458dff1268": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims no existing safe atomic compaction path, but related issues #19767, #21469, #20930, #21045 fixed threshold pipeline and undercount; these are distinct but may reduce urgency"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add a safe atomic compaction operation (e.g., compact()) or extend observe() with bypassThreshold and marker-boundary correctness",
+      "Fix marker persistence to target the actual observed boundary, not the latest assistant message"
+    ],
+    "risks": [
+      "API design changes may conflict with maintainer preferences or existing roadmap",
+      "Potential overlap with issue #21616 (working memory null fields) could indicate broader memory subsystem issues"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "test_plan": [
+      "Seed four stored messages, observe only the first two, assert the newest assistant does not receive data-om-observation-end and loadUnobservedMessages() still returns newer assistant tool parts",
+      "Add a regression test simulating provider context overflow with local estimate below threshold, verifying forced compaction without persistent config overrides"
+    ],
+    "unknowns": [
+      "Maintainer design preference for the new API shape",
+      "Whether issue #21616 is truly duplicate or requires separate handling",
+      "Exact provider token accounting mismatch details and whether a simpler fix exists"
+    ],
+    "wait_reason": "DESIGN_CONFIRMATION",
+    "why": "The issue identifies a real gap in observational memory compaction after provider context overflow, with concrete code anchors and a reproducible scenario. However, the proposed fix requires API design decisions (new compact() vs extending observe()) and maintainer triage is pending; the issue is labeled needs triage and a bot comment instructs waiting for maintainer approval before opening a PR."
   },
   "7c027f17da0ba67beabaab3c4abae3bc113b6f8be741c12caef11798d4974632": {
     "confidence": 0.7,
@@ -17566,6 +17645,32 @@
       "Maintainer interest or assignment for this flaky test"
     ],
     "why": "Issue reports a flaky CI failure in CUDA graph capture with cudaErrorStreamCaptureInvalidated, but root cause is unknown and reproduction is inconsistent (passes in isolation on H100, CI runs on H200). No maintainer confirmation or design direction. Existing PRs are merged and not directly linked, so no competition. Actionability is blocked by missing root cause and hardware-specific reproduction."
+  },
+  "88fdf5a5f9c05cdd0a449cc82158e938fd19da27b1a182c0d5c1917d852e4e4c": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify feishuMarkdownImageRe or image handling logic in internal/im/feishu/adapter.go to process resource:// handles similarly to http(s) URLs, including upload to image_key or fallback to text link."
+    ],
+    "risks": [
+      "Changing image handling may affect other IM channels or introduce regressions in card rendering.",
+      "Need to ensure fallback behavior does not break existing http(s) image handling."
+    ],
+    "root_cause_clarity": "high",
+    "score": 14,
+    "test_plan": [
+      "Create a failing unit test that simulates a resource:// image in Feishu card markdown and asserts proper image_key conversion or fallback behavior.",
+      "Run existing Feishu adapter tests and static checks."
+    ],
+    "unknowns": [
+      "Maintainer design preference on resource:// handling (upload vs degrade) and whether a PR would be accepted without prior discussion."
+    ],
+    "wait_reason": "DESIGN_CONFIRMATION",
+    "why": "Issue reports a concrete Feishu streaming card bug with clear repro steps and root cause: feishuMarkdownImageRe only matches http(s) URLs, skipping resource:// handles, causing card update failures. The fix is actionable but requires design confirmation on how to handle resource:// (upload vs degrade) and whether to align with existing #2698 fix."
   },
   "8932a0a8548495b6a967987e3db8c6c73aa627f309cec85450c95a6d74f12b98": {
     "confidence": 0.8,
@@ -22888,6 +22993,41 @@
     ],
     "why": "The issue provides a precise root cause, a deterministic no-LLM repro, production impact metrics, and a concrete suggested fix. However, the deterministic gate requires HUMAN_REVIEW, and maintainer triage is needed to confirm design preferences (e.g., whether to use pending-updates check vs. tool-name filter, and whether to introduce StateDeltaEvent at the boundary) and to disambiguate potential overlap with issue #7491."
   },
+  "baf84b37b45525f1717459a1d77d898ac45108686753c576c32e760588cd5979": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue suggests multimodal preprocessing missing, but comment says native path already handles it; unclear if EPP path is intended to support multimodal"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add regression test for scorer fallback without worker header",
+      "Fix scorer to propagate FFI errors or set header before fallback",
+      "Possibly add multimodal-aware preprocessing in EPP path"
+    ],
+    "risks": [
+      "Existing PR #13365 may already address the issue; overlapping changes could cause merge conflicts",
+      "Root cause may be in external chat template, not repo code, making fix incomplete",
+      "Rust EPP migration may supersede Go EPP fixes"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 11,
+    "test_plan": [
+      "Reproduce with multimodal request under GAIE direct mode and assert no silent fallback",
+      "Unit test for DynDecodeScorer/DynPrefillScorer when route_decode_request returns error",
+      "Run existing rust-tests and Go EPP tests"
+    ],
+    "unknowns": [
+      "Actual FFI failure stage for multimodal requests (needs logs)",
+      "Whether PR #13365 fixes the same root cause",
+      "Maintainer preference for Go EPP vs Rust EPP migration"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue describes a plausible silent-fallback bug in Go EPP scorers, but root cause of the FFI failure for multimodal requests is unconfirmed; existing PR #13365 overlaps semantically and is draft with no tests, requiring maintainer comparison before new work."
+  },
   "bb0e43a69a836e5c64e46d2090bbc23b98ac46f1935180d98f613d6647713431": {
     "confidence": 0.7,
     "contradictions": [
@@ -23469,6 +23609,35 @@
     ],
     "why": "Issue provides a detailed, high-impact bug with clear root cause and suggested fix, but the deterministic gate requires HUMAN_REVIEW and existing PR #20285 has semantic overlap with the code paths, necessitating maintainer comparison before starting new work."
   },
+  "befe47085b7b50145afa4f2df6d305563f2256ea0fad6bb32c7f4a57f4aab56c": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "litellm/proxy/spend_tracking/savings.py",
+      "litellm/types/utils.py",
+      "litellm/utils.py"
+    ],
+    "risks": [
+      "Existing PR #36657 may already address the root cause; need to compare implementation boundaries before duplicating.",
+      "Potential API behavior changes if Option B is chosen; must avoid breaking existing cost tracking."
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Add a regression test using the issue's minimal config to assert non-zero compression_savings_spend and prompt_caching_savings_spend with cost-based-routing and multiple deployments per model_name.",
+      "Run targeted unit tests for spend tracking and model info lookup."
+    ],
+    "unknowns": [
+      "Whether PR #36657 actually fixes this issue or only overlaps in code paths; requires manual review."
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue provides a clear root cause and reproduction for a user-visible bug, but an existing PR (#36657) overlaps semantically with the same code paths and model_name key, requiring manual comparison before starting new work. The deterministic gate is HUMAN_REVIEW, so no upgrade is allowed."
+  },
   "bf20d726b494da9668225ce44cfd4151614f0087a34de8240c7a8e94b466d89f": {
     "confidence": 0.8,
     "contradictions": [],
@@ -23813,6 +23982,32 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue clearly identifies a regex mismatch in headroom.py causing missing headroom_retrieve injection, with concrete repro steps and suggested fix. However, two open PRs (#36245, #36581) already target the same file and semantic overlap, requiring maintainer comparison before new work."
+  },
+  "c1b355b67a9c0e1b9d33d66f9a8b527007098b86dda4eee73f96a83001125452": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify DynamoGraphDeployment controller rollout logic to enforce max-unavailable/min-available semantics, coalesce pending updates, or gate pod restarts until previous replacement is healthy."
+    ],
+    "risks": [
+      "Potential behavior change in rollout semantics may affect existing deployments; need to ensure backward compatibility.",
+      "Root cause not fully identified; may require deeper investigation into operator's pod selection logic."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "test_plan": [
+      "Create a failing test that simulates three decoder pods and applies three rapid updates before readiness, asserting that at least one pod remains serving.",
+      "Run existing operator unit tests and integration tests for rollout behavior."
+    ],
+    "unknowns": [
+      "Exact operator code path and current rollout logic details; maintainer design preferences for availability semantics."
+    ],
+    "wait_reason": null,
+    "why": "Issue describes a concrete availability bug in the DynamoGraphDeployment operator: rapid updates can restart all decoder pods, violating availability budget. It includes a clear reproduction scenario and expected behavior. No competing PR or issue found. The fix is actionable in the operator's rollout logic, with a clear test path using the provided scenario."
   },
   "c1cc22b223081a242f8b3ddfbf3d9264c802dbdcd2052af99d74af8fb2269a59": {
     "confidence": 0.7,
@@ -27601,6 +27796,34 @@
     ],
     "why": "The issue clearly identifies a security bug where a session API key is exposed via process command line arguments, with specific file locations and a suggested fix. The fix is straightforward and testable, and no competing PR exists."
   },
+  "dd7a2f2c193d8d5f17397376b6203c965c3f1d204cc90923c6185b1709608f6a": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "StreamingRun.WatchStreamAsync event propagation",
+      "Workflow dispatch loop termination handling"
+    ],
+    "risks": [
+      "Potential API behavior change if altering event emission semantics",
+      "Difficulty reproducing without maintainer hypothesis"
+    ],
+    "root_cause_clarity": "low",
+    "score": 14,
+    "test_plan": [
+      "Create a long-running executor turn repro to reproduce silent stream stall",
+      "Add regression test asserting terminal event is emitted after successful long turn"
+    ],
+    "unknowns": [
+      "Exact root cause in MAF internals",
+      "Whether maintainers have a known fix or design preference"
+    ],
+    "wait_reason": "DESIGN_CONFIRMATION",
+    "why": "Issue reports a real streaming stall in MAF but lacks a minimal repro and root cause; maintainer design confirmation is needed before implementation."
+  },
   "de0e9ff6f6891282926195858a2518296cf5603e8990c60935f873df642bea44": {
     "confidence": 0.7,
     "contradictions": [],
@@ -31234,6 +31457,31 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue clearly describes a silent correctness bug in Valkey vector store reset, with root cause and reproduction. However, an existing PR #6996 directly addresses the same issue with a test and is technically complete, but is closed and requires human review to determine if it can be merged or if a new PR is needed."
   },
+  "f7598e18681f3aeca66ce3bf9ff20bd5e561b6a415c9142c024d2fcf09e1d677": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Possibly add a warning or guard in nequip's enable_OpenEquivariance modifier for l_max=3 models, or document the limitation."
+    ],
+    "risks": [
+      "Changing modifier behavior could break existing workflows; upstream fix may be needed."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "test_plan": [
+      "Reproduce the finite-difference Hessian-symmetry test on a NequIP-OAM-L model with and without the modifier to confirm the bug."
+    ],
+    "unknowns": [
+      "Whether nequip maintainers consider this a nequip bug or purely upstream; whether a nequip-side fix is expected."
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "The issue reports a serious bug in nequip's enable_OpenEquivariance modifier causing non-conservative forces for L-capacity models, with a clear reproduction path and root cause traced to upstream OpenEquivariance kernels. However, the nequip-side integration is claimed unaffected, and the fix likely belongs upstream. The issue lacks a proposed nequip-side code change or confirmation from maintainers on desired handling (e.g., warning, disabling modifier)."
+  },
   "f759c47b1a678e9098887e15181bb2f15de855fd93cdd408b1f94a4bc172b3fe": {
     "confidence": 0.7,
     "contradictions": [
@@ -31842,6 +32090,33 @@
     ],
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue provides a clear root cause and concrete fix options, but the supplied evidence lacks a public reproduction and the existing PR #21462 overlaps semantically without direct linkage, requiring maintainer confirmation before starting work."
+  },
+  "facf56a74ff39cacb1ca52c1b658c340ac0a7ba8215e380b28ef62369061f536": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims full KV-cache hit but decoding diverges, suggesting cache hit reporting may be misleading"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix LMCache P/D KV-cache transfer correctness, likely in KV connector or cache layout handling"
+    ],
+    "risks": [
+      "Potential duplicate with issue #52531; root cause may be in LMCache or vLLM integration, requiring cross-repo coordination"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 13,
+    "test_plan": [
+      "Reproduce with provided commands and compare P/D vs monolithic outputs; add regression test for token-level equivalence"
+    ],
+    "unknowns": [
+      "Whether issue #52531 is truly duplicate; maintainer confirmation of root cause and ownership"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "The issue reports a reproducible silent correctness failure in LMCache P/D disaggregation with strong reproduction evidence (9/9 failures, expected vs actual, commands). It qualifies as an llm_algorithm candidate with numerical/logprob mechanisms. However, the supplied data flags a potential duplicate issue #52531 sharing stack signatures, and the deterministic gate is HUMAN_REVIEW. The root cause is not yet isolated, and maintainer confirmation is needed to avoid duplicate work."
   },
   "fae6d19aded6742fe13a66ff8b3cb2237dd66421221421dee15f331ef795faed": {
     "confidence": 0.85,
