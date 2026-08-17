@@ -3023,6 +3023,35 @@
     ],
     "why": "Issue provides detailed root cause and reproduction, but existing PR #1458 overlaps semantically and requires maintainer review to avoid duplicate work. Deterministic gate says HUMAN_REVIEW."
   },
+  "1bb21b8c47073367d5ee308c955933c92c68bcadde35df4d538e50c21c241a2a": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify _handleSseStream and _scheduleReconnection in streamableHttp.ts to persist attempt count across graceful idle-closes",
+      "Add regression test for repeated idle-close/reconnect cycles"
+    ],
+    "risks": [
+      "Potential overlap with PR #2638; maintainer may prefer a different design for retry accounting",
+      "Changing retry semantics could affect other reconnect scenarios"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "test_plan": [
+      "Create a test that simulates a server gracefully closing the SSE stream after each reconnect and asserts maxRetries is eventually reached",
+      "Run existing streamableHttp tests and type checks"
+    ],
+    "unknowns": [
+      "Whether PR #2638 already fixes this exact issue or only partially overlaps",
+      "Maintainer's preferred approach for retry counter persistence"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue clearly identifies a retry-accounting bug in StreamableHTTPClientTransport with a concrete root cause and repro. However, an open PR #2638 overlaps semantically and touches the same file, so a new PR risks duplication until the existing PR's scope is compared."
+  },
   "1bcf6e892c063190d2ab121baac92b50822ff51ec1d26e8cab82470ac2ebef94": {
     "confidence": 0.6,
     "contradictions": [],
@@ -10251,6 +10280,37 @@
       "Exact framework version and minimal repro after API correction"
     ],
     "why": "Issue reports a user-visible bug in .NET agent framework where HostedCodeInterpreterTool cannot access uploaded files. However, maintainer comment suggests the code sample uses Chat Completions API instead of Responses API, which is likely the root cause. No confirmed framework defect, no maintainer approval, and design confirmation is needed."
+  },
+  "519a39760aad59235b9135a317aa03898b2d8f1feecc899a1d3015de5cba59df": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "litellm/proxy/_experimental/mcp_server/outbound_credentials/adapter.py",
+      "litellm/proxy/_experimental/mcp_server/mcp_server_manager.py",
+      "litellm/proxy/_experimental/mcp_server/outbound_credentials/resolver.py"
+    ],
+    "risks": [
+      "Existing PR #36599 may already fix the root cause; overlapping changes could cause merge conflicts",
+      "Scope of issue includes three distinct bugs; fixing all may be too broad"
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Add regression test reproducing OAuth2 client_credentials failure with persisted credentials",
+      "Add test for config.yaml os.environ/ resolution for client_id/client_secret",
+      "Add test for passthrough timeout and scope handling"
+    ],
+    "unknowns": [
+      "Whether PR #36599 already addresses the client_id/client_secret propagation issue",
+      "Maintainer preference on adding new columns vs decrypting credentials blob"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue provides detailed root-cause analysis and reproducible steps for a real bug, but existing PR #36599 overlaps semantically and touches the same code path, requiring manual comparison before new work."
   },
   "51d87afaf092458d78b1ac07988e63149990bf661331435205153c8cb9da853f": {
     "confidence": 0.7,
