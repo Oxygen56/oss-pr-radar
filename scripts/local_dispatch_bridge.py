@@ -756,6 +756,34 @@ def prewarm_source_repo(path: Path) -> None:
     )
 
 
+def fetch_default_branch(path: Path) -> None:
+    """Refresh only the branch used to seed managed task worktrees."""
+
+    default_ref = command(
+        ["git", "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"],
+        cwd=path,
+        timeout=15,
+    )
+    prefix = "refs/remotes/origin/"
+    if not default_ref.startswith(prefix):
+        raise RuntimeError("origin/HEAD does not target an origin branch")
+    branch = default_ref.removeprefix(prefix)
+    if not branch or branch == "HEAD":
+        raise RuntimeError("origin/HEAD does not name a default branch")
+    command(
+        [
+            "git",
+            "fetch",
+            "--no-tags",
+            "--filter=blob:none",
+            "origin",
+            f"+refs/heads/{branch}:{default_ref}",
+        ],
+        cwd=path,
+        timeout=180,
+    )
+
+
 def source_repo(repo: str) -> Path:
     GITHUB_ROOT.mkdir(parents=True, exist_ok=True)
     for path in sorted(GITHUB_ROOT.iterdir()):
@@ -769,11 +797,7 @@ def source_repo(repo: str) -> Path:
         except RuntimeError:
             continue
         if normalize_origin(origin) == repo.casefold():
-            command(
-                ["git", "fetch", "--prune", "--no-tags", "--filter=blob:none", "origin"],
-                cwd=path,
-                timeout=180,
-            )
+            fetch_default_branch(path)
             resolved = path.resolve()
             prewarm_source_repo(resolved)
             return resolved

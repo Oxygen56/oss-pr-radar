@@ -2248,6 +2248,13 @@ def test_existing_repo_fetches_and_prewarms_default_snapshot(monkeypatch, tmp_pa
         commands.append((args, cwd, timeout, stdin))
         if args == ["git", "remote", "get-url", "origin"]:
             return "https://github.com/example/large-repo.git"
+        if args == [
+            "git",
+            "symbolic-ref",
+            "--quiet",
+            "refs/remotes/origin/HEAD",
+        ]:
+            return "refs/remotes/origin/main"
         return ""
 
     monkeypatch.setattr(MODULE, "GITHUB_ROOT", tmp_path)
@@ -2256,15 +2263,27 @@ def test_existing_repo_fetches_and_prewarms_default_snapshot(monkeypatch, tmp_pa
 
     path = MODULE.source_repo("example/large-repo")
 
-    assert commands[1][0] == [
+    assert commands[2][0] == [
         "git",
         "fetch",
-        "--prune",
         "--no-tags",
         "--filter=blob:none",
         "origin",
+        "+refs/heads/main:refs/remotes/origin/main",
     ]
+    assert commands[2][2] == 180
     assert prewarmed == [path]
+
+
+def test_default_branch_fetch_rejects_non_origin_symbolic_ref(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        MODULE,
+        "command",
+        lambda *_args, **_kwargs: "refs/remotes/upstream/main",
+    )
+
+    with pytest.raises(RuntimeError, match="does not target an origin branch"):
+        MODULE.fetch_default_branch(tmp_path)
 
 
 def test_existing_repo_ignores_linked_worktree_candidates(monkeypatch, tmp_path):
@@ -2281,6 +2300,13 @@ def test_existing_repo_ignores_linked_worktree_candidates(monkeypatch, tmp_path)
         if args == ["git", "remote", "get-url", "origin"]:
             assert cwd == repo
             return "https://github.com/example/large-repo.git"
+        if args == [
+            "git",
+            "symbolic-ref",
+            "--quiet",
+            "refs/remotes/origin/HEAD",
+        ]:
+            return "refs/remotes/origin/main"
         return ""
 
     monkeypatch.setattr(MODULE, "GITHUB_ROOT", tmp_path)
