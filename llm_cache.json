@@ -1167,6 +1167,36 @@
     ],
     "why": "Issue reports a tool-call error when switching runner backend to flashinfer_mxfp4, but root cause is unclear and may be related to parser logic. Open PRs exist with potential fixes but none explicitly reference this issue, and open PR lookup timed out, so competition cannot be fully assessed."
   },
+  "0a546ced8540eb979d2a6bf860da9a6033d8ac86b924e76019832b8451840261": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add handling for reasoning-file, custom, and tool-approval-request content types in generate-to-stream.ts",
+      "Map each to appropriate Mastra stream events",
+      "Add regression tests for unsupported content types"
+    ],
+    "risks": [
+      "Event mapping may need design confirmation to align with Mastra conventions",
+      "Potential API behavior changes if fallback handling is added"
+    ],
+    "root_cause_clarity": "high",
+    "score": 14,
+    "test_plan": [
+      "Create a unit test that calls createStreamFromGenerateResult() with a result containing reasoning-file, custom, and tool-approval-request parts and asserts corresponding stream events are emitted",
+      "Run existing package tests and lint"
+    ],
+    "unknowns": [
+      "Maintainer design preference for event mapping",
+      "Whether maintainer approval is required before PR"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "Issue clearly identifies a silent data-loss bug in generate-to-stream.ts with a concrete repro and expected mapping, but the deterministic gate is HUMAN_REVIEW and maintainer approval is absent. The issue is actionable but requires maintainer triage/design confirmation before implementation."
+  },
   "0a98c92367d8f789fb293f4eee553a84015b8d43450ee0efcd52ea76b26c9e33": {
     "confidence": 0.7,
     "contradictions": [],
@@ -27647,6 +27677,38 @@
     ],
     "why": "The issue reports a concrete LLM quantization regression (FP8 to MXFP4) with a clear reproduction path and numerical evidence (completion length increase). However, the root cause is unconfirmed, and the open PR search failed due to rate limits, leaving potential duplicate implementations unassessed. The deterministic gate requires HUMAN_REVIEW."
   },
+  "d0e1962b0800fe1dfd31e09092b66800fc7fbf50497879ad5d01aa3b47999176": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Tool description prose for named teammates",
+      "Provider-facing schema to omit run_in_background for named teammates",
+      "Runtime validation to reject run_in_background:false before spawning",
+      "Regression test covering name + run_in_background:false"
+    ],
+    "risks": [
+      "Changing schema may break existing model-generated calls that include run_in_background:false with name",
+      "Potential maintainer preference on API design for teammate spawning"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "test_plan": [
+      "Create a failing test that invokes the Agent tool with name and run_in_background:false and asserts rejection or no concurrent spawn",
+      "Run targeted unit tests for the tool schema and runtime validation"
+    ],
+    "unknowns": [
+      "No public reproduction script or test code provided",
+      "No maintainer response or design confirmation on the proposed fix",
+      "No open PR addressing this issue"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "Issue describes a clear tool-contract defect where run_in_background:false is silently ignored for named teammates, with a concrete repro and expected behavior. However, the supplied evidence lacks a public reproduction script or test, and the issue is not linked to any open PR or maintainer confirmation. The proposed fix involves API/schema changes and runtime validation, which may require design confirmation. The track is agent_ai_infra, not llm_algorithm, so algorithm-specific validation is not required."
+  },
   "d0f25ec094f9677c72859d8a2aa6b432d9cb6298191f9d7fa940754b4e74a8b7": {
     "confidence": 0.7,
     "contradictions": [
@@ -33861,6 +33923,32 @@
       "Whether maintainers have a preferred design for merging vs. overwriting"
     ],
     "why": "Issue provides a clear, reproducible bug with detailed logs and root cause analysis: a delayed registry-to-GUI projection overwrites newly added models. No competing PR or issue exists, and the fix is localized to synchronization logic."
+  },
+  "f87e5c0ff97841c7a8e63e0e4033c2b1bbe14045bd50e194ef8e0320b71902b9": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Fix default_inventory_configured logic in crates/goose/src/providers/inventory/mod.rs to require explicit user configuration",
+      "Add per-provider overrides or validation for providers like claude_code that rely on defaults"
+    ],
+    "risks": [
+      "Changing default behavior may affect existing users who rely on defaults; need to ensure backward compatibility or migration path"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Write a failing test that simulates fresh install with no provider configuration and asserts no provider shows as configured",
+      "Run targeted unit tests for provider inventory and related modules"
+    ],
+    "unknowns": [
+      "Maintainer assignment status and whether the proposed fix aligns with maintainer design preferences"
+    ],
+    "wait_reason": "ASSIGNMENT",
+    "why": "Issue clearly identifies a bug in provider configuration detection with a concrete root cause and reproduction steps, but the repository requires assignment and the gate decision is HUMAN_REVIEW, so work should not start without maintainer assignment."
   },
   "f8952447ed80bf24583db4eed8f998d1d0c2576dda16bba0c2e87ba5bdc9d446": {
     "confidence": 0.8,
