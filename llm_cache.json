@@ -4457,6 +4457,35 @@
     "wait_reason": "DESIGN_CONFIRMATION",
     "why": "Issue reports a concrete bug with a plausible root cause (Gemini 3.5 deprecates includeThoughts and requires thinking_summaries or Interactions API), but the fix requires design confirmation: whether LiteLLM should map reasoning_effort to thinking_summaries for 3.x models and whether to add Interactions API support. No maintainer response or design decision exists."
   },
+  "23ecd531dc907c9cc912b58904062eb683c09ed1b541088c13d5cd947b31174d": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add handling for reasoning-file, custom, and tool-approval-request content types in generate-to-stream.ts",
+      "Map each to appropriate Mastra stream events following existing conventions"
+    ],
+    "risks": [
+      "Potential API behavior change if event mapping is not aligned with maintainer expectations",
+      "May require updates to downstream consumers if new event types are introduced"
+    ],
+    "root_cause_clarity": "high",
+    "score": 14,
+    "test_plan": [
+      "Create a unit test that calls createStreamFromGenerateResult with a result containing each unsupported content type and asserts the corresponding stream event is emitted",
+      "Run existing package tests and lint"
+    ],
+    "unknowns": [
+      "Maintainer design preferences for event mapping",
+      "Whether new stream event types are needed or existing ones can be reused"
+    ],
+    "wait_reason": "DESIGN_CONFIRMATION",
+    "why": "Issue clearly identifies a missing fallback for valid AI SDK content types in generate-to-stream.ts, with concrete repro steps and expected mappings. However, the issue is untriaged and maintainer approval is pending; the exact stream event mapping for new content types requires design confirmation to avoid API behavior changes."
+  },
   "24574cab4d9b2ab5aec89cba1a427038a851f0dba3ce409dd47eb316fc8f3a64": {
     "confidence": 0.7,
     "contradictions": [],
@@ -7829,6 +7858,33 @@
       "Whether a new tier is acceptable or alternative solutions are preferred"
     ],
     "why": "Issue identifies a real design flaw in capability ordering with a clear root cause and reproducible failure, but the proposed fix involves API design changes (new ordering tier, intra-tier ordering, public method) that require maintainer confirmation. The deterministic gate is HUMAN_REVIEW, and the issue is not assigned or approved."
+  },
+  "3e4ec83fb1584f104515e81181ff94d3f7b348cf972480a5b6f3cd038d700098": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Comment suggests leftover extension folder, but issue states only one copy exists"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Investigate extension activation and command registration in WSL remote server context"
+    ],
+    "risks": [
+      "May be environment-specific and not reproducible in CI"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Reproduce in clean WSL environment with only Continue installed; check extension logs for double activation"
+    ],
+    "unknowns": [
+      "Whether duplicate registration is caused by extension code or VS Code remote environment; maintainer confirmation needed"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "Issue reports duplicate command registration in WSL but lacks root cause evidence; comment suggests environment cleanup, not a code defect. No maintainer confirmation or code anchor beyond extension name."
   },
   "3e4fb90f75e655149bf06546f2b034c02f34e53bdcabb436483691782df37673": {
     "confidence": 0.7,
@@ -16430,6 +16486,34 @@
     ],
     "wait_reason": "MISSING_EVIDENCE",
     "why": "The issue reports a reproducible silent degradation and a crash when combining MTP speculative decoding with turboquant KV cache on sm120. It provides detailed reproduction steps, a comparison table, and rules out several alternative causes. However, the root cause is not isolated; the issue itself notes the fault is detected at an async copy sync and suggests hypotheses (e.g., discarded KV calibration scales) without confirmation. The existing PR #40704 has semantic overlap but is not directly linked, and its technical completeness is unknown. The deterministic gate is HUMAN_REVIEW, and the submission policy indicates an AI disclosure conflict, which blocks automatic action. The candidate is potentially valuable but requires maintainer confirmation of the root cause and comparison with the overlapping PR before work can start."
+  },
+  "77a1e8ddaff14e8b0384c327c05b75f351f474445751c6e20fdd5916ef28e3ca": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Documentation update for managed token quota",
+      "Potential feature: custom developer token configuration"
+    ],
+    "risks": [
+      "May be a duplicate of #3066",
+      "Requires Google Ads API policy changes"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "No code tests; verify documentation accuracy and feature behavior if implemented"
+    ],
+    "unknowns": [
+      "Maintainer response on token sharing and custom token support",
+      "Whether this is a code bug or purely support"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "The issue is a support request about a shared developer token quota, not a code bug. It asks for documentation and feature additions (custom token support) but lacks a concrete code path or maintainer confirmation. The only comment is an automated triage labeling it as support, and no maintainer has responded. The proposed changes are not actionable without maintainer input on token management and access tiers."
   },
   "77b3ff6cc302eba5e65c28fde13894adbb5fb5f57f3e53a43bf5007ee09b3a46": {
     "confidence": 0.7,
@@ -25619,6 +25703,37 @@
     ],
     "why": "The issue is a well-documented bug with a clear root cause and reproducible data loss, but it is not an LLM algorithm contribution. The track requires concrete algorithmic mechanisms like training objectives or numerical methods; this is a workflow engine bug fix. The maintainer has labeled it for triage and plans a fix, so work should wait for maintainer direction."
   },
+  "c21474b19e17e027fff0c624adbc6ede4160b00ec12f7beb2b5bf878ebafa20d": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify GPU count detection in dgd_services.py to parse DRA ResourceClaims",
+      "Update kubernetes.py and kubernetes_capacity_manager.py to handle DRA-based GPU counts",
+      "Add fallback or error handling for missing GPU count when DRA is used"
+    ],
+    "risks": [
+      "May require understanding of DRA ResourceClaim schema and Kubernetes API",
+      "Potential impact on existing device plugin behavior if not handled carefully"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a minimal DGD with DRA ResourceClaim and reproduce the error",
+      "Add unit tests for GPU count parsing with DRA ResourceClaim manifests",
+      "Run existing planner tests to ensure no regression"
+    ],
+    "unknowns": [
+      "Exact DRA ResourceClaim structure and how GPU count is specified",
+      "Maintainer preference for implementation approach"
+    ],
+    "wait_reason": null,
+    "why": "Issue clearly describes a bug where GPU counting assumes device plugin and fails with DRA ResourceClaims, causing global planner crash and local planner warnings. Includes reproduction steps, expected vs actual behavior, and code anchors. No competing PR or issue found. The fix is actionable: extend GPU count detection to support DRA ResourceClaims."
+  },
   "c2f63253a0272f955ba3a076af4ca5df25b987746fea5e0e112c05e5c59d06a9": {
     "confidence": 0.9,
     "contradictions": [
@@ -26262,6 +26377,35 @@
       "Root cause of the member-set mismatch; maintainer's preferred fix approach; whether the issue is already being addressed internally."
     ],
     "why": "Issue reports a release archive member-set mismatch during installation, with a public repro and confirmation from another user. However, the root cause is not identified, no maintainer has acknowledged or assigned, and the deterministic gate requires HUMAN_REVIEW. The track is agent_ai_infra, not llm_algorithm, so algorithm evidence is not required, but the fix likely involves release packaging or installer logic, which is actionable but needs maintainer confirmation."
+  },
+  "c6d3416fc0d7e1781d9a29d10acf1d025c680f656d379e3e8d7812e71a240b82": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/layers/quantization/compressed_tensors/compressed_tensors.py: add ParallelLMHead dispatch branch",
+      "possibly config_groups target matching for lm_head"
+    ],
+    "risks": [
+      "Existing PR #35228 may already fix the issue; new PR would be redundant",
+      "Checkpoint-side config changes may be needed and could affect compatibility"
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Run a compressed-tensors checkpoint with quantized lm_head and assert logits are not repeated token 0",
+      "Add unit test for get_quant_method dispatch on ParallelLMHead"
+    ],
+    "unknowns": [
+      "Whether PR #35228 fully resolves the issue and is mergeable",
+      "Maintainer preference on which PR to pursue"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue clearly identifies a silent uninitialized-logits bug in compressed-tensors lm_head dispatch, with a concrete root cause and reproduction. However, two open PRs (#35228, #28130) already target the same code path and semantics, and #35228 is maintainer-owned with review approval. The deterministic gate is HUMAN_REVIEW, and the existing PRs need comparison before new work starts."
   },
   "c6e0bfcbe76cdbf0d161fec52f2060af40a14ebfa3a62b00a4baa04399e5518d": {
     "confidence": 0.7,
