@@ -10810,6 +10810,36 @@
     ],
     "why": "Issue provides a clear root cause (AOT cache key ignores multimodal config) and a reproducible crash. Existing PR #50908 addresses the issue but has failed CI checks and may be incomplete. A materially better PR with comprehensive tests and a robust fix is plausible."
   },
+  "54d6eaef5a984add0ffc85b87469548ff25a7fd3832929d6667554c9300e9a9e": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Issue claims FT.DROPINDEX has no DD flag; comment confirms this and proposes scan_iter+DEL approach"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "mem0/vector_stores/valkey.py: delete_col() should drop index and delete remaining hashes via scan_iter+DEL",
+      "tests/vector_stores/test_valkey.py: add regression test for reset/delete_col clearing documents"
+    ],
+    "risks": [
+      "Potential race conditions if documents are added concurrently during deletion",
+      "Performance impact of scan_iter+DEL on large collections"
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Run the provided repro script against a Valkey instance with search module; assert get_all returns empty after reset and no mem0:mem0:* keys remain",
+      "Run existing tests/vector_stores/test_valkey.py suite"
+    ],
+    "unknowns": [
+      "Whether maintainers will accept the issue and which PR will be merged; no maintainer response yet"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue clearly describes a silent correctness bug in Valkey vector store reset/delete_col, with concrete repro and root cause. However, three closed PRs (#6996, #7013, #7023) already target the same fix, and the repo policy requires an accepted issue before PR review. The issue is not yet labelled accepted, and the author of #7013 explicitly requests that label. This is a duplicate-review situation: the fix is well understood but needs maintainer acceptance and coordination with existing PRs."
+  },
   "54f500e1c103575dbd2371679d1842416df165e1cbe3fe56abd07dce40f5378f": {
     "confidence": 0.8,
     "contradictions": [],
@@ -13834,6 +13864,40 @@
       "Whether maintainers prefer rename vs fail-fast; exact implementation details of existing PR"
     ],
     "why": "Issue clearly identifies a reserved namespace collision in bedrock_mantle that breaks Codex 0.147. Existing PR #36184 overlaps but lacks bidirectional rename and has CI failures; a stronger PR with proper mapping and tests is plausible."
+  },
+  "68b56a1f72dbc64249ff0acb67e6df970fb89e2462aa55042bf554815759024b": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims custom_all_reduce crash, but disabling it relocates fault to DeepGEMM",
+      "Commenter notes custom_all_reduce code is byte-identical between versions, contradicting issue's suspicion of refactor"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "DeepGEMM pin update or kernel fix",
+      "custom_all_reduce refactor verification"
+    ],
+    "risks": [
+      "Potential duplicate issue; fix may already be merged",
+      "Hardware-specific (Hopper) and model-specific reproduction requirements"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 12,
+    "test_plan": [
+      "Reproduce with vLLM 0.27.1 and DeepSeek-V4-Flash-0731 on Hopper TP=4",
+      "Re-test after applying #52035 or a release containing it",
+      "Run compute-sanitizer with CUDA_LAUNCH_BLOCKING=1 to localize the faulting kernel"
+    ],
+    "unknowns": [
+      "Whether #52035 fully fixes the issue",
+      "Maintainer confirmation of duplicate status",
+      "Exact kernel causing memory corruption"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "The issue reports a reproducible CUDA illegal memory access during CUDA graph capture on Hopper TP=4, with evidence pointing to a DeepGEMM kernel fault. A comment identifies it as a likely duplicate of #52065, with a fix merged in #52035 after the 0.27.1 release. The open PR #46515 has semantic overlap but lacks tests and does not reference the issue. The root cause is not fully confirmed and requires maintainer confirmation of duplication and fix verification."
   },
   "68c2888be696321cd2321d0fccfd08aeddd7a30bdae02ec845e32a28b3bac952": {
     "confidence": 0.8,
@@ -20125,6 +20189,42 @@
       "Maintainer preference on where to implement (this repo vs external crate)"
     ],
     "why": "Issue provides a precise root cause (missing structural tag for kimi_k2 parser forces JSON-array grammar, unbounded whitespace) and a clear regression test (test_kimi_k2_tool_choice_required_pins_current_behavior). However, the deterministic gate is HUMAN_REVIEW, and existing PR #9752 overlaps semantically with the code path (handlers.py) and key terms (max_tokens, tool_choice), requiring maintainer comparison before new work. Also, potential duplicate issue #12876 and external crate dependency (dynamo-parsers) add uncertainty."
+  },
+  "9ac00ecd1fbb7bad7af4e0f343e5a9d9b63ce68c922f91f411b37b13e235a1e4": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Maintainer approval comment says implementation may begin, but issue-spec runner comments show unauthorized command attempts, suggesting assignment not yet confirmed."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "hgctl/pkg/installer/standalone.go",
+      "hgctl/pkg/installer/standalone_agent.go",
+      "hgctl/pkg/installer/installer_docker.go",
+      "focused hgctl/pkg/installer tests"
+    ],
+    "risks": [
+      "Potential conflict with #4422 overlay rejection guard; must keep separate.",
+      "Risk of unintended persistence of overlays or defaulted fields if stored Profile re-read is not done correctly.",
+      "Risk of behavior change in StandaloneComponent.Install if strict read path is misapplied."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add deterministic tests for successful updater with whitespace, updater failure, unreadable/empty/malformed VERSION, and Profile-store save failure.",
+      "Compare saved Profile field-by-field against pre-upgrade stored Profile excluding only higressVersion, including overlay not persisted.",
+      "Verify tolerant Agent.Upgrade reads remain tolerant while strict path returns errors.",
+      "Run go test ./pkg/installer -count=1 and go test ./... -count=1 from hgctl.",
+      "Controlled local-docker upgrade with trailing-newline VERSION and verify stored install-local-docker.yaml."
+    ],
+    "unknowns": [
+      "Whether the repository's assignment requirement has been satisfied for this issue."
+    ],
+    "wait_reason": "ASSIGNMENT",
+    "why": "The issue is a well-specified design with clear root cause, concrete code anchors, and a detailed verification plan. However, the repository requires assignment before implementation, and the issue-spec runner comments show unauthorized command attempts, indicating assignment is not yet confirmed. The design has been approved by a maintainer, but the assignment gate is still blocking."
   },
   "9aea0784bdd5a0b1e3a3e7204913c7d37adb54f2fafe91af619f0cffdd1b63a1": {
     "confidence": 0.7,
