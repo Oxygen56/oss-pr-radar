@@ -29710,6 +29710,38 @@
     ],
     "why": "The issue identifies a plausible root cause (namespaced agent id not resolved by kiro-cli) with DEBUG evidence, but the fix requires cross-component changes (KiroCrew vs kiro-cli) and maintainer design confirmation on agent id resolution. No existing PR directly addresses it, but the open PR #3383 touches similar agent resolution paths and may overlap. The track is agent_ai_infra, not llm_algorithm, so algorithm evidence is not required."
   },
+  "e1cd35e346d6c508dd7de7283ac6d44717cb24bd3d49d87843369f9b5a2622b1": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Manual server start works; Antigravity fails",
+      "Probe shows stdio JSON-RPC works with LF framing"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Investigate Antigravity's process launch on Windows",
+      "Potential fix in server stdio handling or documentation"
+    ],
+    "risks": [
+      "May be an Antigravity issue, not server-memory",
+      "No clear code path in this repo"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with Antigravity on Windows using provided config",
+      "Capture stdio framing and process environment during tool call"
+    ],
+    "unknowns": [
+      "Whether Antigravity uses shell or text-mode stdio",
+      "Exact process launch parameters used by Antigravity"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "Issue reports Windows stdio communication failure with Antigravity, but root cause is unconfirmed; a commenter's probe suggests the server itself works and the problem may be in Antigravity's launch path. No maintainer confirmation or design direction."
+  },
   "e200d8ab0437f515de2b6502970e776b2fb8c1d7f9457eebc7dafb3a0f704100": {
     "confidence": 0.7,
     "contradictions": [
@@ -31224,6 +31256,39 @@
       "Exact code path in the gateway that prepends the space"
     ],
     "why": "The issue reports a server-side forwarding bug with strong reproduction evidence, but the root cause is not identified in the codebase and the fix path is unclear. The bot flags a possible duplicate (#41300), and maintainer confirmation is needed to avoid duplicate work."
+  },
+  "ecb057e477f5d82993bdbe7615a75f8fd8a7df6bb3e15d989c3d44bf60e8e136": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Comment 1 attributes zero-hit to SWA tombstone veto; comment 2 and 3 attribute intermittent misses to giant-request flush, suggesting independent failure modes"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix DSV4 hybrid-pool radix reuse path (SWA tombstone veto, full-to-SWA mapping zeroing, HiCache host pool wiring)"
+    ],
+    "risks": [
+      "Existing PR #35217 may already fix the issue; new PR could be redundant",
+      "Root cause may involve multiple independent failure modes (tombstone veto vs block reassignment flush)",
+      "Floating-point or random variation could confound numerical tests"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 12,
+    "test_plan": [
+      "Replay two captured Anthropic-protocol requests (turn 1 warm, turn 2 append) with prompt >64K tokens and assert #cached-token >0",
+      "Add regression test for long multi-chunk prefix reuse under write_through_selective",
+      "Run numerical tolerance test comparing cached vs non-cached outputs"
+    ],
+    "unknowns": [
+      "Whether PR #35217 actually fixes the reported zero-hit issue",
+      "Whether maintainers have acknowledged the issue or assigned ownership",
+      "Exact code path differences between the issue's v0.5.17 and the PR's target version"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue reports a concrete LLM algorithm bug (DSV4 hybrid-pool radix reuse) with detailed reproduction and multiple independent confirmations, but the supplied open PR #35217 has semantic overlap and may already address the root cause. The deterministic gate is HUMAN_REVIEW, and the existing PR's technical completeness and CI status are unresolved, so a new PR would risk duplication."
   },
   "ecb60a44128a4030400f7438d46593b0d6b7f049bb72015525690b6f5e0360ff": {
     "confidence": 0.7,

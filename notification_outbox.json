@@ -2275,11 +2275,11 @@
     },
     "review|sgl-project/sglang#35129": {
       "category": "WAIT_MAINTAINER",
-      "digest": "15d3520e924217cd9819b1e37f817349daeb4954ed7a34cc42c2c5375c701733",
+      "digest": "0da054922909ba61747bde8c060cda8fde10cc3e8956889a82fa750c2dca86c2",
       "kind": "review",
       "scannerVersion": "oss_pr_radar_v46_semantic_fallback",
-      "seenAt": "2026-08-18T04:05:13.882721Z",
-      "stateId": "ca3a53d128f17ef7b61e2b6798f2c77557d81dd9ea58c9b43b025b3fe8bc7cf6"
+      "seenAt": "2026-08-18T09:00:43.146430Z",
+      "stateId": "561108079ddee8b3bed0fb1216c743683f0893374e3e426f633ff2b5f31bf088"
     },
     "review|sgl-project/sglang#35150": {
       "category": "WAIT_MAINTAINER",
@@ -2900,11 +2900,11 @@
     },
     "watch|agentscope-ai/QwenPaw#6825": {
       "category": "PR_FOLLOWUP",
-      "digest": "988def1924672c0400de0178ea92315fb96708f7183f86f12ccf1b2fe3a307fa",
+      "digest": "cff94f3153a5d03e54929579cbc12e35300923f7db26535ca72ceea19c03ad8e",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-18T08:01:43.598768Z",
-      "stateId": "de050646ee06cf469a749f65455e85eeb7e6d9ad2298a46d440c67633f512cf7"
+      "seenAt": "2026-08-18T09:00:43.505718Z",
+      "stateId": "efa312d420adb1e2cfa5b7ddbcae697d64795196fd7807ea358f0e14088e6aee"
     },
     "watch|ai-dynamo/dynamo#12907": {
       "category": "PR_FOLLOWUP",
@@ -3043,11 +3043,11 @@
     },
     "watch|sgl-project/sglang#34138": {
       "category": "PR_FOLLOWUP",
-      "digest": "01b5a9e8d8b50ba19c69e5863e05c846faa8a5a11acde1c8d487347f0f4dd302",
+      "digest": "07c3099b9bd44ece09f98c01c6f0d674107a30ee9ac6b3c459a23a78a9ddff5b",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-18T08:01:43.598768Z",
-      "stateId": "33592382a90aa108a049447dc8503af07ec55e15c2d6714a9469af1feeee06ff"
+      "seenAt": "2026-08-18T09:00:43.505718Z",
+      "stateId": "719a00275f255f763f74dd4c26bdb034ce383f65e955ddaee1900771d2bfacf8"
     },
     "watch|sgl-project/sglang#35140": {
       "category": "PR_FOLLOWUP",
@@ -3067,14 +3067,14 @@
     },
     "watch|vllm-project/vllm#52298": {
       "category": "PR_FOLLOWUP",
-      "digest": "f1db9271b3861eaf6efda4e3a2cab032ae51a7230f90afcac25d8b7464de453c",
+      "digest": "24793f93d7f30f3a9c71caebc003961205c82deb1d7b2b065b876b6c0b5ece07",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-18T07:11:35.746865Z",
-      "stateId": "3e10d7505da9ee313becf09c0b0712f104211fa2c98da5a987ab9a56785cdd40"
+      "seenAt": "2026-08-18T09:00:43.505718Z",
+      "stateId": "cc458d008848b75d86d3a3fa5a770ce41fdff3e5c5820ec7fd1738a7e5b2ea73"
     }
   },
-  "digest": "e56c40e77b795964f7a2ade7ef83a2ed2435f503a0582f6e4f7a4c3c013e23fc",
+  "digest": "5d507e589f03cc6ef86f741a46bda605a0b8b9990f0c955debf35305091ef97d",
   "events": [
     {
       "attempts": 1,
@@ -26757,9 +26757,133 @@
       "runId": "pr-followup-1787039823",
       "sentAt": "2026-08-18T08:02:25.979279Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "sgl-project/sglang#35129"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "0da054922909ba61747bde8c060cda8fde10cc3e8956889a82fa750c2dca86c2",
+          "key": "sgl-project/sglang#35129",
+          "kind": "review",
+          "scannerVersion": "oss_pr_radar_v46_semantic_fallback",
+          "stateId": "561108079ddee8b3bed0fb1216c743683f0893374e3e426f633ff2b5f31bf088"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#35129](https://github.com/sgl-project/sglang/issues/35129) [Bug] DeepSeek-V4-Flash-0731 + dsv4 + DSPARK + HiCache: long agentic sessions get #cached-token: 0 every turn despite stable 50%+ prefix (short requests hit ~98%)**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue reports a concrete LLM algorithm bug (DSV4 hybrid-pool radix reuse) with detailed reproduction and multiple independent confirmations, but the supplied open PR #35217 has semantic overlap and may already address the root cause. The deterministic gate is HUMAN_REVIEW, and the existing PR's technical completeness and CI status are unresolved, so a new PR would risk duplication.\n改动：Fix DSV4 hybrid-pool radix reuse path (SWA tombstone veto, full-to-SWA mapping zeroing, HiCache host pool wiring)\n验证：Replay two captured Anthropic-protocol requests (turn 1 warm, turn 2 append) with prompt >64K tokens and assert #cached-token >0；Add regression test for long multi-chunk prefix reuse under write_through_selective；Run numerical tolerance test comparing cached vs non-cached outputs\n风险：Existing PR #35217 may already fix the issue; new PR could be redundant；Root cause may involve multiple independent failure modes (tombstone veto vs block reassignment flush)；Floating-point or random variation could confound numerical tests\n竞争：发现 PR #35217 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 0，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-18T09:00:43.146430Z",
+      "eventId": "ba93033539e0a23cda9bff1777dcebe60c3a93e519fbafb8f40a5544048a6043",
+      "idempotencyKey": "ba93033539e0a23cda9bff1777dcebe60c3a93e519fbafb8f4",
+      "kind": "review",
+      "runId": "scan-20260818T085835Z-f970be06fa54",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "agentscope-ai/QwenPaw#6825",
+        "sgl-project/sglang#34138",
+        "vllm-project/vllm#52298"
+      ],
+      "candidateStates": [
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "cff94f3153a5d03e54929579cbc12e35300923f7db26535ca72ceea19c03ad8e",
+          "key": "agentscope-ai/QwenPaw#6825",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "efa312d420adb1e2cfa5b7ddbcae697d64795196fd7807ea358f0e14088e6aee"
+        },
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "07c3099b9bd44ece09f98c01c6f0d674107a30ee9ac6b3c459a23a78a9ddff5b",
+          "key": "sgl-project/sglang#34138",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "719a00275f255f763f74dd4c26bdb034ce383f65e955ddaee1900771d2bfacf8"
+        },
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "24793f93d7f30f3a9c71caebc003961205c82deb1d7b2b065b876b6c0b5ece07",
+          "key": "vllm-project/vllm#52298",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "cc458d008848b75d86d3a3fa5a770ce41fdff3e5c5820ec7fd1738a7e5b2ea73"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[agentscope-ai/QwenPaw#6825](https://github.com/agentscope-ai/QwenPaw/pull/6825) fix(mcp): apply configured timeout to client sessions**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#34138](https://github.com/sgl-project/sglang/pull/34138) Bind streaming abort cleanup to request lifecycle**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#52298](https://github.com/vllm-project/vllm/pull/52298) [Bugfix] Validate guidance tokenizer compatibility before EngineCore**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-18T09:00:43.505718Z",
+      "eventId": "7b728e3917d9d3ab1a3aee446e36a95ffe0658a088213b287eed33831fd169d7",
+      "idempotencyKey": "7b728e3917d9d3ab1a3aee446e36a95ffe0658a088213b287e",
+      "kind": "watch",
+      "runId": "pr-followup-1787043377",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-18T08:01:43.598768Z",
+  "generatedAt": "2026-08-18T09:00:43.505718Z",
   "newEventCount": 1,
   "version": "notification_outbox_v2"
 }
