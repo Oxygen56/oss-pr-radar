@@ -39,9 +39,10 @@ timing are external labels, not the north-star metric.
    outbox only for maintainer decisions and actionable status changes; a clean
    candidate is not announced as dispatched until the local controller records
    the real Codex task.
-5. **Local authorization** verifies the signature, leases an intent in SQLite,
-   repeats all live gates, and creates the canonical prompt locally. Before
-   calling the desktop task API it records `CREATING`; the returned
+5. **Local authorization** imports the signed queue on a five-minute local
+   schedule that does not consume a Codex turn. It verifies the signature,
+   leases an intent in SQLite, repeats all live gates, and creates the canonical
+   prompt locally. Before calling the desktop task API it records `CREATING`; the returned
    `clientThreadId` is persisted before any polling.
 6. **Task identity** binds issue, Codex task ID, project, source repository,
    worktree, first user input, and expected timestamped lifecycle title. The
@@ -123,7 +124,11 @@ This is a safety limit on active Codex implementation turns, not a discovery
 limit: scanning, evidence collection, queueing, PR refresh, notifications, and
 publication reconciliation continue independently. When a task releases the
 slot, the local event drain immediately advances the next highest-priority
-item; the hourly heartbeat is only the reconciliation fallback.
+item. The local signed-queue import also advances newly discovered work within
+five minutes. Publishable normal-policy fixes are ordered ahead of private-only
+disclosure or legal-review work, so a candidate that cannot be submitted
+automatically cannot delay one that can. The hourly heartbeat is only the
+reconciliation fallback.
 Continuing the same intent for validation or an existing PR update excludes
 that intent from the WIP count, so the safety limit cannot deadlock its own
 continuation. The independent reviewer shares this same single-writer lane: it

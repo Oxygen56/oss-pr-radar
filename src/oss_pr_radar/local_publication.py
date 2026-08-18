@@ -28,6 +28,7 @@ SENSITIVE_ENVIRONMENT_KEYS = {
     "MODEL_API_KEY",
     "OPENAI_API_KEY",
 }
+QUEUE_SYNC_STATE = "local_queue_sync.json"
 
 
 def _python(root: Path) -> Path:
@@ -105,10 +106,106 @@ def retryable_delivery_pending(root: Path, *, min_age_seconds: int = 60) -> bool
     return False
 
 
+def _queue_sync_state_path(root: Path) -> Path:
+    return root / "state" / QUEUE_SYNC_STATE
+
+
+def _write_queue_sync_state(root: Path, value: dict[str, Any]) -> None:
+    path = _queue_sync_state_path(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".json.tmp")
+    temporary.write_text(
+        json.dumps(value, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, path)
+
+
+def sync_cloud_queue_if_due(
+    root: Path,
+    *,
+    runner: Callable[[Path, str], dict[str, Any]],
+    interval_seconds: int | None,
+    now: float | None = None,
+) -> dict[str, Any]:
+    """Import signed cloud work without depending on a Codex heartbeat turn."""
+
+    if interval_seconds is None or interval_seconds <= 0:
+        return {"ok": True, "attempted": False, "pending": [], "errors": []}
+    current = time.time() if now is None else now
+    state_path = _queue_sync_state_path(root)
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        state = {}
+    last_attempt = float(state.get("attemptedAtEpoch") or 0)
+    if current - last_attempt < max(60, int(interval_seconds)):
+        return {"ok": True, "attempted": False, "pending": [], "errors": []}
+
+    # Record before network I/O so a crash cannot create a 20-second retry storm.
+    _write_queue_sync_state(
+        root,
+        {
+            "attemptedAtEpoch": current,
+            "completedAtEpoch": None,
+            "ok": None,
+        },
+    )
+    errors: list[dict[str, str]] = []
+    try:
+        sync = runner(root, "sync")
+    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        sync = {"ok": False, "error": f"{type(exc).__name__}:{str(exc)[:400]}"}
+    if sync.get("ok") is False:
+        errors.append(
+            {"error": str(sync.get("error") or sync.get("errors") or "queue sync failed")[:400]}
+        )
+
+    listing: dict[str, Any] = {"ok": True, "pending": []}
+    if not errors:
+        try:
+            listing = runner(root, "list")
+        except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+            listing = {"ok": False, "error": f"{type(exc).__name__}:{str(exc)[:400]}"}
+        if listing.get("ok") is False:
+            errors.append(
+                {
+                    "error": str(
+                        listing.get("error") or listing.get("errors") or "queue list failed"
+                    )[:400]
+                }
+            )
+
+    result = {
+        "ok": not errors,
+        "attempted": True,
+        "verified": int(sync.get("verified") or 0),
+        "inserted": int(sync.get("inserted") or 0),
+        "superseded": int(sync.get("superseded") or 0),
+        "pending": list(listing.get("pending") or []),
+        "errors": errors,
+    }
+    _write_queue_sync_state(
+        root,
+        {
+            "attemptedAtEpoch": current,
+            "completedAtEpoch": time.time() if now is None else now,
+            "ok": result["ok"],
+            "verified": result["verified"],
+            "inserted": result["inserted"],
+            "pendingCount": len(result["pending"]),
+            "errors": errors[:5],
+        },
+    )
+    return result
+
+
 def advance_once(
     root: Path,
     *,
     runner: Callable[[Path, str], dict[str, Any]] = run_bridge,
+    queue_sync_interval_seconds: int | None = None,
 ) -> dict[str, Any]:
     root = root.resolve()
     recovery = runner(root, "context-recover")
@@ -211,6 +308,11 @@ def advance_once(
     context_sync = (
         runner(root, "context-sync") if published else {"ok": True, "written": [], "errors": []}
     )
+    queue_sync = sync_cloud_queue_if_due(
+        root,
+        runner=runner,
+        interval_seconds=queue_sync_interval_seconds,
+    )
     publication_feedback = runner(root, "publication-feedback-list")
 
     errors = [
@@ -255,6 +357,7 @@ def advance_once(
         or publication_feedback.get("unresolved")
         or recoverable
         or retryable_delivery_pending(root)
+        or queue_sync.get("pending")
     )
     if should_drain and lifecycle_healthy:
         drain = runner(root, "drain-once")
@@ -276,7 +379,11 @@ def advance_once(
         or blocked
         or errors
         or drain_activity
+        or queue_sync.get("inserted")
+        or queue_sync.get("superseded")
+        or queue_sync.get("errors")
     )
+    errors.extend(list(queue_sync.get("errors") or []))
     return {
         "ok": not errors
         and title_reconciliation.get("ok") is not False
@@ -296,6 +403,7 @@ def advance_once(
         "published": published,
         "contextsSynced": list(context_sync.get("written") or []),
         "publicationFeedback": publication_feedback,
+        "queueSync": queue_sync,
         "recoverable": recoverable,
         "drain": drain,
         "terminalFeedback": terminal_feedback,
@@ -314,6 +422,8 @@ def compact_advance_result(result: dict[str, Any]) -> dict[str, Any]:
     review = review if isinstance(review, dict) else {}
     drain = result.get("drain")
     drain = drain if isinstance(drain, dict) else {}
+    queue_sync = result.get("queueSync")
+    queue_sync = queue_sync if isinstance(queue_sync, dict) else {}
     return {
         "ok": result.get("ok"),
         "activity": result.get("activity"),
@@ -340,12 +450,24 @@ def compact_advance_result(result: dict[str, Any]) -> dict[str, Any]:
             "action": drain.get("action"),
             "key": drain.get("key"),
         },
+        "queueSync": {
+            "attempted": bool(queue_sync.get("attempted")),
+            "verified": int(queue_sync.get("verified") or 0),
+            "inserted": int(queue_sync.get("inserted") or 0),
+            "pending": len(queue_sync.get("pending") or []),
+        },
         "contextsUnavailableCount": int(result.get("contextsUnavailableCount") or 0),
         "errors": list(result.get("errors") or [])[:5],
     }
 
 
-def launch_agent_spec(root: Path, *, interval_seconds: int, home: Path) -> dict[str, Any]:
+def launch_agent_spec(
+    root: Path,
+    *,
+    interval_seconds: int,
+    home: Path,
+    queue_sync_interval_seconds: int = 300,
+) -> dict[str, Any]:
     root = root.resolve()
     interval = max(15, min(int(interval_seconds), 300))
     log_dir = home / "Library" / "Logs" / "oss-pr-radar"
@@ -363,6 +485,8 @@ def launch_agent_spec(root: Path, *, interval_seconds: int, home: Path) -> dict[
             str(root / "scripts" / "local_publication_agent.py"),
             "--root",
             str(root),
+            "--queue-sync-interval-seconds",
+            str(max(60, int(queue_sync_interval_seconds))),
         ],
         "WorkingDirectory": str(root),
         "RunAtLoad": True,
@@ -384,10 +508,14 @@ def main() -> int:
         os.environ.pop(key, None)
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, default=Path(__file__).parents[2])
+    parser.add_argument("--queue-sync-interval-seconds", type=int, default=300)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
     try:
-        result = advance_once(args.root)
+        result = advance_once(
+            args.root,
+            queue_sync_interval_seconds=args.queue_sync_interval_seconds,
+        )
     except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
         result = {"ok": False, "activity": True, "errors": [{"error": str(exc)[:800]}]}
     if args.json:

@@ -65,6 +65,7 @@ def service_status(service: str, plist_path: Path, expected: dict) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--interval-seconds", type=int, default=20)
+    parser.add_argument("--queue-sync-interval-seconds", type=int, default=300)
     parser.add_argument("--status", action="store_true")
     parser.add_argument("--uninstall", action="store_true")
     args = parser.parse_args()
@@ -73,7 +74,12 @@ def main() -> int:
     domain = f"gui/{os.getuid()}"
     service = f"{domain}/{LAUNCH_AGENT_LABEL}"
     plist_path = home / "Library" / "LaunchAgents" / f"{LAUNCH_AGENT_LABEL}.plist"
-    spec = launch_agent_spec(ROOT, interval_seconds=args.interval_seconds, home=home)
+    spec = launch_agent_spec(
+        ROOT,
+        interval_seconds=args.interval_seconds,
+        home=home,
+        queue_sync_interval_seconds=args.queue_sync_interval_seconds,
+    )
 
     if args.status:
         status = service_status(service, plist_path, spec)
@@ -104,6 +110,7 @@ def main() -> int:
                 "restarted": restarted,
                 "label": LAUNCH_AGENT_LABEL,
                 "intervalSeconds": spec["StartInterval"],
+                "queueSyncIntervalSeconds": args.queue_sync_interval_seconds,
                 "plist": str(plist_path),
             }
         )

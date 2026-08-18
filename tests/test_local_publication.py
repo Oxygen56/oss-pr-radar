@@ -12,6 +12,7 @@ from oss_pr_radar.local_publication import (
     compact_advance_result,
     launch_agent_spec,
     run_bridge,
+    sync_cloud_queue_if_due,
 )
 
 
@@ -512,8 +513,92 @@ def test_launch_agent_uses_local_venv_and_contains_no_credentials(tmp_path):
         for argument in spec["ProgramArguments"]
     )
     assert spec["WorkingDirectory"] == str(root.resolve())
+    assert spec["ProgramArguments"][-2:] == ["--queue-sync-interval-seconds", "300"]
     assert "FEISHU" not in str(spec)
     assert "DEEPSEEK" not in str(spec)
+
+
+def test_due_cloud_queue_sync_imports_and_lists_pending_work(tmp_path):
+    calls = []
+
+    def runner(_root: Path, operation: str):
+        calls.append(operation)
+        if operation == "sync":
+            return {"ok": True, "verified": 2, "inserted": 1, "superseded": 0}
+        return {"ok": True, "pending": [{"key": "a/b#1"}]}
+
+    result = sync_cloud_queue_if_due(
+        tmp_path,
+        runner=runner,
+        interval_seconds=300,
+        now=1_000,
+    )
+
+    assert calls == ["sync", "list"]
+    assert result["ok"] is True
+    assert result["inserted"] == 1
+    assert result["pending"] == [{"key": "a/b#1"}]
+
+
+def test_cloud_queue_sync_is_throttled_after_an_attempt(tmp_path):
+    calls = []
+
+    def runner(_root: Path, operation: str):
+        calls.append(operation)
+        return {"ok": True, "verified": 0, "inserted": 0, "pending": []}
+
+    first = sync_cloud_queue_if_due(
+        tmp_path,
+        runner=runner,
+        interval_seconds=300,
+        now=1_000,
+    )
+    second = sync_cloud_queue_if_due(
+        tmp_path,
+        runner=runner,
+        interval_seconds=300,
+        now=1_100,
+    )
+
+    assert first["attempted"] is True
+    assert second == {"ok": True, "attempted": False, "pending": [], "errors": []}
+    assert calls == ["sync", "list"]
+
+
+def test_synced_pending_work_triggers_the_existing_serial_drain(tmp_path):
+    calls = []
+
+    def runner(_root: Path, operation: str):
+        calls.append(operation)
+        responses = {
+            "context-recover": {"ok": True, "errors": [], "unavailable": []},
+            "ingest-results": {"ok": True},
+            "independent-review-run": {"ok": True, "updated": []},
+            "title-reconcile": {"ok": True},
+            "cleanup-reconcile": {"ok": True},
+            "publication-run": {"ok": True},
+            "sync": {"ok": True, "verified": 1, "inserted": 1},
+            "list": {"ok": True, "pending": [{"key": "a/b#1"}]},
+            "publication-feedback-list": {"ok": True},
+            "recovery-list": {"ok": True, "recoverable": []},
+            "drain-once": {
+                "ok": True,
+                "action": "issue_task_dispatched",
+                "key": "a/b#1",
+            },
+        }
+        return responses[operation]
+
+    result = advance_once(
+        tmp_path,
+        runner=runner,
+        queue_sync_interval_seconds=300,
+    )
+
+    assert result["ok"] is True
+    assert result["queueSync"]["inserted"] == 1
+    assert result["drain"]["action"] == "issue_task_dispatched"
+    assert calls.index("sync") < calls.index("drain-once")
 
 
 def test_compact_result_keeps_counts_and_omits_large_payloads():

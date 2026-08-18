@@ -8,7 +8,9 @@
 - Local completion collector: every 20 seconds, ingesting existing workspace
   results, advancing existing publication requests without an LLM, and invoking
   one serialized event drain only when a result or lifecycle transition releases
-  task capacity.
+  task capacity. The same local process imports the latest signed cloud queue
+  every five minutes and advances new work without consuming a Codex heartbeat
+  turn.
 - Health watchdog: every hour at minute 55.
 - The local dispatcher also runs the health check, so scheduler failure is not
   monitored only by another workflow on the same scheduler.
@@ -20,8 +22,10 @@ an issue. Both the watchdog and the local dispatcher run the health check with
 they dispatch one manual fallback run. A recent active fallback suppresses a
 second repair, and workflow concurrency serializes a late natural run behind it.
 The desktop controller never waits inside its execution window for that run to
-finish. It skips only queue sync, continues live revalidation of unexpired local
-signed intents, and retries sync at the end or on the next hourly cycle.
+finish. It skips only queue sync and continues live revalidation of unexpired
+local signed intents. The five-minute local importer picks up the completed
+cloud queue independently, so a delayed or quota-blocked Codex heartbeat cannot
+stop new issue tasks.
 
 Deferred inspections are oldest-first and receive a dedicated 24-item budget
 in addition to the 30-item fresh-issue budget; there is no recheck cooldown. A
@@ -181,7 +185,9 @@ receiving their own worktrees.
   its stored receipt.
 - Install or refresh the local completion collector with
   `python scripts/install_local_publication_agent.py`. Its stdout and stderr are
-  stored under `~/Library/Logs/oss-pr-radar/`; an idle cycle is silent. A
+  stored under `~/Library/Logs/oss-pr-radar/`; an idle cycle is silent. Its
+  five-minute signed-queue import uses the macOS Keychain dispatch key and a
+  secret-free environment. A
   publishable fix with incomplete SubmitReady evidence is reported once as
   `validationDeferred` and settles as non-terminal `VALIDATION_PENDING`. It is
   titled as valuable work awaiting validation, releases dispatch capacity, and
@@ -266,6 +272,10 @@ single `github` project, an isolated source worktree, and an exact task receipt.
 Valid pending intents are ordinary queue state and publication canary state does
 not cap private task creation. No heartbeat step manually interprets a queue,
 renames a task, archives a task, or calls the desktop task API.
+Within new issue work, normal-policy candidates that can be published are
+processed before disclosure- or legal-review-only candidates. Both classes
+remain durable; the ordering only prevents a non-publishable task from delaying
+a directly actionable PR.
 The local completion collector also reconciles lifecycle titles and archives
 exact `[无价值]` `AUDIT_NO_GO` tasks immediately after ingesting a result, so a
 completed no-go task does not remain visible as valuable or wait for the next

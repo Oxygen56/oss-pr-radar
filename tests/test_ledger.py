@@ -148,6 +148,40 @@ def test_canary_wip_limit_is_transactional_and_released_by_outcome(tmp_path):
     assert store.claim("intent-2", "worker-b", max_active=1)
 
 
+def test_pending_prioritizes_publishable_normal_work(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    now = datetime.now(UTC)
+    store.enqueue(
+        intent(
+            intentId="private-old",
+            key="a/b#1",
+            issuedAt=iso_z(now - timedelta(minutes=10)),
+            expiresAt=iso_z(now + timedelta(hours=1)),
+            score=12,
+            publicSubmissionAllowed=False,
+            submissionPolicy="ai_disclosure_conflict",
+        )
+    )
+    store.enqueue(
+        intent(
+            intentId="publishable-new",
+            key="a/b#2",
+            issueNumber=2,
+            issueUrl="https://github.com/a/b/issues/2",
+            issuedAt=iso_z(now),
+            expiresAt=iso_z(now + timedelta(hours=1)),
+            score=9,
+            publicSubmissionAllowed=True,
+            submissionPolicy="normal",
+        )
+    )
+
+    assert [item["intentId"] for item in store.pending()] == [
+        "publishable-new",
+        "private-old",
+    ]
+
+
 def test_clean_unresolved_dispatch_can_be_reset_for_retry(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(intent())

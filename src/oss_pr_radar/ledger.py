@@ -1865,7 +1865,14 @@ class RadarLedger:
                           creation_started_at FROM intents
                    WHERE (status IN ('PENDING','LEASED') AND expires_at>?)
                       OR status='CREATING'
-                   ORDER BY issued_at""",
+                   ORDER BY
+                     CASE
+                       WHEN json_extract(payload_json,'$.publicSubmissionAllowed')=1
+                        AND COALESCE(json_extract(payload_json,'$.submissionPolicy'),'normal')='normal'
+                       THEN 0 ELSE 1
+                     END,
+                     CAST(COALESCE(json_extract(payload_json,'$.score'),0) AS INTEGER) DESC,
+                     issued_at""",
                 (now,),
             ).fetchall()
         values: list[dict[str, Any]] = []
