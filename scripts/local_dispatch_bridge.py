@@ -8099,10 +8099,19 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
 
     pr_state = pr_followup_list(argparse.Namespace(ledger=args.ledger))
     deferred_followups: list[dict[str, Any]] = []
-    for candidate in pr_state.get("candidates") or []:
-        restore_failure = restore_target(candidate)
+    restored_followup_threads: set[str] = set()
+    if pr_state.get("restoreRequired"):
+        restore_candidate = pr_state["restoreRequired"][0]
+        restore_failure = restore_target(restore_candidate)
         if restore_failure:
             return restore_failure
+        restored_followup_threads.add(str(restore_candidate["threadId"]))
+        pr_state = pr_followup_list(argparse.Namespace(ledger=args.ledger))
+    for candidate in pr_state.get("candidates") or []:
+        if str(candidate["threadId"]) not in restored_followup_threads:
+            restore_failure = restore_target(candidate)
+            if restore_failure:
+                return restore_failure
         reserved = pr_followup_reserve(
             argparse.Namespace(
                 ledger=args.ledger,

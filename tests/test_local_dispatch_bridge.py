@@ -245,6 +245,62 @@ def test_event_drain_holds_new_issue_when_pr_snapshot_needs_refresh(monkeypatch,
     ]
 
 
+def test_event_drain_restores_an_archived_pr_task_before_followup(monkeypatch, tmp_path):
+    restored = []
+
+    def restore(args):
+        thread_id = getattr(args, "thread_id", None)
+        if thread_id:
+            restored.append(thread_id)
+        return {"ok": True, "restored": [], "errors": []}
+
+    followup_calls = 0
+
+    def followups(_args):
+        nonlocal followup_calls
+        followup_calls += 1
+        candidate = {
+            "key": "a/b#1",
+            "threadId": "thread-1",
+            "wakeDigest": "wake-1",
+        }
+        if followup_calls == 1:
+            return {
+                "candidates": [],
+                "restoreRequired": [candidate],
+                "unresolved": [],
+            }
+        return {
+            "candidates": [candidate],
+            "restoreRequired": [],
+            "unresolved": [],
+        }
+
+    monkeypatch.setattr(MODULE, "restore_reconcile", restore)
+    monkeypatch.setattr(MODULE, "pr_followup_list", followups)
+    monkeypatch.setattr(
+        MODULE,
+        "pr_followup_reserve",
+        lambda _args: {"ok": True, "deferred": False},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "pr_followup_deliver",
+        lambda _args: {"ok": True, "threadId": "thread-1"},
+    )
+
+    result = MODULE.drain_once(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            project_id="github-project",
+            owner="event-drain",
+        )
+    )
+
+    assert result["action"] == "pr_followup_dispatched"
+    assert restored == ["thread-1"]
+
+
 def test_event_drain_treats_validation_wip_race_as_a_normal_deferral(monkeypatch, tmp_path):
     monkeypatch.setattr(
         MODULE, "restore_reconcile", lambda _args: {"ok": True, "restored": [], "errors": []}
