@@ -23863,6 +23863,37 @@
     "wait_reason": "DESIGN_CONFIRMATION",
     "why": "The issue provides a clear root cause (Electron app inherits GUI PATH, Gateway inherits incomplete env) and a reproducible scenario, but the fix requires a product-shape decision among four distinct approaches with different security, lifecycle, and scope implications. The maintainer collaborator explicitly routed to needs-human and suggested incremental decomposition, indicating design confirmation is required before implementation."
   },
+  "b79b98094380de2d0cd69daa4b09fc04e2bd630fe425720b3d2f2be9ddb78ad4": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Skill registry namespacing by owning extension",
+      "Qualified skill invocation resolution",
+      "UI display of owning extension in /skills"
+    ],
+    "risks": [
+      "Potential breaking change for users relying on flat skill names",
+      "Need to align with maintainer design preferences for namespacing format"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "test_plan": [
+      "Add a failing test that installs two extensions with overlapping generic skill names and asserts qualified invocation resolves correctly",
+      "Add a test that unqualified names do not resolve when ambiguous",
+      "Run existing extension and skill-related unit tests"
+    ],
+    "unknowns": [
+      "Exact code path for skill loading and resolution",
+      "Maintainer design preference on namespacing approach"
+    ],
+    "wait_reason": null,
+    "why": "Issue describes a concrete functional gap: extension skills are loaded under flat global names, breaking the advertised `extension:skill` qualified invocation and causing name collisions. The expected behavior is clearly specified with upstream prior art, and the fix is localized to skill resolution/namespacing. No competing PR or issue found, and the triage bot allows work. However, root cause is not yet confirmed in code, and maintainer design preference is unknown."
+  },
   "b7c004e699feba973f3134a58a452542e9042d9c616ce4100284750d34d8a1c8": {
     "confidence": 0.8,
     "contradictions": [],
