@@ -3805,6 +3805,37 @@
     ],
     "why": "Issue reports a reproducible grammar-constrained cancellation bug with a clear reproducer, but root cause is not identified and open PR lookup failed due to rate limit, so duplicate work cannot be excluded."
   },
+  "207420b288fc9a45df0f9927df6f7786c278408e7831926c6d395c8d01deee92": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue title limits bug to cost-based-routing with multiple deployments, but comment shows it occurs with a single deployment and default routing."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "litellm/proxy/spend_tracking/savings.py",
+      "litellm/types/utils.py",
+      "litellm/utils.py"
+    ],
+    "risks": [
+      "PR #36657 may already cover the root cause; need to compare implementation boundaries before starting new work.",
+      "Fix design choices (A/B/C) have different API and behavior implications; maintainer preference is unknown."
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Add a regression test that reproduces the zero-savings bug with a custom-priced model and multiple deployments, then verify the fix yields nonzero savings."
+    ],
+    "unknowns": [
+      "Whether PR #36657 actually fixes this issue or is unrelated.",
+      "Maintainer preference among the proposed fix options."
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue provides a clear root cause and reproduction for a user-visible bug, but the open PR #36657 overlaps semantically and may already address the same code path. The issue also lacks maintainer confirmation and the fix design has multiple viable options (A/B/C) that need maintainer input. The deterministic gate is HUMAN_REVIEW, so no upgrade is allowed."
+  },
   "20c7f520726b094abb49b75fecfbb7aceeb0ca83b0a9197bd3b6c32056e72b58": {
     "confidence": 0.6,
     "contradictions": [],
@@ -16477,6 +16508,36 @@
     ],
     "why": "Issue identifies a concrete bug in Gemma4UnifiedMultimodalEmbedder where output_proj_dims is incorrectly used as input dimension for audio, causing weight-loading AssertionError. Root cause is clear, fix is minimal and verified by reporter. No competing PR or related issue found."
   },
+  "78c0254578d72ed6448d2b225336d2616c964029d2fa10bf9ad2d7279d074fcc": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify GPU counting logic in planner monitoring and connectors to detect and count DRA ResourceClaims",
+      "Add fallback or error handling in global planner to avoid crash when GPU count is unavailable",
+      "Update local planner fallback behavior to handle DRA gracefully"
+    ],
+    "risks": [
+      "Potential API changes in planner components may affect existing device plugin behavior",
+      "Need to ensure compatibility with different Kubernetes versions and DRA implementations"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a minimal DGD with DRA ResourceClaim and reproduce the error",
+      "Add unit tests for GPU counting with DRA ResourceClaim in dgd_services.py",
+      "Run integration test with Kubernetes environment to verify global planner does not crash and local planner scales correctly"
+    ],
+    "unknowns": [
+      "Exact DRA ResourceClaim structure and how to map to GPU count",
+      "Maintainer preference for implementation approach"
+    ],
+    "wait_reason": null,
+    "why": "Issue clearly describes a bug where GPU counting assumes device plugin and fails with DRA ResourceClaims, causing global planner crash and local planner warnings. Root cause is identified in specific code paths (dgd_services.py, kubernetes.py, kubernetes_capacity_manager.py). No competing PR or related issue found. Actionable fix: extend GPU counting to support DRA ResourceClaims."
+  },
   "78e61498ae4ad3052df9899eec903410f6838c131873daa97be33e671d183879": {
     "confidence": 0.85,
     "contradictions": [],
@@ -18011,6 +18072,37 @@
       "Maintainer preference on design (await vs background hook) is not yet confirmed"
     ],
     "why": "Issue clearly identifies a detached promise in Agent#executeOnFinish causing title loss on serverless runtimes, with a minimal repro and a contributor asking for design direction. However, the deterministic gate is HUMAN_REVIEW and the contributor explicitly requests maintainer preference on whether to await title persistence or use a background hook, which changes latency and durability semantics. Existing PRs have semantic overlap but none directly address this issue, so a new PR could be viable but requires design confirmation."
+  },
+  "847abd8cfccd18622ebc25bb16c0be6fbfb6766d4dbb52d6b3ba8d14e0e4c919": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Investigate scheduling loop in assistant presentation",
+      "Potential fix in runtime/scheduler or provider integration"
+    ],
+    "risks": [
+      "Fix may be complex and require maintainer design input",
+      "Issue may be environment-specific (Windows, proxy, locale)"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "test_plan": [
+      "Reproduce with provided steps and capture log spam",
+      "Test with 'Next' architecture to see if issue persists",
+      "Add regression test for scheduling loop prevention"
+    ],
+    "unknowns": [
+      "Whether the issue persists on 'Next' architecture",
+      "Exact code path causing the infinite scheduling loop",
+      "Maintainer's preferred fix approach"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "The issue reports a severe UI freeze with a clear repro and log spam, but the root cause is not identified. The maintainer has asked the reporter to test the 'Next' architecture, indicating active investigation and a possible workaround. No code-level diagnosis or fix is proposed, and the issue may be resolved by the architecture switch."
   },
   "8484006fde1ed336734ac3d9badd8045433b46e154f27d8f1af6ae57b5d7ffae": {
     "confidence": 0.6,
@@ -20060,6 +20152,25 @@
       "PR #20690's merge status and whether it fully resolves the issue"
     ],
     "why": "Issue provides a precise root cause (shape mismatch in requestContext user slot) and a verified workaround, but a PR (#20690) already exists and is closed, with maintainer triage ongoing. The deterministic gate requires HUMAN_REVIEW, and the PR's completeness and maintainer scope decisions (e.g., handling two other quiet readers) are unresolved."
+  },
+  "95d7915553b8f1cfdf44ddfa9111869582100e3f09ed66a40a1c2e252c969b2b": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "decision": "REJECT",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [],
+    "risks": [],
+    "root_cause_clarity": "low",
+    "score": 2,
+    "test_plan": [],
+    "unknowns": [
+      "Root cause of duplicate registration",
+      "Relevant code path in extension"
+    ],
+    "wait_reason": null,
+    "why": "Issue reports a duplicate command registration error in a VS Code extension under WSL, but provides no root cause, code anchor, or reproduction beyond environment description. It is a usage/support problem without actionable implementation details."
   },
   "962331b72cfd70ae701f13de6c2903b1c3cf51f246e7b189366d85d7878d86c2": {
     "confidence": 0.7,
@@ -24069,6 +24180,37 @@
       "Whether maintainers have already assigned or are investigating (no maintainer activity signals)"
     ],
     "why": "Issue identifies a deterministic compile failure in FA4 SM100 split-KV kernels with a clear root cause and a minimal repro. However, the deterministic gate is HUMAN_REVIEW, and the open PR and related issue lookups timed out, so duplicate work cannot be excluded. The suggested fix (bump DSL pin) is a dependency change, not an algorithm change, and the kernel fix is in a separate repo (vllm-flash-attn), requiring maintainer coordination."
+  },
+  "b8c533181ba61d8a46c516b5bb0da6355e66f4ceaba9b9598c0ca3ecbed509cf": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue title and body reference AzureProvider, but comments show the deployment uses MCP SDK's mcp.server.fastmcp without AzureProvider"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Clarify whether the fix belongs in standalone FastMCP or the MCP SDK",
+      "Potentially add an OAuth proxy/translation layer for Entra compatibility"
+    ],
+    "risks": [
+      "Changing OAuth request handling could break existing AzureProvider users",
+      "Scope or resource handling changes may have security implications"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with a minimal standalone FastMCP server using AzureProvider and ChatGPT Remote MCP",
+      "Verify the generated authorization request contains the correct resource-qualified scope"
+    ],
+    "unknowns": [
+      "Whether the issue is reproducible with standalone FastMCP's AzureProvider",
+      "Maintainer's intended design for Entra OAuth compatibility"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "The issue reports an Entra OAuth failure but the discussion reveals the reporter is using the MCP SDK's mcp.server.fastmcp, not the standalone fastmcp package. The root cause is unclear: it may be a client-side scope selection issue, a missing translation layer, or a configuration mismatch. No maintainer has confirmed the intended behavior or provided guidance."
   },
   "b8c62deb26639f53e9023549b26a80e469d2fcb2d168c4590987156fdcac19d3": {
     "confidence": 0.7,
