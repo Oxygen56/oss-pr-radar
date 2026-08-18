@@ -1351,6 +1351,34 @@
     ],
     "why": "Issue clearly identifies a bug in _agent_run.py where APPROVAL_RESUME_NOT_FOUND fails to clear snapshot interrupt, causing repeated unanswerable approval cards. Triage reproduced with a failing test. However, open PR lookup failed due to rate limit, so duplicate work cannot be excluded. Maintainer design confirmation is needed for the suggested fix and potential client-side pending state release."
   },
+  "0cc8001cccc5a0802061f7d36248769b8a10489e0459f230dbea658e298693d2": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Fix failing static analysis or tests in fastmcp repo"
+    ],
+    "risks": [
+      "May be a transient dependency issue that resolves itself",
+      "Fix may conflict with maintainer's preferred dependency pinning strategy"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Obtain failing workflow logs to identify exact job and error",
+      "Reproduce locally with uv sync --upgrade and run prek and pytest"
+    ],
+    "unknowns": [
+      "Which job failed and what error messages were produced",
+      "Whether the failure is reproducible locally",
+      "Whether maintainers are already investigating"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "Issue is an automated build failure report with no root cause identified. It lists generic possible causes (ty, ruff, MCP SDK) but provides no specific error logs or reproduction steps. The candidate's own actionability evidence shows root_cause_signal=false and probe_ready=false. Without concrete failure details, a PR cannot be scoped."
+  },
   "0cd11e322196f2fdab5e4c31482db3f655c193bbefb4fb62f9ff399cfb79803e": {
     "confidence": 0.7,
     "contradictions": [
@@ -14688,6 +14716,42 @@
     ],
     "why": "The issue reports a reproducible Ref2VA-specific snow/noise bug with detailed diagnostics and a minimal repro, but the root cause is not identified and the issue is not assigned or confirmed by maintainers. The track requires a concrete algorithm mechanism; while the report mentions FSDP/offload and numerical diagnostics, the actual defect could be in the diffusion pipeline's reference-conditioning path, which is not clearly an LLM algorithm mechanism. The evidence is strong for a bug report but insufficient to start implementation without maintainer triage."
   },
+  "6dadc5af6c51848c7ef735940f2578cd987761263a56c9af3bd306bb42d11f9b": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue reports long sessions always miss, but comment reports intermittent single-turn misses",
+      "Comment claims has_swa_host_pool always False, but startup log shows host pool allocation"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "SWA component match validation",
+      "full-to-SWA mapping in allocator/swa.py",
+      "HiCache host pool wiring for SWA"
+    ],
+    "risks": [
+      "PR #31713 may already fix the root cause, making a new PR redundant",
+      "Floating-point or random variation could confound numerical tests",
+      "Changes to SWA mapping may affect short-request hit rates"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 12,
+    "test_plan": [
+      "Replay two captured Anthropic-protocol requests with >64K prompt to reproduce #cached-token: 0",
+      "Add regression test for multi-chunk prefix reuse with write_through_selective",
+      "Compare behavior with and without enable_hierarchical_cache"
+    ],
+    "unknowns": [
+      "Whether PR #31713 fixes the reported root cause",
+      "Whether maintainers consider the issue actionable or already covered",
+      "Exact code version and whether fixes after v0.5.17 resolve the issue"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue reports a concrete DSV4 long-prefix cache miss with client-side evidence and a detailed source-level causal chain, but an open PR #31713 (DeepSeek V4 SWA recompute) overlaps the same code paths and semantics. The PR is not linked to the issue and has failing CI; a new PR would risk duplication. Maintainer review is needed to confirm whether the PR addresses the root cause or if a separate fix is warranted."
+  },
   "6e368d44fe1e9cb126c26141c69dcb91ed981f397c32890dca295485f028ffc3": {
     "confidence": 0.8,
     "contradictions": [
@@ -15642,6 +15706,36 @@
       "Whether existing PRs are considered sufficient or need replacement"
     ],
     "why": "Issue clearly identifies a stale-fact retrieval bug in mem0 v3 ADD-only extraction, with concrete reproduction and community confirmation. However, multiple closed PRs already attempt fixes (e.g., #4969 soft-supersede, #4965 restore CRUD), and maintainer direction is unclear. The deterministic gate requires HUMAN_REVIEW, and the AI disclosure conflict blocks automated action."
+  },
+  "748763fce9b0525eda1cbe3c652b302e0b5f7c520406305a5af3d7fe2463fc7b": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "mem0/memory/main.py: guard empty list in delete_all",
+      "add regression test for empty vector store response"
+    ],
+    "risks": [
+      "Potential duplicate with issue #5509; maintainer may prefer a different fix location",
+      "Changing delete_all behavior could affect other callers expecting an exception"
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Run the provided reproduction script to confirm IndexError",
+      "Add a unit test that mocks vector_store.list to return [] and assert delete_all completes with zero deletions",
+      "Run existing test suite for mem0/memory"
+    ],
+    "unknowns": [
+      "Whether maintainers consider #5509 a duplicate and want a combined fix",
+      "Whether there is an existing PR or branch addressing this issue"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "The issue provides a clear bug report with a minimal reproduction and a specific root cause (unconditional indexing of an empty list in Memory.delete_all). However, the candidate is gated as HUMAN_REVIEW and lacks maintainer approval or active investigation, and there is a potential duplicate issue #5509 that needs triage. The implementation is straightforward but requires maintainer confirmation to avoid duplicate work and ensure alignment."
   },
   "74e32ee5627a1a5af61f604a6c2c39148b21cc19b92258924555cfc9f6ae3065": {
     "confidence": 0.8,
@@ -32444,6 +32538,32 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue clearly describes a silent correctness bug in Valkey vector store reset, with root cause and reproduction. However, an existing PR #6996 directly addresses the same issue with a test and is technically complete, but is closed and requires human review to determine if it can be merged or if a new PR is needed."
+  },
+  "f72c294c15b4a5a3d0692a23f6acef26717010d769253db8a41b6aac075b8433": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify _prepare_messages in mem0/proxy/main.py to deep-copy message dictionaries before enrichment, ensuring caller input is not mutated and background memory write receives original conversation."
+    ],
+    "risks": [
+      "Potential performance overhead from deep-copying messages, but negligible for typical sizes.",
+      "Need to ensure no other code relies on the current aliasing behavior."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add a unit test that calls _prepare_messages with a sample messages list, mutates the returned list's last content, and asserts the original list remains unchanged.",
+      "Add a regression test simulating the race by invoking _async_add_to_memory with the original messages and verifying stored content does not include injected prompt."
+    ],
+    "unknowns": [
+      "Exact maintainer preference for copy strategy (deep vs shallow) is unknown, but not blocking as a minimal fix is clear."
+    ],
+    "wait_reason": null,
+    "why": "Issue provides a clear, reproducible bug with a concrete code path: _prepare_messages aliases caller-owned message dicts, causing a race with background memory writes. No competing PR or issue exists, and the fix is a minimal local change (deep copy or copy-on-write) with a straightforward regression test."
   },
   "f7598e18681f3aeca66ce3bf9ff20bd5e561b6a415c9142c024d2fcf09e1d677": {
     "confidence": 0.7,
