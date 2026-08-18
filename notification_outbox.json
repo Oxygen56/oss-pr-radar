@@ -2900,11 +2900,11 @@
     },
     "watch|agentscope-ai/QwenPaw#6825": {
       "category": "PR_FOLLOWUP",
-      "digest": "fab3229e8ffcee58cf12d21b70b8cc5e7c5f71827001453e1307be0473adcafc",
+      "digest": "988def1924672c0400de0178ea92315fb96708f7183f86f12ccf1b2fe3a307fa",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-18T07:11:35.746865Z",
-      "stateId": "5a464fd9f074471d11aac652b428516aae69e045e8a5676e24f4c3bdb4a5fb0f"
+      "seenAt": "2026-08-18T08:01:43.598768Z",
+      "stateId": "de050646ee06cf469a749f65455e85eeb7e6d9ad2298a46d440c67633f512cf7"
     },
     "watch|ai-dynamo/dynamo#12907": {
       "category": "PR_FOLLOWUP",
@@ -2972,11 +2972,11 @@
     },
     "watch|esengine/DeepSeek-Reasonix#8510": {
       "category": "PR_FOLLOWUP",
-      "digest": "1328e15fed3501829908b6396f970783047db116f388a1931eca093810d8c83b",
+      "digest": "7d15b8a5d11938697b6c519469f008793370dc2ddf2e850da29eade5993cb860",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-18T05:52:31.471944Z",
-      "stateId": "0e4998f3d81a43cfe647d9de87bb43048c2e8ae68e36710d3c0255334021312a"
+      "seenAt": "2026-08-18T08:01:43.598768Z",
+      "stateId": "17c7db8a80e33e4c096f5ab83ebda12c5b5c3b074434d3f20c7750729ac29230"
     },
     "watch|hashicorp/terraform-mcp-server#442": {
       "category": "PR_FOLLOWUP",
@@ -3043,11 +3043,11 @@
     },
     "watch|sgl-project/sglang#34138": {
       "category": "PR_FOLLOWUP",
-      "digest": "6491b2208f06e00c17f40cac0fdfe7854a6e289dd1b5f6fb5892ce21850c9f53",
+      "digest": "01b5a9e8d8b50ba19c69e5863e05c846faa8a5a11acde1c8d487347f0f4dd302",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-18T07:11:35.746865Z",
-      "stateId": "d040049a86fc68afc8a25c1a5ac22ea8659478836a309ed036166943c40a820d"
+      "seenAt": "2026-08-18T08:01:43.598768Z",
+      "stateId": "33592382a90aa108a049447dc8503af07ec55e15c2d6714a9469af1feeee06ff"
     },
     "watch|sgl-project/sglang#35140": {
       "category": "PR_FOLLOWUP",
@@ -3074,157 +3074,8 @@
       "stateId": "3e10d7505da9ee313becf09c0b0712f104211fa2c98da5a987ab9a56785cdd40"
     }
   },
-  "digest": "88caa7f1c5fed8042349f92470e8957a72b342003565a322c8d4d034b5419bff",
+  "digest": "aca964eb210fc73c876a5357db026b3928b83dbadd354bd68475ad87585c3eea",
   "events": [
-    {
-      "attempts": 1,
-      "candidateKeys": [
-        "esengine/DeepSeek-Reasonix#8213"
-      ],
-      "candidateStates": [
-        {
-          "category": "WAIT_MAINTAINER",
-          "digest": "3fcce3e0905a3e335a61720a6c35e61efebb97ef762b6bbcdbf12b57ed2bd37c",
-          "key": "esengine/DeepSeek-Reasonix#8213",
-          "kind": "review",
-          "scannerVersion": "oss_pr_radar_v42_terminal_feedback_revoke",
-          "stateId": "2045c40004de855dc0b5f93bff578f76a2c0551caec0a540a1ea1f1d7824d522"
-        }
-      ],
-      "card": {
-        "config": {
-          "wide_screen_mode": true
-        },
-        "elements": [
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[esengine/DeepSeek-Reasonix#8213](https://github.com/esengine/DeepSeek-Reasonix/issues/8213) [Bug]: [Critical] Infinite recovery loop and UI freeze caused by JSON truncation (GBK/UTF-8 encoding mismatch during Bash tool call)**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue describes a plausible encoding mismatch and recovery loop, but lacks a minimal code-level reproduction and maintainer confirmation. The suggested fixes are broad and may require design decisions.\n改动：Add circuit breaker to recovery loop；Implement GBK/UTF-8 transcoding for subprocess output；Cleanup orphan lock files\n验证：Create a Windows test that simulates GBK output from bash tool and verifies no JSON truncation；Unit test recovery loop with forced failures to ensure circuit breaker triggers\n风险：Changing recovery behavior may affect existing recovery semantics；Transcoding may have platform-specific edge cases\n竞争：未发现相关 open PR\n下一步：阅读相关实现和测试，先本地复现，再决定是否开 PR。\n证据：复现信号 3，根因信号 True",
-              "tag": "lark_md"
-            }
-          }
-        ],
-        "header": {
-          "template": "yellow",
-          "title": {
-            "content": "OSS PR Radar: 需要确认",
-            "tag": "plain_text"
-          }
-        }
-      },
-      "createdAt": "2026-08-11T07:44:57.509540Z",
-      "eventId": "fbc262db38826ea2499e49fb4cc565b24b745676e97efe828f9ff786b38cfe81",
-      "idempotencyKey": "fbc262db38826ea2499e49fb4cc565b24b745676e97efe828f",
-      "kind": "review",
-      "lastAttemptAt": "2026-08-11T07:45:30.060418Z",
-      "messageId": "om_x100b68997f07f0a0dd34b32dee8221c",
-      "runId": "scan-20260811T074155Z-5e664f704cfb",
-      "sentAt": "2026-08-11T07:45:33.152418Z",
-      "status": "SENT"
-    },
-    {
-      "attempts": 1,
-      "candidateKeys": [
-        "agentscope-ai/QwenPaw#6825",
-        "ai-dynamo/dynamo#12907",
-        "sgl-project/sglang#30554",
-        "sgl-project/sglang#34138"
-      ],
-      "candidateStates": [
-        {
-          "category": "PR_FOLLOWUP",
-          "digest": "b91ab8bac3d886f67871df8d718be92a246eff4f2fb1510ad1f1d7a2404e5ab0",
-          "key": "agentscope-ai/QwenPaw#6825",
-          "kind": "watch",
-          "scannerVersion": "",
-          "stateId": "7e74645f1745843e5eaf75b6dc6de8304c2ed0cb82553804e42d32bdd7b011bf"
-        },
-        {
-          "category": "PR_FOLLOWUP",
-          "digest": "1e3436d3ea443d454a243a628788103c7660679a412c7d083d0a9848b14b7837",
-          "key": "ai-dynamo/dynamo#12907",
-          "kind": "watch",
-          "scannerVersion": "",
-          "stateId": "80b3be384606b3e8bfe1a5e7bcc60e7bf0375a890e4323c124363115fcccd5a4"
-        },
-        {
-          "category": "PR_FOLLOWUP",
-          "digest": "7f98d8f18b0b08d9178a3b95560c0311ad384547f6db78297be216517804624d",
-          "key": "sgl-project/sglang#30554",
-          "kind": "watch",
-          "scannerVersion": "",
-          "stateId": "23230a3880ffc4b2a6d378b7ff1014ada3944fa548adb89d35a566be265c5965"
-        },
-        {
-          "category": "PR_FOLLOWUP",
-          "digest": "aabf43eb74a555e46cad02b87e2adf082a041c817f5553cd1029cae11c983d2c",
-          "key": "sgl-project/sglang#34138",
-          "kind": "watch",
-          "scannerVersion": "",
-          "stateId": "a8d30ebc2ca5893a37940a1c18531c359e8f9051edf15fb33f967266ca37f6e5"
-        }
-      ],
-      "card": {
-        "config": {
-          "wide_screen_mode": true
-        },
-        "elements": [
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[agentscope-ai/QwenPaw#6825](https://github.com/agentscope-ai/QwenPaw/pull/6825) fix(mcp): apply configured timeout to client sessions**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[ai-dynamo/dynamo#12907](https://github.com/ai-dynamo/dynamo/pull/12907) fix(epp): account for prefill load during routing**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突；存在未解决审查线程\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[sgl-project/sglang#30554](https://github.com/sgl-project/sglang/pull/30554) [Spec] Size shared logits buffer for adaptive candidates**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[sgl-project/sglang#34138](https://github.com/sgl-project/sglang/pull/34138) Bind streaming abort cleanup to request lifecycle**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
-              "tag": "lark_md"
-            }
-          }
-        ],
-        "header": {
-          "template": "yellow",
-          "title": {
-            "content": "OSS PR Radar: 状态更新",
-            "tag": "plain_text"
-          }
-        }
-      },
-      "createdAt": "2026-08-11T07:44:57.876903Z",
-      "eventId": "f96a8f1940fd4398b948a51e58bf17c2522e3aaf9a8f65e828bb25d20b2c2b57",
-      "idempotencyKey": "f96a8f1940fd4398b948a51e58bf17c2522e3aaf9a8f65e828",
-      "kind": "watch",
-      "lastAttemptAt": "2026-08-11T07:45:33.152444Z",
-      "messageId": "om_x100b68997f2bccb0dd34d183e7350fe",
-      "runId": "pr-followup-1786434057",
-      "sentAt": "2026-08-11T07:45:34.893386Z",
-      "status": "SENT"
-    },
     {
       "attempts": 1,
       "candidateKeys": [
@@ -26822,9 +26673,90 @@
       "runId": "pr-followup-1787036883",
       "sentAt": "2026-08-18T07:12:20.007351Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "agentscope-ai/QwenPaw#6825",
+        "esengine/DeepSeek-Reasonix#8510",
+        "sgl-project/sglang#34138"
+      ],
+      "candidateStates": [
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "988def1924672c0400de0178ea92315fb96708f7183f86f12ccf1b2fe3a307fa",
+          "key": "agentscope-ai/QwenPaw#6825",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "de050646ee06cf469a749f65455e85eeb7e6d9ad2298a46d440c67633f512cf7"
+        },
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "7d15b8a5d11938697b6c519469f008793370dc2ddf2e850da29eade5993cb860",
+          "key": "esengine/DeepSeek-Reasonix#8510",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "17c7db8a80e33e4c096f5ab83ebda12c5b5c3b074434d3f20c7750729ac29230"
+        },
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "01b5a9e8d8b50ba19c69e5863e05c846faa8a5a11acde1c8d487347f0f4dd302",
+          "key": "sgl-project/sglang#34138",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "33592382a90aa108a049447dc8503af07ec55e15c2d6714a9469af1feeee06ff"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[agentscope-ai/QwenPaw#6825](https://github.com/agentscope-ai/QwenPaw/pull/6825) fix(mcp): apply configured timeout to client sessions**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[esengine/DeepSeek-Reasonix#8510](https://github.com/esengine/DeepSeek-Reasonix/pull/8510) fix(acp): return prompt failures as JSON-RPC errors**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#34138](https://github.com/sgl-project/sglang/pull/34138) Bind streaming abort cleanup to request lifecycle**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-18T08:01:43.598768Z",
+      "eventId": "dbdaee06a7b6e7581bdf8fd211137b4e17371dc56f923755fe890e60b301961d",
+      "idempotencyKey": "dbdaee06a7b6e7581bdf8fd211137b4e17371dc56f923755fe",
+      "kind": "watch",
+      "runId": "pr-followup-1787039823",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-18T07:11:35.746865Z",
+  "generatedAt": "2026-08-18T08:01:43.598768Z",
   "newEventCount": 1,
   "version": "notification_outbox_v2"
 }

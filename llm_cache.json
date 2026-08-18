@@ -19649,6 +19649,35 @@
     ],
     "why": "The issue reports a clear packaging defect: the published npm package lacks the static/sandbox_proxy.html file, causing the Apps tab to fail for all npx users. A maintainer triaged it as High priority, and a user confirmed a local fix. No competing PR exists, and the fix is straightforward: include the missing static file in the npm package."
   },
+  "92a37e8917fb673e44293e8bef16615ad6277fd7ba6c6d946f7bee313f8be1aa": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Fix multimodal metadata retention across MAX_UTILIZATION pause/resume in py_executor.py and multimodal.py",
+      "Add regression test for multimodal resume with MAX_UTILIZATION and V2 KV cache"
+    ],
+    "risks": [
+      "Fix may affect other multimodal models or scheduler paths",
+      "Metadata stripping is intentional for memory savings; changing it may impact performance"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with provided script and TensorRT-LLM 1.3.0rc23",
+      "Run a regression test that pauses and resumes a multimodal request under MAX_UTILIZATION and asserts no RequestError"
+    ],
+    "unknowns": [
+      "Maintainer confirmation of root cause and intended fix",
+      "Whether a PR is already in progress or planned",
+      "Exact code change required and its impact on other models"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "The issue reports a concrete multimodal resume failure with a clear traceback and code anchors, but the root cause is not confirmed by maintainers and the fix scope is unclear. The candidate is a bug report, not a code contribution, and the deterministic gate says ALLOW_PRIVATE_WORK, not a clean public PR. The track requires an algorithm mechanism, but the evidence only shows a metadata lifecycle bug in the LLM API, not a training objective, numerical method, or evaluation methodology. The expected changes are speculative and no maintainer confirmation exists."
+  },
   "92f8afbeb17182e7b2388928832393fa0897b5e631fe420eaa5bf44967dea465": {
     "confidence": 0.8,
     "contradictions": [],
@@ -33085,6 +33114,36 @@
     ],
     "wait_reason": "ASSIGNMENT",
     "why": "Issue is a well-scoped, maintainer-approved proposal with confirmed root causes and clear success criteria. However, the repository requires assignment and the issue explicitly requests maintainer approval before implementation begins, so work cannot start without that approval."
+  },
+  "f92282b095c0711039eb0eebc5dc2e5bae8069ed8087ff295789ad83d9c96ee9": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Issue body claims AI assistance and not reproduced by author, but recent comments show multiple contributors reproduced and prepared fixes."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "open_pr_assessment"
+    ],
+    "expected_changes": [
+      "mem0/vector_stores/valkey.py",
+      "tests/vector_stores/test_valkey.py"
+    ],
+    "risks": [
+      "Valkey FT.DROPINDEX does not support DD flag; must use scan_iter+DEL which may have cluster CROSSSLOT issues; need to handle glob escaping."
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Run the provided reproduction script against Valkey with search module; assert get_all returns empty after reset and no mem0:mem0:* keys remain.",
+      "Run existing tests/vector_stores/test_valkey.py to ensure no regressions."
+    ],
+    "unknowns": [
+      "Whether maintainers will accept the issue and which PR will be merged; no explicit acceptance label yet."
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue clearly describes a silent correctness bug in Valkey vector store reset/delete_col, with root cause and reproduction. However, multiple PRs (#6996, #7013, #7023) already exist and are closed pending issue acceptance; maintainer BCathcart is actively involved. The issue is not yet accepted, and the correct next step is to accept the issue and review the existing PRs, not start new work."
   },
   "f9388995937b1e55bd8977335851a0e9859696c4056b203c018e1a8a6a848547": {
     "confidence": 0.8,
