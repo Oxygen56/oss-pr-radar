@@ -2908,11 +2908,11 @@
     },
     "watch|agentscope-ai/QwenPaw#6825": {
       "category": "PR_FOLLOWUP",
-      "digest": "8f8423dc911336c1fde8388acaed9ccbe5d86f2ac899d8d7512829608bc7c0f7",
+      "digest": "a81d8fdd5ff2354ad1db94857769b1c62f3f2521ea1b003e433167d9e031eb7c",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-18T10:54:34.211171Z",
-      "stateId": "0031bd4087e153ff6e0bd6204fe35f364e2abe2b347db32b215fc202d4d545fa"
+      "seenAt": "2026-08-18T11:47:43.468617Z",
+      "stateId": "f455cc07acc573de13c6de3c5ebddd1d415a36364ae382d4eebca8c18ac446fd"
     },
     "watch|ai-dynamo/dynamo#12907": {
       "category": "PR_FOLLOWUP",
@@ -2979,11 +2979,11 @@
     },
     "watch|esengine/DeepSeek-Reasonix#8510": {
       "category": "PR_FOLLOWUP",
-      "digest": "46683b95dc029d701f5fef75b5158ad94438e46a23acd32dd542e92021b03063",
+      "digest": "12f958cfb38e9546c34dce6ef5cae23479d114ae2e6055c0db0e05dac755e77f",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-18T09:56:27.214224Z",
-      "stateId": "11e77ba48d46ea32afbfd679796321e7301c74d7fd56eda0ab4449b7d8bfa2ef"
+      "seenAt": "2026-08-18T11:47:43.468617Z",
+      "stateId": "8a17724838e8dc61598074a4a51c18fd535c2e63b0b0d73c7ad35b9af3c9066a"
     },
     "watch|hashicorp/terraform-mcp-server#442": {
       "category": "PR_FOLLOWUP",
@@ -3050,11 +3050,11 @@
     },
     "watch|sgl-project/sglang#34138": {
       "category": "PR_FOLLOWUP",
-      "digest": "6648f678ab647dc6555a212f4bcfa71dbca07459768b354b0653f9ad51acb234",
+      "digest": "8cee9a31694f2003fe7c297e78c270ee515c604a85ec62850ed58476f2f5cd54",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-18T10:54:34.211171Z",
-      "stateId": "c5901baba728917be0df1468cf05eb890a0bb631a5851b0a1fdfed2399770b9b"
+      "seenAt": "2026-08-18T11:47:43.468617Z",
+      "stateId": "3033b1a7abd77f3e393c7329060a85c67d95227e4745ee7839b9aca6e842fa6d"
     },
     "watch|sgl-project/sglang#35140": {
       "category": "PR_FOLLOWUP",
@@ -3081,157 +3081,8 @@
       "stateId": "63edbd994d2b92dbb10c269766f82e643cae0dbdc1c1aa1d1d9a6115d4e2e8cc"
     }
   },
-  "digest": "2ffeb38a69c39d10f6afc186c671531d58dfb565f2bb9b89ca4f11a563c47177",
+  "digest": "c53aa40bd0e1b5ead69cbd64030ab3a78a02bb70cb39c7fc649c8a4e6363f61c",
   "events": [
-    {
-      "attempts": 1,
-      "candidateKeys": [
-        "vllm-project/vllm#51804",
-        "vllm-project/vllm#51805"
-      ],
-      "candidateStates": [
-        {
-          "category": "NEW_CLEAN_CANDIDATE",
-          "digest": "9ad5cc1ac98c63710b59d116160dbfe3ad284d7bbcfb73371bbccf1456815af3",
-          "key": "vllm-project/vllm#51804",
-          "kind": "review",
-          "scannerVersion": "oss_pr_radar_v42_terminal_feedback_revoke",
-          "stateId": "b5722eb93945c9780571d97c606284e20c4e102d62f41d858d48121f633d70f9"
-        },
-        {
-          "category": "WAIT_MAINTAINER",
-          "digest": "afd1c68b59c28bb4bfe43406e12343e1f924ec41eb5d99b16ca5d9fe136926d2",
-          "key": "vllm-project/vllm#51805",
-          "kind": "review",
-          "scannerVersion": "oss_pr_radar_v42_terminal_feedback_revoke",
-          "stateId": "e7a2abf06f485b74429705e463d601856ad104ecd9ae21e33c32e189220b36b1"
-        }
-      ],
-      "card": {
-        "config": {
-          "wide_screen_mode": true
-        },
-        "elements": [
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[vllm-project/vllm#51804](https://github.com/vllm-project/vllm/issues/51804) [Bug]: step3p5 parser bypasses XML parsing for named/required tool_choice**\n建议：NEW_CLEAN_CANDIDATE | 分数：12\n价值：Issue identifies a concrete bug: Step3p5ToolParser inherits supports_required_and_named=True, causing named/required tool_choice to bypass XML parsing and return raw XML as arguments. Root cause is clear and fix is minimal (set flag to False). No competing PR addresses this issue; existing PRs are unrelated or lack tests. Actionable and valuable.\n改动：Set supports_required_and_named = False in Step3p5ToolParser；Add regression test for named/required tool_choice with step3p5 parser\n验证：Reproduce with provided example: send chat completion with tool_choice named and step3p5 parser, assert arguments are JSON not raw XML；Run existing tool parser tests and add new test case\n风险：Potential behavior change for users relying on raw XML output; but this is a bug fix aligning with other XML parsers\n竞争：仅发现未直接关联、无代码路径或强机制重合的 PR #51655；保留为搜索上下文，不阻止实现\n下一步：仅完成本地复现、修复、测试和私有提交包；由用户自行决定公开提交。\n证据：复现信号 5，根因信号 True",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[vllm-project/vllm#51805](https://github.com/vllm-project/vllm/issues/51805) [Bug]: MooncakeStoreConnector process_tokens assertion fails on decode with MTP speculative decoding**\n建议：WAIT_MAINTAINER | 分数：13\n价值：The issue describes a concrete assertion failure in MooncakeStoreConnector when MTP speculative decoding advances token_len faster than block hashes are computed. The root cause is plausible but not fully verified; the deterministic gate requires HUMAN_REVIEW, and there is a potential duplicate issue #51801 sharing stack signatures. The candidate is technically actionable but needs maintainer confirmation and duplicate resolution.\n改动：Modify MooncakeStoreConnector's process_tokens to handle token_len_chunk exceeding block_hashes length, possibly by aligning token counts or deferring hash computation.\n验证：Reproduce with MTP speculative decoding and MooncakeStoreConnector in disaggregated setup; add regression test with synthetic token sequences to verify assertion no longer fails.\n风险：Potential duplicate issue #51801; root cause may be in scheduler token tracking rather than connector; fix may affect performance or correctness of KV transfer.\n竞争：未发现相关 open PR；仅发现未直接关联 issue 的历史 PR\n下一步：先人工比较相关 issue 的根因、维护者归并方向和可提交代码路径；确认不是重复后再进入实现。\n证据：复现信号 6，根因信号 True",
-              "tag": "lark_md"
-            }
-          }
-        ],
-        "header": {
-          "template": "yellow",
-          "title": {
-            "content": "OSS PR Radar: 需要确认",
-            "tag": "plain_text"
-          }
-        }
-      },
-      "createdAt": "2026-08-11T11:13:49.024735Z",
-      "eventId": "6323adaab2f6adbbf679c39d5ee31820d30c7e8507669ff30f343a1ca8ef1cbf",
-      "idempotencyKey": "6323adaab2f6adbbf679c39d5ee31820d30c7e8507669ff30f",
-      "kind": "review",
-      "lastAttemptAt": "2026-08-11T11:14:16.779293Z",
-      "messageId": "om_x100b68840e6a28b4c2a0ba805dae490",
-      "runId": "scan-20260811T111019Z-805ce7f0fdf7",
-      "sentAt": "2026-08-11T11:14:18.960943Z",
-      "status": "SENT"
-    },
-    {
-      "attempts": 1,
-      "candidateKeys": [
-        "agentscope-ai/QwenPaw#6825",
-        "sgl-project/sglang#30554",
-        "sgl-project/sglang#34138"
-      ],
-      "candidateStates": [
-        {
-          "category": "PR_FOLLOWUP",
-          "digest": "b6f70c127ec0b4c28839a8f913dd95e2026ab932a6ff75c82d8b53932f8b6804",
-          "key": "agentscope-ai/QwenPaw#6825",
-          "kind": "watch",
-          "scannerVersion": "",
-          "stateId": "f8dc28290164b9f064f36a9acfbcdd5d3d0df6b6d7590c51b51d1a955fff422e"
-        },
-        {
-          "category": "PR_FOLLOWUP",
-          "digest": "21d57e6f677b1e079404ab5b5b336afac81a433ff911a94e49a4c11e94c60494",
-          "key": "sgl-project/sglang#30554",
-          "kind": "watch",
-          "scannerVersion": "",
-          "stateId": "0d41c205f68980549d48ac0f1131a573a89deb164643206e886bbea6b90fd5b3"
-        },
-        {
-          "category": "PR_FOLLOWUP",
-          "digest": "546d4b2b7ae33c74f02ea8c4802c731d41bedac4b5287783cd5c527439294431",
-          "key": "sgl-project/sglang#34138",
-          "kind": "watch",
-          "scannerVersion": "",
-          "stateId": "8cc630123b568e896d111ac4345b4e36d06dcd45f74101b460336df04bae0406"
-        }
-      ],
-      "card": {
-        "config": {
-          "wide_screen_mode": true
-        },
-        "elements": [
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[agentscope-ai/QwenPaw#6825](https://github.com/agentscope-ai/QwenPaw/pull/6825) fix(mcp): apply configured timeout to client sessions**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[sgl-project/sglang#30554](https://github.com/sgl-project/sglang/pull/30554) [Spec] Size shared logits buffer for adaptive candidates**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[sgl-project/sglang#34138](https://github.com/sgl-project/sglang/pull/34138) Bind streaming abort cleanup to request lifecycle**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
-              "tag": "lark_md"
-            }
-          }
-        ],
-        "header": {
-          "template": "yellow",
-          "title": {
-            "content": "OSS PR Radar: 状态更新",
-            "tag": "plain_text"
-          }
-        }
-      },
-      "createdAt": "2026-08-11T11:13:49.371945Z",
-      "eventId": "bf98929b17843f1ec5cfccd3350e2ebc4c033139eb91e2c25275e2b930e7d8fe",
-      "idempotencyKey": "bf98929b17843f1ec5cfccd3350e2ebc4c033139eb91e2c252",
-      "kind": "watch",
-      "lastAttemptAt": "2026-08-11T11:14:18.960968Z",
-      "messageId": "om_x100b68840e7664a4c0bbfe354b05ca0",
-      "runId": "pr-followup-1786446580",
-      "sentAt": "2026-08-11T11:14:20.164159Z",
-      "status": "SENT"
-    },
     {
       "attempts": 1,
       "candidateKeys": [
@@ -26810,9 +26661,90 @@
       "runId": "pr-followup-1787050184",
       "sentAt": "2026-08-18T10:55:17.614835Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "agentscope-ai/QwenPaw#6825",
+        "esengine/DeepSeek-Reasonix#8510",
+        "sgl-project/sglang#34138"
+      ],
+      "candidateStates": [
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "a81d8fdd5ff2354ad1db94857769b1c62f3f2521ea1b003e433167d9e031eb7c",
+          "key": "agentscope-ai/QwenPaw#6825",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "f455cc07acc573de13c6de3c5ebddd1d415a36364ae382d4eebca8c18ac446fd"
+        },
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "12f958cfb38e9546c34dce6ef5cae23479d114ae2e6055c0db0e05dac755e77f",
+          "key": "esengine/DeepSeek-Reasonix#8510",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "8a17724838e8dc61598074a4a51c18fd535c2e63b0b0d73c7ad35b9af3c9066a"
+        },
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "8cee9a31694f2003fe7c297e78c270ee515c604a85ec62850ed58476f2f5cd54",
+          "key": "sgl-project/sglang#34138",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "3033b1a7abd77f3e393c7329060a85c67d95227e4745ee7839b9aca6e842fa6d"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[agentscope-ai/QwenPaw#6825](https://github.com/agentscope-ai/QwenPaw/pull/6825) fix(mcp): apply configured timeout to client sessions**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[esengine/DeepSeek-Reasonix#8510](https://github.com/esengine/DeepSeek-Reasonix/pull/8510) fix(acp): return prompt failures as JSON-RPC errors**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#34138](https://github.com/sgl-project/sglang/pull/34138) Bind streaming abort cleanup to request lifecycle**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-18T11:47:43.468617Z",
+      "eventId": "03dea9b36140e20e200b3374e47ec8f6213481ea184b5bbb5930ef880751137e",
+      "idempotencyKey": "03dea9b36140e20e200b3374e47ec8f6213481ea184b5bbb59",
+      "kind": "watch",
+      "runId": "pr-followup-1787053470",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-18T10:54:34.211171Z",
+  "generatedAt": "2026-08-18T11:47:43.468617Z",
   "newEventCount": 1,
   "version": "notification_outbox_v2"
 }

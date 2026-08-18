@@ -21826,6 +21826,31 @@
     ],
     "why": "The issue precisely identifies a semantic-convention violation in OTel GenAI message roles, with a minimal reproduction and confirmed root cause. However, the repository requires assignment and the existing PR #7261 is closed with CI failures, so maintainer direction is needed before starting new work."
   },
+  "a5b4aa5390a2fad9ed522ed306ca07440be0afba2699cfc4c770e5c3803394c0": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify packages/google/src/convert-json-schema-to-openapi-schema.ts to resolve $ref against $defs or translate to Vertex's ref/defs form, and add warning/error for unresolvable references."
+    ],
+    "risks": [
+      "Potential behavior change for existing schemas that rely on dropping $ref; need to ensure backward compatibility or add opt-in."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add a unit test using the issue's minimal schema with $ref/$defs to assert the converted OpenAPI schema either inlines the reference or emits ref/defs, and that no silent dropping occurs."
+    ],
+    "unknowns": [
+      "Maintainer preference on whether to inline or translate to ref/defs; but the issue provides a clear priority order and the fix is actionable regardless."
+    ],
+    "wait_reason": null,
+    "why": "Issue reports a concrete bug in @ai-sdk/google's JSON Schema to OpenAPI conversion: $ref/$defs are silently dropped, causing Vertex API rejection. Root cause is clearly identified in the converter's destructuring allowlist. The issue includes a minimal reproduction, expected vs actual output, and a suggested fix with multiple options. No competing PR exists; the only related PR is a draft with no direct overlap. The fix is actionable and testable."
+  },
   "a5c23c12415cb1a107ffe454dcd4137da5829deddeb48869891d5cbda4e291d1": {
     "confidence": 0.7,
     "contradictions": [],
