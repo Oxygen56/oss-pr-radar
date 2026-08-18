@@ -17523,6 +17523,33 @@
     ],
     "why": "Issue provides a clear root cause and repro, but maintainer comment questions the desired behavior (retry vs fast fail) and suggests possible UX mitigation, indicating design confirmation is needed before implementation."
   },
+  "7e14d982cb7b2e600b260dde7d74d085573348ce2d70026d174a999032b73aaa": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify variable expansion logic in test vars to respect Nunjucks raw blocks and string literal expressions",
+      "Add regression tests for escaping placeholders in vars"
+    ],
+    "risks": [
+      "Potential impact on existing behavior where users rely on expansion in vars; need to ensure backward compatibility"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a test using the provided minimal config to assert that raw blocks and string literal expressions are not expanded",
+      "Run existing unit tests for variable expansion and prompt rendering"
+    ],
+    "unknowns": [
+      "Exact code location for variable expansion in test vars; maintainer preference on implementation approach"
+    ],
+    "wait_reason": null,
+    "why": "Issue clearly describes a bug in variable expansion within test vars, provides a minimal reproduction, and references a prior fix for a similar issue. No competing PR or maintainer assignment found, and the fix is localized to the variable expansion logic."
+  },
   "7e899af95aa2fbf9b319b5d63467b3e8c9f63aceabcc9c0135785b4d6f9160b6": {
     "confidence": 0.8,
     "contradictions": [
