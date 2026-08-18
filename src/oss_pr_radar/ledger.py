@@ -2871,19 +2871,13 @@ class RadarLedger:
         review_marker: str,
         reason: str,
     ) -> bool:
-        """Reopen one stalled result when controller-owned review evidence changes."""
+        """Reopen one stalled result only when controller-owned evidence changes."""
 
-        one_shot_prefetch = reason == "DEPENDENCY_PREFETCH_AVAILABLE"
-        dedupe_key = sha256_text(
-            f"{review_marker}|{reason}"
-            if one_shot_prefetch
-            else f"{result_digest}|{review_marker}|{reason}"
-        )
+        evidence_fingerprint = sha256_text(f"{review_marker}|{reason}")
         now = iso_z(datetime.now(UTC))
         with self.transaction() as connection:
-            rearm_after_no_progress = "" if one_shot_prefetch else "AND rearmed.id>n.id"
             row = connection.execute(
-                f"""SELECT n.id
+                """SELECT n.id
                    FROM opportunities o
                    JOIN events d ON d.id=(
                      SELECT MAX(d2.id) FROM events d2
@@ -2896,17 +2890,37 @@ class RadarLedger:
                    WHERE o.key=?
                      AND json_extract(d.payload_json,'$.resultDigest')=?
                      AND NOT EXISTS (
-                       SELECT 1 FROM events rearmed
-                       WHERE rearmed.opportunity_key=o.key
-                         AND rearmed.event_type='VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED'
-                         AND rearmed.dedupe_key=?
-                         {rearm_after_no_progress}
+                       SELECT 1 FROM events active_rearm
+                       WHERE active_rearm.opportunity_key=o.key
+                         AND active_rearm.event_type=
+                             'VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED'
+                         AND json_extract(active_rearm.payload_json,'$.resultDigest')=
+                             json_extract(d.payload_json,'$.resultDigest')
+                         AND active_rearm.id>n.id
                      )
                    ORDER BY n.id DESC LIMIT 1""",
-                (key, result_digest, dedupe_key),
+                (key, result_digest),
             ).fetchone()
             if row is None:
                 return False
+            previous = connection.execute(
+                """SELECT payload_json FROM events
+                   WHERE opportunity_key=?
+                     AND event_type='VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED'
+                   ORDER BY id DESC LIMIT 1""",
+                (key,),
+            ).fetchone()
+            if previous is not None:
+                previous_payload = json.loads(previous["payload_json"])
+                previous_fingerprint = str(previous_payload.get("evidenceFingerprint") or "")
+                if not previous_fingerprint:
+                    previous_fingerprint = sha256_text(
+                        f"{previous_payload.get('reviewMarker', '')}|"
+                        f"{previous_payload.get('reason', '')}"
+                    )
+                if previous_fingerprint == evidence_fingerprint:
+                    return False
+            dedupe_key = sha256_text(f"{row['id']}|{evidence_fingerprint}")
             self._event(
                 connection,
                 key,
@@ -2916,6 +2930,7 @@ class RadarLedger:
                     "resultDigest": result_digest,
                     "reviewMarker": review_marker,
                     "reason": reason,
+                    "evidenceFingerprint": evidence_fingerprint,
                 },
                 now,
             )

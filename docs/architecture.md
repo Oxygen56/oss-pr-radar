@@ -94,6 +94,13 @@ recovery attempt. Recoveries use the same single-task limit: one active or
 authorized recovery keeps every later failed task in a visible queue. An
 ambiguous recovery is surfaced instead of retried.
 
+Incomplete validation is evidence-driven rather than timer-driven. A task that
+made no progress remains waiting until its controller review, local code,
+dependency plan, policy revision, or validation evidence fingerprint differs
+from the evidence used for the previous continuation. A new result identifier
+alone cannot wake the task. There is no fixed cooldown; genuinely changed
+evidence can continue immediately.
+
 ## State Ownership
 
 - `radar-state`: cloud JSON checkpoints with SHA-256 manifest and compare-and-swap publish.

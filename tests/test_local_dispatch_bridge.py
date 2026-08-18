@@ -6511,11 +6511,8 @@ def test_new_controller_review_feedback_rearms_a_stalled_validation(monkeypatch,
         result_digest=second_digest,
         missing=["relevant_tests_green", "independent_review_passed"],
     )
-    monkeypatch.setattr(
-        MODULE,
-        "controller_review_result",
-        lambda _root, _value: {"verdict": "FAIL", "summary": "integration path is stale"},
-    )
+    review = {"verdict": "FAIL", "summary": "integration path is stale"}
+    monkeypatch.setattr(MODULE, "controller_review_result", lambda _root, _value: dict(review))
 
     listed = MODULE.validation_followup_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
 
@@ -6525,6 +6522,31 @@ def test_new_controller_review_feedback_rearms_a_stalled_validation(monkeypatch,
     ]
     assert listed["blockedNoProgress"] == []
     assert listed["candidates"][0]["resultDigest"] == second_digest
+
+    store.reserve_validation_followup(thread_id="thread-1", result_digest=second_digest)
+    store.commit_validation_followup(thread_id="thread-1", result_digest=second_digest)
+    value["evidence"] = {"summary": "the same validation gap remains"}
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    third_digest = hashlib.sha256(result_path.read_bytes()).hexdigest()
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest=third_digest,
+        missing=["relevant_tests_green", "independent_review_passed"],
+    )
+
+    unchanged = MODULE.validation_followup_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert unchanged["rearmedReviewFeedback"] == []
+    assert unchanged["blockedNoProgress"][0]["resultDigest"] == third_digest
+
+    review["summary"] = "the integration path and async fallback are both stale"
+    changed = MODULE.validation_followup_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert changed["rearmedReviewFeedback"] == [
+        {"key": "a/b#1", "reason": "CONTROLLER_REVIEW_FEEDBACK_AVAILABLE"}
+    ]
+    assert changed["candidates"][0]["resultDigest"] == third_digest
 
 
 def test_dirty_worktree_rearms_a_stalled_validation_result(tmp_path):
