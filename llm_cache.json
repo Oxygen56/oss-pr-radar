@@ -8113,6 +8113,32 @@
     ],
     "why": "Issue provides a precise root cause and a concrete fix for a user-visible bug in vLLM's Inkling parser, with a no-GPU repro. However, the deterministic gate requires HUMAN_REVIEW, and the open PR/related issue lookup failed, so we cannot rule out duplicate work. Maintainer design confirmation is also absent."
   },
+  "40b6fe743a0848704c05775b365e7a51e23988a5414edde025ae72e06da31f4a": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "litellm/integrations/prometheus.py",
+      "litellm/proxy/management_endpoints/key_management_endpoints.py"
+    ],
+    "risks": [
+      "PR #37215 may already fix the root cause; avoid duplicate work."
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Add regression test creating a key with NULL team_id and asserting budget metric is emitted after initialization tick."
+    ],
+    "unknowns": [
+      "Whether PR #37215 already addresses the NULL team_id filter bug."
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue clearly identifies a NULL-team_id SQL filter bug in prometheus budget metric initialization, with strong reproduction evidence. However, open PR #37215 overlaps semantically and touches the same code paths, requiring maintainer comparison before new work."
+  },
   "40d2d52fc2afd21f5c5260a51f456ba543e315f9f842de35d738786bdde06596": {
     "confidence": 0.8,
     "contradictions": [
@@ -9519,6 +9545,32 @@
     ],
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue reports two distinct streaming parse failures for OpenAI Responses API with DeepSeek and Alibaba providers. Root cause is likely in the Responses stream event parser, but the issue lacks a minimal code-level reproduction and the maintainer has not confirmed the design or assigned work. The repository requires assignment, and the gate decision is HUMAN_REVIEW."
+  },
+  "4b04910a0bd02c4a7b580392359b8c03265205b1ce97ca6b20e7af6bf0e2a5f4": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Add a regression test that reproduces the race by delaying session.update",
+      "Modify OpenAIRealtimeLLMService to gate audio processing on _api_session_ready before sending audio to the server"
+    ],
+    "risks": [
+      "Potential maintainer design preference on how to gate audio; avoid changing public API behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Use the provided minimal reproducible example to create a failing test that asserts the first turn honors system_instruction",
+      "Run targeted unit tests for the OpenAI realtime service and static checks"
+    ],
+    "unknowns": [
+      "No explicit maintainer approval or assignment, but repository does not require assignment; no competing PR exists"
+    ],
+    "wait_reason": null,
+    "why": "Issue clearly describes a race condition where server-VAD turns can start before session.update is applied, causing first-turn instructions to be ignored. Includes a deterministic reproduction with a patch that delays session.update, and a clear expected vs actual behavior. No competing PR or issue found."
   },
   "4b07de3be9a81c4b3fa0a41ed2c5ec72a30c41669a2edf1f17c00d5f24561166": {
     "confidence": 0.7,
@@ -15307,6 +15359,33 @@
     ],
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue provides a clear root cause and reproduction for a real bug in SGLang's host memory pre-flight check, but lacks maintainer confirmation or design preference on the fix approach. The proposed fix (adding HugePages free bytes to available memory) is plausible but needs maintainer input to avoid unintended behavior changes."
+  },
+  "6f150ce740d6b69e420725756cd86fe5b09bb454426044e770aa27814bc0a710": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue says only one copy exists, but comment suggests leftover copies may exist"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Extension activation/registration logic to guard against duplicate command registration"
+    ],
+    "risks": [
+      "May be an environment-specific issue not reproducible in CI; fix could mask a real double-loading bug"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Reproduce in a clean WSL environment with only one extension copy; verify command registered once; add a regression test for idempotent command registration"
+    ],
+    "unknowns": [
+      "Whether the issue is reproducible in a clean environment; whether maintainers have acknowledged the bug; whether there is an existing PR or design for extension lifecycle"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "The issue reports a duplicate command registration error in WSL, but the root cause is unclear. The only comment suggests it may be a leftover extension folder or double-loading, not a code defect. No maintainer confirmation, no code anchor beyond the command name, and no deterministic reproduction. The track is agent_ai_infra, but the issue is about VS Code extension lifecycle, not core agent/inference logic."
   },
   "6f5512baa8391347b1ef0ed24e74da3f6dd0980b40598f2cecfb44a9eac21fe0": {
     "confidence": 0.7,
@@ -23480,6 +23559,33 @@
       "Maintainer preference on whether to keep strict indexing or use .get()"
     ],
     "why": "The issue provides a clear root cause and a minimal fix for a deterministic crash in the standalone DisRM reward path. However, the supplied open PR #7151 directly targets the same reward_extra_info contract and is still open, creating potential competition. The issue is not assigned and no maintainer has confirmed the fix approach, so maintainer input is needed to avoid duplicate work."
+  },
+  "b3f091158cf47d3089e4cc1e500bdfacfdc89c41fbd681b4d5b79897c2bc4cd6": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Initial report implies standalone FastMCP AzureProvider, but later comments confirm the deployment uses MCP SDK's mcp.server.fastmcp without AzureProvider."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "OAuth proxy/translation layer or documentation for Entra-backed ChatGPT Remote MCP"
+    ],
+    "risks": [
+      "Changing Entra configuration blindly may not resolve the mismatch; adding a proxy layer could introduce security and maintenance overhead."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with mcp==1.29.0 and AuthSettings(resource_server_url=...) to confirm the resource/scope mismatch; then validate any proposed proxy or configuration change against the same setup."
+    ],
+    "unknowns": [
+      "Exact FastMCP version and code path in the deployed environment; whether a server-side fix is feasible in the MCP SDK's RS-only path; maintainer's preferred resolution."
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "The issue reports an Entra OAuth failure but the discussion reveals the reporter is using the MCP SDK's mcp.server.fastmcp, not standalone FastMCP's AzureProvider. The root cause is likely a client-side scope/resource mismatch with no clear server-side fix in the SDK path. The candidate lacks a concrete code change proposal and requires maintainer guidance on the supported configuration."
   },
   "b41796eff7f932a8b8ed4776b8da6dd71f2a9bed41388168b9efcc590a5555cd": {
     "confidence": 0.6,
