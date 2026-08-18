@@ -1,13 +1,13 @@
 {
-  "digest": "4134b2d3fe8cecaed6df6a5877b759d3fd8f5ebbbd6ef56991d56a6bc1144140",
-  "generatedAt": "2026-08-18T11:44:30.192903Z",
+  "digest": "4d63664458fd081f8d77ced4f314492fc599a48fc558dfb422a6c2a59dec08bd",
+  "generatedAt": "2026-08-18T13:11:55.034205Z",
   "items": [
     {
       "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
       "actions": [],
       "baseRefName": "litellm_internal_staging",
       "baseSha": "4fd7a73ef57543b9b843aa98f3bdc7506b4d2deb",
-      "checkedAt": "2026-08-18T11:44:30.192903Z",
+      "checkedAt": "2026-08-18T13:11:55.034205Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -45,7 +45,7 @@
       "actions": [],
       "baseRefName": "litellm_internal_staging",
       "baseSha": "4fd7a73ef57543b9b843aa98f3bdc7506b4d2deb",
-      "checkedAt": "2026-08-18T11:44:30.192903Z",
+      "checkedAt": "2026-08-18T13:11:55.034205Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -86,7 +86,7 @@
       ],
       "baseRefName": "litellm_internal_staging",
       "baseSha": "4fd7a73ef57543b9b843aa98f3bdc7506b4d2deb",
-      "checkedAt": "2026-08-18T11:44:30.192903Z",
+      "checkedAt": "2026-08-18T13:11:55.034205Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [
@@ -232,8 +232,8 @@
       "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
       "actions": [],
       "baseRefName": "main",
-      "baseSha": "04944f380a1f718e9e86f58a381cbf5d6d93b676",
-      "checkedAt": "2026-08-18T11:44:30.192903Z",
+      "baseSha": "c9c34ae5a8626f133bd1b9c34cac0f3270e35b8d",
+      "checkedAt": "2026-08-18T13:11:55.034205Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -242,7 +242,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "04944f380a1f718e9e86f58a381cbf5d6d93b676",
+        "baseSha": "c9c34ae5a8626f133bd1b9c34cac0f3270e35b8d",
         "changedFiles": [
           ".changeset/bright-crons-stream.md",
           "docs/en/reference/kimi-acp.md",
@@ -274,7 +274,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "944172f6c0d0f90fdc1921fd38c1dcae62c48592",
-      "checkedAt": "2026-08-18T11:44:30.192903Z",
+      "checkedAt": "2026-08-18T13:11:55.034205Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -325,7 +325,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "944172f6c0d0f90fdc1921fd38c1dcae62c48592",
-      "checkedAt": "2026-08-18T11:44:30.192903Z",
+      "checkedAt": "2026-08-18T13:11:55.034205Z",
       "draft": true,
       "evidence": {
         "actionableCheckNames": [],
@@ -373,25 +373,20 @@
       "url": "https://github.com/Oxygen56/fixtureforge/pull/2"
     },
     {
-      "actionDigest": "3ea2332d04b004a5179d2f6d1a9005165890355b9393282aa89d2c9bd8ddadf6",
-      "actions": [
-        "CI 检查失败",
-        "存在未解决审查线程"
-      ],
+      "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
+      "actions": [],
       "baseRefName": "main",
-      "baseSha": "b74bc385d448937d45d1208deb78f9de6c372add",
-      "checkedAt": "2026-08-18T11:44:30.192903Z",
+      "baseSha": "10045f2d519b488cfbff8afa46a156b0cb66568b",
+      "checkedAt": "2026-08-18T13:11:55.034205Z",
       "draft": false,
       "evidence": {
-        "actionableCheckNames": [
-          "CodeQL"
-        ],
+        "actionableCheckNames": [],
         "baseCompareError": null,
         "baseCompareStatus": null,
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "b74bc385d448937d45d1208deb78f9de6c372add",
+        "baseSha": "10045f2d519b488cfbff8afa46a156b0cb66568b",
         "changedFiles": [
           "docs/docs/core-abilities/fetching_ticket_context.md",
           "pr_agent/settings/.secrets_template.toml",
@@ -399,117 +394,22 @@
           "pr_agent/tools/ticket_pr_compliance_check.py",
           "tests/unittest/test_ticket_compliance.py"
         ],
-        "failingChecks": [
-          {
-            "annotations": [
-              {
-                "endLine": 45,
-                "level": "failure",
-                "message": "This class does not call [GithubProvider.__init__](1) during initialization. ([_GithubProvider.__init__](2) may be missing a call to a base class __init__)",
-                "path": "tests/unittest/test_ticket_compliance.py",
-                "startLine": 45
-              },
-              {
-                "endLine": 84,
-                "level": "failure",
-                "message": "This class does not call [AzureDevopsProvider.__init__](1) during initialization. ([_AzureProvider.__init__](2) may be missing a call to a base class __init__)",
-                "path": "tests/unittest/test_ticket_compliance.py",
-                "startLine": 84
-              }
-            ],
-            "conclusion": "failure",
-            "name": "CodeQL",
-            "url": "https://github.com/The-PR-Agent/pr-agent/runs/95620980572"
-          },
-          {
-            "annotations": [
-              {
-                "endLine": 2,
-                "level": "warning",
-                "message": "Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8, docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/",
-                "path": ".github",
-                "startLine": 2
-              },
-              {
-                "endLine": 439,
-                "level": "failure",
-                "message": "Process completed with exit code 1.",
-                "path": ".github",
-                "startLine": 439
-              }
-            ],
-            "conclusion": "failure",
-            "name": "build-and-test",
-            "url": "https://github.com/The-PR-Agent/pr-agent/actions/runs/32013393041/job/95620714153"
-          },
-          {
-            "annotations": [
-              {
-                "endLine": 2,
-                "level": "warning",
-                "message": "Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8, docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/",
-                "path": ".github",
-                "startLine": 2
-              },
-              {
-                "endLine": 1999,
-                "level": "failure",
-                "message": "Process completed with exit code 1.",
-                "path": ".github",
-                "startLine": 1999
-              }
-            ],
-            "conclusion": "failure",
-            "name": "build-and-test",
-            "url": "https://github.com/The-PR-Agent/pr-agent/actions/runs/32013393101/job/95620715420"
-          }
-        ],
-        "headSha": "5f3f33bac5b21fe12d245f3f6835bd0e87332283",
+        "failingChecks": [],
+        "headSha": "1b7dc5249ad958279f0b2e6104c19bcaa49518c6",
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "requestedChanges": [],
-        "unresolvedReviewThreads": [
-          {
-            "association": "COLLABORATOR",
-            "authorType": "User",
-            "createdAt": "2026-08-18T09:53:05Z",
-            "path": "tests/unittest/test_ticket_compliance.py",
-            "reviewer": "IsmaelMartinez",
-            "summary": "CI ran here for the first time today and found two things, both in this file. CodeQL `py/missing-call-to-init`, here and at :84. `extract_tickets` dispatches on `isinstance(git_provider, GithubProvider)` at :340, so the doubles do need to be real instances, but `test_ticket_extraction_async.py` gets that with `GithubProvider.__new__(GithubProvider)` rather than subclassing, which doesn't trip the ",
-            "url": "https://github.com/The-PR-Agent/pr-agent/pull/2430#discussion_r3802967355"
-          },
-          {
-            "association": "NONE",
-            "authorType": "Bot",
-            "createdAt": "2026-08-18T06:40:03Z",
-            "path": "tests/unittest/test_ticket_compliance.py",
-            "reviewer": "github-advanced-security",
-            "summary": "## CodeQL / Missing call to superclass `__init__` during object initialization This class does not call [GithubProvider.__init__](1) during initialization. ([_GithubProvider.__init__](2) may be missing a call to a base class __init__) [Show more details](https://github.com/The-PR-Agent/pr-agent/security/code-scanning/362)",
-            "url": "https://github.com/The-PR-Agent/pr-agent/pull/2430#discussion_r3801623331"
-          },
-          {
-            "association": "NONE",
-            "authorType": "Bot",
-            "createdAt": "2026-08-18T06:40:03Z",
-            "path": "tests/unittest/test_ticket_compliance.py",
-            "reviewer": "github-advanced-security",
-            "summary": "## CodeQL / Missing call to superclass `__init__` during object initialization This class does not call [AzureDevopsProvider.__init__](1) during initialization. ([_AzureProvider.__init__](2) may be missing a call to a base class __init__) [Show more details](https://github.com/The-PR-Agent/pr-agent/security/code-scanning/363)",
-            "url": "https://github.com/The-PR-Agent/pr-agent/pull/2430#discussion_r3801623339"
-          }
-        ]
+        "unresolvedReviewThreads": []
       },
-      "headSha": "5f3f33bac5b21fe12d245f3f6835bd0e87332283",
+      "headSha": "1b7dc5249ad958279f0b2e6104c19bcaa49518c6",
       "key": "The-PR-Agent/pr-agent#2430",
       "mergeConflict": false,
       "mergeableState": "blocked",
       "number": 2430,
       "repo": "The-PR-Agent/pr-agent",
-      "taskActionDigest": "96e09c8feba13c35e61c4ab3cd37fbf30117a6e8f08dd74dad5103452090dee0",
-      "taskActions": [
-        "当前分支检查失败",
-        "存在未解决审查线程"
-      ],
-      "taskFollowupRequired": true,
+      "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
+      "taskActions": [],
+      "taskFollowupRequired": false,
       "title": "feat: add Asana ticket detection to ticket compliance check",
       "url": "https://github.com/The-PR-Agent/pr-agent/pull/2430"
     },
@@ -520,7 +420,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "38006dda2d9632ec8cba376b89684376a6f0b1d9",
-      "checkedAt": "2026-08-18T11:44:30.192903Z",
+      "checkedAt": "2026-08-18T13:11:55.034205Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -544,7 +444,7 @@
       "headSha": "2f480ca99e72fe9e76b2ab3523bdc682334a2332",
       "key": "agentscope-ai/QwenPaw#6825",
       "mergeConflict": true,
-      "mergeableState": "unknown",
+      "mergeableState": "dirty",
       "number": 6825,
       "repo": "agentscope-ai/QwenPaw",
       "taskActionDigest": "a81d8fdd5ff2354ad1db94857769b1c62f3f2521ea1b003e433167d9e031eb7c",
@@ -561,8 +461,8 @@
         "存在未解决审查线程"
       ],
       "baseRefName": "main",
-      "baseSha": "46fa2746593e7da53b8936b682fb2ec5e81daec3",
-      "checkedAt": "2026-08-18T11:44:30.192903Z",
+      "baseSha": "8d072ee48bfceffec19276bf468707c9cef53b29",
+      "checkedAt": "2026-08-18T13:11:55.034205Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -571,7 +471,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "46fa2746593e7da53b8936b682fb2ec5e81daec3",
+        "baseSha": "8d072ee48bfceffec19276bf468707c9cef53b29",
         "changedFiles": [
           "deploy/inference-gateway/epp/pkg/plugins/disagg/decode_scorer.go",
           "deploy/inference-gateway/epp/pkg/plugins/disagg/decode_scorer_test.go",
@@ -651,7 +551,7 @@
       "actions": [],
       "baseRefName": "dev",
       "baseSha": "4e81a0b73f6e614afebf9c7ff8862904a3674455",
-      "checkedAt": "2026-08-18T11:44:30.192903Z",
+      "checkedAt": "2026-08-18T13:11:55.034205Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -692,7 +592,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "90ab9578f92ea6ca49616bcbc22ac6f9a32724df",
-      "checkedAt": "2026-08-18T11:44:30.192903Z",
+      "checkedAt": "2026-08-18T13:11:55.034205Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -730,53 +630,11 @@
       "url": "https://github.com/anthropics/claude-agent-sdk-python/pull/1008"
     },
     {
-      "actionDigest": "941190e4ccb7ecbd42d963696c64d1cb72080913735dff7a216029170c727381",
-      "actions": [
-        "分支存在合并冲突"
-      ],
-      "baseRefName": "main",
-      "baseSha": "f379e5ad66e2febc1616cf8d6284666fecbe514e",
-      "checkedAt": "2026-08-18T11:44:30.192903Z",
-      "draft": false,
-      "evidence": {
-        "actionableCheckNames": [],
-        "baseCompareError": null,
-        "baseCompareStatus": null,
-        "baseIntegrationRequired": false,
-        "baseMergeBaseSha": null,
-        "baseRefName": "main",
-        "baseSha": "f379e5ad66e2febc1616cf8d6284666fecbe514e",
-        "changedFiles": [
-          "skills/pptx/scripts/keynote_sanitize.py",
-          "skills/pptx/scripts/office/pack.py"
-        ],
-        "failingChecks": [],
-        "headSha": "fa2055c658cd78905e417fb5754f0c4cb17143c2",
-        "mergeConflict": true,
-        "mergeConflictPreparationVersion": "conflict_files_v1",
-        "requestedChanges": [],
-        "unresolvedReviewThreads": []
-      },
-      "headSha": "fa2055c658cd78905e417fb5754f0c4cb17143c2",
-      "key": "anthropics/skills#1231",
-      "mergeConflict": true,
-      "mergeableState": "dirty",
-      "number": 1231,
-      "repo": "anthropics/skills",
-      "taskActionDigest": "2074e14eb8e646a7d7ca0a5c39101c966f0f096a8a476b1b4827e1114376dd2b",
-      "taskActions": [
-        "分支存在合并冲突"
-      ],
-      "taskFollowupRequired": true,
-      "title": "fix(pptx): add Keynote/macOS OOXML compliance sanitizer",
-      "url": "https://github.com/anthropics/skills/pull/1231"
-    },
-    {
       "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
       "actions": [],
       "baseRefName": "main",
       "baseSha": "195a2a38bcde3e51befdacb1ddacb68a21f87006",
-      "checkedAt": "2026-08-18T11:44:30.192903Z",
+      "checkedAt": "2026-08-18T13:11:55.034205Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -815,7 +673,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "3c989dc0adc594d592be62272d70e28caaa5553b",
-      "checkedAt": "2026-08-18T11:44:30.192903Z",
+      "checkedAt": "2026-08-18T13:11:55.034205Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -857,7 +715,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "544ec87f2edef960eb6de0537bf63bfe4c7658d8",
-      "checkedAt": "2026-08-18T11:44:30.192903Z",
+      "checkedAt": "2026-08-18T13:11:55.034205Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -921,7 +779,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "c2e293e2932e35d01c9ec2c116a93e9b53cda158",
-      "checkedAt": "2026-08-18T11:44:30.192903Z",
+      "checkedAt": "2026-08-18T13:11:55.034205Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [
@@ -1007,7 +865,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "c2e293e2932e35d01c9ec2c116a93e9b53cda158",
-      "checkedAt": "2026-08-18T11:44:30.192903Z",
+      "checkedAt": "2026-08-18T13:11:55.034205Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1045,7 +903,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "c2e293e2932e35d01c9ec2c116a93e9b53cda158",
-      "checkedAt": "2026-08-18T11:44:30.192903Z",
+      "checkedAt": "2026-08-18T13:11:55.034205Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1083,7 +941,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "c2e293e2932e35d01c9ec2c116a93e9b53cda158",
-      "checkedAt": "2026-08-18T11:44:30.192903Z",
+      "checkedAt": "2026-08-18T13:11:55.034205Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1123,7 +981,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "c2e293e2932e35d01c9ec2c116a93e9b53cda158",
-      "checkedAt": "2026-08-18T11:44:30.192903Z",
+      "checkedAt": "2026-08-18T13:11:55.034205Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [
@@ -1209,7 +1067,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "63884215103e287c87fa1e9f3010938dc6c12404",
-      "checkedAt": "2026-08-18T11:44:30.192903Z",
+      "checkedAt": "2026-08-18T13:11:55.034205Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1249,7 +1107,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "c3c76a6d26d7ed61cb875219ffa82a50cd144a93",
-      "checkedAt": "2026-08-18T11:44:30.192903Z",
+      "checkedAt": "2026-08-18T13:11:55.034205Z",
       "draft": true,
       "evidence": {
         "actionableCheckNames": [],
@@ -1285,13 +1143,13 @@
       "url": "https://github.com/datahub-project/datahub-skills/pull/127"
     },
     {
-      "actionDigest": "ab6f0c2390c652e554bdb3f93b129afd79f60aafd4aa8edc73cbfbfbfab78c17",
+      "actionDigest": "80ff403d71b30cf20b92e62bcee306206af74929e4ae8ce587f8bfc6420c60ce",
       "actions": [
         "分支存在合并冲突"
       ],
       "baseRefName": "main-v2",
-      "baseSha": "ac17fe3429a5084c9dec8d3420ed8e584a69c9df",
-      "checkedAt": "2026-08-18T11:44:30.192903Z",
+      "baseSha": "5197d9e396d99bda1bcfe34df2940afc69628639",
+      "checkedAt": "2026-08-18T13:11:55.034205Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1300,7 +1158,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main-v2",
-        "baseSha": "ac17fe3429a5084c9dec8d3420ed8e584a69c9df",
+        "baseSha": "5197d9e396d99bda1bcfe34df2940afc69628639",
         "changedFiles": [
           "docs/ACP.md",
           "docs/ACP.zh-CN.md",
@@ -1326,7 +1184,7 @@
       "mergeableState": "unknown",
       "number": 8510,
       "repo": "esengine/DeepSeek-Reasonix",
-      "taskActionDigest": "12f958cfb38e9546c34dce6ef5cae23479d114ae2e6055c0db0e05dac755e77f",
+      "taskActionDigest": "7f34eaba55b307682dd6a58940e04dec7e381cf7584bd8b47cb9524532cd660d",
       "taskActions": [
         "分支存在合并冲突"
       ],
@@ -1341,7 +1199,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "846e172dcbcbe33b8aadfb4cfd5fa5098322e114",
-      "checkedAt": "2026-08-18T11:44:30.192903Z",
+      "checkedAt": "2026-08-18T13:11:55.034205Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1386,7 +1244,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "12b09ff4113bd1726a2ad56e96e67963312406f8",
-      "checkedAt": "2026-08-18T11:44:30.192903Z",
+      "checkedAt": "2026-08-18T13:11:55.034205Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1454,7 +1312,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "001c235229be8795e3834520467bd0d661ed8f34",
-      "checkedAt": "2026-08-18T11:44:30.192903Z",
+      "checkedAt": "2026-08-18T13:11:55.034205Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1492,7 +1350,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "001c235229be8795e3834520467bd0d661ed8f34",
-      "checkedAt": "2026-08-18T11:44:30.192903Z",
+      "checkedAt": "2026-08-18T13:11:55.034205Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1532,7 +1390,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "1b45c15749dbef06b9b97b5d09b7f0b3b1e7ceb3",
-      "checkedAt": "2026-08-18T11:44:30.192903Z",
+      "checkedAt": "2026-08-18T13:11:55.034205Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1582,7 +1440,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "944000d5f1c88c7d78d0a0a404f8304bb4bd7d8c",
-      "checkedAt": "2026-08-18T11:44:30.192903Z",
+      "checkedAt": "2026-08-18T13:11:55.034205Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1627,7 +1485,7 @@
       "actions": [],
       "baseRefName": "master",
       "baseSha": "85af10f03e13ed020778fb5863eb53c5526a01e9",
-      "checkedAt": "2026-08-18T11:44:30.192903Z",
+      "checkedAt": "2026-08-18T13:11:55.034205Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1651,7 +1509,7 @@
       "headSha": "b48da3a82f21657b09483cadaaaf98ffc5e64a4a",
       "key": "openvinotoolkit/openvino#36146",
       "mergeConflict": false,
-      "mergeableState": "unknown",
+      "mergeableState": "blocked",
       "number": 36146,
       "repo": "openvinotoolkit/openvino",
       "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
@@ -1665,7 +1523,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "4bcc514e79490b597f452facd0f8e178938bacb9",
-      "checkedAt": "2026-08-18T11:44:30.192903Z",
+      "checkedAt": "2026-08-18T13:11:55.034205Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1690,7 +1548,7 @@
       "headSha": "5df8f373e0181c4acc7366bb3e1a8898617e0e98",
       "key": "pipecat-ai/pipecat#5346",
       "mergeConflict": false,
-      "mergeableState": "unknown",
+      "mergeableState": "blocked",
       "number": 5346,
       "repo": "pipecat-ai/pipecat",
       "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
@@ -1704,7 +1562,7 @@
       "actions": [],
       "baseRefName": "develop",
       "baseSha": "ba7a9ce0d92a46f2458b82b1fcdd000f887f651a",
-      "checkedAt": "2026-08-18T11:44:30.192903Z",
+      "checkedAt": "2026-08-18T13:11:55.034205Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1751,7 +1609,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "3759b52cfb88dd966f9c4b0301a5583a6180ad1b",
-      "checkedAt": "2026-08-18T11:44:30.192903Z",
+      "checkedAt": "2026-08-18T13:11:55.034205Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1786,14 +1644,14 @@
       "url": "https://github.com/run-llama/llama_index/pull/21892"
     },
     {
-      "actionDigest": "20f4600ed1ee655d9bf0446a0fef89e1fb4838f89d2d60816f3598294fc2e25c",
+      "actionDigest": "f8149e273dc3d87c226a1df4834719233e102db68b0c5e778f059906a3dedaa3",
       "actions": [
         "CI 检查失败",
         "分支存在合并冲突"
       ],
       "baseRefName": "main",
-      "baseSha": "7605529bdf98ded2815e48c7054b1bc4533256c9",
-      "checkedAt": "2026-08-18T11:44:30.192903Z",
+      "baseSha": "94eef833fe40460230cd6856e2602e038c8305e0",
+      "checkedAt": "2026-08-18T13:11:55.034205Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1802,7 +1660,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "7605529bdf98ded2815e48c7054b1bc4533256c9",
+        "baseSha": "94eef833fe40460230cd6856e2602e038c8305e0",
         "changedFiles": [
           "python/sglang/srt/managers/io_struct.py",
           "python/sglang/srt/managers/tokenizer_manager.py",
@@ -1982,7 +1840,7 @@
       "mergeableState": "unknown",
       "number": 34138,
       "repo": "sgl-project/sglang",
-      "taskActionDigest": "8cee9a31694f2003fe7c297e78c270ee515c604a85ec62850ed58476f2f5cd54",
+      "taskActionDigest": "75aece9d2b912b6868124988c6c2024b37abe47e26d8ca1d1379bb601aa4e008",
       "taskActions": [
         "分支存在合并冲突"
       ],
@@ -1996,8 +1854,8 @@
         "CI 检查失败"
       ],
       "baseRefName": "main",
-      "baseSha": "7605529bdf98ded2815e48c7054b1bc4533256c9",
-      "checkedAt": "2026-08-18T11:44:30.192903Z",
+      "baseSha": "94eef833fe40460230cd6856e2602e038c8305e0",
+      "checkedAt": "2026-08-18T13:11:55.034205Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -2006,7 +1864,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "7605529bdf98ded2815e48c7054b1bc4533256c9",
+        "baseSha": "94eef833fe40460230cd6856e2602e038c8305e0",
         "changedFiles": [
           "python/sglang/multimodal_gen/configs/sample/teacache.py",
           "python/sglang/multimodal_gen/runtime/cache/teacache.py",
@@ -2157,8 +2015,8 @@
         "CI 检查失败"
       ],
       "baseRefName": "main",
-      "baseSha": "7605529bdf98ded2815e48c7054b1bc4533256c9",
-      "checkedAt": "2026-08-18T11:44:30.192903Z",
+      "baseSha": "94eef833fe40460230cd6856e2602e038c8305e0",
+      "checkedAt": "2026-08-18T13:11:55.034205Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -2167,7 +2025,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "7605529bdf98ded2815e48c7054b1bc4533256c9",
+        "baseSha": "94eef833fe40460230cd6856e2602e038c8305e0",
         "changedFiles": [
           "python/sglang/multimodal_gen/runtime/cache/spectrum.py",
           "python/sglang/multimodal_gen/test/unit/test_spectrum.py"
@@ -2314,8 +2172,8 @@
       "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
       "actions": [],
       "baseRefName": "main",
-      "baseSha": "41f179b57aa8ab6f634f508128ce1f1efadd0eb1",
-      "checkedAt": "2026-08-18T11:44:30.192903Z",
+      "baseSha": "404a9d9b6b0a39e7ee544a1609a1ec104d08d9da",
+      "checkedAt": "2026-08-18T13:11:55.034205Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -2324,7 +2182,46 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "41f179b57aa8ab6f634f508128ce1f1efadd0eb1",
+        "baseSha": "404a9d9b6b0a39e7ee544a1609a1ec104d08d9da",
+        "changedFiles": [
+          ".changeset/fresh-maps-reference.md",
+          "packages/google/src/convert-json-schema-to-openapi-schema.test.ts",
+          "packages/google/src/convert-json-schema-to-openapi-schema.ts"
+        ],
+        "failingChecks": [],
+        "headSha": "ab7133853f402bdc1ee6317e7c04812c8ec3353b",
+        "mergeConflict": false,
+        "mergeConflictPreparationVersion": null,
+        "requestedChanges": [],
+        "unresolvedReviewThreads": []
+      },
+      "headSha": "ab7133853f402bdc1ee6317e7c04812c8ec3353b",
+      "key": "vercel/ai#19006",
+      "mergeConflict": false,
+      "mergeableState": "blocked",
+      "number": 19006,
+      "repo": "vercel/ai",
+      "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
+      "taskActions": [],
+      "taskFollowupRequired": false,
+      "title": "fix(google): preserve JSON Schema references",
+      "url": "https://github.com/vercel/ai/pull/19006"
+    },
+    {
+      "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
+      "actions": [],
+      "baseRefName": "main",
+      "baseSha": "d29dc3ab87840aef42129b30825176295ea73b07",
+      "checkedAt": "2026-08-18T13:11:55.034205Z",
+      "draft": false,
+      "evidence": {
+        "actionableCheckNames": [],
+        "baseCompareError": null,
+        "baseCompareStatus": null,
+        "baseIntegrationRequired": false,
+        "baseMergeBaseSha": null,
+        "baseRefName": "main",
+        "baseSha": "d29dc3ab87840aef42129b30825176295ea73b07",
         "changedFiles": [
           "tests/v1/worker/test_mamba_utils.py",
           "vllm/v1/worker/mamba_utils.py"
@@ -2354,8 +2251,8 @@
         "CI 检查失败"
       ],
       "baseRefName": "main",
-      "baseSha": "41f179b57aa8ab6f634f508128ce1f1efadd0eb1",
-      "checkedAt": "2026-08-18T11:44:30.192903Z",
+      "baseSha": "d29dc3ab87840aef42129b30825176295ea73b07",
+      "checkedAt": "2026-08-18T13:11:55.034205Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -2364,7 +2261,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "41f179b57aa8ab6f634f508128ce1f1efadd0eb1",
+        "baseSha": "d29dc3ab87840aef42129b30825176295ea73b07",
         "changedFiles": [
           "tests/v1/kv_connector/unit/offloading_connector/test_scheduler.py",
           "vllm/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py"
@@ -2435,8 +2332,8 @@
         "CI 检查失败"
       ],
       "baseRefName": "main",
-      "baseSha": "41f179b57aa8ab6f634f508128ce1f1efadd0eb1",
-      "checkedAt": "2026-08-18T11:44:30.192903Z",
+      "baseSha": "d29dc3ab87840aef42129b30825176295ea73b07",
+      "checkedAt": "2026-08-18T13:11:55.034205Z",
       "draft": true,
       "evidence": {
         "actionableCheckNames": [],
@@ -2445,7 +2342,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "41f179b57aa8ab6f634f508128ce1f1efadd0eb1",
+        "baseSha": "d29dc3ab87840aef42129b30825176295ea73b07",
         "changedFiles": [
           "tests/v1/kv_offload/cpu/test_gpu_worker.py",
           "vllm/v1/kv_offload/cpu/gpu_worker.py"
@@ -2475,7 +2372,7 @@
       "headSha": "3036472185bfcc23b0148fe3ae22666c6d379279",
       "key": "vllm-project/vllm#52296",
       "mergeConflict": false,
-      "mergeableState": "blocked",
+      "mergeableState": "unknown",
       "number": 52296,
       "repo": "vllm-project/vllm",
       "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
@@ -2485,13 +2382,13 @@
       "url": "https://github.com/vllm-project/vllm/pull/52296"
     },
     {
-      "actionDigest": "e4cbc8a3b9bed2623db0459e5039f2747b5abb4a6d10fb80e8e29879eb40bdba",
+      "actionDigest": "23e7111becc550f1a78e52327c140f968d72b4780444fbd4149ee06c210f1fb5",
       "actions": [
         "分支存在合并冲突"
       ],
       "baseRefName": "main",
-      "baseSha": "41f179b57aa8ab6f634f508128ce1f1efadd0eb1",
-      "checkedAt": "2026-08-18T11:44:30.192903Z",
+      "baseSha": "d29dc3ab87840aef42129b30825176295ea73b07",
+      "checkedAt": "2026-08-18T13:11:55.034205Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -2500,7 +2397,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "41f179b57aa8ab6f634f508128ce1f1efadd0eb1",
+        "baseSha": "d29dc3ab87840aef42129b30825176295ea73b07",
         "changedFiles": [
           "tests/v1/structured_output/test_validation.py",
           "vllm/sampling_params.py",
@@ -2516,10 +2413,10 @@
       "headSha": "f5b8dee33268bf8511784c94742d6ec33653a07d",
       "key": "vllm-project/vllm#52298",
       "mergeConflict": true,
-      "mergeableState": "dirty",
+      "mergeableState": "unknown",
       "number": 52298,
       "repo": "vllm-project/vllm",
-      "taskActionDigest": "03fa422df2cf3a8ef4b04d5374abd4630daed7fdc80188053b7332d831d1616c",
+      "taskActionDigest": "c72a2d993d4467a01ad6df683273cd9780ef9601717972eb5f4e6fdd523cc570",
       "taskActions": [
         "分支存在合并冲突"
       ],

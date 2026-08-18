@@ -6088,6 +6088,37 @@
     ],
     "why": "The issue provides a clear root cause and a minimal reproduction for a real async bug in PropertyGraphIndex.ainsert_nodes. However, the deterministic gate requires HUMAN_REVIEW, and the fix requires design confirmation for adding an async _ainsert hook to BaseIndex, which affects the public API surface. No competing PR exists, but maintainer input is needed before implementation."
   },
+  "32a58cf3a05d2eaf8c63098715a3acc057a5c6d2c60e237d5e5d201d77c36d13": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims bug present in 1.30.0, but PR #2085 title suggests fix for v1.x; need to verify if fix is already merged."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "src/server/zod-json-schema-compat.ts",
+      "src/server/mcp.ts"
+    ],
+    "risks": [
+      "Existing PRs may already fix the issue; duplicate work or conflicting changes.",
+      "Changing default dialect may affect backward compatibility for clients expecting draft-07."
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Add a regression test that registers a Zod v4 tool and asserts tools/list emits $schema draft-2020-12.",
+      "Run existing package unit tests and static checks."
+    ],
+    "unknowns": [
+      "Whether existing PRs #2085 and #2653 fully resolve the issue and are mergeable.",
+      "Maintainer preference on default dialect vs explicit target."
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue clearly describes a user-visible bug with a concrete repro and root cause (toJsonSchemaCompat defaulting to draft-7). However, multiple open PRs (#2085, #2653) already target the same code path and semantics, and related issues (#2084, #2627) overlap. The supplied gate decision is HUMAN_REVIEW, and the open PR assessment requires manual comparison before creating a new task."
+  },
   "32bcd9c53c33e159e71f189d21e4a30676345998e43eaed2724bed9a786b9b6f": {
     "confidence": 0.7,
     "contradictions": [],
@@ -30434,6 +30465,39 @@
       "Maintainer preference on whether to fix in get_model_config_by_id or task_handler"
     ],
     "why": "Issue clearly identifies a stale tenant_embd_id causing empty api_key in queued tasks, with a concrete code path and suggested fix. However, open PR lookup failed due to rate limit, and existing merged PRs (#17176, #14923) partially address related tenant_embd_id resolution but not execution-time fallback. Need to confirm no competing implementation and maintainer design preference before starting work."
+  },
+  "e5b2c8237a4562570895e8916ae275d0bce165272753ac42dee890871a221028": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue title claims pipeline parallel unsupported, but traceback shows failure in speculative config creation"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Pipeline parallel support for DeepseekV4ForCausalLM",
+      "Speculative config validation for pipeline parallel"
+    ],
+    "risks": [
+      "Potential duplicate with issue #52735; overlapping stack signatures may indicate a common root cause",
+      "The failure may be in speculative config parsing rather than pipeline parallel itself"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 13,
+    "test_plan": [
+      "Reproduce with the provided vllm serve command on 3 A100 GPUs",
+      "Run with pipeline-parallel-size 1 to isolate the failure",
+      "Add a regression test that launches pipeline parallel with speculative decoding and asserts no crash"
+    ],
+    "unknowns": [
+      "Whether issue #52735 is truly a duplicate",
+      "Whether the failure occurs without speculative decoding",
+      "Maintainer confirmation of the intended fix direction"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue reports pipeline parallelism unsupported for deepseek-v4-flash-0731, with a concrete repro command and traceback. However, the supplied evidence flags a potential duplicate issue #52735 sharing stack signatures, and the deterministic gate is HUMAN_REVIEW. The root cause is not yet confirmed; the traceback stops at speculative config creation, not the pipeline parallel path. Maintainer confirmation is needed to avoid duplicate work."
   },
   "e5e7fdfb3f6e7d62799b04bde19557ad698baa2d29c520e1c8ed75ab1629dd6e": {
     "confidence": 0.6,
