@@ -29396,6 +29396,32 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue reports four scheduler defects; comments confirm bugs 1, 3, 4 fixed in v1.46/main, leaving bug 2 (recipe settings ignored on scheduled runs) as the remaining actionable defect. A contributor has a local patch for the bounded scope but has not opened a PR pending maintainer design confirmation. Existing PR #11110 overlaps scheduler paths but lacks tests and does not reference this issue. The remaining work is well-defined but requires maintainer scope decision and comparison with existing PR."
   },
+  "db54f3cfd6360920a67529e7262a750bf10aea0ded8ce49d0aae50d487354e1b": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "TTLCache configuration or refresh logic in globalRunRegistry",
+      "DurableAgent run lifecycle handling"
+    ],
+    "risks": [
+      "Changing TTL semantics may affect memory usage or leak safety; need to ensure cleanup still occurs on normal completion."
+    ],
+    "root_cause_clarity": "high",
+    "score": 14,
+    "test_plan": [
+      "Add a unit test with fake timers that starts a durable run, advances time past TTL while a tool is pending, resolves the tool, and asserts the next LLM step retains the registry entry."
+    ],
+    "unknowns": [
+      "Maintainer preference on the fix approach; whether a PR would be accepted without prior approval."
+    ],
+    "wait_reason": "DESIGN_CONFIRMATION",
+    "why": "The issue clearly identifies a real bug: active runs evicted by a hard-coded TTL during long tool calls, with a concrete repro and suggested fixes. However, the maintainer has not approved the approach, and the issue is still in triage. The fix requires design confirmation on whether to extend TTL, refresh during tool execution, or switch to lifecycle-based cleanup."
+  },
   "db8f5cb996e9231163dd2916904fd4055e3932480f55fc9b862615300b40cf77": {
     "confidence": 0.9,
     "contradictions": [
