@@ -284,6 +284,37 @@
     ],
     "why": "The issue reports tokenizer misbehavior on Windows CPU but lacks a clear root cause; a collaborator could not reproduce, and the reporter's own debugging suggests environment-specific factors. The track requires algorithm-level evidence, but the issue is primarily a bug report with no concrete algorithm mechanism or validation path."
   },
+  "037dd4cad7e9990e696e82759dad1f111ee34ee4cb061230aef5f788433d482b": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Add a provider hook for out-of-turn agent updates",
+      "Route ACP Text/Thought/tool-call updates to the hook when no turn is live",
+      "Persist and emit the message on the session update channel",
+      "Add a notifier to send agent_message_chunk to Desktop"
+    ],
+    "risks": [
+      "May require design confirmation on the exact hook API and session update semantics",
+      "Potential impact on existing ACP turn handling and Desktop notification behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a failing test using the issue's reproduction steps with a mock ACP backend",
+      "Verify that out-of-turn updates are persisted and surfaced in the session",
+      "Run targeted unit tests for provider.rs, base.rs, and server.rs"
+    ],
+    "unknowns": [
+      "Maintainer assignment or approval status",
+      "Whether the proposed mechanism aligns with maintainer design preferences"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "The issue clearly identifies a real defect: ACP background updates are dropped because the provider stream ends at turn completion. The proposed fix direction (provider hook, routing, persistence, notifier) is plausible and matches existing patterns. However, the submission policy requires assignment, and the gate decision is HUMAN_REVIEW, so work cannot start without maintainer confirmation."
+  },
   "03cf1f5ddd0de367908c9e51b00ef50e2c69f536f752393ef474cd375effea82": {
     "confidence": 0.7,
     "contradictions": [
@@ -388,6 +419,32 @@
       "Whether maintainer prefers text fallback vs tool error for non-text mismatches"
     ],
     "why": "Issue provides a clear, reproducible bug with root cause confirmed by maintainer via source inspection. Fix is localized and leverages existing utilities (sniffFileKind, looksLikeText). No competing PR exists."
+  },
+  "054487dab001368b540bf5a8f87e6499991e503362d64376b4ed1ad1676d9219": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Workflow variable initialization UI and runtime support for constant/default values"
+    ],
+    "risks": [
+      "Potential breaking changes to existing workflow variable semantics"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Create a workflow with a variable initialized to a constant and verify it can be updated by subsequent nodes"
+    ],
+    "unknowns": [
+      "Maintainer design preferences on variable initialization semantics",
+      "Exact code paths for variable initialization in Dify runtime"
+    ],
+    "wait_reason": "DESIGN_CONFIRMATION",
+    "why": "Issue requests a feature to allow independent variable initialization in Dify workflows. It lacks a concrete root cause, code anchors, or reproduction steps. The track is agent_ai_infra, not llm_algorithm, so algorithm evidence is not required. However, the feature touches workflow runtime semantics and requires design confirmation from maintainers. No competing PRs or related issues found, but the absence of maintainer input and the need for API behavior changes make it premature to start."
   },
   "05b2723286658721bf7dee7c9f672802a8a45df487096f97f7cbc7fc10ae9e49": {
     "confidence": 0.7,
@@ -23466,6 +23523,34 @@
     ],
     "why": "Issue reports a reproducible Ref2VA-specific snow/noise bug with detailed diagnostics and a minimal repro, but root cause is unconfirmed and open PR lookup failed due to rate limit, so duplicate work cannot be excluded."
   },
+  "b573f72fde9349846f7fdff6427656fcfa084cf342a97ca1685af60f09e339cd": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix scheduling loop in assistant presentation",
+      "Add guard against repeated scheduling"
+    ],
+    "risks": [
+      "Incorrect fix may break assistant presentation scheduling"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "test_plan": [
+      "Create minimal reproducer with frequent tool calls",
+      "Run unit tests for scheduler"
+    ],
+    "unknowns": [
+      "Exact code path causing infinite loop",
+      "Maintainer design preferences"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "Issue reports a severe UI freeze with log spam but lacks a minimal reproduction and root cause analysis. The code anchors are speculative and no maintainer confirmation exists."
+  },
   "b57f22059d6ae10ec03f60e1a45c70184d6c4e2bd304eac2559d337979424121": {
     "confidence": 0.85,
     "contradictions": [],
@@ -26057,6 +26142,35 @@
       "No maintainer confirmation on accepting the fix, but the issue is clear and the change is minimal."
     ],
     "why": "The issue identifies a clear dependency pin that breaks Python 3.14 installs in air-gapped environments, with a minimal fix (relaxing the upper bound) and verified API compatibility. This is a concrete, actionable bug fix with high user impact."
+  },
+  "c72257b7c87494da16baba2be32ec0ca794aa72c5b5aaa13a60fcbee659f51ca": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify _input_and_cache_read_cost in savings.py to use deployment-aware pricing lookup",
+      "Possibly adjust shared_backend_model_info to preserve pricing for single-deployment keys",
+      "Add regression test for custom model savings calculation"
+    ],
+    "risks": [
+      "Potential impact on existing cost calculation paths if deployment-aware lookup changes behavior for other models",
+      "Key shadowing may require careful handling to avoid breaking other lookups"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Use the provided minimal config to reproduce the $0.00 savings bug",
+      "Write a unit test that registers a custom model with pricing and verifies _input_and_cache_read_cost returns correct values",
+      "Run existing spend tracking tests to ensure no regression"
+    ],
+    "unknowns": [
+      "Maintainer preference on fix approach (deployment-aware vs cost-map repair) not yet confirmed"
+    ],
+    "wait_reason": null,
+    "why": "Issue provides a precise root cause (pricing keys stripped/not registered for public model name), a minimal reproduction, and a concrete fix direction (deployment-aware lookup). The bug is user-visible and affects savings reporting for custom models. No competing PR or issue found."
   },
   "c72ebf196b8f56830404aef6dc504ca85f7b17a79548323f04fd9dcfb2336143": {
     "confidence": 0.7,
