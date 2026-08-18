@@ -2622,9 +2622,10 @@ def test_publication_feedback_is_reserved_retried_and_sent_once(tmp_path):
     )
 
     assert store.publication_feedback_candidates() == []
-    assert store.unresolved_publication_feedback()[0]["reservationNonce"] == reserved[
-        "reservationNonce"
-    ]
+    assert (
+        store.unresolved_publication_feedback()[0]["reservationNonce"]
+        == reserved["reservationNonce"]
+    )
     with pytest.raises(LedgerError, match="stale or already reserved"):
         store.reserve_publication_feedback(thread_id="thread-1", pr_url=pr_url)
 

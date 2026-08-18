@@ -468,9 +468,7 @@ def test_broker_allows_bound_update_despite_a_competing_pr(monkeypatch, tmp_path
             return []
 
     monkeypatch.setattr(publication, "_changed_files_since", lambda *args: ["second.txt"])
-    monkeypatch.setattr(
-        publication, "_changed_files", lambda *args: ["file.txt", "second.txt"]
-    )
+    monkeypatch.setattr(publication, "_changed_files", lambda *args: ["file.txt", "second.txt"])
     result = broker_publication_request(store, update["request_id"], client=UpdateClient())
 
     assert result["granted"] is True
@@ -508,9 +506,7 @@ def test_broker_allows_bound_update_despite_a_competing_pr(monkeypatch, tmp_path
     assert post_push.status == "ALLOW"
 
 
-def test_broker_allows_bound_update_when_related_pr_enrichment_is_partial(
-    monkeypatch, tmp_path
-):
+def test_broker_allows_bound_update_when_related_pr_enrichment_is_partial(monkeypatch, tmp_path):
     store, request, evidence_path = prepared_request(tmp_path)
     first = store.publication_request(request["request_id"])
     permit = store.grant_publication_request(

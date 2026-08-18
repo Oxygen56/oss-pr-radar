@@ -760,12 +760,8 @@ def test_terminal_feedback_treats_transient_github_failure_as_deferred(monkeypat
 
     assert result["ok"] is True
     assert result["errors"] == []
-    assert result["deferred"] == [
-        {"key": "a/b#1", "reason": "github_temporarily_unavailable"}
-    ]
-    assert result["warnings"] == [
-        {"key": "a/b#1", "warning": "gh: Gateway Time-out (HTTP 504)"}
-    ]
+    assert result["deferred"] == [{"key": "a/b#1", "reason": "github_temporarily_unavailable"}]
+    assert result["warnings"] == [{"key": "a/b#1", "warning": "gh: Gateway Time-out (HTTP 504)"}]
 
 
 def test_terminal_feedback_keeps_nontransient_github_failure_fatal(monkeypatch, tmp_path):
@@ -9156,9 +9152,7 @@ def test_event_drain_prioritizes_visible_publication_feedback(monkeypatch, tmp_p
     )
     monkeypatch.setattr(MODULE, "ledger", lambda _path: object())
     monkeypatch.setattr(MODULE, "_rearm_negative_followup_deliveries", lambda _store: [])
-    monkeypatch.setattr(
-        MODULE, "_rearm_interrupted_recovery_turns", lambda _store: ([], [])
-    )
+    monkeypatch.setattr(MODULE, "_rearm_interrupted_recovery_turns", lambda _store: ([], []))
     monkeypatch.setattr(
         MODULE,
         "publication_feedback_list",

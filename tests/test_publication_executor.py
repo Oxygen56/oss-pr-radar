@@ -164,9 +164,7 @@ def test_create_pr_keeps_ambiguous_attempt_when_remote_result_is_still_missing(
     assert store.succeeded == []
 
 
-def test_create_pr_retries_transient_503_after_exact_head_is_still_absent(
-    monkeypatch, tmp_path
-):
+def test_create_pr_retries_transient_503_after_exact_head_is_still_absent(monkeypatch, tmp_path):
     args = pr_args(tmp_path)
     store = ReconcileStore(
         effect_result={
@@ -498,9 +496,7 @@ def test_live_recheck_deferral_is_retryable_before_external_action(monkeypatch):
     with pytest.raises(MODULE.PublicationDeferred, match="LIVE_EVIDENCE_INCOMPLETE"):
         MODULE.recheck_new_effect(store, {"request_id": "request-1"}, "effect-1")
 
-    assert store.resolved == [
-        ("effect-1", "DEFER", "LIVE_EVIDENCE_INCOMPLETE")
-    ]
+    assert store.resolved == [("effect-1", "DEFER", "LIVE_EVIDENCE_INCOMPLETE")]
     assert store.completed == []
 
 
@@ -533,9 +529,7 @@ def test_live_recheck_block_is_recorded_before_external_action(monkeypatch):
     ):
         MODULE.recheck_new_effect(store, {"request_id": "request-1"}, "effect-1")
 
-    assert store.resolved == [
-        ("effect-1", "BLOCK", "ISSUE_ASSIGNED_TO_ANOTHER_CONTRIBUTOR")
-    ]
+    assert store.resolved == [("effect-1", "BLOCK", "ISSUE_ASSIGNED_TO_ANOTHER_CONTRIBUTOR")]
     assert store.completed == []
 
 

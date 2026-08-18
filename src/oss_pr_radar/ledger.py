@@ -5668,9 +5668,7 @@ class RadarLedger:
 
     def reserve_publication_feedback(self, *, thread_id: str, pr_url: str) -> dict[str, Any]:
         now = iso_z(datetime.now(UTC))
-        nonce = sha256_text(
-            f"{thread_id}|{pr_url}|{now}|{secrets.token_hex(16)}"
-        )
+        nonce = sha256_text(f"{thread_id}|{pr_url}|{now}|{secrets.token_hex(16)}")
         with self.transaction() as connection:
             row = connection.execute(
                 """SELECT o.key,o.issue_url,i.thread_id,i.worktree_path,

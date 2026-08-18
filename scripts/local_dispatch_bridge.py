@@ -3084,8 +3084,7 @@ def _rearm_negative_followup_deliveries(store: RadarLedger) -> list[dict[str, An
         receipt = read_json(receipt_path, missing={})
         age = now - parse_time(str(item["reservedAt"]))
         proved_incomplete = bool(receipt) and (
-            receipt.get("ok") is False
-            or receipt.get("turnStatus") in {"failed", "interrupted"}
+            receipt.get("ok") is False or receipt.get("turnStatus") in {"failed", "interrupted"}
         )
         launch_path = STATE / "task_turn_receipts" / f"{receipt_key}.launch.json"
         abandoned_worker = launch_path.exists() and age >= timedelta(minutes=5)
@@ -8066,9 +8065,7 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
     recovery_rearmed, recovery_exhausted = _rearm_interrupted_recovery_turns(store)
     rearmed.extend(recovery_rearmed)
 
-    publication_feedback_state = publication_feedback_list(
-        argparse.Namespace(ledger=args.ledger)
-    )
+    publication_feedback_state = publication_feedback_list(argparse.Namespace(ledger=args.ledger))
     if publication_feedback_state.get("candidates"):
         candidate = publication_feedback_state["candidates"][0]
         reserved = publication_feedback_reserve(
@@ -8492,19 +8489,13 @@ def main() -> int:
     subparsers.add_parser("context-recover")
     subparsers.add_parser("context-sync")
     subparsers.add_parser("publication-feedback-list")
-    publication_feedback_reserve_parser = subparsers.add_parser(
-        "publication-feedback-reserve"
-    )
+    publication_feedback_reserve_parser = subparsers.add_parser("publication-feedback-reserve")
     publication_feedback_reserve_parser.add_argument("--thread-id", required=True)
     publication_feedback_reserve_parser.add_argument("--pr-url", required=True)
-    publication_feedback_deliver_parser = subparsers.add_parser(
-        "publication-feedback-deliver"
-    )
+    publication_feedback_deliver_parser = subparsers.add_parser("publication-feedback-deliver")
     publication_feedback_deliver_parser.add_argument("--thread-id", required=True)
     publication_feedback_deliver_parser.add_argument("--reservation-nonce", required=True)
-    publication_feedback_commit_parser = subparsers.add_parser(
-        "publication-feedback-commit"
-    )
+    publication_feedback_commit_parser = subparsers.add_parser("publication-feedback-commit")
     publication_feedback_commit_parser.add_argument("--thread-id", required=True)
     publication_feedback_commit_parser.add_argument("--reservation-nonce", required=True)
     pr_followup_list_parser = subparsers.add_parser("pr-followup-list")
