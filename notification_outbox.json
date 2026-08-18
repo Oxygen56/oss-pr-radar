@@ -2835,6 +2835,14 @@
       "seenAt": "2026-08-17T21:47:39.574491Z",
       "stateId": "cb80fbb39d22a7645789a8377190d645f2a4e19fcdb6f845892ae7d4bea7ce34"
     },
+    "review|vllm-project/vllm#52693": {
+      "category": "WAIT_MAINTAINER",
+      "digest": "73139f570284b1f22c7451b799e672eb4f14aacc2c43b3b88879ddfeb4593831",
+      "kind": "review",
+      "scannerVersion": "oss_pr_radar_v46_semantic_fallback",
+      "seenAt": "2026-08-18T04:58:26.124788Z",
+      "stateId": "af94b0d504ca45fa4bd6bcc609bd2e3e56e491512321e015931464b6353b5280"
+    },
     "review|vllm-project/vllm-omni#6159": {
       "category": "WAIT_MAINTAINER",
       "digest": "7117ab4c9f257d6a77405816b38f5361ef19f4e4da36eeb9b2883eb3481f5f4a",
@@ -2964,11 +2972,11 @@
     },
     "watch|esengine/DeepSeek-Reasonix#8510": {
       "category": "PR_FOLLOWUP",
-      "digest": "918c3234ec61438263c781b3b185943e1391ff41fd32487092e5ef1724044548",
+      "digest": "0da46617b1412824a428f2c4fe11f0a44fbf4eb27c37c61456c72d69df8779c3",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-17T23:44:24.910889Z",
-      "stateId": "e1b36e3c4014f86366e1584cb7add7e5ff1a0093c1b9fb8a7c7b90a16b026af0"
+      "seenAt": "2026-08-18T04:58:26.360395Z",
+      "stateId": "6c1915d06dad0c5a7175b503d06c9895513f41442c381f7d3f83e5e23247da58"
     },
     "watch|hashicorp/terraform-mcp-server#442": {
       "category": "PR_FOLLOWUP",
@@ -3036,11 +3044,11 @@
     },
     "watch|sgl-project/sglang#34138": {
       "category": "PR_FOLLOWUP",
-      "digest": "f83e98e845d3b864093814ce53507d465637db5491bb067f7543ac9a501103e5",
+      "digest": "d2069766c6fb973afc37f37c1fdf94a0d1c5cf0b404d06bc18b8a56588cd97e0",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-18T03:14:46.564210Z",
-      "stateId": "941943b8d68f9f86fa0442a48fdf7c28c92d59b85e1a8cfacc7a25bb80930333"
+      "seenAt": "2026-08-18T04:58:26.360395Z",
+      "stateId": "9e43441a637ce7ca54afee5db7ff0608c61fd98990017ebf202ed37059cea434"
     },
     "watch|sgl-project/sglang#35140": {
       "category": "PR_FOLLOWUP",
@@ -3060,14 +3068,14 @@
     },
     "watch|vllm-project/vllm#52298": {
       "category": "PR_FOLLOWUP",
-      "digest": "c5d946b34e42f35ed669476cf5777ec84c5b275a4fdb8c2c1130c65f9ae32426",
+      "digest": "b436640b1d7f6dfea9ba025f4c19d3e54c1eb7008acb717cd6b35c792f6d87e2",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-18T04:05:14.243412Z",
-      "stateId": "262477944be6b84467245c41100ab08bb8158d554135c633054a27aa9d017199"
+      "seenAt": "2026-08-18T04:58:26.360395Z",
+      "stateId": "e2dc110ce01924da0ce18535f9eb254182891562ef942926e354c94b26ad36b8"
     }
   },
-  "digest": "3af5d0630832c7bb94453e59841eee919e4a8d68ed0ed5c64b0311aa44ed5dc9",
+  "digest": "50f5a1df48e8a202204ae25a1e14ac31fde8640145536e5a074b845b5693c7d1",
   "events": [
     {
       "attempts": 1,
@@ -26872,9 +26880,133 @@
       "runId": "pr-followup-1787025707",
       "sentAt": "2026-08-18T04:06:01.040457Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "vllm-project/vllm#52693"
+      ],
+      "candidateStates": [
+        {
+          "category": "WAIT_MAINTAINER",
+          "digest": "73139f570284b1f22c7451b799e672eb4f14aacc2c43b3b88879ddfeb4593831",
+          "key": "vllm-project/vllm#52693",
+          "kind": "review",
+          "scannerVersion": "oss_pr_radar_v46_semantic_fallback",
+          "stateId": "af94b0d504ca45fa4bd6bcc609bd2e3e56e491512321e015931464b6353b5280"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#52693](https://github.com/vllm-project/vllm/issues/52693) [Bug] Streaming input: zero-token continuation crashes EngineCore (Invalid request status: RUNNING) — client-triggerable via temperature>0 chat sessions**\n建议：WAIT_MAINTAINER | 分数：11\n价值：Issue describes a clear client-triggerable engine crash with a concrete root-cause hypothesis and reproduction. However, the supplied gate decision is HUMAN_REVIEW and the open PR assessment flags semantic overlap with PR #52097 and #52132, requiring manual comparison before creating a new task. The candidate is actionable but blocked by the need to review existing PRs and maintainer input.\n改动：vllm/v1/core/sched/scheduler.py；vllm/v1/engine/core.py\n验证：Reproduce with the issue's minimal streaming session at temperature>0; add regression test for zero-token continuation; verify engine does not crash and request fails gracefully.\n风险：Existing PRs may already fix the root cause; overlapping changes could cause merge conflicts.\n竞争：发现 PR #52097 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 1，根因信号 True",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 需要确认",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-18T04:58:26.124788Z",
+      "eventId": "bca1cc364b3d5397cd963afdc53c46a25dd19776a0dd4da3041ae089a97e79e2",
+      "idempotencyKey": "bca1cc364b3d5397cd963afdc53c46a25dd19776a0dd4da304",
+      "kind": "review",
+      "runId": "scan-20260818T045554Z-ea49594426b3",
+      "status": "PENDING"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "esengine/DeepSeek-Reasonix#8510",
+        "sgl-project/sglang#34138",
+        "vllm-project/vllm#52298"
+      ],
+      "candidateStates": [
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "0da46617b1412824a428f2c4fe11f0a44fbf4eb27c37c61456c72d69df8779c3",
+          "key": "esengine/DeepSeek-Reasonix#8510",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "6c1915d06dad0c5a7175b503d06c9895513f41442c381f7d3f83e5e23247da58"
+        },
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "d2069766c6fb973afc37f37c1fdf94a0d1c5cf0b404d06bc18b8a56588cd97e0",
+          "key": "sgl-project/sglang#34138",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "9e43441a637ce7ca54afee5db7ff0608c61fd98990017ebf202ed37059cea434"
+        },
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "b436640b1d7f6dfea9ba025f4c19d3e54c1eb7008acb717cd6b35c792f6d87e2",
+          "key": "vllm-project/vllm#52298",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "e2dc110ce01924da0ce18535f9eb254182891562ef942926e354c94b26ad36b8"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[esengine/DeepSeek-Reasonix#8510](https://github.com/esengine/DeepSeek-Reasonix/pull/8510) fix(acp): return prompt failures as JSON-RPC errors**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#34138](https://github.com/sgl-project/sglang/pull/34138) Bind streaming abort cleanup to request lifecycle**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#52298](https://github.com/vllm-project/vllm/pull/52298) [Bugfix] Validate guidance tokenizer compatibility before EngineCore**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-18T04:58:26.360395Z",
+      "eventId": "b11303fecdd6eb525444219568b003bf006fecedea3e5c39b42f1232f23e15c6",
+      "idempotencyKey": "b11303fecdd6eb525444219568b003bf006fecedea3e5c39b4",
+      "kind": "watch",
+      "runId": "pr-followup-1787028902",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-18T04:05:14.243412Z",
+  "generatedAt": "2026-08-18T04:58:26.360395Z",
   "newEventCount": 1,
   "version": "notification_outbox_v2"
 }

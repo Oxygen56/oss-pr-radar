@@ -6494,6 +6494,32 @@
     ],
     "why": "The issue reports a user-visible bug in tool_choice='auto' handling on the Rust frontend path, with a clear reproduction and expected behavior. However, the root cause is not identified, and the issue itself asks a design question about whether 'auto' should work without frontend --enable-auto-tool-choice. The deterministic gate is HUMAN_REVIEW, and there is no maintainer confirmation or active investigation. The open PRs are not directly competing, but the lack of root cause clarity and design confirmation makes this a WAIT_MAINTAINER."
   },
+  "3607f77f00e354e0ee32bf7477fbad05a58c25737c827284cfa38728d961b844": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify ToolParameterConfigurationManager.decrypt_tool_parameters in api/core/tools/utils/configuration.py to include a fingerprint of secret-input parameters in the cache key or validate cache entries against it."
+    ],
+    "risks": [
+      "Cache invalidation may affect performance for static secrets; need to ensure fingerprint computation is cheap.",
+      "Legacy cache entries without fingerprint are treated as stale, causing a one-time cache miss within TTL."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add a unit test that calls get_workflow_tool_runtime twice with different secret-input values in the variable pool and asserts the second call returns the new value, not the cached first value.",
+      "Run existing tool configuration tests to ensure no regression."
+    ],
+    "unknowns": [
+      "No explicit maintainer approval or assignment, but repository does not require assignment; issue is actionable."
+    ],
+    "wait_reason": null,
+    "why": "Issue provides a precise root-cause chain with code anchors and a minimal in-process repro, plus a concrete fingerprint-based fix. No competing PR or issue found. The fix is local and testable."
+  },
   "3618fc6631bd2ec5805249e1a2b613ccf7e2f1802235c727e8ee840603967358": {
     "confidence": 0.6,
     "contradictions": [],
@@ -9699,6 +9725,32 @@
       "Maintainer preference on the fix approach (e.g., whether to change cache validation or add a separate check)."
     ],
     "why": "The issue identifies a concrete bug in the cache-first fast path of maybe_download_model() in hf_diffusers_utils.py, with a clear root cause (metadata-only snapshot treated as complete) and a public reproduction. However, the deterministic gate requires HUMAN_REVIEW, and the open PR and related issue lookups timed out, so duplicate work cannot be excluded. Maintainer design preference is also unconfirmed."
+  },
+  "4ccce55994546c9358c82789043ac269082b418084867317e27167185f9da1c4": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/v1/core/sched/scheduler.py",
+      "vllm/v1/engine/core.py"
+    ],
+    "risks": [
+      "Existing PRs may already fix the root cause; overlapping changes could cause merge conflicts."
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Reproduce with the issue's minimal streaming session at temperature>0; add regression test for zero-token continuation; verify engine does not crash and request fails gracefully."
+    ],
+    "unknowns": [
+      "Whether PR #52097 or #52132 already addresses the zero-token continuation bug; maintainer preference on fix approach."
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue describes a clear client-triggerable engine crash with a concrete root-cause hypothesis and reproduction. However, the supplied gate decision is HUMAN_REVIEW and the open PR assessment flags semantic overlap with PR #52097 and #52132, requiring manual comparison before creating a new task. The candidate is actionable but blocked by the need to review existing PRs and maintainer input."
   },
   "4d6d3d938173b1f2b96c929c1b96fba3cd7d83c70e1e069edb6ae2fb779350c0": {
     "confidence": 0.7,
