@@ -2892,19 +2892,19 @@
     },
     "watch|The-PR-Agent/pr-agent#2430": {
       "category": "PR_FOLLOWUP",
-      "digest": "c2132a63d4add015fce2a0173f931db272aa14135d8917bb7afe3465d446d0ff",
+      "digest": "90268feeb731b4a4f2c40f0797266f1f327c5d787c07f82eb45513d978c3d33c",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-16T09:48:41.119244Z",
-      "stateId": "4ad04ba921387e9ce6108ca950ccc9a9a126e44b6ed00ef8dbdd188037cc8bfc"
+      "seenAt": "2026-08-18T07:11:35.746865Z",
+      "stateId": "08cce5acc2cb8f4a52f9d045de395f9a84578faeb6096bc8cc7810dc6ec19ade"
     },
     "watch|agentscope-ai/QwenPaw#6825": {
       "category": "PR_FOLLOWUP",
-      "digest": "282048921266cbc1dadfbcf1fd9d206111e556218c06a4efb7dccb57a44264f1",
+      "digest": "fab3229e8ffcee58cf12d21b70b8cc5e7c5f71827001453e1307be0473adcafc",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-18T04:05:14.243412Z",
-      "stateId": "4804e5cde26323697c9b596fbed876bb0c843a86f7791b35185fd70f5f18b5f2"
+      "seenAt": "2026-08-18T07:11:35.746865Z",
+      "stateId": "5a464fd9f074471d11aac652b428516aae69e045e8a5676e24f4c3bdb4a5fb0f"
     },
     "watch|ai-dynamo/dynamo#12907": {
       "category": "PR_FOLLOWUP",
@@ -3030,7 +3030,6 @@
       "category": "PR_FOLLOWUP",
       "digest": "384fbc5c01054c8799114bb3c8ff76fc3a64ce2c6b5a00c145eb4972121230c8",
       "kind": "watch",
-      "scannerVersion": "",
       "seenAt": "2026-08-11T06:05:27.236429Z",
       "stateId": "8ea45a5efbdcc411f9944c15c12d4c7dd42957dc10f7179c47b7b6d0767cf365"
     },
@@ -3044,11 +3043,11 @@
     },
     "watch|sgl-project/sglang#34138": {
       "category": "PR_FOLLOWUP",
-      "digest": "204f3ddf8a4f44643c456fae271bb7e64ee1e583b5fed446946e081ae5a552d9",
+      "digest": "6491b2208f06e00c17f40cac0fdfe7854a6e289dd1b5f6fb5892ce21850c9f53",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-18T05:52:31.471944Z",
-      "stateId": "826416147c46d4c8fc62e70879f45313d0ebb9091e6fcd00b34a34ff92125f8a"
+      "seenAt": "2026-08-18T07:11:35.746865Z",
+      "stateId": "d040049a86fc68afc8a25c1a5ac22ea8659478836a309ed036166943c40a820d"
     },
     "watch|sgl-project/sglang#35140": {
       "category": "PR_FOLLOWUP",
@@ -3068,408 +3067,15 @@
     },
     "watch|vllm-project/vllm#52298": {
       "category": "PR_FOLLOWUP",
-      "digest": "c0ac0127f1ab3893e20152484330144e707e81412a7fac4b7289c38e36647494",
+      "digest": "f1db9271b3861eaf6efda4e3a2cab032ae51a7230f90afcac25d8b7464de453c",
       "kind": "watch",
       "scannerVersion": "",
-      "seenAt": "2026-08-18T05:52:31.471944Z",
-      "stateId": "b2b44e0bf6ac2faecce326fb3831f47be1fb6590792fea7c13ec34e8a2cda3c7"
+      "seenAt": "2026-08-18T07:11:35.746865Z",
+      "stateId": "3e10d7505da9ee313becf09c0b0712f104211fa2c98da5a987ab9a56785cdd40"
     }
   },
-  "digest": "d73294b2c2899b3283d2a4b05750c19832c84dcea0dae47093c93b69f5ee2a1d",
+  "digest": "c9a22a77409bb860382f1b283a0696944f1cd0c58ba08cfa402b606a54c7f51d",
   "events": [
-    {
-      "attempts": 1,
-      "candidateKeys": [
-        "langchain-ai/langgraph#8587"
-      ],
-      "candidateStates": [
-        {
-          "category": "WAIT_MAINTAINER",
-          "digest": "947a1928cd9b81409557be0f804c1126be920168265d5f82e18f88d7cb555f67",
-          "key": "langchain-ai/langgraph#8587",
-          "kind": "review",
-          "scannerVersion": "oss_pr_radar_v42_terminal_feedback_revoke",
-          "stateId": "9a81e7c8ef5a98723cd4ea2f648d4616fd69eb08bf90907c1995f6381bdb34db"
-        }
-      ],
-      "card": {
-        "config": {
-          "wide_screen_mode": true
-        },
-        "elements": [
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[langchain-ai/langgraph#8587](https://github.com/langchain-ai/langgraph/issues/8587) No way to declare the subgraphs a node invokes; detection cannot see them**\n建议：WAIT_MAINTAINER | 分数：10\n价值：Issue identifies a real observability gap in LangGraph: dynamically invoked subgraphs are invisible to get_subgraphs, xray, and checkpoint namespace lookup. The proposed add_node(subgraphs=...) API is concrete and backward-compatible, with a clear propagation path through StateNodeSpec to PregelNode. However, the deterministic gate requires HUMAN_REVIEW, and the maintainer has not confirmed the API design or assignment. The issue is actionable but needs maintainer sign-off before implementation.\n改动：Add subgraphs parameter to StateGraph.add_node；Thread subgraphs through StateNodeSpec to PregelNode；Update get_subgraphs and checkpoint namespace resolution to use declared subgraphs\n验证：Add regression test using the provided Router example, asserting get_subgraphs returns the child and xray shows the child node；Test checkpoint namespace lookup with declared subgraph；Run existing LangGraph test suite to ensure backward compatibility\n风险：API design may change after maintainer review；Potential interaction with existing source inference logic；Cross-repo changes (langchain, deepagents) may be needed for full coverage\n竞争：未发现相关 open PR\n下一步：先请求维护者分配/确认方案，获批后再开 PR。\n证据：复现信号 7，根因信号 True",
-              "tag": "lark_md"
-            }
-          }
-        ],
-        "header": {
-          "template": "yellow",
-          "title": {
-            "content": "OSS PR Radar: 需要确认",
-            "tag": "plain_text"
-          }
-        }
-      },
-      "createdAt": "2026-08-11T06:05:26.883669Z",
-      "eventId": "564d6fdb57ba66f15238870ac337af93aec21acfe073e1c35a5b737d7057c6a1",
-      "idempotencyKey": "564d6fdb57ba66f15238870ac337af93aec21acfe073e1c35a",
-      "kind": "review",
-      "lastAttemptAt": "2026-08-11T06:05:53.591493Z",
-      "messageId": "om_x100b689ff2fab8a8b1648d0a5321458",
-      "runId": "scan-20260811T060205Z-d210e8555c48",
-      "sentAt": "2026-08-11T06:05:55.984374Z",
-      "status": "SENT"
-    },
-    {
-      "attempts": 1,
-      "candidateKeys": [
-        "SWE-bench/SWE-bench#593",
-        "SWE-bench/SWE-bench#594",
-        "ai-dynamo/dynamo#12907",
-        "anthropics/skills#1231",
-        "camel-ai/camel#4103",
-        "cline/cline#11317",
-        "langflow-ai/langflow#14470",
-        "ray-project/ray#64102",
-        "sgl-project/sglang#30554",
-        "sgl-project/sglang#34138"
-      ],
-      "candidateStates": [
-        {
-          "category": "PR_FOLLOWUP",
-          "digest": "4d28c51192b2906a3284778d02caecd216555ae61d4a54e1ded2e3a508303305",
-          "key": "SWE-bench/SWE-bench#593",
-          "kind": "watch",
-          "scannerVersion": "",
-          "stateId": "15819ed561ce12af5200455a059963393a7d2c672d9fbfdc6d0a4a7a301989c9"
-        },
-        {
-          "category": "PR_FOLLOWUP",
-          "digest": "1ef2499a3e6f5e819d1357ed788eb34bb6aeceefb1f051e9a0e934762c02e89a",
-          "key": "SWE-bench/SWE-bench#594",
-          "kind": "watch",
-          "scannerVersion": "",
-          "stateId": "7c416a63da45921f83b14e0695ed3d52565861fdeb187e423e15fe3ab0ee90c6"
-        },
-        {
-          "category": "PR_FOLLOWUP",
-          "digest": "34c5006168ea2be5ef212113029018db3a3058a375acfd018fc6f32abbc0755d",
-          "key": "ai-dynamo/dynamo#12907",
-          "kind": "watch",
-          "scannerVersion": "",
-          "stateId": "cdb941722d98c91af61721f4ab28123733d7e2cf18370e82b7efa8f3879b7f67"
-        },
-        {
-          "category": "PR_FOLLOWUP",
-          "digest": "d75bf880ef261acbe0112fc574c2afb4984d2b71f3e296f0bb8e5943095adf25",
-          "key": "anthropics/skills#1231",
-          "kind": "watch",
-          "scannerVersion": "",
-          "stateId": "ae53243b356682ee057b516177ac903b615fb7f81b276d08a90434c12ff2c23b"
-        },
-        {
-          "category": "PR_FOLLOWUP",
-          "digest": "a966ccf222801c673ebecf419608edf06d117d22b9c9f63e08ac45ea00780b55",
-          "key": "camel-ai/camel#4103",
-          "kind": "watch",
-          "scannerVersion": "",
-          "stateId": "219d97e2f95a6418da5c9c9b4f47686285523f6322942eb91dfb61c7ba69bd40"
-        },
-        {
-          "category": "PR_FOLLOWUP",
-          "digest": "514cfe4299514520ddc040f13e218e3416041f56496d4f2873fa3231539f3e9e",
-          "key": "cline/cline#11317",
-          "kind": "watch",
-          "scannerVersion": "",
-          "stateId": "e3b16a2c245b2fdbf43abfa7f1160910ba1e73bd54cd41ec5dfe104f9362e546"
-        },
-        {
-          "category": "PR_FOLLOWUP",
-          "digest": "c698ecdbe933114a4e84563c0cc78ba02e24e0cbde98e23a09f1ee2b9c0eb36f",
-          "key": "langflow-ai/langflow#14470",
-          "kind": "watch",
-          "scannerVersion": "",
-          "stateId": "236e9ce7855299aecf561e6d7c52e2a84a45b0d404ca9c141d0214562b427e75"
-        },
-        {
-          "category": "PR_FOLLOWUP",
-          "digest": "384fbc5c01054c8799114bb3c8ff76fc3a64ce2c6b5a00c145eb4972121230c8",
-          "key": "ray-project/ray#64102",
-          "kind": "watch",
-          "scannerVersion": "",
-          "stateId": "8ea45a5efbdcc411f9944c15c12d4c7dd42957dc10f7179c47b7b6d0767cf365"
-        },
-        {
-          "category": "PR_FOLLOWUP",
-          "digest": "454fdcc9fc31edff7a000bce4ce573361b29df0ded15c36025d82a62e6c9667e",
-          "key": "sgl-project/sglang#30554",
-          "kind": "watch",
-          "scannerVersion": "",
-          "stateId": "22184d6fe64f8d42b4b793516875bc09249e3c0570c7ee1215f6d1fd069443b9"
-        },
-        {
-          "category": "PR_FOLLOWUP",
-          "digest": "1ecfb55db61568b41c58706422ea31c44eb502936b5ca5485ed34012a662fb19",
-          "key": "sgl-project/sglang#34138",
-          "kind": "watch",
-          "scannerVersion": "",
-          "stateId": "06c7bcb4136bfe0bb380c8e723755ddd3dee21c7283b4502c06dd0498dfdc239"
-        }
-      ],
-      "card": {
-        "config": {
-          "wide_screen_mode": true
-        },
-        "elements": [
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[SWE-bench/SWE-bench#593](https://github.com/SWE-bench/SWE-bench/pull/593) fix: add per-instance spec overrides to handle astropy setuptools conflict**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[SWE-bench/SWE-bench#594](https://github.com/SWE-bench/SWE-bench/pull/594) fix: add infrastructure failure classification to evaluation pipeline**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[ai-dynamo/dynamo#12907](https://github.com/ai-dynamo/dynamo/pull/12907) fix(epp): account for prefill load during routing**\n建议：PR_FOLLOWUP\n价值：存在未解决审查线程\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[anthropics/skills#1231](https://github.com/anthropics/skills/pull/1231) fix(pptx): add Keynote/macOS OOXML compliance sanitizer**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[camel-ai/camel#4103](https://github.com/camel-ai/camel/pull/4103) feat: Add ComputerUseToolkit for GUI automation via vision models**\n建议：PR_FOLLOWUP\n价值：当前分支检查失败；存在未解决审查线程\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[cline/cline#11317](https://github.com/cline/cline/pull/11317) fix: add DeepSeek V4 support to OpenAI-compatible handler + provider-neutral mistake-limit message**\n建议：PR_FOLLOWUP\n价值：当前分支检查失败\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[langflow-ai/langflow#14470](https://github.com/langflow-ai/langflow/pull/14470) fix: bound web search result content**\n建议：PR_FOLLOWUP\n价值：存在未解决审查线程\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[ray-project/ray#64102](https://github.com/ray-project/ray/pull/64102) [serve] Fix gRPC router cache invalidation on request failure (#63261)**\n建议：PR_FOLLOWUP\n价值：存在未解决审查线程\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[sgl-project/sglang#30554](https://github.com/sgl-project/sglang/pull/30554) [Spec] Size shared logits buffer for adaptive candidates**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[sgl-project/sglang#34138](https://github.com/sgl-project/sglang/pull/34138) Bind streaming abort cleanup to request lifecycle**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
-              "tag": "lark_md"
-            }
-          }
-        ],
-        "header": {
-          "template": "yellow",
-          "title": {
-            "content": "OSS PR Radar: 状态更新",
-            "tag": "plain_text"
-          }
-        }
-      },
-      "createdAt": "2026-08-11T06:05:27.236429Z",
-      "eventId": "3107048aea238806cbd3b96cd9c20279bdf77a5dd8e44b6970ecf9909700ab36",
-      "idempotencyKey": "3107048aea238806cbd3b96cd9c20279bdf77a5dd8e44b6970",
-      "kind": "watch",
-      "lastAttemptAt": "2026-08-11T06:05:55.984397Z",
-      "messageId": "om_x100b689ff29680acb1d7187b31a4baf",
-      "runId": "pr-followup-1786428019",
-      "sentAt": "2026-08-11T06:05:58.227050Z",
-      "status": "SENT"
-    },
-    {
-      "attempts": 1,
-      "candidateKeys": [
-        "BerriAI/litellm#36395",
-        "sgl-project/sglang#34366",
-        "vllm-project/vllm#51663"
-      ],
-      "candidateStates": [
-        {
-          "category": "WAIT_MAINTAINER",
-          "digest": "d54696e2efde2b44c9b62eccd165921b07059c352432a3fd62f39ca109d2f3a2",
-          "key": "BerriAI/litellm#36395",
-          "kind": "review",
-          "scannerVersion": "oss_pr_radar_v42_terminal_feedback_revoke",
-          "stateId": "24d752185119a1ed02e8a34e1013e5614faeaa47a03ce2f5075c81f5c6b83b2f"
-        },
-        {
-          "category": "WAIT_MAINTAINER",
-          "digest": "bb927b62f57dcedfe83bc147fdf3370286133cee0fb667e4c4f2067b75fabbaf",
-          "key": "sgl-project/sglang#34366",
-          "kind": "review",
-          "scannerVersion": "oss_pr_radar_v42_terminal_feedback_revoke",
-          "stateId": "e7ed8bdcc65da1d259609aec067a4ec2ef370ace9689a080a4326d848b45ad57"
-        },
-        {
-          "category": "WAIT_MAINTAINER",
-          "digest": "231775dd4ca0074616a2899fec6049613dc18c22e738fb80434ddaec7900415c",
-          "key": "vllm-project/vllm#51663",
-          "kind": "review",
-          "scannerVersion": "oss_pr_radar_v42_terminal_feedback_revoke",
-          "stateId": "a897d6bef289ab9c3e6fb86c201184279141d9703f70ea01e82f4a1f0eb2d286"
-        }
-      ],
-      "card": {
-        "config": {
-          "wide_screen_mode": true
-        },
-        "elements": [
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[BerriAI/litellm#36395](https://github.com/BerriAI/litellm/issues/36395) [Bug]: Gemini/Vertex cache_control performs cachedContents discovery on every repeated request**\n建议：WAIT_MAINTAINER | 分数：11\n价值：The issue describes a performance bug with clear repro and latency data, but lacks root-cause analysis and maintainer confirmation. Existing PRs are keyword-overlap only and not direct competition. The track is agent_ai_infra, not llm_algorithm, so algorithm evidence is not required. However, the fix likely involves provider-specific caching behavior and may need design confirmation.\n改动：Modify Gemini/Vertex provider cache_control handling to skip cachedContents discovery when cache is valid；Add caching state tracking for explicit cache reuse\n验证：Create a regression test that mocks Vertex API responses and asserts cachedContents discovery is not called on repeated identical requests；Run existing provider test suite for Gemini/Vertex\n风险：Cache invalidation semantics may vary; skipping discovery could use stale cache；Provider API changes may affect behavior\n竞争：仅发现未直接关联、无代码路径或强机制重合的 PR #36466；保留为搜索上下文，不阻止实现\n下一步：按正常流程实现并验证；如要求 DCO 则自动 sign-off，PR 创建后报告 CLA 状态。\n证据：复现信号 3，根因信号 False",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[sgl-project/sglang#34366](https://github.com/sgl-project/sglang/issues/34366) [Bug][diffusion] JoyAI-Image-Edit fails at ImageEncodingStage: Qwen3-VL text encoder missing `mm_token_type_ids`**\n建议：WAIT_MAINTAINER | 分数：12\n价值：Issue identifies a clear transformers-API drift causing Qwen3-VL text encoder failure in ImageEncodingStage, with a concrete repro and suggested fix. However, the deterministic gate is HUMAN_REVIEW and existing PR #33569 has semantic overlap on Qwen3-VL paths, requiring maintainer comparison before creating a new task.\n改动：ImageEncodingStage forward to pass mm_token_type_ids from processor output；possibly other Qwen3-VL encoder call sites\n验证：Add regression test using joyai_image_edit_ti2i repro to assert successful warmup and output；Run existing diffusion tests and static checks\n风险：Existing PR #33569 may already address the root cause; overlapping changes could conflict；API drift may require version-specific handling\n竞争：发现 PR #33569 与 issue 代码路径和关键语义重合，但未直接关联 issue；需人工比较，禁止自动创建重复任务\n下一步：先逐项对比已有 PR 的复现、根因、改动文件与测试；只有明确存在未覆盖路径时才继续。\n证据：复现信号 4，根因信号 True",
-              "tag": "lark_md"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[vllm-project/vllm#51663](https://github.com/vllm-project/vllm/issues/51663) [Bug]: Massive output-token throughput regression since v0.24.0 with Qwen3.6-35B-A3B-FP8**\n建议：WAIT_MAINTAINER | 分数：14\n价值：Issue reports a significant throughput regression between vLLM versions but lacks root cause analysis, profiling data, or a minimal reproducer. The only comment is a non-maintainer saying 'Closely looking at it,' indicating active investigation but no confirmed cause. The candidate is a bug report with no proposed code path, and the deterministic gate requires HUMAN_REVIEW due to design confirmation needs and AI disclosure conflict.\n改动：Identify kernel selection or scheduler change causing regression；Add regression test for output-token throughput\n验证：Reproduce with provided config and model on v0.23.0 vs v0.24.0；Profile with nsight or vLLM metrics to isolate bottleneck\n风险：Regression may be environment-specific or require specific hardware；Fix may involve complex kernel or scheduler changes\n竞争：仅发现未直接关联、无代码路径或强机制重合的 PR #34046；保留为搜索上下文，不阻止实现\n下一步：仅完成本地复现、修复、测试和私有提交包；由用户自行决定公开提交。\n证据：复现信号 2，根因信号 False",
-              "tag": "lark_md"
-            }
-          }
-        ],
-        "header": {
-          "template": "yellow",
-          "title": {
-            "content": "OSS PR Radar: 需要确认",
-            "tag": "plain_text"
-          }
-        }
-      },
-      "createdAt": "2026-08-11T06:10:45.943734Z",
-      "eventId": "69887f9f3fd2859238bfef6c19400a33622093c76fc17cb1eb8a74ffda4dfdf2",
-      "idempotencyKey": "69887f9f3fd2859238bfef6c19400a33622093c76fc17cb1eb",
-      "kind": "review",
-      "lastAttemptAt": "2026-08-11T06:11:15.294058Z",
-      "messageId": "om_x100b689f9e809890b14f701eeda9226",
-      "runId": "scan-20260811T060814Z-f316c33c4e16",
-      "sentAt": "2026-08-11T06:11:17.310731Z",
-      "status": "SENT"
-    },
-    {
-      "attempts": 1,
-      "candidateKeys": [
-        "agentscope-ai/QwenPaw#6825"
-      ],
-      "candidateStates": [
-        {
-          "category": "PR_FOLLOWUP",
-          "digest": "d42a2d5f78cf5836553302acfd445b2efe78504880eb340fa571242abd9e234b",
-          "key": "agentscope-ai/QwenPaw#6825",
-          "kind": "watch",
-          "scannerVersion": "",
-          "stateId": "fce6d4a7cf9ffef68dac8313bf305aa26bae57ba90cbfdab9c51d1b8dd466902"
-        }
-      ],
-      "card": {
-        "config": {
-          "wide_screen_mode": true
-        },
-        "elements": [
-          {
-            "tag": "div",
-            "text": {
-              "content": "**[agentscope-ai/QwenPaw#6825](https://github.com/agentscope-ai/QwenPaw/pull/6825) fix(mcp): apply configured timeout to client sessions**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
-              "tag": "lark_md"
-            }
-          }
-        ],
-        "header": {
-          "template": "yellow",
-          "title": {
-            "content": "OSS PR Radar: 状态更新",
-            "tag": "plain_text"
-          }
-        }
-      },
-      "createdAt": "2026-08-11T06:10:46.291770Z",
-      "eventId": "db54b9f609ed76e0dd890d533d7d58317c865e70951191054df28d7724051890",
-      "idempotencyKey": "db54b9f609ed76e0dd890d533d7d58317c865e70951191054d",
-      "kind": "watch",
-      "lastAttemptAt": "2026-08-11T06:11:17.310759Z",
-      "messageId": "om_x100b689f9eae74a4b32e26c6ad20876",
-      "runId": "pr-followup-1786428440",
-      "sentAt": "2026-08-11T06:11:18.711177Z",
-      "status": "SENT"
-    },
     {
       "attempts": 1,
       "candidateKeys": [
@@ -27113,9 +26719,109 @@
       "runId": "pr-followup-1787032113",
       "sentAt": "2026-08-18T05:53:18.416480Z",
       "status": "SENT"
+    },
+    {
+      "attempts": 0,
+      "candidateKeys": [
+        "The-PR-Agent/pr-agent#2430",
+        "agentscope-ai/QwenPaw#6825",
+        "sgl-project/sglang#34138",
+        "vllm-project/vllm#52298"
+      ],
+      "candidateStates": [
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "90268feeb731b4a4f2c40f0797266f1f327c5d787c07f82eb45513d978c3d33c",
+          "key": "The-PR-Agent/pr-agent#2430",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "08cce5acc2cb8f4a52f9d045de395f9a84578faeb6096bc8cc7810dc6ec19ade"
+        },
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "fab3229e8ffcee58cf12d21b70b8cc5e7c5f71827001453e1307be0473adcafc",
+          "key": "agentscope-ai/QwenPaw#6825",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "5a464fd9f074471d11aac652b428516aae69e045e8a5676e24f4c3bdb4a5fb0f"
+        },
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "6491b2208f06e00c17f40cac0fdfe7854a6e289dd1b5f6fb5892ce21850c9f53",
+          "key": "sgl-project/sglang#34138",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "d040049a86fc68afc8a25c1a5ac22ea8659478836a309ed036166943c40a820d"
+        },
+        {
+          "category": "PR_FOLLOWUP",
+          "digest": "f1db9271b3861eaf6efda4e3a2cab032ae51a7230f90afcac25d8b7464de453c",
+          "key": "vllm-project/vllm#52298",
+          "kind": "watch",
+          "scannerVersion": "",
+          "stateId": "3e10d7505da9ee313becf09c0b0712f104211fa2c98da5a987ab9a56785cdd40"
+        }
+      ],
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[The-PR-Agent/pr-agent#2430](https://github.com/The-PR-Agent/pr-agent/pull/2430) feat: add Asana ticket detection to ticket compliance check**\n建议：PR_FOLLOWUP\n价值：当前分支检查失败；存在未解决审查线程\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[agentscope-ai/QwenPaw#6825](https://github.com/agentscope-ai/QwenPaw/pull/6825) fix(mcp): apply configured timeout to client sessions**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[sgl-project/sglang#34138](https://github.com/sgl-project/sglang/pull/34138) Bind streaming abort cleanup to request lifecycle**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "div",
+            "text": {
+              "content": "**[vllm-project/vllm#52298](https://github.com/vllm-project/vllm/pull/52298) [Bugfix] Validate guidance tokenizer compatibility before EngineCore**\n建议：PR_FOLLOWUP\n价值：分支存在合并冲突\n验证：查看正式 review、分支相关失败检查、审查线程或冲突详情后处理",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "OSS PR Radar: 状态更新",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "createdAt": "2026-08-18T07:11:35.746865Z",
+      "eventId": "4a7bfc64f69dd5e6fcf7ad88e05fe7a538465686cdaf66721ef915fde97aabd9",
+      "idempotencyKey": "4a7bfc64f69dd5e6fcf7ad88e05fe7a538465686cdaf66721e",
+      "kind": "watch",
+      "runId": "pr-followup-1787036883",
+      "status": "PENDING"
     }
   ],
-  "generatedAt": "2026-08-18T05:52:31.471944Z",
+  "generatedAt": "2026-08-18T07:11:35.746865Z",
   "newEventCount": 1,
   "version": "notification_outbox_v2"
 }

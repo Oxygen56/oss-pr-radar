@@ -18080,6 +18080,32 @@
     ],
     "why": "Issue clearly identifies a shallow update in get_config causing recursive override failure, with a concrete reproduction. However, an existing PR #33525 directly addresses this but lacks tests and has failing CI, and the deterministic gate requires HUMAN_REVIEW. Maintainer design preference is unconfirmed."
   },
+  "867cfd70904a8d44edb9649b434b0dcc0347a33f1ff61c998a80ff12dc7edafa": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "mem0/vector_stores/valkey.py",
+      "tests/vector_stores/test_valkey.py"
+    ],
+    "risks": [
+      "Valkey FT.DROPINDEX does not support DD flag; must use scan_iter+DEL with CROSSSLOT prevention and glob escaping."
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Add regression test that calls reset() and asserts get_all() returns empty and no mem0:<collection>:* keys remain via scan_iter."
+    ],
+    "unknowns": [
+      "Whether maintainers will accept the issue and which PR will be merged."
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue clearly describes a silent correctness bug in Valkey vector store reset/delete_col, with root cause and reproduction. However, multiple PRs (#6996, #7013, #7023) already exist and are closed pending issue acceptance; maintainer BCathcart is actively involved. The issue is not yet accepted, and the correct next step is to review existing PRs rather than start new work."
+  },
   "86ad73ceb9cfe16be7833bf006c8a2a7473b3b53e278f40ed19107d894ac2f71": {
     "confidence": 0.7,
     "contradictions": [],
@@ -19753,6 +19779,35 @@
       "Whether PR #36292 already fixes the root cause or only partially"
     ],
     "why": "Issue reports a user-visible bug with a plausible root cause (Gemini 3.5 API change) and a public repro, but the deterministic gate requires HUMAN_REVIEW and existing PR #36292 overlaps semantically. Need maintainer confirmation on desired API mapping and whether to extend generateContent or adopt Interactions API."
+  },
+  "948a22ec4e5bb7b2cdb92397ae8741ff428ce5bd171d7e25ee177d920066e365": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix evictable_size() in radix_cache.py to count distinct pages instead of per-node references",
+      "Add regression test for idle pool invariant with shared pages and page-aligned prompts"
+    ],
+    "risks": [
+      "Fix may affect eviction policy performance if counting distinct pages requires extra traversal",
+      "Potential interaction with other cache accounting paths not covered by issue"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Run provided reproduction commands on NPU or CPU with dLLM model to confirm +160 error",
+      "Add unit test for evictable_size() with a radix tree containing shared pages, asserting distinct page count",
+      "Run idle invariant check with page-aligned prompts and radix cache enabled to ensure no false leak"
+    ],
+    "unknowns": [
+      "Exact mechanism causing multiple tree references to same page not identified, but not required for fix"
+    ],
+    "wait_reason": null,
+    "why": "Issue identifies a concrete counting bug in radix cache evictable_size() that double-counts shared pages, causing idle invariant check to fail and kill the scheduler. Root cause is clearly localized to evictable_size() counting per-node references instead of distinct pages, with deterministic reproduction and code anchors. No competing PR addresses this specific bug."
   },
   "94ac77edf879c92efcd9be5809f884d9e0c8fed3363d3404ec2e1cdbae9e75a1": {
     "confidence": 0.9,
