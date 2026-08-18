@@ -1,13 +1,13 @@
 {
-  "digest": "22fee7670c6e1a880770daa12e1621246de2f59fb187cd97f85fe63b5eaeba61",
-  "generatedAt": "2026-08-18T09:52:00.745328Z",
+  "digest": "b135b28174e2ea0679e0b3ea00893c27532105128ae93e76b09b960f1e1301c5",
+  "generatedAt": "2026-08-18T10:49:44.039146Z",
   "items": [
     {
       "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
       "actions": [],
       "baseRefName": "litellm_internal_staging",
       "baseSha": "4fd7a73ef57543b9b843aa98f3bdc7506b4d2deb",
-      "checkedAt": "2026-08-18T09:52:00.745328Z",
+      "checkedAt": "2026-08-18T10:49:44.039146Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -45,7 +45,7 @@
       "actions": [],
       "baseRefName": "litellm_internal_staging",
       "baseSha": "4fd7a73ef57543b9b843aa98f3bdc7506b4d2deb",
-      "checkedAt": "2026-08-18T09:52:00.745328Z",
+      "checkedAt": "2026-08-18T10:49:44.039146Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -86,7 +86,7 @@
       ],
       "baseRefName": "litellm_internal_staging",
       "baseSha": "4fd7a73ef57543b9b843aa98f3bdc7506b4d2deb",
-      "checkedAt": "2026-08-18T09:52:00.745328Z",
+      "checkedAt": "2026-08-18T10:49:44.039146Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [
@@ -233,7 +233,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "8c865f48173011439cfc2e140e45586e59b6bfcf",
-      "checkedAt": "2026-08-18T09:52:00.745328Z",
+      "checkedAt": "2026-08-18T10:49:44.039146Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -274,7 +274,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "944172f6c0d0f90fdc1921fd38c1dcae62c48592",
-      "checkedAt": "2026-08-18T09:52:00.745328Z",
+      "checkedAt": "2026-08-18T10:49:44.039146Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -325,7 +325,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "944172f6c0d0f90fdc1921fd38c1dcae62c48592",
-      "checkedAt": "2026-08-18T09:52:00.745328Z",
+      "checkedAt": "2026-08-18T10:49:44.039146Z",
       "draft": true,
       "evidence": {
         "actionableCheckNames": [],
@@ -373,14 +373,14 @@
       "url": "https://github.com/Oxygen56/fixtureforge/pull/2"
     },
     {
-      "actionDigest": "c21ba8afda50d002eb77d61367c5449915e6a8e55c7833c168f522cb5b3cb118",
+      "actionDigest": "3ea2332d04b004a5179d2f6d1a9005165890355b9393282aa89d2c9bd8ddadf6",
       "actions": [
         "CI 检查失败",
         "存在未解决审查线程"
       ],
       "baseRefName": "main",
-      "baseSha": "1eea001187afc7cbbdd055f6bc1347917e7b509a",
-      "checkedAt": "2026-08-18T09:52:00.745328Z",
+      "baseSha": "cf6e03242f4ba1a83161a9b69ef4cac203f46af5",
+      "checkedAt": "2026-08-18T10:49:44.039146Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [
@@ -391,7 +391,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "1eea001187afc7cbbdd055f6bc1347917e7b509a",
+        "baseSha": "cf6e03242f4ba1a83161a9b69ef4cac203f46af5",
         "changedFiles": [
           "docs/docs/core-abilities/fetching_ticket_context.md",
           "pr_agent/settings/.secrets_template.toml",
@@ -470,6 +470,15 @@
         "requestedChanges": [],
         "unresolvedReviewThreads": [
           {
+            "association": "COLLABORATOR",
+            "authorType": "User",
+            "createdAt": "2026-08-18T09:53:05Z",
+            "path": "tests/unittest/test_ticket_compliance.py",
+            "reviewer": "IsmaelMartinez",
+            "summary": "CI ran here for the first time today and found two things, both in this file. CodeQL `py/missing-call-to-init`, here and at :84. `extract_tickets` dispatches on `isinstance(git_provider, GithubProvider)` at :340, so the doubles do need to be real instances, but `test_ticket_extraction_async.py` gets that with `GithubProvider.__new__(GithubProvider)` rather than subclassing, which doesn't trip the ",
+            "url": "https://github.com/The-PR-Agent/pr-agent/pull/2430#discussion_r3802967355"
+          },
+          {
             "association": "NONE",
             "authorType": "Bot",
             "createdAt": "2026-08-18T06:40:03Z",
@@ -492,10 +501,10 @@
       "headSha": "5f3f33bac5b21fe12d245f3f6835bd0e87332283",
       "key": "The-PR-Agent/pr-agent#2430",
       "mergeConflict": false,
-      "mergeableState": "blocked",
+      "mergeableState": "unknown",
       "number": 2430,
       "repo": "The-PR-Agent/pr-agent",
-      "taskActionDigest": "90268feeb731b4a4f2c40f0797266f1f327c5d787c07f82eb45513d978c3d33c",
+      "taskActionDigest": "96e09c8feba13c35e61c4ab3cd37fbf30117a6e8f08dd74dad5103452090dee0",
       "taskActions": [
         "当前分支检查失败",
         "存在未解决审查线程"
@@ -505,13 +514,13 @@
       "url": "https://github.com/The-PR-Agent/pr-agent/pull/2430"
     },
     {
-      "actionDigest": "320b803535f2be8ad12137e8dea6f8d6eadc3d29edd9b5c13e12ab5f17efd32f",
+      "actionDigest": "3bb47716f6782482770bd923aaa13fd449a31efa93ddc7310ee1eeb528e04e51",
       "actions": [
         "分支存在合并冲突"
       ],
       "baseRefName": "main",
-      "baseSha": "9382a6230d29a19369aaf0ab1b6dc3bdbf0d99e3",
-      "checkedAt": "2026-08-18T09:52:00.745328Z",
+      "baseSha": "af62d253f8f9920cfa5065d48b90f925f1998dff",
+      "checkedAt": "2026-08-18T10:49:44.039146Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -520,7 +529,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "9382a6230d29a19369aaf0ab1b6dc3bdbf0d99e3",
+        "baseSha": "af62d253f8f9920cfa5065d48b90f925f1998dff",
         "changedFiles": [
           "src/qwenpaw/drivers/handlers/mcp_stateful_client.py",
           "tests/unit/drivers/handlers/test_mcp_stateful_client.py"
@@ -535,10 +544,10 @@
       "headSha": "2f480ca99e72fe9e76b2ab3523bdc682334a2332",
       "key": "agentscope-ai/QwenPaw#6825",
       "mergeConflict": true,
-      "mergeableState": "dirty",
+      "mergeableState": "unknown",
       "number": 6825,
       "repo": "agentscope-ai/QwenPaw",
-      "taskActionDigest": "84bf98b6c56a137b3e45e5d26725d5d99204b1bc932bc35a47ae15f4d253500e",
+      "taskActionDigest": "8f8423dc911336c1fde8388acaed9ccbe5d86f2ac899d8d7512829608bc7c0f7",
       "taskActions": [
         "分支存在合并冲突"
       ],
@@ -553,7 +562,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "a7d6b2ee01fbb4910fe46a4b36ffd49014f2ace6",
-      "checkedAt": "2026-08-18T09:52:00.745328Z",
+      "checkedAt": "2026-08-18T10:49:44.039146Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -642,7 +651,7 @@
       "actions": [],
       "baseRefName": "dev",
       "baseSha": "4e81a0b73f6e614afebf9c7ff8862904a3674455",
-      "checkedAt": "2026-08-18T09:52:00.745328Z",
+      "checkedAt": "2026-08-18T10:49:44.039146Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -683,7 +692,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "90ab9578f92ea6ca49616bcbc22ac6f9a32724df",
-      "checkedAt": "2026-08-18T09:52:00.745328Z",
+      "checkedAt": "2026-08-18T10:49:44.039146Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -727,7 +736,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "f379e5ad66e2febc1616cf8d6284666fecbe514e",
-      "checkedAt": "2026-08-18T09:52:00.745328Z",
+      "checkedAt": "2026-08-18T10:49:44.039146Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -767,7 +776,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "195a2a38bcde3e51befdacb1ddacb68a21f87006",
-      "checkedAt": "2026-08-18T09:52:00.745328Z",
+      "checkedAt": "2026-08-18T10:49:44.039146Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -806,7 +815,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "3c989dc0adc594d592be62272d70e28caaa5553b",
-      "checkedAt": "2026-08-18T09:52:00.745328Z",
+      "checkedAt": "2026-08-18T10:49:44.039146Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -848,7 +857,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "544ec87f2edef960eb6de0537bf63bfe4c7658d8",
-      "checkedAt": "2026-08-18T09:52:00.745328Z",
+      "checkedAt": "2026-08-18T10:49:44.039146Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -911,8 +920,8 @@
         "CI 检查失败"
       ],
       "baseRefName": "main",
-      "baseSha": "b9efa968265b09c481696b5c4f6c1d921cd05009",
-      "checkedAt": "2026-08-18T09:52:00.745328Z",
+      "baseSha": "c2e293e2932e35d01c9ec2c116a93e9b53cda158",
+      "checkedAt": "2026-08-18T10:49:44.039146Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [
@@ -924,7 +933,7 @@
         "baseIntegrationRequired": true,
         "baseMergeBaseSha": "0cfd0bbe0563c3ca0df04d86198f17a5c60b6695",
         "baseRefName": "main",
-        "baseSha": "b9efa968265b09c481696b5c4f6c1d921cd05009",
+        "baseSha": "c2e293e2932e35d01c9ec2c116a93e9b53cda158",
         "changedFiles": [
           "sdk/packages/llms/src/providers/model-facts.ts",
           "sdk/packages/llms/src/providers/routing/provider-options.test.ts"
@@ -985,7 +994,7 @@
       "mergeableState": "blocked",
       "number": 11317,
       "repo": "cline/cline",
-      "taskActionDigest": "0c9b5bad49b3b69bc72bc35b3796be6be160cf62008bf2c23009547a043c1b33",
+      "taskActionDigest": "2b53a5e59421be4d29011ba6f15e950e5be0ea7c145af71fc0cf6ba25ef8bdcc",
       "taskActions": [
         "当前分支检查失败"
       ],
@@ -997,8 +1006,8 @@
       "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
       "actions": [],
       "baseRefName": "main",
-      "baseSha": "b9efa968265b09c481696b5c4f6c1d921cd05009",
-      "checkedAt": "2026-08-18T09:52:00.745328Z",
+      "baseSha": "c2e293e2932e35d01c9ec2c116a93e9b53cda158",
+      "checkedAt": "2026-08-18T10:49:44.039146Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1007,7 +1016,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "b9efa968265b09c481696b5c4f6c1d921cd05009",
+        "baseSha": "c2e293e2932e35d01c9ec2c116a93e9b53cda158",
         "changedFiles": [
           "apps/vscode/src/shared/services/Logger.test.ts",
           "apps/vscode/src/shared/services/Logger.ts"
@@ -1035,8 +1044,8 @@
       "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
       "actions": [],
       "baseRefName": "main",
-      "baseSha": "b9efa968265b09c481696b5c4f6c1d921cd05009",
-      "checkedAt": "2026-08-18T09:52:00.745328Z",
+      "baseSha": "c2e293e2932e35d01c9ec2c116a93e9b53cda158",
+      "checkedAt": "2026-08-18T10:49:44.039146Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1045,7 +1054,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "b9efa968265b09c481696b5c4f6c1d921cd05009",
+        "baseSha": "c2e293e2932e35d01c9ec2c116a93e9b53cda158",
         "changedFiles": [
           "apps/cli/src/acp/acpAgent.test.ts",
           "apps/cli/src/acp/acpAgent.ts"
@@ -1073,8 +1082,8 @@
       "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
       "actions": [],
       "baseRefName": "main",
-      "baseSha": "b9efa968265b09c481696b5c4f6c1d921cd05009",
-      "checkedAt": "2026-08-18T09:52:00.745328Z",
+      "baseSha": "c2e293e2932e35d01c9ec2c116a93e9b53cda158",
+      "checkedAt": "2026-08-18T10:49:44.039146Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1083,7 +1092,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "b9efa968265b09c481696b5c4f6c1d921cd05009",
+        "baseSha": "c2e293e2932e35d01c9ec2c116a93e9b53cda158",
         "changedFiles": [
           "apps/vscode/src/sdk/vscode-run-commands-tool.test.ts",
           "apps/vscode/src/sdk/vscode-run-commands-tool.ts"
@@ -1113,8 +1122,8 @@
         "CI 检查失败"
       ],
       "baseRefName": "main",
-      "baseSha": "b9efa968265b09c481696b5c4f6c1d921cd05009",
-      "checkedAt": "2026-08-18T09:52:00.745328Z",
+      "baseSha": "c2e293e2932e35d01c9ec2c116a93e9b53cda158",
+      "checkedAt": "2026-08-18T10:49:44.039146Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [
@@ -1126,7 +1135,7 @@
         "baseIntegrationRequired": true,
         "baseMergeBaseSha": "041afb718bcdfe50eabd90d060e5335ef98e2d16",
         "baseRefName": "main",
-        "baseSha": "b9efa968265b09c481696b5c4f6c1d921cd05009",
+        "baseSha": "c2e293e2932e35d01c9ec2c116a93e9b53cda158",
         "changedFiles": [
           "sdk/packages/core/src/extensions/tools/definitions.test.ts",
           "sdk/packages/core/src/extensions/tools/definitions.ts"
@@ -1187,7 +1196,7 @@
       "mergeableState": "blocked",
       "number": 13307,
       "repo": "cline/cline",
-      "taskActionDigest": "a5b236069f038f942c443818b285eb33c1b466d81f872d126ccb520b3c14b4e4",
+      "taskActionDigest": "9dd11a55b1507010b2a62b68fa0a4ba077e73a2a29d930d539d1bf987f6e6a45",
       "taskActions": [
         "当前分支检查失败"
       ],
@@ -1200,7 +1209,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "63884215103e287c87fa1e9f3010938dc6c12404",
-      "checkedAt": "2026-08-18T09:52:00.745328Z",
+      "checkedAt": "2026-08-18T10:49:44.039146Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1240,7 +1249,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "c3c76a6d26d7ed61cb875219ffa82a50cd144a93",
-      "checkedAt": "2026-08-18T09:52:00.745328Z",
+      "checkedAt": "2026-08-18T10:49:44.039146Z",
       "draft": true,
       "evidence": {
         "actionableCheckNames": [],
@@ -1282,7 +1291,7 @@
       ],
       "baseRefName": "main-v2",
       "baseSha": "69d597e2194f67eaf8646dcd035afa0552a2cc1a",
-      "checkedAt": "2026-08-18T09:52:00.745328Z",
+      "checkedAt": "2026-08-18T10:49:44.039146Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1314,7 +1323,7 @@
       "headSha": "6537ed4c478c435a1e99148ac7e124405eb3b7fb",
       "key": "esengine/DeepSeek-Reasonix#8510",
       "mergeConflict": true,
-      "mergeableState": "unknown",
+      "mergeableState": "dirty",
       "number": 8510,
       "repo": "esengine/DeepSeek-Reasonix",
       "taskActionDigest": "46683b95dc029d701f5fef75b5158ad94438e46a23acd32dd542e92021b03063",
@@ -1332,7 +1341,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "846e172dcbcbe33b8aadfb4cfd5fa5098322e114",
-      "checkedAt": "2026-08-18T09:52:00.745328Z",
+      "checkedAt": "2026-08-18T10:49:44.039146Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1377,7 +1386,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "12b09ff4113bd1726a2ad56e96e67963312406f8",
-      "checkedAt": "2026-08-18T09:52:00.745328Z",
+      "checkedAt": "2026-08-18T10:49:44.039146Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1445,7 +1454,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "001c235229be8795e3834520467bd0d661ed8f34",
-      "checkedAt": "2026-08-18T09:52:00.745328Z",
+      "checkedAt": "2026-08-18T10:49:44.039146Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1483,7 +1492,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "001c235229be8795e3834520467bd0d661ed8f34",
-      "checkedAt": "2026-08-18T09:52:00.745328Z",
+      "checkedAt": "2026-08-18T10:49:44.039146Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1522,8 +1531,8 @@
         "存在未解决审查线程"
       ],
       "baseRefName": "main",
-      "baseSha": "00d7102c54aa4ed14676cfceb41645e19097b62e",
-      "checkedAt": "2026-08-18T09:52:00.745328Z",
+      "baseSha": "1b45c15749dbef06b9b97b5d09b7f0b3b1e7ceb3",
+      "checkedAt": "2026-08-18T10:49:44.039146Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1532,7 +1541,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "00d7102c54aa4ed14676cfceb41645e19097b62e",
+        "baseSha": "1b45c15749dbef06b9b97b5d09b7f0b3b1e7ceb3",
         "changedFiles": [
           "python/packages/foundry_hosting/agent_framework_foundry_hosting/_toolbox.py",
           "python/packages/foundry_hosting/tests/test_toolbox.py"
@@ -1557,7 +1566,7 @@
       "headSha": "3413e3546b6da56b9c0ac74b4d2cd3e0c890c2f6",
       "key": "microsoft/agent-framework#7696",
       "mergeConflict": false,
-      "mergeableState": "blocked",
+      "mergeableState": "unknown",
       "number": 7696,
       "repo": "microsoft/agent-framework",
       "taskActionDigest": "0a8a5f3fe1383a7787dd1d095fc6350242d87c5ca3898f267fc410ca4b7f9774",
@@ -1573,7 +1582,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "944000d5f1c88c7d78d0a0a404f8304bb4bd7d8c",
-      "checkedAt": "2026-08-18T09:52:00.745328Z",
+      "checkedAt": "2026-08-18T10:49:44.039146Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1617,8 +1626,8 @@
       "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
       "actions": [],
       "baseRefName": "master",
-      "baseSha": "ad6e6744f648bec5a056343e96ceb0a56107b0b8",
-      "checkedAt": "2026-08-18T09:52:00.745328Z",
+      "baseSha": "11d482cef2d187944275074ebfa8f7d4b63e38a3",
+      "checkedAt": "2026-08-18T10:49:44.039146Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1627,7 +1636,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "master",
-        "baseSha": "ad6e6744f648bec5a056343e96ceb0a56107b0b8",
+        "baseSha": "11d482cef2d187944275074ebfa8f7d4b63e38a3",
         "changedFiles": [
           "docs/articles_en/get-started/install-openvino/install-openvino-apt.rst",
           "docs/sphinx_setup/_static/selector-tool/assets/selector-oxnzcw97.js"
@@ -1656,7 +1665,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "4cb54849971d8921faa62a1dc86fac3bdc89dd6b",
-      "checkedAt": "2026-08-18T09:52:00.745328Z",
+      "checkedAt": "2026-08-18T10:49:44.039146Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1695,7 +1704,7 @@
       "actions": [],
       "baseRefName": "develop",
       "baseSha": "ba7a9ce0d92a46f2458b82b1fcdd000f887f651a",
-      "checkedAt": "2026-08-18T09:52:00.745328Z",
+      "checkedAt": "2026-08-18T10:49:44.039146Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1742,7 +1751,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "3759b52cfb88dd966f9c4b0301a5583a6180ad1b",
-      "checkedAt": "2026-08-18T09:52:00.745328Z",
+      "checkedAt": "2026-08-18T10:49:44.039146Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1777,14 +1786,14 @@
       "url": "https://github.com/run-llama/llama_index/pull/21892"
     },
     {
-      "actionDigest": "32d64ee7a8704f102e563145d00f5881fc17a69a22d45a7d9d3aa5209ce12ff6",
+      "actionDigest": "8133b84d71de27790fd4abd6e267cad9597b65670d7021d8e2bae4264544dedc",
       "actions": [
         "CI 检查失败",
         "分支存在合并冲突"
       ],
       "baseRefName": "main",
-      "baseSha": "24d625698d44c78f6e8ab8b7c19f96f45bbaa90a",
-      "checkedAt": "2026-08-18T09:52:00.745328Z",
+      "baseSha": "f7101b0ae626d6d8700f8f5fa444e9cbe69351ad",
+      "checkedAt": "2026-08-18T10:49:44.039146Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1793,7 +1802,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "24d625698d44c78f6e8ab8b7c19f96f45bbaa90a",
+        "baseSha": "f7101b0ae626d6d8700f8f5fa444e9cbe69351ad",
         "changedFiles": [
           "python/sglang/srt/managers/io_struct.py",
           "python/sglang/srt/managers/tokenizer_manager.py",
@@ -1973,7 +1982,7 @@
       "mergeableState": "unknown",
       "number": 34138,
       "repo": "sgl-project/sglang",
-      "taskActionDigest": "41b7ea1257c99076c9324dc8bdf5b181163791ba07fd624013b3b22895749e95",
+      "taskActionDigest": "6648f678ab647dc6555a212f4bcfa71dbca07459768b354b0653f9ad51acb234",
       "taskActions": [
         "分支存在合并冲突"
       ],
@@ -1987,8 +1996,8 @@
         "CI 检查失败"
       ],
       "baseRefName": "main",
-      "baseSha": "24d625698d44c78f6e8ab8b7c19f96f45bbaa90a",
-      "checkedAt": "2026-08-18T09:52:00.745328Z",
+      "baseSha": "f7101b0ae626d6d8700f8f5fa444e9cbe69351ad",
+      "checkedAt": "2026-08-18T10:49:44.039146Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -1997,7 +2006,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "24d625698d44c78f6e8ab8b7c19f96f45bbaa90a",
+        "baseSha": "f7101b0ae626d6d8700f8f5fa444e9cbe69351ad",
         "changedFiles": [
           "python/sglang/multimodal_gen/configs/sample/teacache.py",
           "python/sglang/multimodal_gen/runtime/cache/teacache.py",
@@ -2148,8 +2157,8 @@
         "CI 检查失败"
       ],
       "baseRefName": "main",
-      "baseSha": "24d625698d44c78f6e8ab8b7c19f96f45bbaa90a",
-      "checkedAt": "2026-08-18T09:52:00.745328Z",
+      "baseSha": "f7101b0ae626d6d8700f8f5fa444e9cbe69351ad",
+      "checkedAt": "2026-08-18T10:49:44.039146Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -2158,7 +2167,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "24d625698d44c78f6e8ab8b7c19f96f45bbaa90a",
+        "baseSha": "f7101b0ae626d6d8700f8f5fa444e9cbe69351ad",
         "changedFiles": [
           "python/sglang/multimodal_gen/runtime/cache/spectrum.py",
           "python/sglang/multimodal_gen/test/unit/test_spectrum.py"
@@ -2292,7 +2301,7 @@
       "headSha": "fb8e3555c6179c0d5a6826c94351738bca4d8e01",
       "key": "sgl-project/sglang#35140",
       "mergeConflict": false,
-      "mergeableState": "unknown",
+      "mergeableState": "blocked",
       "number": 35140,
       "repo": "sgl-project/sglang",
       "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
@@ -2306,7 +2315,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "41f179b57aa8ab6f634f508128ce1f1efadd0eb1",
-      "checkedAt": "2026-08-18T09:52:00.745328Z",
+      "checkedAt": "2026-08-18T10:49:44.039146Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -2346,7 +2355,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "41f179b57aa8ab6f634f508128ce1f1efadd0eb1",
-      "checkedAt": "2026-08-18T09:52:00.745328Z",
+      "checkedAt": "2026-08-18T10:49:44.039146Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -2427,7 +2436,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "41f179b57aa8ab6f634f508128ce1f1efadd0eb1",
-      "checkedAt": "2026-08-18T09:52:00.745328Z",
+      "checkedAt": "2026-08-18T10:49:44.039146Z",
       "draft": true,
       "evidence": {
         "actionableCheckNames": [],
@@ -2466,7 +2475,7 @@
       "headSha": "3036472185bfcc23b0148fe3ae22666c6d379279",
       "key": "vllm-project/vllm#52296",
       "mergeConflict": false,
-      "mergeableState": "unknown",
+      "mergeableState": "blocked",
       "number": 52296,
       "repo": "vllm-project/vllm",
       "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
@@ -2482,7 +2491,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "41f179b57aa8ab6f634f508128ce1f1efadd0eb1",
-      "checkedAt": "2026-08-18T09:52:00.745328Z",
+      "checkedAt": "2026-08-18T10:49:44.039146Z",
       "draft": false,
       "evidence": {
         "actionableCheckNames": [],
@@ -2507,7 +2516,7 @@
       "headSha": "f5b8dee33268bf8511784c94742d6ec33653a07d",
       "key": "vllm-project/vllm#52298",
       "mergeConflict": true,
-      "mergeableState": "unknown",
+      "mergeableState": "dirty",
       "number": 52298,
       "repo": "vllm-project/vllm",
       "taskActionDigest": "03fa422df2cf3a8ef4b04d5374abd4630daed7fdc80188053b7332d831d1616c",

@@ -6207,6 +6207,36 @@
     ],
     "why": "Issue provides a clear root cause and a verified fix for a user-visible UTF-8 corruption bug, but an existing PR (#12688) semantically overlaps with the same code path and may already address the issue. The deterministic gate requires HUMAN_REVIEW, and the open PR assessment indicates semantic overlap requiring manual comparison. Without maintainer confirmation or a clear gap in the existing PR, starting a new PR risks duplication."
   },
+  "3392dfc1bbbdd3642ff4e13ffb75cddd5b7bea57d71b19776ca1c0a81e973991": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify convert-json-schema-to-openapi-schema.ts to resolve $ref against $defs or translate to Vertex's ref/defs form",
+      "Add warning or UnsupportedFunctionalityError for unresolvable references",
+      "Add unit tests for $ref/$defs handling"
+    ],
+    "risks": [
+      "Potential behavior change for existing schemas that rely on dropping $ref; need to ensure backward compatibility",
+      "Recursive schema handling may be complex and require careful depth limiting"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Use the issue's minimal reproduction to create a failing test that asserts the converted schema includes resolved type/enum",
+      "Add regression tests for recursive schemas and warning behavior",
+      "Run targeted unit tests in packages/google"
+    ],
+    "unknowns": [
+      "Maintainer design preference for inlining vs ref translation is not confirmed; but issue provides clear options and the fix is actionable regardless"
+    ],
+    "wait_reason": null,
+    "why": "Issue identifies a concrete bug in @ai-sdk/google's schema conversion: $ref/$defs are silently dropped, producing invalid API requests. Root cause is clearly localized to convert-json-schema-to-openapi-schema.ts with a reproducible example and expected behavior. No competing PR addresses this specific issue."
+  },
   "33b5005f95e84a2d96eca178ae4419267f102451b12aa73132087e852f8f25ac": {
     "confidence": 0.85,
     "contradictions": [],
@@ -31421,6 +31451,23 @@
       "Whether PR #36115 fully resolves the issue and maintainer preference on approach"
     ],
     "why": "Issue clearly identifies a runtime validation gap causing silent group failure, but existing PR #36115 overlaps semantically and requires maintainer review to avoid duplicate work."
+  },
+  "ed283a5ae8c477d09f5848ad6bc22adb561ee9a427334b6cf06434607f3117b2": {
+    "confidence": 0.95,
+    "contradictions": [],
+    "decision": "REJECT",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [],
+    "risks": [],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "test_plan": [],
+    "unknowns": [],
+    "wait_reason": null,
+    "why": "The issue is a dependency version mismatch: the PPO trainer requires trl>=0.8.6,<=0.9.6 while the package allows trl up to 0.24.0. This is an installation/configuration problem, not an algorithm defect. The track requires concrete training objective, model mechanism, or numerical method; this issue only concerns version pinning and error messaging, which is explicitly excluded."
   },
   "ed7e2afd22e2396a609c0ce2971d85153ec290a1c93c057ba2e497ac014ba5e8": {
     "confidence": 0.7,
