@@ -14068,6 +14068,32 @@
     ],
     "why": "The issue clearly identifies a recurring bug: new Claude models fail because temperature is deprecated, and the fix requires a maintainable approach instead of per-model hardcoding. No open PR or issue addresses this, and the existing PRs are merged and only add specific models."
   },
+  "690be9858b0cb0d433f144c4740d6492bb0ba2d2f6cbe04714654c2b35f47f02": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "decision": "REJECT",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "AcceleratorConfig self-resolution",
+      "module-scoped config knobs",
+      "config migration"
+    ],
+    "risks": [
+      "Breaking config compatibility",
+      "Potential misconfiguration in distributed training"
+    ],
+    "root_cause_clarity": "low",
+    "score": 2,
+    "test_plan": [
+      "Unit tests for config resolution",
+      "e2e training test"
+    ],
+    "unknowns": [],
+    "wait_reason": null,
+    "why": "The issue is a configuration/API refactor moving knobs between dataclasses, not an LLM algorithm change. It lacks a concrete training objective, model mechanism, or numerical method. The validation path is config parsing and e2e training, not a reference-vs-implementation test or numerical regression."
+  },
   "691703cc5c84e6847ce39e5141c5f2c225fc880257a055205aa9872a616b1a8f": {
     "confidence": 0.8,
     "contradictions": [
@@ -16649,6 +16675,23 @@
     ],
     "why": "Issue reports a high-impact Windows bug where install/uninstall/doctor/serve all fail with 'active CBM sessions and operations could not be stopped safely', with independent reproduction and a working recovery procedure. Root cause is likely in the activation transaction or daemon startup logic on Windows, possibly related to file access or session handling. No competing PR exists, and maintainer has acknowledged the bug as high priority."
   },
+  "7b7b881e32d885ba681e7f28842eb909fb43d1f1feb5582329dd002f834118e9": {
+    "confidence": 0.95,
+    "contradictions": [],
+    "decision": "REJECT",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [],
+    "risks": [],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "test_plan": [],
+    "unknowns": [],
+    "wait_reason": null,
+    "why": "The issue is a dependency version mismatch: the Docker image installs trl 0.24.0 while the PPO trainer requires trl>=0.8.6,<=0.9.6. This is an environment/configuration problem, not an algorithm defect. The proposed fix is to align dependency ranges or update the error message, which is installation/CLI/configuration work, not a concrete training objective or numerical method. The track requires a concrete algorithm mechanism and validation path, which is absent."
+  },
   "7b935e2e33e35b2822a3f75e7d01de96225fdc9b91f6c03c09b500e0c96d7b6f": {
     "confidence": 0.7,
     "contradictions": [
@@ -18454,6 +18497,37 @@
     ],
     "wait_reason": "DESIGN_CONFIRMATION",
     "why": "Issue reports a concrete Feishu streaming card bug with clear repro steps and root cause: feishuMarkdownImageRe only matches http(s) URLs, skipping resource:// handles, causing card update failures. The fix is actionable but requires design confirmation on how to handle resource:// (upload vs degrade) and whether to align with existing #2698 fix."
+  },
+  "89116c151019bc5eb1f70fe8d4633e2a8a7426e409ade99a68e2fc632ca34e47": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims no existing issue, but PR #20136 exists with semantic overlap"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add expectedTrajectory to ExperimentItem and propagate through mapping and scorer.run()",
+      "Possibly surface configuration error when expectedTrajectory is required but missing"
+    ],
+    "risks": [
+      "PR #20136 may already fix the issue or require coordination",
+      "Changing error behavior may affect existing tests or users"
+    ],
+    "root_cause_clarity": "high",
+    "score": 14,
+    "test_plan": [
+      "Add regression test using the issue's minimal repro to assert trajectory scorer returns 1 when expectedTrajectory matches",
+      "Run existing unit tests for packages/core/src/datasets/experiment"
+    ],
+    "unknowns": [
+      "Whether PR #20136 already addresses the expectedTrajectory drop",
+      "Maintainer preference on error handling for missing expectedTrajectory"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue clearly identifies a bug in dataset.startExperiment dropping expectedTrajectory, with minimal repro and root cause. However, an open PR #20136 by a maintainer overlaps semantically and touches the same code paths, requiring manual comparison to avoid duplicate work."
   },
   "8932a0a8548495b6a967987e3db8c6c73aa627f309cec85450c95a6d74f12b98": {
     "confidence": 0.8,
@@ -27142,6 +27216,38 @@
       "Exact maintainer design preference for the fix (minimal plumbing vs. broader run identity redesign) is not confirmed, but the issue is labeled and acknowledged, so work can start with a minimal fix."
     ],
     "why": "Issue provides a precise root cause: requestContextEntries is dropped in iteration state and LLM input mapping, causing silent fallback to empty context in durable agents. This is a high-impact bug with a clear code path and a concrete reproduction strategy."
+  },
+  "d22d3bb98213c468fc32cbfe3619a36c2db5dc5c7efd7ea9aa5c430921b987f3": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Reporter uses MCP SDK, not standalone fastmcp",
+      "Maintainer analysis shows v3.4.7 AzureProvider should not produce the reported URL"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Investigate MCP SDK OAuth flow for resource parameter handling",
+      "Possibly add a configuration option to control resource forwarding"
+    ],
+    "risks": [
+      "Changing OAuth behavior could break existing integrations",
+      "Entra configuration may need adjustment"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with the exact MCP SDK version and configuration",
+      "Capture the full authorization request and compare with Entra requirements"
+    ],
+    "unknowns": [
+      "Exact code path in MCP SDK that generates the authorization request",
+      "Whether the issue is reproducible with standalone fastmcp"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "The issue reports an Entra OAuth failure but the reporter's environment uses the MCP SDK (mcp.server.fastmcp) rather than the standalone fastmcp package, and the maintainer's analysis shows the reported URL cannot be produced by the v3.4.7 AzureProvider path. The root cause is unclear and may be a client-side or configuration issue."
   },
   "d23c4207a8906a3c17dd4a7f8ed8d3b7983b11a8271f780a693084b494a85e1b": {
     "confidence": 0.7,
