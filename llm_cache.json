@@ -5089,6 +5089,31 @@
     ],
     "why": "The issue clearly identifies a root cause in tenant credential resolution reading the raw better-auth user shape, with a verified local workaround and a suggested fix direction. However, the deterministic gate is HUMAN_REVIEW, and the issue is labeled for maintainer triage (trio-tb). There is a potential duplicate issue #20688 with high semantic overlap, and the proposed fix touches a documented public slot, requiring design confirmation. The track is llm_algorithm, but the issue is about auth credential resolution, not an LLM algorithm mechanism; the algorithm evidence is misapplied. Actionability is high, but the gate and design uncertainty mandate WAIT_MAINTAINER."
   },
+  "269776ecb2cee4ed188212d7a60fd3b252809107d7867c5bce4b1299f9431315": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "investigate session/auth refresh and MCP reconnection logic"
+    ],
+    "risks": [
+      "fix may be environment-specific and not reproducible in CI"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "create a controlled idle-timeout test with mocked network failure and verify reconnection"
+    ],
+    "unknowns": [
+      "exact code path causing auth failure",
+      "whether maintainers acknowledge the issue",
+      "minimal reproducible test case"
+    ],
+    "why": "Issue describes a real idle-timeout failure but lacks root-cause analysis, code-level anchors, or a minimal reproduction. The provided steps are high-level and environment-specific, and no maintainer confirmation or design direction exists."
+  },
   "26cd03747d0f7a1a0b5e9674be5cd62362261a1afb174efaf1c89ee8e93146a8": {
     "confidence": 0.85,
     "contradictions": [],
@@ -7108,6 +7133,37 @@
       "Exact code path in Rust frontend responsible for tool_choice handling"
     ],
     "why": "The issue reports a user-visible bug in tool_choice='auto' handling on the Rust frontend path, with a clear reproduction and expected behavior. However, the root cause is not identified, and the issue itself asks a design question about whether 'auto' should work without frontend --enable-auto-tool-choice. The deterministic gate is HUMAN_REVIEW, and there is no maintainer confirmation or active investigation. The open PRs are not directly competing, but the lack of root cause clarity and design confirmation makes this a WAIT_MAINTAINER."
+  },
+  "35b6723b7040d0242088615ce899a3d558711f27d4de64c564f7f86b2d86c540": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Initial report suggests hang is universal, but comments show it is due to long prefill and timeouts, not a complete hang."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "prefix cache restoration logic",
+      "Anthropic-compatible /v1/messages endpoint",
+      "context length handling for agent prompts"
+    ],
+    "risks": [
+      "Changes to cache restoration may affect memory usage or performance.",
+      "Potential API behavior changes could impact existing integrations."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with a large prompt (>40k tokens) and verify prefill time and cache restoration across sessions.",
+      "Add regression test for prefix cache restoration failure across independent sessions."
+    ],
+    "unknowns": [
+      "Exact request differences between agent clients and direct API calls.",
+      "Whether the issue is specific to MLX backend or affects other backends."
+    ],
+    "why": "Issue reports a reproducible hang in agent integrations with local Qwen models on macOS, while direct API calls work. Comments identify root cause: large prompts (40k+ tokens) cause long prefill times, and prefix cache restoration fails across sessions, leading to timeouts. This is a concrete performance/caching bug in Ollama's inference path, actionable for maintainers."
   },
   "3607f77f00e354e0ee32bf7477fbad05a58c25737c827284cfa38728d961b844": {
     "confidence": 0.85,
@@ -22516,6 +22572,44 @@
     ],
     "why": "Issue provides a clear, reproducible streaming protocol violation: missing finish_reason and [DONE] for muse models on the Zen gateway, with multiple user confirmations and a concrete expected/actual pair. This is a high-impact bug in the agent/inference path, actionable for a fix."
   },
+  "9dd9ccc66e75b6ec5cae8a9ca7bbfe1091cc2ec066304766df8c89b92f0463b4": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "api/extensions",
+      "pkg/ingress",
+      "istio/istio/pilot",
+      "plugins/golang-filter/sandbox-router",
+      "pkg/sandbox/registry",
+      "pkg/sandbox/token",
+      "pkg/sandbox/egress",
+      "test/e2e"
+    ],
+    "risks": [
+      "Large scope spanning multiple components may require careful coordination",
+      "Security-sensitive design requires thorough review to avoid bypasses",
+      "Dependency on maintainer approval before implementation begins"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run unit tests for API/Controller: go test ./pkg/sandbox/... ./pkg/ingress/...",
+      "Run Pilot cluster/LB/xDS tests: (cd istio/istio && go test ./pilot/pkg/networking/core/... ./pilot/pkg/xds/endpoints/...)",
+      "Run Golang Filter tests: (cd plugins/golang-filter && go test ./... && go test -race ./...)",
+      "Run e2e tests: make run-higress-e2e-test TEST_SHORTNAME=SandboxRouter and provider-specific tests",
+      "Execute security negative tests for forged headers, wrong tenant, stale generation, unhealthy endpoints, registry expiry, invalid CIDR, DNS rebinding"
+    ],
+    "unknowns": [
+      "Exact final API group/name for EndpointOverridePolicy pending API review",
+      "Specific implementation details may change after maintainer approval"
+    ],
+    "why": "The issue provides a detailed design for a sandbox gateway with clear architectural decisions, implementation locations, and a concrete verification plan. It identifies specific code anchors and proposes a fail-closed routing mechanism with three isolated upstream paths. The design is actionable and includes a test plan covering unit, e2e, and security negative cases."
+  },
   "9e52c5effae05aed5b2afe1dac9ef639d8e14042616605a378c795b5633638c0": {
     "confidence": 0.7,
     "contradictions": [],
@@ -33601,6 +33695,29 @@
       "Open PR and related issue lookup failed, so duplicate work cannot be excluded"
     ],
     "why": "The issue reports tokenizer misbehavior on Windows CPU but lacks a clear root cause; a collaborator could not reproduce on Linux CPU, suggesting platform-specific or environment-dependent factors. The candidate's algorithm evidence is generic and not tied to a concrete mechanism or validation path."
+  },
+  "ea21ac9d15a5b1dd218ce49995abfddcc7a093598b94849a07bb50d3321cd4c5": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "agent card builder in a2a conversion to handle callable instruction providers"
+    ],
+    "risks": [
+      "Potential behavior change if instruction resolution is added; need to ensure no breaking changes for existing string instructions."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test using the provided minimal reproduction to ensure to_a2a() starts successfully with a callable instruction."
+    ],
+    "unknowns": [
+      "No maintainer confirmation or design preference; but the issue is actionable and the fix is straightforward."
+    ],
+    "why": "The issue clearly identifies a bug where to_a2a() fails when instruction is a callable InstructionProvider, with a minimal reproduction and expected behavior. The root cause is that the agent card builder assumes instruction is a string, which is a concrete code defect in the a2a conversion path."
   },
   "ea273a25b80bd763533e993ffb902758db165b698067e645a4771359a960781b": {
     "confidence": 0.9,
