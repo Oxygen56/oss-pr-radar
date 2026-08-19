@@ -10375,6 +10375,37 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue describes a clear client-triggerable engine crash with a concrete root-cause hypothesis and reproduction. However, the supplied gate decision is HUMAN_REVIEW and the open PR assessment flags semantic overlap with PR #52097 and #52132, requiring manual comparison before creating a new task. The candidate is actionable but blocked by the need to review existing PRs and maintainer input."
   },
+  "4d461c5ccac9c63dd3d4dbce29de147554d9e39a4ec960d229ae384932d1bca3": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix attachment fetch to return non-empty body",
+      "Correct MCP content block schema (handle _meta null)",
+      "Add regression tests for attachment listing and download"
+    ],
+    "risks": [
+      "Potential API behavior changes if fix alters response format",
+      "Need to ensure fix works across different region URLs and tenants"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Reproduce with provided org/project/event IDs and attachment IDs",
+      "Add unit test for attachment fetch returning empty body",
+      "Add schema validation test for content block with _meta null"
+    ],
+    "unknowns": [
+      "Exact code location of the connector fetch logic",
+      "Whether maintainers have already started a fix internally"
+    ],
+    "wait_reason": null,
+    "why": "Issue provides a concrete, reproducible bug in the Sentry MCP attachment download path, with clear expected vs actual behavior and a likely root cause (empty body fetch). The fix is actionable and testable, and no competing PR exists."
+  },
   "4d6d3d938173b1f2b96c929c1b96fba3cd7d83c70e1e069edb6ae2fb779350c0": {
     "confidence": 0.7,
     "contradictions": [
@@ -33461,6 +33492,33 @@
     ],
     "why": "Issue reports a user-facing bug with DeepSeek thinking mode in react_agent, but lacks a minimal reproducible example and root cause is unconfirmed. Existing PR #6535 is closed and stale, and repository requires assignment, so maintainer confirmation is needed."
   },
+  "edcd4d8de7ec8b2d897d486b7fec2f465b62a65a64cc0366d2bee7627e09c26d": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Original issue claims SP no-op; author's comment retracts that claim"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Documentation update for max_token_len_per_gpu semantics"
+    ],
+    "risks": [
+      "No code change; risk of misinterpreting withdrawn issue as actionable"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "test_plan": [
+      "No algorithm test applicable; documentation review only"
+    ],
+    "unknowns": [
+      "Whether maintainers want to keep the issue open for documentation purposes"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "The issue's original claim of a silent no-op in ulysses_sequence_parallel_size was retracted by the author, who clarified that the memory issue was due to FSDP2 gradient accumulation, not sequence parallelism. The remaining actionable item is documentation of max_token_len_per_gpu semantics, which is not an algorithm fix. No concrete evidence of an actual SP bug remains, and the issue is effectively withdrawn."
+  },
   "edd523f664ce6ab8ee3c72fcaa846b2d983fe9725eac7a49422648cdf0d33175": {
     "confidence": 0.9,
     "contradictions": [],
@@ -36148,6 +36206,40 @@
     ],
     "unknowns": [],
     "why": "The issue is a dependency-related segfault caused by decord's global symbol override, not an LLM algorithm defect. The proposed fix (making decord optional or removing it) is operational dependency management, not a training objective, model mechanism, or numerical method. It lacks a reference-vs-implementation test or controlled experiment for algorithm validation."
+  },
+  "fddbf32df29d5f6b785936e46bb8a9730f20efad77dcf40db64426fcaf35da40": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue title mentions vLLM 0.26.0 but reproduction also includes 0.27.1",
+      "Contributor hypothesis suggests token-count mismatch but not yet confirmed by maintainers"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "LMCache vLLM adapter token-count handling for full-prompt hits",
+      "scheduler/worker KV-cache length consistency"
+    ],
+    "risks": [
+      "Root cause may be in LMCache rather than vLLM",
+      "Potential overlap with issue #52620 requires triage",
+      "Fix may affect performance or other disaggregation paths"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 13,
+    "test_plan": [
+      "Reproduce with provided YAML configs and commands on two GPUs",
+      "Compare monolithic vs P/D generation for identical prompts",
+      "Add regression test asserting token-count consistency between scheduler and worker for full-prompt hits"
+    ],
+    "unknowns": [
+      "Whether issue #52620 is truly duplicate",
+      "Maintainer confirmation of root cause and desired fix location"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue reports a silent correctness failure in LMCache P/D disaggregation with a concrete reproduction and a contributor's root-cause hypothesis (token-count mismatch in the adapter). However, the supplied evidence flags a potential duplicate issue #52620 sharing stack/failure signatures, and the deterministic gate is HUMAN_REVIEW. The root cause is not confirmed, and the proposed fix path depends on maintainer confirmation of the adapter behavior."
   },
   "feacb19b7cf392f775baf197c9c83a1b3750f61bca8020cf5aff7308ae69be1a": {
     "confidence": 0.7,
