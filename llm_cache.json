@@ -6921,6 +6921,36 @@
     ],
     "why": "Issue clearly identifies a user-visible bug: API accepts arbitrary IDs but silently filters them, caused by a regression in #1684. Acceptance criteria are concrete and testable, and no competing PR exists. The fix is actionable and aligns with the repo's focus."
   },
+  "36951d37f3331da424826432ad1df4b940e196ceffe30169520d26f72240578b": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify clampReasoningEffort to cap at a safe ceiling when provider supported list is unknown",
+      "Apply clamping/mapping in the OpenAI-compatible pipeline's buildReasoningConfig before sending to wire",
+      "Add regression test asserting 'max' never reaches the wire for endpoints that don't accept it"
+    ],
+    "risks": [
+      "Changing behavior for providers that do accept 'max' could break them; need to ensure clamping only applies when provider's supported set is known or safe ceiling is conservative",
+      "Potential scope creep if fix touches multiple provider pipelines; keep minimal"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Add unit test for clampReasoningEffort with undefined supported list asserting 'max' is clamped to 'xhigh' or similar",
+      "Add integration test for OpenAI-compatible provider that sets /effort max and verifies the outgoing request uses a valid tier",
+      "Run existing reasoning-effort and provider pipeline tests"
+    ],
+    "unknowns": [
+      "Exact provider capability detection mechanism for OpenAI-compatible endpoints; whether a generic supported list can be derived from API metadata"
+    ],
+    "wait_reason": null,
+    "why": "Issue provides a clear, reproducible bug with root cause analysis and a concrete fix direction. The triage confirms the clamp fallback is insufficient and identifies the OpenAI-compatible pipeline as the primary path needing a fix. No competing PR exists; the issue is labeled ready-for-agent and is actionable."
+  },
   "36deb033ef9614205ee9f7418c95e5cf93e2a3121cf5e7f9c0e087e5d8aec869": {
     "confidence": 0.7,
     "contradictions": [],
@@ -17886,6 +17916,37 @@
     ],
     "why": "The issue describes a plausible stale-session bug in Continue's PR checks, but the repository is now read-only and unmaintained after acquisition, and the open-PR lookup failed, so duplicate work cannot be excluded. The report is detailed but lacks a confirmed root cause and maintainer confirmation."
   },
+  "803e1ea3290cdb9d948b0bbba5fb621767710dd3d967c3ac34a5d54ad8f30936": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims distinct from async crash family, but duplicate issue #37035 shares stack signatures"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix int16 overflow in position/offset handling in GDN/MTP drafter path",
+      "Add regression test for sequence length crossing 32768"
+    ],
+    "risks": [
+      "Potential duplicate issue #37035 may already cover root cause",
+      "Open PR #48792 may overlap and require coordination"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 12,
+    "test_plan": [
+      "Run provided reproducer with --no-async-scheduling and monitor acceptance metrics around ctx 32768",
+      "Add unit test with synthetic sequence crossing 32768 to verify no acceptance collapse"
+    ],
+    "unknowns": [
+      "Whether issue #37035 is truly duplicate or different root cause",
+      "Whether PR #48792 fixes this specific overflow or is unrelated"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue describes a concrete LLM algorithm bug (int16 overflow at position 32768 in GDN/MTP speculative decoding) with a clear reproducer and metrics, but the supplied evidence flags a potential duplicate issue #37035 sharing stack signatures and an open PR #48792 with semantic overlap on gdn_attn.py. The deterministic gate is HUMAN_REVIEW, and the candidate's own assessment requires manual comparison before action. No maintainer approval or assignment is present, and the root cause is hypothesized but not confirmed."
+  },
   "811580dbec57b0c5aaecf3a0702132258e6bf6c914b6aa5a28a7b416860e8e5b": {
     "confidence": 0.7,
     "contradictions": [],
@@ -23207,6 +23268,40 @@
       "Exact maintainer preference for API changes in _DirectImageGenerationTool."
     ],
     "why": "Issue clearly identifies a user-visible bug with a verified repro and precise root cause: local capability-contributed tools drop nested agent usage from RunUsage/UsageLimits. However, the issue itself states the fix is likely gated on #6886, which awaits a maintainer design decision on a return channel for durable execution. The supplied gate_decision is HUMAN_REVIEW, and the open PR assessment flags semantic overlap requiring manual comparison. These blocking unknowns and the need for design confirmation mandate WAIT_MAINTAINER."
+  },
+  "acf11a1a46184a48ec8ab711129918838a00c4749acf674e368e0bd23ff25f9a": {
+    "confidence": 0.7,
+    "contradictions": [
+      "PR #33863 is titled 'PP Support PD + DSpark' and does not reference this issue, yet semantic overlap is reported"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix forward context propagation in MiniMax H3 audio encoding stage",
+      "Ensure set_forward_context is called before attention layers in reference encoding path"
+    ],
+    "risks": [
+      "Existing PR #33863 may already fix this; new PR could conflict or be redundant",
+      "Changing forward context handling may affect other model pipelines",
+      "Large PR scope increases review burden and merge risk"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 11,
+    "test_plan": [
+      "Reproduce the issue with the provided traceback steps and a minimal MiniMax H3 audio input",
+      "Add a regression test that runs audio encoding without a pre-set forward context and asserts no AssertionError",
+      "Run existing multimodal pipeline tests for MiniMax H3"
+    ],
+    "unknowns": [
+      "Whether PR #33863 actually fixes the forward context issue",
+      "Maintainer preference on whether to extend PR #33863 or create a new PR",
+      "Exact minimal reproduction steps beyond the traceback"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue reports a clear runtime failure (Forward context not set) in MiniMax H3 audio encoding, with detailed traceback and code anchors. However, an existing open PR #33863 has semantic overlap with the same code paths and scheduler context, and the issue does not reference it. The PR is large, has failed CI, and may already address the root cause. A new PR would risk duplication and conflict; maintainer review is needed to determine if the existing PR covers this issue or if a separate fix is warranted."
   },
   "adef651b4b3603057ec024e05e61f09b0eaec725bc670c797cde4c91bac81943": {
     "confidence": 0.7,
