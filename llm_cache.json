@@ -15735,6 +15735,38 @@
     "wait_reason": "MISSING_EVIDENCE",
     "why": "The issue provides a clear root cause and a concrete fix path, but the only proposed PR was withdrawn due to intermittent corruption, and the remaining fix (FlashInfer instantiation) lacks a validated implementation. The issue is actionable but requires maintainer confirmation on the correct fix direction and a regression test."
   },
+  "72394d1e6c8193ab3d165fb2b845d591799e3a5749163226f672ada7755cf94f": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Reporter claims user message omitted; triage bot static analysis says user turn is present in history and converter emits it"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix message serialization in OpenAI-compatible converter or agent runtime to retain user turn after tool calls",
+      "Add regression test for Ollama-style tool-call follow-up requests"
+    ],
+    "risks": [
+      "Root cause may be Ollama-side parsing, not client-side omission",
+      "Existing PR #8900 may already address the issue, causing duplicate work"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 12,
+    "test_plan": [
+      "Capture actual wire request using --openai-logging and verify messages array",
+      "Add unit test in converter.test.ts for follow-up request shape with tool_calls and tool result parts"
+    ],
+    "unknowns": [
+      "Actual wire request content",
+      "Whether Ollama parses reasoning_content and parts-array tool content correctly",
+      "Whether PR #8900 fixes this issue"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "Issue reports a user-visible bug with a plausible root cause, but the triage bot's static analysis contradicts the reporter's claim and requests a wire capture to settle the diagnosis. The existing PR #8900 has semantic overlap and is already under review, so a new PR risks duplication. Actionability is blocked by missing wire-level evidence and unresolved maintainer direction."
+  },
   "728fd9dfee48442beceb511650a5e8f905a21872d61ac0ece3b1f88a92d1ef48": {
     "confidence": 0.85,
     "contradictions": [],
@@ -16522,6 +16554,33 @@
       "Exact auto-cancel path in reporter's session (missing /about output, CLI version, launch method)"
     ],
     "why": "Issue is a well-diagnosed bug with clear root cause and maintainer confirmation, but maintainer explicitly requires sign-off on behavior split before landing; no PR competition."
+  },
+  "774cb93f6061b7669bbf2499d6e71bd96f8cece88d0a6260aa63f2b0e39ee3e0": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify DeepSeek V4 parser configuration or ParserEngine logic to allow incremental streaming of string parameter bodies",
+      "Add regression test for long string parameter streaming"
+    ],
+    "risks": [
+      "Changing arg_structural_chars may affect performance for long arguments; need to evaluate converter complexity",
+      "Potential behavior change for other tool call formats"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Run the provided parser-only reproduction and assert multiple non-empty deltas before closing tag",
+      "Add a regression test in vllm/tool_parsers/deepseekv4_engine_tool_parser_test.py"
+    ],
+    "unknowns": [
+      "Maintainer preference on fix approach; no open PR or related issue found"
+    ],
+    "wait_reason": null,
+    "why": "Issue provides a precise root cause (arg_structural_chars filtering) and a minimal parser-only reproduction with expected behavior, making it actionable for a focused fix."
   },
   "7751fad09dde653e243bea3752e07d7a9d072ba6b580e2bdf24c074bc3880788": {
     "confidence": 0.7,
@@ -26252,6 +26311,35 @@
     ],
     "why": "The issue provides a clear, reproducible bug with a detailed root cause analysis and a suggested fix direction. However, the deterministic gate requires HUMAN_REVIEW, and the issue explicitly requests design confirmation. The existing PR #7546 is not a direct competitor, but maintainer input is needed to avoid conflicting with ongoing work."
   },
+  "c476e2df3a394a6debacad1d5ee675c9994e581ddc20928612e10c18afe11cb7": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add ParallelLMHead dispatch in compressed_tensors.py",
+      "Ensure scheme matching includes lm_head in config targets",
+      "Add regression test for quantized lm_head"
+    ],
+    "risks": [
+      "Overlap with existing PRs may lead to duplicate or conflicting changes",
+      "Potential API behavior changes if dispatch is not carefully scoped"
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Reproduce with a compressed-tensors checkpoint with quantized lm_head and verify logits are not uninitialized",
+      "Run existing quantization tests and add a targeted unit test for ParallelLMHead dispatch"
+    ],
+    "unknowns": [
+      "Whether existing PR #35228 fully resolves the issue and is acceptable to maintainers"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue clearly describes a silent correctness bug with a concrete root cause (missing ParallelLMHead dispatch in compressed-tensors quantization) and includes a reproduction. However, two open PRs (#35228, #28130) already target the same code path and semantics, with #35228 being maintainer-owned and recently updated. The candidate is a PR competition opportunity, but the existence of overlapping PRs requires maintainer review to avoid duplicate work."
+  },
   "c479e95b8a2b407d2063e5d36c287dea858f90243fa13eedfb20353dbd958b63": {
     "confidence": 0.7,
     "contradictions": [
@@ -28510,6 +28598,39 @@
       "No explicit maintainer approval or design confirmation, but repository does not require assignment; issue is clear and actionable."
     ],
     "why": "Issue clearly identifies a concrete correctness bug in Honcho backend config validation: non-positive message_char_limit causes silent data corruption via Python slicing. Root cause is missing validation in from_backend_config(). No competing PR or issue found. The fix is localized and testable."
+  },
+  "d55ae2f0cf05a73a3fc051b912efa9403e6e25fb5fc43e24311b76c8ed7791e8": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims flags missing on main; maintainer comment shows generator on main already emits both flags"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "components/src/dynamo/profiler/utils/config_modifiers/vllm.py",
+      "components/src/dynamo/vllm/args.py",
+      "components/src/dynamo/planner/config/backend_components.py"
+    ],
+    "risks": [
+      "Fix may be unnecessary if already resolved in newer profiler image",
+      "Changing flag emission could affect other deployment paths"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 11,
+    "test_plan": [
+      "Reproduce on current main with a DGDR autoApply scenario and verify generated DGD includes --disaggregation-mode prefill and --kv-transfer-config",
+      "Add a unit test for _apply_disagg_workers to assert both flags are emitted for prefill role",
+      "Run existing planner and vllm tests"
+    ],
+    "unknowns": [
+      "Profiler image version used in reproduction",
+      "Whether AIC autoApply path reaches _apply_disagg_workers"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "Issue reports a plausible bug but a maintainer comment shows the generator on main already emits both flags, suggesting the bug may be fixed or version-specific. The issue lacks confirmation of the profiler image version and whether the AIC path reaches the relevant modifier, so root cause is unconfirmed. Existing PRs overlap semantically but do not directly address this issue, requiring maintainer guidance."
   },
   "d5619453a101ef3ef74b0a606cc1f4fc02c31d32ab3901f0b06a149cf972dd0c": {
     "confidence": 0.7,
@@ -32036,6 +32157,40 @@
       "Whether existing PRs address the root cause"
     ],
     "why": "Issue describes a clear load-balancing bug with a concrete repro and root-cause analysis in comments, but the deterministic gate requires HUMAN_REVIEW and there are overlapping open PRs and related issues that need maintainer triage."
+  },
+  "ea7822f312a66d1d12a613b7e21a48bd4b803957eb52b2be732abeb87c4feba7": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims PR #39706 does not directly address the race, but Dosu comment suggests it may partially address it"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify streams_channel.py to accept per-subscription starting cursor",
+      "Modify app_generate_service.py to capture stream tip before enqueuing task",
+      "Add regression test for concurrent streaming with streams transport"
+    ],
+    "risks": [
+      "PR #39706 may conflict or already fix the race",
+      "Changing last_id semantics could reintroduce #34040 if not scoped per subscription",
+      "Non-deterministic failure requires repeated test runs for confidence"
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Run provided repro.mjs with K=8 and EVENT_BUS_REDIS_CHANNEL_TYPE=streams to confirm workflow_started is always delivered",
+      "Add unit test for _StreamsSubscription with explicit last_id parameter",
+      "Run existing streaming and workflow tests to ensure no regression"
+    ],
+    "unknowns": [
+      "Whether PR #39706 already fixes the race or conflicts with the proposed fix",
+      "Maintainer preference for the per-subscription cursor approach vs alternative design"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue provides a precise root cause (last_id='$' race) with a one-line confirmation and a proposed per-subscription cursor fix. However, an open PR #39706 touches the same files and may partially address the race, requiring manual comparison before a new PR is created. The submission policy also blocks automatic public actions due to AI disclosure conflict."
   },
   "ea8c4d6a087e45855f487e879dbe1b52088e0e33062c845599cff3f09ea5202a": {
     "confidence": 0.8,
