@@ -11031,6 +11031,37 @@
     ],
     "why": "Issue reports slow downloads but lacks a clear root cause; maintainer and contributor comments suggest a dependency version fix (hf-xet 1.5.2) and transient CDN issues, not a code defect in huggingface_hub. No actionable code path is identified, and the deterministic gate is ALLOW_TO_WORK but the evidence points to a maintainer-driven fix."
   },
+  "52ff6fa72a3afbc6bfbc663b844da3f47e017620db72c2f22af51d5dac987344": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Original report claims finalizer never runs, but comments show it runs after cyclic GC"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "LangGraph interrupt/task cleanup to release task inputs deterministically",
+      "or define an abandon/thread-delete lifecycle signal for middleware"
+    ],
+    "risks": [
+      "Breaking resume behavior if cleanup happens on every interrupt",
+      "Cross-repo changes may be needed, increasing complexity"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with cyclic GC disabled and verify subprocess remains alive until gc.collect()",
+      "Add regression test that asserts deterministic cleanup on interrupt without relying on cyclic GC"
+    ],
+    "unknowns": [
+      "Maintainer preference on whether to fix in LangGraph or define a lifecycle contract",
+      "Exact mechanism for deterministic release without breaking resume"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "The issue reports a resource leak but subsequent investigation shows the finalizer does run via cyclic GC; the real defect is nondeterministic cleanup due to reference cycles in LangGraph interrupt handling. The root cause is not fully confirmed and the fix likely requires LangGraph-side changes or a new lifecycle contract, which needs maintainer input."
+  },
   "5321c77c9d1a634164893d57fa56dcc277f4b5f88d26d000d5571d9158f6764c": {
     "confidence": 0.8,
     "contradictions": [],
@@ -15292,6 +15323,40 @@
     ],
     "why": "Issue reports a silent no-op for prefix caching on Mamba-2/GDN hybrids, but root cause is not fully confirmed (no code path analysis). A collaborator referenced PR #50991 which may address this, but open PR lookup failed due to timeout, so competition status is unknown. Maintainer input is needed to confirm design direction (warn vs. support recurrent state caching)."
   },
+  "6cf399537ade07304e5295120e3afe39c9baab85ffa05e09fda1f2dbbfe84ff8": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Original claim of policy-dependent zero hits contradicted by later measurements showing rare hits and FCFS also zero in dead phase",
+      "Maintainer's scheduler-level repro shows no policy divergence"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Scheduler chunk-carving logic in align mode",
+      "Prefix-cache snapshot boundary handling"
+    ],
+    "risks": [
+      "Root cause may be workload-specific and not reproducible in isolation",
+      "Potential overlap with issue #51758 requires triage"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with concurrent load and mixed priorities on a hybrid model with align-mode prefix caching",
+      "Add a counter for off-boundary chunk ends in align mode",
+      "Compare hit rates under FCFS vs priority with controlled concurrency"
+    ],
+    "unknowns": [
+      "Exact mechanism of admission/chunk-budget fragmentation",
+      "Whether issue #51758 is a duplicate",
+      "Reproducible test case under concurrent load"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "The issue reports a policy-dependent prefix-cache miss, but the reporter later retracts the policy correlation and the maintainer's scheduler-level reproduction shows no policy divergence. The remaining hypothesis (admission/chunk-budget fragmentation) is plausible but lacks a concrete reproducer or root-cause confirmation. The issue is a bug report with no proposed code change, and the deterministic gate is HUMAN_REVIEW."
+  },
   "6d24452a9ba97788de956d33271eaf95b97f2295055b62365e61110b5b73f959": {
     "confidence": 0.7,
     "contradictions": [],
@@ -17456,6 +17521,38 @@
       "Whether the issue is specific to Windows file permissions or a broader activation logic flaw"
     ],
     "why": "Issue reports a high-impact Windows bug where install/uninstall/doctor/serve all fail with 'active CBM sessions and operations could not be stopped safely', with independent reproduction and a working recovery procedure. Root cause is likely in the activation transaction or daemon startup logic on Windows, possibly related to file access or session handling. No competing PR exists, and maintainer has acknowledged the bug as high priority."
+  },
+  "7b71933caccca17af79798f06baa3d1a64a554f8e95201c87417c0379d97418b": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue claims muse-specific, but bot lists similar issues on other models (#40420, #43328, #42918)"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Gateway streaming transport: ensure final chunk with finish_reason and [DONE] for muse models",
+      "Possibly client-side tolerance for missing finish_reason"
+    ],
+    "risks": [
+      "Changing gateway behavior may affect other models or clients",
+      "Synthesizing finish_reason may mask upstream issues"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 11,
+    "test_plan": [
+      "Create a failing integration test that sends a streaming request to the Zen gateway for muse-spark-1.2-contributor and asserts the final chunk contains finish_reason and [DONE]",
+      "Run existing gateway streaming tests for other models to ensure no regression"
+    ],
+    "unknowns": [
+      "Whether the repository contains the gateway code or only the client",
+      "Whether maintainers have acknowledged the issue or assigned ownership",
+      "Whether the Anthropic-compatible endpoint emits proper stop_reason"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "The issue describes a streaming protocol violation on the Zen gateway for muse models, with a clear expected/actual pair and reproduction steps. However, the root cause is not identified (gateway-side vs upstream provider), and the repository is a client (opencode) while the bug appears to be in the gateway service. No code anchors or maintainer confirmation exist, and the suggested fix is speculative."
   },
   "7b7b881e32d885ba681e7f28842eb909fb43d1f1feb5582329dd002f834118e9": {
     "confidence": 0.95,
@@ -32477,6 +32574,35 @@
       "Maintainer's intended fix direction"
     ],
     "why": "Issue reports CLI args error for MiniMax-H3; comments suggest adding --model-type diffusion as workaround, and a merged PR #33365 may already address related local-path detection. Open PR lookup timed out, so competition status is incomplete."
+  },
+  "e915532598e063c16a21d0413df8f5e63f7504ac053f483d09ff090f8423648d": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "PR_COMPETITION_OPPORTUNITY",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify audio_speech exception handling in litellm/proxy/proxy_server.py to wrap errors in ProxyException with proper status code, mirroring audio_transcriptions",
+      "Add regression tests for /v1/audio/speech error status mapping"
+    ],
+    "risks": [
+      "Potential maintainer preference for a different error-handling pattern",
+      "Risk of unintended behavior changes if error wrapping affects other exception types"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a failing test that simulates a provider returning a 4xx error on /v1/audio/speech and asserts the response status is 400 with the provider message",
+      "Run existing proxy tests for audio routes to ensure no regressions"
+    ],
+    "unknowns": [
+      "Whether maintainers have already assigned or are actively working on this issue",
+      "Exact test coverage in existing PR #33028 and its quality"
+    ],
+    "wait_reason": null,
+    "why": "Issue clearly identifies a user-visible bug: /v1/audio/speech returns 500 for client-side 4xx errors due to a bare raise in the except block, while /v1/audio/transcriptions correctly maps to 400. Root cause is code-verified and a minimal repro is provided. Existing PR #33028 is open but stale (>30 days) and lacks strong evidence/tests, leaving room for a materially better PR with comprehensive tests and root-cause analysis."
   },
   "e92aa5b9c72a490aa778720cb596ea5b740b3ca39557d831218680ada2062c82": {
     "confidence": 0.85,
