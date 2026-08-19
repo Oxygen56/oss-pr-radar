@@ -1386,6 +1386,32 @@
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue claims missing priority pricing keys on dated-snapshot entries, but a recent comment with code excerpts shows those keys are present on current main and in recent commits, contradicting the root cause. The comment suggests the reporter's proxy may be outdated and requests version info. Without resolving this contradiction, the fix is not actionable."
   },
+  "0c10eaad6ff9bfa990a2a79c22c10268968ceb3390b1a3a2700d9f24ffda1c4c": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "litellm/integrations/prometheus.py",
+      "litellm/proxy/management_endpoints/key_management_endpoints.py"
+    ],
+    "risks": [
+      "The suggested OR condition may not compose correctly with existing or_conditions; need to verify query semantics.",
+      "Changing _list_key_helper behavior could affect other callers, though issue states it's the only caller with exclude_team_id."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that creates a key with team_id NULL and verifies litellm_remaining_api_key_budget_metric is emitted after the initialization job runs.",
+      "Run existing prometheus and key management unit tests."
+    ],
+    "unknowns": [
+      "Exact implementation details of the fix and whether maintainers prefer the helper-level or prometheus-level change."
+    ],
+    "why": "Issue provides a precise root cause (SQL NULL inequality in exclude_team_id filter), a concrete reproduction with curl commands and metric observations, and a suggested fix with code sketch. The bug is user-visible and affects monitoring reliability. The fix is localized and testable."
+  },
   "0c4f0b2de15d2116505fb050cc35db70311810f38fe2e12c49a3b33a194ba76f": {
     "confidence": 0.7,
     "contradictions": [
@@ -20940,6 +20966,59 @@
     "wait_reason": "DESIGN_CONFIRMATION",
     "why": "Issue clearly describes stale E2E assertions that fail after managed-image cutover, with reproduction steps and acceptance criteria. However, the issue is a bug report without maintainer approval or design confirmation, and the gate decision is HUMAN_REVIEW. The fix requires updating test assertions and possibly test infrastructure, which needs maintainer confirmation on expected behavior and scope."
   },
+  "8e06e7d264c394c4d5d7946dd50a60e35b1777ce1f7f38e15ce762d564e70343": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "litellm/llms/anthropic/experimental_pass_through/responses_adapters/transformation.py",
+      "chat-completions adapter path"
+    ],
+    "risks": [
+      "Changing mapping may affect existing behavior for 'user' field; needs config gating to avoid breaking changes."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Create a minimal test that sends an Anthropic /v1/messages request with metadata.user_id to a mock OpenAI-compatible endpoint and asserts prompt_cache_key is set in the translated request."
+    ],
+    "unknowns": [
+      "Whether maintainers intend to support prompt_cache_key mapping; whether PR #37510 already addresses this; exact code path for chat-completions adapter."
+    ],
+    "why": "Issue describes a plausible mapping gap but lacks a concrete reproduction or validation path; no code anchor beyond a file path, and no maintainer confirmation. Existing PR #37510 may overlap semantically, but its scope is unclear. The track is agent_ai_infra, not llm_algorithm, so algorithm evidence is not required, but actionability is low without a failing test or maintainer input."
+  },
+  "8e1a0d849bdfc186d6243f97271a0a4e87d8da9691e0cb0bc295db3233f9c860": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/core/src/core/reasoning-effort.ts",
+      "OpenAI-compatible pipeline buildReasoningConfig",
+      "settings persistence handling"
+    ],
+    "risks": [
+      "Potential API behavior change if clamping is applied too broadly",
+      "Need to align with maintainer design preferences to avoid duplicate work"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test asserting 'max' never reaches the wire for an endpoint that doesn't accept it",
+      "Reproduce with Alibaba ModelStudio compatible-mode and verify 400 no longer occurs"
+    ],
+    "unknowns": [
+      "Exact maintainer preference among the three fix options",
+      "Whether existing PR #9501 will be merged or superseded"
+    ],
+    "why": "Issue provides a clear, reproducible bug with root-cause analysis and a concrete fix direction. The triage bot confirms the root cause and extends it to the OpenAI-compatible pipeline where the clamp is never invoked. Existing PRs are incomplete or lack root-cause coverage, leaving room for a well-tested fix."
+  },
   "8e6bd58673a3d663ed2032d03c82548dbc85e3dfb314b97ae17d61b8a961f706": {
     "confidence": 0.7,
     "contradictions": [
@@ -25027,6 +25106,35 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue describes a clear bug with high impact and a concrete reproduction, but two existing PRs (#18876, #18878) directly target the same root cause and are closed without merge. A new PR would likely duplicate prior work and require maintainer guidance on the preferred fix direction."
+  },
+  "b2722deb0fb1156c91a507fbbb375fb39e75226503a44f606047d370c0334f0e": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify executeStreamWithFallbackModels to advance fallback index when in-place retry budget is exhausted",
+      "Adjust runProcessAPIError to return a retry result that advances fallback index instead of terminal error",
+      "Add regression test for mid-stream error fallback behavior"
+    ],
+    "risks": [
+      "Potential behavior change in streaming clients if not handled carefully; need to preserve response-message-id rotation",
+      "May require maintainer design confirmation to avoid unintended API changes"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a failing test that simulates a provider emitting an SSE error event mid-stream and verifies the fallback model is invoked",
+      "Run existing unit tests for the relevant package to ensure no regressions"
+    ],
+    "unknowns": [
+      "Exact codebase version and file paths for the fix",
+      "Maintainer preference on implementation approach"
+    ],
+    "why": "Issue identifies a concrete bug in fallback model handling for mid-stream errors, with code-level root cause and a clear fix direction. It is actionable and valuable for agent infrastructure."
   },
   "b27928fa806e85c22b3b95c3c9cbfb239ab7e6695ff692005a8bf899be4b8497": {
     "confidence": 0.7,
