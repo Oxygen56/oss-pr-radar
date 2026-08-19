@@ -15,6 +15,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import time
 import tomllib
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -1156,6 +1157,50 @@ def _controller_parent_drift(
         "expectedPreparedHeadSha": expected,
         "observedHeadSha": observed,
     }
+
+
+def _parent_drift_rebind_is_valid(
+    value: dict[str, Any],
+    context: dict[str, Any],
+    *,
+    candidate: dict[str, Any],
+    task_stage: str,
+    prepared_head: str | None,
+    current_wake_digest: str,
+    legacy_compatible_result: bool,
+) -> bool:
+    """Validate the complete task contract before changing the ledger.
+
+    Rebinding is a controller-owned recovery mutation.  It is intentionally
+    stricter than merely noticing a stale parent: the result must still be a
+    current, authenticated implementation handoff for this exact task.
+    """
+
+    if task_stage != "IMPLEMENTATION_READY":
+        return False
+    if context.get("taskStage") != task_stage:
+        return False
+    if value.get("stage") != "FIX_READY":
+        return False
+    if value.get("handoffMode") != "controller_commit_required":
+        return False
+    if value.get("key") != candidate.get("key"):
+        return False
+    try:
+        valid_context_digests = _task_context_digest_candidates(context, prepared_head)
+    except (RuntimeError, ValueError, TypeError):
+        return False
+    if value.get("contextDigest") not in valid_context_digests:
+        return False
+    if isinstance(context.get("prFollowup"), dict):
+        if not current_wake_digest:
+            return False
+        if not (value.get("followupDigest") == current_wake_digest or legacy_compatible_result):
+            return False
+    try:
+        return _controller_policy_verification(context) is not None
+    except (RuntimeError, ValueError, TypeError):
+        return False
 
 
 def _legacy_result_requires_migration(
@@ -5726,6 +5771,7 @@ def pr_followup_list(args: argparse.Namespace) -> dict[str, Any]:
     restore_required: list[dict[str, Any]] = []
     blocked: list[dict[str, Any]] = []
     quarantined: list[dict[str, Any]] = []
+    reprepare_required: list[dict[str, Any]] = []
     for candidate in candidates:
         thread_id = str(candidate["threadId"])
         if thread_id not in archived:
@@ -5755,26 +5801,26 @@ def pr_followup_list(args: argparse.Namespace) -> dict[str, Any]:
                     continue
                 dirty_paths = [line[3:] for line in status.stdout.splitlines() if line]
                 if dirty_paths:
-                    quarantined.append(
-                        candidate
-                        | {
-                            "reason": (
-                                PR_FOLLOWUP_REBIND_REQUIRED
-                                if rebind_status is not None
-                                else "worktree_dirty"
-                            ),
-                            "dirtyPathCount": len(dirty_paths),
-                            "dirtyPaths": dirty_paths[:10],
-                            **(
-                                {
-                                    "rebind": rebind_status,
-                                    "reprepareRequired": True,
-                                }
-                                if rebind_status is not None
-                                else {}
-                            ),
-                        }
-                    )
+                    value = candidate | {
+                        "reason": (
+                            PR_FOLLOWUP_REBIND_REQUIRED
+                            if rebind_status is not None
+                            else "worktree_dirty"
+                        ),
+                        "dirtyPathCount": len(dirty_paths),
+                        "dirtyPaths": dirty_paths[:10],
+                        **(
+                            {
+                                "rebind": rebind_status,
+                                "reprepareRequired": True,
+                            }
+                            if rebind_status is not None
+                            else {}
+                        ),
+                    }
+                    if rebind_status is not None:
+                        reprepare_required.append(value)
+                    quarantined.append(value)
                     continue
         updated_at = activity.get(thread_id, 0)
         if updated_at > recent_cutoff:
@@ -5847,6 +5893,7 @@ def pr_followup_list(args: argparse.Namespace) -> dict[str, Any]:
         "restoreRequired": restore_required,
         "blocked": blocked,
         "quarantined": quarantined,
+        "reprepareRequired": reprepare_required,
         "unresolved": unresolved_with_recovery,
     }
 
@@ -5907,6 +5954,76 @@ def _ensure_pr_followup_worktree(candidate: dict[str, Any]) -> Path:
     if recovered != expected:
         raise RuntimeError("PR follow-up workspace recovery path mismatch")
     return recovered
+
+
+def _managed_worktree_source(worktree: Path, repo: str) -> Path:
+    """Resolve the owning source checkout without guessing from user paths."""
+
+    common = Path(
+        command(
+            ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            cwd=worktree,
+        )
+    ).resolve()
+    source = common.parent if common.name == ".git" else None
+    if source is None or not (source / ".git").is_dir():
+        raise RuntimeError("managed worktree source identity is unavailable")
+    origin = command(["git", "remote", "get-url", "origin"], cwd=source)
+    if normalize_origin(origin) != repo.casefold():
+        raise RuntimeError("managed worktree source identity disagrees with repository")
+    return source
+
+
+def _recover_dirty_rebound_worktree(
+    candidate: dict[str, Any], rebind_status: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Preserve a dirty stale worktree, then recreate its managed path cleanly.
+
+    The old checkout is moved through Git's worktree registry into a private
+    quarantine directory.  No file is cleaned or overwritten; a fresh worktree
+    is created at the original controller-managed path only after the move
+    succeeds and the repository identity has been verified.
+    """
+
+    worktree = Path(str(candidate.get("worktreePath") or "")).resolve()
+    expected = managed_worktree_path(
+        str(candidate.get("intentId") or ""), str(candidate.get("repo") or "")
+    )
+    if worktree != expected or not _is_managed_worktree(worktree) or not worktree.is_dir():
+        raise RuntimeError("dirty PR follow-up workspace is not controller-managed")
+    status = subprocess.run(
+        ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+        cwd=worktree,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if status.returncode != 0:
+        raise RuntimeError("dirty PR follow-up workspace status is unavailable")
+    if not status.stdout.strip():
+        return None
+    source = _managed_worktree_source(worktree, str(candidate["repo"]))
+    quarantine_root = managed_worktree_root() / ".rebind-quarantine"
+    quarantine_root.mkdir(parents=True, exist_ok=True)
+    safe_key = re.sub(r"[^A-Za-z0-9._-]+", "-", str(candidate["key"])).strip("-._")
+    destination = quarantine_root / f"{safe_key}-{time.time_ns()}" / worktree.name
+    destination.parent.mkdir(parents=True, exist_ok=False)
+    command(["git", "worktree", "move", str(worktree), str(destination)], cwd=source, timeout=180)
+    recreated = prepare_managed_worktree(
+        source,
+        intent_id=str(candidate["intentId"]),
+        repo=str(candidate["repo"]),
+    )
+    if recreated != expected or not recreated.is_dir():
+        raise RuntimeError("recreated PR follow-up workspace path mismatch")
+    return {
+        "oldWorktreePath": str(worktree),
+        "quarantinePath": str(destination),
+        "newWorktreePath": str(recreated),
+        "rebind": dict(rebind_status),
+        "statusDigest": hashlib.sha256(status.stdout.encode("utf-8")).hexdigest(),
+    }
 
 
 def _prepare_pr_followup(candidate: dict[str, Any]) -> dict[str, Any]:
@@ -6121,6 +6238,10 @@ def pr_followup_reserve(args: argparse.Namespace) -> dict[str, Any]:
     )
     if wip_limited:
         raise RuntimeError("global task WIP limit reached")
+    rebind_status = store.pr_followup_rebind_status(candidate["key"])
+    recovery = None
+    if rebind_status is not None:
+        recovery = _recover_dirty_rebound_worktree(candidate, rebind_status)
     try:
         prepared = _prepare_pr_followup(candidate)
     except PrFollowupSnapshotChanged as exc:
@@ -6160,6 +6281,19 @@ def pr_followup_reserve(args: argparse.Namespace) -> dict[str, Any]:
         cwd=Path(candidate["worktreePath"]),
         prepared_followup_head=prepared_head,
     )
+    if recovery is not None:
+        clear_quarantine = getattr(store, "clear_task_quarantine", None)
+        if not callable(clear_quarantine):
+            raise RuntimeError("ledger cannot clear a completed task quarantine")
+        clear_quarantine(
+            candidate["key"],
+            reason="PR_FOLLOWUP_REBOUND_AND_REPREPARED",
+            evidence={
+                "replacementWakeDigest": candidate["wakeDigest"],
+                "preparedHeadSha": prepared_head,
+                "quarantinePath": recovery["quarantinePath"],
+            },
+        )
     return {
         "ok": True,
         "key": reserved["key"],
@@ -7293,7 +7427,15 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 and value.get("followupDigest") == compatibility.get("wakeDigest")
             )
             rebind_evidence = _controller_parent_drift(value, context)
-            if rebind_evidence is not None:
+            if rebind_evidence is not None and _parent_drift_rebind_is_valid(
+                value,
+                context,
+                candidate=candidate,
+                task_stage=task_stage,
+                prepared_head=prepared_head,
+                current_wake_digest=current_wake_digest,
+                legacy_compatible_result=legacy_compatible_result,
+            ):
                 rebind = store.rearm_pr_followup_after_task_drift(
                     candidate["key"],
                     expected_prepared_head_sha=rebind_evidence["expectedPreparedHeadSha"],
@@ -9248,7 +9390,10 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
             return restore_failure
         restored_followup_threads.add(str(restore_candidate["threadId"]))
         pr_state = pr_followup_list(argparse.Namespace(ledger=args.ledger))
-    for candidate in pr_state.get("candidates") or []:
+    followup_candidates = list(pr_state.get("reprepareRequired") or []) + list(
+        pr_state.get("candidates") or []
+    )
+    for candidate in followup_candidates:
         if str(candidate["threadId"]) not in restored_followup_threads:
             restore_failure = restore_target(candidate)
             if restore_failure:

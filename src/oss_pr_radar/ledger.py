@@ -4172,7 +4172,21 @@ class RadarLedger:
         with self.connect() as connection:
             rows = connection.execute(
                 """SELECT r.* FROM publication_requests r
-                   WHERE r.status IN ('PENDING','GRANTED') OR (
+                   WHERE NOT EXISTS (
+                     SELECT 1 FROM events quarantine
+                     WHERE quarantine.opportunity_key=r.opportunity_key
+                       AND quarantine.event_type IN (
+                         'LEGACY_RESULT_REQUIRES_MIGRATION',
+                         'PR_FOLLOWUP_REBIND_REQUIRED'
+                       )
+                       AND NOT EXISTS (
+                         SELECT 1 FROM events cleared
+                         WHERE cleared.opportunity_key=quarantine.opportunity_key
+                           AND cleared.event_type='TASK_QUARANTINE_CLEARED'
+                           AND cleared.id>quarantine.id
+                       )
+                   )
+                   AND (r.status IN ('PENDING','GRANTED') OR (
                      r.status='BLOCKED'
                      AND EXISTS (
                        SELECT 1 FROM publication_permits p
@@ -4184,10 +4198,58 @@ class RadarLedger:
                          AND confirm.result_json LIKE '%\"reason\":\"LIVE_RECHECK_FAILED\"%'
                          AND confirm.result_json LIKE '%\"detail\":\"EXISTING_PR_HEAD_DRIFT\"%'
                      )
-                   )
+                   ))
                    ORDER BY r.created_at"""
             ).fetchall()
         return [dict(row) | {"request": json.loads(row["request_json"])} for row in rows]
+
+    def active_task_quarantine(self, key: str) -> dict[str, Any] | None:
+        """Return the latest uncleared task-local quarantine, if any."""
+
+        with self.connect() as connection:
+            row = connection.execute(
+                """SELECT event_type,payload_json,created_at
+                   FROM events quarantine
+                   WHERE quarantine.opportunity_key=?
+                     AND quarantine.event_type IN (
+                       'LEGACY_RESULT_REQUIRES_MIGRATION',
+                       'PR_FOLLOWUP_REBIND_REQUIRED'
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events cleared
+                       WHERE cleared.opportunity_key=quarantine.opportunity_key
+                         AND cleared.event_type='TASK_QUARANTINE_CLEARED'
+                         AND cleared.id>quarantine.id
+                     )
+                   ORDER BY quarantine.id DESC LIMIT 1""",
+                (key,),
+            ).fetchone()
+        if row is None:
+            return None
+        payload = json.loads(row["payload_json"])
+        if not isinstance(payload, dict):
+            raise LedgerError("task quarantine payload is invalid")
+        return {
+            "reason": str(row["event_type"]),
+            "payload": payload,
+            "createdAt": row["created_at"],
+        }
+
+    def clear_task_quarantine(self, key: str, *, reason: str, evidence: dict[str, Any]) -> None:
+        """Clear a task quarantine only after a fresh controller rebind succeeds."""
+
+        if not reason or not isinstance(evidence, dict):
+            raise LedgerError("task quarantine clear evidence is incomplete")
+        now = iso_z(datetime.now(UTC))
+        with self.transaction() as connection:
+            self._event(
+                connection,
+                key,
+                "TASK_QUARANTINE_CLEARED",
+                sha256_text(f"{key}|{reason}|{canonical_json(evidence)}"),
+                {"reason": reason, **evidence},
+                now,
+            )
 
     def defer_publication_request(self, request_id: str, reason: str) -> None:
         now = iso_z(datetime.now(UTC))

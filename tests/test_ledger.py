@@ -2818,3 +2818,60 @@ def test_pr_followup_task_drift_rebinds_wake_and_invalidates_preparation(tmp_pat
     )
     assert repeated == {**rebound, "created": False}
     assert store.pr_followup_rebind_status("a/b#1")["observedHeadSha"] == "d" * 40
+
+
+def test_task_quarantine_blocks_pending_publication_until_cleared(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    now = iso_z(datetime.now(UTC))
+    with store.transaction() as connection:
+        connection.execute(
+            """INSERT INTO opportunities
+               (key,repo,issue_number,issue_url,title,stage,first_seen,updated_at)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            (
+                "a/b#1",
+                "a/b",
+                1,
+                "https://github.com/a/b/issues/1",
+                "Bug",
+                "FIX_READY",
+                now,
+                now,
+            ),
+        )
+        connection.execute(
+            """INSERT INTO publication_requests
+               (request_id,opportunity_key,thread_id,commit_sha,branch,worktree_path,
+                evidence_digest,status,request_json,created_at,updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                "request-1",
+                "a/b#1",
+                "thread-1",
+                "a" * 40,
+                "fix/runtime",
+                str(tmp_path / "worktree"),
+                "evidence",
+                "PENDING",
+                json.dumps({"opportunityKey": "a/b#1"}),
+                now,
+                now,
+            ),
+        )
+        store._event(
+            connection,
+            "a/b#1",
+            "LEGACY_RESULT_REQUIRES_MIGRATION",
+            "legacy-1",
+            {"requiresExplicitMigration": True},
+            now,
+        )
+
+    assert store.active_task_quarantine("a/b#1") is not None
+    assert store.publication_work_items() == []
+
+    store.clear_task_quarantine(
+        "a/b#1", reason="explicit-migration", evidence={"migrationId": "m-1"}
+    )
+    assert store.active_task_quarantine("a/b#1") is None
+    assert [item["request_id"] for item in store.publication_work_items()] == ["request-1"]

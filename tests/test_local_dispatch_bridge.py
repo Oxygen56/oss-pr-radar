@@ -3097,6 +3097,112 @@ def test_pr_followup_list_reports_rebind_for_dirty_worktree(monkeypatch, tmp_pat
     assert recovered["quarantined"] == []
 
 
+def test_parent_drift_rebind_rejects_forged_result_before_ledger_mutation(monkeypatch, tmp_path):
+    store, worktree, _head_sha, _pr_url = _published_followup_store(tmp_path)
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    context = json.loads(context_path.read_text(encoding="utf-8"))
+    context["taskStage"] = "IMPLEMENTATION_READY"
+    candidate = store.pr_followup_candidates()[0]
+    monkeypatch.setattr(MODULE, "_controller_policy_verification", lambda _context: {})
+    value = {
+        "key": candidate["key"],
+        "stage": "FIX_READY",
+        "handoffMode": "controller_commit_required",
+        "contextDigest": "forged-context-digest",
+        "followupDigest": context["prFollowup"]["wakeDigest"],
+    }
+
+    assert (
+        MODULE._parent_drift_rebind_is_valid(
+            value,
+            context,
+            candidate=candidate,
+            task_stage="IMPLEMENTATION_READY",
+            prepared_head=context["prFollowup"].get("preparedHeadSha"),
+            current_wake_digest=context["prFollowup"]["wakeDigest"],
+            legacy_compatible_result=False,
+        )
+        is False
+    )
+    assert store.pr_followup_rebind_status(candidate["key"]) is None
+
+
+def test_dirty_rebound_worktree_is_preserved_and_recreated_clean(monkeypatch, tmp_path):
+    project_root = tmp_path / "github"
+    source = tmp_path / "source"
+    source.mkdir()
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    run_git(source, "init")
+    run_git(source, "config", "user.name", "Radar Test")
+    run_git(source, "config", "user.email", "radar@example.invalid")
+    (source / "tracked.txt").write_text("base\n", encoding="utf-8")
+    run_git(source, "add", "tracked.txt")
+    run_git(source, "commit", "-m", "baseline")
+    head = run_git(source, "rev-parse", "HEAD")
+    run_git(source, "remote", "add", "origin", "https://github.com/a/b.git")
+    run_git(source, "update-ref", "refs/remotes/origin/main", head)
+    run_git(source, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+    expected = MODULE.managed_worktree_path("intent-1", "a/b")
+    expected.parent.mkdir(parents=True, exist_ok=True)
+    run_git(source, "worktree", "add", "--detach", str(expected), head)
+    (expected / "tracked.txt").write_text("user change\n", encoding="utf-8")
+    (expected / "user-note.txt").write_text("keep me\n", encoding="utf-8")
+
+    recovery = MODULE._recover_dirty_rebound_worktree(
+        {
+            "key": "a/b#1",
+            "repo": "a/b",
+            "intentId": "intent-1",
+            "worktreePath": str(expected),
+        },
+        {"replacementWakeDigest": "w" * 64},
+    )
+
+    assert recovery is not None
+    quarantined = Path(recovery["quarantinePath"])
+    assert (quarantined / "tracked.txt").read_text(encoding="utf-8") == "user change\n"
+    assert (quarantined / "user-note.txt").read_text(encoding="utf-8") == "keep me\n"
+    assert run_git(expected, "status", "--porcelain") == ""
+
+
+def test_pr_followup_reserve_clears_rebind_gate_after_reprepare(monkeypatch, tmp_path):
+    store, worktree, _head_sha, _pr_url = _published_followup_store(tmp_path)
+    original = store.pr_followup_candidates()[0]
+    rebound = store.rearm_pr_followup_after_task_drift(
+        original["key"], expected_prepared_head_sha="a" * 40, observed_head_sha="b" * 40
+    )
+    candidate = store.pr_followup_candidates()[0]
+    assert candidate["wakeDigest"] == rebound["replacementWakeDigest"]
+    recovery_calls = []
+    monkeypatch.setattr(
+        MODULE,
+        "_recover_dirty_rebound_worktree",
+        lambda _candidate, status: (
+            recovery_calls.append(status) or {"quarantinePath": str(tmp_path / "quarantine")}
+        ),
+    )
+    monkeypatch.setattr(
+        MODULE, "_prepare_pr_followup", lambda _candidate: {"preparedHeadSha": "c" * 40}
+    )
+
+    result = MODULE.pr_followup_reserve(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            thread_id=candidate["threadId"],
+            wake_digest=candidate["wakeDigest"],
+        )
+    )
+
+    assert result["ok"] is True
+    assert recovery_calls and recovery_calls[0]["replacementWakeDigest"] == candidate["wakeDigest"]
+    assert store.active_task_quarantine(candidate["key"]) is None
+
+
 def test_pr_followup_never_abandons_an_unreceipted_delivery(monkeypatch, tmp_path):
     now = datetime.now(UTC)
     reserved_at = iso_z(now - timedelta(hours=2))
