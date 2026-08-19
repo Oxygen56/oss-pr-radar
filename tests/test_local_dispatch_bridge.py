@@ -4958,6 +4958,118 @@ def test_ingestion_still_rejects_context_mismatch_for_active_task(tmp_path):
     assert result["errors"] == [{"key": "a/b#1", "error": "task result context digest mismatch"}]
 
 
+def test_ingestion_migrates_exact_legacy_result_digest_in_memory(monkeypatch, tmp_path):
+    monkeypatch.setattr(MODULE, "ROOT", tmp_path)
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", tmp_path / "github")
+    store, worktree, local_path, shared_path = _context_digest_fixture(tmp_path / "fixture")
+    context = json.loads(local_path.read_text(encoding="utf-8"))
+    context["targetBase"] = "base-a"
+    context["contextDigest"] = MODULE._task_context_digest(context, None)
+    _rewrite_context_mirrors(local_path, shared_path, context)
+    result_path = Path(context["resultPath"])
+    legacy_digest = sha256_json(
+        MODULE._task_context_digest_payload(
+            context,
+            None,
+            include_target_base=False,
+        )
+    )
+    result_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": "radar-task-result-v1",
+                "contextDigest": legacy_digest,
+                "key": "a/b#1",
+                "issueUrl": "https://github.com/a/b/issues/1",
+                "threadId": "thread-1",
+                "worktreePath": str(worktree.resolve()),
+                "stage": "AUDIT_NO_GO",
+                "reason": "EVIDENCE_INCOMPLETE",
+            }
+        ),
+        encoding="utf-8",
+    )
+    original_result_bytes = result_path.read_bytes()
+
+    ledger_path = tmp_path / "fixture" / "ledger.sqlite3"
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=ledger_path))
+
+    assert first["ok"] is True, first["errors"]
+    assert first["ingested"] == [
+        {"key": "a/b#1", "stage": "AUDIT_NO_GO", "reason": "EVIDENCE_INCOMPLETE"}
+    ]
+    assert first["legacyContextDigestMigrations"] == ["a/b#1"]
+    assert result_path.read_bytes() == original_result_bytes
+    assert json.loads(result_path.read_text(encoding="utf-8"))["contextDigest"] == legacy_digest
+
+    repeated = MODULE.ingest_task_results(SimpleNamespace(ledger=ledger_path))
+
+    assert repeated["ok"] is True
+    assert repeated["ingested"] == []
+    assert repeated["errors"] == []
+
+
+@pytest.mark.parametrize("mutation", ["target", "result", "identity"])
+def test_legacy_result_digest_migration_rejects_tampering(monkeypatch, tmp_path, mutation):
+    monkeypatch.setattr(MODULE, "ROOT", tmp_path)
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", tmp_path / "github")
+    store, worktree, local_path, shared_path = _context_digest_fixture(tmp_path / "fixture")
+    context = json.loads(local_path.read_text(encoding="utf-8"))
+    context["targetBase"] = "base-a"
+    context["contextDigest"] = MODULE._task_context_digest(context, None)
+    _rewrite_context_mirrors(local_path, shared_path, context)
+    result_path = Path(context["resultPath"])
+    legacy_digest = sha256_json(
+        MODULE._task_context_digest_payload(
+            context,
+            None,
+            include_target_base=False,
+        )
+    )
+    if mutation == "target":
+        context["targetBase"] = "base-b"
+        _rewrite_context_mirrors(local_path, shared_path, context)
+    result_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": "radar-task-result-v1",
+                "contextDigest": legacy_digest if mutation == "target" else "f" * 64,
+                "key": "a/b#1",
+                "issueUrl": "https://github.com/a/b/issues/1",
+                "threadId": "other-thread" if mutation == "identity" else "thread-1",
+                "worktreePath": str(worktree.resolve()),
+                "stage": "AUDIT_NO_GO",
+                "reason": "EVIDENCE_INCOMPLETE",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = MODULE.ingest_task_results(
+        SimpleNamespace(ledger=tmp_path / "fixture" / "ledger.sqlite3")
+    )
+
+    assert result["ok"] is False
+    expected_error = (
+        "task result mismatch: threadId"
+        if mutation == "identity"
+        else "task result context digest mismatch"
+    )
+    assert result["errors"] == [{"key": "a/b#1", "error": expected_error}]
+
+
+def test_legacy_result_migration_does_not_change_signed_result_digest(tmp_path):
+    _store, _worktree, result_path = _controller_commit_result(tmp_path)
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    raw = result_path.read_bytes()
+    assert isinstance(value.get("reproductionReceipt"), dict)
+    expected = value["resultDigest"]
+
+    migrated = dict(value, contextDigest="target-bound-context")
+
+    assert MODULE._task_result_digest(migrated, raw) == expected
+
+
 def _published_followup_store(
     tmp_path: Path,
 ) -> tuple[RadarLedger, Path, str, str]:

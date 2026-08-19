@@ -1006,6 +1006,47 @@ def _task_context_digest_candidates(context: dict[str, Any], prepared_head: str 
     return candidates
 
 
+def _legacy_result_context_digest_migration_allowed(
+    value: dict[str, Any], context: dict[str, Any], prepared_head: str | None
+) -> bool:
+    """Allow only the exact result digest produced before target binding.
+
+    The context must already be bound to a non-empty target base and its
+    current digest must be the canonical target-bound value.  This is a
+    narrow in-memory migration for results written during the context-format
+    transition; it does not authorize an arbitrary result/context mismatch.
+    """
+
+    if str(context.get("stage") or "") in PUBLISHED_TASK_STAGES:
+        return False
+    target_base = context.get("targetBase")
+    if not isinstance(target_base, str) or not target_base.strip():
+        return False
+    if context.get("contextDigest") != _task_context_digest(context, prepared_head):
+        return False
+    legacy_digests = {
+        sha256_json(
+            _task_context_digest_payload(
+                context,
+                prepared_head,
+                include_target_base=False,
+            )
+        )
+    }
+    if prepared_head is None:
+        legacy_digests.add(
+            sha256_json(
+                _task_context_digest_payload(
+                    context,
+                    prepared_head,
+                    include_target_base=False,
+                    include_prepared_head=False,
+                )
+            )
+        )
+    return value.get("contextDigest") in legacy_digests
+
+
 def _verified_shared_task_context(path: Path) -> tuple[dict[str, Any], str]:
     if path.is_symlink():
         raise RuntimeError("shared task context is not a regular file")
@@ -6894,6 +6935,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
     ingested: list[dict[str, Any]] = []
     publication_requests: list[dict[str, Any]] = []
     validation_deferred: list[dict[str, Any]] = []
+    legacy_context_digest_migrations: list[str] = []
     ignored: list[dict[str, str]] = []
     errors: list[dict[str, str]] = []
     for candidate in store.task_result_candidates():
@@ -6970,6 +7012,12 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 or managed_candidate.get("taskStage")
                 or "REPRODUCTION_REQUIRED"
             )
+            context_followup = context.get("prFollowup")
+            prepared_head = (
+                str(context_followup.get("preparedHeadSha"))
+                if isinstance(context_followup, dict) and context_followup.get("preparedHeadSha")
+                else None
+            )
             if task_stage == "REPRODUCTION_REQUIRED" and value.get("contextDigest") == context.get(
                 "contextDigest"
             ):
@@ -7044,7 +7092,6 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     )
                     ingested.append({"key": candidate["key"], "stage": "IMPLEMENTATION_READY"})
                     continue
-            context_followup = context.get("prFollowup")
             current_wake_digest = (
                 str(context_followup.get("wakeDigest") or "")
                 if isinstance(context_followup, dict)
@@ -7067,6 +7114,14 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                         continue
                     value = dict(value)
                     value["contextDigest"] = context.get("contextDigest")
+                elif candidate[
+                    "stage"
+                ] not in PUBLISHED_TASK_STAGES and _legacy_result_context_digest_migration_allowed(
+                    value, context, prepared_head
+                ):
+                    value = dict(value)
+                    value["contextDigest"] = context.get("contextDigest")
+                    legacy_context_digest_migrations.append(candidate["key"])
                 elif legacy_compatible_result:
                     pass
                 elif current_wake_digest and value.get("followupDigest") != current_wake_digest:
@@ -7372,6 +7427,8 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
     }
     if ignored:
         result["ignored"] = ignored
+    if legacy_context_digest_migrations:
+        result["legacyContextDigestMigrations"] = legacy_context_digest_migrations
     return result
 
 
