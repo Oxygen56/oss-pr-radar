@@ -66,6 +66,11 @@ def test_radar_receipt_persistence_consumes_the_current_pending_state():
     workflow = (ROOT / ".github/workflows/radar.yml").read_text(encoding="utf-8")
     section = workflow.split("\n  persist-receipt:\n", 1)[1]
     assert "name: pending-state-${{ github.run_id }}" in section
+    assert "path: pending-state" in section
+    assert (
+        "cp pending-state/state/war_room_feishu_outbox.json state/war_room_feishu_outbox.json"
+        in section
+    )
     assert "name: war-room-receipt-${{ github.run_id }}" in section
 
 
