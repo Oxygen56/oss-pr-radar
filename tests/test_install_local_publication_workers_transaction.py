@@ -12,6 +12,8 @@ from pathlib import Path
 
 import pytest
 
+from oss_pr_radar.local_publication import slow_advance_once
+
 SCRIPT = Path(__file__).parents[1] / "scripts" / "install_local_publication_workers.py"
 sys.path.insert(0, str(SCRIPT.parent))
 module_spec = importlib.util.spec_from_file_location("install_workers_transaction", SCRIPT)
@@ -154,6 +156,111 @@ def test_success_installs_and_loads_all_three_workers(
         assert plistlib.loads(path.read_bytes()) == spec
     assert existing.stat().st_mode & 0o777 == 0o640
     assert not list(launch_dir.glob(".*.tmp"))
+
+
+def _write_staged_plists(home: Path, worker_specs: list[dict[str, object]]) -> None:
+    launch_dir = home / "Library" / "LaunchAgents"
+    launch_dir.mkdir(parents=True, exist_ok=True)
+    for spec in worker_specs:
+        path = plist_path(home, str(spec["Label"]))
+        path.write_bytes(plistlib.dumps(spec, fmt=plistlib.FMT_XML))
+        path.chmod(0o600)
+
+
+@pytest.mark.parametrize("failure", [None, "kickstart"])
+def test_first_activation_promotes_auth_before_bootstrap_and_rolls_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str | None
+) -> None:
+    runtime = tmp_path / "runtime"
+    (runtime / "state").mkdir(parents=True)
+    home = tmp_path / "home"
+    worker_specs = specs(tmp_path)
+    _write_staged_plists(home, worker_specs)
+    domain = "gui/4242"
+    fake = FakeLaunchctl(domain, set(), failure=failure, failure_at=1)
+    authorization = {
+        "state": "STAGED",
+        "workerConfigDigest": INSTALL.worker_spec_digest(worker_specs),
+    }
+    events: list[str] = []
+
+    def slow_runner(_root: Path, operation: str) -> dict[str, object]:
+        assert authorization["state"] == "ACTIVE"
+        return {
+            "ok": True,
+            "errors": [],
+            "updated": [],
+            "ingested": [],
+            "publicationRequests": [],
+            "validationDeferred": [],
+            "published": [],
+            "pending": [],
+            "blocked": [],
+            "renamed": [],
+            "archived": [],
+            "candidates": [],
+            "unresolved": [],
+            "reconciled": [],
+            "recoverable": [],
+            "action": "none",
+            "operation": operation,
+        }
+
+    def observed_launchctl(*arguments: str, check: bool = True):
+        if arguments[0] in {"bootstrap", "kickstart"}:
+            assert authorization["state"] == "ACTIVE"
+            events.append(arguments[0])
+        if arguments[0] == "kickstart" and arguments[2].endswith(
+            "com.oss-pr-radar.local-publication-slow"
+        ):
+            # The first slow-worker action is reproduction-probe.  It must
+            # observe ACTIVE auth, never the consumed STAGED proof.
+            events.append("reproduction-probe")
+            assert authorization["state"] == "ACTIVE"
+            if failure is None:
+                assert slow_advance_once(runtime, runner=slow_runner)["ok"] is True
+        return fake(*arguments, check=check)
+
+    def finalize(_runtime: Path):
+        events.append("finalize")
+        authorization["state"] = "ACTIVE"
+        return authorization
+
+    monkeypatch.setattr(INSTALL, "launchctl", observed_launchctl)
+    monkeypatch.setattr(INSTALL, "_launchctl_config_matches", lambda *_args: True)
+    monkeypatch.setattr(
+        INSTALL,
+        "require_operational_authorization",
+        lambda *_args, **_kwargs: authorization,
+    )
+    monkeypatch.setattr(INSTALL, "finalize_operational_authorization", finalize)
+    revoked: list[Path] = []
+    monkeypatch.setattr(INSTALL, "revoke_operational_authorization", revoked.append)
+
+    if failure is None:
+        result = INSTALL.activate_staged_workers(
+            worker_specs,
+            home=home,
+            domain=domain,
+            runtime_root=runtime,
+            require_stage_receipt=True,
+        )
+        assert result["ok"] is True
+        assert events[0] == "finalize"
+        assert events.index("finalize") < events.index("reproduction-probe")
+        assert revoked == []
+    else:
+        with pytest.raises(RuntimeError, match="rolled back"):
+            INSTALL.activate_staged_workers(
+                worker_specs,
+                home=home,
+                domain=domain,
+                runtime_root=runtime,
+                require_stage_receipt=True,
+            )
+        assert events[0] == "finalize"
+        assert revoked == [runtime]
+        assert fake.loaded == set()
 
 
 def test_first_worker_failure_does_not_touch_later_loaded_workers(

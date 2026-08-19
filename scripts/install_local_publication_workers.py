@@ -34,6 +34,7 @@ from oss_pr_radar.operational_auth import (  # noqa: E402
     finalize_operational_authorization,
     require_operational_authorization,
     require_worker_staging_authorization,
+    revoke_operational_authorization,
     staged_worker_receipt_path,
     worker_spec_digest,
     worker_staging_transaction_lock,
@@ -446,20 +447,6 @@ def activate_staged_workers(
     # Steady-state --ensure is the only path allowed to handle loaded workers.
     if require_stage_receipt and any(snapshot.loaded for snapshot in snapshots):
         raise RuntimeError("workers must be explicitly unloaded before first activation")
-    if all(
-        snapshot.loaded
-        and _config_matches(snapshot.path, spec)
-        and _launchctl_config_matches(snapshot.service, spec)
-        for snapshot, spec in zip(snapshots, specs, strict=True)
-    ):
-        if require_stage_receipt:
-            finalize_operational_authorization(runtime_root)
-        return {
-            "ok": True,
-            "activated": True,
-            "loaded": True,
-            "workers": [{"label": str(spec["Label"]), "activated": True} for spec in specs],
-        }
     if any(
         snapshot.loaded or not _config_matches(snapshot.path, spec)
         for snapshot, spec in zip(snapshots, specs, strict=True)
@@ -467,16 +454,29 @@ def activate_staged_workers(
         raise RuntimeError("workers must be staged and unloaded before activation")
     touched: list[str] = []
     try:
+        # The bridge performs its own authorization check before any worker
+        # operation, including reproduction-probe.  Promote the staged proof
+        # before bootstrap so the first process cannot observe STAGED auth.
+        if require_stage_receipt:
+            finalize_operational_authorization(runtime_root)
         for _spec, snapshot in zip(specs, snapshots, strict=True):
             touched.append(snapshot.service)
             _checked_launchctl("bootstrap", domain, str(snapshot.path))
             _checked_launchctl("kickstart", "-k", snapshot.service)
-        if any(not _loaded(snapshot.service) for snapshot in snapshots):
+        if any(
+            not _loaded(snapshot.service) or not _launchctl_config_matches(snapshot.service, spec)
+            for snapshot, spec in zip(snapshots, specs, strict=True)
+        ):
             raise RuntimeError("worker activation validation failed")
-        if require_stage_receipt:
-            finalize_operational_authorization(runtime_root)
     except Exception as exc:
         rollback_errors = _rollback(snapshots, touched, domain=domain)
+        if require_stage_receipt:
+            try:
+                revoke_operational_authorization(runtime_root)
+            except Exception as revoke_exc:
+                rollback_errors.append(
+                    f"revoke authorization: {type(revoke_exc).__name__}:{revoke_exc}"
+                )
         detail = f"{type(exc).__name__}:{exc}"
         if rollback_errors:
             detail += "; rollback=" + ", ".join(rollback_errors)

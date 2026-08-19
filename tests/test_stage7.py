@@ -36,6 +36,7 @@ from oss_pr_radar.pr_projection import projection_summary
 from oss_pr_radar.release_binding import runtime_root_digest
 from oss_pr_radar.stage6_verification import build_verification_manifest
 from oss_pr_radar.stage7_acceptance import (
+    _managed_counts_append_only,
     build_managed_counts_evidence,
     check,
     issue_operational_authorization,
@@ -123,6 +124,29 @@ def test_prompt_digest_accepts_only_codex_terminal_lf_removal(tmp_path):
                 runtime_root=runtime,
                 release_command=command,
             )
+
+
+def test_final_ledger_append_only_guard_preserves_exact_pr_invariants():
+    counts = {"managed_lifecycle_events": 10, "managed_prs": 40, "managed_tasks": 2}
+    states = {"OPEN": 29, "CLOSED": 8, "MERGED": 3}
+    assert _managed_counts_append_only(
+        counts,
+        {**counts, "managed_lifecycle_events": 11},
+        expected_pr_states=states,
+        current_pr_states=states,
+    )
+    assert not _managed_counts_append_only(
+        counts,
+        {**counts, "managed_lifecycle_events": 9},
+        expected_pr_states=states,
+        current_pr_states=states,
+    )
+    assert not _managed_counts_append_only(
+        counts,
+        counts,
+        expected_pr_states=states,
+        current_pr_states={**states, "OPEN": 28},
+    )
 
 
 def _source(path: Path, value: str) -> None:
@@ -859,6 +883,22 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
     assert result["ok"] is True
     assert result["operationalAuthorizationValid"] is True
     assert result["operationalAuthorizationEvidenceMatch"] is True
+
+    # Worker health/lifecycle bookkeeping may append after activation, but
+    # the Stage 6 PR projection and all PR state counts remain immutable.
+    ManagedLedger(
+        (runtime / "state" / "current-ledger").resolve(), ensure_schema=True
+    ).record_event(event_type="WORKER_HEALTH_APPEND", idempotency_key="worker-health-append")
+    appended = check(
+        runtime,
+        home=home,
+        launchctl_runner=launchctl,
+        managed_counts_evidence=counts_path,
+        automation_snapshot=automation_path,
+    )
+    assert appended["ok"] is True
+    assert appended["managedCountsEvidenceValid"] is True
+
     drift_plist = launch_dir / "com.oss-pr-radar.local-publication.plist"
     drift_bytes = drift_plist.read_bytes()
     drift_plist.write_bytes(drift_bytes + b"\n")

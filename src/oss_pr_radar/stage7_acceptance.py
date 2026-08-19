@@ -147,6 +147,31 @@ def _baseline_matches_ledger(baseline: dict[str, Any], evidence: dict[str, Any])
     )
 
 
+def _managed_counts_append_only(
+    expected: object,
+    current: object,
+    *,
+    expected_pr_states: object = None,
+    current_pr_states: object = None,
+) -> bool:
+    """Allow worker bookkeeping to append without weakening PR invariants."""
+
+    if not isinstance(expected, dict) or not isinstance(current, dict):
+        return False
+    if set(expected) != set(current):
+        return False
+    if any(
+        not isinstance(expected[key], int)
+        or not isinstance(current[key], int)
+        or current[key] < expected[key]
+        for key in expected
+    ):
+        return False
+    if not isinstance(expected_pr_states, dict) or not isinstance(current_pr_states, dict):
+        return False
+    return expected_pr_states == current_pr_states
+
+
 def shareable_acceptance_report(value: dict[str, Any]) -> dict[str, Any]:
     """Return a path/token-redacted report suitable for sharing externally."""
 
@@ -283,6 +308,7 @@ def build_managed_counts_evidence(
         "releaseHead": code_head,
         "observedAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "managedCounts": evidence["managedCounts"],
+        "managedPrStateCounts": evidence["managedPrStateCounts"],
         "ledgerSha256": observation["sha256"],
         "ledgerSnapshot": "sqlite-backup-wal-safe-v1",
         "ledgerGeneration": observation.get("copy", {})
@@ -382,13 +408,34 @@ def check(
                     and isinstance(stage6_baseline, dict)
                     and bound.get("generator") == "stage6-envelope-verified"
                     and bound.get("releaseHead") == binding.release.get("commit")
-                    and bound.get("ledgerSha256") == ledger_sha
                     and bound.get("ledgerSnapshot") == "sqlite-backup-wal-safe-v1"
                     and isinstance(bound.get("ledgerGeneration"), str)
                     and isinstance(bound.get("sourceEnvelopeSha256"), str)
                     and isinstance(bound.get("sourceReportSha256"), str)
                     and isinstance(bound.get("sourceArtifactDigest"), str)
-                    and bound.get("managedCounts") == ledger_evidence.get("managedCounts")
+                    and (
+                        (
+                            bound.get("ledgerSha256") == ledger_sha
+                            and bound.get("ledgerGeneration")
+                            == ledger_observation.get("copy", {})
+                            .get("attempts", [{}])[-1]
+                            .get("after", {})
+                            .get("generation")
+                            and bound.get("managedCounts") == ledger_evidence.get("managedCounts")
+                            and bound.get("managedPrStateCounts")
+                            == ledger_evidence.get("managedPrStateCounts")
+                        )
+                        or (
+                            strict
+                            and require_workers_loaded
+                            and _managed_counts_append_only(
+                                bound.get("managedCounts"),
+                                ledger_evidence.get("managedCounts"),
+                                expected_pr_states=bound.get("managedPrStateCounts"),
+                                current_pr_states=ledger_evidence.get("managedPrStateCounts"),
+                            )
+                        )
+                    )
                     and bound.get("managedPrProjectionDigest")
                     == ledger_evidence.get("managedPrProjectionDigest")
                 )
