@@ -24708,6 +24708,34 @@
     "wait_reason": null,
     "why": "Issue provides a precise root cause, a failing test with exact reproduction steps, and a clear fix direction. The bug affects public API consistency and tool registry state during MCP reconnect, with high user impact. No competing PR or issue found."
   },
+  "b0477d3701a8fd00037d209a52c61eacb41043dbf91dc1d853e2588505c058e9": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Initial report suggests hang, but later comments show it is slow prefill, not a hang; also one comment reports /v1/completions 200 while /v1/messages 500."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Anthropic-compatible /v1/messages endpoint",
+      "prefix cache restoration logic",
+      "KV cache management for MLX backend"
+    ],
+    "risks": [
+      "Potential performance trade-offs when changing cache eviction or restoration; risk of breaking existing Anthropic API compatibility."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with a large prompt (~47k tokens) via /v1/messages and verify prefill time and cache restoration; add regression test for cache restore failure and 500 error on /v1/messages while /v1/completions succeeds."
+    ],
+    "unknowns": [
+      "Exact request headers and payloads from agent clients; whether the 500 error is reproducible consistently; whether maintainers have a preferred fix direction."
+    ],
+    "why": "Issue provides detailed reproduction steps, multiple independent integrations, and maintainer/community analysis pointing to long prefill times and prefix cache restoration failures in the Anthropic-compatible endpoint. This is a concrete, actionable bug in the agent/inference path with clear evidence."
+  },
   "b0b15ca84081da9279a79f70a3fe6de5b086346f7abbe5532dc25b5ce61c4b2b": {
     "confidence": 0.7,
     "contradictions": [],
