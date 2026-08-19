@@ -499,6 +499,37 @@
     ],
     "why": "Issue provides a precise root cause: stop-buffer desynchronizes delta_text and delta_token_ids, causing reasoning parsers to misroute content. Existing PRs overlap but are incomplete (missing tests, stale, or not directly linked). A materially better PR with a focused fix and regression tests is plausible."
   },
+  "05ce5ce4c2fa160f40d75c7cec9d10829e8eb285daeaa3a44fa85b57e1090c92": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims 9/9 failures but related issue #52620 shares stack signatures, suggesting possible duplicate"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "LMCache vLLM adapter token-count alignment for full-prompt hits",
+      "KV-cache position state consistency in P/D disaggregation"
+    ],
+    "risks": [
+      "Root cause may be in LMCache rather than vLLM, requiring cross-repo coordination",
+      "Potential duplicate issue #52620 may already be under investigation"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 13,
+    "test_plan": [
+      "Reproduce with provided YAML configs and Qwen3-0.6B on two L40S GPUs; compare P/D vs monolithic outputs",
+      "Add regression test asserting token-count consistency between scheduler and worker for full-prompt hits"
+    ],
+    "unknowns": [
+      "Whether issue #52620 is truly a duplicate or a distinct bug",
+      "Maintainer confirmation of root-cause location and acceptance of a fix"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "The issue reports a silent correctness failure in LMCache P/D disaggregation with a concrete reproduction and a plausible root-cause hypothesis from a contributor (token-count mismatch in the adapter). However, the supplied evidence indicates a potential duplicate issue #52620 sharing stack signatures, and the deterministic gate is HUMAN_REVIEW. The candidate is algorithmically relevant (KV-cache correctness, distributed inference) but requires maintainer confirmation of the duplicate and root-cause ownership before implementation."
+  },
   "0611b49e9b5505e5bfdf7607a94c7adb98deb13db4c434a6e499cc84aabfce4f": {
     "confidence": 0.7,
     "contradictions": [
@@ -6135,6 +6166,35 @@
     ],
     "why": "Issue clearly identifies a non-streaming error response format mismatch with OpenAI standard and pinpoints the root cause in create_error_response. Existing PR #33534 directly addresses this but has failed CI checks and lacks complete evidence, leaving room for a materially better PR with robust tests and CI passing."
   },
+  "2eaf22eecdf4803f2fd0af4b88765c7e81e4c80fd591ab1986907f25da7121a0": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Fix in voxtral_realtime.py to handle empty multimodal embeddings without infinite decode",
+      "Possibly add timeout or error handling in audio transcription pipeline"
+    ],
+    "risks": [
+      "Changing behavior of zero-embedding fallback may affect other realtime scenarios",
+      "Potential performance impact if adding timeouts or checks"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "test_plan": [
+      "Add regression test using the provided WAV file to reproduce the hang",
+      "Run targeted unit tests for voxtral_realtime and audio transcription"
+    ],
+    "unknowns": [
+      "Exact root cause of why empty embeddings cause infinite decode",
+      "Maintainer preference for fix approach (e.g., error vs. skip tokens)",
+      "Whether the issue is already being addressed in an unlinked PR or branch"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "The issue provides a deterministic reproduction and clear symptom (permanent hang on empty multimodal embeddings), but lacks a root cause analysis or code-level diagnosis. The proposed fix is vague ('minimal fix along runtime/provider/scheduler path') and no maintainer has confirmed the approach. The existing related issues and PRs indicate this is a known fragile area, but no open PR or maintainer investigation is present. The candidate is actionable only after maintainer guidance on the intended fix direction."
+  },
   "2f7c2d58fca81dca69ab95dcae132d6c0b42b1955ef0bff9677335ccf15d07ee": {
     "confidence": 0.85,
     "contradictions": [],
@@ -8654,6 +8714,38 @@
       "Whether an existing PR already addresses this"
     ],
     "why": "The issue describes a plausible stale-session bug in Continue's PR check pipeline, but the repository is now read-only post-acquisition, the open-PR lookup failed, and the maintainer has not confirmed the design. The suggested fix (keying sessions by head SHA) is reasonable but requires upstream confirmation."
+  },
+  "41ae9cdf7dccb46a8add4be5ce3ea4718f16e2d39f5ad5e6ca1dc751935e869f": {
+    "confidence": 0.8,
+    "contradictions": [
+      "One comment notes Copilot works fine, suggesting client-side tolerance"
+    ],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Gateway streaming code for muse models",
+      "SSE chunk finalization logic",
+      "Add regression test for finish_reason and [DONE]"
+    ],
+    "risks": [
+      "May affect other models if fix is too broad",
+      "Underlying upstream may not provide finish reason, requiring synthesis"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "test_plan": [
+      "Reproduce with provided steps using muse-spark-1.2-contributor",
+      "Assert final chunk has non-null finish_reason and [DONE] is sent",
+      "Run existing streaming tests"
+    ],
+    "unknowns": [
+      "Exact gateway code path and whether maintainers have design preferences"
+    ],
+    "wait_reason": null,
+    "why": "Issue reports a concrete streaming protocol bug on the Zen gateway: missing finish_reason and [DONE] for muse models, causing strict OpenAI clients to retry. Multiple user confirmations and related issues strengthen the case. The fix is actionable: ensure final chunk and [DONE] are emitted, possibly synthesizing stop reason. No competing PR found."
   },
   "424899631d80208034e39c85ad19d3383780c6dbf4a291c55b94bf74b2a8b44c": {
     "confidence": 0.7,
