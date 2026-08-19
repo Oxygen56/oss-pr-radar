@@ -611,6 +611,30 @@
     ],
     "why": "The issue reports a user-visible behavior change in DeepSeek-V4-Pro default reasoning effort caused by a merged PR. The root cause is identified (PR #50580 changed default behavior), but the desired fix is ambiguous: whether to revert, add a warning, or make the behavior configurable. No maintainer input or design confirmation exists, and the issue is a bug report without a clear code path."
   },
+  "06a7fff03fe145629fea18afa24514594618a2b8c975303d676f83d40f2e8a32": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "crates/goose/src/providers/inventory/mod.rs",
+      "provider-specific configuration resolvers"
+    ],
+    "risks": [
+      "Potential behavior change may affect existing users who rely on defaults; need to ensure backward compatibility."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that verifies providers without user configuration are not marked as configured on fresh install."
+    ],
+    "unknowns": [
+      "Maintainer preference on whether defaults should count as configured; exact scope of fix."
+    ],
+    "why": "Issue identifies a concrete bug in provider configuration detection with clear root cause and code anchors. It is actionable and affects user-facing behavior."
+  },
   "06ace7f6fffd197c1ce3374ba52258c5cdd6b872439fd902349836decf9483f8": {
     "confidence": 0.7,
     "contradictions": [],
@@ -5126,6 +5150,36 @@
     ],
     "why": "Issue reports a concrete LLM quantization bug (FP8->MXFP4 conversion) with reproducible failure and a second FP8 length regression. It is algorithmically relevant and testable, but the root cause is unconfirmed and an existing PR (#33182) overlaps semantically, requiring manual comparison."
   },
+  "26f06f2c897d2b86478125735254e2a5998b53d6951c61a289fde2b8a1eab4f9": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The triage bot's static analysis suggests the user message should be present, contradicting the reporter's claim that it is omitted"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix the request construction to retain the original user message in follow-up requests after tool calls",
+      "Add regression tests for tool-call follow-up requests with OpenAI-compatible providers"
+    ],
+    "risks": [
+      "The exact root cause is not yet confirmed; the fix may need to be in the history recording or converter layer",
+      "Potential for unintended changes to request construction affecting other providers"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use the provided curl examples to reproduce the 500 error against Ollama",
+      "Add a unit test in converter.test.ts that verifies the user message is present in the follow-up request after a tool call",
+      "Run the existing test suite for the core package"
+    ],
+    "unknowns": [
+      "The actual wire request capture is missing, which would definitively identify where the user message is dropped"
+    ],
+    "why": "The issue provides a clear, reproducible bug with minimal examples and a plausible root cause in request construction. The triage bot and contributor analysis confirm the bug is real and actionable, though the exact drop point is not yet confirmed. The candidate is a valuable bug fix opportunity in the core agent/inference path."
+  },
   "26fa077733609bdc7b9a834c6bcff699e84ab42d7669dac0495444e4dc510964": {
     "confidence": 0.85,
     "contradictions": [],
@@ -5590,6 +5644,31 @@
       "Whether the issue is already being addressed internally"
     ],
     "why": "Issue reports a .NET agent runtime failure when web search is enabled, with a clear stack trace pointing to an unsupported web_search_options parameter. However, the deterministic gate requires HUMAN_REVIEW, and the issue lacks maintainer confirmation or design direction. Existing related PRs are Python-specific and not directly linked, so no direct competition. Actionability is limited by the need for maintainer input on the intended fix approach."
+  },
+  "2a1e8b8b09990cef81ba381da8a91c897d908d99d612c1826a36375ee4d431e1": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/core/src/core/reasoning-effort.ts",
+      "OpenAI-compatible provider pipeline (buildReasoningConfig)"
+    ],
+    "risks": [
+      "Potential behavior change for providers that do accept 'max' if clamping is applied too broadly; need to ensure provider-specific supported lists are respected."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test asserting 'max' never reaches the wire for an OpenAI-compatible provider without supported tier list; reproduce with /effort max and send prompt to confirm 400 before fix."
+    ],
+    "unknowns": [
+      "Exact provider API capabilities for 'max' across different OpenAI-compatible endpoints; maintainer preference among the three proposed fix options."
+    ],
+    "why": "Issue provides a clear, reproducible bug with root-cause analysis and a concrete fix direction. The triage bot confirms the root cause and extends it to the OpenAI-compatible pipeline where the clamp is not invoked. The issue is actionable and valuable for agent_ai_infra track."
   },
   "2ac54972f8f7a33492bce2863b84a5b6ac53801210785ca7dd8935689c9a73ac": {
     "confidence": 0.85,
@@ -6773,6 +6852,35 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "The issue is a well-specified design with maintainer approval and a matching open PR (#4543) that already implements the described changes. The PR is active, has tests, and the issue's own task comments claim completion. This is a duplicate review situation: the candidate work is already in progress and appears to satisfy the design."
+  },
+  "343e629a8711c1f2b4ebb09fc2e01d91b444bb64864b92ebb5fc4c0520623a7a": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/memory/src/processors/observational-memory/retry.ts",
+      "packages/memory/src/processors/observational-memory/observation-strategies/sync.ts",
+      "packages/memory/src/processors/observational-memory/processor.ts",
+      "ObservationalMemoryOptions"
+    ],
+    "risks": [
+      "Changing default retry behavior may affect existing users expecting current behavior.",
+      "Adding new configuration options requires careful API design and documentation."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a failing test that simulates observer model failure and asserts the turn is not aborted and retries are configurable.",
+      "Run existing unit tests for the memory package and static checks."
+    ],
+    "unknowns": [
+      "Maintainer design preferences for the failure policy and retry configuration."
+    ],
+    "why": "Issue identifies a concrete, high-impact bug in the agent runtime: synchronous observation failure causes ~4-minute blocking retries and aborts the user's turn, with no configuration or degradation option. Root cause is clearly located in specific files (retry.ts, sync.ts, processor.ts) and the proposal is actionable."
   },
   "343ecb161ff61603a678d37a425ddada4991ce36176394b6abf325f7fd45dc70": {
     "confidence": 0.8,
@@ -12043,6 +12151,30 @@
       "Whether the reporter has tested the latest code with the merged fixes; whether the root cause is fully captured by the two identified bugs; maintainer confirmation on the need for further action."
     ],
     "why": "Issue reports a user-visible bug but lacks a clear root cause; the bot comment identifies two likely causes already fixed by merged PRs #39424 and #39587, so the issue may be resolved in a future release. No open PR competition exists, but the candidate is not actionable without confirmation that the bug persists after applying those fixes."
+  },
+  "571a5bd07ffc2f8dc99b28f3833a40fe28fffe914a0f2b04b0afa6e8daa9d0aa": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "components/src/dynamo/replay/main.py",
+      "lib/bindings/python/rust/llm/replay.rs"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #13478 which touches similar paths; need to compare implementation boundaries to avoid duplication."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that constructs replay arguments with --aic-nextn and --aic-nextn-accept-rates and verifies the resulting MockEngineArgs carry the speculative decoding settings, or run the provided reproduction and assert output tok/s differs from no-speculation baseline."
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred design for passing AIC perf config to engine args; whether PR #13478 already fixes this issue."
+    ],
+    "why": "Issue provides a clear, reproducible bug with exact commands and byte-identical results, identifies the root cause in the replay entrypoint wiring, and contrasts with the working mocker path. The fix is a targeted code change in the replay argument handling, with a concrete test gap identified."
   },
   "5754c8a955d38adc9f5830ca287790d00d79c773f451748793d5e1272b02fd63": {
     "confidence": 0.8,
@@ -19816,6 +19948,30 @@
     ],
     "why": "Issue clearly identifies a module-level unguarded os.makedirs causing import failure in restricted environments. Existing PR #6813 directly addresses it but lacks tests, leaving room for a materially better PR with regression tests."
   },
+  "894c01b33fe62be74160ca2d820c132b9963846d9f01044e86d4b183d7f7ec83": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "fused_moe/deep_gemm_utils.py",
+      "fused_moe/experts/deep_gemm_moe.py"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #52632 which addresses a similar DeepEP-V2 cudagraph issue; need to coordinate to avoid duplicate fixes."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the reported configuration (deepep_v2, deep_gemm, cudagraph FULL_AND_PIECEWISE) on a small model; add a regression test that checks expert_start_loc shape matches num_experts in cudagraph mode."
+    ],
+    "unknowns": [
+      "Exact model configuration and minimal reproduction script are not provided; the issue lacks a standalone test case."
+    ],
+    "why": "The issue reports a concrete crash in DeepEP-V2 with deep_gemm and cudagraph mode, with a clear assertion failure in deep_gemm_utils.py. The code path is identified and the bug is likely in the handling of expert_start_loc shape during cudagraph execution. This is a kernel/algorithm-level bug with a reproducible traceback."
+  },
   "8973767f066076f152fb689087ee643d6b1ca7eb07c701ed22e17f09a1b6b5f7": {
     "confidence": 0.8,
     "contradictions": [],
@@ -21757,6 +21913,31 @@
     ],
     "wait_reason": "DESIGN_CONFIRMATION",
     "why": "The design is technically sound and addresses a real bug in local-docker upgrade version metadata persistence. It includes concrete mechanisms (strict version read, re-read stored Profile, narrow write) and a detailed verification plan. However, the maintainer explicitly requested revisions and approval before implementation starts; the latest update claims revisions but the maintainer has not yet re-reviewed. The gate decision is HUMAN_REVIEW, and the submission policy requires assignment and AI disclosure confirmation, which are not yet satisfied."
+  },
+  "99fc098976f2fec9f2b7a8712b092b6be3edd26d4b67f88a3b1b16c60c975419": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "DurableAgent runtime state management",
+      "TTL configuration or refresh logic in globalRunRegistry"
+    ],
+    "risks": [
+      "Changing TTL or refresh behavior may affect memory usage or leak safety; need to ensure bounded registry size."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test with fake timers that starts a durable run, enters a tool with an externally controlled promise, advances time beyond the TTL, resolves the tool, and asserts the next LLM step still has the original registry entry."
+    ],
+    "unknowns": [
+      "Maintainer design preference for the fix approach (TTL increase vs. explicit refresh vs. lifecycle-based cleanup)."
+    ],
+    "why": "The issue describes a concrete bug in DurableAgent where active runs are evicted during long tool calls due to a fixed TTL, with a clear root cause and a deterministic test plan using fake timers. The suggested fixes are actionable and align with the agent_ai_infra track."
   },
   "9a1d3922359df42df141f9bd969988ebe3add0e642ef3ddcb5923727ab1ffb21": {
     "confidence": 0.8,
@@ -26932,6 +27113,32 @@
     ],
     "why": "The issue is a well-documented bug with a clear root cause and reproducible data loss, but it is not an LLM algorithm contribution. The track requires concrete algorithmic mechanisms like training objectives or numerical methods; this is a workflow engine bug fix. The maintainer has labeled it for triage and plans a fix, so work should wait for maintainer direction."
   },
+  "c2028bed594cd06ce5a718f4b880bb684fd38d5a41ce730cd75722238163e64c": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "cuda_ipc_transport_utils.py",
+      "server_args.py"
+    ],
+    "risks": [
+      "Potential false positives in WSL2 detection could affect non-WSL2 environments.",
+      "Changing auto-selection might alter behavior for users who rely on CUDA IPC in WSL2 (though unsupported)."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that mocks WSL2 detection and verifies _handle_multimodal_feature_transport selects 'cpu' instead of 'cuda_ipc'.",
+      "Add an integration test that runs a multimodal model on a WSL2-like environment and asserts no scheduler crash."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer option 1 (auto-detect) or option 2 (error message) or both."
+    ],
+    "why": "Issue provides a clear user-facing bug with a reproducible command, traceback, and a confirmed workaround. The root cause is well understood: CUDA IPC is unsupported on WSL2 but auto-selected. The fix is straightforward and aligns with existing fallback logic."
+  },
   "c21474b19e17e027fff0c624adbc6ede4160b00ec12f7beb2b5bf878ebafa20d": {
     "confidence": 0.85,
     "contradictions": [],
@@ -30209,6 +30416,30 @@
     ],
     "why": "The issue provides a precise root cause: FlashInfer's logits_soft_cap is a compile-time parameter that must be passed to plan(), not forward(), and the SGLang backend passes it to forward(), silently dropping it. The issue includes a minimal reproduction with cosine similarity evidence and a model-level comparison. However, the deterministic gate is HUMAN_REVIEW, and the open PR and related issue lookups timed out, so we cannot rule out existing duplicate work. The fix is clear but requires maintainer confirmation on the intended design (e.g., planning per cap value)."
   },
+  "d7fea5c3916849849276d7fc7400bcb264cd9805ea0700b70af732f940f7f5de": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/parser/deepseek_v4.py",
+      "vllm/tool_parsers/deepseekv4_engine_tool_parser.py"
+    ],
+    "risks": [
+      "Removing the structural filter may cause performance regression due to repeated regex scanning of accumulated arguments; needs evaluation."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that streams a long string parameter and asserts multiple non-empty argument deltas before the closing tag, using the provided minimal reproduction."
+    ],
+    "unknowns": [
+      "Maintainer design preference for handling long-argument streaming performance."
+    ],
+    "why": "The issue provides a precise root cause (arg_structural_chars filtering) and a minimal parser-only reproduction with expected behavior, making it actionable for a targeted fix."
+  },
   "d836701ae2f697fd1928df83add0e74039aaa48cfa24489081ffbd96690df112": {
     "confidence": 0.6,
     "contradictions": [],
@@ -32719,6 +32950,32 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue reports a concrete multimodal processor vs ContinuousToken family mismatch for Qwen3.5 in one_step_off_policy with delta_sharded. Existing PR #7433 directly modifies continuous_token_wiring.py to add Qwen3.5 VL family, likely addressing the root cause. PR #7324 also overlaps semantically. Need maintainer to confirm which PR resolves the issue before starting new work."
   },
+  "e6c0780c8bc9b33d47b2d8154c6a0bbdc011b81968b5440bcbbf4e52d4293817": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue says intermittent, but reproduction steps are specific; no clear root cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Need root-cause analysis and a minimal fix in the conversation history mapping logic"
+    ],
+    "risks": [
+      "Duplicate work with existing PR #12679; potential maintainer design preferences unknown"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Create a failing test that reproduces the intermittent error by editing a message then resetting chat"
+    ],
+    "unknowns": [
+      "Root cause of the mapping error; whether existing PR #12679 fully addresses the issue; maintainer's preferred solution"
+    ],
+    "why": "Issue reports an intermittent error with no root cause identified; existing PR #12679 lacks root-cause coverage and tests are insufficient. No maintainer confirmation or design direction. The track is agent_ai_infra, but the issue is a bug report without a concrete algorithm or validation path."
+  },
   "e6e87b063d38fd174859437a5da3e3521a1b38850f1ef57170553ee92e3e9725": {
     "confidence": 0.8,
     "contradictions": [],
@@ -34242,6 +34499,36 @@
     ],
     "why": "Issue describes a clear shutdown-ordering bug with a verified causal chain and a concrete expected behavior. However, the deterministic gate is HUMAN_REVIEW, and an existing PR (#21255) has semantic overlap that requires maintainer comparison before starting new work."
   },
+  "f01e8ed94cb606bd2d116a807536da5306da0fa0c1e9d6d0460c8807fd351727": {
+    "confidence": 0.85,
+    "contradictions": [
+      "One comment notes the issue does not occur with VS Code Copilot, suggesting client-side differences."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Zen gateway streaming response generation",
+      "SSE chunk formatting for muse models"
+    ],
+    "risks": [
+      "Potential behavior change for other models if fix is not scoped to muse models.",
+      "Synthesizing finish_reason may mask upstream issues."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a test that sends a streaming request to the Zen gateway for a muse model and asserts the final chunk contains a non-null finish_reason and a data: [DONE] terminator.",
+      "Run existing gateway streaming tests to ensure no regression."
+    ],
+    "unknowns": [
+      "Exact code path in the gateway responsible for streaming muse models.",
+      "Whether the Anthropic-compatible endpoint also has the issue."
+    ],
+    "why": "Issue provides a clear, reproducible streaming protocol violation with expected/actual behavior, multiple user confirmations, and a concrete suggested fix. It is a high-impact bug in the agent/inference path, actionable for a maintainer."
+  },
   "f03b441336acba5d6c6c4e393c8728b3ba9ad9efee85db887344cff58a148298": {
     "confidence": 0.8,
     "contradictions": [
@@ -34650,6 +34937,37 @@
       "Exact commit that fixes the issue in dev"
     ],
     "why": "The issue reports a crash in vLLM's metrics logging when CPU offloading is enabled, with a clear stack trace pointing to a negative counter increment. However, the root cause is not definitively identified; a comment suggests it may be a duplicate of #36755, and the fix may already exist in dev. The candidate is a bug report, not a code contribution, and requires maintainer confirmation of the root cause and whether a fix is needed."
+  },
+  "f3a1cc8c679ea5416a1aef3ea3d4f98c48bc50d201c511c454435a1176b5b444": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue claims bug exists on main as of 2026-08-14, but comment states fix landed in a9a7db43a on 2026-07-24 and is in v1.4.0",
+      "Reporter used operator/planner 1.4.0 but may have run an older profiler image"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Identify the exact code path used by AIC autoApply for generating disagg services",
+      "If bug persists, add missing --disaggregation-mode and --kv-transfer-config flags in that path"
+    ],
+    "risks": [
+      "Duplicate work if issue is already fixed",
+      "Fixing the wrong code path if the AIC flow bypasses the known modifier"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on current main with a minimal DGDR and inspect generated DGD for flags",
+      "Verify profiler image version used in the reproduction matches the code containing the fix"
+    ],
+    "unknowns": [
+      "Which profiler image version was used in the reproduction?",
+      "Does the AIC autoApply path reach _apply_disagg_workers or bypass it?"
+    ],
+    "why": "The issue reports a bug in DGDR autoApply for prefill workers, but a maintainer comment indicates the fix may already be present on main (commit a9a7db43a) and the reporter's environment may be using an outdated profiler image. The root cause is uncertain: either the issue is already fixed or the bug lies in a different code path (AIC autoApply) that is not clearly identified. The evidence is contradictory and incomplete, requiring clarification before action."
   },
   "f3c40d15a182db9f9127ac7e3c7c1e4b9539fb87ce51bf3085c49887c598ecd0": {
     "confidence": 0.7,
