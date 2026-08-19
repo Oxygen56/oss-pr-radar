@@ -7358,6 +7358,27 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "The issue reports a concrete assertion failure in expert-parallel setup with 3 GPUs, but the root cause is not fully diagnosed. Existing PR #46370 overlaps semantically and touches the same model_runner path, and related issue #36010 shares stack signatures. The deterministic gate is HUMAN_REVIEW, and the AI disclosure conflict blocks automatic action. Need maintainer review to confirm root cause and avoid duplicate work."
   },
+  "384ee22680ac4f86a006b381e7f767fbe644877792881e21632ff8aa4bb0ac81": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Issue reports missing 2026-07-28 support, but maintainer bot confirms it shipped in 1.17.0."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [],
+    "risks": [],
+    "root_cause_clarity": "high",
+    "score": 5,
+    "test_plan": [],
+    "unknowns": [
+      "Whether the issue has been formally closed as resolved."
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "The issue is a valid bug report for @mastra/mcp@1.16.0, but the maintainer bot states the feature shipped in @mastra/mcp@1.17.0 via merged PRs #20929 and #20931. The issue is effectively resolved and the candidate work is already implemented."
+  },
   "3869a689a4ac88ee3cd663699f334b613175e4cd5375bedf7806eca3732ff12e": {
     "confidence": 0.85,
     "contradictions": [],
@@ -20706,6 +20727,27 @@
     ],
     "why": "Issue provides a precise root cause (shape mismatch in requestContext user slot) and a verified workaround, but a PR (#20690) already exists and is closed, with maintainer triage ongoing. The deterministic gate requires HUMAN_REVIEW, and the PR's completeness and maintainer scope decisions (e.g., handling two other quiet readers) are unresolved."
   },
+  "950767d16a33ddc2d3c32a7d0d73be82e292eeed1696fa487b78cda1a3e8ff39": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims API works but agents hang; comments attribute hang to large prompts and context limits, not API failure."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [],
+    "risks": [],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [],
+    "unknowns": [
+      "Exact request differences between agent clients and direct API calls; whether Ollama has a bug or expected behavior; maintainer interest in changing context handling."
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "Issue reports agent integrations hanging with local Qwen models, but comments indicate the root cause is large prompts exceeding context and long prefill times, not a bug in Ollama. No concrete code path or reproducible failure in Ollama is identified; the issue is likely usage/harness configuration. No maintainer confirmation or design direction."
+  },
   "95d7915553b8f1cfdf44ddfa9111869582100e3f09ed66a40a1c2e252c969b2b": {
     "confidence": 0.9,
     "contradictions": [],
@@ -23426,6 +23468,39 @@
       "Whether a new PR would be accepted given existing related merged PRs"
     ],
     "why": "The issue clearly identifies a stale tenant_embd_id causing empty api_key and a missing validation in get_model_config_by_id. However, the deterministic gate requires HUMAN_REVIEW and the candidate is a bug report without an implementation. Existing merged PRs partially address related resolution but not the execution-time stale cache scenario, so a new PR could be valuable, but design confirmation is needed."
+  },
+  "ae008963fbbaace4d5d6b34fae07a312ef4a43691bddc3ef085d2bc9d43d9224": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Reporter claims AzureProvider but later confirms using mcp.server.fastmcp from MCP SDK",
+      "sui-ni2's analysis suggests v3.4.7 should not produce the bad URL, but reporter's production trace shows it does"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "AzureProvider OAuth flow",
+      "OAuthProxy resource handling"
+    ],
+    "risks": [
+      "Changing AzureProvider behavior may break existing users",
+      "The actual bug may be in MCP SDK, not FastMCP"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 11,
+    "test_plan": [
+      "Reproduce with standalone FastMCP AzureProvider and ChatGPT Remote MCP",
+      "Add regression test for resource-qualified scopes in authorize URL"
+    ],
+    "unknowns": [
+      "Whether the bug reproduces with standalone FastMCP AzureProvider",
+      "Maintainer's intended fix direction",
+      "Exact code path in FastMCP that could cause the issue"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "The issue is a user-visible auth bug with a clear repro, but the discussion reveals the reporter is actually using the MCP SDK's mcp.server.fastmcp, not standalone FastMCP's AzureProvider. The root cause is not confirmed in the FastMCP codebase; the reporter's environment uses mcp==1.29.0 and no standalone fastmcp package. The maintainer has not confirmed the bug or provided guidance. The candidate is not clearly actionable without maintainer confirmation of the intended fix path."
   },
   "ae346b25f311dbd21f829ebe68f2e29c80a6db6c82c657170988b33d4209f4ce": {
     "confidence": 0.85,
@@ -27806,6 +27881,37 @@
     ],
     "why": "The issue clearly identifies a regression in vLLM's attention backend selection for FP8 KV cache on Blackwell, with a precise root cause: eligibility check includes fp8 but FA-version fallback to FA2 cannot serve it. However, the deterministic gate requires HUMAN_REVIEW, and there are multiple open PRs with semantic overlap (e.g., #46963, #46329) that may already address the root cause. The issue is actionable but requires maintainer confirmation to avoid duplicate work."
   },
+  "cd70c0778555e83940b3809236d507b29dddf211e8062bf082c5700d04ae86fc": {
+    "confidence": 0.7,
+    "contradictions": [
+      "PR #52632 title suggests a fix for the exact cudagraph path, but issue does not reference it and PR lacks tests"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "fused_moe/deep_gemm_utils.py",
+      "fused_moe/experts/deep_gemm_moe.py"
+    ],
+    "risks": [
+      "Potential duplicate issue #52897 may split maintainer attention",
+      "Open PR #52632 may already fix the issue but lacks tests and CI failure needs attribution"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 13,
+    "test_plan": [
+      "Reproduce with small model, fixed seed, and cudagraph FULL_AND_PIECEWISE; assert expert_start_loc shape matches num_experts; add regression test for decode/cudagraph path with empty recv_expert_num_tokens"
+    ],
+    "unknowns": [
+      "Whether issue #52897 is truly duplicate",
+      "Whether PR #52632 resolves this issue",
+      "Exact trigger conditions beyond cudagraph mode"
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "The issue reports a crash in deep_gemm_moe_permute during cudagraph mode with deepep_v2, but the root cause is not fully diagnosed. A potential duplicate issue #52897 shares stack signatures, and an open PR #52632 directly addresses DeepEP-V2 cudagraph path but lacks tests and does not reference this issue. The deterministic gate is HUMAN_REVIEW, and the submission policy conflict blocks automatic action."
+  },
   "cdf8a27f391af3d9e7c6e494f90b7adb705fc64885f15eefeb15ad7d7a94512a": {
     "confidence": 0.7,
     "contradictions": [],
@@ -28382,6 +28488,42 @@
       "Maintainer design preferences for event subscription lifecycle"
     ],
     "why": "The issue precisely identifies a missing session-lifetime event subscription in the ACP adapter, with concrete code pointers and a reproducible scenario. It is a clear bug in the agent infrastructure that affects ACP clients, and no competing PR or issue exists."
+  },
+  "d1db348f82d2ce72cd6d0c9aa4f8a1191faa5a7c204e5c155d35bb0c2e5ed1c4": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Gate decision HUMAN_REVIEW conflicts with high algorithm evidence score",
+      "Submission policy ai_disclosure_conflict blocks automatic action despite actionable bug report"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Scheduler chunk-alignment logic for priority policy",
+      "Prefix-cache hit accounting or metrics",
+      "Startup warning for incompatible scheduling-policy and align-mode combination"
+    ],
+    "risks": [
+      "Potential duplicate issue #52894 may already cover this; need triage",
+      "Root cause may be in metrics rather than scheduler; fix could be misleading",
+      "AI-disclosure policy may require user-approved wording before any public action"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 12,
+    "test_plan": [
+      "Reproduce with two identical requests sharing a >1600-token prefix under priority scheduling; assert prefix_cache_hits_total increments",
+      "Add a regression test comparing FCFS vs priority scheduler hit rates on a small hybrid model",
+      "Run numerical/unit tests for scheduler chunk boundary alignment"
+    ],
+    "unknowns": [
+      "Whether maintainers have acknowledged or are investigating",
+      "Whether issue #52894 is truly a duplicate or just shares environment stack signatures",
+      "Exact code path where priority scheduler breaks alignment; no code diff or stack trace provided"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "The issue reports a silent 0% prefix-cache hit rate with priority scheduling in align mode, with strong A/B data and a plausible mechanism tied to #51113. However, the deterministic gate is HUMAN_REVIEW, and the submission policy flags an AI-disclosure conflict that blocks automatic public action. Additionally, a potential duplicate issue #52894 shares stack signatures, and there is no maintainer confirmation or public reproduction signal. The root cause is not fully confirmed; it may be a scheduler alignment bug or a metric/reporting issue."
   },
   "d1de8bfdfb28024aadf23ac1f1d53c6cfe597e11643250bf0ec05a2e1c2fdd69": {
     "confidence": 0.9,
@@ -29962,6 +30104,35 @@
       "Exact normalization rule (case, whitespace) for dedup"
     ],
     "why": "Issue identifies a concrete over-counting bug in web_search_requests with strong evidence and a clear root cause. However, the issue itself poses open semantic questions (dedup vs cap, normalization, scope) that require maintainer confirmation before implementation. Additionally, multiple open PRs overlap with the same code path and semantics, so a new PR risks duplication without maintainer guidance."
+  },
+  "da8e0957304fabe156f6c25dd46a20646f66e8fe7b80b89b91b0955fb51cdadd": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Zen gateway streaming transport for muse models",
+      "SSE chunk/finish_reason synthesis logic"
+    ],
+    "risks": [
+      "May require maintainer design confirmation on synthesizing finish_reason",
+      "Potential overlap with related issues #40420, #43328, #42918"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "test_plan": [
+      "Add a regression test that streams a muse model and asserts a final chunk with non-null finish_reason followed by data: [DONE]",
+      "Run existing gateway streaming tests and static checks"
+    ],
+    "unknowns": [
+      "Whether the gateway code is in this repo and where the streaming logic lives",
+      "Whether maintainers have a preferred fix approach"
+    ],
+    "wait_reason": null,
+    "why": "Issue reports a concrete streaming protocol violation (missing finish_reason and [DONE]) with a clear repro and expected/actual pair, affecting agentic clients. No competing PR addresses it; the suggested fix is actionable and testable."
   },
   "daf4ffc1bc6eb9675dd230a152a99f7179e46868bb6766f233747dced2ffea11": {
     "confidence": 0.8,
