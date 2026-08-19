@@ -10717,6 +10717,35 @@
     ],
     "why": "Issue describes a high-impact consent/UI bug with a clear root cause in the streaming agent-as-tool seam, but the fix requires design confirmation on the nested approval envelope shape and naming. The triage bot explicitly flags open product/API questions and maintainer agreement, and the deterministic gate is HUMAN_REVIEW. No competing PR exists, but the design decision blocks a clean candidate."
   },
+  "4c00e5d9a75e998ac9ae4d3b7503012c0ec4807a6fb55ebaf0af8cfd8162126f": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Initial claim of org-wide failure was corrected to per-bot; root cause unaffected."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "api/pkg/server/helix_org.go: add WithOrgID(ctx, orgID) before calling removeLegacyHelixOrgMCPs",
+      "api/pkg/server/helix_org.go: possibly adjust error handling to make cleanup best-effort"
+    ],
+    "risks": [
+      "Changing error handling to best-effort could mask other failures; need to ensure only the legacy cleanup is non-fatal.",
+      "Adding WithOrgID might have side effects if the context is used elsewhere in the same scope."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that simulates a bot with a legacy helix-org MCP and an unset bootstrapped flag, then call ensureBootstrap and assert no error and that the inproc client receives orgID on context.",
+      "Run existing tests for api/pkg/server package."
+    ],
+    "unknowns": [
+      "Exact date of onset and whether the fix should also address the fatal error handling design."
+    ],
+    "why": "Issue provides a precise root cause: orgID is not stamped onto the context passed to removeLegacyHelixOrgMCPs, causing inproc client to fail. The fix is a minimal, well-scoped change (add WithOrgID) with clear code anchors and a reproducible scenario. The intermittent recovery is explained by the ErrNotFound skip and in-memory flag, consistent with the root cause. No competing PRs or issues found."
+  },
   "4c728b16da8895875ffe531b59aa389f90d1798fa6fca5ba8b857b0eef0ef09d": {
     "confidence": 0.7,
     "contradictions": [
@@ -10889,6 +10918,31 @@
       "Exact code path causing stale key object; whether maintainers prefer a specific fix approach"
     ],
     "why": "Issue reports budget enforcement bypass in v1.82.3 with clear repro and evidence of stale cached key objects; existing PR #29179 is stale and lacks root-cause coverage, while newer PRs are incomplete. A materially better PR with a failing test and minimal fix is plausible."
+  },
+  "4d744e70793dce7ed40217fb274d6766be12580b3a585c6795ac51250f574c90": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/core/src/channels/agent-channels.ts",
+      "Thread interface (add stopTyping or document clear semantics)"
+    ],
+    "risks": [
+      "Changing Thread interface may break existing adapters; unclear whether startTyping('') is the intended clear path."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Create a failing test that simulates a run ending without chat.postMessage and asserts the typing status is cleared on the platform adapter."
+    ],
+    "unknowns": [
+      "Maintainer design preference for clearing typing status; whether a minimal fix is acceptable without broader API changes."
+    ],
+    "why": "The issue describes a plausible bug in typing status cleanup but lacks a concrete reproduction test or code-level validation. The suggested fix requires maintainer design decisions on the Thread interface, and no maintainer approval or active investigation is present. The track is agent_ai_infra, which requires concrete validation paths; the issue does not provide a reference-vs-implementation test or numerical regression."
   },
   "4d7883194b5d9b6c505daef55aa11f0eef27e7175f23992759144a5e5df51ab2": {
     "confidence": 0.7,
@@ -25840,6 +25894,34 @@
     ],
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue reports that console output is handled by Rich rather than Python logging, with a workaround. It lacks a concrete root cause analysis, maintainer confirmation, or a clear code path for a minimal fix. The proposed change is ambiguous: either integrate Rich output with logging or provide a documented pattern. No maintainer approval or help-wanted signal."
+  },
+  "b734bb32b0a53d4f05ecdd18f889a9166ae2ddb3ff403c2fb10358aed7495a25": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "litellm/proxy/guardrails/guardrail_hooks/headroom/headroom.py",
+      "regex pattern for hash extraction",
+      "tool injection logic for headroom_retrieve"
+    ],
+    "risks": [
+      "Potential overlap with existing PRs #36245 and #36581; need to compare implementation boundaries"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add unit tests for legacy and CCR marker formats",
+      "Integration test for Chat Completions and Responses tool injection"
+    ],
+    "unknowns": [
+      "Whether maintainers have design preferences for marker parsing",
+      "Exact scope of existing PRs' coverage"
+    ],
+    "why": "Issue provides a clear root cause (regex mismatch for CCR markers), a concrete reproduction path, and a suggested fix with test cases. It is actionable and technically valuable for the agent_ai_infra track."
   },
   "b737f6157602e445b20acff50f070ccd739ce36716f8a1963ebb89068acb169f": {
     "confidence": 0.8,
