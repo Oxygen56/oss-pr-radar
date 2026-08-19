@@ -929,6 +929,83 @@ def ledger(path: Path = LEDGER_PATH) -> RadarLedger:
     return RadarLedger(path)
 
 
+def _task_context_digest_payload(
+    context: dict[str, Any],
+    prepared_head: str | None,
+    *,
+    include_target_base: bool = True,
+    include_prepared_head: bool = True,
+) -> dict[str, Any]:
+    live_audit = context.get("liveAudit")
+    if not isinstance(live_audit, dict) or not isinstance(live_audit.get("evidence"), dict):
+        raise RuntimeError("task context live audit is invalid")
+    payload = {
+        "schemaVersion": TASK_CONTEXT_SCHEMA,
+        "key": context.get("key"),
+        "issueUrl": context.get("issueUrl"),
+        "intentId": context.get("intentId"),
+        "track": context.get("track"),
+        "algorithmEvidence": context.get("algorithmEvidence"),
+        "liveAuditDigest": live_audit["evidence"].get("digest"),
+        "threadId": context.get("threadId"),
+        "worktreePath": context.get("worktreePath"),
+    }
+    if include_target_base:
+        payload["targetBase"] = context.get("targetBase")
+    if include_prepared_head:
+        payload["prFollowupPreparedHeadSha"] = prepared_head
+    return payload
+
+
+def _legacy_task_context_digest_allowed(context: dict[str, Any]) -> bool:
+    if str(context.get("stage") or "") not in PUBLISHED_TASK_STAGES:
+        return False
+    receipt = context.get("publicationReceipt")
+    if not isinstance(receipt, dict) or not receipt.get("prUrl"):
+        return False
+    issue_match = ISSUE_URL.fullmatch(str(context.get("issueUrl") or ""))
+    pull_match = PULL_URL.fullmatch(str(receipt.get("prUrl") or ""))
+    if issue_match is None or pull_match is None:
+        return False
+    if pull_match.group(1).casefold() != issue_match.group(1).casefold():
+        return False
+    return re.fullmatch(r"[0-9a-f]{40}", str(receipt.get("commitSha") or "")) is not None
+
+
+def _task_context_digest_candidates(context: dict[str, Any], prepared_head: str | None) -> set[str]:
+    candidates = {
+        sha256_json(_task_context_digest_payload(context, prepared_head)),
+        sha256_json(
+            _task_context_digest_payload(
+                context,
+                prepared_head,
+                include_prepared_head=False,
+            )
+        ),
+    }
+    if "targetBase" not in context and _legacy_task_context_digest_allowed(context):
+        candidates.update(
+            {
+                sha256_json(
+                    _task_context_digest_payload(
+                        context,
+                        prepared_head,
+                        include_target_base=False,
+                    )
+                ),
+                sha256_json(
+                    _task_context_digest_payload(
+                        context,
+                        prepared_head,
+                        include_target_base=False,
+                        include_prepared_head=False,
+                    )
+                ),
+            }
+        )
+    return candidates
+
+
 def _verified_shared_task_context(path: Path) -> tuple[dict[str, Any], str]:
     if path.is_symlink():
         raise RuntimeError("shared task context is not a regular file")
@@ -995,22 +1072,7 @@ def _verified_shared_task_context(path: Path) -> tuple[dict[str, Any], str]:
         if isinstance(followup, dict) and followup.get("preparedHeadSha")
         else None
     )
-    digest_payload = {
-        "schemaVersion": TASK_CONTEXT_SCHEMA,
-        "key": context.get("key"),
-        "issueUrl": issue_url,
-        "intentId": context.get("intentId"),
-        "track": context.get("track"),
-        "algorithmEvidence": context.get("algorithmEvidence"),
-        "liveAuditDigest": live_audit["evidence"].get("digest"),
-        "threadId": context.get("threadId"),
-        "worktreePath": context.get("worktreePath"),
-    }
-    accepted_digests = {
-        sha256_json(digest_payload),
-        sha256_json(digest_payload | {"prFollowupPreparedHeadSha": prepared_head}),
-    }
-    if context.get("contextDigest") not in accepted_digests:
+    if context.get("contextDigest") not in _task_context_digest_candidates(context, prepared_head):
         raise RuntimeError("shared task context digest mismatch")
 
     # Missing historical workspaces must not block unrelated live queue items.
@@ -2132,23 +2194,7 @@ def _exclude_private_task_dir(worktree: Path) -> None:
 
 
 def _task_context_digest(context: dict[str, Any], prepared_head: str | None) -> str:
-    live_audit = context.get("liveAudit")
-    if not isinstance(live_audit, dict) or not isinstance(live_audit.get("evidence"), dict):
-        raise RuntimeError("task context live audit is invalid")
-    return sha256_json(
-        {
-            "schemaVersion": TASK_CONTEXT_SCHEMA,
-            "key": context.get("key"),
-            "issueUrl": context.get("issueUrl"),
-            "intentId": context.get("intentId"),
-            "track": context.get("track"),
-            "algorithmEvidence": context.get("algorithmEvidence"),
-            "liveAuditDigest": live_audit["evidence"].get("digest"),
-            "prFollowupPreparedHeadSha": prepared_head,
-            "threadId": context.get("threadId"),
-            "worktreePath": context.get("worktreePath"),
-        }
-    )
+    return sha256_json(_task_context_digest_payload(context, prepared_head))
 
 
 def write_task_context(
@@ -2166,6 +2212,9 @@ def write_task_context(
     )
     if context is None:
         raise RuntimeError("registered task context is unavailable")
+    # Keep the binding explicit in the serialized context even when the
+    # current ledger predates target-base storage and the value is null.
+    context["targetBase"] = context.get("targetBase")
     live_audit = context.get("liveAudit")
     if not isinstance(live_audit, dict) or not isinstance(live_audit.get("evidence"), dict):
         raise RuntimeError("registered task context is missing controller live audit")
@@ -5093,7 +5142,7 @@ def _recover_unbound_pr_followup_preparations(
                     not isinstance(legacy_followup, dict)
                     or legacy_followup.get("prUrl") != candidate["prUrl"]
                     or legacy_context.get("contextDigest")
-                    != _task_context_digest(legacy_context, legacy_prepared_head)
+                    not in _task_context_digest_candidates(legacy_context, legacy_prepared_head)
                 ):
                     raise RuntimeError("legacy PR follow-up context digest is invalid")
                 legacy_context_digest = str(legacy_context["contextDigest"])

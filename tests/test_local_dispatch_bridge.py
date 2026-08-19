@@ -1098,6 +1098,140 @@ def test_shared_context_recovery_verifies_an_existing_dispatched_task(monkeypatc
     ]
 
 
+def _context_digest_fixture(tmp_path, *, stage="DISPATCHED"):
+    worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, worktree = registered_store(tmp_path, worktree=worktree)
+    run_git(worktree, "config", "user.name", "Test Contributor")
+    run_git(worktree, "config", "user.email", "test@example.com")
+    (worktree / "README.md").write_text("fixture\n", encoding="utf-8")
+    run_git(worktree, "add", "README.md")
+    run_git(worktree, "commit", "-m", "chore: context fixture")
+    run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
+    if stage != "DISPATCHED":
+        store.record_stage("a/b#1", stage, evidence={})
+    local_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    return (
+        store,
+        worktree,
+        local_path,
+        MODULE.shared_context_path("https://github.com/a/b/issues/1"),
+    )
+
+
+def _rewrite_context_mirrors(local_path, shared_path, value):
+    MODULE._atomic_json(local_path, value)
+    MODULE._atomic_json(shared_path, value)
+
+
+def test_task_context_digest_binds_target_base_and_prepared_head():
+    context = {
+        "schemaVersion": MODULE.TASK_CONTEXT_SCHEMA,
+        "key": "a/b#1",
+        "issueUrl": "https://github.com/a/b/issues/1",
+        "intentId": "intent-1",
+        "track": "agent_ai_infra",
+        "algorithmEvidence": None,
+        "liveAudit": {"evidence": {"digest": "evidence"}},
+        "threadId": "thread-1",
+        "worktreePath": "/tmp/worktree",
+        "targetBase": "base-a",
+    }
+    prepared = "a" * 40
+    canonical = MODULE._task_context_digest(context, prepared)
+    assert canonical == sha256_json(MODULE._task_context_digest_payload(context, prepared))
+    assert canonical != MODULE._task_context_digest(context | {"targetBase": "base-b"}, prepared)
+    assert canonical != sha256_json(
+        MODULE._task_context_digest_payload(context, prepared, include_target_base=False)
+    )
+
+
+def test_shared_context_recovery_accepts_target_bound_context_without_errors(monkeypatch, tmp_path):
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    store, _worktree, local_path, shared_path = _context_digest_fixture(tmp_path / "fixture")
+    value = json.loads(local_path.read_text(encoding="utf-8"))
+    value["targetBase"] = "base-a"
+    value["contextDigest"] = sha256_json(
+        MODULE._task_context_digest_payload(value, None, include_prepared_head=False)
+    )
+    _rewrite_context_mirrors(local_path, shared_path, value)
+
+    recovered = MODULE.recover_shared_task_contexts(store)
+
+    assert recovered["verified"] == 1
+    assert recovered["errors"] == []
+
+
+def test_shared_context_recovery_rejects_target_base_tampering(monkeypatch, tmp_path):
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    store, _worktree, local_path, shared_path = _context_digest_fixture(tmp_path / "fixture")
+    value = json.loads(local_path.read_text(encoding="utf-8"))
+    value["targetBase"] = "base-a"
+    value["contextDigest"] = MODULE._task_context_digest(value, None)
+    _rewrite_context_mirrors(local_path, shared_path, value)
+    tampered = dict(value, targetBase="base-b")
+    MODULE._atomic_json(shared_path, tampered)
+
+    recovered = MODULE.recover_shared_task_contexts(store)
+
+    assert recovered["verified"] == 0
+    assert recovered["errors"][0]["error"] == "shared task context digest mismatch"
+
+
+def test_published_legacy_context_without_target_base_is_accepted(monkeypatch, tmp_path):
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    _store, _worktree, local_path, shared_path = _context_digest_fixture(
+        tmp_path / "fixture", stage="PR_OPEN"
+    )
+    value = json.loads(local_path.read_text(encoding="utf-8"))
+    value.pop("targetBase")
+    value["publicationReceipt"] = {
+        "status": "PR_OPEN",
+        "prUrl": "https://github.com/a/b/pull/9",
+        "commitSha": run_git(_worktree, "rev-parse", "HEAD"),
+    }
+    value["contextDigest"] = sha256_json(
+        MODULE._task_context_digest_payload(
+            value,
+            None,
+            include_target_base=False,
+            include_prepared_head=False,
+        )
+    )
+    _rewrite_context_mirrors(local_path, shared_path, value)
+
+    verified, _updated = MODULE._verified_shared_task_context(shared_path)
+
+    assert verified["stage"] == "PR_OPEN"
+
+
+def test_active_legacy_context_without_target_base_fails_closed(monkeypatch, tmp_path):
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    _store, _worktree, local_path, shared_path = _context_digest_fixture(tmp_path / "fixture")
+    value = json.loads(local_path.read_text(encoding="utf-8"))
+    value.pop("targetBase")
+    value["contextDigest"] = sha256_json(
+        MODULE._task_context_digest_payload(
+            value,
+            None,
+            include_target_base=False,
+            include_prepared_head=False,
+        )
+    )
+    _rewrite_context_mirrors(local_path, shared_path, value)
+
+    with pytest.raises(RuntimeError, match="shared task context digest mismatch"):
+        MODULE._verified_shared_task_context(shared_path)
+
+
 def test_shared_context_recovery_ignores_context_removed_by_cleanup(monkeypatch, tmp_path):
     project_root = tmp_path / "github"
     monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
