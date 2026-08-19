@@ -11988,6 +11988,41 @@
     ],
     "why": "Issue reports a crash in FlashInfer reshape with zero elements on RTX PRO 5000, but root cause is not fully diagnosed; open PR and related issue lookups timed out, so duplicate work cannot be excluded. Maintainer design preference is unknown and the repository requires AI disclosure, which conflicts with automated public actions."
   },
+  "59340fc6312a14cc68ebc30bc1ed715d00ee9b8c9dc14b149ea427695c0b0671": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Direct API works but agent integrations hang",
+      "User set 256K context but Ollama used 32K"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Investigate context length handling",
+      "Improve prefill performance or timeout handling",
+      "Add warnings for oversized prompts"
+    ],
+    "risks": [
+      "May be integration-specific issue not fixable in Ollama",
+      "Changing context handling could affect performance"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "test_plan": [
+      "Reproduce with large prompt exceeding num_ctx",
+      "Measure prefill time and timeout behavior",
+      "Test with reduced context or disabled MCP servers"
+    ],
+    "unknowns": [
+      "Exact request differences from agent clients",
+      "Whether issue is Ollama bug or integration configuration",
+      "Maintainer interest in fixing"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "Issue reports agent integration hangs with local Qwen models, but direct API calls work. Comments suggest root cause may be context length/prefill timeout rather than Ollama bug. No code-level root cause identified, no maintainer confirmation, and no concrete fix path."
+  },
   "595a505356a28e4acd736f3dc3cfa1d00adacc1736376664037b816f061ac96e": {
     "confidence": 0.85,
     "contradictions": [],
