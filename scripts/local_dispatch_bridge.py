@@ -7427,15 +7427,52 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 and value.get("followupDigest") == compatibility.get("wakeDigest")
             )
             rebind_evidence = _controller_parent_drift(value, context)
-            if rebind_evidence is not None and _parent_drift_rebind_is_valid(
-                value,
-                context,
-                candidate=candidate,
-                task_stage=task_stage,
-                prepared_head=prepared_head,
-                current_wake_digest=current_wake_digest,
-                legacy_compatible_result=legacy_compatible_result,
-            ):
+            if rebind_evidence is not None:
+                rebind_valid = _parent_drift_rebind_is_valid(
+                    value,
+                    context,
+                    candidate=candidate,
+                    task_stage=task_stage,
+                    prepared_head=prepared_head,
+                    current_wake_digest=current_wake_digest,
+                    legacy_compatible_result=legacy_compatible_result,
+                )
+                if not rebind_valid:
+                    event = managed_adapter.ledger.record_event(
+                        event_type=PR_FOLLOWUP_REBIND_REQUIRED,
+                        idempotency_key=(
+                            f"task-rebind-validation-blocked:{candidate['key']}:{initial_digest}"
+                        ),
+                        opportunity_key=candidate["key"],
+                        task_id=str(candidate.get("intentId") or candidate["threadId"]),
+                        state="VALIDATION_PENDING",
+                        source="result-ingestion",
+                        provenance={
+                            "contextDigest": context.get("contextDigest"),
+                            "resultContextDigest": value.get("contextDigest"),
+                            "followupDigest": current_wake_digest,
+                            "resultFollowupDigest": value.get("followupDigest"),
+                            "taskStage": context.get("taskStage"),
+                        },
+                        payload={
+                            "reason": PR_FOLLOWUP_REBIND_REQUIRED,
+                            "requiresReprepare": True,
+                            "rebindEligible": False,
+                            **rebind_evidence,
+                        },
+                    )
+                    entry = {
+                        "key": candidate["key"],
+                        "reason": PR_FOLLOWUP_REBIND_REQUIRED,
+                        "requiresReprepare": True,
+                        "rebindEligible": False,
+                        **rebind_evidence,
+                    }
+                    if event.get("created") is False:
+                        quarantined_already_recorded.append(entry)
+                    else:
+                        quarantined.append(entry)
+                    continue
                 rebind = store.rearm_pr_followup_after_task_drift(
                     candidate["key"],
                     expected_prepared_head_sha=rebind_evidence["expectedPreparedHeadSha"],
