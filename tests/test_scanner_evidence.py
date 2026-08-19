@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from oss_pr_radar import scanner
+from oss_pr_radar.contracts import validate_report
 from oss_pr_radar.outbox import build_outbox
 from oss_pr_radar.policy import decision_contract_digest
 from oss_pr_radar.scanner import (
@@ -680,6 +681,84 @@ def test_outbox_mode_marks_candidates_as_queued(monkeypatch, tmp_path):
     assert seen["example/project#7"]["status"] == "queued_outbox"
     assert seen["example/project#7"]["notification_digest"]
     assert seen["example/project#7"]["notification_scanner_version"] == SCANNER_VERSION
+
+
+def test_semantic_regate_demotes_stale_auto_spawn_and_report_validates(monkeypatch, tmp_path):
+    seen_path = tmp_path / "seen.json"
+    report_path = tmp_path / "scan.json"
+    candidate = {
+        "repo": "example/project",
+        "num": 7,
+        "title": "Streaming tool-call chunks lose their id",
+        "url": "https://github.com/example/project/issues/7",
+        "score": 9,
+        "category": "NEW_CLEAN_CANDIDATE",
+        "gate_decision": "ALLOW_TO_WORK",
+        "auto_spawn": True,
+        "notify": True,
+        "maturity": "mature",
+        "track": "agent_ai_infra",
+        "labels": ["bug"],
+        "issue_updated": "2026-08-04T00:00:00Z",
+        "submission_policy": "normal",
+        "public_submission_allowed": True,
+        "actionability_evidence": {"public_repro_signals": 1},
+        "open_pr_assessment": {"status": "none"},
+        "related_issue_assessment": {"status": "none"},
+        "llm_review": {
+            "status": "ok",
+            "semanticSignal": "NO_OBJECTION",
+            "confidence": 0.95,
+        },
+        "preTaskEvidence": {
+            "issue": {"state": "open", "assignees": []},
+            "baseSha": "a" * 40,
+            "issueDigest": "issue-digest",
+            "policy": {"status": "normal"},
+            "codePathsPlan": ["src/runtime.py"],
+            "reproductionPathPlan": True,
+            "validationPathPlan": True,
+            "matureRepository": True,
+            "duplicate": {"status": "none"},
+        },
+        "preTaskGate": {"allowed": True, "expected": {}},
+    }
+
+    class UncertainEvaluator:
+        @classmethod
+        def from_environment(cls, _path):
+            return cls()
+
+        def evaluate_candidates(self, candidates):
+            candidates[0]["llm_review"] = {
+                "status": "ok",
+                "semanticSignal": "RETRY",
+                "confidence": 0.9,
+            }
+            return candidates
+
+    radar = Radar(
+        datetime(2026, 8, 4, tzinfo=UTC),
+        2,
+        seen_path,
+        "",
+        dry_run=True,
+        notify=False,
+    )
+    monkeypatch.setattr(radar, "collect_items", lambda: {"example/project#7": {}})
+    monkeypatch.setattr(radar, "shortlist", lambda _items: ([candidate], 1, 1))
+    monkeypatch.setattr(scanner, "DeepSeekEvaluator", UncertainEvaluator)
+
+    radar.run(report_path)
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    validate_report(report, require_v2=True)
+    final = report["candidate_details"][0]
+    assert final["preTaskGate"]["allowed"] is False
+    assert final["auto_spawn"] is False
+    assert final["notify"] is False
+    assert final["maturity"] == "exploration"
+    assert final["category"] == "WAIT_MAINTAINER"
+    assert final["gate_decision"] == "HUMAN_REVIEW"
 
 
 def test_outbox_recovers_lost_deferred_notification_identity(monkeypatch, tmp_path):

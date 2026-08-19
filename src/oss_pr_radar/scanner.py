@@ -1727,6 +1727,34 @@ def candidate_issue_outcome(candidate: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def demote_failed_pre_task_gate(candidate: dict[str, Any], gate: dict[str, Any]) -> None:
+    """Remove dispatch eligibility after any failed deterministic gate."""
+
+    if gate.get("allowed") is True:
+        return
+    candidate["auto_spawn"] = False
+    candidate["notify"] = False
+    candidate["maturity"] = "exploration"
+    private_conflict = (
+        candidate.get("gate_decision") == "ALLOW_PRIVATE_WORK"
+        and candidate.get("submission_policy") == "ai_disclosure_conflict"
+        and candidate.get("public_submission_allowed") is False
+    )
+    semantic_retry = (
+        candidate.get("category") == "SEMANTIC_REVIEW_RETRY"
+        or candidate.get("gate_decision") == "RETRY_REQUIRED"
+    )
+    if not private_conflict and not semantic_retry:
+        candidate["category"] = "WAIT_MAINTAINER"
+        candidate["gate_decision"] = "HUMAN_REVIEW"
+    reasons = [str(reason) for reason in gate.get("reasons") or [] if str(reason)]
+    if reasons:
+        suffix = "；预审未通过：" + ", ".join(reasons[:4])
+        risk = str(candidate.get("risk") or "")
+        if suffix not in risk:
+            candidate["risk"] = f"{risk}{suffix}"
+
+
 def should_skip_seen(
     old: Any,
     issue_updated: str | None = None,
@@ -4261,15 +4289,7 @@ class Radar:
                 scored,
                 repository={"maturityScore": 8 if base["repo"] in known else 0},
             )
-            if not scored["pre_task_gate"]["allowed"]:
-                scored["maturity"] = "exploration"
-                scored["auto_spawn"] = False
-                scored["notify"] = False
-                scored["gate_decision"] = "HUMAN_REVIEW"
-                scored["category"] = "WAIT_MAINTAINER"
-                scored["risk"] = f"{scored.get('risk') or ''}；预审未通过：" + ", ".join(
-                    scored["pre_task_gate"]["reasons"][:4]
-                )
+            demote_failed_pre_task_gate(scored, scored["pre_task_gate"])
             scored["_llm_context"] = {
                 "issue_body": (issue.get("body") or "")[:16000],
                 "recent_comments": [
@@ -4504,6 +4524,7 @@ class Radar:
                     require_semantic=True,
                 )
                 candidate["preTaskGate"] = candidate["pre_task_gate"]
+                demote_failed_pre_task_gate(candidate, candidate["pre_task_gate"])
             phase3_candidates = any(
                 isinstance(candidate, dict)
                 and (

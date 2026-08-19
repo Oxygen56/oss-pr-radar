@@ -17,10 +17,12 @@
 
 GitHub scheduled workflows may be delayed under load. The scanner uses a
 two-hour update window plus bounded backfill, so one delayed run does not lose
-an issue. Both the watchdog and the local dispatcher run the health check with
-`--repair`: when neither a successful scan nor a still-active scan is recent,
-they dispatch one manual fallback run. A recent active fallback suppresses a
-second repair, and workflow concurrency serializes a late natural run behind it.
+an issue. The local dispatcher runs the bound health check with `--repair`: when
+neither a successful scan nor a still-active scan is recent, it dispatches one
+manual fallback run. The GitHub health watchdog is intentionally read-only and
+only reports freshness; it has no local runtime authorization and cannot repair
+or notify. A recent active fallback suppresses a second repair, and workflow
+concurrency serializes a late natural run behind it.
 The desktop controller never waits inside its execution window for that run to
 finish. It skips only queue sync and continues live revalidation of unexpired
 local signed intents. The five-minute local importer picks up the completed

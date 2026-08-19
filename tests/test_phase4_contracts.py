@@ -35,6 +35,16 @@ def test_scheduled_workflow_uses_only_the_versioned_war_room_actionable_path():
     assert "send_notification_outbox.py" not in workflow
 
 
+def test_health_workflow_is_read_only_and_cannot_repair_or_notify():
+    workflow = (ROOT / ".github/workflows/health.yml").read_text(encoding="utf-8")
+    assert "Check natural schedule freshness (read-only)" in workflow
+    assert "--repair" not in workflow
+    assert "--notify" not in workflow
+    assert "FEISHU_APP_ID" not in workflow
+    assert "FEISHU_APP_SECRET" not in workflow
+    assert "actions: read" in workflow
+
+
 def test_war_room_sender_cannot_send_without_the_source_artifact():
     sender = (ROOT / "scripts/send_war_room_outbox.py").read_text(encoding="utf-8")
     assert "--artifact" in sender
