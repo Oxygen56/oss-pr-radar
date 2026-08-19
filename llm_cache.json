@@ -1166,6 +1166,32 @@
     ],
     "why": "Issue clearly identifies a missing capability id hint in a durable-exec error message, with a concrete repro and root cause. However, the deterministic gate says HUMAN_REVIEW, and existing PR #6696 has semantic overlap with the durable_exec leaf-toolset path, requiring maintainer comparison before starting work."
   },
+  "098f4fd6116256418db2e3dc8b085d67e3c30500b897601a5665ee8bdf12c503": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/models/deepseek_v4/attention.py",
+      "vllm/models/deepseek_v4/nvidia/flashinfer_sparse.py",
+      "vllm/models/deepseek_v4/common/ops/cache_utils.py"
+    ],
+    "risks": [
+      "Potential overlap with existing PRs (e.g., #49636, #50455, #51718) that may already address the root cause; need to compare implementation boundaries before duplicating effort."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided curl command and vLLM 0.26.0 on SM120, assert that greedy decode does not produce identical token/logprob across positions; add a regression test comparing logprob values across decode steps for a fixed prompt and seed."
+    ],
+    "unknowns": [
+      "Whether the root cause is in the FlashInfer sparse-MLA kernel, the KV-cache layout, or the model's FP4/FP8 mixed-precision path; the issue does not provide a minimal code-level reproduction beyond the serving command."
+    ],
+    "why": "Issue reports a reproducible degenerate output (identical token and logprob at every decode position) on DeepSeek-V4-Flash with SM120, isolated across TP and DP+EP, and confirmed independent of environment via clean-venv reproduction. The evidence includes concrete code paths (attention.py, cache_utils.py, flashinfer_sparse.py) and a clear numerical signature, supporting a reference-vs-implementation test. The track is llm_algorithm with mechanisms like model_architecture, numerics_quantization, and kernel_algorithm, and the issue is actionable for root-cause investigation."
+  },
   "09df473bffb42c7beccea614ed85f2223ff5845edbaa00895f0e256a1acb1bea": {
     "confidence": 0.7,
     "contradictions": [],
@@ -2440,6 +2466,32 @@
       "Maintainer design preference on model_info field handling"
     ],
     "why": "The issue describes a user-visible bug where manually added fields in Model Info are not persisted, with multiple user confirmations. However, the root cause is unclear (possible caching/race condition) and the deterministic gate requires HUMAN_REVIEW. Open PR and related issue lookups failed, so duplicate work cannot be excluded. Maintainer design preference is unknown."
+  },
+  "13ce011ed264aee7f12dc757b48dbc6363faa251ddf18f45e4c412ce8bcc6e91": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "AsyncGRPOTrainer weight-transfer error handling",
+      "timeout or error propagation from vLLM server",
+      "config validation for fsdp_offload_params",
+      "progress logging during weight sync"
+    ],
+    "risks": [
+      "Distinguishing true deadlock from slow transfer; flaky tests due to timing; need to coordinate with vLLM changes."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with provided train.py and fsdp2_offload.yaml on 8xH100; verify hang or OOM. Add unit test for timeout/error propagation using mocked NCCL failure. Add integration test with small model and fsdp_offload_params true to ensure fail-fast."
+    ],
+    "unknowns": [
+      "Exact root cause of hang in pack_tensors; whether fix should be in TRL or vLLM; reproducibility at smaller scale not verified."
+    ],
+    "why": "Issue describes a concrete distributed-training deadlock and OOM in AsyncGRPO weight transfer, with clear reproduction steps and expected behavior. It identifies a real algorithmic mechanism (distributed training, numerical precision) and supports a reference-vs-implementation test. Although an open PR exists, it lacks tests and root-cause coverage, leaving room for a more complete contribution."
   },
   "13e7bc093eda0d8f5641120c95af6a91a69e561113b6f386a0812789f9fc4e99": {
     "confidence": 0.8,
@@ -6553,6 +6605,30 @@
     ],
     "why": "Issue provides a clear root cause and a verified fix for a user-visible UTF-8 corruption bug, but an existing PR (#12688) semantically overlaps with the same code path and may already address the issue. The deterministic gate requires HUMAN_REVIEW, and the open PR assessment indicates semantic overlap requiring manual comparison. Without maintainer confirmation or a clear gap in the existing PR, starting a new PR risks duplication."
   },
+  "337323dd9f772fb8e5e19e769d0c9d5f452282c436ac95c314fa2af5a95b8a67": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "voxtral_realtime.py zero-embedding fallback handling",
+      "engine hang prevention in transcription path"
+    ],
+    "risks": [
+      "Potential maintainer design preferences; avoid unintended API behavior changes."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test using the provided WAV file to reproduce the hang and verify the engine remains responsive after the fix."
+    ],
+    "unknowns": [
+      "Exact root cause of empty embeddings for this specific file is not identified; maintainer approval not confirmed."
+    ],
+    "why": "Issue provides a deterministic public reproducer (specific WAV file) and clear evidence of a permanent engine hang caused by the zero-embedding fallback in voxtral_realtime.py. The bug is user-visible, high-impact, and actionable with a concrete test path."
+  },
   "3392dfc1bbbdd3642ff4e13ffb75cddd5b7bea57d71b19776ca1c0a81e973991": {
     "confidence": 0.85,
     "contradictions": [],
@@ -6637,6 +6713,33 @@
       "Maintainer preference on fix approach and scope"
     ],
     "why": "Issue clearly describes a user-visible bug with a concrete reproduction and root cause analysis, but the deterministic gate requires HUMAN_REVIEW and the issue requests design confirmation. The suggested fix is plausible but needs maintainer input to avoid unintended API changes."
+  },
+  "3412bb48f69d257785c5fa7538876897b9925ea2ee989947838ee9e70e8e75d4": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Fix in PyTorch backend batching or kernel for Qwen3.5 models",
+      "Add regression test for batch_size > 3 with Qwen3.5-2B"
+    ],
+    "risks": [
+      "Potential maintainer design preferences; need to avoid broad API changes",
+      "May require access to Qwen3.5-2B model and GPU for testing"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with provided config and 20 concurrent requests; assert all outputs match expected translation",
+      "Run existing PyTorch backend tests for Qwen3.5 with batch sizes 1, 3, 4, 19"
+    ],
+    "unknowns": [
+      "Exact root cause location (kernel vs scheduler) not identified",
+      "Whether maintainers have already started investigation"
+    ],
+    "why": "Issue provides a clear, reproducible bug with exact commands, config, and observed behavior. The root cause is likely in the batching or kernel path for Qwen3.5 models, and the issue includes a concrete validation path (batch size > 3 vs <= 3, CUDA graph disabled still fails). This is a high-value bug fix opportunity."
   },
   "343505fb465cf8d50d8d2b448dcc3b832eb7d37edc2154fd00385cdab5f66a01": {
     "confidence": 0.9,
@@ -15207,6 +15310,38 @@
     ],
     "why": "Issue clearly identifies a security-relevant bug in a shared download path, with a verified repro and suggested fix direction. However, the deterministic gate requires HUMAN_REVIEW, and the existing PR #7162 is closed with CI failures, so maintainer confirmation is needed before starting new work."
   },
+  "6b6853471e64f0d7210edf74bcc43ecacb6cab1f6be51ac7300080f203aed0c5": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The reporter's config sets discard_partial_chunks: false, which makes the chunking gap zero, but the off-by-one hypothesis still applies"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "LMCache vLLM adapter token-count handling",
+      "scheduler/worker KV-cache token count synchronization",
+      "validation plan instrumentation"
+    ],
+    "risks": [
+      "The reporter's config (discard_partial_chunks: false) may not be explained by the off-by-one hypothesis",
+      "Need to distinguish between token-count mismatch and other KV-cache state inconsistencies"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the 24-case CPU-only grid to verify the counting invariant len(req_meta.token_ids) >= promised",
+      "Run the four-part monolithic oracle 3/3 on Qwen3-0.6B",
+      "Add adapter path to source_file_dependencies to ensure CI coverage"
+    ],
+    "unknowns": [
+      "Exact root cause not yet confirmed; needs instrumentation to verify token counts",
+      "Whether the fix will be in vLLM or LMCache adapter"
+    ],
+    "why": "The issue reports a reproducible silent correctness failure in LMCache P/D disaggregation, with a concrete off-by-one token-count mismatch hypothesis and a validation plan that includes a counting invariant and a monolithic-equivalence oracle. This is a valuable, actionable bug report with clear reproduction steps and a proposed fix direction."
+  },
   "6b727f9b899e3d7e789d9a0a799dc527f10dded6728697c24852b84489c0c6c7": {
     "confidence": 0.8,
     "contradictions": [
@@ -19742,6 +19877,36 @@
     ],
     "why": "The issue identifies a real design flaw in capability ordering: the 'innermost' tier is overloaded, causing incorrect behavior for non-durability capabilities like SpendLimits. It provides a clear root cause, reproduction, and proposed fixes. However, the gate decision is HUMAN_REVIEW, and the submission policy requires assignment, so work should not start without maintainer confirmation."
   },
+  "89e0d50b8d57a0772f80c0337ffbca22ad6c485af9899020ff89a4b94c78d4c2": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix attachment download to return non-empty content blocks",
+      "Correct SHA1 computation to use actual file content",
+      "Address _meta:null schema validation issue"
+    ],
+    "risks": [
+      "Potential API behavior changes if fix alters response structure",
+      "Need to ensure fix works across different region URLs and tenants"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided event and attachment IDs, verify download returns valid content block",
+      "Add regression test for attachment listing SHA1 values",
+      "Test schema validation with _meta as record"
+    ],
+    "unknowns": [
+      "Exact code location of the connector fetch logic",
+      "Whether maintainers have design preferences for the fix"
+    ],
+    "why": "The issue provides a clear, reproducible bug in the Sentry MCP connector: attachment downloads return empty bodies, causing schema validation failures and incorrect SHA1 hashes. The root cause is likely a zero-byte fetch, with a separate _meta:null defect. This is a user-visible bug in an agent/inference path, with concrete reproduction steps and expected vs actual behavior."
+  },
   "89e69bc597fa05e2c74fd4f26ee520b06b92f712485acffff3ddc5ef5f259120": {
     "confidence": 0.85,
     "contradictions": [
@@ -22111,6 +22276,37 @@
     ],
     "why": "Issue clearly identifies a mypy overload chain break caused by interleaved string literals, with a minimal repro and a suggested fix. However, an existing PR (#4774) directly addresses the issue but is closed and lacks regression tests, requiring maintainer review to decide whether to reopen or accept a new PR."
   },
+  "9db0b04cde367f79a146dc04e2e407d9ef1ac00ca20a3acc32742892d814c6b1": {
+    "confidence": 0.85,
+    "contradictions": [
+      "One comment notes Copilot does not exhibit the error, suggesting client-side tolerance differences"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "streaming response handling in Zen gateway",
+      "finish_reason synthesis for muse models",
+      "SSE chunk formatting"
+    ],
+    "risks": [
+      "Potential behavior change for other models if fix is too broad",
+      "Need to confirm maintainer design preferences for synthesizing finish_reason"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a failing test that streams a muse model response and asserts a final chunk with non-null finish_reason and [DONE] terminator",
+      "Run existing gateway streaming tests to ensure no regression"
+    ],
+    "unknowns": [
+      "Exact code path in the gateway responsible for streaming muse models",
+      "Whether the upstream provider can report finish_reason or must be synthesized"
+    ],
+    "why": "Issue provides a clear, reproducible streaming protocol violation: missing finish_reason and [DONE] for muse models on the Zen gateway, with multiple user confirmations and a concrete expected/actual pair. This is a high-impact bug in the agent/inference path, actionable for a fix."
+  },
   "9e52c5effae05aed5b2afe1dac9ef639d8e14042616605a378c795b5633638c0": {
     "confidence": 0.7,
     "contradictions": [],
@@ -23979,6 +24175,36 @@
       "Exact mechanism for determining when all ranks have attached (e.g., rendezvous protocol) is not detailed in the issue"
     ],
     "why": "The issue identifies a concrete resource leak in vLLM's CPU offloading: the mmap file in /dev/shm is only unlinked on explicit shutdown, so SIGKILL or library embedding leaks it. The proposed fix (unlink after all ranks attach) is a standard POSIX pattern and directly addresses the root cause. No competing PR or issue exists, and the fix is localized with a clear reproduction."
+  },
+  "aec8e8275ae264821204d0cb976635cd662ef17257656851fc667ee7abbfd1ca": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Issue claims plugin update caused it, but comment suggests vLLM latency due to large context and MTP"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Cline provider timeout configuration",
+      "possibly vLLM server settings (MAX_MODEL_LEN, MTP)"
+    ],
+    "risks": [
+      "Misdiagnosis as algorithm issue when it is a configuration/timeout problem",
+      "No algorithm change is justified"
+    ],
+    "root_cause_clarity": "low",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Reproduce with curl to /v1/chat/completions to isolate vLLM latency vs Cline plumbing",
+      "Adjust client body timeout and retest"
+    ],
+    "unknowns": [
+      "Actual vLLM response latency and whether timeout occurs during prefill or streaming",
+      "Cline's default body timeout value"
+    ],
+    "why": "Issue is a client-side timeout (UND_ERR_BODY_TIMEOUT) in a JetBrains plugin, not an LLM algorithm defect. The provided reproduction is a vLLM server configuration with quantization flags, but the failure is a network/streaming timeout. No concrete algorithm mechanism or validation path is supplied; the comment suggests adjusting timeouts or reducing context, which is operational tuning."
   },
   "aed6f7eb9c8ff562f9cc81a1c5d04822d5f11e9b76ae52c7270358d1425f1314": {
     "confidence": 0.7,
@@ -29129,6 +29355,33 @@
       "Exact code path causing the corruption"
     ],
     "why": "The issue reports a reproducible MTP speculative decoding corruption at concurrency >= 4, with strong evidence of a mixed-batch indexing bug. However, the deterministic gate requires HUMAN_REVIEW, and open PR/related issue lookups failed, so duplicate work cannot be excluded. The root cause is not precisely identified, and maintainer confirmation is needed before implementation."
+  },
+  "d309d6ec1f19288807125c6bbc7f7134a0af4f863779a74462944ddcc409e58e": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "KDA layer wrapper state handling",
+      "causal-convolution state continuity",
+      "recurrent-state gather/writeback"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #52190 or #52606; need to compare implementation boundaries.",
+      "Need to confirm whether v2 model runner is used, as recent PP fixes focus on mrv2."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Compare one-shot vs split execution of complete Kimi-K3 KDA layer path, checking Q/K/V causal-convolution outputs, gathered recurrent initial state, final recurrent state before cache writeback, and layer output after residual mixing."
+    ],
+    "unknowns": [
+      "Whether the issue is reproducible with v2 model runner (VLLM_USE_V2_MODEL_RUNNER=1)."
+    ],
+    "why": "Issue provides a concrete, reproducible correctness bug in an LLM algorithm path: chunked prefill diverges from one-shot prefill for Kimi-K3 under TP8/PP2, with detailed numerical evidence and a clear hypothesis about cross-chunk state continuity. It includes a proposed regression test and references related work, making it actionable for maintainers."
   },
   "d324d8b18978ac7766d9b9b48a46dfcb2fabf4fc0d5a63b8935e7387cd222ca3": {
     "confidence": 0.75,
@@ -36298,6 +36551,37 @@
       "Whether PR #36268 already addresses this issue"
     ],
     "why": "Issue reports a real bug but root cause is unconfirmed; maintainer confirmation needed to avoid conflicting with existing PRs."
+  },
+  "fef210b8fbedfd153948cdd669ad10e66fbded690622287e4ced4161e0bc2995": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Original claim of SP no-op vs. author's correction that evidence supports gradient memory issue",
+      "Per-rank activation full length vs. actual memory from fp32 gradients"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Documentation or config semantics for max_token_len_per_gpu",
+      "Potential fix for FSDP2 gradient accumulation memory retention"
+    ],
+    "risks": [
+      "Misleading issue may lead to unnecessary code changes",
+      "Overlap with existing PRs addressing related Qwen3.5 issues"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce memory behavior with and without SP to confirm no SP defect",
+      "Verify gradient memory retention with mixed precision settings"
+    ],
+    "unknowns": [
+      "Whether ulysses_sequence_parallel_size actually shards correctly on Qwen3.5",
+      "Maintainer's decision on keeping issue open for budget semantics half"
+    ],
+    "why": "The issue's original claim of a silent no-op in sequence parallelism was retracted by the author; the evidence actually points to a gradient memory issue, not an SP failure. The remaining valid point is a documentation/config semantics issue about max_token_len_per_gpu, which is not an algorithm bug. The issue is self-contradictory and lacks a clear actionable algorithm defect."
   },
   "ff151a79b73d3ebc8f7aecb2e6c83c244494dee099434a994eaefe29944be8df": {
     "confidence": 0.6,
