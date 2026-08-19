@@ -321,6 +321,16 @@ def test_authorized_stage_uses_only_the_three_current_worker_specs(
     monkeypatch.setattr(INSTALL, "worker_specs", lambda *_args, **_kwargs: worker_specs_value)
     monkeypatch.setattr(
         INSTALL,
+        "launchctl",
+        lambda *arguments, check=True: subprocess.CompletedProcess(
+            ["launchctl", *arguments],
+            113 if arguments and arguments[0] == "print" else 0,
+            "",
+            "",
+        ),
+    )
+    monkeypatch.setattr(
+        INSTALL,
         "stage_workers",
         lambda worker_specs, **_kwargs: (
             calls.append(("stage", [str(spec["Label"]) for spec in worker_specs]))

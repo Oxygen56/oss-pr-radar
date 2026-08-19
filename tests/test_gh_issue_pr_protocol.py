@@ -1,10 +1,14 @@
 from pathlib import Path
 
+import pytest
+
 SKILL = Path("/Users/oxygen/.codex/skills/gh-issue-pr/SKILL.md")
 REPO = Path(__file__).parents[1]
 
 
 def test_reproduction_protocol_preserves_two_line_contract_and_read_only_boundary():
+    if not SKILL.is_file():
+        pytest.skip("requires the local Codex gh-issue-pr skill")
     text = SKILL.read_text(encoding="utf-8")
 
     assert "only this skill and one GitHub issue URL" in text
