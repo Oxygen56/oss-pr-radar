@@ -61,6 +61,11 @@ from oss_pr_radar.repo_probe import (  # noqa: E402
     run_repo_probe,
     verify_probe_receipt,
 )
+from oss_pr_radar.target_branch import (  # noqa: E402
+    TargetBranchError,
+    resolve_target_base,
+    validate_target_base,
+)
 from oss_pr_radar.util import (  # noqa: E402
     atomic_write_json,
     iso_z,
@@ -110,6 +115,7 @@ TRANSIENT_PUBLICATION_AUDIT_REASONS = {
     "EXISTING_PR_UNAVAILABLE",
     "LIVE_EVIDENCE_INCOMPLETE",
     "REPOSITORY_METADATA_UNAVAILABLE",
+    "TARGET_BASE_UNAVAILABLE",
 }
 
 PLAIN_LANGUAGE_STATUS_PROMPT = (
@@ -755,21 +761,28 @@ def quiet_command(args: list[str], *, cwd: Path, timeout: int = 300) -> None:
         raise RuntimeError((completed.stderr or "command failed")[:800])
 
 
-def prewarm_source_repo(path: Path) -> None:
-    """Make the default-branch snapshot locally checkout-ready for Codex."""
+def _target_ref(path: Path, target_base: dict[str, Any] | None = None) -> str:
+    if target_base is not None:
+        target = validate_target_base(target_base)
+        return f"refs/remotes/origin/{target['branch']}"
+    return command(
+        ["git", "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"],
+        cwd=path,
+        timeout=15,
+    )
+
+
+def prewarm_source_repo(path: Path, target_base: dict[str, Any] | None = None) -> None:
+    """Make the selected branch snapshot locally checkout-ready for Codex."""
 
     command(
         ["git", "status", "--porcelain=v1", "--untracked-files=no"],
         cwd=path,
         timeout=60,
     )
-    default_ref = command(
-        ["git", "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"],
-        cwd=path,
-        timeout=15,
-    )
+    selected_ref = _target_ref(path, target_base)
     quiet_command(
-        ["git", "archive", "--format=tar", default_ref],
+        ["git", "archive", "--format=tar", selected_ref],
         cwd=path,
         timeout=600,
     )
@@ -804,7 +817,37 @@ def fetch_default_branch(path: Path) -> None:
     )
 
 
-def source_repo(repo: str) -> Path:
+def fetch_target_branch(
+    path: Path,
+    target_base: dict[str, Any] | None = None,
+    *,
+    depth_one: bool = False,
+) -> None:
+    """Refresh and verify the exact branch snapshot selected during live audit."""
+
+    if target_base is None:
+        fetch_default_branch(path)
+        return
+    target = validate_target_base(target_base)
+    tracking_ref = f"refs/remotes/origin/{target['branch']}"
+    fetch_args = ["git", "fetch"]
+    if depth_one:
+        fetch_args.append("--depth=1")
+    fetch_args.extend(
+        [
+            "--no-tags",
+            "--filter=blob:none",
+            "origin",
+            f"+refs/heads/{target['branch']}:{tracking_ref}",
+        ]
+    )
+    command(fetch_args, cwd=path, timeout=180)
+    fetched_sha = command(["git", "rev-parse", "--verify", tracking_ref], cwd=path)
+    if fetched_sha.casefold() != target["sha"]:
+        raise RuntimeError("target branch changed after live audit")
+
+
+def source_repo(repo: str, *, target_base: dict[str, Any] | None = None) -> Path:
     GITHUB_ROOT.mkdir(parents=True, exist_ok=True)
     for path in sorted(GITHUB_ROOT.iterdir()):
         # A .git file marks a linked worktree. Using one as the reusable source
@@ -817,37 +860,43 @@ def source_repo(repo: str) -> Path:
         except RuntimeError:
             continue
         if normalize_origin(origin) == repo.casefold():
-            fetch_default_branch(path)
+            fetch_target_branch(path, target_base)
             resolved = path.resolve()
-            prewarm_source_repo(resolved)
+            if target_base is None:
+                prewarm_source_repo(resolved)
+            else:
+                prewarm_source_repo(resolved, target_base)
             return resolved
     destination = GITHUB_ROOT / repo.rsplit("/", 1)[1]
     if destination.exists():
         destination = GITHUB_ROOT / repo.replace("/", "--")
     clone_target = destination.with_name(f".{destination.name}.radar-clone-{os.getpid()}")
     try:
-        command(
-            [
-                "git",
-                "clone",
-                "--depth=1",
-                "--single-branch",
-                "--no-tags",
-                "--filter=blob:none",
-                f"https://github.com/{repo}.git",
-                str(clone_target),
-            ],
-            timeout=180,
-        )
+        clone_args = [
+            "git",
+            "clone",
+            "--depth=1",
+            "--single-branch",
+            "--no-tags",
+            "--filter=blob:none",
+        ]
+        if target_base is not None:
+            clone_args.extend(["--branch", validate_target_base(target_base)["defaultBranch"]])
+        clone_args.extend([f"https://github.com/{repo}.git", str(clone_target)])
+        command(clone_args, timeout=180)
         if destination.exists():
             shutil.rmtree(clone_target, ignore_errors=True)
-            return source_repo(repo)
+            return source_repo(repo, target_base=target_base)
         clone_target.replace(destination)
     except Exception:
         shutil.rmtree(clone_target, ignore_errors=True)
         raise
     resolved = destination.resolve()
-    prewarm_source_repo(resolved)
+    if target_base is None:
+        prewarm_source_repo(resolved)
+    else:
+        fetch_target_branch(resolved, target_base, depth_one=True)
+        prewarm_source_repo(resolved, target_base)
     return resolved
 
 
@@ -860,26 +909,34 @@ def _worktree_belongs_to_source(worktree: Path, source: Path) -> bool:
         return False
 
 
-def prepare_managed_worktree(source: Path, *, intent_id: str, repo: str) -> Path:
+def prepare_managed_worktree(
+    source: Path,
+    *,
+    intent_id: str,
+    repo: str,
+    target_base: dict[str, Any] | None = None,
+) -> Path:
     """Create an isolated source checkout inside the broad GitHub project."""
 
     worktree = managed_worktree_path(intent_id, repo)
-    default_ref = command(
-        ["git", "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"],
-        cwd=source,
-        timeout=15,
-    )
+    selected_ref = _target_ref(source, target_base)
+    selected_sha = command(["git", "rev-parse", "--verify", selected_ref], cwd=source)
+    if (
+        target_base is not None
+        and selected_sha.casefold() != validate_target_base(target_base)["sha"]
+    ):
+        raise RuntimeError("prepared target branch does not match live audit")
     if worktree.exists():
         if not _worktree_belongs_to_source(worktree, source):
             raise RuntimeError("managed worktree does not belong to source repository")
         if command(["git", "status", "--porcelain"], cwd=worktree):
             raise RuntimeError("managed worktree is not clean before dispatch")
-        command(["git", "switch", "--detach", default_ref], cwd=worktree, timeout=180)
+        command(["git", "switch", "--detach", selected_sha], cwd=worktree, timeout=180)
     else:
         worktree.parent.mkdir(parents=True, exist_ok=True)
         try:
             command(
-                ["git", "worktree", "add", "--detach", str(worktree), default_ref],
+                ["git", "worktree", "add", "--detach", str(worktree), selected_sha],
                 cwd=source,
                 timeout=600,
             )
@@ -973,17 +1030,23 @@ def _legacy_task_context_digest_allowed(context: dict[str, Any]) -> bool:
 
 
 def _task_context_digest_candidates(context: dict[str, Any], prepared_head: str | None) -> set[str]:
-    candidates = {
-        sha256_json(_task_context_digest_payload(context, prepared_head)),
-        sha256_json(
-            _task_context_digest_payload(
-                context,
-                prepared_head,
-                include_prepared_head=False,
-            )
-        ),
-    }
-    if "targetBase" not in context and _legacy_task_context_digest_allowed(context):
+    candidates: set[str] = set()
+    if "targetBase" in context:
+        if context.get("targetBase") is not None:
+            validate_target_base(context["targetBase"])
+        candidates.update(
+            {
+                sha256_json(_task_context_digest_payload(context, prepared_head)),
+                sha256_json(
+                    _task_context_digest_payload(
+                        context,
+                        prepared_head,
+                        include_prepared_head=False,
+                    )
+                ),
+            }
+        )
+    if _legacy_task_context_digest_allowed(context):
         candidates.update(
             {
                 sha256_json(
@@ -1011,17 +1074,23 @@ def _legacy_result_context_digest_migration_allowed(
 ) -> bool:
     """Allow only the exact result digest produced before target binding.
 
-    The context must already be bound to a non-empty target base and its
-    current digest must be the canonical target-bound value.  This is a
-    narrow in-memory migration for results written during the context-format
-    transition; it does not authorize an arbitrary result/context mismatch.
+    The context must carry an explicit targetBase field and its current digest
+    must be the canonical target-bound value (including the historical
+    targetBase:null form). This is a narrow in-memory migration for results
+    written during the context-format transition; it does not authorize an
+    arbitrary result/context mismatch.
     """
 
     if str(context.get("stage") or "") in PUBLISHED_TASK_STAGES:
         return False
-    target_base = context.get("targetBase")
-    if not isinstance(target_base, str) or not target_base.strip():
+    if "targetBase" not in context:
         return False
+    target_base = context.get("targetBase")
+    if target_base is not None:
+        try:
+            validate_target_base(target_base)
+        except TargetBranchError:
+            return False
     if context.get("contextDigest") != _task_context_digest(context, prepared_head):
         return False
     legacy_digests = {
@@ -1146,6 +1215,13 @@ def _verified_shared_task_context(path: Path) -> tuple[dict[str, Any], str]:
         raise RuntimeError("shared task context worktree does not belong to issue repository")
     if isinstance(receipt, dict) and receipt.get("prUrl"):
         command(["git", "cat-file", "-e", f"{receipt['commitSha']}^{{commit}}"], cwd=worktree)
+    if context.get("targetBase") is not None:
+        target_base = validate_target_base(context["targetBase"])
+        command(["git", "cat-file", "-e", f"{target_base['sha']}^{{commit}}"], cwd=worktree)
+        command(
+            ["git", "merge-base", "--is-ancestor", target_base["sha"], "HEAD"],
+            cwd=worktree,
+        )
     source_updated_at = iso_z(
         datetime.fromtimestamp(max(path.stat().st_mtime, local_path.stat().st_mtime), tz=UTC)
     )
@@ -1895,8 +1971,21 @@ def _audit_intent(intent: dict[str, Any]) -> tuple[Any, Any]:
     return evidence, verdict
 
 
-def _audit_payload(evidence: Any, verdict: Any) -> dict[str, Any]:
-    return {
+def _resolve_intent_target_base(intent: dict[str, Any], evidence: Any) -> dict[str, str]:
+    evidence_value = evidence.as_dict()
+    issue = evidence_value.get("issue")
+    repo = str(evidence_value.get("repo") or intent.get("repo") or "")
+    if not isinstance(issue, dict) or not repo:
+        raise TargetBranchError("live audit does not contain repository issue metadata")
+    return resolve_target_base(GitHubClient(), repo, issue)
+
+
+def _audit_payload(
+    evidence: Any,
+    verdict: Any,
+    target_base: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    payload = {
         "authorization": verdict.as_dict(),
         "evidenceDigest": evidence.digest,
         "probeLevel": getattr(evidence, "probe_level", "UNVERIFIED"),
@@ -1905,6 +1994,9 @@ def _audit_payload(evidence: Any, verdict: Any) -> dict[str, Any]:
             "evidence": evidence.as_dict(),
         },
     }
+    if target_base is not None:
+        payload["targetBase"] = validate_target_base(target_base)
+    return payload
 
 
 def _private_task_limit() -> int | None:
@@ -2063,10 +2155,28 @@ def claim_intent(args: argparse.Namespace) -> dict[str, Any]:
             "held": True,
             "decision": verdict.as_dict(),
         }
+    try:
+        target_base = _resolve_intent_target_base(intent, evidence)
+    except TargetBranchError as exc:
+        ManagedAdapter(ROOT, args.ledger).record_preflight_outcome(
+            intent=intent,
+            result_type="blocked_pre_task",
+            reason="TARGET_BASE_UNRESOLVED",
+            evidence=_audit_payload(evidence, verdict),
+        )
+        return {
+            "ok": True,
+            "authorized": False,
+            "held": True,
+            "claimed": False,
+            "reason": "TARGET_BASE_UNRESOLVED",
+            "error": str(exc)[:240],
+            "decision": verdict.as_dict(),
+        }
     store.record_stage(
         intent["key"],
         "AUDIT_PASS",
-        evidence=_audit_payload(evidence, verdict),
+        evidence=_audit_payload(evidence, verdict, target_base),
         dedupe_key=f"{intent['intentId']}:{evidence.digest}:live-audit-v1",
     )
     probe = getattr(evidence, "repo_probe_receipt", None) or {}
@@ -2125,14 +2235,16 @@ def claim_intent(args: argparse.Namespace) -> dict[str, Any]:
         "reproductionRequired": task_stage == "REPRODUCTION_REQUIRED",
         "implementationAuthorized": task_stage == "IMPLEMENTATION_READY",
         "publicationAuthorized": False,
+        "targetBase": target_base,
     }
     if args.prepare:
         try:
-            path = source_repo(str(intent["repo"]))
+            path = source_repo(str(intent["repo"]), target_base=target_base)
             worktree = prepare_managed_worktree(
                 path,
                 intent_id=str(intent["intentId"]),
                 repo=str(intent["repo"]),
+                target_base=target_base,
             )
         except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
             store.release_claim(
@@ -2280,6 +2392,16 @@ def write_task_context(
         context["prFollowup"] = dict(followup) | {
             "preparedHeadSha": effective_prepared_head,
         }
+    if context.get("targetBase") is not None:
+        target_base = validate_target_base(context["targetBase"])
+        command(["git", "cat-file", "-e", f"{target_base['sha']}^{{commit}}"], cwd=cwd)
+        if context.get("stage") == "DISPATCHED" and not isinstance(followup, dict):
+            if command(["git", "rev-parse", "HEAD"], cwd=cwd).casefold() != target_base["sha"]:
+                raise RuntimeError("new task worktree does not start at its audited target base")
+        command(
+            ["git", "merge-base", "--is-ancestor", target_base["sha"], "HEAD"],
+            cwd=cwd,
+        )
     _exclude_private_task_dir(cwd)
     private_dir = cwd / TASK_PRIVATE_DIR
     private_dir.mkdir(parents=True, exist_ok=True)
@@ -4767,12 +4889,14 @@ def _finalize_controller_merge(
     finalized["previousCommitSha"] = expected_head
     finalized["mergeBaseSha"] = expected_base
     finalized["handoffMode"] = "controller_merge_complete"
-    default_branch = _prepared_default_branch(worktree)
+    base_branch = _prepared_base_branch(worktree, context)
     publication = finalized.get("publication")
-    if default_branch and isinstance(publication, dict):
+    if base_branch and isinstance(publication, dict):
         finalized_publication = dict(publication)
-        finalized_publication["baseBranch"] = default_branch
+        finalized_publication["baseBranch"] = base_branch
         finalized["publication"] = finalized_publication
+    if context.get("targetBase") is not None:
+        finalized["targetBase"] = validate_target_base(context["targetBase"])
     _atomic_json(result_path, finalized)
     return finalized, result_path.read_bytes()
 
@@ -4825,6 +4949,20 @@ def _prepared_default_branch(worktree: Path) -> str | None:
     return branch
 
 
+def _prepared_base_branch(worktree: Path, context: dict[str, Any]) -> str | None:
+    """Return the audit-bound target branch, falling back for legacy tasks."""
+
+    if context.get("targetBase") is None:
+        return _prepared_default_branch(worktree)
+    target = validate_target_base(context["targetBase"])
+    command(["git", "cat-file", "-e", f"{target['sha']}^{{commit}}"], cwd=worktree)
+    command(
+        ["git", "merge-base", "--is-ancestor", target["sha"], "HEAD"],
+        cwd=worktree,
+    )
+    return target["branch"]
+
+
 def _validation_publication_changed_files(
     *, worktree: Path, context: dict[str, Any], commit_changed_files: list[str]
 ) -> list[str]:
@@ -4850,10 +4988,10 @@ def _validation_publication_changed_files(
         return cumulative
     if context.get("stage") != "VALIDATION_PENDING":
         return commit_changed_files
-    default_branch = _prepared_default_branch(worktree)
-    if not default_branch:
-        raise RuntimeError("validation continuation lacks a prepared default branch")
-    tracking_ref = f"refs/remotes/origin/{default_branch}"
+    base_branch = _prepared_base_branch(worktree, context)
+    if not base_branch:
+        raise RuntimeError("validation continuation lacks a prepared base branch")
+    tracking_ref = f"refs/remotes/origin/{base_branch}"
     base = command(["git", "merge-base", "HEAD", tracking_ref], cwd=worktree)
     cumulative = _validated_changed_files(
         [
@@ -4880,11 +5018,11 @@ def _prospective_validation_changed_files(*, worktree: Path, context: dict[str, 
     else:
         if context.get("stage") != "VALIDATION_PENDING":
             raise RuntimeError("prospective validation diff requires a validation continuation")
-        default_branch = _prepared_default_branch(worktree)
-        if not default_branch:
-            raise RuntimeError("validation continuation lacks a prepared default branch")
+        base_branch = _prepared_base_branch(worktree, context)
+        if not base_branch:
+            raise RuntimeError("validation continuation lacks a prepared base branch")
         base = command(
-            ["git", "merge-base", "HEAD", f"refs/remotes/origin/{default_branch}"],
+            ["git", "merge-base", "HEAD", f"refs/remotes/origin/{base_branch}"],
             cwd=worktree,
         )
     tracked = {
@@ -5010,6 +5148,12 @@ def _finalize_controller_commit(
             finalized["previousCommitSha"] = previous_commit
         else:
             finalized.pop("previousCommitSha", None)
+        base_branch = _prepared_base_branch(worktree, context)
+        publication = finalized.get("publication")
+        if base_branch and isinstance(publication, dict):
+            finalized["publication"] = dict(publication) | {"baseBranch": base_branch}
+        if context.get("targetBase") is not None:
+            finalized["targetBase"] = validate_target_base(context["targetBase"])
         if write_if_unchanged or finalized != value:
             _atomic_json(result_path, finalized)
         return finalized, result_path.read_bytes()
@@ -5125,12 +5269,14 @@ def _finalize_controller_commit(
     else:
         finalized.pop("previousCommitSha", None)
     finalized["handoffMode"] = "controller_commit_complete"
-    default_branch = _prepared_default_branch(worktree)
+    base_branch = _prepared_base_branch(worktree, context)
     publication = finalized.get("publication")
-    if default_branch and isinstance(publication, dict):
+    if base_branch and isinstance(publication, dict):
         finalized_publication = dict(publication)
-        finalized_publication["baseBranch"] = default_branch
+        finalized_publication["baseBranch"] = base_branch
         finalized["publication"] = finalized_publication
+    if context.get("targetBase") is not None:
+        finalized["targetBase"] = validate_target_base(context["targetBase"])
     _atomic_json(result_path, finalized)
     return finalized, result_path.read_bytes()
 
@@ -5307,9 +5453,10 @@ def sync_task_contexts(args: argparse.Namespace) -> dict[str, Any]:
                     )
                     no_go.append({"key": candidate["key"], "reason": verdict.reason_code})
                     continue
+                target_base = _resolve_intent_target_base(candidate["intent"], evidence)
                 store.record_audit_snapshot(
                     candidate["key"],
-                    evidence=_audit_payload(evidence, verdict),
+                    evidence=_audit_payload(evidence, verdict, target_base),
                     dedupe_key=(f"{candidate['intentId']}:{evidence.digest}:context-refresh"),
                 )
                 refreshed.append({"key": candidate["key"], "evidenceDigest": evidence.digest})

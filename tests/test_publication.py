@@ -364,6 +364,39 @@ class Client:
         return []
 
 
+def test_legacy_null_target_revalidation_allows_forward_only_and_rejects_fork():
+    class BranchClient:
+        def __init__(self, status, merge_base):
+            self.status = status
+            self.merge_base = merge_base
+
+        def branch(self, repo, branch):
+            return {"commit": {"sha": "b" * 40}}
+
+        def compare(self, repo, base, head):
+            return {
+                "status": self.status,
+                "merge_base_commit": {"sha": self.merge_base},
+            }
+
+    assert (
+        publication._revalidate_legacy_target_base(
+            BranchClient("ahead", "a" * 40),
+            "example/project",
+            "main",
+            "a" * 40,
+        )
+        == "b" * 40
+    )
+    with pytest.raises(publication.PublicationError, match="drifted"):
+        publication._revalidate_legacy_target_base(
+            BranchClient("behind", "c" * 40),
+            "example/project",
+            "main",
+            "a" * 40,
+        )
+
+
 def test_broker_grants_commit_bound_permit(monkeypatch, tmp_path):
     store, request, _ = prepared_request(tmp_path)
     monkeypatch.setattr(publication, "_changed_files", lambda *args: ["file.txt"])

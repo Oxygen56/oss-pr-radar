@@ -132,6 +132,22 @@ evidence can continue immediately.
 
 ## State Ownership
 
+### Target-Branch Binding
+
+Every newly dispatched issue carries a live `targetBase` object containing the
+selected branch and the exact remote commit SHA. The controller passes that
+binding through the task context, ledger, worktree, merge/commit handoff, and
+publication request; publication re-resolves the branch and accepts only the
+same commit or a verified fast-forward. A missing or ambiguous live repository
+or issue snapshot holds the task before a publishable task is created.
+
+Historical contexts with an explicit `targetBase: null` retain a narrow
+compatibility path. Their result digest may be upgraded in memory only when it
+is exactly the pre-target-binding digest and all existing identity, worktree,
+policy, and receipt checks pass. Legacy publication rechecks the prepared
+default branch and its bound SHA immediately before publication; divergence or
+an unverifiable branch blocks the action.
+
 - `radar-state`: cloud JSON checkpoints with SHA-256 manifest and compare-and-swap publish.
 - `state/radar_ledger.sqlite3`: local authoritative leases, lifecycle, task identity,
   quality evidence, publication requests, permits, effects, and receipts.

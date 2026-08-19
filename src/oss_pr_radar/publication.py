@@ -19,6 +19,7 @@ from .ledger import LedgerError, RadarLedger
 from .metrics import assess_submit_ready
 from .opportunity import external_side_effect_allowed
 from .repo_probe import REPRODUCED_VALIDATED, verify_probe_receipt
+from .target_branch import TargetBranchError, resolve_target_base, validate_target_base
 from .util import sha256_text
 
 ISSUE_URL = re.compile(r"^https://github\.com/([^/]+/[^/]+)/issues/(\d+)$")
@@ -183,6 +184,14 @@ def request_publication(
         if evidence.get(key) != value:
             raise PublicationError(f"publication evidence mismatch: {key}")
     publication = _publication_payload(evidence, issue_url)
+    target_base = None
+    if evidence.get("targetBase") is not None:
+        try:
+            target_base = validate_target_base(evidence["targetBase"])
+        except TargetBranchError as exc:
+            raise PublicationError(str(exc)) from exc
+        if publication["baseBranch"] != target_base["branch"]:
+            raise PublicationError("publication base does not match the audited target branch")
     return store.create_publication_request(
         issue_url=issue_url,
         thread_id=thread_id,
@@ -197,6 +206,8 @@ def request_publication(
         head_sha=str(evidence.get("headSha") or snapshot["commitSha"]),
         selected_base_sha=str(evidence.get("selectedBaseSha") or pre_task.get("baseSha") or ""),
         code_paths=code_paths,
+        target_base=target_base,
+        target_base_bound="targetBase" in evidence,
     )
 
 
@@ -243,6 +254,38 @@ def _refresh_upstream_branch(worktree: Path, repo: str, default_branch: str) -> 
         if refreshed_sha.casefold() != live_sha:
             raise PublicationError("upstream default branch changed during refresh")
     return remote
+
+
+def _revalidate_legacy_target_base(
+    github: GitHubClient,
+    repo: str,
+    branch: str,
+    expected_sha: str,
+) -> str:
+    """Recheck the prepared default branch used by a legacy null-target task."""
+
+    if re.fullmatch(r"[0-9a-fA-F]{40}", expected_sha or "") is None:
+        raise PublicationError("legacy publication lacks a bound base SHA")
+    try:
+        observed = github.branch(repo, branch)
+    except GitHubError as exc:
+        raise PublicationError("legacy publication base branch is unavailable") from exc
+    observed_sha = str((observed.get("commit") or {}).get("sha") or "").casefold()
+    if re.fullmatch(r"[0-9a-f]{40}", observed_sha) is None:
+        raise PublicationError("legacy publication base SHA is invalid")
+    if observed_sha == expected_sha.casefold():
+        return observed_sha
+    try:
+        comparison = github.compare(repo, expected_sha, observed_sha)
+    except GitHubError as exc:
+        raise PublicationError("legacy publication base comparison is unavailable") from exc
+    if (
+        str(comparison.get("status") or "").casefold() not in {"ahead", "identical"}
+        or str((comparison.get("merge_base_commit") or {}).get("sha") or "").casefold()
+        != expected_sha.casefold()
+    ):
+        raise PublicationError("legacy publication base branch drifted")
+    return observed_sha
 
 
 def _changed_files(worktree: Path, repo: str, default_branch: str) -> list[str]:
@@ -370,6 +413,8 @@ def audit_publication_request(
         )
     if publication != request.get("publication"):
         return PublicationAudit("BLOCK", "PUBLICATION_PAYLOAD_DRIFT", request_id, {})
+    if evidence_file.get("targetBase") != request.get("targetBase"):
+        return PublicationAudit("BLOCK", "TARGET_BASE_EVIDENCE_DRIFT", request_id, {})
     quality = request.get("quality") or {}
     assessment = assess_submit_ready(quality)
     if not assessment.ready or evidence_file.get("quality") != quality:
@@ -522,20 +567,69 @@ def audit_publication_request(
         return PublicationAudit("DEFER", "LIVE_EVIDENCE_INCOMPLETE", request_id, live)
     if verdict.status != "ALLOW":
         return PublicationAudit("BLOCK", verdict.reason_code, request_id, live)
-    try:
-        metadata = github.repository(repo)
-    except GitHubError as exc:
-        return PublicationAudit(
-            "DEFER",
-            "REPOSITORY_METADATA_UNAVAILABLE",
-            request_id,
-            live | {"error": str(exc)[:200]},
-        )
-    default_branch = str(metadata.get("default_branch") or "")
-    if not default_branch:
-        return PublicationAudit("DEFER", "DEFAULT_BRANCH_UNKNOWN", request_id, live)
-    if publication["baseBranch"] != default_branch:
-        return PublicationAudit("BLOCK", "BASE_BRANCH_MISMATCH", request_id, live)
+    target_base_value = request.get("targetBase")
+    live_target_base = None
+    if target_base_value is not None:
+        try:
+            target_base = validate_target_base(target_base_value)
+            live_target_base = resolve_target_base(github, repo, evidence.issue)
+        except TargetBranchError as exc:
+            return PublicationAudit(
+                "DEFER", "TARGET_BASE_UNAVAILABLE", request_id, live | {"error": str(exc)[:200]}
+            )
+        if (
+            publication["baseBranch"] != target_base["branch"]
+            or live_target_base["branch"] != target_base["branch"]
+        ):
+            return PublicationAudit("BLOCK", "TARGET_BASE_MISMATCH", request_id, live)
+        if live_target_base["sha"] != target_base["sha"]:
+            try:
+                comparison = github.compare(repo, target_base["sha"], live_target_base["sha"])
+            except GitHubError as exc:
+                return PublicationAudit(
+                    "DEFER",
+                    "TARGET_BASE_UNAVAILABLE",
+                    request_id,
+                    live | {"error": str(exc)[:200]},
+                )
+            compare_status = str(comparison.get("status") or "").casefold()
+            merge_base_sha = str(
+                (comparison.get("merge_base_commit") or {}).get("sha") or ""
+            ).casefold()
+            if compare_status not in {"ahead", "identical"} or merge_base_sha != target_base["sha"]:
+                return PublicationAudit("BLOCK", "TARGET_BASE_DRIFT", request_id, live)
+        base_branch = target_base["branch"]
+        default_branch = live_target_base["defaultBranch"]
+    else:
+        try:
+            metadata = github.repository(repo)
+        except GitHubError as exc:
+            return PublicationAudit(
+                "DEFER",
+                "REPOSITORY_METADATA_UNAVAILABLE",
+                request_id,
+                live | {"error": str(exc)[:200]},
+            )
+        default_branch = str(metadata.get("default_branch") or "")
+        if not default_branch:
+            return PublicationAudit("DEFER", "DEFAULT_BRANCH_UNKNOWN", request_id, live)
+        if publication["baseBranch"] != default_branch:
+            return PublicationAudit("BLOCK", "BASE_BRANCH_MISMATCH", request_id, live)
+        if "targetBase" in request:
+            try:
+                _revalidate_legacy_target_base(
+                    github,
+                    repo,
+                    default_branch,
+                    str(
+                        request.get("selectedBaseSha") or evidence_file.get("selectedBaseSha") or ""
+                    ),
+                )
+            except PublicationError as exc:
+                return PublicationAudit(
+                    "BLOCK", "TARGET_BASE_DRIFT", request_id, live | {"error": str(exc)[:200]}
+                )
+        base_branch = default_branch
     expected_actor = os.environ.get("RADAR_GITHUB_ACTOR", "Oxygen56")
     if publication["headOwner"].casefold() != expected_actor.casefold():
         return PublicationAudit("BLOCK", "FORK_OWNER_MISMATCH", request_id, live)
@@ -548,10 +642,10 @@ def audit_publication_request(
             changed_files = (
                 update_changed_files
                 if evidence_file.get("handoffMode") == "controller_merge_complete"
-                else _changed_files(worktree, repo, default_branch)
+                else _changed_files(worktree, repo, base_branch)
             )
         else:
-            changed_files = _changed_files(worktree, repo, default_branch)
+            changed_files = _changed_files(worktree, repo, base_branch)
     except PublicationError as exc:
         return PublicationAudit(
             "DEFER", "DIFF_REVALIDATION_FAILED", request_id, live | {"error": str(exc)[:200]}
@@ -573,7 +667,7 @@ def audit_publication_request(
         )
     if evidence.policy.get("dco"):
         try:
-            dco_valid = _dco_valid(worktree, repo, default_branch)
+            dco_valid = _dco_valid(worktree, repo, base_branch)
         except PublicationError as exc:
             return PublicationAudit(
                 "DEFER",
@@ -592,6 +686,8 @@ def audit_publication_request(
             "changedFiles": changed_files,
             "updateChangedFiles": update_changed_files,
             "defaultBranch": default_branch,
+            "targetBase": target_base_value,
+            "liveTargetBase": live_target_base,
         },
     )
 

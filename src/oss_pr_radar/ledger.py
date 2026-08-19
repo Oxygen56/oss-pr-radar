@@ -718,6 +718,7 @@ class RadarLedger:
                 "stage": stage,
                 "intentStatus": intent_status,
                 "liveAudit": live_audit,
+                "targetBase": context.get("targetBase"),
             }
             if any(current.get(field) != expected for field, expected in expected_active.items()):
                 raise LedgerError("active task context disagrees with the ledger")
@@ -778,6 +779,7 @@ class RadarLedger:
             "probeReceiptDigest": context.get("probeReceiptDigest"),
             "selectedBaseSha": context.get("selectedBaseSha"),
             "codePaths": context.get("codePaths") or [],
+            "targetBase": context.get("targetBase"),
             "recoveredFromTaskContext": True,
             "titleTime": title_time,
         }
@@ -908,7 +910,11 @@ class RadarLedger:
                 key,
                 "AUDIT_SNAPSHOT",
                 f"recovered:{context_digest}",
-                {"liveAudit": live_audit, "recoveredFromTaskContext": True},
+                {
+                    "liveAudit": live_audit,
+                    "targetBase": context.get("targetBase"),
+                    "recoveredFromTaskContext": True,
+                },
                 captured_at,
             )
 
@@ -941,6 +947,7 @@ class RadarLedger:
                     "publicationKind": "PR_CREATE",
                     "recoveredFromTaskContext": True,
                 }
+                request["targetBase"] = context.get("targetBase")
                 recovered_authorized = _publication_probe_valid(request)
                 existing_publication = connection.execute(
                     """SELECT r.opportunity_key FROM publication_permits p
@@ -3739,6 +3746,7 @@ class RadarLedger:
                 else "revoked_terminal_no_go"
             ),
             "liveAudit": audit_payload.get("liveAudit"),
+            "targetBase": audit_payload.get("targetBase"),
             "liveAuditRecordedAt": audit_row["created_at"] if audit_row else None,
             "publicationReceipt": publication_receipt,
             "prFollowup": pr_followup,
@@ -3971,21 +3979,22 @@ class RadarLedger:
         head_sha: str | None = None,
         selected_base_sha: str | None = None,
         code_paths: list[str] | None = None,
+        target_base: dict[str, str] | None = None,
+        target_base_bound: bool = False,
     ) -> dict[str, Any]:
         now = iso_z(datetime.now(UTC))
-        request_id = sha256_text(
-            "|".join(
-                (
-                    issue_url,
-                    thread_id,
-                    commit_sha,
-                    branch,
-                    worktree_path,
-                    evidence_digest,
-                    canonical_json(publication),
-                )
-            )
-        )
+        request_identity = [
+            issue_url,
+            thread_id,
+            commit_sha,
+            branch,
+            worktree_path,
+            evidence_digest,
+            canonical_json(publication),
+        ]
+        if target_base is not None:
+            request_identity.append(canonical_json(target_base))
+        request_id = sha256_text("|".join(request_identity))
         with self.transaction() as connection:
             row = connection.execute(
                 """SELECT o.key,o.stage,i.intent_id,i.status,i.thread_id,i.worktree_path,
@@ -4063,6 +4072,8 @@ class RadarLedger:
                 "intent": payload,
                 "publicationKind": "PR_UPDATE" if previous_publication else "PR_CREATE",
             }
+            if target_base_bound or target_base is not None:
+                request["targetBase"] = target_base
             if previous_publication:
                 request.update(
                     {

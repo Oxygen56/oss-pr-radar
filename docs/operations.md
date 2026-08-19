@@ -266,6 +266,12 @@ receiving their own worktrees.
 - For controller-owned commits, the publication base is taken from the
   prepared checkout's `origin/HEAD`. A child-provided release or stale branch
   hint cannot create a permanently blocked publication request.
+- New tasks persist the live `targetBase` branch and SHA through the context,
+  ledger, worktree, controller handoff, and publication request. Publication
+  rechecks that branch immediately before the external action and accepts only
+  the same commit or a verified fast-forward. Historical `targetBase: null`
+  tasks use the prepared default branch only after its bound SHA is rechecked;
+  drift or an unavailable branch blocks publication.
 - Controller terminal feedback retains the state branch stale-write guard. On
   concurrent cloud writes it restores and merges again with bounded backoff,
   so a short scanner or watchdog publish does not exhaust immediate retries.

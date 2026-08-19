@@ -341,9 +341,9 @@ def test_probe_receipt_is_required_before_fake_thread_bind(tmp_path, monkeypatch
 def test_passed_probe_claim_then_actual_bind_creates_one_task(tmp_path, monkeypatch):
     database = tmp_path / "radar.sqlite3"
     store = RadarLedger(database)
-    queued = intent()
+    queued = intent(base_sha="a" * 40)
     store.enqueue(queued)
-    client = FakeGitHub("base-a")
+    client = FakeGitHub("a" * 40)
     monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", KEY)
     monkeypatch.setattr(BRIDGE, "GitHubClient", lambda: client)
     monkeypatch.setattr(BRIDGE, "collect_evidence", lambda *_args, **_kwargs: evidence_bundle())

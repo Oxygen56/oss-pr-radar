@@ -1139,12 +1139,19 @@ def test_task_context_digest_binds_target_base_and_prepared_head():
         "liveAudit": {"evidence": {"digest": "evidence"}},
         "threadId": "thread-1",
         "worktreePath": "/tmp/worktree",
-        "targetBase": "base-a",
+        "targetBase": {
+            "branch": "main",
+            "sha": "a" * 40,
+            "source": "repository_default",
+            "defaultBranch": "main",
+        },
     }
     prepared = "a" * 40
     canonical = MODULE._task_context_digest(context, prepared)
     assert canonical == sha256_json(MODULE._task_context_digest_payload(context, prepared))
-    assert canonical != MODULE._task_context_digest(context | {"targetBase": "base-b"}, prepared)
+    assert canonical != MODULE._task_context_digest(
+        context | {"targetBase": {**context["targetBase"], "sha": "b" * 40}}, prepared
+    )
     assert canonical != sha256_json(
         MODULE._task_context_digest_payload(context, prepared, include_target_base=False)
     )
@@ -1155,11 +1162,25 @@ def test_shared_context_recovery_accepts_target_bound_context_without_errors(mon
     monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
     store, _worktree, local_path, shared_path = _context_digest_fixture(tmp_path / "fixture")
     value = json.loads(local_path.read_text(encoding="utf-8"))
-    value["targetBase"] = "base-a"
+    value["targetBase"] = {
+        "branch": "main",
+        "sha": run_git(_worktree, "rev-parse", "HEAD"),
+        "source": "repository_default",
+        "defaultBranch": "main",
+    }
     value["contextDigest"] = sha256_json(
         MODULE._task_context_digest_payload(value, None, include_prepared_head=False)
     )
     _rewrite_context_mirrors(local_path, shared_path, value)
+    with store.transaction() as connection:
+        store._event(
+            connection,
+            "a/b#1",
+            "AUDIT_SNAPSHOT",
+            "target-bound-fixture",
+            {"liveAudit": value["liveAudit"], "targetBase": value["targetBase"]},
+            value["liveAudit"].get("capturedAt"),
+        )
 
     recovered = MODULE.recover_shared_task_contexts(store)
 
@@ -1172,10 +1193,15 @@ def test_shared_context_recovery_rejects_target_base_tampering(monkeypatch, tmp_
     monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
     store, _worktree, local_path, shared_path = _context_digest_fixture(tmp_path / "fixture")
     value = json.loads(local_path.read_text(encoding="utf-8"))
-    value["targetBase"] = "base-a"
+    value["targetBase"] = {
+        "branch": "main",
+        "sha": run_git(_worktree, "rev-parse", "HEAD"),
+        "source": "repository_default",
+        "defaultBranch": "main",
+    }
     value["contextDigest"] = MODULE._task_context_digest(value, None)
     _rewrite_context_mirrors(local_path, shared_path, value)
-    tampered = dict(value, targetBase="base-b")
+    tampered = dict(value, targetBase={**value["targetBase"], "sha": "b" * 40})
     MODULE._atomic_json(shared_path, tampered)
 
     recovered = MODULE.recover_shared_task_contexts(store)
@@ -1950,7 +1976,12 @@ def test_private_task_dispatch_is_not_limited_by_publication_canary(monkeypatch,
 
     evidence = SimpleNamespace(
         digest="evidence-2",
-        as_dict=lambda: {"digest": "evidence-2", "complete": True},
+        as_dict=lambda: {
+            "digest": "evidence-2",
+            "complete": True,
+            "repo": "a/b",
+            "issue": {"labels": []},
+        },
     )
     verdict = SimpleNamespace(
         status="ALLOW",
@@ -1959,6 +1990,16 @@ def test_private_task_dispatch_is_not_limited_by_publication_canary(monkeypatch,
     )
     monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
     monkeypatch.setattr(MODULE, "_audit_intent", lambda _intent: (evidence, verdict))
+    monkeypatch.setattr(
+        MODULE,
+        "resolve_target_base",
+        lambda _client, _repo, _issue: {
+            "branch": "main",
+            "sha": "a" * 40,
+            "source": "repository_default",
+            "defaultBranch": "main",
+        },
+    )
     monkeypatch.setenv("RADAR_MAX_ACTIVE_TASKS", "0")
 
     result = MODULE.claim_intent(
@@ -2233,7 +2274,12 @@ def test_prepare_failure_releases_claim(monkeypatch, tmp_path):
     )
     evidence = SimpleNamespace(
         digest="evidence",
-        as_dict=lambda: {"digest": "evidence", "complete": True},
+        as_dict=lambda: {
+            "digest": "evidence",
+            "complete": True,
+            "repo": "a/b",
+            "issue": {"labels": []},
+        },
     )
     verdict = SimpleNamespace(
         status="ALLOW",
@@ -2244,8 +2290,18 @@ def test_prepare_failure_releases_claim(monkeypatch, tmp_path):
     monkeypatch.setattr(MODULE, "_audit_intent", lambda _intent: (evidence, verdict))
     monkeypatch.setattr(
         MODULE,
+        "resolve_target_base",
+        lambda _client, _repo, _issue: {
+            "branch": "main",
+            "sha": "a" * 40,
+            "source": "repository_default",
+            "defaultBranch": "main",
+        },
+    )
+    monkeypatch.setattr(
+        MODULE,
         "source_repo",
-        lambda _repo: (_ for _ in ()).throw(RuntimeError("clone timeout")),
+        lambda _repo, **_kwargs: (_ for _ in ()).throw(RuntimeError("clone timeout")),
     )
 
     with pytest.raises(RuntimeError, match="clone timeout"):
@@ -2283,7 +2339,12 @@ def test_prepare_claim_returns_single_project_root_and_isolated_worktree(monkeyp
     )
     evidence = SimpleNamespace(
         digest="evidence",
-        as_dict=lambda: {"digest": "evidence", "complete": True},
+        as_dict=lambda: {
+            "digest": "evidence",
+            "complete": True,
+            "repo": "a/b",
+            "issue": {"labels": []},
+        },
     )
     verdict = SimpleNamespace(
         status="ALLOW",
@@ -2296,7 +2357,17 @@ def test_prepare_claim_returns_single_project_root_and_isolated_worktree(monkeyp
     monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
     monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
     monkeypatch.setattr(MODULE, "_audit_intent", lambda _intent: (evidence, verdict))
-    monkeypatch.setattr(MODULE, "source_repo", lambda _repo: source)
+    monkeypatch.setattr(
+        MODULE,
+        "resolve_target_base",
+        lambda _client, _repo, _issue: {
+            "branch": "main",
+            "sha": "a" * 40,
+            "source": "repository_default",
+            "defaultBranch": "main",
+        },
+    )
+    monkeypatch.setattr(MODULE, "source_repo", lambda _repo, **_kwargs: source)
     monkeypatch.setattr(MODULE, "prepare_managed_worktree", lambda *_args, **_kwargs: worktree)
 
     result = MODULE.claim_intent(
@@ -4963,7 +5034,12 @@ def test_ingestion_migrates_exact_legacy_result_digest_in_memory(monkeypatch, tm
     monkeypatch.setattr(MODULE, "GITHUB_ROOT", tmp_path / "github")
     store, worktree, local_path, shared_path = _context_digest_fixture(tmp_path / "fixture")
     context = json.loads(local_path.read_text(encoding="utf-8"))
-    context["targetBase"] = "base-a"
+    context["targetBase"] = {
+        "branch": "main",
+        "sha": run_git(worktree, "rev-parse", "HEAD"),
+        "source": "repository_default",
+        "defaultBranch": "main",
+    }
     context["contextDigest"] = MODULE._task_context_digest(context, None)
     _rewrite_context_mirrors(local_path, shared_path, context)
     result_path = Path(context["resultPath"])
@@ -5009,13 +5085,60 @@ def test_ingestion_migrates_exact_legacy_result_digest_in_memory(monkeypatch, tm
     assert repeated["errors"] == []
 
 
+def test_ingestion_migrates_exact_legacy_result_for_explicit_null_target_base(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(MODULE, "ROOT", tmp_path)
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", tmp_path / "github")
+    store, worktree, local_path, shared_path = _context_digest_fixture(tmp_path / "fixture")
+    context = json.loads(local_path.read_text(encoding="utf-8"))
+    context["targetBase"] = None
+    context["contextDigest"] = MODULE._task_context_digest(context, None)
+    _rewrite_context_mirrors(local_path, shared_path, context)
+    result_path = Path(context["resultPath"])
+    legacy_digest = sha256_json(
+        MODULE._task_context_digest_payload(
+            context,
+            None,
+            include_target_base=False,
+        )
+    )
+    result_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": "radar-task-result-v1",
+                "contextDigest": legacy_digest,
+                "key": "a/b#1",
+                "issueUrl": "https://github.com/a/b/issues/1",
+                "threadId": "thread-1",
+                "worktreePath": str(worktree.resolve()),
+                "stage": "AUDIT_NO_GO",
+                "reason": "EVIDENCE_INCOMPLETE",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = MODULE.ingest_task_results(
+        SimpleNamespace(ledger=tmp_path / "fixture" / "ledger.sqlite3")
+    )
+
+    assert result["ok"] is True, result["errors"]
+    assert result["legacyContextDigestMigrations"] == ["a/b#1"]
+
+
 @pytest.mark.parametrize("mutation", ["target", "result", "identity"])
 def test_legacy_result_digest_migration_rejects_tampering(monkeypatch, tmp_path, mutation):
     monkeypatch.setattr(MODULE, "ROOT", tmp_path)
     monkeypatch.setattr(MODULE, "GITHUB_ROOT", tmp_path / "github")
     store, worktree, local_path, shared_path = _context_digest_fixture(tmp_path / "fixture")
     context = json.loads(local_path.read_text(encoding="utf-8"))
-    context["targetBase"] = "base-a"
+    context["targetBase"] = {
+        "branch": "main",
+        "sha": run_git(worktree, "rev-parse", "HEAD"),
+        "source": "repository_default",
+        "defaultBranch": "main",
+    }
     context["contextDigest"] = MODULE._task_context_digest(context, None)
     _rewrite_context_mirrors(local_path, shared_path, context)
     result_path = Path(context["resultPath"])
@@ -5027,7 +5150,7 @@ def test_legacy_result_digest_migration_rejects_tampering(monkeypatch, tmp_path,
         )
     )
     if mutation == "target":
-        context["targetBase"] = "base-b"
+        context["targetBase"] = {**context["targetBase"], "sha": "b" * 40}
         _rewrite_context_mirrors(local_path, shared_path, context)
     result_path.write_text(
         json.dumps(
