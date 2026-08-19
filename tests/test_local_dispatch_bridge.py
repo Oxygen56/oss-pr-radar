@@ -1275,6 +1275,12 @@ def test_ingestion_quarantines_legacy_implementation_result_without_side_effect(
         ).fetchone()
     assert event[0] == MODULE.LEGACY_RESULT_REQUIRES_MIGRATION
 
+    repeated = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert repeated["ok"] is True, repeated.get("errors")
+    assert repeated.get("quarantined", []) == []
+    assert len(repeated["quarantinedAlreadyRecorded"]) == 1
+
 
 def test_shared_context_recovery_accepts_target_bound_context_without_errors(monkeypatch, tmp_path):
     project_root = tmp_path / "github"
@@ -3034,6 +3040,61 @@ def test_pr_followup_list_isolates_dirty_worktree_and_keeps_next_candidate(monke
     assert result["quarantined"][0]["key"] == "a/b#1"
     assert result["quarantined"][0]["reason"] == "worktree_dirty"
     assert result["quarantined"][0]["dirtyPaths"] == ["tracked.txt"]
+
+
+def test_pr_followup_list_reports_rebind_for_dirty_worktree(monkeypatch, tmp_path):
+    thread_db = tmp_path / "threads.sqlite3"
+    dirty = tmp_path / "dirty"
+    dirty.mkdir()
+    run_git(dirty, "init")
+    run_git(dirty, "config", "user.name", "Radar Test")
+    run_git(dirty, "config", "user.email", "radar-test@example.invalid")
+    (dirty / "tracked.txt").write_text("base\n", encoding="utf-8")
+    run_git(dirty, "add", "tracked.txt")
+    run_git(dirty, "commit", "-m", "baseline")
+    (dirty / "tracked.txt").write_text("changed\n", encoding="utf-8")
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "CREATE TABLE threads (id TEXT, updated_at INTEGER, archived INTEGER, rollout_path TEXT)"
+        )
+        old = int((datetime.now(UTC) - timedelta(hours=2)).timestamp())
+        connection.execute("INSERT INTO threads VALUES (?,?,?,?)", ("thread-dirty", old, 0, None))
+
+    class Store:
+        def pr_followup_candidates(self):
+            return [
+                {
+                    "key": "a/b#1",
+                    "threadId": "thread-dirty",
+                    "worktreePath": str(dirty),
+                }
+            ]
+
+        def pr_followup_rebind_status(self, _key):
+            return {
+                "expectedPreparedHeadSha": "a" * 40,
+                "observedHeadSha": "b" * 40,
+                "replacementWakeDigest": "c" * 64,
+            }
+
+        def unresolved_pr_followups(self):
+            return []
+
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+
+    result = MODULE.pr_followup_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert result["candidates"] == []
+    assert result["quarantined"][0]["reason"] == MODULE.PR_FOLLOWUP_REBIND_REQUIRED
+    assert result["quarantined"][0]["reprepareRequired"] is True
+    assert result["quarantined"][0]["dirtyPaths"] == ["tracked.txt"]
+
+    (dirty / "tracked.txt").write_text("base\n", encoding="utf-8")
+    recovered = MODULE.pr_followup_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert [item["key"] for item in recovered["candidates"]] == ["a/b#1"]
+    assert recovered["quarantined"] == []
 
 
 def test_pr_followup_never_abandons_an_unreceipted_delivery(monkeypatch, tmp_path):

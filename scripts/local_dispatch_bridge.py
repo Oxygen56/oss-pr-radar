@@ -5734,6 +5734,10 @@ def pr_followup_list(args: argparse.Namespace) -> dict[str, Any]:
         if archived[thread_id] == 1:
             restore_required.append(candidate | {"reason": "thread_archived"})
             continue
+        rebind_status_getter = getattr(store, "pr_followup_rebind_status", None)
+        rebind_status = (
+            rebind_status_getter(candidate["key"]) if callable(rebind_status_getter) else None
+        )
         worktree_value = str(candidate.get("worktreePath") or "")
         if worktree_value:
             worktree = Path(worktree_value).resolve()
@@ -5754,9 +5758,21 @@ def pr_followup_list(args: argparse.Namespace) -> dict[str, Any]:
                     quarantined.append(
                         candidate
                         | {
-                            "reason": "worktree_dirty",
+                            "reason": (
+                                PR_FOLLOWUP_REBIND_REQUIRED
+                                if rebind_status is not None
+                                else "worktree_dirty"
+                            ),
                             "dirtyPathCount": len(dirty_paths),
                             "dirtyPaths": dirty_paths[:10],
+                            **(
+                                {
+                                    "rebind": rebind_status,
+                                    "reprepareRequired": True,
+                                }
+                                if rebind_status is not None
+                                else {}
+                            ),
                         }
                     )
                     continue
@@ -7177,6 +7193,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
     validation_deferred: list[dict[str, Any]] = []
     legacy_context_digest_migrations: list[str] = []
     quarantined: list[dict[str, Any]] = []
+    quarantined_already_recorded: list[dict[str, Any]] = []
     ignored: list[dict[str, str]] = []
     errors: list[dict[str, str]] = []
     for candidate in store.task_result_candidates():
@@ -7282,14 +7299,16 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     expected_prepared_head_sha=rebind_evidence["expectedPreparedHeadSha"],
                     observed_head_sha=rebind_evidence["observedHeadSha"],
                 )
-                quarantined.append(
-                    {
-                        "key": candidate["key"],
-                        "reason": PR_FOLLOWUP_REBIND_REQUIRED,
-                        **rebind_evidence,
-                        "replacementWakeDigest": rebind["replacementWakeDigest"],
-                    }
-                )
+                entry = {
+                    "key": candidate["key"],
+                    "reason": PR_FOLLOWUP_REBIND_REQUIRED,
+                    **rebind_evidence,
+                    "replacementWakeDigest": rebind["replacementWakeDigest"],
+                }
+                if rebind.get("created") is False:
+                    quarantined_already_recorded.append(entry)
+                else:
+                    quarantined.append(entry)
                 continue
             legacy_state = _legacy_result_requires_migration(
                 value,
@@ -7303,7 +7322,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 ),
             )
             if legacy_state is not None:
-                managed_adapter.ledger.record_event(
+                event = managed_adapter.ledger.record_event(
                     event_type=LEGACY_RESULT_REQUIRES_MIGRATION,
                     idempotency_key=(
                         f"legacy-result-requires-migration:{candidate['key']}:{initial_digest}"
@@ -7323,15 +7342,17 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                         "requiresExplicitMigration": True,
                     },
                 )
-                quarantined.append(
-                    {
-                        "key": candidate["key"],
-                        "reason": LEGACY_RESULT_REQUIRES_MIGRATION,
-                        "requiresExplicitMigration": True,
-                        "commitSha": legacy_state["commitSha"],
-                        "followupDigestValid": legacy_state["followupDigestValid"],
-                    }
-                )
+                entry = {
+                    "key": candidate["key"],
+                    "reason": LEGACY_RESULT_REQUIRES_MIGRATION,
+                    "requiresExplicitMigration": True,
+                    "commitSha": legacy_state["commitSha"],
+                    "followupDigestValid": legacy_state["followupDigestValid"],
+                }
+                if event.get("created") is False:
+                    quarantined_already_recorded.append(entry)
+                else:
+                    quarantined.append(entry)
                 continue
             if task_stage == "REPRODUCTION_REQUIRED" and value.get("contextDigest") == context.get(
                 "contextDigest"
@@ -7726,6 +7747,8 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
     }
     if quarantined:
         result["quarantined"] = quarantined
+    if quarantined_already_recorded:
+        result["quarantinedAlreadyRecorded"] = quarantined_already_recorded
     if ignored:
         result["ignored"] = ignored
     if legacy_context_digest_migrations:

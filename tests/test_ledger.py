@@ -2816,4 +2816,5 @@ def test_pr_followup_task_drift_rebinds_wake_and_invalidates_preparation(tmp_pat
         expected_prepared_head_sha="c" * 40,
         observed_head_sha="d" * 40,
     )
-    assert repeated == rebound
+    assert repeated == {**rebound, "created": False}
+    assert store.pr_followup_rebind_status("a/b#1")["observedHeadSha"] == "d" * 40

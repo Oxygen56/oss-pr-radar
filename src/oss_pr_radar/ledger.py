@@ -4272,7 +4272,7 @@ class RadarLedger:
         expected_prepared_head_sha: str,
         observed_head_sha: str,
         reason: str = "PR_FOLLOWUP_REBIND_REQUIRED",
-    ) -> dict[str, str]:
+    ) -> dict[str, Any]:
         """Rebind one stale prepared follow-up without changing the PR parent."""
 
         if not re.fullmatch(r"[0-9a-f]{40}", expected_prepared_head_sha):
@@ -4307,6 +4307,7 @@ class RadarLedger:
                         "key": key,
                         "previousWakeDigest": str(payload["previousWakeDigest"]),
                         "replacementWakeDigest": previous_wake,
+                        "created": False,
                     }
             replacement_wake = sha256_json(
                 {
@@ -4343,6 +4344,7 @@ class RadarLedger:
             "key": key,
             "previousWakeDigest": previous_wake,
             "replacementWakeDigest": replacement_wake,
+            "created": True,
         }
 
     def _rearm_followup_for_publication_drift(
@@ -5455,6 +5457,23 @@ class RadarLedger:
                 },
             )
         return list(unique.values())
+
+    def pr_followup_rebind_status(self, key: str) -> dict[str, Any] | None:
+        """Return the latest task-local rebind signal, if one exists."""
+
+        with self.connect() as connection:
+            row = connection.execute(
+                """SELECT payload_json,created_at FROM events
+                   WHERE opportunity_key=? AND event_type='PR_FOLLOWUP_REBIND_REQUIRED'
+                   ORDER BY id DESC LIMIT 1""",
+                (key,),
+            ).fetchone()
+        if row is None:
+            return None
+        payload = json.loads(row["payload_json"])
+        if not isinstance(payload, dict):
+            raise LedgerError("PR follow-up rebind payload is invalid")
+        return payload | {"createdAt": row["created_at"]}
 
     @staticmethod
     def _pr_followup_snapshot(

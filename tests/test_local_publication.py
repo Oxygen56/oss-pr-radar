@@ -179,6 +179,41 @@ def test_advance_once_keeps_legacy_task_quarantine_out_of_global_errors(monkeypa
     assert result["contextsUnavailableCount"] == 1
 
 
+def test_advance_once_does_not_report_recorded_quarantine_as_activity(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "oss_pr_radar.local_publication.sync_cloud_queue_if_due",
+        lambda *args, **kwargs: {"ok": True, "errors": [], "pending": []},
+    )
+
+    def runner(_root: Path, operation: str):
+        if operation == "context-recover":
+            return {"ok": True, "unavailable": [], "errors": []}
+        if operation == "ingest-results":
+            return {
+                "ok": True,
+                "ingested": [],
+                "publicationRequests": [],
+                "validationDeferred": [],
+                "quarantined": [
+                    {
+                        "key": "a/b#1",
+                        "reason": "LEGACY_RESULT_REQUIRES_MIGRATION",
+                        "new": False,
+                    }
+                ],
+                "errors": [],
+            }
+        if operation == "publication-feedback-list":
+            return {"ok": True, "candidates": [], "unresolved": [], "errors": []}
+        return {"ok": True, "published": [], "pending": [], "blocked": [], "errors": []}
+
+    result = advance_once(tmp_path, runner=runner)
+
+    assert result["ok"] is True
+    assert result["activity"] is False
+    assert result["quarantined"][0]["new"] is False
+
+
 def test_terminalized_live_audit_is_published_before_cycle_finishes(tmp_path):
     calls = []
 

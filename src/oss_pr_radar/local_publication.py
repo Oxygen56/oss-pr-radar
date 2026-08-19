@@ -611,6 +611,9 @@ def advance_once(
         }
     ingestion = runner(root, "ingest-results")
     ingestion_quarantined = list(ingestion.get("quarantined") or [])
+    ingestion_quarantine_activity = [
+        item for item in ingestion_quarantined if item.get("new", True) is not False
+    ]
     ingestion_errors = list(ingestion.get("errors") or [])
     if ingestion.get("ok") is False or ingestion_errors:
         return {
@@ -656,6 +659,9 @@ def advance_once(
     )
     post_review_errors = list(post_review_ingestion.get("errors") or [])
     post_review_quarantined = list(post_review_ingestion.get("quarantined") or [])
+    post_review_quarantine_activity = [
+        item for item in post_review_quarantined if item.get("new", True) is not False
+    ]
     if post_review_ingestion.get("ok") is False or post_review_errors:
         return {
             "ok": False,
@@ -717,6 +723,7 @@ def advance_once(
         *list(post_review_ingestion.get("validationDeferred") or []),
     ]
     quarantined = ingestion_quarantined + post_review_quarantined
+    quarantine_activity = ingestion_quarantine_activity + post_review_quarantine_activity
     blocked = list(publication.get("blocked") or [])
     pending = list(publication.get("pending") or [])
     renamed = list(title_reconciliation.get("renamed") or [])
@@ -764,7 +771,7 @@ def advance_once(
         or published
         or publication_feedback.get("reconciled")
         or blocked
-        or quarantined
+        or quarantine_activity
         or errors
         or drain_activity
         or queue_sync.get("inserted")
