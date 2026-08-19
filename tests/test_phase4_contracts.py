@@ -50,7 +50,12 @@ def test_radar_scan_exports_authenticated_state_with_the_managed_key():
     scan = workflow.split("\n  scan:\n", 1)[1].split("\n  build-state:\n", 1)[0]
     assert "RADAR_DISPATCH_HMAC_KEY: ${{ secrets.RADAR_DISPATCH_HMAC_KEY }}" in scan
     assert "scripts/export_managed_snapshot.py" in scan
-    for job, next_job in (("persist-pending", "notify"), ("persist-receipt", None)):
+    for job, next_job in (
+        ("watch", "pr-followup"),
+        ("pr-followup", "scan"),
+        ("persist-pending", "notify"),
+        ("persist-receipt", None),
+    ):
         start = workflow.index(f"\n  {job}:\n")
         end = workflow.index(f"\n  {next_job}:\n", start) if next_job else len(workflow)
         section = workflow[start:end]
