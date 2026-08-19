@@ -1,11 +1,15 @@
 import json
+import subprocess
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
 from oss_pr_radar.ledger import LedgerError, RadarLedger
 from oss_pr_radar.metrics import QUALITY_FIELDS, assess_submit_ready, rolling_quality
-from oss_pr_radar.util import iso_z, parse_time
+from oss_pr_radar.util import iso_z, parse_time, sha256_json
+
+pytestmark = pytest.mark.usefixtures("current_signing_key")
 
 
 def intent(**updates):
@@ -28,6 +32,76 @@ def intent(**updates):
     }
     value.update(updates)
     return value
+
+
+def legal_publication_probe(
+    tmp_path: Path,
+    *,
+    commit_message: str = "fix: runtime",
+    owner_repo: str = "a/b",
+    issue_number: int = 1,
+    task_id: str = "intent-1",
+):
+    from oss_pr_radar.repo_probe import TRUSTED_PROBE_PROFILES, run_reproduction_probe
+
+    worktree = tmp_path / f"publication-worktree-{task_id}"
+    worktree.mkdir()
+
+    def git(*args: str) -> str:
+        completed = subprocess.run(
+            ["git", *args], cwd=worktree, check=True, capture_output=True, text=True
+        )
+        return completed.stdout.strip()
+
+    git("init")
+    git("config", "user.name", "Test Contributor")
+    git("config", "user.email", "test@example.com")
+    (worktree / "runtime.py").write_text("value = 1\n", encoding="utf-8")
+    git("add", "runtime.py")
+    git("commit", "-m", "chore: baseline")
+    base_sha = git("rev-parse", "HEAD")
+    (worktree / "runtime.py").write_text("value = 2\n", encoding="utf-8")
+    git("add", "runtime.py")
+    git("commit", "-m", commit_message)
+    head_sha = git("rev-parse", "HEAD")
+    branch = git("symbolic-ref", "--short", "HEAD")
+    checkout = tmp_path / f"publication-probe-{task_id}"
+    profile_id = "test-ledger-publication"
+    issue_url = f"https://github.com/{owner_repo}/issues/{issue_number}"
+    unsigned = {
+        "taskId": task_id,
+        "issueUrl": issue_url,
+        "selectedBaseSha": base_sha,
+        "headSha": head_sha,
+        "commitSha": head_sha,
+        "codePaths": ["runtime.py"],
+    }
+    result_digest = sha256_json(unsigned)
+    TRUSTED_PROBE_PROFILES[profile_id] = {
+        "reproductionArgv": ["python3", "runtime.py"],
+        "validationArgv": ["python3", "runtime.py"],
+    }
+    git("worktree", "add", "--detach", str(checkout), base_sha)
+    receipt = run_reproduction_probe(
+        checkout_path=checkout,
+        repo=owner_repo,
+        default_branch="main",
+        selected_base_sha=base_sha,
+        code_paths=["runtime.py"],
+        profile_id=profile_id,
+        issue_url=unsigned["issueUrl"],
+        task_id=task_id,
+        thread_id=task_id,
+        head_sha=head_sha,
+        commit_sha=head_sha,
+        result_digest=result_digest,
+    )
+    TRUSTED_PROBE_PROFILES.pop(profile_id, None)
+    git("worktree", "remove", "--force", str(checkout))
+    evidence_path = worktree / ".oss-pr-radar" / "result.json"
+    evidence_path.parent.mkdir()
+    evidence_path.write_text(json.dumps(unsigned | {"reproductionReceipt": receipt}), encoding="utf-8")
+    return worktree, base_sha, head_sha, branch, receipt, result_digest, evidence_path
 
 
 def published_task_context(**updates):
@@ -2340,26 +2414,39 @@ def test_pr_followup_is_bound_to_existing_task_and_sent_once(tmp_path):
 
     previous_wake = candidate["wakeDigest"]
     store.record_stage("a/b#1", "FIX_READY", evidence={field: True for field in QUALITY_FIELDS})
+    worktree, base_sha, head_sha, branch, probe_receipt, result_digest, evidence_path = (
+        legal_publication_probe(tmp_path)
+    )
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE intents SET worktree_path=? WHERE intent_id='intent-1'",
+            (str(worktree),),
+        )
     update = store.create_publication_request(
         issue_url="https://github.com/a/b/issues/1",
         thread_id="thread-1",
-        commit_sha="d" * 40,
+        commit_sha=head_sha,
         branch="fix/1-runtime",
-        worktree_path="/tmp/worktree",
+        worktree_path=str(worktree),
         evidence_digest="update-evidence",
-        evidence_path="/tmp/worktree/.oss-pr-radar/result.json",
+        evidence_path=str(evidence_path),
         publication={
             "headOwner": "Oxygen56",
             "baseBranch": "main",
             "title": "fix: runtime",
-            "bodyPath": "/tmp/worktree/.oss-pr-radar/pr-body.md",
+            "bodyPath": str(worktree / ".oss-pr-radar" / "pr-body.md"),
         },
+        probe_receipt=probe_receipt,
+        result_digest=result_digest,
+        head_sha=head_sha,
+        selected_base_sha=base_sha,
+        code_paths=["runtime.py"],
     )
     assert update["request"]["publicationKind"] == "PR_UPDATE"
     permit = store.grant_publication_request(
         update["request_id"],
         issue_url="https://github.com/a/b/issues/1",
-        commit_sha="d" * 40,
+        commit_sha=head_sha,
         branch="fix/1-runtime",
         evidence={"verified": True},
     )
@@ -2426,59 +2513,21 @@ def test_post_push_confirmation_recovers_legacy_head_drift_failure(tmp_path):
                 now,
             ),
         )
-    push = store.publication_effect(
-        permit_id=permit_id,
-        action="push",
-        request_digest="push-request",
-    )
-    store.complete_publication_effect(
-        push["effect_id"],
-        status="SUCCEEDED",
-        result={"ok": True, "remoteSha": "b" * 40},
-    )
-    confirmation = store.publication_effect(
-        permit_id=permit_id,
-        action="create_pr",
-        request_digest="confirmation-request",
-    )
-    store.complete_publication_effect(
-        confirmation["effect_id"],
-        status="FAILED",
-        result={
-            "ok": False,
-            "reason": "LIVE_RECHECK_FAILED",
-            "detail": "EXISTING_PR_HEAD_DRIFT",
-        },
-    )
-    store.block_publication_request(request_id, "EXISTING_PR_HEAD_DRIFT")
-
-    assert [item["request_id"] for item in store.publication_work_items()] == [request_id]
-    recovered = store.prepare_post_push_reconciliation(request_id)
-
-    assert recovered["permit_id"] == permit_id
-    assert store.publication_request(request_id)["status"] == "GRANTED"
-    effect = store.publication_effect_by_request(
-        permit_id=permit_id,
-        action="create_pr",
-        request_digest="confirmation-request",
-    )
-    assert effect["status"] == "RECONCILE_REQUIRED"
-    store.succeed_pull_request_effect(
-        effect_id=effect["effect_id"],
-        permit_id=permit_id,
-        pr_url="https://github.com/a/b/pull/9",
-        result={"ok": True, "prUrl": "https://github.com/a/b/pull/9"},
-    )
-    consumed = store.publication_request(request_id)
-    assert consumed["status"] == "CONSUMED"
-    assert consumed["reason"] is None
+    with pytest.raises(LedgerError, match="authenticated reproduction is required"):
+        store.publication_effect(
+            permit_id=permit_id,
+            action="push",
+            request_digest="push-request",
+        )
+    assert store.publication_request(request_id)["status"] == "BLOCKED"
+    assert store.publication_request(request_id)["reason"] == "BLOCKED_REPRODUCTION_REQUIRED"
+    assert store.publication_work_items() == []
 
 
 def test_interrupted_push_effect_can_retry_after_confirmed_noop(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(intent())
     old = iso_z(datetime.now(UTC) - timedelta(minutes=10))
-    now = iso_z(datetime.now(UTC))
     with store.connect() as connection:
         connection.execute(
             """INSERT INTO publication_requests
@@ -2503,39 +2552,13 @@ def test_interrupted_push_effect_can_retry_after_confirmed_noop(tmp_path):
             (old, old),
         )
 
-    prepared = store.prepare_ambiguous_publication_effect(
-        "request-1",
-        action="push",
-    )
-
-    assert prepared["pending"] is False
-    assert prepared["effectId"] == "effect-1"
+    assert store.prepare_ambiguous_publication_effect("request-1", action="push") is None
     with store.connect() as connection:
         status = connection.execute(
             "SELECT status FROM publication_effects WHERE effect_id='effect-1'"
         ).fetchone()["status"]
-    assert status == "RECONCILE_REQUIRED"
-
-    permit = store.retry_publication_effect_after_noop(
-        effect_id="effect-1",
-        permit_id="permit-1",
-        evidence={"remoteSha": "a" * 40},
-    )
-
-    assert permit["status"] == "ACTIVE"
-    assert parse_time(permit["expires_at"]) > parse_time(now)
-    with store.connect() as connection:
-        effect = connection.execute(
-            "SELECT status,result_json FROM publication_effects WHERE effect_id='effect-1'"
-        ).fetchone()
-    assert effect["status"] == "ATTEMPTED"
-    assert json.loads(effect["result_json"])["reason"] == "RETRY_AFTER_CONFIRMED_NO_EFFECT"
-
-    pending = store.prepare_ambiguous_publication_effect(
-        "request-1",
-        action="push",
-    )
-    assert pending["pending"] is True
+    assert status == "BLOCKED"
+    assert store.publication_request("request-1")["status"] == "BLOCKED"
 
 
 def test_transient_pr_creation_effect_can_refresh_and_retry_after_confirmed_noop(tmp_path):
@@ -2592,18 +2615,12 @@ def test_transient_pr_creation_effect_can_refresh_and_retry_after_confirmed_noop
 
     assert permit["status"] == "ACTIVE"
     assert parse_time(permit["expires_at"]) > datetime.now(UTC)
-    retried = store.retry_publication_effect_after_noop(
-        effect_id="create-1",
-        permit_id="permit-1",
-        evidence={"exactHeadPrAbsent": True},
-    )
-    assert retried["status"] == "ACTIVE"
-    with store.connect() as connection:
-        effect = connection.execute(
-            "SELECT status,result_json FROM publication_effects WHERE effect_id='create-1'"
-        ).fetchone()
-    assert effect["status"] == "ATTEMPTED"
-    assert json.loads(effect["result_json"])["reason"] == "RETRY_AFTER_CONFIRMED_NO_EFFECT"
+    with pytest.raises(LedgerError, match="authenticated reproduction is required"):
+        store.retry_publication_effect_after_noop(
+            effect_id="create-1",
+            permit_id="permit-1",
+            evidence={"exactHeadPrAbsent": True},
+        )
 
 
 def test_deferred_publication_preflight_is_rearmed_without_ambiguous_effect(tmp_path):

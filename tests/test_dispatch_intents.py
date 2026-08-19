@@ -40,9 +40,25 @@ def candidate(**updates):
         "gate_decision": "ALLOW_TO_WORK",
         "auto_spawn": True,
         "public_submission_allowed": True,
+        "preTaskEvidence": {
+            "schema": "pre_task_evidence_v1",
+            "baseSha": "base-a",
+            "issue": {"state": "open", "assignees": []},
+            "codePaths": ["src/runtime.py"],
+            "reproductionPath": True,
+            "validationPath": True,
+        },
+        "preTaskGate": {
+            "schema": "pre_task_evidence_v1",
+            "allowed": True,
+            "reason": "PRE_TASK_EVIDENCE_PASSED",
+            "evidenceDigest": "evidence-digest",
+        },
         "llm_review": {
             "status": "ok",
             "decision": "NEW_CLEAN_CANDIDATE",
+            "semanticSignal": "NO_OBJECTION",
+            "evidence": ["issue_data.issue_body"],
             "confidence": 0.91,
             "model": "deepseek-v4-flash",
         },
@@ -125,21 +141,21 @@ def test_human_review_and_llm_failure_are_not_dispatched():
     assert result["intents"] == []
 
 
-def test_strict_deterministic_fallback_is_dispatched():
-    result = MODULE.build(
-        report(
-            candidate(
-                llm_review={
-                    "status": "deterministic_fallback",
-                    "decision": "NEW_CLEAN_CANDIDATE",
-                    "semantic_review_mode": "deterministic_high_confidence_fallback",
-                }
-            )
-        ),
-        signing_key=KEY,
-        now=NOW,
-    )
-    assert len(result["intents"]) == 1
+def test_strict_deterministic_fallback_is_not_dispatched():
+    with pytest.raises(ValueError):
+        MODULE.build(
+            report(
+                candidate(
+                    llm_review={
+                        "status": "deterministic_fallback",
+                        "decision": "NEW_CLEAN_CANDIDATE",
+                        "semantic_review_mode": "deterministic_high_confidence_fallback",
+                    }
+                )
+            ),
+            signing_key=KEY,
+            now=NOW,
+        )
 
 
 def test_ai_disclosure_candidate_is_dispatched_for_private_work_only():
@@ -173,6 +189,8 @@ def test_ai_disclosure_only_wait_dispatches_private_task():
                     "status": "ok",
                     "decision": "WAIT_MAINTAINER",
                     "wait_reason": "DISCLOSURE_ONLY",
+                    "semanticSignal": "NO_OBJECTION",
+                    "evidence": ["issue_data.issue_body"],
                     "confidence": 0.7,
                     "model": "deepseek-v4-flash",
                 },

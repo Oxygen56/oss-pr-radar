@@ -18,10 +18,13 @@ heartbeat. The heartbeat is a controller, not an issue implementation task.
 
 ## One command
 
-From the fixed root, run exactly:
+From the fixed runtime root, run exactly; the script and package must come from
+the verified active release:
 
 ```text
-.venv/bin/python scripts/controller_cycle.py
+.venv/bin/python current-release/scripts/controller_cycle.py \
+  --root /Users/oxygen/Documents/github/oss-pr-radar \
+  --code-root /Users/oxygen/Documents/github/oss-pr-radar/current-release
 ```
 
 This command is the only hourly orchestration entry point. It deterministically:
@@ -93,3 +96,15 @@ re-audit held candidates every 20 seconds when nothing changed.
 - When `ok=false`, describe the real user-visible impact and affected issue in
   plain Chinese. Mention an internal name only if there is no accurate plain
   description. Do not paste logs, credentials, prompts, or the full JSON.
+
+The daily War Room uses the same release-bound projection for both channels:
+
+```text
+.venv/bin/python current-release/scripts/daily_war_room_cycle.py \
+  --runtime-root /Users/oxygen/Documents/github/oss-pr-radar
+```
+
+Adding `--send` is the only way to request Feishu delivery. Delivery state is
+authenticated and keyed to candidate content, so an unrelated projection
+change does not resend an already delivered item. Public replies remain drafts
+unless the existing managed gate authorizes them.

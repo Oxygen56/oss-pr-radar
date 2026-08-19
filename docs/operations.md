@@ -27,6 +27,17 @@ local signed intents. The five-minute local importer picks up the completed
 cloud queue independently, so a delayed or quota-blocked Codex heartbeat cannot
 stop new issue tasks.
 
+All public `local_dispatch_bridge.py` operations require an explicit
+`--runtime-root` bound to the active release and a valid operational
+authorization. This applies even to commands whose primary result is a
+listing, because reconciliation paths may update managed ledger or lifecycle
+records. There is no unauthenticated or skip-auth CLI mode. The
+`publication_executor.py` `push` and `create-pr` commands are internal bridge
+children and reject direct calls without the same runtime binding. Workflow
+health inspection remains available as a read-only check, but `--repair` and
+`--notify` require the binding and authorization before any GitHub or Feishu
+action.
+
 Deferred inspections are oldest-first and receive a dedicated 24-item budget
 in addition to the 30-item fresh-issue budget; there is no recheck cooldown. A
 terminal rejection drains the item. A transient evidence or semantic-model
@@ -80,11 +91,13 @@ receiving their own worktrees.
   runtime directory and require that protocol; do not duplicate the checklist
   in desktop configuration.
 - Deploy local controller updates only through `scripts/deploy_local_runtime.py`.
+- The deployment source must be clean. The deployer creates a new immutable
+  `releases/<commit>-<manifest-digest>/` directory, verifies every file hash,
+  then atomically moves `current-release`. It never overwrites a previous
+  release or durable `state`; rollback means pointing the activation pointer at
+  a previously verified release.
 - Repair task title drift with `local_dispatch_bridge.py title-reconcile`; it applies
   and verifies lifecycle titles through the local Codex app-server protocol.
-  It copies Git-tracked code and preserves `.git`, `.venv`, `reports`, and
-  `state`; release-worktree caches or databases can never overwrite production
-  runtime state.
 - A missing or corrupt state manifest stops the scan. Run
   `python scripts/state_branch.py migrate` once for a legacy branch.
 - If the local lifecycle database is missing or replaced, queue sync verifies
@@ -183,11 +196,20 @@ receiving their own worktrees.
   capacity. An expired permit can reconcile an existing ambiguous effect but
   can never authorize a new public attempt; a consumed success may only replay
   its stored receipt.
-- Install or refresh the local completion collector with
-  `python scripts/install_local_publication_agent.py`. Its stdout and stderr are
-  stored under `~/Library/Logs/oss-pr-radar/`; an idle cycle is silent. Its
-  five-minute signed-queue import uses the macOS Keychain dispatch key and a
-  secret-free environment. A
+- Stage or activate the local completion collector only through the explicit
+  release-bound `--stage`, `--activate`, or steady-state `--ensure` modes; the
+  production controller uses `--ensure` after operational authorization. The
+  20-second fast worker
+  only ingests local receipts and enqueues slow work. The installer registers the
+  slow worker and five-minute queue importer from their separate specs; their
+  `fast-worker.lock` and `slow-worker.lock` are independent. Shared Ledger and
+  operation writes are short-lived and idempotent, so slow network work cannot
+  block receipt registration. Their stdout and stderr are stored
+  under `~/Library/Logs/oss-pr-radar/` and rotated before a new one-shot run.
+  `python scripts/runtime_audit.py` is read-only and must be used for service
+  health: a loaded LaunchAgent is not healthy when its real PID/version,
+  successful-cycle freshness, failure streak, exit code, queue-import age,
+  pending publication effects, disk, log, release, or policy checks fail. A
   publishable fix with incomplete SubmitReady evidence is reported once as
   `validationDeferred` and settles as non-terminal `VALIDATION_PENDING`. It is
   titled as valuable work awaiting validation, releases dispatch capacity, and
@@ -248,7 +270,7 @@ receiving their own worktrees.
 
 ## Quality Review
 
-Run `local_dispatch_bridge.py metrics --days 30`. Review:
+Run `local_dispatch_bridge.py --runtime-root <runtime-root> metrics --days 30`. Review:
 
 - `submitReadyRate`: primary metric;
 - `filterMissRate`: selected tasks later blocked by pre-existing ownership,
@@ -262,8 +284,9 @@ competition opportunity.
 
 ## Local Dispatcher Order
 
-The desktop heartbeat runs only
-`.venv/bin/python scripts/controller_cycle.py`. The command owns health repair,
+The desktop heartbeat runs only the exact active-release command
+`.venv/bin/python current-release/scripts/controller_cycle.py --root <runtime-root> --code-root <runtime-root>/current-release`.
+The command owns health repair,
 interrupted creation, queue sync, PR refresh, ingestion, restoration, titles,
 cleanup, publication, notifications, final audit, and one serialized drain.
 The drain always prioritizes existing PR follow-up, validation continuation,
@@ -282,6 +305,195 @@ completed no-go task does not remain visible as valuable or wait for the next
 hourly heartbeat to be cleaned up. The same event then advances at most one next
 task under the shared drain lock. An idle 20-second cycle performs no live audit
 and creates no task.
+
+Stage 7 keeps executable code under the verified immutable release while
+`state`, `.venv`, and `reports` stay under the runtime root. The local ledger
+cutover is reversible and pointer-only:
+
+```bash
+python current-release/scripts/stage7_cutover.py prepare \
+  --runtime-root <runtime-root> --source <ledger-copy> \
+  --quiesce-token <writer-stop-proof>
+python current-release/scripts/stage7_cutover.py activate \
+  --runtime-root <runtime-root> --manifest <prepared-manifest>
+python current-release/scripts/stage7_cutover.py status --runtime-root <runtime-root>
+python current-release/scripts/stage7_cutover.py rollback \
+  --runtime-root <runtime-root> --manifest <activated-manifest>
+```
+
+The complete first-deployment order starts by running the deployer from an
+accepted clean candidate checkout, because a new runtime has no
+`current-release` yet:
+
+```bash
+python <accepted-clean-source>/scripts/deploy_local_runtime.py \
+  --source <accepted-clean-source> --target <runtime-root>
+```
+
+This verifies the source before changing the target. It creates the immutable
+release and pointer, and atomically adds the complete runtime-owned set
+`/current-release`, `/releases/`, `/reports/`, `/state/`, and `/.venv/` to the
+target repository's private `.git/info/exclude`; it does not modify tracked
+production files or overwrite existing exclude rules. The tracked
+`state/.gitkeep` exception remains tracked and is not hidden by the exclude.
+The candidate repository's `.gitignore` contains the same local-runtime rules
+for new repositories. The complete order is then: stop and sign live service
+evidence, bootstrap the retained legacy ledger, create the authoritative live
+snapshot, verify the Stage 6 report and detached envelope, run the Stage 6
+rehearsal, prepare the managed ledger without any live-state input, rehearse Git
+preservation restore in an isolated clone, activate the pointer (which revokes
+any old operational authorization), generate and validate managed-counts evidence
+against the exact Stage 6 projection, issue the short-lived worker-staging
+authorization, stage the three worker plists unloaded, update the two automations,
+generate the automation snapshot from the actual TOML files and staged plist bytes,
+run strict preflight, issue the operational authorization (which revokes only the
+staging permit), activate the workers, and finally run strict final acceptance. If any preflight fails,
+roll back the pointer and do not load or run a worker. Worker installation is
+split into these two release-bound commands:
+
+```bash
+python current-release/scripts/stage7_evidence.py worker-staging-authorization \
+  --runtime-root <runtime-root> \
+  --managed-counts-evidence <managed-counts-evidence>
+python current-release/scripts/install_local_publication_workers.py \
+  --runtime-root <runtime-root> --stage
+# Update both automations, then generate <automation-snapshot> from their actual
+# TOML files and the three staged plist files.
+python current-release/scripts/stage7_evidence.py operational-authorization \
+  --runtime-root <runtime-root> \
+  --managed-counts-evidence <managed-counts-evidence> \
+  --automation-snapshot <automation-snapshot>
+python current-release/scripts/install_local_publication_workers.py \
+  --runtime-root <runtime-root> --activate
+```
+
+`--status` is a runtime-bound read-only check. `--stage` requires the short-lived
+signed stage-only authorization; `--activate`, `--ensure`, and `--uninstall`
+require the active immutable release and full operational authorization before
+any plist write or service operation. The
+historical `install_local_publication_agent.py` entrypoint is only a
+compatibility forwarder to the three-worker installer; it cannot generate,
+install, or start the old monolithic or fast-only service.
+
+Rollback is the final pointer-only step and retains both ledger versions. The
+exact machine-readable order and arguments are exported by
+`current-release/scripts/automation_command_contracts.py`; do not reconstruct
+these commands in an automation prompt.
+
+Before the Stage 6 compact rehearsal, create the authoritative live PR input
+from the legacy database. This command makes a private stable source backup,
+replays the same pre-migration inputs used by Stage 6, and performs only
+read-only GitHub requests. It writes one atomic 0600 file only after every PR
+has been observed successfully:
+
+```bash
+python current-release/scripts/snapshot_managed_pr_states.py \
+  --source <legacy-ledger-source> \
+  --legacy-db <legacy-war-room-db> \
+  --legacy-reports <legacy-reports-dir> \
+  --followup <followup-snapshot> \
+  --quiesce-token <writer-stop-proof> \
+  --out <live-states.json> \
+  --workers 4 --max-attempts 3
+```
+
+The output is bound to the source SQLite logical generation, including WAL
+state, the legacy database generation, the legacy reports and follow-up
+digests, and the exact managed PR key-set digest. If any input changes before
+or after the GitHub reads, the command fails closed and leaves no partial
+output. Pass this exact file to the Stage 6 rehearsal; do not construct live
+states by hand. The terminal output is only a compact receipt; full
+observations remain in the private 0600 file.
+
+Stage 6 verification results are generated, never typed into the report. From
+the active release, use a dedicated verification root and report root:
+
+```bash
+python current-release/scripts/stage6_manifest.py \
+  --artifact-root <verification-report-root> \
+  --verification-out <verification-root>/verification-manifest.json \
+  --run
+```
+
+This executes every versioned check and atomically writes the standalone 0600
+verification manifest. Instead of `--run`, `--results <captured-results.json>`
+may provide exactly those passing command results. Missing, extra, failed,
+skipped, non-zero, or malformed results are rejected before either output is
+created. The versioned `code-integrity` verifies the release manifest or exact clean
+development root and does not search a parent Git repository; run `git diff
+--check` separately for local development hygiene. Keep `<verification-root>` and the final rehearsal root separate, then
+pass the standalone file directly to the compact rehearsal:
+
+```bash
+python current-release/scripts/stage6_compact_rehearsal.py \
+  --artifact-root <final-rehearsal-root> \
+  --verification-manifest <verification-root>/verification-manifest.json \
+  --source <source-ledger> --legacy-db <legacy-db> \
+  --legacy-reports <legacy-reports> --followup <followup> \
+  --live-states <live-states.json> --code-head <verified-head> \
+  --observed-at <snapshot-observed-at>
+```
+
+The Codex automation files use their actual application format. Generate the
+signed snapshot only from the two current TOML files; it validates the exact
+heartbeat thread target, the daily `github` project target, timestamps, prompt
+template, active-release command and worker plists:
+
+```bash
+python current-release/scripts/stage7_evidence.py automation-snapshot \
+  --runtime-root <runtime-root> \
+  --heartbeat-toml <heartbeat-automation.toml> \
+  --daily-toml <daily-automation.toml> \
+  --out <automation-snapshot.json>
+```
+
+Generate managed counts only from an independently verified Stage 6 public
+report and detached envelope. The runtime ledger is checked against that
+baseline; it cannot create its own expected baseline:
+
+```bash
+python current-release/scripts/stage7_evidence.py managed-counts \
+  --runtime-root <runtime-root> --report <stage6-report.json> \
+  --envelope <stage6-envelope.json> --code-head <verified-release-head> \
+  --out <managed-counts-evidence.json>
+```
+
+Before activation, rehearse the signed Git preservation archive. Rehearsal
+uses a no-hardlink clone and checks tracked binary patch bytes plus every
+untracked file's bytes, mode and digest. `apply` is allowed only for the exact
+clean repository identity and stages the complete restore before changing it;
+any failure restores the pre-apply clean state without broad cleanup:
+
+```bash
+python current-release/scripts/stage7_cutover.py restore \
+  --manifest <prepared-manifest> --repo <source-repo> --mode rehearse
+python current-release/scripts/stage7_cutover.py restore \
+  --manifest <prepared-manifest> --repo <exact-clean-repo> --mode apply
+```
+
+The default acceptance output is `PUBLIC_SAFE`: absolute local paths and
+token-like values are redacted. Use `--private` only for restricted local
+operations evidence. Raw SQLite/WAL/SHM files, Git patches, API payloads and
+full private manifests must never be copied into a shareable report.
+
+Stage 6's versioned YAML check explicitly parses `.github/workflows/ci.yml`,
+`.github/workflows/health.yml`, and `.github/workflows/radar.yml` one by one
+with Ruby Psych. A parse error in any file makes the check fail; hidden
+workflow directories are part of the acceptance scope.
+
+Prepare never changes the active ledger pointer. Activation and rollback only
+atomically replace that pointer; every versioned SQLite file remains retained.
+On a first deployment, stop all workers and record a service-stopped evidence
+file, then retain the legacy database before preparing the managed ledger:
+
+```bash
+python current-release/scripts/stage7_cutover.py bootstrap \
+  --runtime-root <runtime-root> --legacy-source <legacy-ledger> \
+  --service-stopped-evidence <stopped-evidence> \
+  --quiesce-token <writer-stop-proof>
+```
+Bootstrap accepts only the pre-managed legacy database and only when the
+current-ledger pointer is absent. It never substitutes for managed prepare.
 
 DeepSeek Harness runs as a separate product automation. It does not share the
 Radar ledger, scanner state, task WIP slot, task contexts, controller command,

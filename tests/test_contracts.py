@@ -38,23 +38,24 @@ def test_auto_spawn_requires_actionable_review():
         )
 
 
-def test_auto_spawn_accepts_auditable_deterministic_fallback():
-    validate_report(
-        {
-            "scan_ok": True,
-            "candidate_details": [
-                candidate(
-                    auto_spawn=True,
-                    gate_decision="ALLOW_TO_WORK",
-                    category="NEW_CLEAN_CANDIDATE",
-                    llm_review={
-                        "status": "deterministic_fallback",
-                        "decision": "NEW_CLEAN_CANDIDATE",
-                    },
-                )
-            ],
-        }
-    )
+def test_auto_spawn_rejects_deterministic_fallback_as_authorization():
+    with pytest.raises(ContractError):
+        validate_report(
+            {
+                "scan_ok": True,
+                "candidate_details": [
+                    candidate(
+                        auto_spawn=True,
+                        gate_decision="ALLOW_TO_WORK",
+                        category="NEW_CLEAN_CANDIDATE",
+                        llm_review={
+                            "status": "deterministic_fallback",
+                            "decision": "NEW_CLEAN_CANDIDATE",
+                        },
+                    )
+                ],
+            }
+        )
 
 
 def test_candidate_requires_issue_update_watermark():

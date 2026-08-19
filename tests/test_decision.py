@@ -40,6 +40,8 @@ def candidate() -> dict:
         "llm_review": {
             "status": "ok",
             "decision": "NEW_CLEAN_CANDIDATE",
+            "semanticSignal": "NO_OBJECTION",
+            "evidence": ["issue_data.issue_body"],
             "confidence": 0.9,
         },
     }
@@ -171,14 +173,15 @@ def test_live_gate_allows_private_disclosure_only_wait():
             "status": "ok",
             "decision": "WAIT_MAINTAINER",
             "waitReason": "DISCLOSURE_ONLY",
+            "semanticSignal": "NO_OBJECTION",
             "confidence": 0.7,
         },
     }
 
     result = authorize(private_candidate, value)
 
-    assert result.status == "ALLOW"
-    assert result.reason_code == "AI_DISCLOSURE_PRIVATE_WORK_ALLOWED"
+    assert result.status == "HOLD"
+    assert result.reason_code == "SEMANTIC_REVIEW_NOT_ACTIONABLE"
 
 
 def test_live_gate_holds_private_disclosure_task_waiting_on_design():

@@ -6,6 +6,7 @@ import pytest
 
 from oss_pr_radar import publication
 from oss_pr_radar.github_client import GitHubError
+from oss_pr_radar.independent_review import REVIEW_SCHEMA, _receipt_path, _source_digest
 from oss_pr_radar.ledger import LedgerError, RadarLedger
 from oss_pr_radar.metrics import QUALITY_FIELDS
 from oss_pr_radar.publication import (
@@ -14,12 +15,10 @@ from oss_pr_radar.publication import (
     public_text_is_safe,
     request_publication,
 )
+from oss_pr_radar.repo_probe import TRUSTED_PROBE_PROFILES, run_reproduction_probe
 from oss_pr_radar.util import iso_z
 
-
-@pytest.fixture(autouse=True)
-def controller_review_receipt(monkeypatch):
-    monkeypatch.setattr(publication, "controller_review_passed", lambda _root, _value: True)
+pytestmark = pytest.mark.usefixtures("current_signing_key")
 
 
 def git(*args, cwd):
@@ -50,6 +49,8 @@ def dispatch_intent(worktree):
         "llmReview": {
             "status": "ok",
             "decision": "NEW_CLEAN_CANDIDATE",
+            "semanticSignal": "NO_OBJECTION",
+            "evidence": ["issue_data.issue_body"],
             "confidence": 0.91,
             "model": "test",
         },
@@ -60,16 +61,36 @@ def dispatch_intent(worktree):
 
 
 def prepared_request(tmp_path):
+    publication.CONTROL_ROOT = tmp_path
     worktree = tmp_path / "worktree"
     worktree.mkdir()
     git("init", cwd=worktree)
     git("config", "user.name", "Tester", cwd=worktree)
     git("config", "user.email", "tester@example.com", cwd=worktree)
-    (worktree / "file.txt").write_text("fixed\n", encoding="utf-8")
+    (worktree / "file.txt").write_text('assert "fixed" == "fixed"\n', encoding="utf-8")
     git("add", "file.txt", cwd=worktree)
     git("commit", "-m", "Fix streaming", cwd=worktree)
     branch = git("symbolic-ref", "--short", "HEAD", cwd=worktree)
     commit = git("rev-parse", "HEAD", cwd=worktree)
+    TRUSTED_PROBE_PROFILES["test-publication-real"] = {
+        "reproductionArgv": ["python3", "file.txt"],
+        "validationArgv": ["python3", "file.txt"],
+    }
+    result_digest = "publication-result-digest"
+    reproduction_receipt = run_reproduction_probe(
+        checkout_path=worktree,
+        repo="example/project",
+        default_branch="main",
+        selected_base_sha=commit,
+        code_paths=["file.txt"],
+        profile_id="test-publication-real",
+        issue_url="https://github.com/example/project/issues/7",
+        task_id="intent-1",
+        thread_id="thread-1",
+        head_sha=commit,
+        commit_sha=commit,
+        result_digest=result_digest,
+    )
 
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(dispatch_intent(worktree))
@@ -89,12 +110,21 @@ def prepared_request(tmp_path):
     evidence_path.write_text(
         json.dumps(
             {
+                "key": "example/project#7",
                 "issueUrl": "https://github.com/example/project/issues/7",
                 "commitSha": commit,
                 "branch": branch,
                 "worktreePath": str(worktree),
                 "changedFiles": ["file.txt"],
                 "quality": quality,
+                "probeRequired": True,
+                "probeLevel": "REPRODUCED_VALIDATED",
+                "selectedBaseSha": commit,
+                "headSha": commit,
+                "resultDigest": result_digest,
+                "taskId": "intent-1",
+                "codePaths": ["file.txt"],
+                "reproductionReceipt": reproduction_receipt,
                 "tests": [{"command": "pytest", "exitCode": 0}],
                 "publication": {
                     "headOwner": "Oxygen56",
@@ -102,6 +132,41 @@ def prepared_request(tmp_path):
                     "title": "Fix streaming tool arguments",
                     "bodyFile": str(body_path),
                 },
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    evidence_value = json.loads(evidence_path.read_text(encoding="utf-8"))
+    source_digest = _source_digest(evidence_value)
+    review = {
+        "schemaVersion": REVIEW_SCHEMA,
+        "reviewedAt": iso_z(datetime.now(UTC)),
+        "commitSha": commit,
+        "baseRevision": commit,
+        "sourceDigest": source_digest,
+        "reviewMode": "codex_exec_ephemeral_read_only",
+        "verdict": "PASS",
+        "summary": "Explicit fixture review passed.",
+        "findings": [],
+        "blockingEvidence": [],
+        "evidence": ["file.txt", "pytest"],
+    }
+    review_path = _receipt_path(
+        tmp_path,
+        key="example/project#7",
+        commit_sha=commit,
+        source_digest=source_digest,
+    )
+    review_path.parent.mkdir(parents=True, exist_ok=True)
+    review_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": REVIEW_SCHEMA,
+                "key": "example/project#7",
+                "commitSha": commit,
+                "sourceDigest": source_digest,
+                "review": review,
             },
             sort_keys=True,
         ),
@@ -115,6 +180,80 @@ def prepared_request(tmp_path):
         evidence_path=evidence_path,
     )
     return store, request, evidence_path
+
+
+def refresh_reproduction_evidence(evidence, *, worktree, tmp_path, commit_sha):
+    probe_checkout = tmp_path / "probe-checkout"
+    subprocess.run(
+        ["git", "worktree", "add", "--detach", str(probe_checkout), evidence["selectedBaseSha"]],
+        cwd=worktree,
+        check=True,
+        capture_output=True,
+    )
+    result_digest = f"result-{commit_sha}"
+    evidence.update(
+        {
+            "commitSha": commit_sha,
+            "headSha": commit_sha,
+            "resultDigest": result_digest,
+            "reproductionReceipt": run_reproduction_probe(
+                checkout_path=probe_checkout,
+                repo="example/project",
+                default_branch="main",
+                selected_base_sha=evidence["selectedBaseSha"],
+                code_paths=["file.txt"],
+                profile_id="test-publication-real",
+                issue_url="https://github.com/example/project/issues/7",
+                task_id="intent-1",
+                thread_id="thread-1",
+                head_sha=commit_sha,
+                commit_sha=commit_sha,
+                result_digest=result_digest,
+            ),
+        }
+    )
+    return evidence
+
+
+def write_explicit_review_receipt(evidence, *, tmp_path):
+    """Issue a fresh private review artifact for the exact evidence snapshot."""
+
+    source_digest = _source_digest(evidence)
+    commit_sha = str(evidence["commitSha"])
+    review = {
+        "schemaVersion": REVIEW_SCHEMA,
+        "key": evidence["key"],
+        "reviewedAt": iso_z(datetime.now(UTC)),
+        "commitSha": commit_sha,
+        "baseRevision": str(evidence.get("selectedBaseSha") or commit_sha),
+        "sourceDigest": source_digest,
+        "reviewMode": "codex_exec_ephemeral_read_only",
+        "verdict": "PASS",
+        "summary": "Explicit fixture review passed.",
+        "findings": [],
+        "blockingEvidence": [],
+        "evidence": ["file.txt", "pytest"],
+    }
+    path = _receipt_path(
+        tmp_path,
+        key=str(evidence["key"]),
+        commit_sha=commit_sha,
+        source_digest=source_digest,
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": REVIEW_SCHEMA,
+                "key": evidence["key"],
+                "commitSha": commit_sha,
+                "sourceDigest": source_digest,
+                "review": review,
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
 
 
 def test_up_to_date_upstream_branch_skips_fetch(monkeypatch, tmp_path):
@@ -327,8 +466,9 @@ def test_followup_publication_is_bound_to_existing_pr_and_previous_head(tmp_path
     quality = {field: True for field in QUALITY_FIELDS}
     store.record_stage("example/project#7", "FIX_READY", evidence=quality)
     evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
-    evidence["commitSha"] = current
+    refresh_reproduction_evidence(evidence, worktree=worktree, tmp_path=tmp_path, commit_sha=current)
     evidence_path.write_text(json.dumps(evidence, sort_keys=True), encoding="utf-8")
+    write_explicit_review_receipt(evidence, tmp_path=tmp_path)
 
     update = request_publication(
         store,
@@ -414,9 +554,10 @@ def test_broker_allows_bound_update_despite_a_competing_pr(monkeypatch, tmp_path
     quality = {field: True for field in QUALITY_FIELDS}
     store.record_stage("example/project#7", "FIX_READY", evidence=quality)
     evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
-    evidence["commitSha"] = current
+    refresh_reproduction_evidence(evidence, worktree=worktree, tmp_path=tmp_path, commit_sha=current)
     evidence["changedFiles"] = ["file.txt", "second.txt"]
     evidence_path.write_text(json.dumps(evidence, sort_keys=True), encoding="utf-8")
+    write_explicit_review_receipt(evidence, tmp_path=tmp_path)
     update = request_publication(
         store,
         issue_url="https://github.com/example/project/issues/7",
@@ -526,8 +667,9 @@ def test_broker_allows_bound_update_when_related_pr_enrichment_is_partial(monkey
     quality = {field: True for field in QUALITY_FIELDS}
     store.record_stage("example/project#7", "FIX_READY", evidence=quality)
     evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
-    evidence["commitSha"] = current
+    refresh_reproduction_evidence(evidence, worktree=worktree, tmp_path=tmp_path, commit_sha=current)
     evidence_path.write_text(json.dumps(evidence, sort_keys=True), encoding="utf-8")
+    write_explicit_review_receipt(evidence, tmp_path=tmp_path)
     update = request_publication(
         store,
         issue_url="https://github.com/example/project/issues/7",
@@ -641,15 +783,16 @@ def test_merge_update_uses_live_repository_base_not_pr_snapshot(tmp_path, live_b
     quality = {field: True for field in QUALITY_FIELDS}
     store.record_stage("example/project#7", "FIX_READY", evidence=quality)
     evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    refresh_reproduction_evidence(evidence, worktree=worktree, tmp_path=tmp_path, commit_sha=current)
     evidence.update(
         {
-            "commitSha": current,
             "handoffMode": "controller_merge_complete",
             "mergeBaseSha": base_sha,
             "mergeResolutionFiles": ["file.txt"],
         }
     )
     evidence_path.write_text(json.dumps(evidence, sort_keys=True), encoding="utf-8")
+    write_explicit_review_receipt(evidence, tmp_path=tmp_path)
     update = request_publication(
         store,
         issue_url="https://github.com/example/project/issues/7",

@@ -8,7 +8,9 @@ PROTOCOL = (Path(__file__).parents[1] / "docs" / "controller-heartbeat.md").read
 
 
 def test_controller_protocol_has_one_deterministic_entrypoint():
-    assert ".venv/bin/python scripts/controller_cycle.py" in PROTOCOL
+    assert ".venv/bin/python current-release/scripts/controller_cycle.py" in PROTOCOL
+    assert "--root /Users/oxygen/Documents/github/oss-pr-radar" in PROTOCOL
+    assert "--code-root /Users/oxygen/Documents/github/oss-pr-radar/current-release" in PROTOCOL
     assert "only hourly orchestration entry point" in PROTOCOL
     assert "Do not\nrepeat individual lifecycle operations" in PROTOCOL
 

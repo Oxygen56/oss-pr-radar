@@ -343,6 +343,22 @@ def collect_followup(
             if str(check.get("status") or "").lower() == "completed"
             and str(check.get("conclusion") or "").lower() in FAILURE_CONCLUSIONS
         ]
+        ci_status = "UNKNOWN"
+        if checks and all(str(check.get("status") or "").lower() == "completed" for check in checks):
+            ci_status = (
+                "PASSED"
+                if all(
+                    str(check.get("conclusion") or "").lower()
+                    in {"success", "neutral", "skipped"}
+                    for check in checks
+                )
+                else "FAILED"
+            )
+        elif any(
+            str(check.get("status") or "").lower() in {"queued", "in_progress"}
+            for check in checks
+        ):
+            ci_status = "RUNNING"
         changed_files = {str(item.get("filename") or "") for item in files if item.get("filename")}
         previous_evidence = previous_item.get("evidence") or {}
         if review_threads is None:
@@ -396,11 +412,41 @@ def collect_followup(
                 {
                     "reviewer": (item.get("user") or {}).get("login"),
                     "submittedAt": item.get("submitted_at"),
+                    "actorType": (item.get("user") or {}).get("type") or "User",
+                    "authorAssociation": str(item.get("author_association") or "").upper(),
                 }
                 for item in maintainer_changes
             ),
             key=lambda item: (str(item["reviewer"] or ""), str(item["submittedAt"] or "")),
         )
+        maintainer_events = []
+        for field, event_type in (("requested_reviewers", "INVITATION"), ("assignees", "ASSIGNMENT")):
+            for actor in pull.get(field) or []:
+                if not isinstance(actor, dict) or not actor.get("login"):
+                    continue
+                event_id = sha256_json(
+                    {
+                        "repo": repo,
+                        "number": number,
+                        "eventType": event_type,
+                        "login": actor.get("login"),
+                        "updatedAt": pull.get("updated_at"),
+                    }
+                )
+                maintainer_events.append(
+                    {
+                        "eventId": f"github:{event_id}",
+                        "eventType": event_type,
+                        "actorLogin": actor.get("login"),
+                        "actorType": actor.get("type") or actor.get("__typename") or "",
+                        "authorAssociation": str(
+                            actor.get("author_association") or ""
+                        ).upper(),
+                        "targetRepo": repo,
+                        "targetPrKey": key,
+                        "opportunityKey": key,
+                    }
+                )
         failing_check_evidence = sorted(
             (
                 {
@@ -463,6 +509,7 @@ def collect_followup(
             "mergeConflict": merge_conflict,
             "mergeConflictPreparationVersion": ("conflict_files_v1" if merge_conflict else None),
             "requestedChanges": requested_changes,
+            "maintainerEvents": sorted(maintainer_events, key=lambda item: str(item["eventId"])),
             "failingChecks": failing_check_evidence,
             "changedFiles": sorted(changed_files),
             "actionableCheckNames": actionable_check_names,
@@ -513,6 +560,7 @@ def collect_followup(
             "mergeableState": mergeable_state,
             "mergeConflict": merge_conflict,
             "draft": bool(pull.get("draft")),
+            "ciStatus": ci_status,
             "checkedAt": iso_z(current),
         }
         state_items.append(state_item)

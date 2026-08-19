@@ -6,19 +6,18 @@ import fcntl
 import json
 import os
 import subprocess
-import sys
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from .managed_adapter import GitHubAbsenceQueries, ManagedAdapter
+from .managed_snapshot import export_snapshot, import_snapshot
+from .operational_auth import require_operational_authorization
+from .release_binding import bind_runtime, runtime_ledger_path, runtime_python
+
 DEFAULT_PROJECT_ID = "5e41d21c-cba3-4be0-9a02-7eef35b67625"
 Runner = Callable[[Path, str, Sequence[str], set[int], int], dict[str, Any]]
-
-
-def _python(root: Path) -> Path:
-    candidate = root / ".venv" / "bin" / "python"
-    return candidate if candidate.exists() else Path(sys.executable)
 
 
 def run_json_command(
@@ -51,6 +50,8 @@ def run_json_command(
 def controller_cycle(
     root: Path,
     *,
+    code_root: Path | None = None,
+    allow_unreleased_code: bool = False,
     runner: Runner = run_json_command,
     notify: bool = True,
     project_id: str = DEFAULT_PROJECT_ID,
@@ -58,8 +59,20 @@ def controller_cycle(
     """Run one ordered control-plane cycle and return one authoritative result."""
 
     root = root.resolve()
-    python = str(_python(root))
-    bridge_script = str(root / "scripts" / "local_dispatch_bridge.py")
+    binding = bind_runtime(
+        root,
+        code_root=code_root,
+        allow_unreleased_code=allow_unreleased_code,
+    )
+    if not allow_unreleased_code:
+        require_operational_authorization(root)
+    managed_path = runtime_ledger_path(root)
+    managed_snapshot_path = root / "state" / "managed_lifecycle.snapshot.json.gz"
+    import_snapshot(managed_path, managed_snapshot_path, allow_missing=True)
+    managed_adapter = ManagedAdapter(root)
+    managed_adapter.ensure()
+    python = str(runtime_python(root))
+    bridge_script = str(binding.script("scripts/local_dispatch_bridge.py"))
     stages: dict[str, dict[str, Any]] = {}
     failures: list[dict[str, str]] = []
 
@@ -96,22 +109,32 @@ def controller_cycle(
     ) -> dict[str, Any]:
         return run_stage(
             name,
-            [python, bridge_script, operation, *arguments],
+            [python, bridge_script, "--runtime-root", str(root), operation, *arguments],
             require_ok=require_ok,
             timeout=timeout,
         )
 
-    install_script = str(root / "scripts" / "install_local_publication_agent.py")
-    health_script = str(root / "scripts" / "check_workflow_health.py")
-    run_stage("localAgentInstall", [python, install_script])
+    install_script = str(binding.script("scripts/install_local_publication_workers.py"))
+    health_script = str(binding.script("scripts/check_workflow_health.py"))
+    run_stage("localAgentEnsure", [python, install_script, "--runtime-root", str(root), "--ensure"])
     run_stage(
         "localAgentStatus",
-        [python, install_script, "--status"],
+        [python, install_script, "--runtime-root", str(root), "--status"],
         allowed_codes={0, 1},
     )
     health = run_stage(
         "workflowHealth",
-        [python, health_script, "--max-effective-age-minutes", "110", "--repair"],
+        [
+            python,
+            health_script,
+            "--runtime-root",
+            str(root),
+            "--code-root",
+            str(binding.code_root),
+            "--max-effective-age-minutes",
+            "110",
+            "--repair",
+        ],
         allowed_codes={0, 2},
         require_ok=False,
     )
@@ -203,17 +226,35 @@ def controller_cycle(
 
     run_stage(
         "finalWorkflowHealth",
-        [python, health_script, "--max-effective-age-minutes", "110"],
+        [
+            python,
+            health_script,
+            "--runtime-root",
+            str(root),
+            "--code-root",
+            str(binding.code_root),
+            "--max-effective-age-minutes",
+            "110",
+        ],
         allowed_codes={0, 2},
         require_ok=False,
     )
     run_stage(
         "finalLocalAgentStatus",
-        [python, install_script, "--status"],
+        [python, install_script, "--runtime-root", str(root), "--status"],
         allowed_codes={0, 1},
     )
 
     final_blockers = _final_blockers(stages)
+    stages["absenceReconcile"] = managed_adapter.reconcile_pending_absences(
+        GitHubAbsenceQueries()
+    )
+    reply_flow = managed_adapter.process_reply_outbox(sender=None, receipts={})
+    stages["replyQueue"] = {"ok": True, "stage": "queue_public_reply"}
+    stages["replyDispatch"] = reply_flow["dispatch"]
+    stages["replyReconcile"] = reply_flow["reconcile"]
+    stages["managedProjection"] = managed_adapter.ledger.war_room_projection()
+    stages["managedPersistence"] = export_snapshot(managed_path, managed_snapshot_path)
     return {
         "ok": not failures and not final_blockers,
         "checkedAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
@@ -266,6 +307,8 @@ def _compact_summary(stages: dict[str, dict[str, Any]]) -> dict[str, Any]:
 def run_locked_controller_cycle(
     root: Path,
     *,
+    code_root: Path | None = None,
+    allow_unreleased_code: bool = False,
     runner: Runner = run_json_command,
     notify: bool = True,
     project_id: str = DEFAULT_PROJECT_ID,
@@ -277,7 +320,14 @@ def run_locked_controller_cycle(
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             return {"ok": True, "busy": True, "summary": {"action": "controller_already_running"}}
-        return controller_cycle(root, runner=runner, notify=notify, project_id=project_id)
+        return controller_cycle(
+            root,
+            code_root=code_root,
+            allow_unreleased_code=allow_unreleased_code,
+            runner=runner,
+            notify=notify,
+            project_id=project_id,
+        )
 
 
 def write_controller_report(root: Path, result: dict[str, Any]) -> Path:

@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from .contracts import ACTIONABLE_REVIEW_STATUSES, contract_digest, validate_report
+from .opportunity import external_side_effect_allowed
 from .policy import SCANNER_DECISION_REVISION, decision_contract_digest
 from .util import canonical_json, iso_z, parse_time, sha256_json, sha256_text
 
@@ -41,7 +42,6 @@ LEGACY_QUEUE_CONTRACTS = {
     },
 }
 SKILL = "[$gh-issue-pr](/Users/oxygen/.codex/skills/gh-issue-pr/SKILL.md)"
-ACTIONABLE_DECISIONS = {"NEW_CLEAN_CANDIDATE", "PR_COMPETITION_OPPORTUNITY"}
 MAX_INTENT_AGE_DAYS = 14
 NON_REVOKING_REJECTION_REASONS = {
     "seen_recently",
@@ -98,16 +98,13 @@ def _eligible(candidate: dict[str, Any]) -> bool:
     )
     return bool(
         candidate.get("auto_spawn") is True
+        and external_side_effect_allowed(candidate)
         and (candidate.get("gate_decision") == "ALLOW_TO_WORK" or private_disclosure_work)
         and review.get("status") in ACTIONABLE_REVIEW_STATUSES
-        and (
-            review.get("decision") in ACTIONABLE_DECISIONS
-            or (
-                private_disclosure_work
-                and review.get("decision") == "WAIT_MAINTAINER"
-                and review.get("wait_reason") == "DISCLOSURE_ONLY"
-            )
-        )
+        and str(review.get("semanticSignal") or review.get("semantic_signal") or "")
+        == "NO_OBJECTION"
+        and isinstance(candidate.get("preTaskGate") or candidate.get("pre_task_gate"), dict)
+        and (candidate.get("preTaskGate") or candidate.get("pre_task_gate")).get("allowed") is True
     )
 
 
@@ -223,12 +220,35 @@ def build_queue(
             "authorizationSource": "signed_live_revalidation_required",
             "publicationMode": mode,
             "llmReview": {
-                ("waitReason" if key == "wait_reason" else key): (
+                ("waitReason" if key == "wait_reason" else "semanticSignal" if key == "semanticSignal" else key): (
                     candidate.get("llm_review") or {}
                 ).get(key)
-                for key in ("status", "decision", "wait_reason", "confidence", "model")
+                for key in ("status", "decision", "wait_reason", "confidence", "model", "semanticSignal")
             },
             "actionabilityEvidence": candidate.get("actionability_evidence") or {},
+            "preTaskEvidence": candidate.get("preTaskEvidence")
+            or candidate.get("pre_task_evidence")
+            or {},
+            "preTaskGate": candidate.get("preTaskGate")
+            or candidate.get("pre_task_gate")
+            or {},
+            "defaultBranch": (
+                candidate.get("preTaskEvidence") or candidate.get("pre_task_evidence") or {}
+            ).get("defaultBranch"),
+            "selectedBaseSha": (
+                candidate.get("preTaskEvidence") or candidate.get("pre_task_evidence") or {}
+            ).get("baseSha"),
+            "preTaskEvidenceDigest": (
+                candidate.get("preTaskGate") or candidate.get("pre_task_gate") or {}
+            ).get("evidenceDigest"),
+            "maturity": candidate.get("maturity") or "mature",
+            "notify": candidate.get("notify") is not False,
+            "probeRequired": True,
+            "probeLevel": "PENDING",
+            "taskStage": "PREFLIGHT",
+            "probeProfile": (
+                candidate.get("preTaskEvidence") or candidate.get("pre_task_evidence") or {}
+            ).get("probeProfile"),
             "algorithmEvidence": candidate.get("algorithm_evidence"),
             "runId": report.get("run_id") or report.get("now"),
             "sourceSha": source_sha,
@@ -237,7 +257,11 @@ def build_queue(
             "decisionContractDigest": dispatch_contract_digest,
             "contractDigest": report.get("contract_digest") or contract_digest(),
             "policyDigest": candidate.get("policy_digest") or "",
-            "evidenceDigest": candidate.get("evidence_digest") or "",
+            "evidenceDigest": candidate.get("evidence_digest")
+            or (candidate.get("preTaskGate") or candidate.get("pre_task_gate") or {}).get(
+                "evidenceDigest"
+            )
+            or "",
             "decisionDigest": candidate_decision_digest,
             "promptDigest": sha256_text(canonical_prompt(issue_url)),
             "issuedAt": iso_z(current),
@@ -310,5 +334,7 @@ def verify_queue(
             continue
         if item.get("promptDigest") != sha256_text(canonical_prompt(str(item["issueUrl"]))):
             raise SignatureError("prompt digest mismatch")
+        if not external_side_effect_allowed(item):
+            raise SignatureError("silent exploration intent cannot be dispatched")
         verified.append(item)
     return verified

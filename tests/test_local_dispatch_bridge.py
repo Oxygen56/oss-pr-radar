@@ -9,15 +9,20 @@ import re
 import shutil
 import sqlite3
 import subprocess
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from oss_pr_radar.independent_review import REVIEW_SCHEMA, _receipt_path, _source_digest
 from oss_pr_radar.ledger import LedgerError, RadarLedger
+from oss_pr_radar.managed_lifecycle import ManagedLedger
 from oss_pr_radar.metrics import QUALITY_FIELDS
-from oss_pr_radar.util import iso_z, parse_time
+from oss_pr_radar.util import iso_z, parse_time, sha256_json
+
+pytestmark = pytest.mark.usefixtures("current_signing_key")
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "local_dispatch_bridge.py"
 SPEC = importlib.util.spec_from_file_location("local_dispatch_bridge", SCRIPT)
@@ -402,22 +407,6 @@ def disable_live_thread_watchdog(monkeypatch, tmp_path):
     monkeypatch.setattr(MODULE, "active_task_turn_worker", lambda _thread_id: None)
 
 
-@pytest.fixture(autouse=True)
-def preserve_legacy_review_assumptions(monkeypatch):
-    monkeypatch.setattr(
-        MODULE,
-        "controller_review_result",
-        lambda _root, value: (
-            {"verdict": "PASS", "summary": "test controller receipt"}
-            if (
-                isinstance(value.get("quality"), dict)
-                and value["quality"].get("independent_review_passed") is True
-            )
-            else None
-        ),
-    )
-
-
 def run_git(path: Path, *args: str) -> str:
     completed = subprocess.run(
         ["git", *args],
@@ -433,6 +422,9 @@ def registered_store(tmp_path: Path, worktree: Path | None = None) -> tuple[Rada
     worktree = worktree or tmp_path / "worktree"
     worktree.mkdir(parents=True)
     run_git(worktree, "init")
+    (worktree / ".git" / "info" / "exclude").write_text(
+        ".oss-pr-radar/\n", encoding="utf-8"
+    )
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     now = datetime.now(UTC)
     store.enqueue(
@@ -477,6 +469,48 @@ def registered_store(tmp_path: Path, worktree: Path | None = None) -> tuple[Rada
         dedupe_key="test-live-evidence",
     )
     return store, worktree
+
+
+def _write_explicit_controller_review(root: Path, value: dict[str, object]) -> dict[str, object]:
+    """Create the private review artifact used by legal controller fixtures."""
+
+    commit_sha = str(value["commitSha"])
+    source_digest = _source_digest(value)
+    review: dict[str, object] = {
+        "schemaVersion": REVIEW_SCHEMA,
+        "key": value["key"],
+        "reviewedAt": iso_z(datetime.now(UTC)),
+        "commitSha": commit_sha,
+        "baseRevision": str(value.get("selectedBaseSha") or commit_sha),
+        "sourceDigest": source_digest,
+        "reviewMode": "codex_exec_ephemeral_read_only",
+        "verdict": "PASS",
+        "summary": "Explicit fixture review passed.",
+        "findings": [],
+        "blockingEvidence": [],
+        "evidence": ["runtime.py", "pytest"],
+    }
+    path = _receipt_path(
+        root,
+        key=str(value["key"]),
+        commit_sha=commit_sha,
+        source_digest=source_digest,
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": REVIEW_SCHEMA,
+                "key": value["key"],
+                "commitSha": commit_sha,
+                "sourceDigest": source_digest,
+                "review": review,
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    return review
 
 
 def test_compact_title_matches_desktop_limit():
@@ -968,27 +1002,17 @@ def test_workspace_task_context_is_private_and_git_ignored(tmp_path):
             "bodyPath": str(worktree / ".oss-pr-radar" / "pr-body.md"),
         },
     )
-    permit = store.grant_publication_request(
-        request["request_id"],
-        issue_url="https://github.com/a/b/issues/1",
-        commit_sha="a" * 40,
-        branch="fix-runtime",
-        evidence={},
-    )
-    store.consume_publication_permit(permit["permit_id"], "https://github.com/a/b/pull/2")
-    published = json.loads(
-        MODULE.write_task_context(
-            store,
+    with pytest.raises(LedgerError, match="publication request is not grantable"):
+        store.grant_publication_request(
+            request["request_id"],
             issue_url="https://github.com/a/b/issues/1",
-            thread_id="thread-1",
-            cwd=worktree,
-        ).read_text(encoding="utf-8")
-    )
-
-    assert published["stage"] == "PR_OPEN"
-    assert published["publicationReceipt"]["status"] == "PR_OPEN"
-    assert published["publicationReceipt"]["prUrl"] == "https://github.com/a/b/pull/2"
-    assert published["contextDigest"] == value["contextDigest"]
+            commit_sha="a" * 40,
+            branch="fix-runtime",
+            evidence={},
+        )
+    assert store.task_context(
+        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
+    )["stage"] == "FIX_READY"
     assert store.task_context_candidates()[0]["threadId"] == "thread-1"
 
 
@@ -1318,12 +1342,34 @@ def test_shared_context_recovery_marks_clean_published_result_as_consumed(monkey
     run_git(worktree, "config", "user.name", "Test Contributor")
     run_git(worktree, "config", "user.email", "test@example.com")
     source = worktree / "runtime.py"
+    source.write_text("value = 1\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "-m", "chore: add runtime boundary")
+    base_sha = run_git(worktree, "rev-parse", "HEAD")
     source.write_text("value = 2\n", encoding="utf-8")
     run_git(worktree, "add", "runtime.py")
     run_git(worktree, "commit", "-m", "fix: runtime")
     head_sha = run_git(worktree, "rev-parse", "HEAD")
     run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
     store.record_stage("a/b#1", "FIX_READY", evidence={})
+    with store.connect() as connection:
+        payload = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM intents WHERE intent_id='intent-1'"
+            ).fetchone()[0]
+        )
+        payload.update(
+            {
+                "taskStage": "IMPLEMENTATION_READY",
+                "probeLevel": "REPRODUCED_VALIDATED",
+                "selectedBaseSha": base_sha,
+                "codePaths": ["runtime.py"],
+            }
+        )
+        connection.execute(
+            "UPDATE intents SET payload_json=? WHERE intent_id='intent-1'",
+            (json.dumps(payload, sort_keys=True),),
+        )
     context_path = MODULE.write_task_context(
         store,
         issue_url="https://github.com/a/b/issues/1",
@@ -1342,8 +1388,28 @@ def test_shared_context_recovery_marks_clean_published_result_as_consumed(monkey
                 "threadId": "thread-1",
                 "worktreePath": str(worktree.resolve()),
                 "stage": "FIX_READY",
+                    "handoffMode": "controller_commit_complete",
+                    "branch": run_git(worktree, "symbolic-ref", "--short", "HEAD"),
+                    "controllerCommitChangedFiles": ["runtime.py"],
+                    "taskStage": "IMPLEMENTATION_READY",
+                "taskId": "intent-1",
+                "probeRequired": True,
+                "probeLevel": "REPRODUCED_VALIDATED",
+                "selectedBaseSha": base_sha,
+                "headSha": head_sha,
+                "commitSha": head_sha,
+                "codePaths": ["runtime.py"],
+                "preTaskEvidence": {
+                    "defaultBranch": "main",
+                    "baseSha": base_sha,
+                    "codePathsPlan": ["runtime.py"],
+                },
                 "changedFiles": ["runtime.py"],
                 "quality": {key: True for key in QUALITY_FIELDS},
+                "independentReview": {
+                    "verdict": "PASS",
+                    "summary": "test controller receipt",
+                },
                 "publication": {
                     "headOwner": "Oxygen56",
                     "baseBranch": "main",
@@ -1353,6 +1419,15 @@ def test_shared_context_recovery_marks_clean_published_result_as_consumed(monkey
             }
         ),
         encoding="utf-8",
+    )
+    result_value = json.loads(result_path.read_text(encoding="utf-8"))
+    _sign_reproduction_certificate(
+        result_value,
+        result_path=result_path,
+        base_sha=base_sha,
+        head_sha=head_sha,
+        commit_sha=head_sha,
+        store=store,
     )
     request = store.create_publication_request(
         issue_url="https://github.com/a/b/issues/1",
@@ -1368,6 +1443,11 @@ def test_shared_context_recovery_marks_clean_published_result_as_consumed(monkey
             "title": "fix: runtime",
             "bodyPath": str(worktree / ".oss-pr-radar" / "pr-body.md"),
         },
+        probe_receipt=result_value["reproductionReceipt"],
+        result_digest=result_value["resultDigest"],
+        head_sha=head_sha,
+        selected_base_sha=base_sha,
+        code_paths=["runtime.py"],
     )
     permit = store.grant_publication_request(
         request["request_id"],
@@ -1387,11 +1467,17 @@ def test_shared_context_recovery_marks_clean_published_result_as_consumed(monkey
     recovered_path = tmp_path / "recovered.sqlite3"
     recovered = RadarLedger(recovered_path)
     recovery = MODULE.recover_shared_task_contexts(recovered)
+    recovered_value = json.loads(result_path.read_text(encoding="utf-8"))
+    monkeypatch.setattr(
+        MODULE,
+        "controller_review_result",
+        lambda *_args: recovered_value["independentReview"],
+    )
     ingestion = MODULE.ingest_task_results(SimpleNamespace(ledger=recovered_path))
 
     assert recovery["resultReceiptsRestored"] == 1
     assert recovery["restored"][0]["resultReceiptRestored"] is True
-    assert ingestion["ok"] is True
+    assert ingestion["ok"] is True, ingestion["errors"]
     assert ingestion["ingested"] == []
     assert ingestion["publicationRequests"] == []
     with recovered.connect() as connection:
@@ -1405,6 +1491,9 @@ def test_clean_pr_followup_result_restores_its_wake_receipt(tmp_path):
     worktree = tmp_path / "worktree"
     worktree.mkdir()
     run_git(worktree, "init")
+    (worktree / ".git" / "info" / "exclude").write_text(
+        ".oss-pr-radar/\n", encoding="utf-8"
+    )
     run_git(worktree, "config", "user.name", "Test Contributor")
     run_git(worktree, "config", "user.email", "test@example.com")
     (worktree / "runtime.py").write_text("value = 1\n", encoding="utf-8")
@@ -2266,6 +2355,7 @@ def test_existing_repo_fetches_and_prewarms_default_snapshot(monkeypatch, tmp_pa
     assert commands[2][0] == [
         "git",
         "fetch",
+        "--no-write-fetch-head",
         "--no-tags",
         "--filter=blob:none",
         "origin",
@@ -4647,7 +4737,7 @@ def test_controller_ingests_workspace_no_go_without_child_ledger_access(tmp_path
 
     result = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
 
-    assert result["ok"] is True
+    assert result["ok"] is True, result["errors"]
     assert result["ingested"] == [
         {"key": "a/b#1", "stage": "AUDIT_NO_GO", "reason": "STRONG_EXISTING_PR"}
     ]
@@ -4738,6 +4828,7 @@ def test_ingestion_still_rejects_context_mismatch_for_active_task(tmp_path):
 def _published_followup_store(
     tmp_path: Path,
 ) -> tuple[RadarLedger, Path, str, str]:
+    MODULE.ROOT = tmp_path
     store, worktree = registered_store(tmp_path)
     run_git(worktree, "config", "user.name", "Test Contributor")
     run_git(worktree, "config", "user.email", "test@example.com")
@@ -4941,7 +5032,7 @@ def test_pr_followup_commit_cannot_self_attest_independent_review(monkeypatch, t
                 "followupDigest": candidate["wakeDigest"],
                 "handoffMode": "controller_commit_required",
                 "commitSha": None,
-                "branch": "fix/1-runtime",
+                    "branch": run_git(worktree, "symbolic-ref", "--short", "HEAD"),
                 "commitMessage": "fix: address runtime review",
                 "changedFiles": ["runtime.py"],
                 "tests": [{"command": "pytest tests/runtime", "exitCode": 0}],
@@ -4961,23 +5052,23 @@ def test_pr_followup_commit_cannot_self_attest_independent_review(monkeypatch, t
     result = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
     finalized = json.loads(result_path.read_text(encoding="utf-8"))
 
+    assert result["ok"] is False
+    assert result["errors"] == [
+        {
+            "key": "a/b#1",
+            "error": "REPRODUCTION_REQUIRED task violated its read-only contract",
+        }
+    ]
     assert result["publicationRequests"] == []
-    assert result["validationDeferred"][0]["missing"] == ["independent_review_passed"]
-    assert finalized["quality"]["independent_review_passed"] is False
-    assert finalized["previousCommitSha"] == previous_head
+    assert result["validationDeferred"] == []
+    assert finalized["quality"]["independent_review_passed"] is True
+    assert "previousCommitSha" not in finalized
+    assert run_git(worktree, "status", "--porcelain") == "M runtime.py"
     assert store.publication_work_items() == []
 
-    controller_review = {
-        "verdict": "PASS",
-        "summary": "The exact follow-up commit has no blocking finding.",
-    }
-    monkeypatch.setattr(MODULE, "controller_review_result", lambda _root, _value: controller_review)
     reviewed = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
-
-    assert len(reviewed["publicationRequests"]) == 1
-    assert json.loads(result_path.read_text(encoding="utf-8"))["independentReview"] == (
-        controller_review
-    )
+    assert reviewed["publicationRequests"] == []
+    assert reviewed["errors"] == result["errors"]
 
 
 def test_pr_followup_reserve_defers_changed_snapshot_until_fresh_import(monkeypatch, tmp_path):
@@ -5571,6 +5662,36 @@ def test_controller_ingests_followup_fix_as_update_to_exact_existing_pr(tmp_path
     candidate = store.pr_followup_candidates()[0]
     store.reserve_pr_followup(thread_id="thread-1", wake_digest=candidate["wakeDigest"])
     store.commit_pr_followup(thread_id="thread-1", wake_digest=candidate["wakeDigest"])
+    base_sha = run_git(worktree, "rev-parse", "HEAD")
+    (worktree / "runtime.py").write_text("value = 2\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "-m", "fix: preserve runtime boundary")
+    head_sha = run_git(worktree, "rev-parse", "HEAD")
+    with store.connect() as connection:
+        payload = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM intents WHERE intent_id='intent-1'"
+            ).fetchone()[0]
+        )
+        payload.update(
+            {
+                "defaultBranch": "main",
+                "selectedBaseSha": base_sha,
+                "preTaskEvidence": {
+                    "defaultBranch": "main",
+                    "baseSha": base_sha,
+                    "codePathsPlan": ["runtime.py"],
+                },
+                "codePaths": ["runtime.py"],
+                "probeRequired": True,
+                "probeLevel": "REPRODUCED_VALIDATED",
+                "taskStage": "IMPLEMENTATION_READY",
+            }
+        )
+        connection.execute(
+            "UPDATE intents SET payload_json=? WHERE intent_id='intent-1'",
+            (json.dumps(payload, sort_keys=True),),
+        )
     context_path = MODULE.write_task_context(
         store,
         issue_url="https://github.com/a/b/issues/1",
@@ -5578,7 +5699,6 @@ def test_controller_ingests_followup_fix_as_update_to_exact_existing_pr(tmp_path
         cwd=worktree,
     )
     context = json.loads(context_path.read_text(encoding="utf-8"))
-    (worktree / "runtime.py").write_text("value = 2\n", encoding="utf-8")
     body_path = worktree / ".oss-pr-radar" / "pr-body.md"
     body_path.write_text("Fixes #1\n\nCorrect the runtime boundary.\n", encoding="utf-8")
     result_path = Path(context["resultPath"])
@@ -5593,11 +5713,24 @@ def test_controller_ingests_followup_fix_as_update_to_exact_existing_pr(tmp_path
                 "threadId": "thread-1",
                 "worktreePath": str(worktree.resolve()),
                 "stage": "FIX_READY",
-                "handoffMode": "controller_commit_required",
-                "commitSha": None,
-                "branch": "fix/1-runtime",
+                "handoffMode": "controller_commit_complete",
+                "commitSha": head_sha,
+                "branch": run_git(worktree, "symbolic-ref", "--short", "HEAD"),
+                "controllerCommitChangedFiles": ["runtime.py"],
                 "commitMessage": "fix: preserve runtime boundary",
                 "changedFiles": ["runtime.py"],
+                    "headSha": head_sha,
+                    "previousCommitSha": previous_head,
+                    "selectedBaseSha": base_sha,
+                "taskId": "intent-1",
+                "codePaths": ["runtime.py"],
+                "preTaskEvidence": {
+                    "defaultBranch": "main",
+                    "baseSha": base_sha,
+                    "codePathsPlan": ["runtime.py"],
+                },
+                "probeRequired": True,
+                "probeLevel": "REPRODUCED_VALIDATED",
                 "tests": [{"command": "pytest tests/runtime", "exitCode": 0}],
                 "quality": {field: True for field in QUALITY_FIELDS},
                 "publication": {
@@ -5610,10 +5743,30 @@ def test_controller_ingests_followup_fix_as_update_to_exact_existing_pr(tmp_path
         ),
         encoding="utf-8",
     )
-
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    candidate_record = next(
+        item
+        for item in store.task_result_candidates()
+        if item["key"] == "a/b#1" and item["threadId"] == "thread-1"
+    )
+    value, _raw = MODULE._finalize_controller_commit(
+        candidate=candidate_record,
+        context=context,
+        value=value,
+        result_path=result_path,
+    )
+    value["independentReview"] = MODULE.controller_review_result(MODULE.ROOT, value)
+    _sign_reproduction_certificate(
+        value,
+        result_path=result_path,
+        base_sha=base_sha,
+        head_sha=head_sha,
+        commit_sha=head_sha,
+        store=store,
+    )
     result = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
 
-    assert result["ok"] is True
+    assert result["ok"] is True, result["errors"]
     assert result["ingested"] == [{"key": "a/b#1", "stage": "FIX_READY"}]
     assert len(result["publicationRequests"]) == 1
     request = store.publication_work_items()[0]["request"]
@@ -5623,7 +5776,7 @@ def test_controller_ingests_followup_fix_as_update_to_exact_existing_pr(tmp_path
     assert request["commitSha"] == run_git(worktree, "rev-parse", "HEAD")
     assert request["commitSha"] != previous_head
     assert store.task_result_digest_seen(
-        "a/b#1", hashlib.sha256(result_path.read_bytes()).hexdigest()
+        "a/b#1", MODULE._task_result_digest(value, result_path.read_bytes())
     )
 
 
@@ -5702,7 +5855,11 @@ def _controller_commit_result(
     publication_blocked_reason: str | None = None,
     dco_required: bool = False,
     base_branch: str = "main",
+    authenticated: bool = True,
 ) -> tuple[RadarLedger, Path, Path]:
+    from oss_pr_radar.repo_probe import TRUSTED_PROBE_PROFILES, run_reproduction_probe
+
+    MODULE.ROOT = tmp_path
     store, worktree = registered_store(tmp_path)
     run_git(worktree, "config", "user.name", "Test Contributor")
     run_git(worktree, "config", "user.email", "test@example.com")
@@ -5719,7 +5876,67 @@ def _controller_commit_result(
         "refs/remotes/origin/HEAD",
         "refs/remotes/origin/main",
     )
-    source.write_text("value = 2\n", encoding="utf-8")
+    base_sha = run_git(worktree, "rev-parse", "HEAD")
+    source.write_text("value = 2\nassert value == 2\n", encoding="utf-8")
+    run_git(worktree, "switch", "-c", "fix/1-runtime-boundary")
+    run_git(worktree, "add", "runtime.py")
+    commit_message = "fix: preserve runtime boundary"
+    if dco_required:
+        commit_message += "\n\nSigned-off-by: Test Contributor <test@example.com>"
+    run_git(worktree, "commit", "-m", commit_message)
+    head_sha = run_git(worktree, "rev-parse", "HEAD")
+    probe_checkout = tmp_path / "probe-checkout"
+    run_git(worktree, "worktree", "add", "--detach", str(probe_checkout), base_sha)
+    profile_id = "test-local-controller-real"
+    TRUSTED_PROBE_PROFILES[profile_id] = {
+        "reproductionArgv": ["python3", "runtime.py"],
+        "validationArgv": ["python3", "runtime.py"],
+    }
+    probe = run_reproduction_probe(
+        checkout_path=probe_checkout,
+        repo="a/b",
+        default_branch="main",
+        selected_base_sha=base_sha,
+        code_paths=["runtime.py"],
+        profile_id=profile_id,
+        issue_url="https://github.com/a/b/issues/1",
+        task_id="intent-1",
+        thread_id="thread-1",
+        head_sha=head_sha,
+        commit_sha=head_sha,
+        result_digest="pending-result-digest",
+    )
+    TRUSTED_PROBE_PROFILES.pop(profile_id, None)
+    run_git(worktree, "worktree", "remove", "--force", str(probe_checkout))
+    with store.connect() as connection:
+        payload = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM intents WHERE intent_id='intent-1'"
+            ).fetchone()[0]
+        )
+        payload.update(
+            {
+                "defaultBranch": "main",
+                "selectedBaseSha": base_sha,
+                "preTaskEvidence": {
+                    "defaultBranch": "main",
+                    "baseSha": base_sha,
+                    "codePathsPlan": ["runtime.py"],
+                },
+                "codePaths": ["runtime.py"],
+                "probeRequired": True,
+                "probeLevel": "REPRODUCED_VALIDATED",
+                "taskStage": "IMPLEMENTATION_READY",
+                "probeReceiptDigest": probe["receiptDigest"],
+                "resultDigest": "pending-result-digest",
+                "headSha": head_sha,
+                "commitSha": head_sha,
+            }
+        )
+        connection.execute(
+            "UPDATE intents SET payload_json=? WHERE intent_id='intent-1'",
+            (json.dumps(payload, sort_keys=True),),
+        )
     if controller_policy_complete:
         store.record_audit_snapshot(
             "a/b#1",
@@ -5766,13 +5983,30 @@ def _controller_commit_result(
         "threadId": "thread-1",
         "worktreePath": str(worktree.resolve()),
         "stage": "FIX_READY",
-        "handoffMode": "controller_commit_required",
-        "commitSha": None,
+        "handoffMode": "controller_commit_complete",
+        "commitSha": head_sha,
         "branch": "fix/1-runtime-boundary",
+        "controllerCommitChangedFiles": ["runtime.py"],
         "commitMessage": "fix: preserve runtime boundary",
         "changedFiles": ["runtime.py"],
+        "headSha": head_sha,
+        "selectedBaseSha": base_sha,
+        "taskId": "intent-1",
+        "codePaths": ["runtime.py"],
+        "preTaskEvidence": {
+            "defaultBranch": "main",
+            "baseSha": base_sha,
+            "codePathsPlan": ["runtime.py"],
+        },
+        "probeRequired": True,
+        "probeLevel": "REPRODUCED_VALIDATED",
+        "reproductionReceipt": probe,
         "tests": [{"command": "pytest tests/runtime", "exitCode": 0}],
         "quality": quality,
+        "independentReview": {
+            "verdict": "PASS",
+            "summary": "test controller receipt",
+        },
         "dcoRequired": dco_required,
         "publication": {
             "headOwner": "Oxygen56",
@@ -5783,8 +6017,471 @@ def _controller_commit_result(
     }
     if publication_blocked_reason:
         result["publicationBlockedReason"] = publication_blocked_reason
+    if quality.get("independent_review_passed") is not True:
+        result.pop("independentReview", None)
+    if controller_policy_complete:
+        result["controllerPolicyVerification"] = {
+            "source": "controller_live_audit",
+            "capturedAt": iso_z(datetime.now(UTC)),
+            "policyDigest": "d" * 64,
+            "policyStatus": "NORMAL",
+        }
+    signed_result = dict(result)
+    signed_result["handoffMode"] = "controller_commit_complete"
+    signed_result["publication"] = dict(result["publication"]) | {"baseBranch": "main"}
+    if controller_policy_complete:
+        signed_quality = dict(signed_result["quality"])
+        signed_quality["policy_verified"] = True
+        signed_result["quality"] = signed_quality
+        signed_result.pop("controllerPolicyVerification", None)
+    signed_result.pop("contextDigest", None)
+    unsigned_digest = sha256_json(signed_result)
+    result["resultDigest"] = unsigned_digest
+    probe["resultDigest"] = unsigned_digest
+    # Re-sign after binding the actual immutable result digest.
+    from oss_pr_radar.repo_probe import run_reproduction_probe
+
+    TRUSTED_PROBE_PROFILES[profile_id] = {
+        "reproductionArgv": ["python3", "runtime.py"],
+        "validationArgv": ["python3", "runtime.py"],
+    }
+    # The first probe was executed against the fixed base.  Recreate the
+    # signed certificate with the final result binding through the same real
+    # profile and checkout, then remove the temporary profile.
+    probe_checkout = tmp_path / "probe-checkout-final"
+    run_git(worktree, "worktree", "add", "--detach", str(probe_checkout), base_sha)
+    probe = run_reproduction_probe(
+        checkout_path=probe_checkout,
+        repo="a/b",
+        default_branch="main",
+        selected_base_sha=base_sha,
+        code_paths=["runtime.py"],
+        profile_id=profile_id,
+        issue_url="https://github.com/a/b/issues/1",
+        task_id="intent-1",
+        thread_id="thread-1",
+        head_sha=head_sha,
+        commit_sha=head_sha,
+        result_digest=unsigned_digest,
+    )
+    TRUSTED_PROBE_PROFILES.pop(profile_id, None)
+    run_git(worktree, "worktree", "remove", "--force", str(probe_checkout))
+    result["reproductionReceipt"] = probe
+    managed = ManagedLedger(store.path, ensure_schema=True)
+    managed.upsert_opportunity(
+        opportunity_key="a/b#1",
+        owner="a",
+        repo="b",
+        issue_number=1,
+        issue_url="https://github.com/a/b/issues/1",
+        state="SYSTEM_PROCESSING",
+        source="test-legal-fixture",
+        provenance={"fixture": True},
+        metadata={"selectedBaseSha": base_sha, "codePaths": ["runtime.py"]},
+    )
+    managed.bind_task(
+        task_id="intent-1",
+        opportunity_key="a/b#1",
+        thread_id="thread-1",
+        worktree_path=str(worktree),
+        state="REPRODUCTION_REQUIRED",
+        provenance={
+            "codePaths": ["runtime.py"],
+            "selectedBaseSha": probe["baseSha"],
+            "headSha": probe["headSha"],
+            "commitSha": probe["commitSha"],
+            "resultDigest": probe["resultDigest"],
+        },
+    )
+    managed.transition_task_to_implementation(
+        task_id="intent-1",
+        receipt_digest=probe["receiptDigest"],
+        receipt=probe,
+    )
+    # Bind the actual current-key receipt before materializing the final task
+    # context.  This keeps legal fixtures editable without weakening the
+    # missing/unauthenticated-probe downgrade.
+    with store.connect() as connection:
+        payload = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM intents WHERE intent_id='intent-1'"
+            ).fetchone()[0]
+        )
+        payload.update(
+            {
+                "probeReceiptDigest": probe["receiptDigest"],
+                "resultDigest": unsigned_digest,
+                "headSha": head_sha,
+                "commitSha": head_sha,
+                "taskStage": "IMPLEMENTATION_READY",
+                "probeLevel": "REPRODUCED_VALIDATED",
+            }
+        )
+        connection.execute(
+            "UPDATE intents SET payload_json=? WHERE intent_id='intent-1'",
+            (json.dumps(payload, sort_keys=True),),
+        )
+    context = json.loads(
+        MODULE.write_task_context(
+            store,
+            issue_url="https://github.com/a/b/issues/1",
+            thread_id="thread-1",
+            cwd=worktree,
+        ).read_text(encoding="utf-8")
+    )
+    result["contextDigest"] = context["contextDigest"]
+    result["handoffMode"] = "controller_commit_required"
+    result["commitSha"] = None
+    result.pop("controllerCommitChangedFiles", None)
+    if not authenticated:
+        result.pop("reproductionReceipt", None)
+        result.pop("resultDigest", None)
     result_path.write_text(json.dumps(result), encoding="utf-8")
+    if authenticated:
+        candidate_record = next(
+            item
+            for item in store.task_result_candidates()
+            if item["key"] == "a/b#1" and item["threadId"] == "thread-1"
+        )
+        context = json.loads(
+            (result_path.parent / "task-context.json").read_text(encoding="utf-8")
+        )
+        result, _raw = MODULE._finalize_controller_commit(
+            candidate=candidate_record,
+            context=context,
+            value=result,
+            result_path=result_path,
+        )
+        if controller_policy_complete:
+            result_quality = dict(result.get("quality") or {})
+            result_quality["policy_verified"] = True
+            result["quality"] = result_quality
+            result_path.write_text(json.dumps(result), encoding="utf-8")
+        _sign_reproduction_certificate(
+            result,
+            result_path=result_path,
+            base_sha=base_sha,
+            head_sha=head_sha,
+            commit_sha=head_sha,
+            store=store,
+        )
+        if quality.get("independent_review_passed") is True:
+            review_value = dict(result)
+            review_quality = dict(review_value.get("quality") or {})
+            if controller_policy_complete:
+                review_quality["policy_verified"] = True
+            review_value["quality"] = review_quality
+            _write_explicit_controller_review(tmp_path, review_value)
     return store, worktree, result_path
+
+
+def _refresh_reproduction_certificate(result_path: Path) -> str:
+    """Re-sign a legal fixture after its controller-owned result fields change."""
+
+    from oss_pr_radar.repo_probe import TRUSTED_PROBE_PROFILES, run_reproduction_probe
+
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    existing = dict(value["reproductionReceipt"])
+    unsigned = dict(value)
+    unsigned.pop("reproductionReceipt", None)
+    unsigned.pop("probeReceipt", None)
+    unsigned.pop("resultDigest", None)
+    unsigned.pop("independentReview", None)
+    unsigned.pop("contextDigest", None)
+    policy_certificate = unsigned.pop("controllerPolicyVerification", None)
+    quality = unsigned.get("quality")
+    if isinstance(quality, dict):
+        quality = dict(quality)
+        if policy_certificate is not None:
+            quality["policy_verified"] = True
+        unsigned["quality"] = quality
+    if value.get("handoffMode") == "controller_commit_required":
+        unsigned["handoffMode"] = "controller_commit_complete"
+        unsigned["commitSha"] = existing.get("commitSha")
+        unsigned["branch"] = existing.get("headRef") or value.get(
+            "branch", "fix/1-runtime-boundary"
+        )
+        unsigned["controllerCommitChangedFiles"] = list(
+            value.get("changedFiles") or ["runtime.py"]
+        )
+        publication = unsigned.get("publication")
+        if isinstance(publication, dict):
+            unsigned["publication"] = dict(publication) | {"baseBranch": "main"}
+    digest = sha256_json(unsigned)
+    worktree = Path(value["worktreePath"]).resolve()
+    checkout = worktree.parent / ".probe-refresh"
+    profile_id = "test-local-controller-refresh"
+    TRUSTED_PROBE_PROFILES[profile_id] = {
+        "reproductionArgv": ["python3", "runtime.py"],
+        "validationArgv": ["python3", "runtime.py"],
+    }
+    run_git(worktree, "worktree", "add", "--detach", str(checkout), existing["baseSha"])
+    receipt = run_reproduction_probe(
+        checkout_path=checkout,
+        repo=existing["repo"],
+        default_branch=existing["defaultBranch"],
+        selected_base_sha=existing["baseSha"],
+        code_paths=list(existing["codePaths"]),
+        profile_id=profile_id,
+        issue_url=existing["issueUrl"],
+        task_id=existing["taskId"],
+        head_sha=existing.get("headSha"),
+        commit_sha=existing.get("commitSha"),
+        result_digest=digest,
+    )
+    TRUSTED_PROBE_PROFILES.pop(profile_id, None)
+    run_git(worktree, "worktree", "remove", "--force", str(checkout))
+    value["resultDigest"] = digest
+    value["reproductionReceipt"] = receipt
+    # Keep the controller context bound to the newly issued receipt.  Follow-up
+    # fixtures intentionally rebuild this binding instead of relying on a
+    # global test bypass.
+    store = RadarLedger(worktree.parent / "ledger.sqlite3")
+    store.update_intent_probe_metadata(
+        str(value.get("taskId") or "intent-1"),
+        probe_level="REPRODUCED_VALIDATED",
+        task_stage="IMPLEMENTATION_READY",
+        receipt_digest=str(receipt.get("receiptDigest") or ""),
+    )
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url=str(value["issueUrl"]),
+        thread_id=str(value["threadId"]),
+        cwd=worktree,
+    )
+    value["contextDigest"] = json.loads(context_path.read_text(encoding="utf-8"))["contextDigest"]
+    quality = value.get("quality")
+    review = value.get("independentReview")
+    if (
+        isinstance(quality, dict)
+        and quality.get("independent_review_passed") is True
+        and isinstance(review, dict)
+        and review.get("verdict") == "PASS"
+    ):
+        value["independentReview"] = _write_explicit_controller_review(MODULE.ROOT, value)
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    return digest
+
+
+def _sign_reproduction_certificate(
+    value: dict,
+    *,
+    result_path: Path,
+    base_sha: str,
+    head_sha: str,
+    commit_sha: str,
+    store: RadarLedger | None = None,
+) -> str:
+    from oss_pr_radar.repo_probe import TRUSTED_PROBE_PROFILES, run_reproduction_probe
+
+    unsigned = dict(value)
+    unsigned.pop("reproductionReceipt", None)
+    unsigned.pop("probeReceipt", None)
+    unsigned.pop("resultDigest", None)
+    unsigned.pop("independentReview", None)
+    unsigned.pop("contextDigest", None)
+    policy_certificate = unsigned.pop("controllerPolicyVerification", None)
+    quality = unsigned.get("quality")
+    if isinstance(quality, dict) and policy_certificate is not None:
+        quality = dict(quality)
+        quality["policy_verified"] = True
+        unsigned["quality"] = quality
+    digest = sha256_json(unsigned)
+    worktree = Path(value["worktreePath"]).resolve()
+    checkout = worktree.parent / ".probe-new"
+    profile_id = "test-local-controller-new"
+    TRUSTED_PROBE_PROFILES[profile_id] = {
+        "reproductionArgv": ["python3", "runtime.py"],
+        "validationArgv": ["python3", "runtime.py"],
+    }
+    run_git(worktree, "worktree", "add", "--detach", str(checkout), base_sha)
+    receipt = run_reproduction_probe(
+        checkout_path=checkout,
+        repo="a/b",
+        default_branch="main",
+        selected_base_sha=base_sha,
+        code_paths=["runtime.py"],
+        profile_id=profile_id,
+        issue_url="https://github.com/a/b/issues/1",
+        task_id="intent-1",
+        thread_id=str(value.get("threadId") or "thread-1"),
+        head_sha=head_sha,
+        commit_sha=commit_sha,
+        result_digest=digest,
+    )
+    TRUSTED_PROBE_PROFILES.pop(profile_id, None)
+    run_git(worktree, "worktree", "remove", "--force", str(checkout))
+    value["resultDigest"] = digest
+    value["reproductionReceipt"] = receipt
+    if store is not None:
+        store.update_intent_probe_metadata(
+            str(value.get("taskId") or "intent-1"),
+            probe_level="REPRODUCED_VALIDATED",
+            task_stage="IMPLEMENTATION_READY",
+            receipt_digest=str(receipt.get("receiptDigest") or ""),
+        )
+        managed = ManagedLedger(store.path, ensure_schema=True)
+        task_id = str(value.get("taskId") or "intent-1")
+        opportunity_key = str(value.get("key") or "a/b#1")
+        owner_repo, issue_number = opportunity_key.rsplit("#", 1)
+        owner, repo = owner_repo.split("/", 1)
+        managed.upsert_opportunity(
+            opportunity_key=opportunity_key,
+            owner=owner,
+            repo=repo,
+            issue_number=int(issue_number),
+            issue_url=str(value["issueUrl"]),
+            state="SYSTEM_PROCESSING",
+            source="test-legal-fixture",
+            provenance={"fixture": True},
+            metadata={"selectedBaseSha": base_sha, "codePaths": ["runtime.py"]},
+        )
+        managed.bind_task(
+            task_id=task_id,
+            opportunity_key=str(value.get("key") or "a/b#1"),
+            thread_id=str(value.get("threadId") or "thread-1"),
+            worktree_path=str(worktree),
+            state="REPRODUCTION_REQUIRED",
+            provenance={
+                "codePaths": list(receipt.get("codePaths") or ["runtime.py"]),
+                "selectedBaseSha": receipt.get("baseSha"),
+                "headSha": receipt.get("headSha"),
+                "commitSha": receipt.get("commitSha"),
+                "resultDigest": receipt.get("resultDigest"),
+            },
+        )
+        managed.transition_task_to_implementation(
+            task_id=task_id,
+            receipt_digest=str(receipt.get("receiptDigest") or ""),
+            receipt=receipt,
+        )
+        context_path = MODULE.write_task_context(
+            store,
+            issue_url=str(value["issueUrl"]),
+            thread_id=str(value["threadId"]),
+            cwd=worktree,
+        )
+        value["contextDigest"] = json.loads(
+            context_path.read_text(encoding="utf-8")
+        )["contextDigest"]
+        if (
+            isinstance(value.get("quality"), dict)
+            and value["quality"].get("independent_review_passed") is True
+        ):
+            value["independentReview"] = _write_explicit_controller_review(MODULE.ROOT, value)
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    return digest
+
+
+def _legal_queue_publication_fixture(tmp_path: Path, *, request_id: str = "request-1") -> dict:
+    """Build a real local commit plus a current-key reproduction receipt."""
+
+    from oss_pr_radar.repo_probe import TRUSTED_PROBE_PROFILES, run_reproduction_probe
+
+    MODULE.ROOT = tmp_path
+    worktree = tmp_path / f"worktree-{request_id}"
+    worktree.mkdir()
+    run_git(worktree, "init")
+    (worktree / ".git" / "info" / "exclude").write_text(
+        ".oss-pr-radar/\n", encoding="utf-8"
+    )
+    run_git(worktree, "config", "user.name", "Test Contributor")
+    run_git(worktree, "config", "user.email", "test@example.com")
+    (worktree / "runtime.py").write_text("value = 2\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "-m", "fix: runtime boundary")
+    head_sha = run_git(worktree, "rev-parse", "HEAD")
+    base_sha = head_sha
+    private_dir = worktree / ".oss-pr-radar"
+    private_dir.mkdir()
+    result_path = private_dir / "result.json"
+    body_path = private_dir / "body.md"
+    body_path.write_text("Fixes #1\n\nFix the runtime boundary.\n", encoding="utf-8")
+    issue_url = "https://github.com/a/b/issues/1"
+    value = {
+        "schemaVersion": "radar-task-result-v1",
+        "key": "a/b#1",
+        "issueUrl": issue_url,
+        "threadId": request_id,
+        "taskId": request_id,
+        "worktreePath": str(worktree.resolve()),
+        "stage": "FIX_READY",
+        "taskStage": "IMPLEMENTATION_READY",
+        "probeRequired": True,
+        "probeLevel": "REPRODUCED_VALIDATED",
+        "selectedBaseSha": base_sha,
+        "headSha": head_sha,
+        "commitSha": head_sha,
+        "codePaths": ["runtime.py"],
+        "preTaskEvidence": {
+            "defaultBranch": "main",
+            "baseSha": base_sha,
+            "codePathsPlan": ["runtime.py"],
+        },
+        "quality": {field: True for field in QUALITY_FIELDS},
+        "independentReview": {
+            "verdict": "PASS",
+            "summary": "test controller receipt",
+        },
+    }
+    profile_id = f"test-queue-{request_id}"
+    checkout = worktree.parent / f"probe-{request_id}"
+    TRUSTED_PROBE_PROFILES[profile_id] = {
+        "reproductionArgv": ["python3", "runtime.py"],
+        "validationArgv": ["python3", "runtime.py"],
+    }
+    run_git(worktree, "worktree", "add", "--detach", str(checkout), base_sha)
+    unsigned = dict(value)
+    digest = sha256_json(unsigned)
+    receipt = run_reproduction_probe(
+        checkout_path=checkout,
+        repo="a/b",
+        default_branch="main",
+        selected_base_sha=base_sha,
+        code_paths=["runtime.py"],
+        profile_id=profile_id,
+        issue_url=issue_url,
+        task_id=request_id,
+        head_sha=head_sha,
+        commit_sha=head_sha,
+        result_digest=digest,
+    )
+    TRUSTED_PROBE_PROFILES.pop(profile_id, None)
+    run_git(worktree, "worktree", "remove", "--force", str(checkout))
+    value["resultDigest"] = digest
+    value["reproductionReceipt"] = receipt
+    value["independentReview"] = _write_explicit_controller_review(tmp_path, value)
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    return {
+        "worktree": worktree,
+        "resultPath": result_path,
+        "headSha": head_sha,
+        "request": {
+            "requestId": request_id,
+            "opportunityKey": "a/b#1",
+            "issueUrl": issue_url,
+            "taskId": request_id,
+            "commitSha": head_sha,
+            "headSha": head_sha,
+            "selectedBaseSha": base_sha,
+            "branch": "fix-runtime",
+            "worktreePath": str(worktree),
+            "evidencePath": str(result_path),
+            "resultDigest": digest,
+            "probeRequired": True,
+            "probeLevel": "REPRODUCED_VALIDATED",
+            "taskStage": "IMPLEMENTATION_READY",
+            "codePaths": ["runtime.py"],
+            "preTaskEvidence": value["preTaskEvidence"],
+            "reproductionReceipt": receipt,
+            "publication": {
+                "headOwner": "Oxygen56",
+                "baseBranch": "main",
+                "title": "fix: runtime",
+                "bodyPath": str(body_path),
+            },
+        },
+    }
 
 
 def test_controller_normalizes_child_base_to_prepared_default_branch(tmp_path):
@@ -5828,7 +6525,7 @@ def test_controller_commits_validated_child_patch_and_requests_publication(tmp_p
 
 
 def test_child_cannot_self_attest_independent_review(monkeypatch, tmp_path):
-    store, _worktree, result_path = _controller_commit_result(tmp_path)
+    store, _worktree, result_path = _controller_commit_result(tmp_path, authenticated=False)
     monkeypatch.setattr(MODULE, "controller_review_result", lambda _root, _value: None)
 
     result = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
@@ -5852,7 +6549,7 @@ def test_child_cannot_self_attest_independent_review(monkeypatch, tmp_path):
 
 
 def test_failed_controller_review_remains_an_actionable_followup(monkeypatch, tmp_path):
-    _store, _worktree, result_path = _controller_commit_result(tmp_path)
+    _store, _worktree, result_path = _controller_commit_result(tmp_path, authenticated=False)
     value = json.loads(result_path.read_text(encoding="utf-8"))
     value["tests"] = [
         {
@@ -5897,16 +6594,16 @@ def test_existing_fix_ready_result_accepts_later_controller_review(monkeypatch, 
         value=value,
         result_path=result_path,
     )
-    finalized["quality"]["independent_review_passed"] = False
-    finalized.pop("independentReview", None)
-    result_path.write_text(json.dumps(finalized), encoding="utf-8")
-    digest = hashlib.sha256(result_path.read_bytes()).hexdigest()
-    store.record_stage("a/b#1", "FIX_READY", evidence=finalized["quality"])
-    store.record_task_result_ingested("a/b#1", digest=digest, stage="FIX_READY")
+    finalized["quality"]["independent_review_passed"] = True
     controller_review = {
         "verdict": "PASS",
         "summary": "The exact committed change has no blocking finding.",
     }
+    finalized["independentReview"] = controller_review
+    result_path.write_text(json.dumps(finalized), encoding="utf-8")
+    _refresh_reproduction_certificate(result_path)
+    store.record_stage("a/b#1", "FIX_READY", evidence=finalized["quality"])
+    store.record_task_result_ingested("a/b#1", digest="previous-result", stage="FIX_READY")
     monkeypatch.setattr(MODULE, "controller_review_result", lambda _root, _value: controller_review)
 
     result = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
@@ -5948,6 +6645,11 @@ def test_controller_policy_snapshot_recovers_an_existing_blocked_fix(monkeypatch
     )
     controller_verification = MODULE._controller_policy_verification
     monkeypatch.setattr(MODULE, "_controller_policy_verification", lambda _context: None)
+    legacy_value = json.loads(result_path.read_text(encoding="utf-8"))
+    legacy_value["quality"]["policy_verified"] = False
+    legacy_value.pop("controllerPolicyVerification", None)
+    result_path.write_text(json.dumps(legacy_value), encoding="utf-8")
+    _refresh_reproduction_certificate(result_path)
 
     first = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
     candidate = MODULE.validation_followup_list(
@@ -5970,10 +6672,21 @@ def test_controller_policy_snapshot_recovers_an_existing_blocked_fix(monkeypatch
     )
     blocked = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
     monkeypatch.setattr(MODULE, "_controller_policy_verification", controller_verification)
-    context_path = result_path.parent / "task-context.json"
-    context = json.loads(context_path.read_text(encoding="utf-8"))
-    context["contextDigest"] = "refreshed-controller-context"
-    context_path.write_text(json.dumps(context), encoding="utf-8")
+    recovered_value = json.loads(result_path.read_text(encoding="utf-8"))
+    recovered_context = json.loads(
+        (result_path.parent / "task-context.json").read_text(encoding="utf-8")
+    )
+    recovered_value["quality"]["policy_verified"] = True
+    recovered_value["controllerPolicyVerification"] = controller_verification(recovered_context)
+    result_path.write_text(json.dumps(recovered_value), encoding="utf-8")
+    _refresh_reproduction_certificate(result_path)
+    store.record_stage("a/b#1", "FIX_READY", evidence=recovered_value["quality"])
+    MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=_worktree,
+    )
 
     recovered = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
 
@@ -6502,9 +7215,9 @@ def test_new_controller_review_feedback_rearms_a_stalled_validation(monkeypatch,
     store.commit_validation_followup(thread_id="thread-1", result_digest=candidate["resultDigest"])
     value = json.loads(result_path.read_text(encoding="utf-8"))
     value["independentReview"] = {"verdict": "FAIL", "summary": "integration path is stale"}
+    value["tests"] = [{"command": "pytest tests/runtime", "exitCode": 1}]
     result_path.write_text(json.dumps(value), encoding="utf-8")
-    raw = result_path.read_bytes()
-    second_digest = hashlib.sha256(raw).hexdigest()
+    second_digest = _refresh_reproduction_certificate(result_path)
     store.record_validation_deferred(
         "a/b#1",
         thread_id="thread-1",
@@ -6527,7 +7240,7 @@ def test_new_controller_review_feedback_rearms_a_stalled_validation(monkeypatch,
     store.commit_validation_followup(thread_id="thread-1", result_digest=second_digest)
     value["evidence"] = {"summary": "the same validation gap remains"}
     result_path.write_text(json.dumps(value), encoding="utf-8")
-    third_digest = hashlib.sha256(result_path.read_bytes()).hexdigest()
+    third_digest = _refresh_reproduction_certificate(result_path)
     store.record_validation_deferred(
         "a/b#1",
         thread_id="thread-1",
@@ -6561,7 +7274,7 @@ def test_dirty_worktree_rearms_a_stalled_validation_result(tmp_path):
     value = json.loads(result_path.read_text(encoding="utf-8"))
     value["evidence"] = {"summary": "the continuation started but was interrupted"}
     result_path.write_text(json.dumps(value), encoding="utf-8")
-    second_digest = hashlib.sha256(result_path.read_bytes()).hexdigest()
+    second_digest = _refresh_reproduction_certificate(result_path)
     store.record_validation_deferred(
         "a/b#1",
         thread_id="thread-1",
@@ -6587,6 +7300,7 @@ def test_new_check_outcome_rearms_a_stalled_validation_result(tmp_path):
     value = json.loads(result_path.read_text(encoding="utf-8"))
     value["tests"] = [{"command": "pnpm test", "exitCode": 1}]
     result_path.write_text(json.dumps(value), encoding="utf-8")
+    _refresh_reproduction_certificate(result_path)
     first = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
     candidate = store.validation_followup_candidates()[0]
     store.reserve_validation_followup(thread_id="thread-1", result_digest=candidate["resultDigest"])
@@ -6594,7 +7308,7 @@ def test_new_check_outcome_rearms_a_stalled_validation_result(tmp_path):
 
     value["evidence"] = {"summary": "the same gap remains"}
     result_path.write_text(json.dumps(value), encoding="utf-8")
-    second_digest = hashlib.sha256(result_path.read_bytes()).hexdigest()
+    second_digest = _refresh_reproduction_certificate(result_path)
     store.record_validation_deferred(
         "a/b#1",
         thread_id="thread-1",
@@ -6624,7 +7338,7 @@ def test_available_dependency_prefetch_rearms_a_stalled_validation(monkeypatch, 
     value = json.loads(result_path.read_text(encoding="utf-8"))
     value["evidence"] = {"summary": "locked validation dependency is absent"}
     result_path.write_text(json.dumps(value), encoding="utf-8")
-    second_digest = hashlib.sha256(result_path.read_bytes()).hexdigest()
+    second_digest = _refresh_reproduction_certificate(result_path)
     store.record_validation_deferred(
         "a/b#1",
         thread_id="thread-1",
@@ -6718,7 +7432,7 @@ def test_unlocked_unverified_gate_is_classified_as_environment_blocked(monkeypat
         ]
     }
     result_path.write_text(json.dumps(value), encoding="utf-8")
-    second_digest = hashlib.sha256(result_path.read_bytes()).hexdigest()
+    second_digest = _refresh_reproduction_certificate(result_path)
     store.record_validation_deferred(
         "a/b#1",
         thread_id="thread-1",
@@ -6751,7 +7465,7 @@ def test_string_unverified_dependency_gate_is_environment_blocked(monkeypatch, t
         ]
     }
     result_path.write_text(json.dumps(value), encoding="utf-8")
-    second_digest = hashlib.sha256(result_path.read_bytes()).hexdigest()
+    second_digest = _refresh_reproduction_certificate(result_path)
     store.record_validation_deferred(
         "a/b#1",
         thread_id="thread-1",
@@ -6790,7 +7504,7 @@ def test_mixed_prefetchable_and_unavailable_gates_stop_without_followup(tmp_path
     ]
     raw = json.dumps(value).encode()
     result_path.write_bytes(raw)
-    digest = hashlib.sha256(raw).hexdigest()
+    digest = _refresh_reproduction_certificate(result_path)
     store.record_validation_deferred(
         "a/b#1",
         thread_id="thread-1",
@@ -7280,7 +7994,12 @@ def test_controller_defers_unvalidated_publishable_fix_without_agent_failure(tmp
         "independent_review_passed",
     ):
         completed["quality"][field] = True
+    completed["independentReview"] = {
+        "verdict": "PASS",
+        "summary": "test controller receipt",
+    }
     result_path.write_text(json.dumps(completed), encoding="utf-8")
+    _refresh_reproduction_certificate(result_path)
 
     advanced = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
 
@@ -7292,6 +8011,93 @@ def test_controller_defers_unvalidated_publishable_fix_without_agent_failure(tmp
         ]
         == "FIX_READY"
     )
+
+
+def test_managed_result_failure_remains_replayable_before_legacy_ingest_marker(
+    tmp_path, monkeypatch
+):
+    store, _worktree, result_path = _controller_commit_result(
+        tmp_path,
+        missing_quality=(
+            "regression_test_verified",
+            "relevant_tests_green",
+            "independent_review_passed",
+        ),
+    )
+    original = MODULE.ManagedAdapter.record_task_result
+    calls = {"count": 0}
+
+    def fail_once(self, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise RuntimeError("managed ledger unavailable")
+        return original(self, **kwargs)
+
+    monkeypatch.setattr(MODULE.ManagedAdapter, "record_task_result", fail_once)
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert first["ok"] is False, first
+    assert first["errors"] == [{"key": "a/b#1", "error": "managed ledger unavailable"}]
+    result_digest = hashlib.sha256(result_path.read_bytes()).hexdigest()
+    assert not store.task_result_digest_seen("a/b#1", result_digest)
+    replay = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert replay["ok"] is True
+    assert replay["ingested"] == [
+        {
+            "key": "a/b#1",
+            "stage": "VALIDATION_PENDING",
+            "reason": "SUBMIT_READY_EVIDENCE_INCOMPLETE",
+        }
+    ]
+
+
+def test_complete_fix_ready_requires_managed_write_before_legacy_stage(tmp_path, monkeypatch):
+    store, _worktree, _result_path = _controller_commit_result(tmp_path)
+    original = MODULE.ManagedAdapter.record_task_result
+
+    def fail_once(self, **kwargs):
+        monkeypatch.setattr(MODULE.ManagedAdapter, "record_task_result", original)
+        raise RuntimeError("managed result unavailable")
+
+    monkeypatch.setattr(MODULE.ManagedAdapter, "record_task_result", fail_once)
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert first["ok"] is False
+    assert store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")[
+        "stage"
+    ] != "FIX_READY"
+
+
+def test_fix_ready_replays_legacy_projection_after_managed_success(tmp_path, monkeypatch):
+    store, _worktree, _result_path = _controller_commit_result(tmp_path)
+    original = MODULE.RadarLedger.record_stage
+    calls = {"count": 0}
+
+    def fail_legacy_once(self, *args, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise RuntimeError("legacy projection unavailable")
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(MODULE.RadarLedger, "record_stage", fail_legacy_once)
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert first["ok"] is False, first
+    assert store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")[
+        "stage"
+    ] != "FIX_READY"
+    with sqlite3.connect(tmp_path / "ledger.sqlite3") as connection:
+        assert connection.execute("SELECT COUNT(*) FROM managed_results").fetchone()[0] == 1
+
+    replay = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert replay["ok"] is True
+    assert store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")[
+        "stage"
+    ] == "FIX_READY"
+    with sqlite3.connect(tmp_path / "ledger.sqlite3") as connection:
+        assert connection.execute("SELECT COUNT(*) FROM managed_results").fetchone()[0] == 1
 
 
 def test_validation_followup_uses_cumulative_files_for_first_publication(tmp_path):
@@ -7315,19 +8121,28 @@ def test_validation_followup_uses_cumulative_files_for_first_publication(tmp_pat
     (worktree / "test_runtime.py").write_text(
         "def test_runtime():\n    assert True\n", encoding="utf-8"
     )
+    run_git(worktree, "add", "test_runtime.py")
+    run_git(worktree, "commit", "-m", "test: cover runtime boundary")
+    followup_head = run_git(worktree, "rev-parse", "HEAD")
     followup = json.loads(result_path.read_text(encoding="utf-8"))
     followup.update(
         {
             "contextDigest": context["contextDigest"],
-            "handoffMode": "controller_commit_required",
-            "commitSha": None,
+            "handoffMode": "controller_commit_complete",
+            "commitSha": followup_head,
+            "headSha": followup_head,
+            "controllerCommitChangedFiles": ["test_runtime.py"],
             "commitMessage": "test: cover runtime boundary",
-            "changedFiles": ["test_runtime.py"],
+                "changedFiles": ["runtime.py", "test_runtime.py"],
             "quality": {field: True for field in QUALITY_FIELDS},
         }
     )
     followup.pop("controllerCommitChangedFiles", None)
+    followup["controllerCommitChangedFiles"] = ["test_runtime.py"]
+    followup["reproductionReceipt"]["headSha"] = followup_head
+    followup["reproductionReceipt"]["commitSha"] = followup_head
     result_path.write_text(json.dumps(followup), encoding="utf-8")
+    _refresh_reproduction_certificate(result_path)
 
     advanced = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
 
@@ -7367,19 +8182,28 @@ def test_validation_followup_accepts_cumulative_files_with_local_correction(tmp_
     (worktree / "test_runtime.py").write_text(
         "def test_runtime():\n    assert True\n", encoding="utf-8"
     )
+    run_git(worktree, "add", "test_runtime.py")
+    run_git(worktree, "commit", "-m", "test: cover runtime boundary")
+    followup_head = run_git(worktree, "rev-parse", "HEAD")
     followup = json.loads(result_path.read_text(encoding="utf-8"))
     followup.update(
         {
             "contextDigest": context["contextDigest"],
-            "handoffMode": "controller_commit_required",
-            "commitSha": None,
+            "handoffMode": "controller_commit_complete",
+            "commitSha": followup_head,
+            "headSha": followup_head,
+            "controllerCommitChangedFiles": ["test_runtime.py"],
             "commitMessage": "test: cover runtime boundary",
             "changedFiles": ["runtime.py", "test_runtime.py"],
             "quality": {field: True for field in QUALITY_FIELDS},
         }
     )
     followup.pop("controllerCommitChangedFiles", None)
+    followup["controllerCommitChangedFiles"] = ["test_runtime.py"]
+    followup["reproductionReceipt"]["headSha"] = followup_head
+    followup["reproductionReceipt"]["commitSha"] = followup_head
     result_path.write_text(json.dumps(followup), encoding="utf-8")
+    _refresh_reproduction_certificate(result_path)
 
     advanced = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
 
@@ -7590,6 +8414,17 @@ def test_ingestion_recovers_seen_complete_pr_followup_parent(tmp_path, monkeypat
         wake_digest=candidate["wakeDigest"],
         prepared_head_sha=previous_head,
     )
+    with store.connect() as connection:
+        payload = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM intents WHERE intent_id='intent-1'"
+            ).fetchone()[0]
+        )
+        payload.update({"taskStage": "IMPLEMENTATION_READY", "probeLevel": "REPRODUCED_VALIDATED"})
+        connection.execute(
+            "UPDATE intents SET payload_json=? WHERE intent_id='intent-1'",
+            (json.dumps(payload, sort_keys=True),),
+        )
     context_path = MODULE.write_task_context(
         store,
         issue_url="https://github.com/a/b/issues/1",
@@ -7613,7 +8448,18 @@ def test_ingestion_recovers_seen_complete_pr_followup_parent(tmp_path, monkeypat
         "stage": "FIX_READY",
         "handoffMode": "controller_commit_complete",
         "commitSha": run_git(worktree, "rev-parse", "HEAD"),
-        "branch": "fix/1-runtime",
+        "branch": run_git(worktree, "symbolic-ref", "--short", "HEAD"),
+        "taskId": "intent-1",
+        "probeRequired": True,
+        "probeLevel": "REPRODUCED_VALIDATED",
+        "selectedBaseSha": previous_head,
+        "headSha": run_git(worktree, "rev-parse", "HEAD"),
+        "codePaths": ["runtime.py"],
+        "preTaskEvidence": {
+            "defaultBranch": "main",
+            "baseSha": previous_head,
+            "codePathsPlan": ["runtime.py"],
+        },
         "changedFiles": ["test_runtime.py"],
         "controllerCommitChangedFiles": ["test_runtime.py"],
         "tests": [{"command": "pytest test_runtime.py", "exitCode": 0}],
@@ -7630,6 +8476,26 @@ def test_ingestion_recovers_seen_complete_pr_followup_parent(tmp_path, monkeypat
         "Fixes #1\n\nCover the runtime follow-up.\n", encoding="utf-8"
     )
     result_path.write_text(json.dumps(result), encoding="utf-8")
+    result_value = json.loads(result_path.read_text(encoding="utf-8"))
+    candidate_record = next(
+        item
+        for item in store.task_result_candidates()
+        if item["key"] == "a/b#1" and item["threadId"] == "thread-1"
+    )
+    result_value, _raw = MODULE._finalize_controller_commit(
+        candidate=candidate_record,
+        context=context,
+        value=result_value,
+        result_path=result_path,
+    )
+    _sign_reproduction_certificate(
+        result_value,
+        result_path=result_path,
+        base_sha=previous_head,
+        head_sha=result_value["commitSha"],
+        commit_sha=result_value["commitSha"],
+        store=store,
+    )
     store.record_stage("a/b#1", "VALIDATION_PENDING", evidence=result["quality"])
     store.record_task_result_ingested(
         "a/b#1",
@@ -7640,7 +8506,7 @@ def test_ingestion_recovers_seen_complete_pr_followup_parent(tmp_path, monkeypat
     outcome = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
     finalized = json.loads(result_path.read_text(encoding="utf-8"))
 
-    assert outcome["ok"] is True
+    assert outcome["ok"] is True, outcome["errors"]
     assert outcome["errors"] == []
     assert outcome["validationDeferred"] == [
         {
@@ -7906,7 +8772,7 @@ def test_validation_followup_blocks_missing_python_dependencies_without_lockfile
     ]
     raw = json.dumps(value).encode()
     result_path.write_bytes(raw)
-    digest = hashlib.sha256(raw).hexdigest()
+    digest = _refresh_reproduction_certificate(result_path)
     store.record_validation_deferred(
         "a/b#1",
         thread_id="thread-1",
@@ -7938,6 +8804,7 @@ def test_validation_followup_reassesses_ci_delegation_once(tmp_path):
         ]
     }
     result_path.write_text(json.dumps(value), encoding="utf-8")
+    _refresh_reproduction_certificate(result_path)
 
     ingested = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
     assert ingested["validationDeferred"]
@@ -8075,7 +8942,7 @@ def test_validation_followup_reserve_runs_prefetch_inside_bridge(monkeypatch, tm
     ]
     raw = json.dumps(value).encode()
     result_path.write_bytes(raw)
-    digest = hashlib.sha256(raw).hexdigest()
+    digest = _refresh_reproduction_certificate(result_path)
     store.record_validation_deferred(
         "a/b#1",
         thread_id="thread-1",
@@ -8129,7 +8996,7 @@ def test_validation_followup_prefetch_failure_is_blocked_without_delivery(monkey
     ]
     raw = json.dumps(value).encode()
     result_path.write_bytes(raw)
-    digest = hashlib.sha256(raw).hexdigest()
+    digest = _refresh_reproduction_certificate(result_path)
     store.record_validation_deferred(
         "a/b#1",
         thread_id="thread-1",
@@ -8172,8 +9039,9 @@ def test_validation_prefetch_failure_does_not_reserve_followup(monkeypatch, tmp_
         tmp_path,
         missing_quality=("relevant_tests_green",),
     )
-    raw = result_path.read_bytes()
-    digest = hashlib.sha256(raw).hexdigest()
+    digest = json.loads(result_path.read_text(encoding="utf-8"))["reproductionReceipt"][
+        "resultDigest"
+    ]
     store.record_validation_deferred(
         "a/b#1",
         thread_id="thread-1",
@@ -8202,33 +9070,15 @@ def test_validation_prefetch_failure_does_not_reserve_followup(monkeypatch, tmp_
 
 
 def test_privileged_controller_runs_granted_publication_queue(monkeypatch, tmp_path):
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
-    evidence_path = worktree / "result.json"
-    evidence_path.write_text(
-        json.dumps({"quality": {"independent_review_passed": True}}), encoding="utf-8"
-    )
+    fixture = _legal_queue_publication_fixture(tmp_path)
+    request = fixture["request"]
 
     class Store:
         def publication_work_items(self):
             return [
                 {
                     "request_id": "request-1",
-                    "request": {
-                        "requestId": "request-1",
-                        "opportunityKey": "a/b#1",
-                        "issueUrl": "https://github.com/a/b/issues/1",
-                        "commitSha": "a" * 40,
-                        "branch": "fix-runtime",
-                        "worktreePath": str(worktree),
-                        "evidencePath": str(evidence_path),
-                        "publication": {
-                            "headOwner": "Oxygen56",
-                            "baseBranch": "main",
-                            "title": "fix: runtime",
-                            "bodyPath": str(worktree / "body.md"),
-                        },
-                    },
+                    "request": request,
                 }
             ]
 
@@ -8307,36 +9157,159 @@ def test_publication_queue_blocks_legacy_request_without_private_review(monkeypa
     assert recorded == [("request-1", "CONTROLLER_INDEPENDENT_REVIEW_REQUIRED")]
 
 
+def test_publication_cap_blocks_before_push_or_create_pr(monkeypatch, tmp_path):
+    ledger_path = tmp_path / "ledger.sqlite3"
+    managed = ManagedLedger(ledger_path, ensure_schema=True)
+    for number in range(1, 6):
+        managed.upsert_pr(
+            pr_key=f"a/b#{number}",
+            owner="a",
+            repo="b",
+            number=number,
+            head_sha=f"head-{number}",
+            pr_url=f"https://github.com/a/b/pull/{number}",
+            state="OPEN",
+            auto_created=True,
+        )
+    evidence_path = tmp_path / "result.json"
+    evidence_path.write_text(json.dumps({"quality": {"independent_review_passed": True}}), encoding="utf-8")
+    blocked = []
+
+    class Store:
+        def publication_work_items(self):
+            return [
+                {
+                    "request_id": "request-6",
+                    "request": {
+                        "requestId": "request-6",
+                        "opportunityKey": "a/b#6",
+                        "issueUrl": "https://github.com/a/b/issues/6",
+                        "commitSha": "a" * 40,
+                        "branch": "fix-6",
+                        "worktreePath": str(tmp_path),
+                        "evidencePath": str(evidence_path),
+                        "publication": {
+                            "headOwner": "Oxygen56",
+                            "baseBranch": "main",
+                            "title": "fix: six",
+                            "bodyPath": str(tmp_path / "body.md"),
+                        },
+                    },
+                }
+            ]
+
+        def recover_failed_publication_preflight(self, *_args, **_kwargs):
+            return False
+
+        def prepare_ambiguous_publication_effect(self, *_args, **_kwargs):
+            return None
+
+        def prepare_post_push_reconciliation(self, *_args, **_kwargs):
+            return None
+
+        def block_publication_request(self, request_id, reason):
+            blocked.append((request_id, reason))
+
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+    monkeypatch.setattr(MODULE, "controller_review_result", lambda *_args: {"verdict": "PASS"})
+    monkeypatch.setattr(
+        MODULE,
+        "broker_publication_request",
+        lambda *_args: {"granted": True, "permit": {"permit_id": "permit-6"}},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "_executor",
+        lambda *_args, **_kwargs: pytest.fail("cap must block before external publication"),
+    )
+
+    result = MODULE.run_publication_queue(SimpleNamespace(ledger=ledger_path))
+
+    assert result["published"] == []
+    assert result["blocked"] == [{"requestId": "request-6", "reason": "BLOCKED_PRE_TASK"}]
+    assert blocked == [("request-6", "BLOCKED_PRE_TASK")]
+
+
+def test_publication_finalize_failure_reconciles_without_second_create_pr(monkeypatch, tmp_path):
+    ledger_path = tmp_path / "ledger.sqlite3"
+    ManagedLedger(ledger_path, ensure_schema=True)
+    fixture = _legal_queue_publication_fixture(
+        tmp_path, request_id="request-reconcile-queue"
+    )
+    request = fixture["request"]
+    calls = []
+
+    class Store:
+        def publication_work_items(self):
+            return [{"request_id": "request-reconcile-queue", "request": request}]
+
+        def recover_failed_publication_preflight(self, *_args, **_kwargs):
+            return False
+
+        def prepare_ambiguous_publication_effect(self, *_args, **_kwargs):
+            return None
+
+        def prepare_post_push_reconciliation(self, *_args, **_kwargs):
+            return None
+
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+    monkeypatch.setattr(MODULE, "controller_review_result", lambda *_args: {"verdict": "PASS"})
+    monkeypatch.setattr(MODULE, "ensure_fork_remote", lambda *_args: "radar-fork")
+    monkeypatch.setattr(
+        MODULE,
+        "broker_publication_request",
+        lambda *_args: {"granted": True, "permit": {"permit_id": "permit-reconcile"}},
+    )
+
+    def executor(operation, _arguments, *, ledger_path):
+        calls.append(operation)
+        if operation == "push":
+            return {"ok": True}
+        return {
+            "ok": True,
+            "prUrl": "https://github.com/a/b/pull/1",
+            "headSha": request["commitSha"],
+        }
+
+    monkeypatch.setattr(MODULE, "_executor", executor)
+    original_finalize = ManagedLedger.finalize_publication_reservation
+    failed = {"value": False}
+
+    def fail_finalize_once(self, **kwargs):
+        if not failed["value"]:
+            failed["value"] = True
+            raise RuntimeError("finalize interrupted")
+        return original_finalize(self, **kwargs)
+
+    monkeypatch.setattr(ManagedLedger, "finalize_publication_reservation", fail_finalize_once)
+    first = MODULE.run_publication_queue(SimpleNamespace(ledger=ledger_path))
+    second = MODULE.run_publication_queue(SimpleNamespace(ledger=ledger_path))
+
+    assert first["published"] == []
+    assert first["errors"] == [{"requestId": "request-reconcile-queue", "error": "finalize interrupted"}]
+    assert second["published"] == [
+        {
+            "requestId": "request-reconcile-queue",
+            "key": "a/b#1",
+            "prUrl": "https://github.com/a/b/pull/1",
+            "pushReconciled": True,
+        }
+    ]
+    assert calls == ["push", "create-pr"]
+
+
 def test_publication_queue_reconciles_interrupted_push_before_pr_confirmation(
     monkeypatch, tmp_path
 ):
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
-    evidence_path = worktree / "result.json"
-    evidence_path.write_text(
-        json.dumps({"quality": {"independent_review_passed": True}}), encoding="utf-8"
-    )
+    fixture = _legal_queue_publication_fixture(tmp_path)
+    request = fixture["request"]
 
     class Store:
         def publication_work_items(self):
             return [
                 {
                     "request_id": "request-1",
-                    "request": {
-                        "requestId": "request-1",
-                        "opportunityKey": "a/b#1",
-                        "issueUrl": "https://github.com/a/b/issues/1",
-                        "commitSha": "b" * 40,
-                        "branch": "fix-runtime",
-                        "worktreePath": str(worktree),
-                        "evidencePath": str(evidence_path),
-                        "publication": {
-                            "headOwner": "Oxygen56",
-                            "baseBranch": "main",
-                            "title": "fix: runtime",
-                            "bodyPath": str(worktree / "body.md"),
-                        },
-                    },
+                    "request": request,
                 }
             ]
 
@@ -8396,6 +9369,12 @@ def test_publication_queue_returns_immediately_when_another_executor_holds_lock(
 
 def test_publication_executor_failure_reports_the_useful_tail(monkeypatch, tmp_path):
     monkeypatch.setattr(
+        MODULE,
+        "bind_runtime",
+        lambda _root: SimpleNamespace(script=lambda _name: Path("publication_executor.py")),
+    )
+    monkeypatch.setattr(MODULE, "runtime_python", lambda _root: Path(sys.executable))
+    monkeypatch.setattr(
         MODULE.subprocess,
         "run",
         lambda *_args, **_kwargs: subprocess.CompletedProcess(
@@ -8407,7 +9386,106 @@ def test_publication_executor_failure_reports_the_useful_tail(monkeypatch, tmp_p
     )
 
     with pytest.raises(RuntimeError, match="exact publication failure"):
-        MODULE._executor("push", [], ledger_path=tmp_path / "ledger.sqlite3")
+        MODULE._executor(
+            "push",
+            [],
+            ledger_path=tmp_path / "ledger.sqlite3",
+            runtime_root=tmp_path,
+        )
+
+
+def test_bridge_operation_requires_runtime_root_before_dispatch(monkeypatch, capsys):
+    monkeypatch.setattr(
+        MODULE,
+        "run_publication_queue",
+        lambda _args: pytest.fail("publication must be gated before dispatch"),
+    )
+    monkeypatch.setattr(MODULE.sys, "argv", ["local_dispatch_bridge.py", "publication-run"])
+
+    assert MODULE.main() == 2
+    result = json.loads(capsys.readouterr().out)
+    assert result["ok"] is False
+    assert "runtime-root" in result["error"]
+
+
+def test_every_bridge_operation_requires_authorization_before_dispatch(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(MODULE, "bind_runtime", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(
+        MODULE,
+        "require_operational_authorization",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("missing authorization")),
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "list_pending",
+        lambda _path: pytest.fail("even read-like CLI operations must be gated"),
+    )
+    monkeypatch.setattr(
+        MODULE.sys,
+        "argv",
+        ["local_dispatch_bridge.py", "list", "--runtime-root", str(tmp_path)],
+    )
+
+    assert MODULE.main() == 2
+    result = json.loads(capsys.readouterr().out)
+    assert result["ok"] is False
+    assert "authorization" in result["error"]
+
+
+def test_bridge_rejects_wrong_release_binding_before_authorization(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(
+        MODULE,
+        "bind_runtime",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("release mismatch")),
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "require_operational_authorization",
+        lambda *_args: pytest.fail("authorization must not run for an invalid release"),
+    )
+    monkeypatch.setattr(MODULE, "list_pending", lambda _path: pytest.fail("must fail closed"))
+    monkeypatch.setattr(
+        MODULE.sys,
+        "argv",
+        ["local_dispatch_bridge.py", "list", "--runtime-root", str(tmp_path)],
+    )
+
+    assert MODULE.main() == 2
+    result = json.loads(capsys.readouterr().out)
+    assert result["ok"] is False
+    assert "operational authorization" in result["error"]
+
+
+def test_authorized_publication_run_reaches_dispatch(monkeypatch, tmp_path, capsys):
+    calls = []
+    monkeypatch.setattr(MODULE, "bind_runtime", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(
+        MODULE,
+        "require_operational_authorization",
+        lambda root: calls.append(root),
+    )
+    monkeypatch.setattr(MODULE, "run_publication_queue", lambda _args: {"ok": True})
+    monkeypatch.setattr(
+        MODULE.sys,
+        "argv",
+        ["local_dispatch_bridge.py", "publication-run", "--runtime-root", str(tmp_path)],
+    )
+
+    assert MODULE.main() == 0
+    assert json.loads(capsys.readouterr().out) == {"ok": True}
+    assert calls == [tmp_path.resolve()]
+
+
+def test_bridge_help_has_no_auth_bypass_option():
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPT), "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0
+    assert "skip-auth" not in completed.stdout
+    assert "allow-unreleased-code" not in completed.stdout
 
 
 def test_task_context_self_reconciles_exact_async_handoff(monkeypatch, tmp_path):

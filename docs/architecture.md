@@ -75,6 +75,35 @@ timing are external labels, not the north-star metric.
    title, and PR body digest. A permit expires quickly and is consumed by the
    verified PR.
 
+## Local Runtime Plane
+
+The local execution plane has three mutually bounded workers:
+
+- The 20-second fast worker performs only local context/result ingestion and
+  writes a durable request for slow work. It never clones, fetches, starts a
+  Codex turn, publishes, or drains.
+- One serialized slow worker owns network access, Git/Codex work, publication,
+  and event drain. Failures persist exponential backoff, so a timeout cannot
+  turn the fast schedule into a long-running network process.
+- A separate five-minute queue importer verifies signed queue data and imports
+  write intents only. It has its own lock and cannot invoke the slow worker.
+The fast and slow workers use independent `fast-worker.lock` and
+`slow-worker.lock` files. Only narrow Ledger transactions and operation-journal
+writes are shared; the slow network workflow never holds the fast lock.
+
+Runtime health is an independent execution-plane fact. It requires a real
+process/version check when a PID is present, a recent successful cycle, bounded
+consecutive failures, zero nonzero exit state, fresh queue import, reconciled
+publication effects, acceptable disk/log budgets, a verified immutable release,
+and an unchanged policy digest. `state/runtime-health.json` and the append-only
+operation log are operational evidence; `state/radar_ledger.sqlite3` remains
+the lifecycle authority.
+
+Deployments are clean-source-only immutable directories under `releases/` with
+per-file SHA-256 entries and a manifest digest. `current-release` is the only
+activation pointer. Previous releases and durable runtime state are retained for
+rollback; a damaged or dirty release cannot become active.
+
 ## Lifecycle
 
 `QUALIFIED -> LEASED -> CREATING -> DISPATCHED -> AUDIT_PASS -> FIX_READY -> PR_OPEN -> CI_GREEN -> MAINTAINER_ACCEPTED -> MERGED`

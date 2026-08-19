@@ -57,6 +57,7 @@ def test_semantic_review_retry_replaces_pre_llm_candidate_outcome():
     assert outcome == {
         "status": "deferred",
         "reason": "semantic_review_retry",
+        "classification": "blocked_pre_task",
         "auto_spawn": False,
         "track": "agent_ai_infra",
         "category": "SEMANTIC_REVIEW_RETRY",

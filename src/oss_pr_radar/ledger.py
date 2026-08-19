@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
+from .repo_probe import REPRODUCED_VALIDATED, verify_probe_receipt
 from .util import canonical_json, iso_z, parse_time, sha256_json, sha256_text
 
 STAGES = (
@@ -36,6 +37,63 @@ PUBLISHED_STAGES = {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED", "MERGED", "CLO
 PR_UPDATE_REARM_REASONS = {"EXISTING_PR_HEAD_DRIFT", "NON_FAST_FORWARD_PR_UPDATE"}
 PR_URL_RE = re.compile(r"^https://github\.com/([^/]+/[^/]+)/pull/(\d+)$")
 ISSUE_URL_RE = re.compile(r"^https://github\.com/([^/]+/[^/]+)/issues/(\d+)$")
+
+
+def _publication_probe_valid(request: dict[str, Any], evidence: dict[str, Any] | None = None) -> bool:
+    """Require a current-key reproduction receipt for every publication layer."""
+
+    merged = dict(request)
+    if isinstance(evidence, dict):
+        merged.update(evidence)
+    issue_url = str(merged.get("issueUrl") or "")
+    match = ISSUE_URL_RE.fullmatch(issue_url)
+    receipt = merged.get("reproductionReceipt") or merged.get("probeReceipt")
+    if match is None or not isinstance(receipt, dict):
+        return False
+    repo = match.group(1)
+    pre_task = merged.get("preTaskEvidence")
+    if not isinstance(pre_task, dict):
+        pre_task = (merged.get("intent") or {}).get("preTaskEvidence")
+    if not isinstance(pre_task, dict):
+        pre_task = {}
+    base_sha = str(merged.get("selectedBaseSha") or pre_task.get("baseSha") or receipt.get("baseSha") or "")
+    code_paths = [
+        str(path)
+        for path in (
+            merged.get("codePaths")
+            or pre_task.get("codePathsPlan")
+            or pre_task.get("codePaths")
+            or receipt.get("codePaths")
+            or []
+        )
+        if str(path).strip()
+    ]
+    commit_sha = str(merged.get("commitSha") or "") or None
+    expected_head = str(merged.get("headSha") or commit_sha or "") or None
+    result_digest = str(merged.get("resultDigest") or "") or None
+    task_id = str(merged.get("taskId") or merged.get("intentId") or merged.get("threadId") or "") or None
+    if not base_sha or not code_paths or not commit_sha or not expected_head or not result_digest or not task_id:
+        return False
+    return verify_probe_receipt(
+        receipt,
+        repo=repo,
+        base_sha=base_sha,
+        code_paths=code_paths,
+        required_level=REPRODUCED_VALIDATED,
+        issue_url=issue_url,
+        task_id=task_id,
+        head_sha=expected_head,
+        commit_sha=commit_sha,
+        result_digest=result_digest,
+    )
+
+
+def _publication_probe_valid_json(raw: str, evidence: dict[str, Any] | None = None) -> bool:
+    try:
+        request = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return False
+    return _publication_probe_valid(request, evidence) if isinstance(request, dict) else False
 RECOVERABLE_CONTEXT_STAGES = {
     "AUDIT_PASS",
     "VALIDATION_PENDING",
@@ -100,7 +158,8 @@ class RadarLedger:
             yield connection
             connection.execute("COMMIT")
         except Exception:
-            connection.execute("ROLLBACK")
+            if connection.in_transaction:
+                connection.execute("ROLLBACK")
             raise
         finally:
             connection.close()
@@ -255,6 +314,35 @@ class RadarLedger:
                     "leased_without_active_intent",
                     {"from": "LEASED", "to": "AUDIT_PASS"},
                     now,
+                )
+            # Historical publication rows predate the authenticated
+            # reproduction boundary.  Downgrade only actionable rows; a
+            # completed external observation is retained and never replayed.
+            legacy_publications = connection.execute(
+                "SELECT request_id,request_json,opportunity_key,status FROM publication_requests"
+            ).fetchall()
+            for row in legacy_publications:
+                try:
+                    request_payload = json.loads(row["request_json"])
+                except (TypeError, json.JSONDecodeError):
+                    request_payload = {}
+                if _publication_probe_valid(request_payload):
+                    continue
+                if row["status"] in {"PENDING", "GRANTED", "CONSUMED"}:
+                    connection.execute(
+                        "UPDATE publication_requests SET status='BLOCKED',reason=?,updated_at=? WHERE request_id=?",
+                        ("BLOCKED_REPRODUCTION_REQUIRED", now, row["request_id"]),
+                    )
+                connection.execute(
+                    """UPDATE publication_permits SET status='BLOCKED',updated_at=?
+                       WHERE request_id=? AND status IN ('ACTIVE','EXPIRED')""",
+                    (now, row["request_id"]),
+                )
+                connection.execute(
+                    """UPDATE publication_effects SET status='BLOCKED',result_json=?,updated_at=?
+                       WHERE permit_id IN (SELECT permit_id FROM publication_permits WHERE request_id=?)
+                         AND status IN ('ATTEMPTED','RECONCILE_REQUIRED')""",
+                    (canonical_json({"ok": False, "reason": "BLOCKED_REPRODUCTION_REQUIRED"}), now, row["request_id"]),
                 )
             drifted_updates = connection.execute(
                 """SELECT r.request_id,r.opportunity_key,r.request_json,r.reason
@@ -666,6 +754,11 @@ class RadarLedger:
             "publicSubmissionAllowed": context.get("publicSubmissionAllowed") is True,
             "authorizationSource": context.get("authorizationSource"),
             "publicationMode": context.get("publicationMode"),
+            "taskStage": context.get("taskStage") or "REPRODUCTION_REQUIRED",
+            "probeLevel": context.get("probeLevel") or "UNVERIFIED",
+            "probeReceiptDigest": context.get("probeReceiptDigest"),
+            "selectedBaseSha": context.get("selectedBaseSha"),
+            "codePaths": context.get("codePaths") or [],
             "recoveredFromTaskContext": True,
             "titleTime": title_time,
         }
@@ -829,10 +922,11 @@ class RadarLedger:
                     "publicationKind": "PR_CREATE",
                     "recoveredFromTaskContext": True,
                 }
+                recovered_authorized = _publication_probe_valid(request)
                 existing_publication = connection.execute(
                     """SELECT r.opportunity_key FROM publication_permits p
                        JOIN publication_requests r ON r.request_id=p.request_id
-                       WHERE p.pr_url=? AND p.status='CONSUMED'""",
+                       WHERE p.pr_url=? AND p.status IN ('CONSUMED','BLOCKED')""",
                     (pr_url,),
                 ).fetchone()
                 if (
@@ -846,7 +940,7 @@ class RadarLedger:
                         """INSERT INTO publication_requests
                            (request_id,opportunity_key,thread_id,commit_sha,branch,worktree_path,
                             evidence_digest,status,reason,permit_id,request_json,created_at,updated_at)
-                           VALUES (?,?,?,?,?,?,?,'CONSUMED',NULL,?,?,?,?)""",
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                         (
                             request_id,
                             key,
@@ -855,7 +949,9 @@ class RadarLedger:
                             branch,
                             str(Path(worktree_path).resolve()),
                             evidence_digest,
-                            permit_id,
+                            "CONSUMED" if recovered_authorized else "BLOCKED",
+                            None if recovered_authorized else "BLOCKED_REPRODUCTION_REQUIRED",
+                            permit_id if recovered_authorized else None,
                             canonical_json(request),
                             requested_at,
                             updated_at,
@@ -865,33 +961,36 @@ class RadarLedger:
                         """INSERT INTO publication_permits
                            (permit_id,request_id,issue_url,commit_sha,branch,status,expires_at,
                             pr_url,evidence_json,created_at,updated_at)
-                           VALUES (?,?,?,?,?,'CONSUMED',?,?,?,?,?)""",
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                         (
                             permit_id,
                             request_id,
                             issue_url,
                             commit_sha,
                             branch,
+                            "CONSUMED" if recovered_authorized else "BLOCKED",
                             updated_at,
                             pr_url,
                             canonical_json(
                                 {
                                     "contextDigest": context_digest,
                                     "recoveredFromTaskContext": True,
+                                    "authorizationStatus": "AUTHENTICATED" if recovered_authorized else "BLOCKED_REPRODUCTION_REQUIRED",
                                 }
                             ),
                             requested_at,
                             updated_at,
                         ),
                     )
-                    self._event(
-                        connection,
-                        key,
-                        "PR_OPEN",
-                        pr_url,
-                        {"permitId": permit_id, "prUrl": pr_url, "recovered": True},
-                        updated_at,
-                    )
+                    if recovered_authorized:
+                        self._event(
+                            connection,
+                            key,
+                            "PR_OPEN",
+                            pr_url,
+                            {"permitId": permit_id, "prUrl": pr_url, "recovered": True},
+                            updated_at,
+                        )
 
             self._event(
                 connection,
@@ -1137,6 +1236,27 @@ class RadarLedger:
                 f"{intent_id}:{row['lease_until']}",
                 {"intentId": intent_id, "owner": owner, "reason": reason},
                 now,
+            )
+            return True
+
+    def update_intent_probe_metadata(
+        self, intent_id: str, *, probe_level: str, task_stage: str, receipt_digest: str
+    ) -> bool:
+        """Persist live probe authorization without changing the intent identity."""
+
+        with self.transaction() as connection:
+            row = connection.execute(
+                "SELECT payload_json FROM intents WHERE intent_id=?", (intent_id,)
+            ).fetchone()
+            if row is None:
+                return False
+            payload = json.loads(row["payload_json"])
+            payload["probeLevel"] = probe_level
+            payload["taskStage"] = task_stage
+            payload["probeReceiptDigest"] = receipt_digest
+            connection.execute(
+                "UPDATE intents SET payload_json=?,updated_at=? WHERE intent_id=?",
+                (json.dumps(payload, ensure_ascii=False, sort_keys=True), iso_z(datetime.now(UTC)), intent_id),
             )
             return True
 
@@ -3325,9 +3445,15 @@ class RadarLedger:
         if thread_id:
             clauses.append("i.thread_id=?")
             params.append(thread_id)
-        if worktree_path:
-            clauses.append("i.worktree_path=?")
-            params.append(str(Path(worktree_path).resolve()))
+        if worktree_path and not thread_id:
+            raw_worktree = str(worktree_path)
+            resolved_worktree = str(Path(worktree_path).resolve())
+            if raw_worktree == resolved_worktree:
+                clauses.append("i.worktree_path=?")
+                params.append(resolved_worktree)
+            else:
+                clauses.append("i.worktree_path IN (?,?)")
+                params.extend((raw_worktree, resolved_worktree))
         if len(clauses) == 1:
             raise ValueError("thread_id or worktree_path is required")
         with self.connect() as connection:
@@ -3404,6 +3530,89 @@ class RadarLedger:
             submission_policy = "ai_disclosure_conflict"
         submission_policy = submission_policy or "normal"
         authorization_active = row["status"] != "REJECTED" and row["stage"] != "AUDIT_NO_GO"
+        raw_probe_level = str(payload.get("probeLevel") or "UNVERIFIED")
+        raw_task_stage = str(payload.get("taskStage") or "REPRODUCTION_REQUIRED")
+        probe_receipt_digest = str(payload.get("probeReceiptDigest") or "")
+        implementation_authorized = (
+            raw_task_stage == "IMPLEMENTATION_READY"
+            and raw_probe_level == "REPRODUCED_VALIDATED"
+            and bool(probe_receipt_digest)
+        )
+        verified_probe_receipt = None
+        if implementation_authorized:
+            try:
+                from .managed_lifecycle import ManagedLedger
+
+                issue_path = issue_url.removeprefix("https://github.com/").split("/issues/", 1)[0]
+                expected_paths = [
+                    str(path)
+                    for path in (payload.get("codePaths") or (payload.get("preTaskEvidence") or {}).get("codePathsPlan") or [])
+                    if str(path).strip()
+                ]
+                verified_probe_receipt = ManagedLedger(self.path, ensure_schema=True).current_reproduction_receipt(
+                    task_id=str(row["intent_id"] or ""),
+                    receipt_digest=probe_receipt_digest,
+                    repo=issue_path,
+                    issue_url=issue_url,
+                    selected_base_sha=str(payload.get("selectedBaseSha") or (payload.get("preTaskEvidence") or {}).get("baseSha") or ""),
+                    code_paths=expected_paths,
+                    head_sha=str(payload.get("headSha") or ""),
+                    commit_sha=str(payload.get("commitSha") or ""),
+                    result_digest=str(payload.get("resultDigest") or ""),
+                    policy_digest=str(payload.get("policyDigest") or (payload.get("preTaskEvidence") or {}).get("policyDigest") or "") or None,
+                )
+            except (OSError, RuntimeError, ValueError, sqlite3.Error):
+                verified_probe_receipt = None
+        implementation_authorized = verified_probe_receipt is not None
+        if not implementation_authorized:
+            # A legacy payload may retain an older result digest after the
+            # managed task has already recorded the authoritative receipt.
+            # Re-read the complete receipt from managed provenance, never from
+            # a digest-only field, and use its bound identity for the context.
+            try:
+                from .managed_lifecycle import ManagedLedger
+
+                managed_task = ManagedLedger(self.path, ensure_schema=True).read_task(
+                    str(row["intent_id"] or "")
+                )
+                managed_provenance = json.loads(
+                    (managed_task or {}).get("provenance_json") or "{}"
+                )
+                managed_receipt = managed_provenance.get("probeReceipt")
+                if (
+                    managed_task
+                    and managed_task.get("state") == "IMPLEMENTATION_READY"
+                    and isinstance(managed_receipt, dict)
+                ):
+                    verified_probe_receipt = ManagedLedger(self.path, ensure_schema=True).current_reproduction_receipt(
+                        task_id=str(row["intent_id"] or ""),
+                        receipt_digest=str(managed_receipt.get("receiptDigest") or ""),
+                        repo=str(managed_receipt.get("repo") or ""),
+                        issue_url=str(managed_receipt.get("issueUrl") or ""),
+                        selected_base_sha=str(managed_receipt.get("baseSha") or ""),
+                        code_paths=list(managed_receipt.get("codePaths") or []),
+                        head_sha=str(managed_receipt.get("headSha") or ""),
+                        commit_sha=str(managed_receipt.get("commitSha") or ""),
+                        result_digest=str(managed_receipt.get("resultDigest") or ""),
+                    )
+                    if verified_probe_receipt is not None:
+                        raw_task_stage = "IMPLEMENTATION_READY"
+                        raw_probe_level = "REPRODUCED_VALIDATED"
+                        probe_receipt_digest = str(verified_probe_receipt["receiptDigest"])
+                        payload["selectedBaseSha"] = verified_probe_receipt["baseSha"]
+                        payload["codePaths"] = verified_probe_receipt["codePaths"]
+                        payload["resultDigest"] = verified_probe_receipt["resultDigest"]
+                        payload["headSha"] = verified_probe_receipt["headSha"]
+                        payload["commitSha"] = verified_probe_receipt["commitSha"]
+            except (OSError, RuntimeError, ValueError, sqlite3.Error, json.JSONDecodeError):
+                verified_probe_receipt = None
+        task_stage = raw_task_stage if implementation_authorized else "REPRODUCTION_REQUIRED"
+        implementation_authorized = verified_probe_receipt is not None
+        allowed_actions = (
+            ["read_issue", "read_repo", "run_reproduction_probe", "write_structured_result"]
+            if not implementation_authorized
+            else ["read_issue", "read_repo", "edit_files", "run_tests", "write_structured_result"]
+        )
         publication_receipt = None
         if publication_row is not None:
             pr_url = publication_row["pr_url"]
@@ -3460,6 +3669,21 @@ class RadarLedger:
             "titleTime": row["title_time"],
             "worktreePath": row["worktree_path"],
             "intentStatus": row["status"],
+            "probeRequired": payload.get("probeRequired") is True or not payload.get("probeLevel"),
+            "probeLevel": raw_probe_level,
+            "probeReceiptDigest": probe_receipt_digest or None,
+            "reproductionReceipt": verified_probe_receipt,
+            "probeProfileId": payload.get("probeProfileId"),
+            "defaultBranch": payload.get("defaultBranch"),
+            "selectedBaseSha": payload.get("selectedBaseSha")
+            or (payload.get("preTaskEvidence") or {}).get("baseSha"),
+            "codePaths": payload.get("codePaths") or (payload.get("preTaskEvidence") or {}).get("codePathsPlan"),
+            "resultDigest": payload.get("resultDigest"),
+            "headSha": payload.get("headSha"),
+            "commitSha": payload.get("commitSha"),
+            "preTaskEvidence": payload.get("preTaskEvidence"),
+            "taskStage": task_stage,
+            "allowedActions": allowed_actions,
             "autoSubmitAuthorized": (
                 authorization_active and payload.get("autoSubmitAuthorized") is True
             ),
@@ -3533,7 +3757,9 @@ class RadarLedger:
         with self.connect() as connection:
             rows = connection.execute(
                 """SELECT o.key,o.repo,o.issue_number,o.issue_url,o.title,
-                          i.thread_id,i.title_time,i.updated_at
+                          i.thread_id,i.title_time,i.updated_at,
+                          json_extract(i.payload_json,'$.maturity') AS maturity,
+                          json_extract(i.payload_json,'$.notify') AS notify
                    FROM opportunities o JOIN intents i ON i.opportunity_key=o.key
                    WHERE i.status='DISPATCHED' AND i.thread_id IS NOT NULL
                      AND NOT EXISTS (
@@ -3553,6 +3779,8 @@ class RadarLedger:
                 "title": row["title"],
                 "threadId": row["thread_id"],
                 "titleTime": row["title_time"],
+                "maturity": row["maturity"] or "mature",
+                "notify": row["notify"] != 0,
             }
             for row in rows
         ]
@@ -3697,6 +3925,11 @@ class RadarLedger:
         evidence_digest: str,
         evidence_path: str,
         publication: dict[str, str],
+        probe_receipt: dict[str, Any] | None = None,
+        result_digest: str | None = None,
+        head_sha: str | None = None,
+        selected_base_sha: str | None = None,
+        code_paths: list[str] | None = None,
     ) -> dict[str, Any]:
         now = iso_z(datetime.now(UTC))
         request_id = sha256_text(
@@ -3778,6 +4011,11 @@ class RadarLedger:
                 "evidenceDigest": evidence_digest,
                 "evidencePath": str(Path(evidence_path).resolve()),
                 "publication": publication,
+                "probeReceipt": probe_receipt,
+                "resultDigest": result_digest,
+                "headSha": head_sha or commit_sha,
+                "selectedBaseSha": selected_base_sha,
+                "codePaths": sorted({str(path) for path in (code_paths or []) if str(path).strip()}),
                 "quality": quality,
                 "intent": payload,
                 "publicationKind": "PR_UPDATE" if previous_publication else "PR_CREATE",
@@ -3790,6 +4028,9 @@ class RadarLedger:
                         "followupWakeDigest": followup["wake_digest"] if followup else None,
                     }
                 )
+            request_allowed = _publication_probe_valid(request)
+            request_status = "PENDING" if request_allowed else "BLOCKED"
+            request_reason = None if request_allowed else "BLOCKED_REPRODUCTION_REQUIRED"
             existing = connection.execute(
                 "SELECT * FROM publication_requests WHERE request_id=?",
                 (request_id,),
@@ -3828,7 +4069,7 @@ class RadarLedger:
                 """INSERT INTO publication_requests
                    (request_id,opportunity_key,thread_id,commit_sha,branch,worktree_path,
                     evidence_digest,status,request_json,created_at,updated_at)
-                   VALUES (?,?,?,?,?,?,?,'PENDING',?,?,?)""",
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     request_id,
                     row["key"],
@@ -3837,11 +4078,17 @@ class RadarLedger:
                     branch,
                     request["worktreePath"],
                     evidence_digest,
+                    request_status,
                     canonical_json(request),
                     now,
                     now,
                 ),
             )
+            if request_reason:
+                connection.execute(
+                    "UPDATE publication_requests SET reason=? WHERE request_id=?",
+                    (request_reason, request_id),
+                )
             self._event(
                 connection,
                 row["key"],
@@ -3852,7 +4099,8 @@ class RadarLedger:
             )
             return {
                 "request_id": request_id,
-                "status": "PENDING",
+                "status": request_status,
+                "reason": request_reason,
                 "request": request,
             }
 
@@ -4077,6 +4325,14 @@ class RadarLedger:
             ).fetchone()
             if request is None or request["status"] not in {"PENDING", "GRANTED"}:
                 raise LedgerError("publication request is not grantable")
+            request_payload = json.loads(request["request_json"])
+            if not _publication_probe_valid(request_payload, evidence):
+                connection.execute(
+                    "UPDATE publication_requests SET status='BLOCKED',reason=?,updated_at=? WHERE request_id=?",
+                    ("BLOCKED_REPRODUCTION_REQUIRED", now, request_id),
+                )
+                connection.commit()
+                raise LedgerError("current-key REPRODUCED_VALIDATED receipt is required")
             existing = connection.execute(
                 "SELECT * FROM publication_permits WHERE request_id=?",
                 (request_id,),
@@ -4156,6 +4412,20 @@ class RadarLedger:
             ).fetchone()
             if row is None:
                 return None
+            request_row = connection.execute(
+                "SELECT request_json FROM publication_requests WHERE request_id=?",
+                (row["request_id"],),
+            ).fetchone()
+            if request_row is None or not _publication_probe_valid_json(request_row["request_json"]):
+                connection.execute(
+                    "UPDATE publication_permits SET status='BLOCKED',updated_at=? WHERE permit_id=?",
+                    (iso_z(current), row["permit_id"]),
+                )
+                connection.execute(
+                    "UPDATE publication_requests SET status='BLOCKED',reason=?,updated_at=? WHERE request_id=?",
+                    ("BLOCKED_REPRODUCTION_REQUIRED", iso_z(current), row["request_id"]),
+                )
+                return None
             if row["status"] == "ACTIVE" and parse_time(row["expires_at"]) <= current:
                 connection.execute(
                     "UPDATE publication_permits SET status='EXPIRED',updated_at=? WHERE permit_id=?",
@@ -4171,6 +4441,20 @@ class RadarLedger:
                 "SELECT * FROM publication_permits WHERE permit_id=?", (permit_id,)
             ).fetchone()
             if row is None:
+                return None
+            request_row = connection.execute(
+                "SELECT request_json FROM publication_requests WHERE request_id=?",
+                (row["request_id"],),
+            ).fetchone()
+            if request_row is None or not _publication_probe_valid_json(request_row["request_json"]):
+                connection.execute(
+                    "UPDATE publication_permits SET status='BLOCKED',updated_at=? WHERE permit_id=?",
+                    (iso_z(current), permit_id),
+                )
+                connection.execute(
+                    "UPDATE publication_requests SET status='BLOCKED',reason=?,updated_at=? WHERE request_id=?",
+                    ("BLOCKED_REPRODUCTION_REQUIRED", iso_z(current), row["request_id"]),
+                )
                 return None
             if row["status"] == "ACTIVE" and parse_time(row["expires_at"]) <= current:
                 connection.execute(
@@ -4191,6 +4475,20 @@ class RadarLedger:
                 "SELECT * FROM publication_permits WHERE permit_id=?", (permit_id,)
             ).fetchone()
             if permit is None:
+                return None
+            request_row = connection.execute(
+                "SELECT request_json FROM publication_requests WHERE request_id=?",
+                (permit["request_id"],),
+            ).fetchone()
+            if request_row is None or not _publication_probe_valid_json(request_row["request_json"]):
+                connection.execute(
+                    "UPDATE publication_permits SET status='BLOCKED',updated_at=? WHERE permit_id=?",
+                    (now, permit_id),
+                )
+                connection.execute(
+                    "UPDATE publication_requests SET status='BLOCKED',reason=?,updated_at=? WHERE request_id=?",
+                    ("BLOCKED_REPRODUCTION_REQUIRED", now, permit["request_id"]),
+                )
                 return None
             if permit["status"] == "ACTIVE" and parse_time(permit["expires_at"]) <= current:
                 connection.execute(
@@ -4220,6 +4518,14 @@ class RadarLedger:
     ) -> dict[str, Any] | None:
         effect_id = sha256_text(f"{permit_id}|{action}|{request_digest}")
         with self.connect() as connection:
+            authorization = connection.execute(
+                """SELECT r.request_json FROM publication_permits p
+                   JOIN publication_requests r ON r.request_id=p.request_id
+                   WHERE p.permit_id=?""",
+                (permit_id,),
+            ).fetchone()
+            if authorization is None or not _publication_probe_valid_json(authorization["request_json"]):
+                return None
             row = connection.execute(
                 "SELECT * FROM publication_effects WHERE effect_id=?", (effect_id,)
             ).fetchone()
@@ -4234,28 +4540,50 @@ class RadarLedger:
     ) -> dict[str, Any]:
         effect_id = sha256_text(f"{permit_id}|{action}|{request_digest}")
         now = iso_z(datetime.now(UTC))
+        blocked = False
         with self.transaction() as connection:
-            existing = connection.execute(
-                "SELECT * FROM publication_effects WHERE effect_id=?", (effect_id,)
+            authorization = connection.execute(
+                """SELECT p.request_id,r.request_json FROM publication_permits p
+                   JOIN publication_requests r ON r.request_id=p.request_id
+                   WHERE p.permit_id=?""",
+                (permit_id,),
             ).fetchone()
-            if existing:
-                return dict(existing) | {"created": False}
-            connection.execute(
-                """INSERT INTO publication_effects
-                   (effect_id,permit_id,action,request_digest,status,result_json,
-                    created_at,updated_at)
-                   VALUES (?,?,?,?,'ATTEMPTED','{}',?,?)""",
-                (effect_id, permit_id, action, request_digest, now, now),
-            )
-            return {
-                "effect_id": effect_id,
-                "permit_id": permit_id,
-                "action": action,
-                "request_digest": request_digest,
-                "status": "ATTEMPTED",
-                "result_json": "{}",
-                "created": True,
-            }
+            if authorization is None or not _publication_probe_valid_json(authorization["request_json"]):
+                if authorization is not None:
+                    connection.execute(
+                        "UPDATE publication_permits SET status='BLOCKED',updated_at=? WHERE permit_id=?",
+                        (now, permit_id),
+                    )
+                    connection.execute(
+                        "UPDATE publication_requests SET status='BLOCKED',reason=?,updated_at=? WHERE request_id=?",
+                        ("BLOCKED_REPRODUCTION_REQUIRED", now, authorization["request_id"]),
+                    )
+                blocked = True
+            if not blocked:
+                existing = connection.execute(
+                    "SELECT * FROM publication_effects WHERE effect_id=?", (effect_id,)
+                ).fetchone()
+                if existing:
+                    return dict(existing) | {"created": False}
+                connection.execute(
+                    """INSERT INTO publication_effects
+                       (effect_id,permit_id,action,request_digest,status,result_json,
+                        created_at,updated_at)
+                       VALUES (?,?,?,?,'ATTEMPTED','{}',?,?)""",
+                    (effect_id, permit_id, action, request_digest, now, now),
+                )
+                return {
+                    "effect_id": effect_id,
+                    "permit_id": permit_id,
+                    "action": action,
+                    "request_digest": request_digest,
+                    "status": "ATTEMPTED",
+                    "result_json": "{}",
+                    "created": True,
+                }
+        if blocked:
+            raise LedgerError("publication effect blocked: authenticated reproduction is required")
+        raise LedgerError("publication effect could not be created")
 
     def resolve_publication_preflight(
         self,
@@ -4393,6 +4721,24 @@ class RadarLedger:
             ).fetchone()
             if row is None:
                 return None
+            request_row = connection.execute(
+                "SELECT request_json FROM publication_requests WHERE request_id=?",
+                (request_id,),
+            ).fetchone()
+            if request_row is None or not _publication_probe_valid_json(request_row["request_json"]):
+                connection.execute(
+                    "UPDATE publication_effects SET status='BLOCKED',result_json=?,updated_at=? WHERE effect_id=?",
+                    (canonical_json({"ok": False, "reason": "BLOCKED_REPRODUCTION_REQUIRED"}), now, row["effect_id"]),
+                )
+                connection.execute(
+                    "UPDATE publication_permits SET status='BLOCKED',updated_at=? WHERE permit_id=?",
+                    (now, row["permit_id"]),
+                )
+                connection.execute(
+                    "UPDATE publication_requests SET status='BLOCKED',reason=?,updated_at=? WHERE request_id=?",
+                    ("BLOCKED_REPRODUCTION_REQUIRED", now, request_id),
+                )
+                return None
             age = current - parse_time(row["effect_updated_at"])
             if row["effect_status"] == "ATTEMPTED" and age < timedelta(
                 minutes=max(1, min_age_minutes)
@@ -4467,6 +4813,21 @@ class RadarLedger:
             ).fetchone()
             if effect is None or permit is None or effect["permit_id"] != permit_id:
                 raise LedgerError("publication retry binding mismatch")
+            request_row = connection.execute(
+                "SELECT request_json FROM publication_requests WHERE request_id=?",
+                (permit["request_id"],),
+            ).fetchone()
+            if request_row is None or not _publication_probe_valid_json(request_row["request_json"], evidence):
+                connection.execute(
+                    "UPDATE publication_permits SET status='BLOCKED',updated_at=? WHERE permit_id=?",
+                    (now, permit_id),
+                )
+                connection.execute(
+                    "UPDATE publication_requests SET status='BLOCKED',reason=?,updated_at=? WHERE request_id=?",
+                    ("BLOCKED_REPRODUCTION_REQUIRED", now, permit["request_id"]),
+                )
+                connection.commit()
+                raise LedgerError("publication retry blocked: authenticated reproduction is required")
             if effect["status"] != "RECONCILE_REQUIRED":
                 raise LedgerError("publication effect is not awaiting reconciliation")
             if effect["action"] not in {"push", "create_pr"}:
@@ -4641,7 +5002,11 @@ class RadarLedger:
                      )
                      JOIN publication_requests r ON r.opportunity_key=o.key
                      JOIN publication_permits p ON p.request_id=r.request_id
-                     WHERE p.status='CONSUMED' AND p.pr_url IS NOT NULL
+                     WHERE p.pr_url IS NOT NULL AND (
+                       p.status='CONSUMED' OR
+                       (p.status='BLOCKED' AND r.reason='BLOCKED_REPRODUCTION_REQUIRED'
+                        AND json_extract(r.request_json,'$.recoveredFromTaskContext')=1)
+                     )
                        AND o.stage NOT IN ('MERGED','CLOSED')
                    ) WHERE latest_rank=1 ORDER BY updated_at"""
             ).fetchall()
@@ -4675,7 +5040,11 @@ class RadarLedger:
                                 ) AS latest_rank
                          FROM publication_requests r
                          JOIN publication_permits p ON p.request_id=r.request_id
-                         WHERE p.status='CONSUMED' AND p.pr_url IS NOT NULL
+                         WHERE p.pr_url IS NOT NULL AND (
+                           p.status='CONSUMED' OR
+                           (p.status='BLOCKED' AND r.reason='BLOCKED_REPRODUCTION_REQUIRED'
+                            AND json_extract(r.request_json,'$.recoveredFromTaskContext')=1)
+                         )
                        ) WHERE latest_rank=1"""
                 ).fetchall()
             }
@@ -4857,7 +5226,11 @@ class RadarLedger:
                    WHERE f.followup_required=1 AND f.wake_digest IS NOT NULL
                      AND o.stage IN ('PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED')
                      AND i.thread_id IS NOT NULL AND i.worktree_path IS NOT NULL
-                     AND p.status='CONSUMED' AND p.pr_url=f.pr_url
+                     AND p.pr_url=f.pr_url AND (
+                       p.status='CONSUMED' OR
+                       (p.status='BLOCKED' AND r.reason='BLOCKED_REPRODUCTION_REQUIRED'
+                        AND json_extract(r.request_json,'$.recoveredFromTaskContext')=1)
+                     )
                      AND NOT EXISTS (
                        SELECT 1 FROM events e WHERE e.opportunity_key=o.key
                          AND e.event_type='PR_FOLLOWUP_RESULT_INGESTED'
@@ -5546,6 +5919,21 @@ class RadarLedger:
             ).fetchone()
             if permit is None or permit["status"] != "ACTIVE":
                 raise LedgerError("publication permit is not active")
+            request_row = connection.execute(
+                "SELECT request_json FROM publication_requests WHERE request_id=?",
+                (permit["request_id"],),
+            ).fetchone()
+            if request_row is None or not _publication_probe_valid_json(request_row["request_json"]):
+                connection.execute(
+                    "UPDATE publication_permits SET status='BLOCKED',updated_at=? WHERE permit_id=?",
+                    (now, permit_id),
+                )
+                connection.execute(
+                    "UPDATE publication_requests SET status='BLOCKED',reason=?,updated_at=? WHERE request_id=?",
+                    ("BLOCKED_REPRODUCTION_REQUIRED", now, permit["request_id"]),
+                )
+                connection.commit()
+                raise LedgerError("publication receipt blocked: authenticated reproduction is required")
             connection.execute(
                 """UPDATE publication_permits SET status='CONSUMED',pr_url=?,updated_at=?
                    WHERE permit_id=?""",

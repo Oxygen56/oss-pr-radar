@@ -70,9 +70,21 @@ class EvidenceBundle:
     pull_relations: tuple[dict[str, Any], ...]
     hardware: dict[str, Any]
     digest: str
+    default_branch: str = ""
+    selected_base_sha: str = ""
+    live_base_sha: str = ""
+    repo_probe_receipt: dict[str, Any] | None = None
+    probe_level: str = "UNVERIFIED"
 
     def as_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        value = asdict(self)
+        value["defaultBranch"] = self.default_branch
+        value["selectedBaseSha"] = self.selected_base_sha
+        value["liveBaseSha"] = self.live_base_sha
+        value["evidenceDigest"] = self.digest
+        value["repoProbeReceipt"] = self.repo_probe_receipt
+        value["probeLevel"] = self.probe_level
+        return value
 
 
 def assess_hardware_requirements(

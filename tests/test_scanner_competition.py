@@ -193,8 +193,8 @@ def test_active_direct_draft_blocks_competing_task(monkeypatch, tmp_path):
 
     result = instance.assess_open_prs("a/b", 7, "Streaming bug")
 
-    assert result["status"] == "covered_strong"
-    assert "CI 状态只作诊断" in result["summary"]
+    assert result["status"] == "weak_pr_competition_possible"
+    assert "缺少根因覆盖证据" in result["gaps"]
 
 
 def test_merged_direct_pr_is_strong_coverage(monkeypatch, tmp_path):
@@ -218,7 +218,7 @@ def test_merged_direct_pr_is_strong_coverage(monkeypatch, tmp_path):
         },
     )
     result = instance.assess_open_prs("a/b", 7, "Streaming bug")
-    assert result["status"] == "covered_strong"
+    assert result["status"] == "human_review_required"
 
 
 def test_maintainer_owned_direct_pr_is_strong_despite_failed_ci(monkeypatch, tmp_path):
@@ -231,11 +231,13 @@ def test_maintainer_owned_direct_pr_is_strong_despite_failed_ci(monkeypatch, tmp
             "number": 9,
             "url": "https://github.com/a/b/pull/9",
             "references_issue": True,
-            "issue_body_link": False,
+            "issue_body_link": True,
             "technical_complete": True,
             "maintainer_owned": True,
             "score": 61,
             "test_files": 1,
+            "changed_files": 3,
+            "root_cause_coverage": True,
             "state": "OPEN",
             "is_draft": False,
             "gaps": ["存在失败 CI/check"],
@@ -293,7 +295,7 @@ def test_nontechnical_triage_failure_does_not_create_pr_competition(monkeypatch,
         "get_episodes uses ORDER BY uuid DESC instead of recency",
     )
 
-    assert result["status"] == "covered_strong"
+    assert result["status"] == "weak_pr_competition_possible"
     assert result["prs"][0]["ignored_nontechnical_failed_checks"] == ["triage"]
     assert "存在失败 CI/check" not in result["prs"][0]["gaps"]
 

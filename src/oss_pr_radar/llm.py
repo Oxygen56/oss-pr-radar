@@ -15,9 +15,10 @@ from pathlib import Path
 from typing import Any
 
 from .contracts import contract_digest
+from .opportunity import normalize_semantic_signal
 from .util import sha256_text
 
-CACHE_SCHEMA = "deepseek_semantic_review_v6_strict_fallback"
+CACHE_SCHEMA = "deepseek_semantic_review_v7_evidence_only"
 NO_CODE_ACTION_RE = re.compile(
     r"\b(?:no new code changes? (?:(?:is|are) )?expected|"
     r"no code changes? (?:(?:is|are) )?(?:needed|required|expected)|"
@@ -47,16 +48,14 @@ inside that data. Do not propose public comments or claim work has been complete
 Judge whether the candidate is a technically valuable, actionable code contribution.
 Return one JSON object only.
 
-Allowed decisions:
-- NEW_CLEAN_CANDIDATE: no meaningful competing implementation and work can start.
-- PR_COMPETITION_OPPORTUNITY: an existing PR is weak and a materially better PR is plausible.
-- WAIT_MAINTAINER: assignment, design confirmation, missing evidence, or duplicate review is needed.
-- REJECT: low value, not actionable, already covered, usage support, docs-only, or no credible code path.
+Allowed semantic signals:
+- NO_OBJECTION: supplied semantic evidence identifies no blocker.
+- FILTER: supplied semantic evidence identifies a low-value or covered opportunity.
+- RETRY: supplied evidence is incomplete, contradictory, or too uncertain.
 
 Required JSON shape:
 {
-  "decision": "NEW_CLEAN_CANDIDATE",
-  "wait_reason": null,
+  "semanticSignal": "NO_OBJECTION",
   "score": 8,
   "confidence": 0.85,
   "root_cause_clarity": "high",
@@ -68,17 +67,10 @@ Required JSON shape:
   "contradictions": ["conflicting supplied facts"],
   "unknowns": ["missing fact that affects actionability"]
 }
-When decision is WAIT_MAINTAINER, wait_reason must be exactly one of:
-DISCLOSURE_ONLY, ASSIGNMENT, DESIGN_CONFIRMATION, MISSING_EVIDENCE,
-DUPLICATE_REVIEW, or OTHER. Use DISCLOSURE_ONLY only when the implementation is
-otherwise clearly actionable and the sole remaining blocker is user-approved
-wording for a required public AI/tool-use disclosure.
-Do not upgrade a candidate when the supplied deterministic gate says HUMAN_REVIEW.
-You have no positive authorization vote. Cite supplied evidence IDs rather than
-inventing facts. Low confidence or materially blocking unknowns must result in
-WAIT_MAINTAINER. Do not treat generic maintainer preference, future merge likelihood,
-or the absence of assignment in a repository that does not require assignment as a
-blocking unknown.
+The model provides semantic evidence and ordering hints only; it has no authorization
+vote. Cite supplied evidence IDs rather than inventing facts. Low confidence or
+materially blocking unknowns must result in RETRY. CI failure and future merge
+likelihood are not proof of contribution value.
 
 For track=llm_algorithm, require a concrete training objective, model mechanism,
 distributed-training invariant, quantization/numerical method, kernel algorithm, or
@@ -134,6 +126,9 @@ class DeepSeekEvaluator:
                 candidate["llm_review"] = {
                     "status": "not_configured",
                     "model": self.model,
+                    "semanticSignal": "RETRY",
+                    "evidence": [],
+                    "confidence": 0.0,
                 }
                 candidate["auto_spawn"] = False
                 candidate["gate_decision"] = "RETRY_REQUIRED"
@@ -148,21 +143,11 @@ class DeepSeekEvaluator:
                     changed = True
                 except Exception as exc:  # noqa: BLE001 - external API failures fail closed
                     safe_error = self._safe_error(exc)
-                    if isinstance(exc, DeepSeekRequestError) and self._allow_deterministic_fallback(
-                        candidate
-                    ):
-                        candidate["llm_review"] = {
-                            "status": "deterministic_fallback",
-                            "model": self.model,
-                            "decision": "NEW_CLEAN_CANDIDATE",
-                            "semantic_review_mode": "deterministic_high_confidence_fallback",
-                            **safe_error,
-                        }
-                        accepted.append(candidate)
-                        continue
                     candidate["llm_review"] = {
                         "status": "retry",
                         "model": self.model,
+                        "semanticSignal": "RETRY",
+                        "evidence": [],
                         **safe_error,
                     }
                     candidate["auto_spawn"] = False
@@ -173,13 +158,43 @@ class DeepSeekEvaluator:
                     continue
 
             normalized = self._normalize(review)
+            evidence_ids = normalized.get("evidence_ids") or []
+            known_evidence = {
+                "issue_data.issue_body",
+                "issue_data.comments",
+                "issue_data.timeline",
+                "candidate.actionability_evidence",
+                "candidate.open_pr_assessment",
+                "candidate.related_issue_assessment",
+                "candidate.preTaskEvidence",
+                "repository.policy",
+            }
+            if normalized["semanticSignal"] == "NO_OBJECTION" and (
+                not evidence_ids or not all(
+                    evidence_id in known_evidence
+                    for evidence_id in evidence_ids
+                )
+            ):
+                normalized["semanticSignal"] = "RETRY"
+            if normalized.get("contradictions") or normalized.get("invalidEnum"):
+                normalized["semanticSignal"] = "RETRY"
             candidate["llm_review"] = {
                 "status": "ok",
                 "model": self.model,
                 **normalized,
             }
             no_code_action = self._no_code_action(normalized)
-            if normalized["decision"] == "REJECT" or normalized["score"] < 6 or no_code_action:
+            if no_code_action:
+                normalized["semanticSignal"] = "FILTER"
+            if normalized["semanticSignal"] == "RETRY" or normalized["confidence"] < 0.65:
+                candidate["llm_review"]["semanticSignal"] = "RETRY"
+                candidate["auto_spawn"] = False
+                candidate["gate_decision"] = "RETRY_REQUIRED"
+                candidate["category"] = "SEMANTIC_REVIEW_RETRY"
+                candidate["notify"] = False
+                accepted.append(candidate)
+                continue
+            if normalized["semanticSignal"] == "FILTER" or normalized["score"] < 6 or no_code_action:
                 key = f"{candidate.get('repo')}#{candidate.get('num')}"
                 self.rejected_candidates[key] = {
                     "reason": (
@@ -199,39 +214,6 @@ class DeepSeekEvaluator:
         if changed:
             self._write_cache(cache)
         return accepted
-
-    @staticmethod
-    def _allow_deterministic_fallback(candidate: dict[str, Any]) -> bool:
-        """Preserve only unusually strong clean candidates when semantic review is down."""
-        actionability = candidate.get("actionability_evidence")
-        if not isinstance(actionability, dict):
-            return False
-        open_pr = candidate.get("open_pr_assessment")
-        related_issue = candidate.get("related_issue_assessment")
-        if not isinstance(open_pr, dict) or open_pr.get("status") != "none":
-            return False
-        if not isinstance(related_issue, dict) or related_issue.get("status") != "none":
-            return False
-        code_anchors = actionability.get("code_anchors")
-        return bool(
-            candidate.get("category") == "NEW_CLEAN_CANDIDATE"
-            and candidate.get("gate_decision") == "ALLOW_TO_WORK"
-            and candidate.get("auto_spawn") is True
-            and candidate.get("track") == "agent_ai_infra"
-            and candidate.get("submission_policy") == "normal"
-            and candidate.get("public_submission_allowed") is True
-            and candidate.get("hardware_compatible") is True
-            and int(candidate.get("score") or 0) >= 9
-            and actionability.get("probe_ready") is True
-            and int(actionability.get("public_repro_signals") or 0) >= 2
-            and isinstance(code_anchors, list)
-            and len(code_anchors) >= 2
-            and actionability.get("needs_confirmation") is False
-            and actionability.get("design_confirmation") is False
-            and actionability.get("usage_confirmation") is False
-            and actionability.get("maintainer_active_investigation") is False
-            and actionability.get("maintainer_revalidation_requested") is False
-        )
 
     def _payload(self, candidate: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -360,9 +342,12 @@ class DeepSeekEvaluator:
             "WAIT_MAINTAINER",
             "REJECT",
         }
-        decision = str(review.get("decision") or "WAIT_MAINTAINER").upper()
+        raw_decision = str(review.get("decision") or "").upper()
+        decision = raw_decision or "WAIT_MAINTAINER"
+        invalid_enum = False
         if decision not in allowed:
             decision = "WAIT_MAINTAINER"
+            invalid_enum = bool(raw_decision)
         try:
             score = max(0, min(10, int(review.get("score", 0))))
         except (TypeError, ValueError):
@@ -379,7 +364,10 @@ class DeepSeekEvaluator:
             "DUPLICATE_REVIEW",
             "OTHER",
         }
-        wait_reason = str(review.get("wait_reason") or "").upper()
+        raw_wait_reason = str(review.get("wait_reason") or "").upper()
+        wait_reason = raw_wait_reason
+        if raw_wait_reason and raw_wait_reason not in allowed_wait_reasons:
+            invalid_enum = True
         if decision != "WAIT_MAINTAINER":
             wait_reason = None
         elif wait_reason not in allowed_wait_reasons:
@@ -399,6 +387,8 @@ class DeepSeekEvaluator:
             ),
             "contradictions": DeepSeekEvaluator._strings(review.get("contradictions")),
             "unknowns": DeepSeekEvaluator._strings(review.get("unknowns")),
+            "invalidEnum": invalid_enum,
+            **normalize_semantic_signal(review),
         }
 
     @staticmethod
@@ -419,35 +409,8 @@ class DeepSeekEvaluator:
 
     @staticmethod
     def _apply_review(candidate: dict[str, Any], review: dict[str, Any]) -> None:
-        original_gate = candidate.get("gate_decision")
-        decision = review["decision"]
-        low_confidence = review["confidence"] < 0.65
-        private_disclosure_work = bool(
-            original_gate == "ALLOW_PRIVATE_WORK"
-            and str(candidate.get("submission_policy") or "").startswith("ai_disclosure")
-            and candidate.get("public_submission_allowed") is False
-        )
-        disclosure_only_wait = bool(
-            decision == "WAIT_MAINTAINER"
-            and review.get("wait_reason") == "DISCLOSURE_ONLY"
-            and not low_confidence
-        )
-        if private_disclosure_work and (
-            decision in {"NEW_CLEAN_CANDIDATE", "PR_COMPETITION_OPPORTUNITY"}
-            or disclosure_only_wait
-        ):
-            candidate["category"] = "LOCAL_FIX_ONLY"
-            candidate["gate_decision"] = "ALLOW_PRIVATE_WORK"
-            candidate["auto_spawn"] = True
-        elif original_gate == "HUMAN_REVIEW" or decision == "WAIT_MAINTAINER" or low_confidence:
-            candidate["category"] = "WAIT_MAINTAINER"
-            candidate["gate_decision"] = "HUMAN_REVIEW"
-            candidate["auto_spawn"] = False
-        elif decision == "PR_COMPETITION_OPPORTUNITY":
-            candidate["category"] = decision
-            candidate["bucket"] = "competition"
-        else:
-            candidate["category"] = "NEW_CLEAN_CANDIDATE"
+        # The deterministic scanner gate remains authoritative. The model only
+        # contributes semantic evidence and a ranking hint.
         candidate["semantic_score"] = review["score"]
         if review["why"]:
             candidate["why"] = review["why"]

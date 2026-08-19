@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from oss_pr_radar.followup import collect_followup  # noqa: E402
 from oss_pr_radar.github_client import GitHubClient  # noqa: E402
+from oss_pr_radar.managed_adapter import ManagedAdapter  # noqa: E402
 from oss_pr_radar.util import atomic_write_json  # noqa: E402
 
 
@@ -26,6 +27,7 @@ def main() -> int:
     state, report = collect_followup(
         GitHubClient(), author=args.author, existing=existing, workers=args.workers
     )
+    ManagedAdapter(ROOT).record_followup(state, report)
     atomic_write_json(args.state, state)
     atomic_write_json(args.report, report)
     print(

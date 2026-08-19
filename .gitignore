@@ -12,9 +12,15 @@ state/root_task_receipts/
 state/task_turn_receipts/
 state/independent_reviews/
 state/independent_review_runtime/
-!state/.gitkeep
 .env
 *.sqlite3
 *.sqlite3-shm
 *.sqlite3-wal
 .oss-pr-radar-runtime-manifest.json
+# Local immutable runtime pointer and release copies.
+/current-release
+/releases/
+/reports/*
+/state/*
+!/state/.gitkeep
+/.venv/

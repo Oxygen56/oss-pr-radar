@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import fcntl
+from pathlib import Path
+
+import pytest
 
 from oss_pr_radar.controller import (
     compact_controller_result,
@@ -8,6 +11,9 @@ from oss_pr_radar.controller import (
     run_locked_controller_cycle,
     write_controller_report,
 )
+
+pytestmark = pytest.mark.usefixtures("current_signing_key")
+DEV_CODE_ROOT = Path(__file__).parents[1]
 
 
 def healthy_response(stage: str) -> dict:
@@ -38,7 +44,14 @@ def test_controller_cycle_runs_one_ordered_sync_and_drain(tmp_path):
         calls.append(stage)
         return healthy_response(stage)
 
-    result = controller_cycle(tmp_path, runner=runner, notify=False, project_id="github")
+    result = controller_cycle(
+        tmp_path,
+        code_root=DEV_CODE_ROOT,
+        allow_unreleased_code=True,
+        runner=runner,
+        notify=False,
+        project_id="github",
+    )
 
     assert result["ok"] is True
     assert calls.count("queueSync") == 1
@@ -58,7 +71,9 @@ def test_controller_reingests_an_independently_reviewed_result(tmp_path):
             return {"ok": True, "updated": [{"key": "a/b#1", "verdict": "PASS"}]}
         return healthy_response(stage)
 
-    result = controller_cycle(tmp_path, runner=runner, notify=False)
+    result = controller_cycle(
+        tmp_path, code_root=DEV_CODE_ROOT, allow_unreleased_code=True, runner=runner, notify=False
+    )
 
     assert result["ok"] is True
     assert calls.index("independentReview") < calls.index("resultIngestionAfterReview")
@@ -74,7 +89,9 @@ def test_controller_cycle_fails_closed_when_context_recovery_fails(tmp_path):
             return {"ok": False, "errors": [{"error": "context mismatch"}]}
         return healthy_response(stage)
 
-    result = controller_cycle(tmp_path, runner=runner, notify=False)
+    result = controller_cycle(
+        tmp_path, code_root=DEV_CODE_ROOT, allow_unreleased_code=True, runner=runner, notify=False
+    )
 
     assert result["ok"] is False
     assert "drain" not in calls
@@ -95,7 +112,9 @@ def test_controller_cycle_skips_sync_while_remote_scan_is_active(tmp_path):
             }
         return healthy_response(stage)
 
-    result = controller_cycle(tmp_path, runner=runner, notify=False)
+    result = controller_cycle(
+        tmp_path, code_root=DEV_CODE_ROOT, allow_unreleased_code=True, runner=runner, notify=False
+    )
 
     assert result["ok"] is True
     assert "queueSync" not in calls

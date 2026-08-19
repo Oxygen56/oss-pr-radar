@@ -60,7 +60,13 @@ def test_reject_removes_candidate(tmp_path, monkeypatch):
     monkeypatch.setattr(
         instance,
         "_request",
-        lambda payload: {"decision": "REJECT", "score": 2, "confidence": 0.9},
+        lambda payload: {
+            "decision": "REJECT",
+            "semanticSignal": "FILTER",
+            "score": 2,
+            "confidence": 0.9,
+            "evidence_ids": ["candidate.open_pr_assessment"],
+        },
     )
     assert instance.evaluate_candidates([candidate()]) == []
     assert instance.rejected_candidates["example/project#42"]["reason"] == "llm_reject"
@@ -93,8 +99,10 @@ def test_llm_cannot_upgrade_human_review(tmp_path, monkeypatch):
         "_request",
         lambda payload: {
             "decision": "NEW_CLEAN_CANDIDATE",
+            "semanticSignal": "NO_OBJECTION",
             "score": 9,
             "confidence": 0.9,
+            "evidence_ids": ["issue_data.issue_body"],
         },
     )
     result = instance.evaluate_candidates(
@@ -132,8 +140,8 @@ def test_disclosure_candidate_waiting_on_design_does_not_spawn(tmp_path, monkeyp
             )
         ]
     )
-    assert result[0]["gate_decision"] == "HUMAN_REVIEW"
-    assert result[0]["category"] == "WAIT_MAINTAINER"
+    assert result[0]["gate_decision"] == "RETRY_REQUIRED"
+    assert result[0]["category"] == "SEMANTIC_REVIEW_RETRY"
     assert result[0]["auto_spawn"] is False
 
 
@@ -159,9 +167,9 @@ def test_disclosure_only_wait_keeps_private_work_gate(tmp_path, monkeypatch):
             )
         ]
     )
-    assert result[0]["gate_decision"] == "ALLOW_PRIVATE_WORK"
-    assert result[0]["category"] == "LOCAL_FIX_ONLY"
-    assert result[0]["auto_spawn"] is True
+    assert result[0]["gate_decision"] == "RETRY_REQUIRED"
+    assert result[0]["category"] == "SEMANTIC_REVIEW_RETRY"
+    assert result[0]["auto_spawn"] is False
 
 
 def test_api_failure_fails_closed(tmp_path, monkeypatch):
@@ -179,13 +187,15 @@ def test_api_failure_fails_closed(tmp_path, monkeypatch):
     assert result[0]["llm_review"] == {
         "status": "retry",
         "model": "deepseek-v4-flash",
+        "semanticSignal": "RETRY",
+        "evidence": [],
         "error": "TimeoutError",
         "error_category": "timeout",
         "retryable": True,
     }
 
 
-def test_service_failure_preserves_only_strict_high_confidence_candidate(tmp_path, monkeypatch):
+def test_service_failure_never_creates_a_deterministic_candidate(tmp_path, monkeypatch):
     instance = evaluator(tmp_path)
 
     def fail(payload):
@@ -194,19 +204,10 @@ def test_service_failure_preserves_only_strict_high_confidence_candidate(tmp_pat
     monkeypatch.setattr(instance, "_request", fail)
     result = instance.evaluate_candidates([strong_fallback_candidate()])
 
-    assert result[0]["category"] == "NEW_CLEAN_CANDIDATE"
-    assert result[0]["gate_decision"] == "ALLOW_TO_WORK"
-    assert result[0]["auto_spawn"] is True
-    assert result[0]["llm_review"] == {
-        "status": "deterministic_fallback",
-        "model": "deepseek-v4-flash",
-        "decision": "NEW_CLEAN_CANDIDATE",
-        "semantic_review_mode": "deterministic_high_confidence_fallback",
-        "error": "DeepSeekRequestError",
-        "error_category": "http_error",
-        "retryable": False,
-        "status_code": 402,
-    }
+    assert result[0]["category"] == "SEMANTIC_REVIEW_RETRY"
+    assert result[0]["gate_decision"] == "RETRY_REQUIRED"
+    assert result[0]["auto_spawn"] is False
+    assert result[0]["llm_review"]["semanticSignal"] == "RETRY"
 
 
 @pytest.mark.parametrize(
@@ -294,8 +295,10 @@ def test_non_blocking_unknown_does_not_downgrade_clean_candidate(tmp_path, monke
         "_request",
         lambda payload: {
             "decision": "NEW_CLEAN_CANDIDATE",
+            "semanticSignal": "NO_OBJECTION",
             "score": 8,
             "confidence": 0.8,
+            "evidence_ids": ["issue_data.issue_body"],
             "unknowns": ["Maintainer may prefer different wording"],
         },
     )

@@ -35,6 +35,12 @@ jobs:
           python-version: "3.12"
       - name: Restore integrity-checked state
         run: python scripts/state_branch.py restore
+      - name: Restore managed lifecycle checkpoint
+        run: >-
+          PYTHONPATH=src python scripts/import_managed_snapshot.py
+          --allow-missing
+      - name: Ensure managed Ledger schema
+        run: PYTHONPATH=src python -c "from pathlib import Path; from oss_pr_radar.managed_adapter import ManagedAdapter; ManagedAdapter(Path.cwd()).ensure()"
       - name: Recheck held opportunities and policy drift
         run: >-
           python scripts/recheck_watchlist.py
@@ -71,6 +77,12 @@ jobs:
           python-version: "3.12"
       - name: Restore integrity-checked state
         run: python scripts/state_branch.py restore
+      - name: Restore managed lifecycle checkpoint
+        run: >-
+          PYTHONPATH=src python scripts/import_managed_snapshot.py
+          --allow-missing
+      - name: Ensure managed Ledger schema
+        run: PYTHONPATH=src python -c "from pathlib import Path; from oss_pr_radar.managed_adapter import ManagedAdapter; ManagedAdapter(Path.cwd()).ensure()"
       - name: Check open PR reviews, CI, and conflicts
         continue-on-error: true
         run: >-
@@ -121,6 +133,10 @@ jobs:
 
       - name: Restore integrity-checked state
         run: python scripts/state_branch.py restore
+      - name: Restore managed lifecycle checkpoint
+        run: >-
+          PYTHONPATH=src python scripts/import_managed_snapshot.py
+          --allow-missing
 
       - name: Restore controller terminal feedback
         run: >-
@@ -148,6 +164,10 @@ jobs:
       - name: Validate report contract
         run: python scripts/validate_report.py reports/latest_scan.json
 
+      - name: Export managed lifecycle checkpoint
+        run: >-
+          PYTHONPATH=src python scripts/export_managed_snapshot.py
+
       - name: Upload scan bundle
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -158,6 +178,7 @@ jobs:
             reports/pr_updates.json
             state/*.json
             state/base_sha.txt
+            state/managed_lifecycle.snapshot.json.gz
           if-no-files-found: error
           retention-days: 14
 
@@ -186,6 +207,19 @@ jobs:
           name: pr-followup-state-${{ github.run_id }}
           path: .
 
+      - name: Import follow-up and ensure managed projection
+        run: |
+          python scripts/sync_managed_followup.py state/pr_followup.json reports/pr_updates.json
+          PYTHONPATH=src python scripts/process_managed_replies.py
+          PYTHONPATH=src python scripts/export_managed_snapshot.py
+          PYTHONPATH=src python scripts/export_war_room_projection.py \
+            --ledger-copy state/radar_ledger.sqlite3 \
+            --artifact reports/war_room_projection.json \
+            --views reports/war_room_views.json \
+            --feishu-outbox state/war_room_feishu_outbox.json \
+            --codex-outbox state/war_room_codex_outbox.json \
+            --source-commit "$GITHUB_SHA"
+
       - name: Build signed dispatch queue
         run: >-
           python scripts/build_dispatch_intents.py
@@ -193,28 +227,6 @@ jobs:
           reports/dispatch_intents.json
           --queue state/dispatch_queue.json
           --mode "$RADAR_DISPATCH_MODE"
-
-      - name: Add new maintainer-review opportunities to outbox
-        run: >-
-          python scripts/build_notification_outbox.py
-          reports/latest_scan.json
-          state/notification_outbox.json
-          --kind review
-
-      - name: Add maintainer and policy status updates to outbox
-        run: >-
-          python scripts/build_notification_outbox.py
-          reports/watch_updates.json
-          state/notification_outbox.json
-          --kind watch
-          --exclude-report reports/latest_scan.json
-
-      - name: Add actionable open PR updates to outbox
-        run: >-
-          python scripts/build_notification_outbox.py
-          reports/pr_updates.json
-          state/notification_outbox.json
-          --kind watch
 
       - name: Refresh durable opportunity watchlist
         run: >-
@@ -230,6 +242,7 @@ jobs:
             reports/*.json
             state/*.json
             state/base_sha.txt
+            state/managed_lifecycle.snapshot.json.gz
           if-no-files-found: error
           retention-days: 14
 
@@ -262,6 +275,7 @@ jobs:
       FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
       FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
       FEISHU_CHAT_ID: ${{ secrets.FEISHU_CHAT_ID }}
+      RADAR_DISPATCH_HMAC_KEY: ${{ secrets.RADAR_DISPATCH_HMAC_KEY }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -272,18 +286,20 @@ jobs:
         with:
           name: pending-state-${{ github.run_id }}
           path: .
-      - name: Send pending messages with Feishu UUID deduplication
+      - name: Send authenticated War Room Feishu projection
         continue-on-error: true
         run: >-
-          python scripts/send_notification_outbox.py
-          state/notification_outbox.json
-          receipt/notification_outbox.json
-      - name: Upload notification receipt
+          python scripts/send_war_room_outbox.py
+          state/war_room_feishu_outbox.json
+          receipt/war_room_feishu_outbox.json
+          --artifact reports/war_room_projection.json
+      - name: Upload War Room receipt
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: notification-receipt-${{ github.run_id }}
-          path: receipt/notification_outbox.json
+          name: war-room-receipt-${{ github.run_id }}
+          path: |
+            receipt/war_room_feishu_outbox.json
           if-no-files-found: error
           retention-days: 14
 
@@ -302,14 +318,19 @@ jobs:
           python-version: "3.12"
       - name: Restore latest committed state
         run: python scripts/state_branch.py restore
+      - name: Restore managed lifecycle checkpoint
+        run: >-
+          PYTHONPATH=src python scripts/import_managed_snapshot.py
+          --allow-missing
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: notification-receipt-${{ github.run_id }}
+          name: war-room-receipt-${{ github.run_id }}
           path: receipt
-      - name: Merge notification receipt without losing newer state
+      - name: Merge War Room receipt without accepting new events
         run: >-
-          python scripts/merge_notification_receipt.py
-          receipt/notification_outbox.json
-          state/notification_outbox.json
+          python scripts/merge_war_room_receipt.py
+          state/war_room_feishu_outbox.json
+          receipt/war_room_feishu_outbox.json
+          state/war_room_feishu_outbox.json
       - name: Commit receipt checkpoint
         run: python scripts/state_branch.py publish

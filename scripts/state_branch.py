@@ -4,13 +4,21 @@
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
 import json
 import os
+import re
 import subprocess
+import sys
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+
+from oss_pr_radar.managed_snapshot import validate_snapshot  # noqa: E402
 
 FILES = {
     "seen.json": Path("state/seen.json"),
@@ -23,6 +31,7 @@ FILES = {
     "health.json": Path("state/health.json"),
     "pending_rechecks.json": Path("state/pending_rechecks.json"),
     "pr_followup.json": Path("state/pr_followup.json"),
+    "managed_lifecycle.snapshot.json.gz": Path("state/managed_lifecycle.snapshot.json.gz"),
 }
 MANIFEST = "state_manifest.json"
 BASE_SHA = Path("state/base_sha.txt")
@@ -49,6 +58,17 @@ PROFILES = {
         "manifest_version": CONTROLLER_FEEDBACK_MANIFEST_VERSION,
     },
 }
+
+
+def isolated_state_ref(branch: str) -> str:
+    if (
+        not re.fullmatch(r"[A-Za-z0-9._/-]+", branch)
+        or branch.startswith("/")
+        or branch.endswith("/")
+        or ".." in branch
+    ):
+        raise ValueError("invalid state branch name")
+    return "refs/oss-pr-radar/state/" + branch.replace("/", "--")
 
 
 def git(
@@ -82,12 +102,95 @@ def digest_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
 
+def _decode_state_json(remote_name: str, raw: bytes) -> object:
+    if remote_name.endswith(".json.gz"):
+        try:
+            raw = gzip.decompress(raw)
+        except OSError as exc:
+            raise RuntimeError(f"compressed state file is invalid: {remote_name}") from exc
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"state file contains invalid JSON: {remote_name}") from exc
+
+
+def _scan_snapshot(value: object, *, key: str = "") -> None:
+    forbidden = {
+        "threadid",
+        "thread_id",
+        "worktreepath",
+        "worktree_path",
+        "absolutepath",
+        "absolute_path",
+        "private_text",
+        "token",
+        "secret",
+        "password",
+        "api_key",
+    }
+    if key.casefold().replace("-", "_") in forbidden:
+        raise RuntimeError(f"managed snapshot contains forbidden field: {key}")
+    if isinstance(value, dict):
+        for child_key, child in value.items():
+            _scan_snapshot(child, key=str(child_key))
+    elif isinstance(value, list):
+        for child in value:
+            _scan_snapshot(child, key=key)
+    elif isinstance(value, str):
+        if value.startswith(("/", "file://", "\\\\")):
+            raise RuntimeError("managed snapshot contains an absolute path")
+        if any(
+            re.search(pattern, value)
+            for pattern in (
+                r"ghp_[A-Za-z0-9]{20,}",
+                r"github_pat_[A-Za-z0-9_]{20,}",
+                r"Bearer [A-Za-z0-9._~-]{20,}",
+                r"sk-[A-Za-z0-9]{20,}",
+            )
+        ):
+            raise RuntimeError("managed snapshot contains a token-like value")
+
+
+def _validate_state_file(remote_name: str, raw: bytes) -> None:
+    value = _decode_state_json(remote_name, raw)
+    if remote_name.endswith("managed_lifecycle.snapshot.json.gz"):
+        if not isinstance(value, dict) or value.get("snapshotSchema") != "managed_lifecycle_snapshot_v5":
+            raise RuntimeError("managed lifecycle snapshot schema is invalid")
+        try:
+            validate_snapshot(value)
+        except ValueError as exc:
+            raise RuntimeError(f"managed lifecycle snapshot integrity is invalid: {exc}") from exc
+        _scan_snapshot(value)
+        serialized = json.dumps(value, ensure_ascii=False, sort_keys=True)
+        for name, value in os.environ.items():
+            if value and len(value) >= 8 and any(
+                marker in name.casefold() for marker in ("token", "secret", "password", "api_key")
+            ) and value in serialized:
+                raise RuntimeError(f"managed snapshot contains environment secret: {name}")
+
+
 def atomic_write(path: Path, value: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile("wb", dir=path.parent, delete=False) as handle:
         handle.write(value)
         temporary = Path(handle.name)
     temporary.replace(path)
+
+
+def fetch_state_ref(root: Path, branch: str) -> tuple[str, subprocess.CompletedProcess[str]]:
+    """Fetch a branch into a private ref without touching shared FETCH_HEAD."""
+
+    ref = isolated_state_ref(branch)
+    git("update-ref", "-d", ref, cwd=root, check=False)
+    result = git(
+        "fetch",
+        "--no-write-fetch-head",
+        "origin",
+        f"+refs/heads/{branch}:{ref}",
+        cwd=root,
+        check=False,
+    )
+    return ref, result
 
 
 def restore(
@@ -100,7 +203,7 @@ def restore(
     base_sha_path: Path = BASE_SHA,
     manifest_version: str = MANIFEST_VERSION,
 ) -> None:
-    fetched = git("fetch", "origin", branch, cwd=root, check=False)
+    ref, fetched = fetch_state_ref(root, branch)
     if fetched.returncode != 0:
         if allow_missing:
             for source in files.values():
@@ -108,8 +211,8 @@ def restore(
             atomic_write(root / base_sha_path, b"")
             return
         raise RuntimeError(f"state branch fetch failed: {fetched.stderr[:300]}")
-    sha = git("rev-parse", "FETCH_HEAD", cwd=root).stdout.strip()
-    manifest_result = git_bytes("show", f"FETCH_HEAD:{manifest_name}", cwd=root, check=False)
+    sha = git("rev-parse", ref, cwd=root).stdout.strip()
+    manifest_result = git_bytes("show", f"{ref}:{manifest_name}", cwd=root, check=False)
     if manifest_result.returncode != 0:
         raise RuntimeError("state manifest is missing; migrate the state branch first")
     try:
@@ -122,17 +225,17 @@ def restore(
     for remote_name, metadata in listed.items():
         if remote_name not in files or not isinstance(metadata, dict):
             raise RuntimeError(f"unexpected state file: {remote_name}")
-        result = git_bytes("show", f"FETCH_HEAD:{remote_name}", cwd=root, check=False)
+        result = git_bytes("show", f"{ref}:{remote_name}", cwd=root, check=False)
         if result.returncode != 0:
             raise RuntimeError(f"state file is missing: {remote_name}")
         raw = result.stdout
         if digest_bytes(raw) != metadata.get("sha256"):
             raise RuntimeError(f"state file digest mismatch: {remote_name}")
-        try:
-            json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(f"state file contains invalid JSON: {remote_name}") from exc
+        _validate_state_file(remote_name, raw)
         atomic_write(root / files[remote_name], raw)
+    for remote_name, source in files.items():
+        if remote_name not in listed:
+            (root / source).unlink(missing_ok=True)
     atomic_write(root / base_sha_path, sha.encode("ascii"))
 
 
@@ -145,7 +248,7 @@ def build_manifest(
     files = {}
     for remote_name, source in available.items():
         raw = source.read_bytes()
-        json.loads(raw)
+        _validate_state_file(remote_name, raw)
         files[remote_name] = {"sha256": digest_bytes(raw), "bytes": len(raw)}
     return {
         "version": manifest_version,
@@ -177,10 +280,10 @@ def publish(
         if (root / base_sha_path).exists()
         else ""
     )
-    fetched = git("fetch", "origin", branch, cwd=root, check=False)
+    ref, fetched = fetch_state_ref(root, branch)
     actual = ""
     if fetched.returncode == 0:
-        actual = git("rev-parse", "FETCH_HEAD", cwd=root).stdout.strip()
+        actual = git("rev-parse", ref, cwd=root).stdout.strip()
         if expected and actual != expected:
             raise RuntimeError("state branch changed since restore")
     elif expected:
@@ -247,15 +350,15 @@ def migrate(
 ) -> None:
     """Add or repair the v2 manifest without changing state JSON bytes."""
 
-    fetched = git("fetch", "origin", branch, cwd=root, check=False)
+    ref, fetched = fetch_state_ref(root, branch)
     if fetched.returncode != 0:
         raise RuntimeError(f"state branch fetch failed: {fetched.stderr[:300]}")
-    actual = git("rev-parse", "FETCH_HEAD", cwd=root).stdout.strip()
+    actual = git("rev-parse", ref, cwd=root).stdout.strip()
     available_raw: dict[str, bytes] = {}
     for remote_name in files:
-        result = git_bytes("show", f"FETCH_HEAD:{remote_name}", cwd=root, check=False)
+        result = git_bytes("show", f"{ref}:{remote_name}", cwd=root, check=False)
         if result.returncode == 0:
-            json.loads(result.stdout.decode("utf-8"))
+            _validate_state_file(remote_name, result.stdout)
             available_raw[remote_name] = result.stdout
     if not available_raw:
         raise RuntimeError("legacy state branch has no recognized JSON state")
@@ -264,7 +367,7 @@ def migrate(
         name: {"sha256": digest_bytes(raw), "bytes": len(raw)}
         for name, raw in available_raw.items()
     }
-    existing = git_bytes("show", f"FETCH_HEAD:{manifest_name}", cwd=root, check=False)
+    existing = git_bytes("show", f"{ref}:{manifest_name}", cwd=root, check=False)
     if existing.returncode == 0:
         try:
             manifest = json.loads(existing.stdout.decode("utf-8"))
@@ -284,8 +387,10 @@ def migrate(
             git("remote", "get-url", "origin", cwd=root).stdout.strip(),
             cwd=work,
         )
-        git("fetch", "origin", branch, cwd=work)
-        git("checkout", "-B", branch, "FETCH_HEAD", cwd=work)
+        work_ref, work_fetched = fetch_state_ref(work, branch)
+        if work_fetched.returncode != 0:
+            raise RuntimeError(f"state branch migration fetch failed: {work_fetched.stderr[:300]}")
+        git("checkout", "-B", branch, work_ref, cwd=work)
         available: dict[str, Path] = {}
         for remote_name, raw in available_raw.items():
             source = work / remote_name

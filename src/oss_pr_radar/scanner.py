@@ -29,7 +29,14 @@ from .claims import detect_claims
 from .contracts import CANDIDATE_SCHEMA, SCAN_SCHEMA, contract_digest
 from .evidence import assess_hardware_requirements
 from .llm import DeepSeekEvaluator
+from .managed_adapter import ManagedAdapter
 from .messages import add_chinese_explanations
+from .opportunity import (
+    allocate_capacity,
+    classify_scan_outcome,
+    pre_task_gate,
+    rank_opportunity,
+)
 from .outbox import latest_candidate_notification_history
 from .policy import SCANNER_DECISION_REVISION, decision_contract_digest
 from .repo_policy import (
@@ -37,6 +44,7 @@ from .repo_policy import (
     select_policy_entries,
     submission_policy_from_text,
 )
+from .scope import scope_digest
 from .util import sha256_json
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -65,6 +73,7 @@ MAX_ISSUES_TO_INSPECT = 30
 RECHECK_INSPECTION_BUDGET = 24
 MAX_SEEN_RECHECKS = RECHECK_INSPECTION_BUDGET
 MAX_PENDING_RECHECKS = RECHECK_INSPECTION_BUDGET
+OPPORTUNITY_CAPACITY = 10
 MAX_SCANNER_MIGRATION_RECHECKS = 8
 SEEN_RECHECK_STATUSES = frozenset(
     {
@@ -1668,11 +1677,34 @@ def candidate_notification_digest(
 
 
 def candidate_issue_outcome(candidate: dict[str, Any]) -> dict[str, Any]:
+    if candidate.get("capacityDisposition") == "MATURE_BUDGET_DEFERRED":
+        return {
+            "status": "deferred",
+            "reason": "mature_capacity_exhausted",
+            "classification": "blocked_pre_task",
+            "auto_spawn": False,
+            "track": candidate.get("track"),
+        }
+    preflight = candidate.get("preTaskGate") or candidate.get("pre_task_gate") or {}
+    if preflight and preflight.get("allowed") is not True:
+        classification = preflight.get("classification") or classify_scan_outcome(
+            "rejected", str(preflight.get("reason") or "")
+        )
+        return {
+            "status": "deferred" if classification == "blocked_pre_task" else "rejected",
+            "reason": preflight.get("reason") or "pre_task_gate_failed",
+            "classification": classification,
+            "auto_spawn": False,
+            "track": candidate.get("track"),
+            "category": candidate.get("category"),
+            "gate_decision": candidate.get("gate_decision"),
+        }
     review = candidate.get("llm_review") if isinstance(candidate.get("llm_review"), dict) else {}
     if review.get("status") in {"retry", "not_configured"}:
         return {
             "status": "deferred",
             "reason": "semantic_review_retry",
+            "classification": "blocked_pre_task",
             "auto_spawn": False,
             "track": candidate.get("track"),
             "category": candidate.get("category"),
@@ -1836,6 +1868,7 @@ class Radar:
         repo_cache_path: Path = DEFAULT_REPO_CACHE,
         controller_feedback_path: Path = DEFAULT_CONTROLLER_FEEDBACK,
         notification_outbox_path: Path = DEFAULT_NOTIFICATION_OUTBOX,
+        managed_ledger_path: Path | None = None,
     ):
         self.now = now.astimezone(timezone.utc)
         self.since = self.now - timedelta(hours=window_hours)
@@ -1884,6 +1917,7 @@ class Radar:
                 "notification_scanner_version": scanner_version,
             }
         self.notification_state_recovered = 0
+        self.managed_ledger_path = managed_ledger_path
         for key, history in self.notification_history.items():
             entry = self.seen.get(key)
             if not isinstance(entry, dict) or entry.get("notification_digest"):
@@ -1930,6 +1964,9 @@ class Radar:
         self.deferred_rechecks_migration_selected = 0
         self.deferred_rechecks_expired = 0
         self.deferred_rechecks_remaining = 0
+        self.base_head_cache: dict[str, dict[str, Any]] = {}
+        self.exploration_candidates: list[dict[str, Any]] = []
+        self.capacity_allocation: dict[str, Any] = {}
 
     def deep_inspection_deadline_reached(self) -> bool:
         reached = (
@@ -2206,6 +2243,12 @@ class Radar:
             items[key]["_prior_score"] = int(entry.get("score") or 0)
             items[key]["_defer_count"] = int(entry.get("defer_count") or 0)
             items[key]["_first_deferred_at"] = entry.get("first_deferred_at") or ""
+            items[key]["expected_base_sha"] = entry.get("base_sha")
+            prior_evidence = entry.get("pre_task_evidence") or {}
+            items[key]["expected_issue_digest"] = prior_evidence.get("issueDigest")
+            items[key]["expected_design_digest"] = prior_evidence.get("designDigest")
+            items[key]["expected_assignee_digest"] = prior_evidence.get("assigneeDigest")
+            items[key]["expected_duplicate_digest"] = prior_evidence.get("duplicateDigest")
         for key, entry in list(self.pending_rechecks.items())[:MAX_PENDING_RECHECKS]:
             repo, separator, number_text = key.rpartition("#")
             if not separator or not number_text.isdigit() or repo_is_excluded(repo):
@@ -2407,6 +2450,38 @@ class Radar:
             self._last_issue_lookup_error = "invalid_issue_response"
             return None
         return data
+
+    def default_branch_evidence(self, repo: str) -> dict[str, Any]:
+        """Pin the default branch commit used by the pre-task evidence gate."""
+
+        if repo in self.base_head_cache:
+            return self.base_head_cache[repo]
+        metadata, metadata_err = gh(["api", f"repos/{repo}"], timeout=15)
+        if metadata_err or not isinstance(metadata, dict):
+            result = {"status": "lookup_failed", "reason": metadata_err or "repo_metadata_invalid"}
+            self.base_head_cache[repo] = result
+            return result
+        branch = str(metadata.get("default_branch") or "")
+        if not branch:
+            result = {"status": "lookup_failed", "reason": "default_branch_missing"}
+            self.base_head_cache[repo] = result
+            return result
+        branch_data, branch_err = gh(
+            ["api", f"repos/{repo}/branches/{quote(branch, safe='')}"], timeout=15
+        )
+        commit = branch_data.get("commit") if isinstance(branch_data, dict) else {}
+        base_sha = str(commit.get("sha") or "") if isinstance(commit, dict) else ""
+        if branch_err or not base_sha:
+            result = {"status": "lookup_failed", "reason": branch_err or "base_sha_missing", "defaultBranch": branch}
+        else:
+            result = {
+                "status": "ok",
+                "defaultBranch": branch,
+                "baseSha": base_sha,
+                "evidenceDigest": sha256_json({"repo": repo, "defaultBranch": branch, "baseSha": base_sha}),
+            }
+        self.base_head_cache[repo] = result
+        return result
 
     def assess_related_issues(
         self,
@@ -3080,6 +3155,10 @@ class Radar:
             strengths.append("改动文件与 issue 代码路径重合")
 
         technical_complete = bool(references_issue and test_files and changed_files > 0)
+        root_cause_coverage = bool(
+            detail.get("rootCauseCoverage") is True
+            or (technical_complete and (semantic_overlap or issue_body_link))
+        )
         material_competition_gaps = []
         if not test_files:
             material_competition_gaps.append("缺少回归测试")
@@ -3113,6 +3192,7 @@ class Radar:
             "maintainer_owned": maintainer_owned,
             "author_association": author_association,
             "technical_complete": technical_complete,
+            "root_cause_coverage": root_cause_coverage,
             "material_competition_gaps": material_competition_gaps,
             "ignored_nontechnical_failed_checks": ignored_failed_checks[:3],
             "technical_failed_checks": technical_failed_checks[:3],
@@ -3224,16 +3304,22 @@ class Radar:
             best = max(merged_direct, key=lambda item: item["score"])
         elif active_direct:
             best = max(active_direct, key=lambda item: item["score"])
-        # An active PR that explicitly targets this issue owns the implementation
-        # opportunity. Draft state, test coverage, and CI are review-quality
-        # signals, not permission to create a competing PR.
-        strong_active = any(
-            item.get("maintainer_owned")
-            or item.get("rule_closed")
-            or int(item.get("age_days") or 0) < 30
-            for item in active_direct
-        )
-        strong = best.get("state") == "MERGED" or strong_active
+        # Direct association and recent activity are auxiliary signals. A PR
+        # is strong only with root-cause coverage plus two independent proofs.
+        def strong_pr(item: dict[str, Any]) -> bool:
+            independent = sum(
+                bool(value)
+                for value in (
+                    int(item.get("changed_files") or 0) > 0,
+                    int(item.get("test_files") or 0) > 0,
+                    item.get("maintainer_owned") is True
+                    or item.get("reviewDecision") == "APPROVED",
+                    item.get("semantic_overlap") is True,
+                )
+            )
+            return item.get("root_cause_coverage") is True and independent >= 2
+
+        strong = strong_pr(best)
         competition_saturated = len(active_direct) >= 2
         if competition_saturated:
             status = "competition_saturated"
@@ -3265,12 +3351,29 @@ class Radar:
             status = "human_review_required"
             summary = f"发现关键词相关 PR，但未确认直接覆盖：#{best['number']}；需人工核对"
 
+        independent = {
+            "codeChange": int(best.get("changed_files") or 0) > 0,
+            "tests": int(best.get("test_files") or 0) > 0,
+            "maintainerRecognition": bool(best.get("maintainer_owned"))
+            or best.get("reviewDecision") == "APPROVED",
+            "keyPathCoverage": bool(best.get("semantic_overlap")),
+        }
+        gaps = list(best.get("gaps") or [])
+        if not best.get("root_cause_coverage"):
+            gaps.append("缺少根因覆盖证据")
+
         return {
             "status": status,
             "best_score": best["score"],
             "best_url": best["url"],
             "summary": summary,
             "prs": assessments[:3],
+            "components": {
+                "rootCauseCoverage": bool(best.get("root_cause_coverage")),
+                "independentEvidence": independent,
+                "ciIsDiagnosticOnly": True,
+            },
+            "gaps": sorted(set(gaps))[:8],
         }
 
     def score_issue(
@@ -4087,6 +4190,71 @@ class Radar:
                     "先人工比较相似 PR 的根因、改动路径和测试；"
                     "确认没有覆盖后才能创建 issue 会话或实现。"
                 )
+            base_evidence = self.default_branch_evidence(base["repo"])
+            actionability = scored.get("actionability_evidence") or {}
+            issue_digest = sha256_json(
+                {
+                    "state": issue.get("state"),
+                    "title": issue.get("title") or base.get("title"),
+                    "body": issue.get("body") or "",
+                    "updatedAt": issue.get("updated_at") or base.get("updated") or "",
+                    "assignees": issue.get("assignees") or [],
+                    "labels": issue.get("labels") or [],
+                }
+            )
+            pre_task_evidence = {
+                "schema": "pre_task_evidence_v1",
+                "issue": {
+                    "state": issue.get("state"),
+                    "assignees": issue.get("assignees") or [],
+                },
+                "issueDigest": issue_digest,
+                "baseSha": base_evidence.get("baseSha"),
+                "defaultBranch": base_evidence.get("defaultBranch"),
+                "baseLookupStatus": base_evidence.get("status"),
+                "policy": {"status": policy},
+                "assignmentRequired": policy in {"needs_assignment", "ai_disclosure_and_assignment"},
+                "aiDisclosureConflict": policy in {"ai_disclosure_conflict", "ai_disclosure_and_assignment"},
+                "codePathsPlan": actionability.get("code_anchors") or [],
+                "reproductionPathPlan": bool(actionability.get("probe_ready")),
+                "validationPathPlan": bool(scored.get("test_path")),
+                "probeRequired": True,
+                "matureRepository": base["repo"] in known or self.repo_quality(base["repo"], False)[0],
+                "duplicate": pr_assessment,
+                "duplicateStatus": pr_assessment.get("status"),
+                "designDigest": sha256_json(
+                    {"needsConfirmation": actionability.get("needs_confirmation"), "design": actionability.get("design_confirmation")}
+                ),
+                "assigneeDigest": sha256_json(issue.get("assignees") or []),
+                "duplicateDigest": sha256_json(pr_assessment),
+            }
+            expected = {
+                "baseSha": base.get("expected_base_sha") or base.get("expectedBaseSha"),
+                "issueDigest": base.get("expected_issue_digest") or base.get("expectedIssueDigest"),
+                "designDigest": base.get("expected_design_digest") or base.get("expectedDesignDigest"),
+                "assigneeDigest": base.get("expected_assignee_digest") or base.get("expectedAssigneeDigest"),
+                "duplicateDigest": base.get("expected_duplicate_digest") or base.get("expectedDuplicateDigest"),
+            }
+            scored["pre_task_evidence"] = pre_task_evidence
+            scored["preTaskEvidence"] = pre_task_evidence
+            scored["pre_task_gate"] = pre_task_gate(
+                scored, pre_task_evidence, expected=expected, require_semantic=False
+            )
+            scored["preTaskGate"] = scored["pre_task_gate"]
+            scored["ranking"] = rank_opportunity(
+                scored,
+                repository={"maturityScore": 8 if base["repo"] in known else 0},
+            )
+            if not scored["pre_task_gate"]["allowed"]:
+                scored["maturity"] = "exploration"
+                scored["auto_spawn"] = False
+                scored["notify"] = False
+                scored["gate_decision"] = "HUMAN_REVIEW"
+                scored["category"] = "WAIT_MAINTAINER"
+                scored["risk"] = (
+                    f"{scored.get('risk') or ''}；预审未通过："
+                    + ", ".join(scored["pre_task_gate"]["reasons"][:4])
+                )
             scored["_llm_context"] = {
                 "issue_body": (issue.get("body") or "")[:16000],
                 "recent_comments": [
@@ -4306,6 +4474,56 @@ class Radar:
             evaluator = DeepSeekEvaluator.from_environment(BASE_DIR / "state" / "llm_cache.json")
             candidates = evaluator.evaluate_candidates(candidates)
             llm_finished = self.monotonic_fn()
+            # The first pass pins deterministic evidence before semantic review.
+            # Re-run the same gate after review so model uncertainty can only
+            # remove eligibility, never manufacture it.
+            for candidate in candidates:
+                evidence = candidate.get("preTaskEvidence") or candidate.get("pre_task_evidence")
+                previous_gate = candidate.get("preTaskGate") or candidate.get("pre_task_gate")
+                if not isinstance(evidence, dict) or not isinstance(previous_gate, dict):
+                    continue
+                candidate["pre_task_gate"] = pre_task_gate(
+                    candidate,
+                    evidence,
+                    expected=previous_gate.get("expected") or {},
+                    require_semantic=True,
+                )
+                candidate["preTaskGate"] = candidate["pre_task_gate"]
+            phase3_candidates = any(
+                isinstance(candidate, dict)
+                and ("preTaskGate" in candidate or "pre_task_gate" in candidate or "ranking" in candidate)
+                for candidate in candidates
+            )
+            allocation = (
+                allocate_capacity(
+                    candidates,
+                    capacity=int(os.environ.get("RADAR_OPPORTUNITY_CAPACITY", OPPORTUNITY_CAPACITY)),
+                    seed=str(self.analyzed),
+                )
+                if phase3_candidates
+                else {"schema": "opportunity_capacity_v1", "seed": str(self.analyzed), "capacity": 0, "slots": {"mature": 0, "exploration": 0}, "mature": [], "exploration": [], "unused": {}, "selectedKeys": []}
+            )
+            self.capacity_allocation = allocation
+            selected_keys = set(allocation["selectedKeys"])
+            selected_exploration = {
+                f"{item.get('repo')}#{item.get('num')}"
+                for item in allocation["exploration"]
+            }
+            for candidate in (candidates if phase3_candidates else []):
+                key = f"{candidate.get('repo')}#{candidate.get('num')}"
+                if candidate.get("maturity") == "exploration":
+                    candidate["capacityDisposition"] = (
+                        "EXPLORATION_SELECTED" if key in selected_exploration else "EXPLORATION_UNUSED"
+                    )
+                    candidate["auto_spawn"] = False
+                    candidate["notify"] = False
+                elif key in selected_keys:
+                    candidate["maturity"] = "mature"
+                    candidate["capacityDisposition"] = "MATURE_SELECTED"
+                else:
+                    candidate["capacityDisposition"] = "MATURE_BUDGET_DEFERRED"
+                    candidate["auto_spawn"] = False
+                    candidate["notify"] = False
             for candidate in candidates:
                 key = f"{candidate['repo']}#{candidate['num']}"
                 self.issue_outcomes[key] = candidate_issue_outcome(candidate)
@@ -4313,7 +4531,11 @@ class Radar:
                 candidate = rejected["candidate"]
                 reason = rejected["reason"]
                 review = rejected["review"]
-                self.issue_outcomes[key] = {"status": "rejected", "reason": reason}
+                self.issue_outcomes[key] = {
+                    "status": "rejected",
+                    "reason": reason,
+                    "classification": "scan_false_positive",
+                }
                 self.seen[key] = {
                     "analyzed": self.analyzed,
                     "status": reason,
@@ -4332,10 +4554,17 @@ class Radar:
                 key = f"{candidate['repo']}#{candidate['num']}"
                 if candidate.get("notify") is False:
                     review = candidate.get("llm_review") or {}
+                    silent_status = (
+                        "silent_exploration"
+                        if candidate.get("maturity") == "exploration"
+                        else "capacity_deferred"
+                        if candidate.get("capacityDisposition") == "MATURE_BUDGET_DEFERRED"
+                        else "semantic_review_retry"
+                    )
                     self.seen[key] = {
                         "analyzed": self.analyzed,
-                        "status": "semantic_review_retry",
-                        "reason": "semantic_review_retry",
+                        "status": silent_status,
+                        "reason": silent_status,
                         "requeued_at": self.analyzed,
                         "title": candidate.get("title") or key,
                         "url": candidate.get("url"),
@@ -4451,6 +4680,18 @@ class Radar:
             if history.get("notification_scanner_version"):
                 entry["notification_scanner_version"] = history["notification_scanner_version"]
 
+        for candidate in candidates:
+            evidence = candidate.get("preTaskEvidence") or candidate.get("pre_task_evidence")
+            gate = candidate.get("preTaskGate") or candidate.get("pre_task_gate")
+            if not isinstance(evidence, dict) or not isinstance(gate, dict):
+                continue
+            key = f"{candidate.get('repo')}#{candidate.get('num')}"
+            entry = self.seen.setdefault(key, {})
+            entry["pre_task_evidence"] = evidence
+            entry["pre_task_gate"] = gate
+            entry["base_sha"] = evidence.get("baseSha")
+            entry["evidence_digest"] = gate.get("evidenceDigest")
+
         for entry in self.seen.values():
             if isinstance(entry, dict) and entry.get("analyzed") == self.analyzed:
                 entry["scanner_version"] = SCANNER_VERSION
@@ -4547,6 +4788,7 @@ class Radar:
                 "inspected": sorted(self.inspected_repo_names),
                 "collection_failures": dict(sorted(self.collection_failures.items())),
                 "dynamic_discovery_enabled": True,
+                "scope_config_digest": scope_digest(),
             },
             "deferred_rechecks": {
                 "queued_before": self.deferred_rechecks_before,
@@ -4575,6 +4817,23 @@ class Radar:
                 for key in sorted(self.forced_recheck_keys)
             },
             "issue_outcomes": self.issue_outcomes,
+            "opportunity_budget": self.capacity_allocation,
+            "silent_exploration": [
+                {
+                    "key": f"{item.get('repo')}#{item.get('num')}",
+                    "maturity": item.get("maturity"),
+                    "capacityDisposition": item.get("capacityDisposition"),
+                    "ranking": item.get("ranking"),
+                    "preTaskGate": item.get("preTaskGate"),
+                }
+                for item in candidates
+                if item.get("maturity") == "exploration"
+            ],
+            "cohort_eligibility": {
+                "horizonsDays": [14, 30, 60],
+                "rightCensoredLabel": "censored",
+                "selectionCount": len(allocation.get("mature") or []),
+            },
             "rejection_summary": self.rejection_summary,
             "rejection_examples": self.rejection_examples,
             "titles": [
@@ -4605,8 +4864,13 @@ class Radar:
         }
         report["snapshot_id"] = sha256_json(report)
         report["report_digest"] = sha256_json(report)
+        managed = None
+        if self.managed_ledger_path is not None:
+            managed = ManagedAdapter(BASE_DIR, self.managed_ledger_path).record_scan_report(report)
         result["snapshot_id"] = report["snapshot_id"]
         result["report_digest"] = report["report_digest"]
+        if managed is not None:
+            result["managed_ledger"] = managed
         if scan_path:
             atomic_write_json(scan_path, report)
         return result
@@ -4635,6 +4899,7 @@ def main() -> int:
     parser.add_argument("--max-backfill-hours", type=float, default=24.0)
     parser.add_argument("--chat-id", default=DEFAULT_CHAT_ID)
     parser.add_argument("--scan-out", type=Path, default=None)
+    parser.add_argument("--ledger", type=Path, default=BASE_DIR / "state" / "radar_ledger.sqlite3")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--no-notify", action="store_true")
     args = parser.parse_args()
@@ -4659,6 +4924,7 @@ def main() -> int:
         notify=not args.no_notify,
         repo_cache_path=args.repo_cache,
         controller_feedback_path=args.controller_feedback,
+        managed_ledger_path=args.ledger,
     )
     result = radar.run(args.scan_out)
     next_state = dict(state) if isinstance(state, dict) else {}

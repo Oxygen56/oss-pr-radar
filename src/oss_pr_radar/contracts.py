@@ -10,8 +10,8 @@ from .util import sha256_json
 SCAN_SCHEMA = "oss-pr-radar.scan.v2"
 CANDIDATE_SCHEMA = "oss-pr-radar.candidate.v3"
 EVIDENCE_SCHEMA = "oss-pr-radar.evidence.v1"
-CONTRACT_REVISION = "trust-core-v8-semantic-fallback"
-ACTIONABLE_REVIEW_STATUSES = frozenset({"ok", "deterministic_fallback"})
+CONTRACT_REVISION = "trust-core-v9-semantic-evidence-only"
+ACTIONABLE_REVIEW_STATUSES = frozenset({"ok"})
 
 CONTRACT_MANIFEST = {
     "scanSchema": SCAN_SCHEMA,
@@ -117,15 +117,16 @@ def validate_candidate(candidate: dict[str, Any]) -> None:
             review.get("status") in ACTIONABLE_REVIEW_STATUSES,
             "auto spawn requires an actionable semantic review",
         )
-        review_actionable = review.get("decision") in {
-            "NEW_CLEAN_CANDIDATE",
-            "PR_COMPETITION_OPPORTUNITY",
-        } or (
-            private_disclosure_work
-            and review.get("decision") == "WAIT_MAINTAINER"
-            and review.get("wait_reason") == "DISCLOSURE_ONLY"
+        _require(
+            str(review.get("semanticSignal") or review.get("semantic_signal") or "")
+            == "NO_OBJECTION",
+            "auto spawn requires semantic NO_OBJECTION evidence",
         )
-        _require(review_actionable, "auto spawn requires an actionable LLM decision")
+        preflight = candidate.get("preTaskGate") or candidate.get("pre_task_gate")
+        _require(
+            isinstance(preflight, dict) and preflight.get("allowed") is True,
+            "auto spawn requires a passed pre-task gate",
+        )
 
 
 @dataclass(frozen=True)

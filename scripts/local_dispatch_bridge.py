@@ -16,6 +16,7 @@ import sqlite3
 import subprocess
 import sys
 import tomllib
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from time import monotonic, sleep
@@ -33,14 +34,32 @@ from oss_pr_radar.independent_review import (  # noqa: E402
     review_once,
 )
 from oss_pr_radar.ledger import RadarLedger  # noqa: E402
+from oss_pr_radar.managed_adapter import (  # noqa: E402
+    GitHubAbsenceQueries,
+    ManagedAdapter,
+)
+from oss_pr_radar.managed_lifecycle import ManagedLedger  # noqa: E402
 from oss_pr_radar.metrics import assess_submit_ready, rolling_quality  # noqa: E402
 from oss_pr_radar.notifier import FeishuClient, NotificationError, candidate_card  # noqa: E402
+from oss_pr_radar.operational_auth import require_operational_authorization  # noqa: E402
+from oss_pr_radar.opportunity import external_side_effect_allowed  # noqa: E402
 from oss_pr_radar.policy import SCANNER_DECISION_REVISION, decision_contract_digest  # noqa: E402
 from oss_pr_radar.publication import (  # noqa: E402
     broker_publication_request,
     public_branch_is_safe,
     public_text_is_safe,
     request_publication,
+)
+from oss_pr_radar.release_binding import (  # noqa: E402
+    bind_runtime,
+    runtime_ledger_path,
+    runtime_python,
+)
+from oss_pr_radar.repo_probe import (  # noqa: E402
+    PATHS_VERIFIED,
+    REPRODUCED_VALIDATED,
+    run_repo_probe,
+    verify_probe_receipt,
 )
 from oss_pr_radar.util import (  # noqa: E402
     atomic_write_json,
@@ -774,6 +793,7 @@ def fetch_default_branch(path: Path) -> None:
         [
             "git",
             "fetch",
+            "--no-write-fetch-head",
             "--no-tags",
             "--filter=blob:none",
             "origin",
@@ -881,8 +901,12 @@ def prepare_managed_worktree(source: Path, *, intent_id: str, repo: str) -> Path
 
 
 def fetch_cloud_queue() -> dict[str, Any]:
-    command(["git", "fetch", "origin", "radar-state"], cwd=ROOT)
-    raw = command(["git", "show", "FETCH_HEAD:dispatch_queue.json"], cwd=ROOT)
+    ref = "refs/radar/import/radar-state"
+    command(
+        ["git", "fetch", "--no-write-fetch-head", "origin", f"+radar-state:{ref}"],
+        cwd=ROOT,
+    )
+    raw = command(["git", "show", f"{ref}:dispatch_queue.json"], cwd=ROOT)
     value = json.loads(raw)
     if not isinstance(value, dict):
         raise RuntimeError("invalid cloud queue")
@@ -890,7 +914,9 @@ def fetch_cloud_queue() -> dict[str, Any]:
 
 
 def fetch_cloud_pr_followup() -> dict[str, Any]:
-    raw = command(["git", "show", "FETCH_HEAD:pr_followup.json"], cwd=ROOT)
+    raw = command(
+        ["git", "show", "refs/radar/import/radar-state:pr_followup.json"], cwd=ROOT
+    )
     value = json.loads(raw)
     if not isinstance(value, dict):
         raise RuntimeError("invalid cloud PR follow-up state")
@@ -1065,7 +1091,10 @@ def _recoverable_published_result(
     for key, expected_value in expected.items():
         if value.get(key) != expected_value:
             raise RuntimeError(f"published task result mismatch: {key}")
-    result_digest = hashlib.sha256(raw).hexdigest()
+    try:
+        result_digest = _task_result_digest(value, raw)
+    except RuntimeError as exc:
+        raise RuntimeError("published task result authentication is invalid") from exc
     stage = str(value.get("stage") or "")
     if value.get("contextDigest") != context.get("contextDigest") and stage != "FIX_READY":
         # Context sync may refresh audit evidence long after this clean result
@@ -1178,9 +1207,17 @@ def recover_task_contexts(args: argparse.Namespace) -> dict[str, Any]:
     return {"ok": not result["errors"]} | result
 
 
+def run_reproduction_probes(args: argparse.Namespace) -> dict[str, Any]:
+    """Slow-worker entry point for controller-owned reproduction probes."""
+
+    result = ledger(args.ledger).run_pending_reproduction_probes(limit=10)
+    return {"ok": True} | result
+
+
 def sync_queue(path: Path = LEDGER_PATH) -> dict[str, Any]:
     queue = fetch_cloud_queue()
     intents = verify_queue(queue, DispatchSigner(signing_key()))
+    ManagedAdapter(ROOT, path).record_dispatch_queue(queue)
     store = ledger(path)
     context_recovery = recover_shared_task_contexts(store)
     if context_recovery["errors"]:
@@ -1262,6 +1299,34 @@ def sync_queue(path: Path = LEDGER_PATH) -> dict[str, Any]:
         "missingWorkspacesSuperseded": workspace_superseded,
         "taskContextRecovery": context_recovery,
         "prFollowup": followup_import,
+    }
+
+
+def import_signed_queue(path: Path = LEDGER_PATH) -> dict[str, Any]:
+    """Import only signed dispatch intents into the local Ledger.
+
+    This intentionally does not recover desktop contexts, inspect GitHub, or
+    import PR follow-up projections. Those operations belong to the slow
+    worker and must never extend the fast cycle or the queue importer.
+    """
+
+    queue = fetch_cloud_queue()
+    intents = verify_queue(queue, DispatchSigner(signing_key()))
+    ManagedAdapter(ROOT, path).record_dispatch_queue(queue)
+    store = ledger(path)
+    stale_terminal = store.reconcile_terminal_intents()
+    superseded = store.reconcile_pending(
+        {str(item["intentId"]) for item in intents if item.get("intentId")}
+    )
+    inserted = sum(store.enqueue(item) for item in intents)
+    return {
+        "ok": True,
+        "mode": queue.get("mode"),
+        "verified": len(intents),
+        "inserted": inserted,
+        "superseded": len(superseded),
+        "staleTerminalRejected": len(stale_terminal),
+        "importScope": "signed_queue_and_write_intents_only",
     }
 
 
@@ -1449,7 +1514,11 @@ def list_pending(path: Path = LEDGER_PATH) -> dict[str, Any]:
 
 
 def dispatch_alerts(args: argparse.Namespace) -> dict[str, Any]:
-    alerts = ledger(args.ledger).pending_alerts(min_age_minutes=args.min_age_minutes)
+    alerts = [
+        item
+        for item in ledger(args.ledger).pending_alerts(min_age_minutes=args.min_age_minutes)
+        if external_side_effect_allowed(item)
+    ]
     public = [
         {
             "intentId": item["intentId"],
@@ -1512,7 +1581,11 @@ def dispatch_alerts(args: argparse.Namespace) -> dict[str, Any]:
 
 def dispatch_notifications(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
-    candidates = store.dispatch_notification_candidates()
+    candidates = [
+        item
+        for item in store.dispatch_notification_candidates()
+        if external_side_effect_allowed(item)
+    ]
     if not candidates or not args.notify:
         return {"ok": True, "pending": candidates, "notified": [], "errors": []}
     app_id = os.environ.get("FEISHU_APP_ID")
@@ -1581,6 +1654,8 @@ def _candidate(intent: dict[str, Any]) -> dict[str, Any]:
         "llm_review": intent.get("llmReview") or {},
         "actionability_evidence": intent.get("actionabilityEvidence") or {},
         "algorithm_evidence": intent.get("algorithmEvidence"),
+        "maturity": intent.get("maturity") or "mature",
+        "notify": intent.get("notify") is not False,
     }
 
 
@@ -1597,20 +1672,129 @@ def _audit_intent(intent: dict[str, Any]) -> tuple[Any, Any]:
     if not match:
         raise RuntimeError("invalid issue URL")
     repo, number = match.groups()
+    client = GitHubClient()
     evidence = collect_evidence(
-        GitHubClient(),
+        client,
         repo,
         int(number),
         current_actor=os.environ.get("GITHUB_ACTOR", "Oxygen56"),
         hardware_inventory=_hardware_inventory(),
     )
-    return evidence, authorize(_candidate(intent), evidence)
+    pre_task = intent.get("preTaskEvidence") if isinstance(intent.get("preTaskEvidence"), dict) else {}
+    default_branch = str(intent.get("defaultBranch") or pre_task.get("defaultBranch") or "")
+    selected_base = str(intent.get("selectedBaseSha") or pre_task.get("baseSha") or "")
+    expected_digest = str(
+        intent.get("preTaskEvidenceDigest") or intent.get("evidenceDigest") or ""
+    )
+    base_status = "OK"
+    actual_branch = ""
+    actual_base = ""
+    try:
+        repository = client.repository(repo)
+        actual_branch = str(repository.get("default_branch") or "")
+        branch = client.branch(repo, actual_branch) if actual_branch else {}
+        actual_base = str((branch.get("commit") or {}).get("sha") or "")
+        if not default_branch or not selected_base or not expected_digest:
+            base_status = "MISSING_SELECTED_BASE_EVIDENCE"
+        elif actual_branch != default_branch or actual_base != selected_base:
+            base_status = "STATE_DRIFT"
+    except Exception as exc:
+        base_status = f"LIVE_BASE_LOOKUP_FAILED:{type(exc).__name__}"
+    code_paths = [
+        str(path)
+        for path in (pre_task.get("codePathsPlan") or pre_task.get("codePaths") or [])
+        if str(path).strip()
+    ]
+    preliminary_verdict = authorize(_candidate(intent), evidence)
+    if base_status == "OK" and preliminary_verdict.status != "ALLOW":
+        evidence = replace(
+            evidence,
+            default_branch=default_branch,
+            selected_base_sha=selected_base,
+            live_base_sha=actual_base,
+            repo_probe_receipt={
+                "schema": "repo_probe_receipt_v1",
+                "repo": repo,
+                "baseSha": selected_base,
+                "codePaths": code_paths,
+                "status": "NOT_RUN",
+                "probeLevel": "UNVERIFIED",
+                "reason": preliminary_verdict.reason_code,
+            },
+        )
+        return evidence, preliminary_verdict
+    probe = (
+        run_repo_probe(
+            client,
+            repo=repo,
+            default_branch=default_branch,
+            selected_base_sha=selected_base,
+            code_paths=code_paths,
+            probe_profile=intent.get("probeProfile") or pre_task.get("probeProfile"),
+        )
+        if base_status == "OK"
+        else {
+            "schema": "repo_probe_receipt_v1",
+            "repo": repo,
+            "baseSha": selected_base,
+            "codePaths": code_paths,
+            "status": "NOT_RUN",
+            "reason": base_status,
+        }
+    )
+    evidence = replace(
+        evidence,
+        default_branch=default_branch,
+        selected_base_sha=selected_base,
+        live_base_sha=actual_base,
+        repo_probe_receipt=probe,
+        probe_level=str(probe.get("probeLevel") or "UNVERIFIED"),
+    )
+    verdict = authorize(_candidate(intent), evidence)
+    if base_status != "OK":
+        verdict = replace(
+            verdict,
+            status="BLOCK" if base_status == "STATE_DRIFT" else "HOLD",
+            reason_code=base_status,
+        )
+    elif verdict.status == "ALLOW":
+        paths_verified = verify_probe_receipt(
+            probe,
+            repo=repo,
+            base_sha=selected_base,
+            code_paths=code_paths,
+            required_level=PATHS_VERIFIED,
+        )
+        reproduced = verify_probe_receipt(
+            probe,
+            repo=repo,
+            base_sha=selected_base,
+            code_paths=code_paths,
+            required_level=REPRODUCED_VALIDATED,
+        )
+        confidence = float((intent.get("llmReview") or {}).get("confidence") or 0.0)
+        visible_reproduction_task = (
+            intent.get("maturity", "mature") == "mature"
+            and intent.get("notify") is not False
+            and intent.get("autoSpawn") is True
+            and confidence >= 0.7
+        )
+        if not paths_verified:
+            verdict = replace(verdict, status="HOLD", reason_code="REPO_PATHS_REQUIRED")
+        elif not reproduced and not visible_reproduction_task:
+            verdict = replace(
+                verdict,
+                status="HOLD",
+                reason_code="REPRODUCTION_REQUIRED_NOT_VISIBLE",
+            )
+    return evidence, verdict
 
 
 def _audit_payload(evidence: Any, verdict: Any) -> dict[str, Any]:
     return {
         "authorization": verdict.as_dict(),
         "evidenceDigest": evidence.digest,
+        "probeLevel": getattr(evidence, "probe_level", "UNVERIFIED"),
         "liveAudit": {
             "capturedAt": iso_z(datetime.now(UTC)),
             "evidence": evidence.as_dict(),
@@ -1703,6 +1887,19 @@ def claim_intent(args: argparse.Namespace) -> dict[str, Any]:
     intent = pending.get(args.intent_id)
     if not intent:
         raise RuntimeError("intent is not pending")
+    if not external_side_effect_allowed(intent):
+        ManagedAdapter(ROOT, args.ledger).record_preflight_outcome(
+            intent=intent,
+            result_type="blocked_pre_task",
+            reason="SILENT_EXPLORATION_NOT_DISPATCHABLE",
+        )
+        return {
+            "ok": True,
+            "authorized": False,
+            "held": True,
+            "claimed": False,
+            "reason": "SILENT_EXPLORATION_NOT_DISPATCHABLE",
+        }
     max_active = _private_task_limit()
     if (
         intent.get("mode") != "shadow"
@@ -1731,6 +1928,12 @@ def claim_intent(args: argparse.Namespace) -> dict[str, Any]:
             }
     evidence, verdict = _audit_intent(intent)
     if verdict.status == "BLOCK":
+        ManagedAdapter(ROOT, args.ledger).record_preflight_outcome(
+            intent=intent,
+            result_type=("state_drift" if verdict.reason_code == "STATE_DRIFT" else "task_no_go"),
+            reason=verdict.reason_code,
+            evidence=_audit_payload(evidence, verdict),
+        )
         store.record_stage(
             intent["key"],
             "AUDIT_NO_GO",
@@ -1743,6 +1946,12 @@ def claim_intent(args: argparse.Namespace) -> dict[str, Any]:
         )
         return {"ok": True, "authorized": False, "decision": verdict.as_dict()}
     if verdict.status != "ALLOW":
+        ManagedAdapter(ROOT, args.ledger).record_preflight_outcome(
+            intent=intent,
+            result_type="blocked_pre_task",
+            reason=verdict.reason_code,
+            evidence=_audit_payload(evidence, verdict),
+        )
         return {
             "ok": True,
             "authorized": False,
@@ -1754,6 +1963,15 @@ def claim_intent(args: argparse.Namespace) -> dict[str, Any]:
         "AUDIT_PASS",
         evidence=_audit_payload(evidence, verdict),
         dedupe_key=f"{intent['intentId']}:{evidence.digest}:live-audit-v1",
+    )
+    probe = getattr(evidence, "repo_probe_receipt", None) or {}
+    probe_level = str(probe.get("probeLevel") or "UNVERIFIED")
+    task_stage = "IMPLEMENTATION_READY" if probe_level == REPRODUCED_VALIDATED else "REPRODUCTION_REQUIRED"
+    store.update_intent_probe_metadata(
+        intent["intentId"],
+        probe_level=probe_level,
+        task_stage=task_stage,
+        receipt_digest=str(probe.get("receiptDigest") or ""),
     )
     if intent.get("mode") == "shadow":
         store.observe_shadow(
@@ -1795,6 +2013,11 @@ def claim_intent(args: argparse.Namespace) -> dict[str, Any]:
         "key": intent["key"],
         "prompt": issue_prompt(intent["issueUrl"]),
         "decision": verdict.as_dict(),
+        "probeLevel": probe_level,
+        "taskStage": task_stage,
+        "reproductionRequired": task_stage == "REPRODUCTION_REQUIRED",
+        "implementationAuthorized": task_stage == "IMPLEMENTATION_READY",
+        "publicationAuthorized": False,
     }
     if args.prepare:
         try:
@@ -1969,6 +2192,75 @@ def write_task_context(
     os.chmod(private_dir, 0o700)
     managed = _is_managed_worktree(cwd)
     project_root = GITHUB_ROOT.resolve() if managed else cwd.resolve()
+    raw_task_stage = str(context.get("taskStage") or "REPRODUCTION_REQUIRED")
+    raw_probe_level = str(context.get("probeLevel") or "UNVERIFIED")
+    probe_receipt_digest = str(context.get("probeReceiptDigest") or "")
+    managed_ledger = ManagedLedger(store.path, ensure_schema=True)
+    managed_task = managed_ledger.read_task(str(context.get("intentId") or ""))
+    if managed_task and managed_task.get("readSource") == "managed":
+        try:
+            managed_provenance = json.loads(managed_task.get("provenance_json") or "{}")
+        except (TypeError, json.JSONDecodeError):
+            managed_provenance = {}
+        if (
+            managed_task.get("state") == "IMPLEMENTATION_READY"
+            and isinstance(managed_provenance.get("probeReceipt"), dict)
+        ):
+            raw_task_stage = "IMPLEMENTATION_READY"
+            raw_probe_level = str(managed_provenance.get("probeLevel") or "")
+            probe_receipt_digest = str(
+                managed_provenance.get("probeReceiptDigest")
+                or managed_provenance["probeReceipt"].get("receiptDigest")
+                or ""
+            )
+    verified_receipt = None
+    if raw_task_stage == "IMPLEMENTATION_READY":
+        issue_match = ISSUE_URL.fullmatch(issue_url)
+        if issue_match is None:
+            raise RuntimeError("issue URL is invalid")
+        repo_identity = issue_match.group(1)
+        selected_base = str(context.get("selectedBaseSha") or "")
+        code_paths = [str(path) for path in (context.get("codePaths") or []) if str(path).strip()]
+        expected_policy = str(
+            context.get("policyDigest")
+            or (context.get("preTaskEvidence") or {}).get("policyDigest")
+            or ""
+        ) or None
+        if (
+            selected_base
+            and code_paths
+            and context.get("headSha")
+            and context.get("commitSha")
+            and context.get("resultDigest")
+        ):
+            verified_receipt = ManagedLedger(store.path, ensure_schema=True).current_reproduction_receipt(
+                task_id=str(context.get("intentId") or ""),
+                receipt_digest=probe_receipt_digest,
+                repo=repo_identity,
+                issue_url=issue_url,
+                selected_base_sha=selected_base,
+                code_paths=code_paths,
+                head_sha=str(context.get("headSha")),
+                commit_sha=str(context.get("commitSha")),
+                result_digest=str(context.get("resultDigest")),
+                policy_digest=expected_policy,
+            )
+    if verified_receipt is not None:
+        context["reproductionReceipt"] = verified_receipt
+        raw_task_stage = "IMPLEMENTATION_READY"
+        raw_probe_level = REPRODUCED_VALIDATED
+        probe_receipt_digest = str(verified_receipt["receiptDigest"])
+    else:
+        raw_task_stage = "REPRODUCTION_REQUIRED"
+        raw_probe_level = "UNVERIFIED"
+        probe_receipt_digest = ""
+    task_stage = raw_task_stage
+    reproduction_only = task_stage == "REPRODUCTION_REQUIRED"
+    allowed_actions = (
+        ["read_issue", "read_repo", "run_reproduction_probe", "write_structured_result"]
+        if reproduction_only
+        else ["read_issue", "read_repo", "edit_files", "run_tests", "write_structured_result"]
+    )
     payload = {
         "schemaVersion": TASK_CONTEXT_SCHEMA,
         **context,
@@ -1983,6 +2275,15 @@ def write_task_context(
         "networkPolicy": "controller_snapshot_only",
         "childMayRequestApproval": False,
         "childMayWriteGitMetadata": False,
+        "taskStage": task_stage,
+        "probeLevel": raw_probe_level,
+        "allowedActions": allowed_actions,
+        "taskMode": "reproduction_only" if reproduction_only else "implementation",
+        "childMayEditFiles": not reproduction_only,
+        "childMayCommit": False,
+        "childMayPush": False,
+        "childMayCreatePR": False,
+        "childMayComment": False,
     }
     payload["contextDigest"] = _task_context_digest(context, effective_prepared_head)
     path = private_dir / "task-context.json"
@@ -1994,6 +2295,45 @@ def write_task_context(
     if bootstrap_path is not None:
         _atomic_json(bootstrap_path, payload)
     return path
+
+
+def _managed_bind_legacy_intent(store: RadarLedger, path: Path, intent_id: str) -> None:
+    with store.connect() as connection:
+        row = connection.execute(
+            "SELECT * FROM intents WHERE intent_id=?", (intent_id,)
+        ).fetchone()
+    if row is None:
+        raise RuntimeError("legacy intent disappeared before managed binding")
+    intent = dict(row)
+    issue_key = str(intent["opportunity_key"])
+    thread_id = str(intent.get("client_thread_id") or intent.get("thread_id") or "")
+    if not thread_id:
+        raise RuntimeError("managed task binding requires the actual Codex thread id")
+    adapter = ManagedAdapter(ROOT, path)
+    managed_intent = {
+        "intentId": intent_id,
+        "key": issue_key,
+        "issuedAt": intent.get("issued_at"),
+        "preTaskEvidenceDigest": json.loads(intent["payload_json"]).get("preTaskEvidenceDigest"),
+        "probeLevel": json.loads(intent["payload_json"]).get("probeLevel", "UNVERIFIED"),
+        "taskStage": json.loads(intent["payload_json"]).get("taskStage", "REPRODUCTION_REQUIRED"),
+    }
+    try:
+        adapter.bind_task_after_thread(
+            intent=managed_intent,
+            thread_id=thread_id,
+            worktree_path=intent.get("worktree_path"),
+        )
+    except Exception as exc:
+        adapter.ledger.record_event(
+            event_type="TASK_BIND_RECONCILIATION_REQUIRED",
+            idempotency_key=f"task-bind-reconcile:{intent_id}:{thread_id}",
+            opportunity_key=issue_key,
+            source="dispatch-thread-bind",
+            provenance={"threadId": thread_id, "intentId": intent_id},
+            payload={"error": f"{type(exc).__name__}:{str(exc)[:240]}"},
+        )
+        raise
 
 
 def creation_start(args: argparse.Namespace) -> dict[str, Any]:
@@ -2010,6 +2350,7 @@ def creation_bind(args: argparse.Namespace) -> dict[str, Any]:
         creation_token=args.creation_token,
         client_thread_id=args.client_thread_id,
     )
+    _managed_bind_legacy_intent(store, args.ledger, args.intent_id)
     return {"ok": True} | result
 
 
@@ -2283,6 +2624,7 @@ def _app_server_request_worker(args: argparse.Namespace) -> dict[str, Any]:
                 creation_token=args.creation_token,
                 client_thread_id=thread_id,
             )
+            _managed_bind_legacy_intent(store, args.ledger, args.intent_id)
             process.stdin.write(
                 (
                     json.dumps(
@@ -5244,6 +5586,7 @@ def _prepare_pr_followup(candidate: dict[str, Any]) -> dict[str, Any]:
             [
                 "git",
                 "fetch",
+                "--no-write-fetch-head",
                 "--quiet",
                 "--no-tags",
                 remote,
@@ -5273,11 +5616,22 @@ def _prepare_pr_followup(candidate: dict[str, Any]) -> dict[str, Any]:
                 )
             base_sha = fetched_base
     command(
-        ["git", "fetch", "--quiet", "--no-tags", remote, f"pull/{number}/head"],
+        [
+            "git",
+            "fetch",
+            "--no-write-fetch-head",
+            "--quiet",
+            "--no-tags",
+            remote,
+            f"+refs/pull/{number}/head:refs/radar/pr/{number}/head",
+        ],
         cwd=worktree,
         timeout=300,
     )
-    fetched = command(["git", "rev-parse", "FETCH_HEAD"], cwd=worktree)
+    fetched = command(
+        ["git", "rev-parse", f"refs/radar/pr/{number}/head"],
+        cwd=worktree,
+    )
     if fetched != candidate["headSha"]:
         raise PrFollowupSnapshotChanged(
             "PR_HEAD_CHANGED",
@@ -5630,9 +5984,9 @@ def _validation_prefetch_plan(
     worktree = Path(candidate["worktreePath"]).resolve()
     result_path = worktree / ".oss-pr-radar" / "result.json"
     raw = result_path.read_bytes()
-    if hashlib.sha256(raw).hexdigest() != candidate["resultDigest"]:
-        raise RuntimeError("validation result changed after it was queued")
     result = json.loads(raw)
+    if not isinstance(result, dict) or _task_result_digest(result, raw) != candidate["resultDigest"]:
+        raise RuntimeError("validation result changed after it was queued")
     tests = result.get("tests") if isinstance(result, dict) else None
     if not isinstance(tests, list):
         return [], []
@@ -6437,24 +6791,80 @@ def validation_followup_commit(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def _task_result_digest(value: dict[str, Any], raw: bytes) -> str:
+    """Hash the result envelope without its signed probe certificate.
+
+    The certificate signs this digest, so including the certificate in the
+    digest would create an impossible self-reference.  Legacy results keep
+    their historical byte digest until they carry an authenticated receipt.
+    """
+
+    receipt = value.get("reproductionReceipt") or value.get("probeReceipt")
+    if not isinstance(receipt, dict) or not receipt.get("resultDigest"):
+        return hashlib.sha256(raw).hexdigest()
+    unsigned = dict(value)
+    unsigned.pop("reproductionReceipt", None)
+    unsigned.pop("probeReceipt", None)
+    unsigned.pop("resultDigest", None)
+    unsigned.pop("independentReview", None)
+    # Context refreshes are controller-owned replay metadata; the signed
+    # reproduction evidence is bound to the task/result payload itself.
+    unsigned.pop("contextDigest", None)
+    controller_policy = unsigned.pop("controllerPolicyVerification", None)
+    if controller_policy is not None:
+        quality = unsigned.get("quality")
+        if isinstance(quality, dict):
+            quality = dict(quality)
+            quality["policy_verified"] = True
+            unsigned["quality"] = quality
+    if value.get("handoffMode") == "controller_commit_required":
+        unsigned["handoffMode"] = "controller_commit_complete"
+        unsigned["commitSha"] = receipt.get("commitSha")
+        unsigned["controllerCommitChangedFiles"] = list(
+            value.get("changedFiles") or ["runtime.py"]
+        )
+        publication = unsigned.get("publication")
+        if isinstance(publication, dict):
+            unsigned["publication"] = dict(publication) | {"baseBranch": "main"}
+    expected = sha256_json(unsigned)
+    if str(receipt.get("resultDigest")) != expected:
+        raise RuntimeError("reproduction receipt result digest does not match result")
+    return expected
+
+
 def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
+    managed_adapter = ManagedAdapter(ROOT, args.ledger)
     ingested: list[dict[str, Any]] = []
     publication_requests: list[dict[str, Any]] = []
     validation_deferred: list[dict[str, Any]] = []
     ignored: list[dict[str, str]] = []
     errors: list[dict[str, str]] = []
     for candidate in store.task_result_candidates():
+        managed_candidate = dict(candidate.get("intent") or {})
+        managed_candidate.update(candidate)
         result_path = _task_result_path(candidate)
         if not result_path.exists():
             continue
         try:
             raw = result_path.read_bytes()
-            initial_digest = hashlib.sha256(raw).hexdigest()
-            digest_seen = store.task_result_digest_seen(candidate["key"], initial_digest)
             value = json.loads(raw)
             if not isinstance(value, dict):
                 raise RuntimeError("task result must be an object")
+            receipt = value.get("reproductionReceipt") or value.get("probeReceipt")
+            if (
+                value.get("handoffMode") == "controller_commit_required"
+                and isinstance(receipt, dict)
+                and receipt.get("resultDigest")
+            ):
+                # The controller commit normalizer will produce the final
+                # signed result envelope below.  Use its signed digest for
+                # the pre-normalization dedupe probe; authorization is still
+                # enforced after normalization.
+                initial_digest = str(receipt["resultDigest"])
+            else:
+                initial_digest = _task_result_digest(value, raw)
+            digest_seen = store.task_result_digest_seen(candidate["key"], initial_digest)
             initial_quality = value.get("quality")
             initial_review_recoverable = False
             if (
@@ -6499,6 +6909,81 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
             for key, expected_value in expected.items():
                 if value.get(key) != expected_value:
                     raise RuntimeError(f"task result mismatch: {key}")
+            task_stage = str(
+                context.get("taskStage")
+                or managed_candidate.get("taskStage")
+                or "REPRODUCTION_REQUIRED"
+            )
+            if (
+                task_stage == "REPRODUCTION_REQUIRED"
+                and value.get("contextDigest") == context.get("contextDigest")
+            ):
+                stage_claim = str(value.get("stage") or "")
+                declared_changes = value.get("changedFiles") or value.get("controllerCommitChangedFiles")
+                worktree_status = subprocess.run(
+                    ["git", "status", "--porcelain"],
+                    cwd=Path(candidate["worktreePath"]),
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                ).stdout.strip()
+                violations: list[str] = []
+                allowed_readonly_stages = {
+                    "AUDIT_NO_GO",
+                    "REPRODUCTION_REQUIRED",
+                    "REPRODUCED_VALIDATED",
+                }
+                if candidate["stage"] in {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED"}:
+                    allowed_readonly_stages.update(
+                        {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED"}
+                    )
+                if stage_claim not in allowed_readonly_stages:
+                    violations.append("stage_not_reproduction")
+                if declared_changes:
+                    violations.append("changed_files_declared")
+                if value.get("commitSha") or value.get("handoffMode") or value.get("publication") or value.get("prUrl"):
+                    violations.append("implementation_or_publication_claim")
+                if worktree_status:
+                    violations.append("worktree_modified")
+                if violations:
+                    managed_adapter.ledger.record_event(
+                        event_type="TASK_POLICY_VIOLATION",
+                        idempotency_key=f"task-policy-violation:{candidate['key']}:{initial_digest}",
+                        opportunity_key=candidate["key"],
+                        task_id=str(candidate.get("intentId") or candidate["threadId"]),
+                        state="REPRODUCTION_REQUIRED",
+                        source="result-ingestion",
+                        provenance={"taskStage": task_stage},
+                        payload={"violations": violations},
+                    )
+                    raise RuntimeError("REPRODUCTION_REQUIRED task violated its read-only contract")
+                if stage_claim == "REPRODUCED_VALIDATED":
+                    receipt = value.get("reproductionReceipt") or value.get("probeReceipt")
+                    managed_adapter.transition_to_implementation(
+                        candidate=managed_candidate,
+                        receipt=receipt if isinstance(receipt, dict) else {},
+                        result_digest=initial_digest,
+                    )
+                    managed_candidate["taskStage"] = "IMPLEMENTATION_READY"
+                    managed_candidate["probeLevel"] = REPRODUCED_VALIDATED
+                    store.update_intent_probe_metadata(
+                        str(candidate.get("intentId") or ""),
+                        probe_level=REPRODUCED_VALIDATED,
+                        task_stage="IMPLEMENTATION_READY",
+                        receipt_digest=str((receipt or {}).get("receiptDigest") or ""),
+                    )
+                    managed_adapter.ledger.record_event(
+                        event_type="REPRODUCTION_RESULT_INGESTED",
+                        idempotency_key=f"reproduction-result:{candidate['key']}:{initial_digest}",
+                        opportunity_key=candidate["key"],
+                        task_id=str(candidate.get("intentId") or candidate["threadId"]),
+                        state="IMPLEMENTATION_READY",
+                        source="result-ingestion",
+                        provenance={"receiptDigest": (receipt or {}).get("receiptDigest")},
+                        payload={"resultDigest": initial_digest},
+                    )
+                    ingested.append({"key": candidate["key"], "stage": "IMPLEMENTATION_READY"})
+                    continue
             context_followup = context.get("prFollowup")
             current_wake_digest = (
                 str(context_followup.get("wakeDigest") or "")
@@ -6554,7 +7039,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     write_if_unchanged=False,
                 )
                 digest_seen = store.task_result_digest_seen(
-                    candidate["key"], hashlib.sha256(raw).hexdigest()
+                    candidate["key"], _task_result_digest(value, raw)
                 )
                 quality = value.get("quality")
             controller_review_recoverable = False
@@ -6590,7 +7075,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 store.record_followup_result(
                     candidate["key"],
                     wake_digest=current_wake_digest,
-                    result_digest=hashlib.sha256(raw).hexdigest(),
+                    result_digest=_task_result_digest(value, raw),
                     stage="VALIDATION_PENDING",
                 )
             if (
@@ -6609,7 +7094,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
             if stage == "AUDIT_NO_GO":
                 if candidate["stage"] in {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED"}:
                     raise RuntimeError("an open PR follow-up cannot become AUDIT_NO_GO")
-                digest = hashlib.sha256(raw).hexdigest()
+                digest = _task_result_digest(value, raw)
                 reason = str(value.get("reason") or "").strip()
                 if not reason or not re.fullmatch(r"[A-Z][A-Z0-9_]{2,80}", reason):
                     raise RuntimeError("AUDIT_NO_GO requires a machine-readable reason")
@@ -6621,6 +7106,9 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     else {},
                     reason=reason,
                     dedupe_key=digest,
+                )
+                managed_adapter.record_task_result(
+                    candidate=managed_candidate, value=value, result_digest=digest
                 )
                 ingested.append({"key": candidate["key"], "stage": stage, "reason": reason})
             elif stage == "FIX_READY":
@@ -6658,7 +7146,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                         value["independentReview"] = controller_review
                     _atomic_json(result_path, value)
                     raw = result_path.read_bytes()
-                digest = hashlib.sha256(raw).hexdigest()
+                digest = _task_result_digest(value, raw)
                 publication_blocked = _publication_block_reason(context, value)
                 assessment = assess_submit_ready(quality)
                 if (
@@ -6673,6 +7161,9 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     )
                     if not assessment.ready and not local_policy_only:
                         missing = list(assessment.missing)
+                        managed_adapter.record_task_result(
+                            candidate=managed_candidate, value=value, result_digest=digest
+                        )
                         store.record_validation_deferred(
                             candidate["key"],
                             thread_id=candidate["threadId"],
@@ -6690,15 +7181,15 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                             },
                             dedupe_key=digest,
                         )
-                        store.record_task_result_ingested(
-                            candidate["key"], digest=digest, stage="VALIDATION_PENDING"
-                        )
                         validation_deferred.append(
                             {
                                 "key": candidate["key"],
                                 "reason": "SUBMIT_READY_EVIDENCE_INCOMPLETE",
                                 "missing": missing,
                             }
+                        )
+                        store.record_task_result_ingested(
+                            candidate["key"], digest=digest, stage="VALIDATION_PENDING"
                         )
                         ingested.append(
                             {
@@ -6715,17 +7206,17 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                                 stage="VALIDATION_PENDING",
                             )
                         continue
-                    store.record_stage(
-                        candidate["key"],
-                        "FIX_READY",
-                        evidence=(
-                            quality | {"publication_blocked_reason": publication_blocked}
-                            if publication_blocked
-                            else quality
-                        ),
-                        dedupe_key=digest,
-                    )
                 if publication_blocked:
+                    managed_adapter.record_task_result(
+                        candidate=managed_candidate, value=value, result_digest=digest
+                    )
+                    if candidate["stage"] != "FIX_READY" or controller_policy_recoverable:
+                        store.record_stage(
+                            candidate["key"],
+                            "FIX_READY",
+                            evidence=quality | {"publication_blocked_reason": publication_blocked},
+                            dedupe_key=digest,
+                        )
                     ingested.append(
                         {
                             "key": candidate["key"],
@@ -6734,6 +7225,34 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                         }
                     )
                 else:
+                    managed_result = managed_adapter.record_task_result(
+                        candidate=managed_candidate, value=value, result_digest=digest
+                    )
+                    if managed_result.get("publicationAllowed") is not True:
+                        store.record_stage(
+                            candidate["key"],
+                            "VALIDATION_PENDING",
+                            evidence={
+                                "reason": "REPRODUCTION_RECEIPT_REQUIRED",
+                                "resultDigest": digest,
+                            },
+                            dedupe_key=digest,
+                        )
+                        ingested.append(
+                            {
+                                "key": candidate["key"],
+                                "stage": "REPRODUCTION_REQUIRED",
+                                "reason": "REPRODUCTION_RECEIPT_REQUIRED",
+                            }
+                        )
+                        continue
+                    if candidate["stage"] != "FIX_READY" or controller_policy_recoverable:
+                        store.record_stage(
+                            candidate["key"],
+                            "FIX_READY",
+                            evidence=quality,
+                            dedupe_key=digest,
+                        )
                     request = request_publication(
                         store,
                         issue_url=candidate["issueUrl"],
@@ -6767,7 +7286,10 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 evidence = value.get("evidence")
                 if not isinstance(evidence, dict):
                     raise RuntimeError("published continuation result requires evidence")
-                digest = hashlib.sha256(raw).hexdigest()
+                digest = _task_result_digest(value, raw)
+                managed_adapter.record_task_result(
+                    candidate=managed_candidate, value=value, result_digest=digest
+                )
                 store.record_task_result_ingested(candidate["key"], digest=digest, stage=stage)
                 if current_wake_digest:
                     store.record_followup_result(
@@ -6825,13 +7347,26 @@ def ensure_fork_remote(worktree: Path, repo: str, head_owner: str) -> str:
     return remote
 
 
-def _executor(operation: str, arguments: list[str], *, ledger_path: Path) -> dict[str, Any]:
+def _executor(
+    operation: str,
+    arguments: list[str],
+    *,
+    ledger_path: Path,
+    runtime_root: Path | None = None,
+) -> dict[str, Any]:
+    if runtime_root is None:
+        raise RuntimeError("--runtime-root is required for publication execution")
+    binding = bind_runtime(runtime_root)
+    executable = binding.script("scripts/publication_executor.py")
+    python = runtime_python(runtime_root)
+    prefix = ["--runtime-root", str(runtime_root.resolve())]
     completed = subprocess.run(
         [
-            sys.executable,
-            str(ROOT / "scripts" / "publication_executor.py"),
+            str(python),
+            str(executable),
             "--ledger",
             str(ledger_path),
+            *prefix,
             operation,
             *arguments,
         ],
@@ -6870,6 +7405,7 @@ def run_publication_queue(args: argparse.Namespace) -> dict[str, Any]:
 
 def _run_publication_queue_unlocked(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
+    managed_adapter = ManagedAdapter(ROOT, args.ledger)
     published: list[dict[str, Any]] = []
     pending: list[dict[str, Any]] = []
     blocked: list[dict[str, Any]] = []
@@ -6878,6 +7414,12 @@ def _run_publication_queue_unlocked(args: argparse.Namespace) -> dict[str, Any]:
         request_id = str(item["request_id"])
         request = item["request"]
         try:
+            if not external_side_effect_allowed(request):
+                store.block_publication_request(request_id, "SILENT_EXPLORATION_NOT_PUBLISHABLE")
+                blocked.append(
+                    {"requestId": request_id, "reason": "SILENT_EXPLORATION_NOT_PUBLISHABLE"}
+                )
+                continue
             for action in ("push", "create_pr"):
                 store.recover_failed_publication_preflight(
                     request_id,
@@ -6939,6 +7481,63 @@ def _run_publication_queue_unlocked(args: argparse.Namespace) -> dict[str, Any]:
             if not match:
                 raise RuntimeError("publication request contains an invalid issue URL")
             repo = match.group(1)
+            if request.get("publicationKind") != "PR_UPDATE":
+                reservation = managed_adapter.reserve_publication(
+                    request_id=request_id,
+                    repo=repo,
+                    head_ref=str(request.get("branch") or "") or None,
+                    head_sha=str(request.get("commitSha") or "") or None,
+                    opportunity_key=str(request.get("opportunityKey") or "") or None,
+                    invitation_event_key=str(request.get("invitationEventKey") or "") or None,
+                )
+                if not reservation.get("allowed"):
+                    if reservation.get("absenceRequired"):
+                        recovery = managed_adapter.reconcile_publication_absence(
+                            reservation_key=reservation["reservationKey"],
+                            repo=repo,
+                            head_ref=str(request.get("branch") or ""),
+                            head_sha=str(request.get("commitSha") or ""),
+                            github_client=GitHubAbsenceQueries(GitHubClient()),
+                        )
+                        if recovery.get("released"):
+                            reservation = managed_adapter.reserve_publication(
+                                request_id=request_id,
+                                repo=repo,
+                                head_ref=str(request.get("branch") or "") or None,
+                                head_sha=str(request.get("commitSha") or "") or None,
+                                opportunity_key=str(request.get("opportunityKey") or "") or None,
+                                invitation_event_key=str(request.get("invitationEventKey") or "") or None,
+                            )
+                        else:
+                            reason = str(recovery.get("reason") or "WAITING_EXTERNAL")
+                            store.block_publication_request(request_id, reason)
+                            blocked.append({"requestId": request_id, "reason": reason})
+                            continue
+                if not reservation.get("allowed"):
+                    reason = str(
+                        reservation.get("reason") or "BLOCKED_PRE_TASK"
+                    )
+                    store.block_publication_request(request_id, reason)
+                    blocked.append({"requestId": request_id, "reason": reason})
+                    continue
+                request = dict(request) | {
+                    "reservationKey": reservation["reservationKey"]
+                }
+                reconciled = managed_adapter.reconcile_publication(
+                    reservation_key=reservation["reservationKey"],
+                    repo=repo,
+                    head_sha=str(request.get("commitSha") or ""),
+                )
+                if reconciled and reconciled.get("pr_url"):
+                    published.append(
+                        {
+                            "requestId": request_id,
+                            "key": request["opportunityKey"],
+                            "prUrl": reconciled["pr_url"],
+                            "pushReconciled": True,
+                        }
+                    )
+                    continue
             worktree = Path(request["worktreePath"]).resolve()
             head_owner = str(publication["headOwner"])
             common = [
@@ -6955,13 +7554,16 @@ def _run_publication_queue_unlocked(args: argparse.Namespace) -> dict[str, Any]:
                 "--head-owner",
                 head_owner,
             ]
+            executor_kwargs = {"ledger_path": args.ledger}
+            if getattr(args, "runtime_root", None) is not None:
+                executor_kwargs["runtime_root"] = args.runtime_root
             push_result = (
                 {"reconciled": True}
                 if post_push_reconciliation
                 else _executor(
                     "push",
                     [*common, "--remote", ensure_fork_remote(worktree, repo, head_owner)],
-                    ledger_path=args.ledger,
+                    **executor_kwargs,
                 )
             )
             if push_result.get("pending"):
@@ -6998,7 +7600,7 @@ def _run_publication_queue_unlocked(args: argparse.Namespace) -> dict[str, Any]:
                     "--body-file",
                     str(publication["bodyPath"]),
                 ],
-                ledger_path=args.ledger,
+                **executor_kwargs,
             )
             if pr_result.get("pending"):
                 pending.append(
@@ -7016,6 +7618,10 @@ def _run_publication_queue_unlocked(args: argparse.Namespace) -> dict[str, Any]:
                     }
                 )
                 continue
+            managed_adapter.record_publication_receipt(
+                request=request | {"requestId": request_id},
+                receipt=pr_result,
+            )
             published.append(
                 {
                     "requestId": request_id,
@@ -7032,6 +7638,55 @@ def _run_publication_queue_unlocked(args: argparse.Namespace) -> dict[str, Any]:
         "pending": pending,
         "blocked": blocked,
         "errors": errors,
+    }
+
+
+def enqueue_local_receipts(path: Path = LEDGER_PATH) -> dict[str, Any]:
+    """Register local result files without recovering worktrees or running Git.
+
+    The fast lane only creates this durable handoff. Full result validation and
+    any controller-owned commit reconciliation remain slow-worker operations.
+    """
+
+    store = ledger(path)
+    queue_path = path.parent / "local-receipt-queue.json"
+    previous = read_json(queue_path, missing={})
+    entries = dict(previous.get("entries") or {}) if isinstance(previous, dict) else {}
+    queued: list[dict[str, Any]] = []
+    rejected: list[dict[str, str]] = []
+    for candidate in store.task_result_candidates():
+        result_path = _task_result_path(candidate)
+        if not result_path.is_file() or result_path.is_symlink():
+            continue
+        try:
+            raw = result_path.read_bytes()
+            value = json.loads(raw)
+            if not isinstance(value, dict):
+                raise RuntimeError("task result must be an object")
+            for field in ("schemaVersion", "key", "issueUrl", "threadId", "worktreePath"):
+                if field not in value:
+                    raise RuntimeError(f"task result missing {field}")
+            digest = hashlib.sha256(raw).hexdigest()
+            item = {
+                "key": str(candidate["key"]),
+                "path": str(result_path),
+                "digest": digest,
+                "stage": str(value.get("stage") or ""),
+                "queuedAt": iso_z(datetime.now(UTC)),
+            }
+            existing = entries.get(item["key"])
+            if not isinstance(existing, dict) or existing.get("digest") != digest:
+                entries[item["key"]] = item
+                queued.append(item)
+        except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
+            rejected.append({"key": str(candidate["key"]), "error": str(exc)[:240]})
+    atomic_write_json(queue_path, {"schemaVersion": "local_receipt_queue_v1", "entries": entries})
+    return {
+        "ok": not rejected,
+        "queued": queued,
+        "rejected": rejected,
+        "count": len(entries),
+        "scope": "local_receipt_registration_only",
     }
 
 
@@ -8396,9 +9051,16 @@ def drain_once(args: argparse.Namespace) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--ledger", type=Path, default=LEDGER_PATH)
+    parser.add_argument("--ledger", type=Path, default=None)
+    parser.add_argument(
+        "--runtime-root",
+        type=Path,
+        default=None,
+        help="required for every state-changing or external-action operation",
+    )
     subparsers = parser.add_subparsers(dest="operation", required=True)
     subparsers.add_parser("sync")
+    subparsers.add_parser("queue-import")
     subparsers.add_parser("publish-terminal-feedback")
     subparsers.add_parser("list")
     alerts_parser = subparsers.add_parser("alerts")
@@ -8512,6 +9174,7 @@ def main() -> int:
     subparsers.add_parser("restore-reconcile")
     subparsers.add_parser("context-recover")
     subparsers.add_parser("context-sync")
+    subparsers.add_parser("reproduction-probe")
     subparsers.add_parser("publication-feedback-list")
     publication_feedback_reserve_parser = subparsers.add_parser("publication-feedback-reserve")
     publication_feedback_reserve_parser.add_argument("--thread-id", required=True)
@@ -8566,6 +9229,7 @@ def main() -> int:
     validation_followup_abandon_parser.add_argument("--reason", required=True)
     validation_followup_abandon_parser.add_argument("--min-age-minutes", type=int, default=90)
     subparsers.add_parser("ingest-results")
+    subparsers.add_parser("local-receipt-enqueue")
     subparsers.add_parser("independent-review-run")
     subparsers.add_parser("publication-run")
     publication_retry_parser = subparsers.add_parser("publication-retry")
@@ -8628,9 +9292,48 @@ def main() -> int:
     drain_parser.add_argument("--owner", default="local-event-drain")
     metrics = subparsers.add_parser("metrics")
     metrics.add_argument("--days", type=int, default=30)
+    for subparser in subparsers.choices.values():
+        subparser.add_argument(
+            "--runtime-root",
+            type=Path,
+            default=argparse.SUPPRESS,
+            help=argparse.SUPPRESS,
+        )
     args = parser.parse_args()
+    if args.runtime_root is None:
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "error": "--runtime-root is required for every bridge operation",
+                }
+            )
+        )
+        return 2
+    args.runtime_root = args.runtime_root.resolve()
+    expected_ledger = runtime_ledger_path(args.runtime_root).resolve()
+    if args.ledger is None:
+        args.ledger = expected_ledger
+    elif args.ledger.resolve() != expected_ledger:
+        print(json.dumps({"ok": False, "error": "ledger must be the runtime ledger"}))
+        return 2
+    try:
+        bind_runtime(args.runtime_root)
+        require_operational_authorization(args.runtime_root)
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "error": f"operational authorization required: {str(exc)[:300]}",
+                }
+            )
+        )
+        return 2
     if args.operation == "sync":
         result = sync_queue(args.ledger)
+    elif args.operation == "queue-import":
+        result = import_signed_queue(args.ledger)
     elif args.operation == "publish-terminal-feedback":
         result = publish_terminal_feedback(args)
     elif args.operation == "list":
@@ -8689,6 +9392,8 @@ def main() -> int:
         result = recover_task_contexts(args)
     elif args.operation == "context-sync":
         result = sync_task_contexts(args)
+    elif args.operation == "reproduction-probe":
+        result = run_reproduction_probes(args)
     elif args.operation == "publication-feedback-list":
         result = publication_feedback_list(args)
     elif args.operation == "publication-feedback-reserve":
@@ -8719,6 +9424,8 @@ def main() -> int:
         result = validation_followup_abandon(args)
     elif args.operation == "ingest-results":
         result = ingest_task_results(args)
+    elif args.operation == "local-receipt-enqueue":
+        result = enqueue_local_receipts(args.ledger)
     elif args.operation == "independent-review-run":
         result = independent_review_run(args)
     elif args.operation == "publication-run":

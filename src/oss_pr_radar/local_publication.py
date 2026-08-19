@@ -3,17 +3,33 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import os
 import plistlib
 import signal
 import subprocess
-import sys
 import time
 from pathlib import Path
 from typing import Any, Callable
 
+from .operational_auth import require_operational_authorization
+from .release_binding import bind_runtime, runtime_ledger_path, runtime_python
+from .runtime import (
+    RuntimeLockBusy,
+    append_operation,
+    disk_snapshot,
+    exclusive_lock,
+    read_json,
+    record_cycle,
+    rotate_log,
+    utc_now,
+    write_json,
+)
+from .runtime_audit import active_release_evidence
+
 LAUNCH_AGENT_LABEL = "com.oss-pr-radar.local-publication"
+SLOW_WORKER_LABEL = "com.oss-pr-radar.local-publication-slow"
 SERVICE_PATH = (
     "/Applications/ChatGPT.app/Contents/Resources:"
     "/Applications/Codex.app/Contents/Resources:"
@@ -29,11 +45,11 @@ SENSITIVE_ENVIRONMENT_KEYS = {
     "OPENAI_API_KEY",
 }
 QUEUE_SYNC_STATE = "local_queue_sync.json"
-
-
-def _python(root: Path) -> Path:
-    candidate = root / ".venv" / "bin" / "python"
-    return candidate if candidate.exists() else Path(sys.executable)
+FAST_WORK_LOCK = "fast-worker.lock"
+SLOW_WORK_LOCK = "slow-worker.lock"
+SLOW_REQUEST_STATE = "slow-work-request.json"
+SLOW_BACKOFF_STATE = "slow-worker-backoff.json"
+MAX_FAST_OPERATION_SECONDS = 15
 
 
 def _terminate_process_group(process: subprocess.Popen[str]) -> None:
@@ -51,8 +67,28 @@ def _terminate_process_group(process: subprocess.Popen[str]) -> None:
         process.wait(timeout=5)
 
 
-def run_bridge(root: Path, operation: str, *, timeout: int = 900) -> dict[str, Any]:
-    argv = [str(_python(root)), str(root / "scripts" / "local_dispatch_bridge.py"), operation]
+def run_bridge(
+    root: Path,
+    operation: str,
+    *,
+    timeout: int = 900,
+    code_root: Path | None = None,
+    allow_unreleased_code: bool = False,
+) -> dict[str, Any]:
+    binding = bind_runtime(
+        root,
+        code_root=code_root,
+        allow_unreleased_code=allow_unreleased_code,
+    )
+    argv = [
+        str(runtime_python(root)),
+        str(binding.script("scripts/local_dispatch_bridge.py")),
+        "--runtime-root",
+        str(root.resolve()),
+        "--ledger",
+        str(runtime_ledger_path(root)),
+        operation,
+    ]
     process = subprocess.Popen(
         argv,
         cwd=root,
@@ -199,6 +235,350 @@ def sync_cloud_queue_if_due(
         },
     )
     return result
+
+
+def _enqueue_slow_work(root: Path, *, reason: str) -> None:
+    path = root / "state" / SLOW_REQUEST_STATE
+    previous = read_json(path, {})
+    previous = previous if isinstance(previous, dict) else {}
+    reasons = list(previous.get("reasons") or [])
+    if reason not in reasons:
+        reasons.append(reason)
+    write_json(
+        path,
+        {
+            "schemaVersion": "slow_work_request_v1",
+            "requestedAt": utc_now(),
+            "reasons": reasons[-20:],
+        },
+    )
+
+
+def fast_bridge(
+    root: Path,
+    operation: str,
+    *,
+    code_root: Path | None = None,
+    allow_unreleased_code: bool = False,
+) -> dict[str, Any]:
+    """Run only the local ingest operations permitted in the rapid cycle."""
+
+    if operation != "local-receipt-enqueue":
+        raise RuntimeError(f"fast cycle rejected non-local operation: {operation}")
+    return run_bridge(
+        root,
+        operation,
+        timeout=MAX_FAST_OPERATION_SECONDS,
+        code_root=code_root,
+        allow_unreleased_code=allow_unreleased_code,
+    )
+
+
+def queue_bridge(
+    root: Path,
+    operation: str,
+    *,
+    code_root: Path | None = None,
+    allow_unreleased_code: bool = False,
+) -> dict[str, Any]:
+    if operation != "queue-import":
+        raise RuntimeError(f"queue importer rejected operation: {operation}")
+    return run_bridge(
+        root,
+        operation,
+        timeout=300,
+        code_root=code_root,
+        allow_unreleased_code=allow_unreleased_code,
+    )
+
+
+def fast_advance_once(
+    root: Path,
+    *,
+    runner: Callable[[Path, str], dict[str, Any]] = fast_bridge,
+    code_root: Path | None = None,
+    allow_unreleased_code: bool = False,
+) -> dict[str, Any]:
+    """Ingest local receipts and enqueue slow work without network side effects."""
+
+    root = root.resolve()
+    if runner is fast_bridge and (code_root is not None or allow_unreleased_code):
+        runner = lambda current_root, operation: fast_bridge(  # noqa: E731
+            current_root,
+            operation,
+            code_root=code_root,
+            allow_unreleased_code=allow_unreleased_code,
+        )
+    started = time.time()
+    try:
+        with exclusive_lock(root / "state" / FAST_WORK_LOCK):
+            disk = disk_snapshot(root)
+            if disk["level"] == "stop":
+                record_cycle(
+                    root,
+                    worker="fast",
+                    ok=False,
+                    exit_code=78,
+                    started_at=started,
+                    error_code="DISK_STOP_THRESHOLD",
+                    disk=disk,
+                )
+                return {
+                    "ok": False,
+                    "activity": False,
+                    "errors": [{"error": "DISK_STOP_THRESHOLD"}],
+                    "slowWorkQueued": False,
+                }
+            ingestion = runner(root, "local-receipt-enqueue")
+            errors = list(ingestion.get("errors") or []) + list(ingestion.get("rejected") or [])
+            _enqueue_slow_work(root, reason="local_ingest")
+            result = {
+                "ok": not errors
+                and ingestion.get("ok") is not False,
+                "activity": bool(ingestion.get("queued") or errors),
+                "receiptsQueued": list(ingestion.get("queued") or []),
+                "errors": errors,
+                "slowWorkQueued": True,
+            }
+            record_cycle(
+                root,
+                worker="fast",
+                ok=bool(result["ok"]),
+                exit_code=0 if result["ok"] else 1,
+                started_at=started,
+                error_code="LOCAL_INGEST_FAILED" if not result["ok"] else None,
+                disk=disk,
+            )
+            return result
+    except RuntimeLockBusy:
+        return {"ok": True, "busy": True, "activity": False, "errors": []}
+    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        record_cycle(
+            root,
+            worker="fast",
+            ok=False,
+            exit_code=1,
+            started_at=started,
+            error_code=type(exc).__name__,
+        )
+        return {
+            "ok": False,
+            "activity": True,
+            "errors": [{"error": f"{type(exc).__name__}:{str(exc)[:400]}"}],
+            "slowWorkQueued": False,
+        }
+
+
+def queue_import_once(
+    root: Path,
+    *,
+    runner: Callable[[Path, str], dict[str, Any]] = queue_bridge,
+) -> dict[str, Any]:
+    """Run the independent five-minute signed queue importer."""
+
+    root = root.resolve()
+    started = time.time()
+    try:
+        with exclusive_lock(root / "state" / "queue-import.lock"):
+            disk = disk_snapshot(root)
+            if disk["level"] == "stop":
+                result = {"ok": False, "error": "DISK_STOP_THRESHOLD"}
+            else:
+                result = runner(root, "queue-import")
+            if result.get("ok"):
+                write_json(
+                    root / "state" / "queue-import-state.json",
+                    {
+                        "schemaVersion": "queue_import_v1",
+                        "lastAttemptAt": utc_now(),
+                        "lastSuccessAt": utc_now(),
+                        "ok": True,
+                        "verified": int(result.get("verified") or 0),
+                        "inserted": int(result.get("inserted") or 0),
+                    },
+                )
+            record_cycle(
+                root,
+                worker="queue-importer",
+                ok=bool(result.get("ok")),
+                exit_code=0 if result.get("ok") else 1,
+                started_at=started,
+                error_code=None if result.get("ok") else str(result.get("error") or "QUEUE_IMPORT_FAILED"),
+                success_field="queueImportSuccessAt",
+                exit_field="queueLastExitCode",
+                failure_field="queueConsecutiveFailures",
+                disk=disk,
+            )
+            return result
+    except RuntimeLockBusy:
+        return {"ok": True, "busy": True, "errors": []}
+    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        record_cycle(
+            root,
+            worker="queue-importer",
+            ok=False,
+            exit_code=1,
+            started_at=started,
+            error_code=type(exc).__name__,
+            success_field="queueImportSuccessAt",
+            exit_field="queueLastExitCode",
+            failure_field="queueConsecutiveFailures",
+        )
+        return {"ok": False, "error": f"{type(exc).__name__}:{str(exc)[:400]}"}
+
+
+def slow_advance_once(
+    root: Path,
+    *,
+    runner: Callable[[Path, str], dict[str, Any]] = run_bridge,
+) -> dict[str, Any]:
+    """Run the single durable slow worker with persisted exponential backoff."""
+
+    root = root.resolve()
+    backoff_path = root / "state" / SLOW_BACKOFF_STATE
+    started = time.time()
+    try:
+        with exclusive_lock(root / "state" / SLOW_WORK_LOCK):
+            now = time.time()
+            backoff = read_json(backoff_path, {})
+            backoff = backoff if isinstance(backoff, dict) else {}
+            retry_at = float(backoff.get("retryAfter") or backoff.get("nextAttemptAt") or 0)
+            if backoff.get("inFlight") and now < retry_at:
+                return {
+                    "ok": True,
+                    "deferred": True,
+                    "reason": "PERSISTED_INFLIGHT_BACKOFF",
+                    "retryAt": retry_at,
+                }
+            if now < float(backoff.get("nextAttemptAt") or 0):
+                return {
+                    "ok": True,
+                    "deferred": True,
+                    "reason": "PERSISTED_BACKOFF",
+                    "retryAt": float(backoff["nextAttemptAt"]),
+                }
+            disk = disk_snapshot(root)
+            failures = int(backoff.get("failureCount") or 0)
+            delay = min(3600, 60 * (2**min(failures, 5)))
+            retry_after = now + delay
+            operation_id = f"{os.getpid()}-{time.time_ns()}"
+            write_json(
+                backoff_path,
+                {
+                    "schemaVersion": "slow_backoff_v1",
+                    "failureCount": failures,
+                    "backoffSeconds": delay,
+                    "nextAttemptAt": retry_after,
+                    "retryAfter": retry_after,
+                    "attemptStartedAt": utc_now(),
+                    "inFlight": True,
+                    "operationId": operation_id,
+                },
+            )
+            append_operation(
+                root,
+                {
+                    "operationId": operation_id,
+                    "worker": "slow",
+                    "operation": "slow-cycle",
+                    "status": "started",
+                    "retryAfter": retry_after,
+                    "inFlight": True,
+                },
+            )
+            try:
+                if disk["level"] == "stop":
+                    result = {"ok": False, "errors": [{"error": "DISK_STOP_THRESHOLD"}]}
+                else:
+                    reproduction = runner(root, "reproduction-probe")
+                    result = advance_once(root, runner=runner, queue_sync_interval_seconds=None)
+                    result["reproductionProbe"] = reproduction
+            except BaseException as exc:
+                failure_retry = time.time() + delay
+                error_code = (
+                    errno.errorcode.get(exc.errno, type(exc).__name__)
+                    if isinstance(exc, OSError)
+                    else type(exc).__name__
+                )
+                write_json(
+                    backoff_path,
+                    {
+                        "schemaVersion": "slow_backoff_v1",
+                        "failureCount": failures + 1,
+                        "backoffSeconds": delay,
+                        "nextAttemptAt": failure_retry,
+                        "retryAfter": failure_retry,
+                        "attemptStartedAt": backoff.get("attemptStartedAt"),
+                        "lastAttemptAt": utc_now(),
+                        "inFlight": False,
+                        "lastError": f"{error_code}:{str(exc)[:240]}",
+                        "operationId": operation_id,
+                    },
+                )
+                append_operation(
+                    root,
+                    {
+                        "operationId": operation_id,
+                        "worker": "slow",
+                        "operation": "slow-cycle",
+                        "status": "failure",
+                        "errorCode": error_code,
+                        "retryAfter": failure_retry,
+                        "inFlight": False,
+                    },
+                )
+                record_cycle(
+                    root,
+                    worker="slow",
+                    ok=False,
+                    exit_code=130 if isinstance(exc, KeyboardInterrupt) else 1,
+                    started_at=started,
+                    error_code=error_code,
+                    disk=disk,
+                )
+                if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                    raise
+                return {"ok": False, "errors": [{"error": str(exc)[:400]}]}
+            ok = bool(result.get("ok"))
+            completed_retry = time.time() if ok else time.time() + delay
+            write_json(
+                backoff_path,
+                {
+                    "schemaVersion": "slow_backoff_v1",
+                    "failureCount": 0 if ok else failures + 1,
+                    "backoffSeconds": 0 if ok else delay,
+                    "nextAttemptAt": completed_retry,
+                    "retryAfter": completed_retry,
+                    "attemptStartedAt": backoff.get("attemptStartedAt"),
+                    "lastAttemptAt": utc_now(),
+                    "inFlight": False,
+                    "operationId": backoff.get("operationId"),
+                },
+            )
+            record_cycle(
+                root,
+                worker="slow",
+                ok=ok,
+                exit_code=0 if ok else 1,
+                started_at=started,
+                error_code=None if ok else "SLOW_WORKER_FAILED",
+                disk=disk,
+            )
+            append_operation(
+                root,
+                {
+                    "worker": "slow",
+                    "operation": "slow-cycle",
+                    "status": "success" if ok else "failure",
+                    "exitCode": 0 if ok else 1,
+                    "retryAfter": completed_retry,
+                    "inFlight": False,
+                    "operationId": backoff.get("operationId"),
+                },
+            )
+            return result
+    except RuntimeLockBusy:
+        return {"ok": True, "busy": True, "errors": []}
 
 
 def advance_once(
@@ -467,8 +847,10 @@ def launch_agent_spec(
     interval_seconds: int,
     home: Path,
     queue_sync_interval_seconds: int = 300,
+    runtime_root: Path | None = None,
 ) -> dict[str, Any]:
-    root = root.resolve()
+    code_root = root.resolve()
+    runtime_root = (runtime_root or root).resolve()
     interval = max(15, min(int(interval_seconds), 300))
     log_dir = home / "Library" / "Logs" / "oss-pr-radar"
     return {
@@ -481,14 +863,14 @@ def launch_agent_spec(
             f"LOGNAME={home.name}",
             "LANG=en_US.UTF-8",
             f"PATH={SERVICE_PATH}",
-            str(_python(root)),
-            str(root / "scripts" / "local_publication_agent.py"),
+            str(runtime_python(runtime_root)),
+            str(code_root / "scripts" / "local_publication_agent.py"),
             "--root",
-            str(root),
-            "--queue-sync-interval-seconds",
-            str(max(60, int(queue_sync_interval_seconds))),
+            str(runtime_root),
+            "--mode",
+            "fast",
         ],
-        "WorkingDirectory": str(root),
+        "WorkingDirectory": str(runtime_root),
         "RunAtLoad": True,
         "StartInterval": interval,
         "ProcessType": "Background",
@@ -496,6 +878,102 @@ def launch_agent_spec(
         "StandardOutPath": str(log_dir / "publication-agent.log"),
         "StandardErrorPath": str(log_dir / "publication-agent.error.log"),
     }
+
+
+def _worker_spec(
+    code_root: Path,
+    *,
+    label: str,
+    script: str,
+    interval_seconds: int,
+    home: Path,
+    runtime_root: Path | None = None,
+) -> dict[str, Any]:
+    code_root = code_root.resolve()
+    runtime_root = (runtime_root or code_root).resolve()
+    log_dir = home / "Library" / "Logs" / "oss-pr-radar"
+    return {
+        "Label": label,
+        "ProgramArguments": [
+            "/usr/bin/env",
+            "-i",
+            f"HOME={home}",
+            f"USER={home.name}",
+            f"LOGNAME={home.name}",
+            "LANG=en_US.UTF-8",
+            f"PATH={SERVICE_PATH}",
+            str(runtime_python(runtime_root)),
+            str(code_root / "scripts" / script),
+            "--root",
+            str(runtime_root),
+        ],
+        "WorkingDirectory": str(runtime_root),
+        "RunAtLoad": True,
+        "StartInterval": max(60, int(interval_seconds)),
+        "ProcessType": "Background",
+        "LowPriorityIO": True,
+        "StandardOutPath": str(log_dir / f"{label.rsplit('.', 1)[-1]}.log"),
+        "StandardErrorPath": str(log_dir / f"{label.rsplit('.', 1)[-1]}.error.log"),
+    }
+
+
+def slow_launch_agent_spec(
+    root: Path,
+    *,
+    home: Path,
+    interval_seconds: int = 60,
+    runtime_root: Path | None = None,
+) -> dict[str, Any]:
+    return _worker_spec(
+        root,
+        label=SLOW_WORKER_LABEL,
+        script="slow_publication_worker.py",
+        interval_seconds=interval_seconds,
+        home=home,
+        runtime_root=runtime_root,
+    )
+
+
+def queue_import_launch_agent_spec(
+    root: Path,
+    *,
+    home: Path,
+    interval_seconds: int = 300,
+    runtime_root: Path | None = None,
+) -> dict[str, Any]:
+    return _worker_spec(
+        root,
+        label="com.oss-pr-radar.queue-importer",
+        script="queue_importer.py",
+        interval_seconds=interval_seconds,
+        home=home,
+        runtime_root=runtime_root,
+    )
+
+
+def worker_specs(
+    root: Path,
+    *,
+    home: Path,
+    runtime_root: Path | None = None,
+) -> list[dict[str, Any]]:
+    code_root = root.resolve()
+    runtime_root = (runtime_root or root).resolve()
+    evidence = active_release_evidence(runtime_root)
+    if evidence.get("valid") is not True:
+        raise RuntimeError(f"active release is invalid: {evidence.get('error', 'unknown error')}")
+    if Path(str(evidence["path"])).resolve() != code_root:
+        raise RuntimeError("worker code root is not the active immutable release")
+    return [
+        launch_agent_spec(
+            code_root,
+            interval_seconds=20,
+            home=home,
+            runtime_root=runtime_root,
+        ),
+        slow_launch_agent_spec(code_root, home=home, runtime_root=runtime_root),
+        queue_import_launch_agent_spec(code_root, home=home, runtime_root=runtime_root),
+    ]
 
 
 def write_launch_agent(path: Path, spec: dict[str, Any]) -> None:
@@ -509,13 +987,27 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, default=Path(__file__).parents[2])
     parser.add_argument("--queue-sync-interval-seconds", type=int, default=300)
+    parser.add_argument("--mode", choices=("full", "fast", "slow"), default="full")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
     try:
-        result = advance_once(
-            args.root,
-            queue_sync_interval_seconds=args.queue_sync_interval_seconds,
-        )
+        require_operational_authorization(args.root)
+    except RuntimeError as exc:
+        print(json.dumps({"ok": False, "blocked": "operational authorization required", "error": str(exc)[:400]}))
+        return 1
+    log_dir = Path.home() / "Library" / "Logs" / "oss-pr-radar"
+    rotate_log(log_dir / "publication-agent.log")
+    rotate_log(log_dir / "publication-agent.error.log")
+    try:
+        if args.mode == "fast":
+            result = fast_advance_once(args.root)
+        elif args.mode == "slow":
+            result = slow_advance_once(args.root)
+        else:
+            result = advance_once(
+                args.root,
+                queue_sync_interval_seconds=args.queue_sync_interval_seconds,
+            )
     except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
         result = {"ok": False, "activity": True, "errors": [{"error": str(exc)[:800]}]}
     if args.json:

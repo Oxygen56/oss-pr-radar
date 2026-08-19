@@ -8,6 +8,7 @@ from typing import Any
 
 from .contracts import ACTIONABLE_REVIEW_STATUSES
 from .evidence import EvidenceBundle
+from .opportunity import normalize_semantic_signal
 
 SECURITY_RE = re.compile(
     r"\b(?:security vulnerabilit(?:y|ies)|vulnerability disclosure|cve[- :#]?\d*|"
@@ -125,17 +126,13 @@ def authorize(candidate: dict[str, Any], evidence: EvidenceBundle) -> Authorizat
             or candidate.get("auto_spawn") is not True
         ):
             return decision("HOLD", "SCAN_GATE_NOT_AUTHORIZED")
-        review_actionable = review.get("decision") in {
-            "NEW_CLEAN_CANDIDATE",
-            "PR_COMPETITION_OPPORTUNITY",
-        } or (
-            private_disclosure_work
-            and review.get("decision") == "WAIT_MAINTAINER"
-            and review.get("waitReason") == "DISCLOSURE_ONLY"
-        )
-        if review.get("status") not in ACTIONABLE_REVIEW_STATUSES or not review_actionable:
+        semantic = normalize_semantic_signal(review)
+        if (
+            review.get("status") not in ACTIONABLE_REVIEW_STATUSES
+            or semantic["semanticSignal"] != "NO_OBJECTION"
+        ):
             return decision("HOLD", "SEMANTIC_REVIEW_NOT_ACTIONABLE")
-        if review.get("status") == "ok" and float(review.get("confidence") or 0.0) < 0.65:
+        if semantic["confidence"] < 0.65:
             return decision("HOLD", "SEMANTIC_CONFIDENCE_LOW")
     return decision(
         "ALLOW",

@@ -15,12 +15,14 @@ ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from oss_pr_radar.ledger import RadarLedger  # noqa: E402
+from oss_pr_radar.operational_auth import require_operational_authorization  # noqa: E402
 from oss_pr_radar.publication import (  # noqa: E402
     ISSUE_URL,
     audit_publication_request,
     public_branch_is_safe,
     public_text_is_safe,
 )
+from oss_pr_radar.release_binding import bind_runtime, runtime_ledger_path  # noqa: E402
 from oss_pr_radar.util import sha256_json, sha256_text  # noqa: E402
 
 
@@ -411,7 +413,14 @@ def push(args: argparse.Namespace, store: RadarLedger) -> dict[str, Any]:
             )
             raise RuntimeError("existing PR head changed before branch update")
         run(
-            ["git", "fetch", "--quiet", args.remote, f"refs/heads/{args.branch}"],
+            [
+                "git",
+                "fetch",
+                "--no-write-fetch-head",
+                "--quiet",
+                args.remote,
+                f"+refs/heads/{args.branch}:refs/radar/publication/{args.branch}",
+            ],
             cwd=worktree,
             timeout=300,
         )
@@ -689,7 +698,8 @@ def create_pr(args: argparse.Namespace, store: RadarLedger) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--ledger", type=Path, default=ROOT / "state" / "radar_ledger.sqlite3")
+    parser.add_argument("--ledger", type=Path, default=None)
+    parser.add_argument("--runtime-root", type=Path, default=None)
     subparsers = parser.add_subparsers(dest="operation", required=True)
     for name in ("push", "create-pr"):
         sub = subparsers.add_parser(name)
@@ -706,7 +716,44 @@ def main() -> int:
     pr_parser.add_argument("--base", required=True)
     pr_parser.add_argument("--title", required=True)
     pr_parser.add_argument("--body-file", required=True)
+    for subparser in subparsers.choices.values():
+        subparser.add_argument(
+            "--runtime-root",
+            type=Path,
+            default=argparse.SUPPRESS,
+            help=argparse.SUPPRESS,
+        )
     args = parser.parse_args()
+    if args.runtime_root is None:
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "error": "--runtime-root is required for external publication",
+                }
+            )
+        )
+        return 2
+    args.runtime_root = args.runtime_root.resolve()
+    expected_ledger = runtime_ledger_path(args.runtime_root).resolve()
+    if args.ledger is None:
+        args.ledger = expected_ledger
+    elif args.ledger.resolve() != expected_ledger:
+        print(json.dumps({"ok": False, "error": "ledger must be the runtime ledger"}))
+        return 2
+    try:
+        bind_runtime(args.runtime_root)
+        require_operational_authorization(args.runtime_root)
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "error": f"operational authorization required: {str(exc)[:300]}",
+                }
+            )
+        )
+        return 2
     store = RadarLedger(args.ledger)
     try:
         result = push(args, store) if args.operation == "push" else create_pr(args, store)

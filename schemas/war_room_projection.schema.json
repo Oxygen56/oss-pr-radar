@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/oss-pr-radar/war-room-projection.v1.schema.json",
+  "title": "Managed War Room user projection",
+  "type": "object",
+  "required": ["schema", "schemaVersion", "artifactType", "source", "observedAt", "buckets", "items", "artifactDigest"],
+  "properties": {
+    "schema": {"const": "oss-pr-radar.war-room-projection.v1"},
+    "schemaVersion": {"const": 1},
+    "artifactType": {"const": "managed_user_projection"},
+    "source": {"type": "object", "required": ["ledgerSchemaVersion", "sourceCommit"], "additionalProperties": false},
+    "observedAt": {"type": "string"},
+    "buckets": {
+      "type": "object",
+      "required": ["DECISION_REQUIRED", "SYSTEM_PROCESSING", "WAITING_EXTERNAL", "PORTFOLIO_READY"],
+      "properties": {
+        "DECISION_REQUIRED": {"type": "array", "items": {"$ref": "#/$defs/item"}},
+        "SYSTEM_PROCESSING": {"type": "array", "items": {"$ref": "#/$defs/item"}},
+        "WAITING_EXTERNAL": {"type": "array", "items": {"$ref": "#/$defs/item"}},
+        "PORTFOLIO_READY": {"type": "array", "items": {"$ref": "#/$defs/item"}}
+      },
+      "additionalProperties": false
+    },
+    "items": {"type": "array", "items": {"$ref": "#/$defs/item"}},
+    "artifactDigest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "item": {
+      "type": "object",
+      "required": ["candidateKey", "bucket", "title", "reason", "evidenceLevel", "nextAction", "actionable", "notified", "creationGatePassed", "taskId", "originKind", "originPrUrl"],
+      "properties": {
+        "candidateKey": {"type": "string", "minLength": 1},
+        "bucket": {"enum": ["DECISION_REQUIRED", "SYSTEM_PROCESSING", "WAITING_EXTERNAL", "PORTFOLIO_READY"]},
+        "title": {"type": "string", "minLength": 1},
+        "reason": {"type": "string", "minLength": 1},
+        "evidenceLevel": {"enum": ["待补充", "有记录", "已核实", "外部记录"]},
+        "nextAction": {"type": "string", "minLength": 1},
+        "actionable": {"type": "boolean"},
+        "notified": {"type": "boolean"},
+        "creationGatePassed": {"type": "boolean"},
+        "taskId": {"type": ["string", "null"]},
+        "originKind": {"type": "string"},
+        "originPrUrl": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "properties": {
+            "actionable": {"const": false},
+            "notified": {"const": false},
+            "creationGatePassed": {"const": false}
+          }
+        },
+        {
+          "properties": {
+            "actionable": {"const": true},
+            "creationGatePassed": {"const": true},
+            "taskId": {"type": "string", "minLength": 1}
+          }
+        }
+      ]
+    }
+  }
+}

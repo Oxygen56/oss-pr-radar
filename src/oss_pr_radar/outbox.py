@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from .notifier import candidate_card
+from .opportunity import external_side_effect_allowed
 from .util import iso_z, parse_time, sha256_json
 
 OUTBOX_VERSION = "notification_outbox_v2"
@@ -16,13 +18,15 @@ STATE_RETENTION_DAYS = 180
 
 def _candidate_state(
     item: dict[str, Any], *, kind: str, scanner_version: str = ""
-) -> dict[str, str]:
+) -> dict[str, Any]:
     value = {
         "key": f"{item['repo']}#{item['num']}",
         "digest": str(item.get("notification_digest") or item.get("evidence_digest") or ""),
         "category": str(item.get("category") or ""),
         "kind": kind,
         "scannerVersion": str(item.get("notification_scanner_version") or scanner_version or ""),
+        "maturity": str(item.get("maturity") or "mature"),
+        "notify": item.get("notify") is not False,
     }
     value["stateId"] = sha256_json(
         {key: item for key, item in value.items() if key != "scannerVersion"}
@@ -161,6 +165,7 @@ def build_outbox(
         for item in report.get("candidate_details") or []
         if isinstance(item, dict)
         and f"{item.get('repo')}#{item.get('num')}" not in excluded
+        and external_side_effect_allowed(item)
         and (
             bool(item.get("auto_spawn"))
             if kind == "immediate"
@@ -235,6 +240,48 @@ def validate_outbox(outbox: dict[str, Any]) -> None:
     expected = sha256_json({key: value for key, value in outbox.items() if key != "digest"})
     if outbox.get("digest") != expected:
         raise ValueError("notification outbox digest mismatch")
+
+
+def external_outbox_event_allowed(event: dict[str, Any]) -> bool:
+    return external_outbox_event_reason(event) is None
+
+
+def external_outbox_event_reason(event: dict[str, Any]) -> str | None:
+    """Validate the sender contract and return a silent-skip reason if valid."""
+
+    if not isinstance(event, dict):
+        return "REVALIDATION_REQUIRED:EVENT_NOT_OBJECT"
+    states = event.get("candidateStates")
+    keys = event.get("candidateKeys")
+    if not isinstance(states, list) or not states:
+        return "REVALIDATION_REQUIRED:CANDIDATE_STATES_MISSING"
+    if not isinstance(keys, list) or not keys:
+        return "REVALIDATION_REQUIRED:CANDIDATE_KEYS_MISSING"
+    if any(not isinstance(key, str) or not re.fullmatch(r"[^/\s]+/[^#\s]+#\d+", key) for key in keys):
+        return "REVALIDATION_REQUIRED:CANDIDATE_KEY_INVALID"
+    state_keys: list[str] = []
+    for state in states:
+        if not isinstance(state, dict):
+            return "REVALIDATION_REQUIRED:CANDIDATE_STATE_INVALID"
+        key = state.get("key")
+        if not isinstance(key, str) or not re.fullmatch(r"[^/\s]+/[^#\s]+#\d+", key):
+            return "REVALIDATION_REQUIRED:CANDIDATE_KEY_INVALID"
+        if not isinstance(state.get("stateId"), str) or not state["stateId"]:
+            return "REVALIDATION_REQUIRED:STATE_ID_MISSING"
+        if not isinstance(state.get("kind"), str) or state["kind"] not in {"immediate", "review", "watch"}:
+            return "REVALIDATION_REQUIRED:EVENT_KIND_INVALID"
+        if not isinstance(state.get("maturity"), str) or state["maturity"] not in {"mature", "exploration"}:
+            return "REVALIDATION_REQUIRED:MATURITY_INVALID"
+        if not isinstance(state.get("notify"), bool):
+            return "REVALIDATION_REQUIRED:NOTIFY_INVALID"
+        state_keys.append(key)
+    if sorted(state_keys) != sorted(keys) or str(event.get("kind") or "") not in {"immediate", "review", "watch"}:
+        return "REVALIDATION_REQUIRED:CANDIDATE_KEY_MISMATCH"
+    if all(state["maturity"] == "mature" and state["notify"] for state in states):
+        return None
+    if all(external_side_effect_allowed(state) for state in states):
+        return None
+    return "SILENT_EXPLORATION_OR_NOTIFY_FALSE"
 
 
 def merge_receipts(current: dict[str, Any], receipt: dict[str, Any]) -> dict[str, Any]:

@@ -3,8 +3,11 @@ from __future__ import annotations
 import importlib.util
 import json
 import subprocess
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+
+import pytest
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "check_workflow_health.py"
 SPEC = importlib.util.spec_from_file_location("check_workflow_health", SCRIPT)
@@ -293,7 +296,13 @@ def test_main_dispatches_one_fallback_for_stale_effective_scan(monkeypatch):
         "dispatch_scan",
         lambda repo, ref: dispatched.append((repo, ref)),
     )
-    monkeypatch.setattr(MODULE.sys, "argv", ["check_workflow_health.py", "--repair"])
+    monkeypatch.setattr(MODULE, "bind_runtime", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(MODULE, "require_operational_authorization", lambda _root: None)
+    monkeypatch.setattr(
+        MODULE.sys,
+        "argv",
+        ["check_workflow_health.py", "--runtime-root", "/tmp/radar-runtime", "--repair"],
+    )
 
     assert MODULE.main() == 0
     assert dispatched == [("Oxygen56/oss-pr-radar", "main")]
@@ -327,7 +336,13 @@ def test_main_suppresses_futile_repair_when_actions_billing_is_blocked(monkeypat
         "dispatch_scan",
         lambda repo, ref: dispatched.append((repo, ref)),
     )
-    monkeypatch.setattr(MODULE.sys, "argv", ["check_workflow_health.py", "--repair"])
+    monkeypatch.setattr(MODULE, "bind_runtime", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(MODULE, "require_operational_authorization", lambda _root: None)
+    monkeypatch.setattr(
+        MODULE.sys,
+        "argv",
+        ["check_workflow_health.py", "--runtime-root", "/tmp/radar-runtime", "--repair"],
+    )
 
     assert MODULE.main() == 2
     result = json.loads(capsys.readouterr().out)
@@ -335,3 +350,65 @@ def test_main_suppresses_futile_repair_when_actions_billing_is_blocked(monkeypat
     assert result["repairTriggered"] is False
     assert result["repairWouldTrigger"] is False
     assert result["repairSuppressedReason"] == "GITHUB_ACTIONS_BILLING_BLOCKED"
+
+
+@pytest.mark.parametrize("flag", ["--repair", "--notify"])
+def test_health_external_actions_require_authorization_before_github_or_feishu(
+    monkeypatch, capsys, flag
+):
+    monkeypatch.setattr(MODULE, "bind_runtime", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(
+        MODULE,
+        "require_operational_authorization",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("missing authorization")),
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "runs",
+        lambda _repo: pytest.fail("GitHub must not be queried before authorization"),
+    )
+    monkeypatch.setattr(
+        MODULE.sys,
+        "argv",
+        ["check_workflow_health.py", "--runtime-root", "/tmp/radar-runtime", flag],
+    )
+
+    assert MODULE.main() == 2
+    result = json.loads(capsys.readouterr().out)
+    assert result["ok"] is False
+    assert "authorization" in result["error"]
+
+
+def test_health_rejects_wrong_runtime_binding_before_github_or_feishu(monkeypatch, capsys):
+    monkeypatch.setattr(
+        MODULE,
+        "bind_runtime",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("release mismatch")),
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "runs",
+        lambda _repo: pytest.fail("GitHub must not be queried for an invalid release"),
+    )
+    monkeypatch.setattr(
+        MODULE.sys,
+        "argv",
+        ["check_workflow_health.py", "--runtime-root", "/tmp/radar-runtime", "--notify"],
+    )
+
+    assert MODULE.main() == 2
+    result = json.loads(capsys.readouterr().out)
+    assert result["ok"] is False
+    assert "runtime binding" in result["error"]
+
+
+def test_health_help_has_no_auth_bypass_option():
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPT), "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0
+    assert "skip-auth" not in completed.stdout
+    assert "allow-unreleased-code" not in completed.stdout

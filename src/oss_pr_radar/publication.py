@@ -17,6 +17,8 @@ from .github_client import GitHubClient, GitHubError
 from .independent_review import controller_review_passed
 from .ledger import LedgerError, RadarLedger
 from .metrics import assess_submit_ready
+from .opportunity import external_side_effect_allowed
+from .repo_probe import REPRODUCED_VALIDATED, verify_probe_receipt
 from .util import sha256_text
 
 ISSUE_URL = re.compile(r"^https://github\.com/([^/]+/[^/]+)/issues/(\d+)$")
@@ -139,6 +141,36 @@ def request_publication(
     if not public_branch_is_safe(snapshot["branch"]):
         raise PublicationError("public branch name exposes an AI tool")
     evidence, evidence_digest = _evidence_file(evidence_path)
+    issue_match = ISSUE_URL.match(issue_url)
+    if issue_match is None:
+        raise PublicationError("invalid issue URL")
+    repo = issue_match.group(1)
+    probe_receipt = evidence.get("reproductionReceipt") or evidence.get("probeReceipt")
+    pre_task = evidence.get("preTaskEvidence") if isinstance(evidence.get("preTaskEvidence"), dict) else {}
+    code_paths = [
+        str(path)
+        for path in (
+            evidence.get("codePaths")
+            or pre_task.get("codePathsPlan")
+            or pre_task.get("codePaths")
+            or []
+        )
+        if str(path).strip()
+    ]
+    result_digest = str(evidence.get("resultDigest") or "")
+    if not result_digest or not verify_probe_receipt(
+        probe_receipt if isinstance(probe_receipt, dict) else {},
+        repo=repo,
+        base_sha=str(evidence.get("selectedBaseSha") or pre_task.get("baseSha") or ""),
+        code_paths=code_paths,
+        required_level=REPRODUCED_VALIDATED,
+        issue_url=issue_url,
+        task_id=str(evidence.get("taskId") or evidence.get("intentId") or thread_id),
+        head_sha=str(evidence.get("headSha") or snapshot["commitSha"]),
+        commit_sha=snapshot["commitSha"],
+        result_digest=result_digest,
+    ):
+        raise PublicationError("REPRODUCED_VALIDATED probe receipt is required before publication")
     expected = {
         "issueUrl": issue_url,
         "commitSha": snapshot["commitSha"],
@@ -158,6 +190,11 @@ def request_publication(
         evidence_digest=evidence_digest,
         evidence_path=str(evidence_path),
         publication=publication,
+        probe_receipt=probe_receipt,
+        result_digest=result_digest,
+        head_sha=str(evidence.get("headSha") or snapshot["commitSha"]),
+        selected_base_sha=str(evidence.get("selectedBaseSha") or pre_task.get("baseSha") or ""),
+        code_paths=code_paths,
     )
 
 
@@ -287,6 +324,33 @@ def audit_publication_request(
         return PublicationAudit("BLOCK", "COMMIT_OR_BRANCH_DRIFT", request_id, snapshot)
     if evidence_digest != request["evidenceDigest"]:
         return PublicationAudit("BLOCK", "EVIDENCE_DIGEST_DRIFT", request_id, {})
+    receipt = evidence_file.get("reproductionReceipt") or evidence_file.get("probeReceipt")
+    pre_task = evidence_file.get("preTaskEvidence")
+    pre_task = pre_task if isinstance(pre_task, dict) else {}
+    code_paths = [
+        str(path)
+        for path in (
+            evidence_file.get("codePaths")
+            or pre_task.get("codePathsPlan")
+            or pre_task.get("codePaths")
+            or []
+        )
+        if str(path).strip()
+    ]
+    result_digest = str(evidence_file.get("resultDigest") or request.get("resultDigest") or "")
+    if not result_digest or not verify_probe_receipt(
+        receipt if isinstance(receipt, dict) else {},
+        repo=repo,
+        base_sha=str(evidence_file.get("selectedBaseSha") or request.get("selectedBaseSha") or pre_task.get("baseSha") or ""),
+        code_paths=code_paths,
+        required_level=REPRODUCED_VALIDATED,
+        issue_url=str(request.get("issueUrl") or ""),
+        task_id=str(request.get("taskId") or request.get("intentId") or request.get("threadId") or ""),
+        head_sha=str(evidence_file.get("headSha") or request.get("headSha") or request.get("commitSha") or ""),
+        commit_sha=str(request.get("commitSha") or ""),
+        result_digest=result_digest,
+    ):
+        return PublicationAudit("BLOCK", "BLOCKED_REPRODUCTION_REQUIRED", request_id, {})
     try:
         publication = _publication_payload(evidence_file, request["issueUrl"])
     except PublicationError as exc:
@@ -304,6 +368,8 @@ def audit_publication_request(
     if not controller_review_passed(CONTROL_ROOT, evidence_file):
         return PublicationAudit("BLOCK", "CONTROLLER_INDEPENDENT_REVIEW_REQUIRED", request_id, {})
     intent = request.get("intent") or {}
+    if not external_side_effect_allowed(intent):
+        return PublicationAudit("BLOCK", "SILENT_EXPLORATION_NOT_PUBLISHABLE", request_id, {})
     if not (
         intent.get("autoSubmitAuthorized") is True
         and intent.get("publicSubmissionAllowed") is True

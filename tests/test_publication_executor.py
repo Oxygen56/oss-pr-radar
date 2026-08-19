@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -786,3 +787,136 @@ def test_wait_for_existing_pr_retries_eventual_visibility(monkeypatch):
 
     assert found == expected
     assert delays == [1.0, 3.0]
+
+
+def test_publication_cli_rejects_missing_authorization_before_external_write(
+    monkeypatch, tmp_path, capsys
+):
+    monkeypatch.setattr(MODULE, "bind_runtime", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(
+        MODULE,
+        "require_operational_authorization",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("missing authorization")),
+    )
+    monkeypatch.setattr(
+        MODULE.subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail("git/gh must not run before authorization"),
+    )
+    monkeypatch.setattr(
+        MODULE.sys,
+        "argv",
+        [
+            "publication_executor.py",
+            "push",
+            "--runtime-root",
+            str(tmp_path),
+            "--permit-id",
+            "permit-1",
+            "--issue-url",
+            "https://github.com/example/project/issues/1",
+            "--worktree",
+            str(tmp_path),
+            "--commit-sha",
+            "a" * 40,
+            "--branch",
+            "fix-one",
+            "--remote",
+            "origin",
+        ],
+    )
+
+    assert MODULE.main() == 2
+    result = json.loads(capsys.readouterr().out)
+    assert result["ok"] is False
+    assert "authorization" in result["error"]
+
+
+def test_authorized_publication_cli_reaches_operation_without_external_process(
+    monkeypatch, tmp_path, capsys
+):
+    calls = []
+    monkeypatch.setattr(MODULE, "bind_runtime", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(MODULE, "require_operational_authorization", lambda root: calls.append(root))
+    monkeypatch.setattr(MODULE, "RadarLedger", lambda _path: object())
+    monkeypatch.setattr(MODULE, "push", lambda _args, _store: {"ok": True, "pushed": True})
+    monkeypatch.setattr(
+        MODULE.sys,
+        "argv",
+        [
+            "publication_executor.py",
+            "push",
+            "--runtime-root",
+            str(tmp_path),
+            "--permit-id",
+            "permit-1",
+            "--issue-url",
+            "https://github.com/example/project/issues/1",
+            "--worktree",
+            str(tmp_path),
+            "--commit-sha",
+            "a" * 40,
+            "--branch",
+            "fix-one",
+            "--remote",
+            "origin",
+        ],
+    )
+
+    assert MODULE.main() == 0
+    assert json.loads(capsys.readouterr().out) == {"ok": True, "pushed": True}
+    assert calls == [tmp_path.resolve()]
+
+
+def test_publication_cli_rejects_wrong_release_binding_before_external_process(
+    monkeypatch, tmp_path, capsys
+):
+    monkeypatch.setattr(
+        MODULE,
+        "bind_runtime",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("release mismatch")),
+    )
+    monkeypatch.setattr(
+        MODULE.subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail("git/gh must not run for an invalid release"),
+    )
+    monkeypatch.setattr(
+        MODULE.sys,
+        "argv",
+        [
+            "publication_executor.py",
+            "push",
+            "--runtime-root",
+            str(tmp_path),
+            "--permit-id",
+            "permit-1",
+            "--issue-url",
+            "https://github.com/example/project/issues/1",
+            "--worktree",
+            str(tmp_path),
+            "--commit-sha",
+            "a" * 40,
+            "--branch",
+            "fix-one",
+            "--remote",
+            "origin",
+        ],
+    )
+
+    assert MODULE.main() == 2
+    result = json.loads(capsys.readouterr().out)
+    assert result["ok"] is False
+    assert "authorization" in result["error"]
+
+
+def test_publication_executor_help_has_no_auth_bypass_option():
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPT), "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0
+    assert "skip-auth" not in completed.stdout
+    assert "allow-unreleased-code" not in completed.stdout

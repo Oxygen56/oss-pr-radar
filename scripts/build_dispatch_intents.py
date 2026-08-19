@@ -13,7 +13,8 @@ from typing import Any
 ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from oss_pr_radar.dispatch import DispatchSigner, build_queue  # noqa: E402
+from oss_pr_radar.dispatch import DispatchSigner, build_queue, verify_queue  # noqa: E402
+from oss_pr_radar.managed_adapter import ManagedAdapter  # noqa: E402
 from oss_pr_radar.util import sha256_json  # noqa: E402
 
 
@@ -74,6 +75,8 @@ def main() -> int:
         mode=args.mode or os.environ.get("RADAR_DISPATCH_MODE", "shadow"),
         source_sha=os.environ.get("GITHUB_SHA", ""),
     )
+    verify_queue(intents, DispatchSigner(signing_key))
+    ManagedAdapter(ROOT).record_dispatch_queue(intents)
     write_json(args.output, intents)
     if args.queue:
         write_json(args.queue, intents)

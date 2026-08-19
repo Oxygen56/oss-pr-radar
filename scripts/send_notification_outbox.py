@@ -12,7 +12,7 @@ ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from oss_pr_radar.notifier import FeishuClient, NotificationError  # noqa: E402
-from oss_pr_radar.outbox import validate_outbox  # noqa: E402
+from oss_pr_radar.outbox import external_outbox_event_reason, validate_outbox  # noqa: E402
 from oss_pr_radar.util import atomic_write_json, iso_z, sha256_json  # noqa: E402
 
 
@@ -23,17 +23,32 @@ def main() -> int:
     args = parser.parse_args()
     outbox = json.loads(args.input.read_text(encoding="utf-8"))
     validate_outbox(outbox)
-    app_id = os.environ.get("FEISHU_APP_ID")
-    app_secret = os.environ.get("FEISHU_APP_SECRET")
-    chat_id = os.environ.get("FEISHU_CHAT_ID")
-    if not app_id or not app_secret or not chat_id:
-        raise SystemExit("Feishu credentials are not configured")
-    client = FeishuClient(app_id, app_secret, chat_id)
     sent = 0
     failed = 0
+    skipped = 0
+    sendable = []
     for event in outbox.get("events") or []:
         if event.get("status") == "SENT":
             continue
+        reason = external_outbox_event_reason(event)
+        if reason and reason.startswith("REVALIDATION_REQUIRED:"):
+            raise SystemExit(reason)
+        if reason:
+            event["status"] = "SKIPPED_SILENT"
+            event["skipReason"] = reason
+            skipped += 1
+            continue
+        sendable.append(event)
+    if sendable:
+        app_id = os.environ.get("FEISHU_APP_ID")
+        app_secret = os.environ.get("FEISHU_APP_SECRET")
+        chat_id = os.environ.get("FEISHU_CHAT_ID")
+        if not app_id or not app_secret or not chat_id:
+            raise SystemExit("Feishu credentials are not configured")
+        client = FeishuClient(app_id, app_secret, chat_id)
+    else:
+        client = None
+    for event in sendable:
         event["attempts"] = int(event.get("attempts") or 0) + 1
         event["lastAttemptAt"] = iso_z(datetime.now(UTC))
         try:
@@ -49,7 +64,7 @@ def main() -> int:
             failed += 1
     outbox["digest"] = sha256_json({key: value for key, value in outbox.items() if key != "digest"})
     atomic_write_json(args.output, outbox)
-    print(json.dumps({"sent": sent, "failed": failed}))
+    print(json.dumps({"sent": sent, "failed": failed, "skipped": skipped}))
     return 1 if failed else 0
 
 

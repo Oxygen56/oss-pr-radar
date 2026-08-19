@@ -10,6 +10,7 @@ from typing import Any
 from .dispatch import rejection_revokes
 from .evidence import collect_evidence
 from .github_client import GitHubClient
+from .opportunity import external_side_effect_allowed
 from .repo_policy import discover_policy
 from .util import iso_z, parse_time, sha256_json
 
@@ -57,6 +58,9 @@ def build_watchlist(
         if not isinstance(candidate, dict):
             continue
         key = f"{candidate.get('repo')}#{candidate.get('num')}"
+        if not external_side_effect_allowed(candidate):
+            retained.pop(key, None)
+            continue
         queued = bool(
             candidate.get("auto_spawn") is True
             and candidate.get("gate_decision") == "ALLOW_TO_WORK"

@@ -16,6 +16,8 @@ ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from oss_pr_radar.notifier import FeishuClient  # noqa: E402
+from oss_pr_radar.operational_auth import require_operational_authorization  # noqa: E402
+from oss_pr_radar.release_binding import bind_runtime  # noqa: E402
 from oss_pr_radar.util import parse_time, sha256_json  # noqa: E402
 
 
@@ -256,6 +258,8 @@ def dispatch_scan(repo: str, ref: str, *, window_hours: float = 2.0) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo", default="Oxygen56/oss-pr-radar")
+    parser.add_argument("--runtime-root", type=Path, default=None)
+    parser.add_argument("--code-root", type=Path, default=None)
     parser.add_argument("--notify", action="store_true")
     parser.add_argument("--repair", action="store_true")
     parser.add_argument("--dry-run-repair", action="store_true")
@@ -263,6 +267,42 @@ def main() -> int:
     parser.add_argument("--max-effective-age-minutes", type=int, default=110)
     parser.add_argument("--coverage-window-hours", type=int, default=12)
     args = parser.parse_args()
+    if args.runtime_root is not None:
+        try:
+            bind_runtime(args.runtime_root, code_root=args.code_root)
+        except (OSError, RuntimeError, ValueError) as exc:
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "error": f"runtime binding required: {str(exc)[:300]}",
+                    }
+                )
+            )
+            return 2
+    if args.repair or args.notify:
+        if args.runtime_root is None:
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "error": "--runtime-root is required for repair or notify",
+                    }
+                )
+            )
+            return 2
+        try:
+            require_operational_authorization(args.runtime_root)
+        except (OSError, RuntimeError, ValueError) as exc:
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "error": f"operational authorization required: {str(exc)[:300]}",
+                    }
+                )
+            )
+            return 2
     workflow_runs = runs(args.repo)
     result = health(workflow_runs, coverage_window_hours=args.coverage_window_hours)
     external_blocker = github_actions_external_blocker(args.repo, workflow_runs)
