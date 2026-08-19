@@ -78,14 +78,15 @@ def _prompt_digest(
     runtime_root: Path,
     release_command: list[str],
 ) -> str:
-    if not isinstance(prompt, str) or not prompt.strip() or "\x00" in prompt:
-        raise ValueError("automation prompt must be a non-empty string")
-    if len(prompt.encode("utf-8")) > 32 * 1024:
-        raise ValueError("automation prompt is too large")
-    lowered = prompt.casefold()
     expected = canonical_prompt(role, runtime_root, release_command)
-    if prompt != expected:
+    accepted = {expected}
+    if expected.endswith("\n"):
+        accepted.add(expected.removesuffix("\n"))
+    if not isinstance(prompt, str) or prompt not in accepted:
         raise ValueError(f"{role} automation prompt does not match the canonical template")
+    if "\x00" in prompt or len(prompt.encode("utf-8")) > 32 * 1024:
+        raise ValueError("automation prompt is invalid")
+    lowered = prompt.casefold()
     forbidden = (
         str((runtime_root / "scripts").resolve()).casefold(),
         "local_publication_agent.py",

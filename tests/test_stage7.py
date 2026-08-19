@@ -14,7 +14,11 @@ import oss_pr_radar.operational_auth as operational_auth_module
 import oss_pr_radar.stage7_cutover as cutover_module
 import scripts.install_local_publication_workers as workers_module
 from oss_pr_radar.automation_contracts import build_contracts
-from oss_pr_radar.automation_snapshot import build_automation_snapshot, canonical_prompt
+from oss_pr_radar.automation_snapshot import (
+    _prompt_digest,
+    build_automation_snapshot,
+    canonical_prompt,
+)
 from oss_pr_radar.daily_war_room import run_daily_cycle
 from oss_pr_radar.local_publication import worker_specs
 from oss_pr_radar.managed_lifecycle import ManagedLedger
@@ -77,6 +81,48 @@ def _verification(head: str) -> dict:
             for item in definitions
         },
     )
+
+
+def test_prompt_digest_accepts_only_codex_terminal_lf_removal(tmp_path):
+    runtime = tmp_path / "runtime"
+    command = ["python", "controller_cycle.py"]
+    expected = canonical_prompt("heartbeat", runtime, command)
+    digest = hashlib.sha256(expected.encode("utf-8")).hexdigest()
+
+    assert (
+        _prompt_digest(
+            expected.removesuffix("\n"),
+            role="heartbeat",
+            runtime_root=runtime,
+            release_command=command,
+        )
+        == digest
+    )
+    assert (
+        _prompt_digest(
+            expected,
+            role="heartbeat",
+            runtime_root=runtime,
+            release_command=command,
+        )
+        == digest
+    )
+
+    invalid = [
+        expected.removesuffix("\n") + " ",
+        expected[:-2],
+        expected + "\n",
+        expected.removesuffix("\n") + "\r\n",
+        expected.replace("execute only", "execute the only", 1),
+    ]
+    for prompt in invalid:
+        with pytest.raises(ValueError, match="canonical template"):
+            _prompt_digest(
+                prompt,
+                role="heartbeat",
+                runtime_root=runtime,
+                release_command=command,
+            )
 
 
 def _source(path: Path, value: str) -> None:
