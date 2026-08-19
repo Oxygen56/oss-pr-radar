@@ -45,6 +45,13 @@ def test_health_workflow_is_read_only_and_cannot_repair_or_notify():
     assert "actions: read" in workflow
 
 
+def test_radar_scan_exports_authenticated_state_with_the_managed_key():
+    workflow = (ROOT / ".github/workflows/radar.yml").read_text(encoding="utf-8")
+    scan = workflow.split("\n  scan:\n", 1)[1].split("\n  build-state:\n", 1)[0]
+    assert "RADAR_DISPATCH_HMAC_KEY: ${{ secrets.RADAR_DISPATCH_HMAC_KEY }}" in scan
+    assert "scripts/export_managed_snapshot.py" in scan
+
+
 def test_war_room_sender_cannot_send_without_the_source_artifact():
     sender = (ROOT / "scripts/send_war_room_outbox.py").read_text(encoding="utf-8")
     assert "--artifact" in sender

@@ -113,6 +113,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
       DEEPSEEK_MODEL: deepseek-v4-flash
+      RADAR_DISPATCH_HMAC_KEY: ${{ secrets.RADAR_DISPATCH_HMAC_KEY }}
       WINDOW_HOURS: ${{ inputs.window_hours || '2' }}
 
     steps:
