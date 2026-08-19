@@ -348,6 +348,30 @@
     ],
     "why": "Issue provides a clear root cause and a verified fix for a user-visible UTF-8 corruption bug in the SGLang streaming detokenizer. However, multiple open PRs (e.g., #10344, #12562, #12820) overlap semantically with the same code path, and the deterministic gate requires HUMAN_REVIEW. The issue itself is a bug report with a proposed fix, not a PR, and the maintainer has not confirmed assignment or design preference. Given the overlapping PRs and the need to compare implementation boundaries, a new clean candidate cannot be confidently started without maintainer input."
   },
+  "047cd0b1cd62fb0a74ad0e5105c3fa71175bdf19ba37fb93501d3489b31d7773": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify plugin tool input decoding to use the plugin's own schema instance for validation, or re-export effect from @opencode-ai/plugin to ensure shared instance, or add load-time version mismatch detection."
+    ],
+    "risks": [
+      "Changing decoding to use plugin's schema may have performance or compatibility implications; re-exporting effect could cause dependency bloat or version conflicts."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "test_plan": [
+      "Create a regression test that simulates two different effect versions (e.g., by mocking or using separate copies) and verifies that tool input decoding either works or fails loudly at load time with a clear version mismatch error."
+    ],
+    "unknowns": [
+      "No maintainer confirmation on preferred fix direction; need to verify if the suggested approach aligns with project architecture."
+    ],
+    "wait_reason": null,
+    "why": "Issue describes a concrete, user-visible bug with a clear root cause: plugin tool input decoding uses the server's effect instance on a foreign schema, causing version drift failures. The issue provides a minimal reproduction, expected vs actual behavior, and multiple suggested fix directions. No competing PR or issue exists, and the gate allows work."
+  },
   "048d329428fa98c0b4e0d94a7ca407995c07a5444dd683da03d0c14cbe83da78": {
     "confidence": 0.9,
     "contradictions": [],
@@ -7335,6 +7359,34 @@
       "Whether maintainers prefer a single PR covering all files or incremental fixes; whether the existing PR will be extended."
     ],
     "why": "The issue identifies specific unreferenced asyncio tasks in multiple files, but lacks a concrete reproduction or test. An existing PR #33048 partially addresses the same pattern and is open, so a new PR may duplicate or conflict. Maintainer confirmation is needed."
+  },
+  "39623a7055c96323e82179963412ddbdbb4fd4b4f02bb095b83c432253f14e51": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "decision": "NEW_CLEAN_CANDIDATE",
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Fix critic TrainingWorkerConfig construction in ray_trainer.py, v1/trainer_base.py, and experimental/separation/ray_trainer.py to copy use_dynamic_bsz, micro_batch_size_per_gpu, and correct token budgets.",
+      "Add ppo_infer_max_token_len_per_gpu and ppo_infer_micro_batch_size_per_gpu to critic.yaml with defaults."
+    ],
+    "risks": [
+      "Potential interaction with other config fields or defaults not covered in the issue.",
+      "Changes may affect existing users relying on current (buggy) behavior."
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "test_plan": [
+      "Run the provided minimal check with critic.use_dynamic_bsz=false and small token budgets, verifying engine_config values match expectations.",
+      "Add a unit test that constructs critic TrainingWorkerConfig and asserts all batching fields are correctly propagated.",
+      "Run a small PPO example with fixed seed and compare training behavior before/after fix to ensure no regression."
+    ],
+    "unknowns": [
+      "Exact maintainer preference on whether to also handle infer_micro_batch_size_per_gpu fallback logic."
+    ],
+    "wait_reason": null,
+    "why": "Issue identifies a concrete wiring bug in critic batching configuration that violates the intended training objective and distributed-training invariants. It provides exact code locations, a minimal reproduction, and a proposed fix, enabling a reference-vs-implementation test."
   },
   "39b8afea33d4e2af07c50541daf707acfbc5de9d7ccb90352c9967e50458c27c": {
     "confidence": 0.7,
@@ -21398,6 +21450,39 @@
       "Whether maintainer has approved a specific design or wants a new PR; existing PRs are closed without merge, so no clear direction"
     ],
     "why": "Issue describes a real bug in CondensePlusContextChatEngine.astream_chat when retriever returns 0 nodes, with a clear repro. However, maintainer logan-markewich explicitly stated the fix should be an option on the chat engine, not default behavior, and existing PRs (#20942, #20967, #20970, #21047) are closed without merge. The deterministic gate is HUMAN_REVIEW, and design confirmation is needed before starting new work."
+  },
+  "9cfe5487fd0f285ff3ca4e8748965c91ac72c9e8573c49a4d8481f82a724d605": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims user message is dropped, but static analysis by maintainer and contributor indicates it should be present"
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "request serialization in openaiContentGenerator/converter.ts or geminiChat.ts",
+      "provider-specific handling for Ollama tool-call follow-ups"
+    ],
+    "risks": [
+      "Root cause may be Ollama-side, making this a provider bug report rather than a Qwen Code fix",
+      "Existing PR #8900 may already address the issue, requiring comparison before new work"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 12,
+    "test_plan": [
+      "Capture the failing follow-up request body using --openai-logging and verify whether role:user is present",
+      "Reproduce against a main-branch build to confirm the bug still exists",
+      "Add a regression test that sends a tool-call follow-up with reasoning_content and parts-array tool content to an OpenAI-compatible mock and asserts the user message is retained"
+    ],
+    "unknowns": [
+      "Actual wire request body from the failing follow-up",
+      "Whether the bug reproduces on a main-branch build",
+      "Whether Ollama's OpenAI-compat layer mishandles reasoning_content or parts-array tool content"
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "Issue reports a user-visible bug with a minimal repro, but maintainer triage and contributor analysis both indicate the root cause is unconfirmed: static tracing shows the user message should be present, and the failure may be Ollama-side parsing of reasoning_content or parts-array tool content. No wire capture or main-branch reproduction has been provided. Existing PR #8900 overlaps semantically but does not reference this issue and has changes requested, so it is not a clear competitor."
   },
   "9d00848177c6194c22c78ae1a8a7ee501312fd076b312d70f5347118f31e92d4": {
     "confidence": 0.7,
