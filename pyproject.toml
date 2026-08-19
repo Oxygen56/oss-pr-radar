@@ -25,7 +25,7 @@ oss-pr-radar = "oss_pr_radar.scanner:main"
 packages = ["src/oss_pr_radar"]
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+pythonpath = [".", "src"]
 testpaths = ["tests"]
 
 [tool.ruff]
