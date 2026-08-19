@@ -9482,6 +9482,71 @@ def test_authorized_publication_run_reaches_dispatch(monkeypatch, tmp_path, caps
     assert calls == [tmp_path.resolve()]
 
 
+def test_reproduction_probe_entrypoint_uses_existing_managed_schema(tmp_path):
+    database = tmp_path / "managed.sqlite3"
+    ManagedLedger(database, ensure_schema=True)
+
+    result = MODULE.run_reproduction_probes(SimpleNamespace(ledger=database))
+
+    assert result["ok"] is True
+    assert result["count"] == 0
+    assert result["processed"] == []
+
+
+def test_reproduction_probe_entrypoint_persists_missing_profile_failure(tmp_path):
+    database = tmp_path / "managed.sqlite3"
+    ledger = ManagedLedger(database, ensure_schema=True)
+    issue_url = "https://github.com/owner/repo/issues/1"
+    ledger.upsert_opportunity(
+        opportunity_key="owner/repo#1",
+        owner="owner",
+        repo="repo",
+        issue_number=1,
+        issue_url=issue_url,
+        state="SYSTEM_PROCESSING",
+        source="test",
+        provenance={},
+        metadata={"selectedBaseSha": "a" * 40, "codePaths": ["src/main.py"]},
+    )
+    ledger.bind_task(
+        task_id="probe-task",
+        opportunity_key="owner/repo#1",
+        thread_id="thread-1",
+        worktree_path=None,
+        state="REPRODUCTION_REQUIRED",
+    )
+    ledger.queue_reproduction_probe(
+        task_id="probe-task",
+        opportunity_key="owner/repo#1",
+        repo="owner/repo",
+        issue_url=issue_url,
+        default_branch="main",
+        selected_base_sha="a" * 40,
+        code_paths=["src/main.py"],
+        profile_id=None,
+        checkout_path=None,
+        thread_id="thread-1",
+        head_sha="b" * 40,
+        commit_sha="b" * 40,
+        result_digest="result-digest",
+        idempotency_key="probe-intent",
+    )
+
+    result = MODULE.run_reproduction_probes(SimpleNamespace(ledger=database))
+
+    assert result["ok"] is True
+    assert result["count"] >= 1
+    assert all(
+        item["state"] == "WAITING_EXTERNAL"
+        and item["reason"] == "TRUSTED_PROBE_PROFILE_UNAVAILABLE"
+        for item in result["processed"]
+    )
+    with ledger._connection() as connection:
+        row = connection.execute("SELECT state, error FROM managed_reproduction_probes").fetchone()
+    assert row["state"] == "WAITING_EXTERNAL"
+    assert row["error"] == "TRUSTED_PROBE_PROFILE_UNAVAILABLE"
+
+
 def test_bridge_help_has_no_auth_bypass_option():
     completed = subprocess.run(
         [sys.executable, str(SCRIPT), "--help"],

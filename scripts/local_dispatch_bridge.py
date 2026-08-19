@@ -1208,7 +1208,11 @@ def recover_task_contexts(args: argparse.Namespace) -> dict[str, Any]:
 def run_reproduction_probes(args: argparse.Namespace) -> dict[str, Any]:
     """Slow-worker entry point for controller-owned reproduction probes."""
 
-    result = ledger(args.ledger).run_pending_reproduction_probes(limit=10)
+    # This queue belongs to the migrated managed schema.  Do not use the
+    # legacy RadarLedger helper here or implicitly run a migration in a worker.
+    result = ManagedLedger(args.ledger, ensure_schema=False).run_pending_reproduction_probes(
+        limit=10
+    )
     return {"ok": True} | result
 
 
