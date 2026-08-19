@@ -4265,6 +4265,86 @@ class RadarLedger:
             ):
                 raise LedgerError("publication request is not an existing PR update")
 
+    def rearm_pr_followup_after_task_drift(
+        self,
+        key: str,
+        *,
+        expected_prepared_head_sha: str,
+        observed_head_sha: str,
+        reason: str = "PR_FOLLOWUP_REBIND_REQUIRED",
+    ) -> dict[str, str]:
+        """Rebind one stale prepared follow-up without changing the PR parent."""
+
+        if not re.fullmatch(r"[0-9a-f]{40}", expected_prepared_head_sha):
+            raise LedgerError("PR follow-up expected prepared head is invalid")
+        if not re.fullmatch(r"[0-9a-f]{40}", observed_head_sha):
+            raise LedgerError("PR follow-up observed head is invalid")
+        if not reason or len(reason) > 120:
+            raise LedgerError("PR follow-up rebind reason is invalid")
+        now = iso_z(datetime.now(UTC))
+        with self.transaction() as connection:
+            row = connection.execute(
+                "SELECT wake_digest,followup_required FROM pr_followups WHERE opportunity_key=?",
+                (key,),
+            ).fetchone()
+            if row is None or int(row["followup_required"] or 0) != 1:
+                raise LedgerError("PR follow-up is not rebindable")
+            previous_wake = str(row["wake_digest"] or "")
+            existing = connection.execute(
+                """SELECT payload_json,dedupe_key FROM events
+                   WHERE opportunity_key=? AND event_type='PR_FOLLOWUP_REBIND_REQUIRED'
+                   ORDER BY id DESC LIMIT 1""",
+                (key,),
+            ).fetchone()
+            if existing is not None:
+                payload = json.loads(existing["payload_json"])
+                if (
+                    payload.get("expectedPreparedHeadSha") == expected_prepared_head_sha
+                    and payload.get("observedHeadSha") == observed_head_sha
+                    and payload.get("replacementWakeDigest") == previous_wake
+                ):
+                    return {
+                        "key": key,
+                        "previousWakeDigest": str(payload["previousWakeDigest"]),
+                        "replacementWakeDigest": previous_wake,
+                    }
+            replacement_wake = sha256_json(
+                {
+                    "operation": "pr-followup-rebind-v1",
+                    "previousWakeDigest": previous_wake,
+                    "expectedPreparedHeadSha": expected_prepared_head_sha,
+                    "observedHeadSha": observed_head_sha,
+                    "reason": reason,
+                }
+            )
+            payload = {
+                "previousWakeDigest": previous_wake,
+                "replacementWakeDigest": replacement_wake,
+                "expectedPreparedHeadSha": expected_prepared_head_sha,
+                "observedHeadSha": observed_head_sha,
+                "reason": reason,
+            }
+            connection.execute(
+                """UPDATE pr_followups SET wake_digest=?,updated_at=?
+                   WHERE opportunity_key=? AND wake_digest=? AND followup_required=1""",
+                (replacement_wake, now, key, previous_wake),
+            )
+            if connection.execute("SELECT changes()").fetchone()[0] != 1:
+                raise LedgerError("PR follow-up changed during rebind")
+            self._event(
+                connection,
+                key,
+                "PR_FOLLOWUP_REBIND_REQUIRED",
+                replacement_wake,
+                payload,
+                now,
+            )
+        return {
+            "key": key,
+            "previousWakeDigest": previous_wake,
+            "replacementWakeDigest": replacement_wake,
+        }
+
     def _rearm_followup_for_publication_drift(
         self,
         connection: sqlite3.Connection,
@@ -5329,6 +5409,12 @@ class RadarLedger:
                        WHERE active.opportunity_key=o.key
                          AND active.event_type='PR_FOLLOWUP_RESERVED'
                          AND NOT EXISTS (
+                           SELECT 1 FROM events rebound
+                           WHERE rebound.opportunity_key=active.opportunity_key
+                             AND rebound.event_type='PR_FOLLOWUP_REBIND_REQUIRED'
+                             AND rebound.id>active.id
+                         )
+                         AND NOT EXISTS (
                            SELECT 1 FROM events finished
                            WHERE finished.opportunity_key=active.opportunity_key
                              AND finished.event_type='PR_FOLLOWUP_RESULT_INGESTED'
@@ -5563,6 +5649,12 @@ class RadarLedger:
                          AND json_extract(abandoned.payload_json,'$.wakeDigest')=r.dedupe_key
                          AND abandoned.id>r.id
                      )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events rebound
+                       WHERE rebound.opportunity_key=r.opportunity_key
+                         AND rebound.event_type='PR_FOLLOWUP_REBIND_REQUIRED'
+                         AND rebound.id>r.id
+                     )
                    ORDER BY r.created_at"""
             ).fetchall()
         return [
@@ -5662,6 +5754,10 @@ class RadarLedger:
             "AND abandoned.event_type='PR_FOLLOWUP_DELIVERY_ABANDONED' "
             "AND json_extract(abandoned.payload_json,'$.wakeDigest')=b.dedupe_key "
             "AND abandoned.id>b.id)",
+            "NOT EXISTS (SELECT 1 FROM events rebound WHERE "
+            "rebound.opportunity_key=b.opportunity_key "
+            "AND rebound.event_type='PR_FOLLOWUP_REBIND_REQUIRED' "
+            "AND rebound.id>b.id)",
         ]
         params: list[Any] = [key]
         if thread_id is not None:
@@ -5755,6 +5851,12 @@ class RadarLedger:
                          AND abandoned.event_type='PR_FOLLOWUP_DELIVERY_ABANDONED'
                          AND json_extract(abandoned.payload_json,'$.wakeDigest')=r.dedupe_key
                          AND abandoned.id>r.id
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events rebound
+                       WHERE rebound.opportunity_key=r.opportunity_key
+                         AND rebound.event_type='PR_FOLLOWUP_REBIND_REQUIRED'
+                         AND rebound.id>r.id
                      )""",
                 (thread_id, wake_digest),
             ).fetchone()
@@ -5869,7 +5971,13 @@ class RadarLedger:
                        AND abandoned.event_type='PR_FOLLOWUP_DELIVERY_ABANDONED'
                        AND json_extract(abandoned.payload_json,'$.wakeDigest')=r.dedupe_key
                        AND abandoned.id>r.id
-                   ) ORDER BY r.created_at"""
+                   )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events rebound
+                       WHERE rebound.opportunity_key=r.opportunity_key
+                         AND rebound.event_type='PR_FOLLOWUP_REBIND_REQUIRED'
+                         AND rebound.id>r.id
+                     ) ORDER BY r.created_at"""
             ).fetchall()
         return [
             {

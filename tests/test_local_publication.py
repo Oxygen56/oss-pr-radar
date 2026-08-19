@@ -144,6 +144,41 @@ def test_fast_publication_runs_ingestion_and_publication_in_order(tmp_path):
     assert result["drain"]["threadId"] == "thread-3"
 
 
+def test_advance_once_keeps_legacy_task_quarantine_out_of_global_errors(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "oss_pr_radar.local_publication.sync_cloud_queue_if_due",
+        lambda *args, **kwargs: {"ok": True, "errors": [], "pending": []},
+    )
+
+    def runner(_root: Path, operation: str):
+        if operation == "context-recover":
+            return {"ok": True, "unavailable": [{"key": "old#1"}], "errors": []}
+        if operation == "ingest-results":
+            return {
+                "ok": True,
+                "ingested": [],
+                "publicationRequests": [],
+                "validationDeferred": [],
+                "quarantined": [
+                    {
+                        "key": "a/b#1",
+                        "reason": "LEGACY_RESULT_REQUIRES_MIGRATION",
+                    }
+                ],
+                "errors": [],
+            }
+        if operation == "publication-feedback-list":
+            return {"ok": True, "candidates": [], "unresolved": [], "errors": []}
+        return {"ok": True, "published": [], "pending": [], "blocked": [], "errors": []}
+
+    result = advance_once(tmp_path, runner=runner)
+
+    assert result["ok"] is True
+    assert result["errors"] == []
+    assert result["quarantined"] == [{"key": "a/b#1", "reason": "LEGACY_RESULT_REQUIRES_MIGRATION"}]
+    assert result["contextsUnavailableCount"] == 1
+
+
 def test_terminalized_live_audit_is_published_before_cycle_finishes(tmp_path):
     calls = []
 

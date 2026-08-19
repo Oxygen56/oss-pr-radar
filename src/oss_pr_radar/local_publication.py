@@ -610,6 +610,7 @@ def advance_once(
             or [{"error": "task context recovery failed before result ingestion"}],
         }
     ingestion = runner(root, "ingest-results")
+    ingestion_quarantined = list(ingestion.get("quarantined") or [])
     ingestion_errors = list(ingestion.get("errors") or [])
     if ingestion.get("ok") is False or ingestion_errors:
         return {
@@ -624,6 +625,7 @@ def advance_once(
             "blocked": [],
             "contextsUnavailable": public_unavailable,
             "contextsUnavailableCount": len(recovery_unavailable),
+            "quarantined": ingestion_quarantined,
             "errors": ingestion_errors
             or [{"error": "task result ingestion failed before publication"}],
         }
@@ -644,6 +646,7 @@ def advance_once(
             "blocked": [],
             "contextsUnavailable": public_unavailable,
             "contextsUnavailableCount": len(recovery_unavailable),
+            "quarantined": ingestion_quarantined,
             "errors": review_errors or [{"error": "independent review failed before publication"}],
         }
     post_review_ingestion = (
@@ -652,6 +655,7 @@ def advance_once(
         else {"ok": True, "ingested": [], "publicationRequests": [], "validationDeferred": []}
     )
     post_review_errors = list(post_review_ingestion.get("errors") or [])
+    post_review_quarantined = list(post_review_ingestion.get("quarantined") or [])
     if post_review_ingestion.get("ok") is False or post_review_errors:
         return {
             "ok": False,
@@ -675,6 +679,7 @@ def advance_once(
             "blocked": [],
             "contextsUnavailable": public_unavailable,
             "contextsUnavailableCount": len(recovery_unavailable),
+            "quarantined": ingestion_quarantined + post_review_quarantined,
             "errors": post_review_errors
             or [{"error": "task result ingestion failed after independent review"}],
         }
@@ -711,6 +716,7 @@ def advance_once(
         *list(ingestion.get("validationDeferred") or []),
         *list(post_review_ingestion.get("validationDeferred") or []),
     ]
+    quarantined = ingestion_quarantined + post_review_quarantined
     blocked = list(publication.get("blocked") or [])
     pending = list(publication.get("pending") or [])
     renamed = list(title_reconciliation.get("renamed") or [])
@@ -758,6 +764,7 @@ def advance_once(
         or published
         or publication_feedback.get("reconciled")
         or blocked
+        or quarantined
         or errors
         or drain_activity
         or queue_sync.get("inserted")
@@ -792,6 +799,7 @@ def advance_once(
         "blocked": blocked,
         "contextsUnavailable": public_unavailable,
         "contextsUnavailableCount": len(recovery_unavailable),
+        "quarantined": quarantined,
         "errors": errors,
     }
 

@@ -278,6 +278,8 @@ PUBLISHED_TASK_STAGES = {
     "MERGED",
     "CLOSED",
 }
+LEGACY_RESULT_REQUIRES_MIGRATION = "LEGACY_RESULT_REQUIRES_MIGRATION"
+PR_FOLLOWUP_REBIND_REQUIRED = "PR_FOLLOWUP_REBIND_REQUIRED"
 IMMEDIATE_RECOVERY_ERROR_CODES = {
     "cyber_policy",
     "cyberPolicy",
@@ -1017,6 +1019,10 @@ def _task_context_digest_payload(
 def _legacy_task_context_digest_allowed(context: dict[str, Any]) -> bool:
     if str(context.get("stage") or "") not in PUBLISHED_TASK_STAGES:
         return False
+    # A non-null target is already part of the authenticated context format.
+    # Never downgrade it to the pre-target digest, even for published history.
+    if "targetBase" in context and context.get("targetBase") is not None:
+        return False
     receipt = context.get("publicationReceipt")
     if not isinstance(receipt, dict) or not receipt.get("prUrl"):
         return False
@@ -1074,24 +1080,30 @@ def _legacy_result_context_digest_migration_allowed(
 ) -> bool:
     """Allow only the exact result digest produced before target binding.
 
-    The context must carry an explicit targetBase field and its current digest
-    must be the canonical target-bound value (including the historical
-    targetBase:null form). This is a narrow in-memory migration for results
-    written during the context-format transition; it does not authorize an
-    arbitrary result/context mismatch.
+    The context must either omit targetBase or carry the historical
+    targetBase:null form, and its current digest must be the canonical
+    target-bound value for that representation. This is a narrow in-memory
+    migration for results written during the context-format transition; it
+    does not authorize an arbitrary result/context mismatch.
     """
 
     if str(context.get("stage") or "") in PUBLISHED_TASK_STAGES:
         return False
-    if "targetBase" not in context:
+    # The legacy result format predates target binding.  It is valid only for
+    # the historical null/missing-target representation; a real target must
+    # never be silently downgraded during result ingestion.
+    if "targetBase" in context and context.get("targetBase") is not None:
         return False
-    target_base = context.get("targetBase")
-    if target_base is not None:
-        try:
-            validate_target_base(target_base)
-        except TargetBranchError:
+    if "targetBase" in context:
+        if context.get("contextDigest") != _task_context_digest(context, prepared_head):
             return False
-    if context.get("contextDigest") != _task_context_digest(context, prepared_head):
+    elif context.get("contextDigest") != sha256_json(
+        _task_context_digest_payload(
+            context,
+            prepared_head,
+            include_target_base=False,
+        )
+    ):
         return False
     legacy_digests = {
         sha256_json(
@@ -1114,6 +1126,87 @@ def _legacy_result_context_digest_migration_allowed(
             )
         )
     return value.get("contextDigest") in legacy_digests
+
+
+def _controller_parent_drift(
+    value: dict[str, Any], context: dict[str, Any]
+) -> dict[str, str] | None:
+    """Return task-local rebind evidence for a stale prepared follow-up.
+
+    This is deliberately read-only.  It does not switch branches or alter the
+    result; the ledger rebind is the only controller-owned recovery action.
+    """
+
+    if value.get("handoffMode") != "controller_commit_required":
+        return None
+    followup = context.get("prFollowup")
+    if not isinstance(followup, dict):
+        return None
+    expected = str(followup.get("preparedHeadSha") or followup.get("headSha") or "")
+    if not re.fullmatch(r"[0-9a-f]{40}", expected):
+        return None
+    worktree = Path(str(context.get("worktreePath") or "")).resolve()
+    try:
+        observed = command(["git", "rev-parse", "HEAD"], cwd=worktree)
+    except (OSError, RuntimeError):
+        return None
+    if observed == expected:
+        return None
+    return {
+        "expectedPreparedHeadSha": expected,
+        "observedHeadSha": observed,
+    }
+
+
+def _legacy_result_requires_migration(
+    value: dict[str, Any],
+    context: dict[str, Any],
+    candidate: dict[str, Any],
+    prepared_head: str | None,
+    *,
+    followup_digest_valid: bool,
+) -> dict[str, str] | None:
+    """Recognize old implementation results without authorizing them.
+
+    Missing task state is a format migration boundary, not a reason to run or
+    publish the result.  Classification requires the same identity, digest,
+    clean-checkout and commit evidence used by normal ingestion; anything less
+    remains an ordinary validation error.
+    """
+
+    if context.get("taskStage") is not None or context.get("probeLevel") is not None:
+        return None
+    if str(value.get("stage") or "") != "FIX_READY":
+        return None
+    if not (
+        value.get("commitSha")
+        or value.get("handoffMode")
+        or value.get("publication")
+        or value.get("changedFiles")
+    ):
+        return None
+    current_digest = value.get("contextDigest") == context.get("contextDigest")
+    legacy_digest = _legacy_result_context_digest_migration_allowed(value, context, prepared_head)
+    if not current_digest and not legacy_digest:
+        return None
+    commit_sha = str(value.get("commitSha") or "")
+    if not re.fullmatch(r"[0-9a-f]{40}", commit_sha):
+        return None
+    worktree = Path(str(candidate.get("worktreePath") or "")).resolve()
+    try:
+        if command(["git", "rev-parse", "--show-toplevel"], cwd=worktree) != str(worktree):
+            return None
+        if command(["git", "status", "--porcelain"], cwd=worktree):
+            return None
+        if command(["git", "rev-parse", "HEAD"], cwd=worktree) != commit_sha:
+            return None
+    except (OSError, RuntimeError):
+        return None
+    return {
+        "legacyDigest": "true" if legacy_digest else "false",
+        "commitSha": commit_sha,
+        "followupDigestValid": "true" if followup_digest_valid else "false",
+    }
 
 
 def _verified_shared_task_context(path: Path) -> tuple[dict[str, Any], str]:
@@ -7083,6 +7176,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
     publication_requests: list[dict[str, Any]] = []
     validation_deferred: list[dict[str, Any]] = []
     legacy_context_digest_migrations: list[str] = []
+    quarantined: list[dict[str, Any]] = []
     ignored: list[dict[str, str]] = []
     errors: list[dict[str, str]] = []
     for candidate in store.task_result_candidates():
@@ -7165,6 +7259,80 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 if isinstance(context_followup, dict) and context_followup.get("preparedHeadSha")
                 else None
             )
+            current_wake_digest = (
+                str(context_followup.get("wakeDigest") or "")
+                if isinstance(context_followup, dict)
+                else ""
+            )
+            preparation = store.active_pr_followup_preparation(
+                candidate["key"], thread_id=candidate["threadId"]
+            )
+            compatibility = (
+                preparation.get("legacyCompatibility") if isinstance(preparation, dict) else None
+            )
+            legacy_compatible_result = bool(
+                isinstance(compatibility, dict)
+                and value.get("contextDigest") == compatibility.get("contextDigest")
+                and value.get("followupDigest") == compatibility.get("wakeDigest")
+            )
+            rebind_evidence = _controller_parent_drift(value, context)
+            if rebind_evidence is not None:
+                rebind = store.rearm_pr_followup_after_task_drift(
+                    candidate["key"],
+                    expected_prepared_head_sha=rebind_evidence["expectedPreparedHeadSha"],
+                    observed_head_sha=rebind_evidence["observedHeadSha"],
+                )
+                quarantined.append(
+                    {
+                        "key": candidate["key"],
+                        "reason": PR_FOLLOWUP_REBIND_REQUIRED,
+                        **rebind_evidence,
+                        "replacementWakeDigest": rebind["replacementWakeDigest"],
+                    }
+                )
+                continue
+            legacy_state = _legacy_result_requires_migration(
+                value,
+                context,
+                candidate,
+                prepared_head,
+                followup_digest_valid=(
+                    not isinstance(context_followup, dict)
+                    or value.get("followupDigest") == current_wake_digest
+                    or legacy_compatible_result
+                ),
+            )
+            if legacy_state is not None:
+                managed_adapter.ledger.record_event(
+                    event_type=LEGACY_RESULT_REQUIRES_MIGRATION,
+                    idempotency_key=(
+                        f"legacy-result-requires-migration:{candidate['key']}:{initial_digest}"
+                    ),
+                    opportunity_key=candidate["key"],
+                    task_id=str(candidate.get("intentId") or candidate["threadId"]),
+                    state="VALIDATION_PENDING",
+                    source="result-ingestion",
+                    provenance={
+                        "contextDigest": context.get("contextDigest"),
+                        "resultContextDigest": value.get("contextDigest"),
+                        "commitSha": legacy_state["commitSha"],
+                        "followupDigestValid": legacy_state["followupDigestValid"],
+                    },
+                    payload={
+                        "reason": LEGACY_RESULT_REQUIRES_MIGRATION,
+                        "requiresExplicitMigration": True,
+                    },
+                )
+                quarantined.append(
+                    {
+                        "key": candidate["key"],
+                        "reason": LEGACY_RESULT_REQUIRES_MIGRATION,
+                        "requiresExplicitMigration": True,
+                        "commitSha": legacy_state["commitSha"],
+                        "followupDigestValid": legacy_state["followupDigestValid"],
+                    }
+                )
+                continue
             if task_stage == "REPRODUCTION_REQUIRED" and value.get("contextDigest") == context.get(
                 "contextDigest"
             ):
@@ -7239,22 +7407,6 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     )
                     ingested.append({"key": candidate["key"], "stage": "IMPLEMENTATION_READY"})
                     continue
-            current_wake_digest = (
-                str(context_followup.get("wakeDigest") or "")
-                if isinstance(context_followup, dict)
-                else ""
-            )
-            preparation = store.active_pr_followup_preparation(
-                candidate["key"], thread_id=candidate["threadId"]
-            )
-            compatibility = (
-                preparation.get("legacyCompatibility") if isinstance(preparation, dict) else None
-            )
-            legacy_compatible_result = bool(
-                isinstance(compatibility, dict)
-                and value.get("contextDigest") == compatibility.get("contextDigest")
-                and value.get("followupDigest") == compatibility.get("wakeDigest")
-            )
             if value.get("contextDigest") != context.get("contextDigest"):
                 if digest_seen and possible_policy_recovery:
                     if controller_policy is None:
@@ -7572,6 +7724,8 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
         "validationDeferred": validation_deferred,
         "errors": errors,
     }
+    if quarantined:
+        result["quarantined"] = quarantined
     if ignored:
         result["ignored"] = ignored
     if legacy_context_digest_migrations:

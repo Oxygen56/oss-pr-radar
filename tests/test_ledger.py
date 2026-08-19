@@ -2723,3 +2723,97 @@ def test_publication_feedback_is_reserved_retried_and_sent_once(tmp_path):
     )
     assert store.publication_feedback_candidates() == []
     assert store.unresolved_publication_feedback() == []
+
+
+def test_pr_followup_task_drift_rebinds_wake_and_invalidates_preparation(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent(autoSubmitAuthorized=True, publicSubmissionAllowed=True))
+    store.claim("intent-1", "controller")
+    store.commit_dispatch(
+        "intent-1",
+        owner="controller",
+        thread_id="thread-1",
+        project_id="github",
+        worktree_path="/tmp/worktree",
+    )
+    store.record_stage("a/b#1", "PR_OPEN", evidence={"prUrl": "https://github.com/a/b/pull/9"})
+    now = iso_z(datetime.now(UTC))
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO publication_requests
+               (request_id,opportunity_key,thread_id,commit_sha,branch,worktree_path,
+                evidence_digest,status,request_json,created_at,updated_at)
+               VALUES ('request-1','a/b#1','thread-1',?,'fix/1-runtime','/tmp/worktree',
+                       'evidence','CONSUMED','{}',?,?)""",
+            ("a" * 40, now, now),
+        )
+        connection.execute(
+            """INSERT INTO publication_permits
+               (permit_id,request_id,issue_url,commit_sha,branch,status,expires_at,pr_url,
+                evidence_json,created_at,updated_at)
+               VALUES ('permit-1','request-1','https://github.com/a/b/issues/1',?,
+                       'fix/1-runtime','CONSUMED',?,'https://github.com/a/b/pull/9','{}',?,?)""",
+            ("a" * 40, iso_z(datetime.now(UTC) + timedelta(hours=1)), now, now),
+        )
+    old_wake = "e" * 64
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO pr_followups
+               (opportunity_key,pr_url,head_sha,action_digest,task_action_digest,wake_digest,
+                actions_json,evidence_json,followup_required,checked_at,updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                "a/b#1",
+                "https://github.com/a/b/pull/9",
+                "b" * 40,
+                "action",
+                "task-action",
+                old_wake,
+                json.dumps(["当前分支检查失败"]),
+                json.dumps({"actionableCheckNames": ["Ruff"]}),
+                1,
+                now,
+                now,
+            ),
+        )
+        connection.execute(
+            """INSERT INTO events
+               (opportunity_key,event_type,dedupe_key,payload_json,created_at)
+               VALUES (?,?,?,?,?)""",
+            (
+                "a/b#1",
+                "PR_FOLLOWUP_RESERVED",
+                old_wake,
+                json.dumps({"threadId": "thread-1", "prUrl": "https://github.com/a/b/pull/9"}),
+                now,
+            ),
+        )
+        connection.execute(
+            """INSERT INTO events
+               (opportunity_key,event_type,dedupe_key,payload_json,created_at)
+               VALUES (?,?,?,?,?)""",
+            (
+                "a/b#1",
+                "PR_FOLLOWUP_PREPARATION_BOUND",
+                old_wake,
+                json.dumps({"threadId": "thread-1", "snapshot": {}}),
+                now,
+            ),
+        )
+
+    rebound = store.rearm_pr_followup_after_task_drift(
+        "a/b#1",
+        expected_prepared_head_sha="c" * 40,
+        observed_head_sha="d" * 40,
+    )
+
+    assert rebound["previousWakeDigest"] == old_wake
+    assert rebound["replacementWakeDigest"] != old_wake
+    assert store.active_pr_followup_preparation("a/b#1", thread_id="thread-1") is None
+    assert store.pr_followup_candidates()[0]["wakeDigest"] == rebound["replacementWakeDigest"]
+    repeated = store.rearm_pr_followup_after_task_drift(
+        "a/b#1",
+        expected_prepared_head_sha="c" * 40,
+        observed_head_sha="d" * 40,
+    )
+    assert repeated == rebound

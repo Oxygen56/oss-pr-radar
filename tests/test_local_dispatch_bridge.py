@@ -1157,6 +1157,125 @@ def test_task_context_digest_binds_target_base_and_prepared_head():
     )
 
 
+def test_published_non_null_target_cannot_use_legacy_context_digest(monkeypatch, tmp_path):
+    monkeypatch.setattr(MODULE, "WORKTREE_ROOT", tmp_path / "worktrees")
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", tmp_path / "github")
+    _store, worktree, local_path, _shared_path = _context_digest_fixture(
+        tmp_path / "fixture", stage="PR_OPEN"
+    )
+    context = json.loads(local_path.read_text(encoding="utf-8"))
+    context["stage"] = "PR_OPEN"
+    context["publicationReceipt"] = {
+        "prUrl": "https://github.com/a/b/pull/2",
+        "commitSha": run_git(worktree, "rev-parse", "HEAD"),
+    }
+    context["targetBase"] = {
+        "branch": "main",
+        "sha": run_git(worktree, "rev-parse", "HEAD"),
+        "source": "repository_default",
+        "defaultBranch": "main",
+    }
+    assert MODULE._legacy_task_context_digest_allowed(context) is False
+    candidates = MODULE._task_context_digest_candidates(context, None)
+    legacy_digest = sha256_json(
+        MODULE._task_context_digest_payload(context, None, include_target_base=False)
+    )
+    assert candidates
+    assert legacy_digest not in candidates
+
+
+def test_legacy_implementation_result_requires_explicit_migration(monkeypatch, tmp_path):
+    monkeypatch.setattr(MODULE, "WORKTREE_ROOT", tmp_path / "worktrees")
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", tmp_path / "github")
+    store, worktree, local_path, shared_path = _context_digest_fixture(tmp_path / "fixture")
+    context = json.loads(local_path.read_text(encoding="utf-8"))
+    context["taskStage"] = None
+    context["probeLevel"] = None
+    context["contextDigest"] = MODULE._task_context_digest(context, None)
+    _rewrite_context_mirrors(local_path, shared_path, context)
+    candidate = store.task_result_candidates()[0]
+    value = {
+        "schemaVersion": MODULE.TASK_RESULT_SCHEMA,
+        "contextDigest": context["contextDigest"],
+        "key": "a/b#1",
+        "issueUrl": "https://github.com/a/b/issues/1",
+        "threadId": "thread-1",
+        "worktreePath": str(worktree.resolve()),
+        "stage": "FIX_READY",
+        "commitSha": run_git(worktree, "rev-parse", "HEAD"),
+        "changedFiles": ["README.md"],
+    }
+    classified = MODULE._legacy_result_requires_migration(
+        value,
+        context,
+        candidate,
+        None,
+        followup_digest_valid=True,
+    )
+    assert classified == {
+        "legacyDigest": "false",
+        "commitSha": value["commitSha"],
+        "followupDigestValid": "true",
+    }
+    context["targetBase"] = {
+        "branch": "main",
+        "sha": value["commitSha"],
+        "source": "repository_default",
+        "defaultBranch": "main",
+    }
+    context["contextDigest"] = MODULE._task_context_digest(context, None)
+    legacy_value = dict(value)
+    legacy_value["contextDigest"] = sha256_json(
+        MODULE._task_context_digest_payload(context, None, include_target_base=False)
+    )
+    assert (
+        MODULE._legacy_result_requires_migration(
+            legacy_value,
+            context,
+            candidate,
+            None,
+            followup_digest_valid=True,
+        )
+        is None
+    )
+
+
+def test_ingestion_quarantines_legacy_implementation_result_without_side_effect(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(MODULE, "WORKTREE_ROOT", tmp_path / "worktrees")
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", tmp_path / "github")
+    store, worktree, result_path = _controller_commit_result(tmp_path)
+    context_path = result_path.parent / "task-context.json"
+    context = json.loads(context_path.read_text(encoding="utf-8"))
+    context["taskStage"] = None
+    context["probeLevel"] = None
+    context["contextDigest"] = MODULE._task_context_digest(context, None)
+    _rewrite_context_mirrors(
+        context_path,
+        MODULE.shared_context_path(context["issueUrl"]),
+        context,
+    )
+    original = result_path.read_bytes()
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert result["ok"] is True, result.get("errors")
+    assert result["errors"] == []
+    assert result["publicationRequests"] == []
+    assert result["quarantined"][0]["reason"] == MODULE.LEGACY_RESULT_REQUIRES_MIGRATION
+    assert result_path.read_bytes() == original
+    from oss_pr_radar.managed_lifecycle import ManagedLedger
+
+    with ManagedLedger(tmp_path / "ledger.sqlite3", ensure_schema=True)._connection() as connection:
+        event = connection.execute(
+            """SELECT event_type FROM managed_lifecycle_events
+               WHERE opportunity_key='a/b#1' AND event_type=?""",
+            (MODULE.LEGACY_RESULT_REQUIRES_MIGRATION,),
+        ).fetchone()
+    assert event[0] == MODULE.LEGACY_RESULT_REQUIRES_MIGRATION
+
+
 def test_shared_context_recovery_accepts_target_bound_context_without_errors(monkeypatch, tmp_path):
     project_root = tmp_path / "github"
     monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
@@ -5029,7 +5148,7 @@ def test_ingestion_still_rejects_context_mismatch_for_active_task(tmp_path):
     assert result["errors"] == [{"key": "a/b#1", "error": "task result context digest mismatch"}]
 
 
-def test_ingestion_migrates_exact_legacy_result_digest_in_memory(monkeypatch, tmp_path):
+def test_ingestion_rejects_legacy_result_for_non_null_target_base(monkeypatch, tmp_path):
     monkeypatch.setattr(MODULE, "ROOT", tmp_path)
     monkeypatch.setattr(MODULE, "GITHUB_ROOT", tmp_path / "github")
     store, worktree, local_path, shared_path = _context_digest_fixture(tmp_path / "fixture")
@@ -5070,19 +5189,12 @@ def test_ingestion_migrates_exact_legacy_result_digest_in_memory(monkeypatch, tm
     ledger_path = tmp_path / "fixture" / "ledger.sqlite3"
     first = MODULE.ingest_task_results(SimpleNamespace(ledger=ledger_path))
 
-    assert first["ok"] is True, first["errors"]
-    assert first["ingested"] == [
-        {"key": "a/b#1", "stage": "AUDIT_NO_GO", "reason": "EVIDENCE_INCOMPLETE"}
-    ]
-    assert first["legacyContextDigestMigrations"] == ["a/b#1"]
+    assert first["ok"] is False
+    assert first["ingested"] == []
+    assert first.get("legacyContextDigestMigrations", []) == []
+    assert first["errors"] == [{"key": "a/b#1", "error": "task result context digest mismatch"}]
     assert result_path.read_bytes() == original_result_bytes
     assert json.loads(result_path.read_text(encoding="utf-8"))["contextDigest"] == legacy_digest
-
-    repeated = MODULE.ingest_task_results(SimpleNamespace(ledger=ledger_path))
-
-    assert repeated["ok"] is True
-    assert repeated["ingested"] == []
-    assert repeated["errors"] == []
 
 
 def test_ingestion_migrates_exact_legacy_result_for_explicit_null_target_base(
@@ -5125,6 +5237,46 @@ def test_ingestion_migrates_exact_legacy_result_for_explicit_null_target_base(
 
     assert result["ok"] is True, result["errors"]
     assert result["legacyContextDigestMigrations"] == ["a/b#1"]
+
+
+def test_legacy_result_migration_accepts_missing_target_base_field(monkeypatch, tmp_path):
+    monkeypatch.setattr(MODULE, "ROOT", tmp_path)
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", tmp_path / "github")
+    store, worktree, local_path, shared_path = _context_digest_fixture(tmp_path / "fixture")
+    context = json.loads(local_path.read_text(encoding="utf-8"))
+    context.pop("targetBase")
+    context["contextDigest"] = sha256_json(
+        MODULE._task_context_digest_payload(
+            context,
+            None,
+            include_target_base=False,
+        )
+    )
+    _rewrite_context_mirrors(local_path, shared_path, context)
+    result_path = Path(context["resultPath"])
+    result_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": "radar-task-result-v1",
+                "contextDigest": context["contextDigest"],
+                "key": "a/b#1",
+                "issueUrl": "https://github.com/a/b/issues/1",
+                "threadId": "thread-1",
+                "worktreePath": str(worktree.resolve()),
+                "stage": "AUDIT_NO_GO",
+                "reason": "EVIDENCE_INCOMPLETE",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = MODULE.ingest_task_results(
+        SimpleNamespace(ledger=tmp_path / "fixture" / "ledger.sqlite3")
+    )
+
+    assert result["ok"] is True, result["errors"]
+    assert result["errors"] == []
+    assert result.get("legacyContextDigestMigrations", []) == []
 
 
 @pytest.mark.parametrize("mutation", ["target", "result", "identity"])
