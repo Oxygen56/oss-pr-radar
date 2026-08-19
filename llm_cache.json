@@ -440,6 +440,31 @@
     ],
     "why": "The issue provides a clear, reproducible bug on Windows with a specific root cause in fileURLToPath handling of relative file:// paths. The fix is localized to path resolution in HTTP provider multipart handling, and the expected behavior is well-defined. No competing PR or related issue exists, and the maintainer has not yet engaged, but the bug is user-visible and actionable."
   },
+  "0521dcb3aa3a1a9b932ce9e10bcf39a0e07f647dda455f470e57de681dbda692": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "litellm/completion_extras/litellm_responses_transformation/transformation.py",
+      "non-streaming responses transformation logic"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #36281 which touches similar transformation paths; need to compare implementation boundaries."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use the provided minimal reproducer to create a failing test for non-streaming chatgpt/* requests, then verify the fix restores expected behavior."
+    ],
+    "unknowns": [
+      "Exact root cause not confirmed; maintainer design preferences unknown."
+    ],
+    "why": "Issue provides a clear regression with version matrix, minimal reproducer, and suspected code path. The bug is user-visible and actionable, with a concrete validation path via the provided reproducer."
+  },
   "05278a14a74f70e0e4f45f93ea4f43bb2c812ae4e2a1b8bffc61c5d5c8d7308c": {
     "confidence": 0.85,
     "contradictions": [],
@@ -6223,6 +6248,30 @@
       "Whether maintainers have a preferred design for distinguishing 'not touched' vs 'cleared' env"
     ],
     "why": "Issue provides a precise root cause (initialValues missing env_json, stdio save defaults to {}) with code references and a runnable PoC. A second user independently confirms the bug and adds a second affected code path. No competing PR or issue exists, and the fix is a minimal UI change with a clear regression test."
+  },
+  "2cab8693b5095842fea8a8af94d1ef5e7ccb999d415e26898425211f2656d162": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "litellm/router.py",
+      "litellm/router_strategy/tag_based_routing.py"
+    ],
+    "risks": [
+      "Potential behavior change in tag-based routing that could affect existing users relying on current semantics."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a regression test that sets model_info.enable_tag_filtering: false for a model group and sends an untagged request, expecting routing to consider all deployments in the group without tag filtering."
+    ],
+    "unknowns": [
+      "Whether model_info.enable_tag_filtering is intended to be supported in the current version; maintainer confirmation needed."
+    ],
+    "why": "The issue provides a clear, reproducible bug with expected vs actual behavior, identifies the likely root cause (per-deployment tag filtering override not implemented, causing deployment's own tags to be treated as required request tags), and includes code anchors. This is a valuable, actionable bug fix opportunity in the routing logic."
   },
   "2ce03d3d0a2d0af56eb1b08b32d2f655bfc1824d3df534f2394cced5f75c57a7": {
     "confidence": 0.7,
@@ -30511,6 +30560,36 @@
       "Maintainer confirmation on whether deepspeed/sequence/layer.py is still supported or superseded by ulysses_sp.py"
     ],
     "why": "The issue identifies a clear bug in DistributedAttention where sequence length not divisible by world size silently corrupts output. Root cause is missing divisibility guard in sequence dimension, confirmed by contributor analysis. However, maintainer has not confirmed whether the old path is still supported, and the issue is a bug report without an explicit fix request. The candidate is actionable but requires maintainer direction on whether to patch the legacy path or focus on the new Ulysses implementation."
+  },
+  "d5dc9be22ece6b301903d4829a6fd96d240e8317d178ff06bf290c59f178bc18": {
+    "confidence": 0.85,
+    "contradictions": [
+      "One comment reports V1 runner also leaks with VLLM_USE_V2_MODEL_RUNNER=0, conflicting with original claim that V1 is stable."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "V2 runner request lifecycle cleanup",
+      "prefix caching metadata management",
+      "scheduler state handling"
+    ],
+    "risks": [
+      "Memory leak may be due to external library or environment-specific; need to isolate with minimal repro.",
+      "Fix may impact performance or correctness if not carefully targeted."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided vllm serve command with Qwen3-14B-FP8 and a long-running workload, monitor host memory over time; compare with V1 engine and TranslateGemma to confirm regression.",
+      "Add a regression test that simulates many requests with prefix caching and asserts host memory stabilizes after warmup."
+    ],
+    "unknowns": [
+      "Exact root cause component not yet identified; whether the leak is in Python or C++ layer; whether it affects all models or specific to Qwen3."
+    ],
+    "why": "The issue provides a reproducible memory leak in the V2 runner with Qwen3 models, including exact commands, environment, and comparative evidence (V1 stable, TranslateGemma stable). It identifies likely components (scheduler state, prefix caching, request lifecycle) and has community confirmation with per-request leak rate. This is a concrete, actionable bug report with clear validation path."
   },
   "d60f2e1a91c19c80c1bd36488768d32e4c7d161c9b8e8568ba983863722a7637": {
     "confidence": 0.7,
