@@ -1,4 +1,28 @@
 {
+  "001de1ed89d629b7a4b02f43e427431631bc6bfcc9d2eaa018f7537fd6da0831": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "litellm/proxy/_experimental/mcp_server/server.py",
+      "litellm/proxy/_experimental/mcp_server/mcp_server_manager.py"
+    ],
+    "risks": [
+      "Potential API behavior changes if not carefully scoped; maintainer design preferences unknown."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression tests for prompts/list, resources/list, prompts/get, resources/read, and resources/templates/list with per-user OAuth credentials, verifying that the credential is passed to _create_mcp_client and upstream requests succeed."
+    ],
+    "unknowns": [
+      "Maintainer approval or design preference for the fix."
+    ],
+    "why": "The issue clearly identifies a bug where per-user OAuth credentials are not passed to MCP prompt/resource operations, with exact code locations and a reproducible sequence. The suggested fix is concrete and testable."
+  },
   "0077f1c5e5c6b55490b7744aa6aa2c762e311b6c95a07bc386ae4cae5d529a76": {
     "confidence": 0.6,
     "contradictions": [
@@ -6875,6 +6899,34 @@
       "Maintainer preference on fix approach and scope"
     ],
     "why": "Issue clearly describes a user-visible bug with a concrete reproduction and root cause analysis, but the deterministic gate requires HUMAN_REVIEW and the issue requests design confirmation. The suggested fix is plausible but needs maintainer input to avoid unintended API changes."
+  },
+  "34119d543352b8e834ce818e8008097d20a506d5f6855d21dab4e1de573ba730": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Fix FunctionCallParser llama3 parser to preserve original text when no tool call is detected",
+      "Add regression tests for parser behavior with leading JSON objects"
+    ],
+    "risks": [
+      "Potential unintended changes to parser behavior for valid tool call formats",
+      "Need to align with maintainer design preferences for parser implementation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproduction script to confirm the bug",
+      "Add a unit test asserting that detect_and_parse returns unchanged normal_text when no tool call is found",
+      "Run existing parser and protocol tests to ensure no regressions"
+    ],
+    "unknowns": [
+      "Exact code location and logic causing the deletion",
+      "Whether maintainers have already started a fix or have design preferences"
+    ],
+    "why": "Issue provides a clear, reproducible bug in the llama3 tool-call parser that silently drops leading JSON objects from message content. The root cause is localized to the parser class, and the reproduction script is self-contained without requiring a GPU or server. This is a user-visible correctness bug in a critical agent/inference path, making it a valuable and actionable contribution."
   },
   "3412bb48f69d257785c5fa7538876897b9925ea2ee989947838ee9e70e8e75d4": {
     "confidence": 0.85,
@@ -16069,6 +16121,29 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue reports a concrete DSV4 long-prefix cache miss with client-side evidence and a detailed source-level causal chain, but an open PR #31713 (DeepSeek V4 SWA recompute) overlaps the same code paths and semantics. The PR is not linked to the issue and has failing CI; a new PR would risk duplication. Maintainer review is needed to confirm whether the PR addresses the root cause or if a separate fix is warranted."
   },
+  "6e16bf9e0b7436bfb4cd43bad39e87a51ffb5a5ce2cfb1c78a20cdad4faa0121": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "mcp_server_manager.py: apply MCP_METADATA_TIMEOUT to initial resource GET, stream and close response without consuming SSE body"
+    ],
+    "risks": [
+      "Potential behavior change for servers that legitimately stream metadata; need to ensure closing stream does not break valid flows."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test using a mock Streamable HTTP server that returns text/event-stream and keeps connection open; assert discovery completes within timeout."
+    ],
+    "unknowns": [
+      "No maintainer confirmation on preferred fix approach; whether streaming response handling is acceptable."
+    ],
+    "why": "Issue identifies a concrete hang in OAuth discovery due to missing timeout on initial MCP GET, with clear repro steps and code anchors. Fix is bounded and testable."
+  },
   "6e368d44fe1e9cb126c26141c69dcb91ed981f397c32890dca295485f028ffc3": {
     "confidence": 0.8,
     "contradictions": [
@@ -17679,6 +17754,33 @@
       "Whether maintainers have already started work on this or have design preferences; but no evidence of that."
     ],
     "why": "Issue identifies a concrete bug in Gemma4UnifiedMultimodalEmbedder where output_proj_dims is incorrectly used as input dimension for audio, causing weight-loading AssertionError. Root cause is clear, fix is minimal and verified by reporter. No competing PR or related issue found."
+  },
+  "789c3d9adfaf3f140ecb6683fd3657ffa6bb3543f23aa64697f6ae00c35614bc": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "function_call_parser.py streaming logic",
+      "deepseekv32/deepseekv4 parser state handling"
+    ],
+    "risks": [
+      "Potential impact on other streaming parsers if shared logic is changed",
+      "Need to ensure trailing flush handling remains correct"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproduce_deepseek_dsml_two_chunk.py to confirm the bug",
+      "Add a regression test that splits the same text at the '-7' boundary and asserts streaming output matches non-streaming"
+    ],
+    "unknowns": [
+      "Exact code location of the streaming parser state machine",
+      "Maintainer preference for fix approach"
+    ],
+    "why": "The issue provides a clear, reproducible bug in streaming tool-call parsing for deepseekv32/deepseekv4, with a minimal script and expected vs actual behavior. The root cause is likely in the streaming parser's state handling across chunk boundaries, which is a concrete, actionable code fix."
   },
   "78c0254578d72ed6448d2b225336d2616c964029d2fa10bf9ad2d7279d074fcc": {
     "confidence": 0.85,
@@ -22116,6 +22218,32 @@
       "Maintainer preference on where to implement (this repo vs external crate)"
     ],
     "why": "Issue provides a precise root cause (missing structural tag for kimi_k2 parser forces JSON-array grammar, unbounded whitespace) and a clear regression test (test_kimi_k2_tool_choice_required_pins_current_behavior). However, the deterministic gate is HUMAN_REVIEW, and existing PR #9752 overlaps semantically with the code path (handlers.py) and key terms (max_tokens, tool_choice), requiring maintainer comparison before new work. Also, potential duplicate issue #12876 and external crate dependency (dynamo-parsers) add uncertainty."
+  },
+  "9aa6b63e1b7b1655abe6da2dfa85a1e78ab79bf51d3956badd01dba4430ecbc6": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "per_user_oauth_store.py",
+      "mcp_management_endpoints.py",
+      "dual_cache_token_backend.py",
+      "auth_cache_invalidation_pubsub.py"
+    ],
+    "risks": [
+      "Potential impact on performance if Redis-only backend is used; need to ensure invalidation pub/sub does not introduce race conditions."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Set up multi-replica LiteLLM with shared Redis and DB, configure per-user OAuth MCP server, connect user, warm caches on both replicas, disconnect via replica A, then verify replica B cannot use cached credentials."
+    ],
+    "unknowns": [
+      "No maintainer confirmation or design preference; exact implementation approach not decided."
+    ],
+    "why": "The issue provides a clear, reproducible bug in a critical path (MCP OAuth credential cache coherence across replicas) with specific code anchors and a suggested fix. It is actionable and technically valuable."
   },
   "9ac00ecd1fbb7bad7af4e0f343e5a9d9b63ce68c922f91f411b37b13e235a1e4": {
     "confidence": 0.9,
@@ -28888,6 +29016,30 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "The issue reports a crash in deep_gemm_moe_permute during cudagraph mode with deepep_v2, but the root cause is not fully diagnosed. A potential duplicate issue #52897 shares stack signatures, and an open PR #52632 directly addresses DeepEP-V2 cudagraph path but lacks tests and does not reference this issue. The deterministic gate is HUMAN_REVIEW, and the submission policy conflict blocks automatic action."
+  },
+  "cdb5b29aae24d407245bb10f03d6d4e62aff35aa7814535f34c68924ca0f3047": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "function_call_parser.py",
+      "streaming tool-call delta accumulation logic"
+    ],
+    "risks": [
+      "Potential behavior changes in streaming API responses; need to ensure backward compatibility with existing clients."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run provided reproduce_streaming_empty_args.py to confirm bug, then add regression tests for each parser's streaming vs non-streaming equivalence."
+    ],
+    "unknowns": [
+      "No maintainer confirmation or design preference; exact intended fix approach not specified."
+    ],
+    "why": "Issue provides a concrete, reproducible bug with a minimal script, clear expected behavior, and specific failure modes across 8 parsers. The root cause is localized to streaming incremental parsing logic, making it actionable for a focused fix."
   },
   "cdf8a27f391af3d9e7c6e494f90b7adb705fc64885f15eefeb15ad7d7a94512a": {
     "confidence": 0.7,
