@@ -8345,6 +8345,33 @@ def refresh_pull_requests(args: argparse.Namespace) -> dict[str, Any]:
 def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
     unresolved = store.unresolved_recoveries()
+    if not THREAD_DB.is_file():
+        # A fresh machine may not have a Codex thread database yet.  Recovery
+        # cannot be authorized without it, but this must remain a normal
+        # fail-closed state rather than crashing the controller.
+        blocked = [
+            item | {"reason": "THREAD_DB_UNAVAILABLE"}
+            for item in store.recovery_candidates(min_age_minutes=0)
+        ]
+        unresolved_with_recovery = [
+            item
+            | {
+                "reason": "THREAD_DB_UNAVAILABLE",
+                "threadActivityAvailable": False,
+                "targetTurnMaterialized": False,
+                "commitReady": False,
+                "abandonable": False,
+            }
+            for item in unresolved
+        ]
+        return {
+            "ok": not blocked and not unresolved_with_recovery,
+            "recoverable": [],
+            "activeDeferred": [],
+            "queuedDeferred": [],
+            "blocked": blocked,
+            "unresolved": unresolved_with_recovery,
+        }
     connection = sqlite3.connect(THREAD_DB)
     connection.row_factory = sqlite3.Row
     recoverable: list[dict[str, Any]] = []

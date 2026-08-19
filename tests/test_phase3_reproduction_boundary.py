@@ -350,27 +350,31 @@ def test_real_probe_sandbox_denies_host_secret_write_and_network(tmp_path):
         pytest.skip("macOS sandbox backend is required for this behavior test")
     checkout, sha = real_checkout(tmp_path)
     unrelated_host_file = Path("/private/tmp/oss-pr-radar-host-read-test")
+    unrelated_tmp_file = Path("/private/tmp/oss-pr-radar-host-read-test-2")
+    host_write_file = Path("/private/tmp/oss-pr-radar-host-write-sentinel")
     unrelated_host_file.write_text("host-only", encoding="utf-8")
+    unrelated_tmp_file.write_text("host-only-2", encoding="utf-8")
+    host_write_file.unlink(missing_ok=True)
     script = checkout / "tests" / "security_probe.py"
     script.parent.mkdir()
     script.write_text(
-        """from pathlib import Path
+        f"""from pathlib import Path
 import socket
 
 read_denied = False
 try:
-    Path('/Users/oxygen/.codex/skills/gh-issue-pr/SKILL.md').read_text()
+    Path({str(unrelated_tmp_file)!r}).read_text()
 except PermissionError:
     read_denied = True
 
 tmp_read_denied = False
 try:
-    Path('/private/tmp/oss-pr-radar-host-read-test').read_text()
+    Path({str(unrelated_host_file)!r}).read_text()
 except PermissionError:
     tmp_read_denied = True
 
 write_denied = False
-host_write = Path('/Users/oxygen/.codex/probe-host-write-sentinel')
+host_write = Path({str(host_write_file)!r})
 try:
     host_write.write_text('must-not-write')
 except PermissionError:
@@ -425,6 +429,8 @@ raise SystemExit(0 if read_denied and tmp_read_denied and write_denied and netwo
     finally:
         TRUSTED_PROBE_PROFILES.pop(profile_id, None)
         unrelated_host_file.unlink(missing_ok=True)
+        unrelated_tmp_file.unlink(missing_ok=True)
+        host_write_file.unlink(missing_ok=True)
     assert receipt["probeLevel"] == REPRODUCED_VALIDATED, receipt
     assert receipt["attemptJournal"]["externalEffectCount"] == 0
     assert set(Path("/private/tmp").glob(f"oss-pr-radar-probe-attempt-{attempt_id}-*")) == before
