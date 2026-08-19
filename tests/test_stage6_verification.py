@@ -24,6 +24,21 @@ from oss_pr_radar.util import sha256_json
 HEAD = "0a4e99b78b376e03e02699b7b6e3fe5cede41bf5"
 
 
+def _copy_deployed_release_as_development_candidate(source: Path, destination: Path) -> None:
+    """Copy code into a development fixture without carrying deployment identity."""
+    shutil.copytree(
+        source,
+        destination,
+        ignore=shutil.ignore_patterns(
+            ".git",
+            ".venv",
+            ".pytest_cache",
+            "__pycache__",
+            "release-manifest.json",
+        ),
+    )
+
+
 def _passed_results() -> dict[str, dict[str, object]]:
     return {
         item["id"]: {"status": "passed", "exitCode": 0, "outputDigest": "a" * 64}
@@ -143,11 +158,8 @@ def test_stage6_manifest_requires_bound_results_or_run(tmp_path):
 def test_stage6_manifest_results_output_is_directly_consumable(tmp_path):
     root = Path(__file__).parents[1]
     clean_root = tmp_path / "clean-candidate"
-    shutil.copytree(
-        root,
-        clean_root,
-        ignore=shutil.ignore_patterns(".git", ".venv", ".pytest_cache", "__pycache__"),
-    )
+    _copy_deployed_release_as_development_candidate(root, clean_root)
+    assert not (clean_root / "release-manifest.json").exists()
     subprocess.run(["git", "init", "-q"], cwd=clean_root, check=True)
     subprocess.run(
         ["git", "config", "user.email", "test@example.invalid"], cwd=clean_root, check=True
@@ -239,6 +251,7 @@ def test_stage6_manifest_results_output_is_directly_consumable(tmp_path):
     )
     assert deploy.returncode == 0, deploy.stderr
     release = (target / "current-release").resolve()
+    assert (release / "release-manifest.json").exists()
     identity_command = next(
         item["command"]
         for item in VERSIONED_DEFINITIONS["commands"]
@@ -286,11 +299,8 @@ def test_stage6_manifest_results_output_is_directly_consumable(tmp_path):
 def test_stage6_manifest_rejects_clean_head_change_before_writing(tmp_path, monkeypatch):
     source = Path(__file__).parents[1]
     clean_root = tmp_path / "changing-candidate"
-    shutil.copytree(
-        source,
-        clean_root,
-        ignore=shutil.ignore_patterns(".git", ".venv", ".pytest_cache", "__pycache__"),
-    )
+    _copy_deployed_release_as_development_candidate(source, clean_root)
+    assert not (clean_root / "release-manifest.json").exists()
     subprocess.run(["git", "init", "-q"], cwd=clean_root, check=True)
     subprocess.run(
         ["git", "config", "user.email", "test@example.invalid"], cwd=clean_root, check=True
