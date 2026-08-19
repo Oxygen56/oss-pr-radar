@@ -329,6 +329,10 @@ jobs:
           --allow-missing
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
+          name: pending-state-${{ github.run_id }}
+          path: .
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
           name: war-room-receipt-${{ github.run_id }}
           path: receipt
       - name: Merge War Room receipt without accepting new events

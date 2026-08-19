@@ -57,6 +57,13 @@ def test_radar_scan_exports_authenticated_state_with_the_managed_key():
         assert "RADAR_DISPATCH_HMAC_KEY: ${{ secrets.RADAR_DISPATCH_HMAC_KEY }}" in section
 
 
+def test_radar_receipt_persistence_consumes_the_current_pending_state():
+    workflow = (ROOT / ".github/workflows/radar.yml").read_text(encoding="utf-8")
+    section = workflow.split("\n  persist-receipt:\n", 1)[1]
+    assert "name: pending-state-${{ github.run_id }}" in section
+    assert "name: war-room-receipt-${{ github.run_id }}" in section
+
+
 def test_war_room_sender_cannot_send_without_the_source_artifact():
     sender = (ROOT / "scripts/send_war_room_outbox.py").read_text(encoding="utf-8")
     assert "--artifact" in sender
