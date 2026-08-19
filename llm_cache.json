@@ -1571,6 +1571,36 @@
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue is an automated build failure report with no root cause identified. It lists generic possible causes (ty, ruff, MCP SDK) but provides no specific error logs or reproduction steps. The candidate's own actionability evidence shows root_cause_signal=false and probe_ready=false. Without concrete failure details, a PR cannot be scoped."
   },
+  "0ccd74ec7822c274ad4fbfde4b67663a6bc45b26361093e41c2566ed65c9446f": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Initial claim of policy-only effect contradicted by later measurements showing fragmentation under both policies."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Scheduler chunk-budget carving in _mamba_block_aligned_split",
+      "Prefix cache alignment logic for priority scheduling"
+    ],
+    "risks": [
+      "Fix may trade latency for cacheability, impacting throughput under high concurrency.",
+      "Need to distinguish cache misses due to fragmentation from LRU eviction in live metrics."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Extend scheduler harness to simulate priority scheduling with mixed request priorities and concurrent load, verifying chunk ends align to block boundaries.",
+      "Add a counter for off-boundary chunk ends in align mode and assert cache hit rates under sustained budget pressure."
+    ],
+    "unknowns": [
+      "Exact request priority distribution and its effect on scheduler behavior.",
+      "Whether the proposed fix handles all edge cases (e.g., speculative decoding interactions)."
+    ],
+    "why": "The issue identifies a concrete LLM algorithm bug: align-mode prefix caching fails under priority scheduling due to chunk-boundary misalignment. It includes reproducible metrics, a suspected mechanism tied to #51113, and maintainer discussion confirming the fragmentation path. The proposed fix (boundary-aware budget carving) is actionable and testable."
+  },
   "0cd11e322196f2fdab5e4c31482db3f655c193bbefb4fb62f9ff399cfb79803e": {
     "confidence": 0.7,
     "contradictions": [
@@ -24984,6 +25014,33 @@
     ],
     "wait_reason": "MISSING_EVIDENCE",
     "why": "The issue reports an Entra OAuth failure but the discussion reveals the reporter is using the MCP SDK's mcp.server.fastmcp, not standalone FastMCP's AzureProvider. The root cause is likely a client-side scope/resource mismatch with no clear server-side fix in the SDK path. The candidate lacks a concrete code change proposal and requires maintainer guidance on the supported configuration."
+  },
+  "b3f0dfc722ca385354a34a61166d3a218ef58e5b4b430e6dcc7800a6ee6afc75": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/v1/attention/backends/mla/flashmla_sparse.py",
+      "vllm/v1/worker/gpu_model_runner.py"
+    ],
+    "risks": [
+      "The fix may affect other attention backends or DBO paths; need to ensure no regression in non-DBO scenarios."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that triggers DBO ubatching with a long prefill request on DeepSeek V4 Flash and verifies that positions are preserved in the rebuilt metadata, ensuring no assertion failure."
+    ],
+    "unknowns": [
+      "Exact code change in PR #43966 is not fully verified, but the issue itself is actionable."
+    ],
+    "why": "The issue provides a clear, reproducible bug in the MLA sparse attention backend: DBO ubatching rebuilds CommonAttentionMetadata without preserving the positions field, causing an assertion failure in C128A metadata build. The traceback and reproduction conditions are concrete, and the fix is a targeted code change in flashmla_sparse.py."
   },
   "b41796eff7f932a8b8ed4776b8da6dd71f2a9bed41388168b9efcc590a5555cd": {
     "confidence": 0.6,
