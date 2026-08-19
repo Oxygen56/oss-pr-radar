@@ -70,8 +70,12 @@ def _counts(path: Path) -> dict[str, int]:
     with sqlite3.connect(path) as connection:
         return {
             "managedPrs": int(connection.execute("SELECT COUNT(*) FROM managed_prs").fetchone()[0]),
-            "managedOpportunities": int(connection.execute("SELECT COUNT(*) FROM managed_opportunities").fetchone()[0]),
-            "managedHistoryEvents": int(connection.execute("SELECT COUNT(*) FROM managed_lifecycle_events").fetchone()[0]),
+            "managedOpportunities": int(
+                connection.execute("SELECT COUNT(*) FROM managed_opportunities").fetchone()[0]
+            ),
+            "managedHistoryEvents": int(
+                connection.execute("SELECT COUNT(*) FROM managed_lifecycle_events").fetchone()[0]
+            ),
         }
 
 
@@ -168,7 +172,10 @@ def main() -> int:
     root = args.artifact_root.resolve()
     root.mkdir(parents=True, exist_ok=True)
     secure_permissions(root)
-    projected = sum(path.stat().st_size for path in (args.source, args.legacy_db) if path.exists()) * 4 + 10 * 1024 * 1024
+    projected = (
+        sum(path.stat().st_size for path in (args.source, args.legacy_db) if path.exists()) * 4
+        + 10 * 1024 * 1024
+    )
     space = require_free_space(root, projected)
     source_backup = root / "source-ledger.sqlite3"
     migrated = root / "migrated.sqlite3"
@@ -213,7 +220,9 @@ def main() -> int:
             followup=args.followup,
         )
         stable = before == after == live_snapshot["sourceGeneration"]
-        attempts.append({"attempt": attempt, "copy": copy, "before": before, "after": after, "stable": stable})
+        attempts.append(
+            {"attempt": attempt, "copy": copy, "before": before, "after": after, "stable": stable}
+        )
         if stable:
             final = result
             break
@@ -227,7 +236,9 @@ def main() -> int:
         "verification": verification,
         "sourceGenerationStable": True,
         "observationTime": observed_at,
-        "observationTimeSource": "live_snapshot" if live_snapshot.get("generatedAt") else "explicit_or_runtime_now",
+        "observationTimeSource": "live_snapshot"
+        if live_snapshot.get("generatedAt")
+        else "explicit_or_runtime_now",
         "attempts": attempts,
         "disk": space,
         "sourceBackup": {"bytes": source_backup.stat().st_size, "sha256": _sha(source_backup)},
@@ -240,7 +251,8 @@ def main() -> int:
         "prInvariant": {
             "totalRecords": reconciliation["after"]["count"],
             "currentOpen": reconciliation["after"]["stateCounts"]["OPEN"],
-            "closedOrMerged": reconciliation["after"]["stateCounts"]["CLOSED"] + reconciliation["after"]["stateCounts"]["MERGED"],
+            "closedOrMerged": reconciliation["after"]["stateCounts"]["CLOSED"]
+            + reconciliation["after"]["stateCounts"]["MERGED"],
             "allManagedKeysObserved": reconciliation["allManagedKeysObserved"],
             "liveOpenCount": len(reconciliation["liveOpenKeys"]),
             "missing": reconciliation["missingManagedKeys"],
@@ -249,12 +261,19 @@ def main() -> int:
             "headMismatches": reconciliation["headMismatches"],
             "managedPrProjectionDigest": final["prProjection"]["digest"],
         },
-        "externalSideEffects": {"githubWrites": 0, "feishuSends": 0, "codexTaskMutations": 0, "fakeSender": True},
+        "externalSideEffects": {
+            "githubWrites": 0,
+            "feishuSends": 0,
+            "codexTaskMutations": 0,
+            "fakeSender": True,
+        },
         "artifactClassification": {"restrictedRecoveryFilesExcluded": True},
     }
     envelope_path = root / "stage6-public-envelope.json"
     envelope_path.unlink(missing_ok=True)
-    manifest = artifact_manifest(root, exclude_names={"stage6-public-summary.json", envelope_path.name})
+    manifest = artifact_manifest(
+        root, exclude_names={"stage6-public-summary.json", envelope_path.name}
+    )
     report["publicSafeScanBeforeReport"] = manifest["publicSafeScan"]
     report["fileInventory"] = manifest["files"]
     report["detachedEnvelope"] = {

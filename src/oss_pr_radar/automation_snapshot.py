@@ -154,20 +154,38 @@ def _automation_entry(
     }
     if any(value is None for value in required.values()):
         raise ValueError(f"{role} automation TOML is missing required fields")
-    if required["version"] != 1 or required["name"] != (HEARTBEAT_NAME if role == "heartbeat" else DAILY_WAR_ROOM_NAME):
+    if required["version"] != 1 or required["name"] != (
+        HEARTBEAT_NAME if role == "heartbeat" else DAILY_WAR_ROOM_NAME
+    ):
         raise ValueError(f"{role} automation version or name does not match the contract")
     for key in ("id", "kind", "status", "rrule"):
         if str(required[key]) != str(expected[key]):
             raise ValueError(f"{role} automation {key} does not match the contract")
-    allowed = {"version", "name", "id", "kind", "status", "rrule", "created_at", "updated_at", "prompt"}
+    allowed = {
+        "version",
+        "name",
+        "id",
+        "kind",
+        "status",
+        "rrule",
+        "created_at",
+        "updated_at",
+        "prompt",
+    }
     if role == "heartbeat":
         allowed.add("target_thread_id")
         if section.get("target_thread_id") != HEARTBEAT_TARGET_THREAD_ID:
             raise ValueError("heartbeat target thread does not match the contract")
     else:
         allowed.update({"cwds", "target", "model", "reasoning_effort", "execution_environment"})
-        if section.get("model") != "gpt-5.5" or section.get("reasoning_effort") != "medium" or section.get("execution_environment") != "local":
-            raise ValueError("daily War Room model or execution environment does not match the contract")
+        if (
+            section.get("model") != "gpt-5.5"
+            or section.get("reasoning_effort") != "medium"
+            or section.get("execution_environment") != "local"
+        ):
+            raise ValueError(
+                "daily War Room model or execution environment does not match the contract"
+            )
         if section.get("cwds") != [DAILY_AUTOMATION_CWD]:
             raise ValueError("daily War Room cwd list does not match the contract")
         if section.get("target") != {"type": "project", "project_id": DAILY_PROJECT_ID}:
@@ -190,13 +208,17 @@ def _automation_entry(
         "name": required["name"],
         "createdAt": section["created_at"],
         "updatedAt": section["updated_at"],
-        **({"targetThreadId": HEARTBEAT_TARGET_THREAD_ID} if role == "heartbeat" else {
-            "cwds": [DAILY_AUTOMATION_CWD],
-            "target": {"type": "project", "projectId": DAILY_PROJECT_ID},
-            "model": "gpt-5.5",
-            "reasoningEffort": "medium",
-            "executionEnvironment": "local",
-        }),
+        **(
+            {"targetThreadId": HEARTBEAT_TARGET_THREAD_ID}
+            if role == "heartbeat"
+            else {
+                "cwds": [DAILY_AUTOMATION_CWD],
+                "target": {"type": "project", "projectId": DAILY_PROJECT_ID},
+                "model": "gpt-5.5",
+                "reasoningEffort": "medium",
+                "executionEnvironment": "local",
+            }
+        ),
         "releaseCommand": release_command,
         "runtimeRoot": str(runtime_root.resolve()),
         "promptTemplate": AUTOMATION_PROMPT_TEMPLATE,
@@ -206,7 +228,9 @@ def _automation_entry(
 
 
 def _actual_workers(runtime_root: Path, home: Path, contracts: dict[str, Any]) -> dict[str, Any]:
-    specs = worker_specs(Path(contracts["release"]["codeRoot"]), home=home, runtime_root=runtime_root)
+    specs = worker_specs(
+        Path(contracts["release"]["codeRoot"]), home=home, runtime_root=runtime_root
+    )
     result: dict[str, Any] = {}
     for spec in specs:
         label = str(spec["Label"])

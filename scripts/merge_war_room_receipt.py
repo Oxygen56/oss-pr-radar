@@ -26,10 +26,16 @@ def _read(path: Path) -> dict:
 
 
 def merge(current: dict, receipt: dict) -> dict:
-    if current.get("schema") != "oss-pr-radar.war-room-outbox.v1" or current.get("channel") != "feishu":
+    if (
+        current.get("schema") != "oss-pr-radar.war-room-outbox.v1"
+        or current.get("channel") != "feishu"
+    ):
         raise ValueError("unsupported War Room queue")
     current_events = {event.get("eventId"): event for event in current.get("events") or []}
-    if any(event.get("status") not in {"PENDING", "SENT", "FAILED"} for event in current_events.values()):
+    if any(
+        event.get("status") not in {"PENDING", "SENT", "FAILED"}
+        for event in current_events.values()
+    ):
         raise ValueError("War Room persisted event status is invalid")
     for event in current_events.values():
         if event.get("status") != "PENDING":

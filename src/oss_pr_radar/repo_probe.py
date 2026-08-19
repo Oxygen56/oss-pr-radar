@@ -101,6 +101,7 @@ def validate_checkout_paths(checkout: Path, code_paths: list[str]) -> dict[str, 
         raise ProbeUnavailable("CODE_PATHS_REQUIRED")
     return bindings
 
+
 # Profiles are code-owned.  A profile must name real repository test selectors
 # and may never contain shell syntax or an inline print/eval program.
 TRUSTED_PROBE_PROFILES: dict[str, dict[str, Any]] = {
@@ -158,7 +159,9 @@ def _safe_command(command: Any) -> list[str] | None:
     return values
 
 
-def _profile_command(profile: dict[str, Any], label: str, checkout: Path, code_paths: list[str]) -> list[str] | None:
+def _profile_command(
+    profile: dict[str, Any], label: str, checkout: Path, code_paths: list[str]
+) -> list[str] | None:
     command = _safe_command(profile.get(f"{label}Argv"))
     if command is None:
         return None
@@ -194,12 +197,20 @@ def _signed_receipt(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def verify_probe_receipt(
-    receipt: dict[str, Any], *, repo: str, base_sha: str, code_paths: list[str],
-    required_level: str = REPRODUCED_VALIDATED, issue_url: str | None = None,
-    task_id: str | None = None, thread_id: str | None = None,
-    thread_fingerprint_value: str | None = None, attempt_id: str | None = None,
+    receipt: dict[str, Any],
+    *,
+    repo: str,
+    base_sha: str,
+    code_paths: list[str],
+    required_level: str = REPRODUCED_VALIDATED,
+    issue_url: str | None = None,
+    task_id: str | None = None,
+    thread_id: str | None = None,
+    thread_fingerprint_value: str | None = None,
+    attempt_id: str | None = None,
     head_sha: str | None = None,
-    commit_sha: str | None = None, result_digest: str | None = None,
+    commit_sha: str | None = None,
+    result_digest: str | None = None,
     policy_digest: str | None = None,
     max_age_seconds: int = 3600,
 ) -> bool:
@@ -276,8 +287,7 @@ def verify_probe_receipt(
     if (now - observed_at).total_seconds() > max(1, max_age_seconds):
         return False
     if level == REPRODUCED_VALIDATED and not (
-        receipt.get("reproductionVerified") is True
-        and receipt.get("validationVerified") is True
+        receipt.get("reproductionVerified") is True and receipt.get("validationVerified") is True
     ):
         return False
     payload = {
@@ -287,12 +297,18 @@ def verify_probe_receipt(
     }
     if receipt.get("receiptDigest") != sha256_json(payload):
         return False
-    signed_payload = {key: value for key, value in receipt.items() if key not in {"keyId", "signature"}}
-    return bool(receipt.get("keyId")) and bool(receipt.get("signature")) and verify_current(
-        signed_payload,
-        context=PROBE_CONTEXT,
-        key_id=str(receipt.get("keyId")),
-        signature=str(receipt.get("signature")),
+    signed_payload = {
+        key: value for key, value in receipt.items() if key not in {"keyId", "signature"}
+    }
+    return (
+        bool(receipt.get("keyId"))
+        and bool(receipt.get("signature"))
+        and verify_current(
+            signed_payload,
+            context=PROBE_CONTEXT,
+            key_id=str(receipt.get("keyId")),
+            signature=str(receipt.get("signature")),
+        )
     )
 
 
@@ -396,7 +412,16 @@ def _materialize_git_snapshot(
         if identity.returncode != 0 or identity.stdout.strip() != selected_base_sha:
             raise ProbeUnavailable("CHECKOUT_SHA_UNAVAILABLE")
         archived = subprocess.run(
-            ["git", "-C", str(checkout), "archive", "--format=tar", selected_base_sha, "--", *paths],
+            [
+                "git",
+                "-C",
+                str(checkout),
+                "archive",
+                "--format=tar",
+                selected_base_sha,
+                "--",
+                *paths,
+            ],
             check=False,
             capture_output=True,
             timeout=MAX_PROBE_SECONDS,
@@ -436,7 +461,10 @@ def _materialize_git_snapshot(
                 normalized = member_path.as_posix()
                 if normalized in requested:
                     bindings[normalized] = sha256_json(
-                        {"relativePath": normalized, "contentSha256": hashlib.sha256(content).hexdigest()}
+                        {
+                            "relativePath": normalized,
+                            "contentSha256": hashlib.sha256(content).hexdigest(),
+                        }
                     )
         if set(bindings) != requested:
             raise ProbeUnavailable("CODE_PATH_MISSING_FROM_ARCHIVE")
@@ -574,7 +602,12 @@ def run_reproduction_probe(
                                 if command_runner is None
                                 else command_runner(command, snapshot)
                             )
-                        except (OSError, RuntimeError, subprocess.SubprocessError, ProbeUnavailable):
+                        except (
+                            OSError,
+                            RuntimeError,
+                            subprocess.SubprocessError,
+                            ProbeUnavailable,
+                        ):
                             exit_code = 125
                         payload["commandStatuses"][label] = {"exitCode": exit_code}
                         payload["attemptJournal"]["events"].append(f"{label.upper()}_FINISHED")
@@ -645,7 +678,11 @@ def _run_profile_command(
     runtime_roots: list[Path] = []
     runtime_files: list[Path] = []
     framework = next(
-        (parent for parent in (resolved_executable, *resolved_executable.parents) if parent.name == "Python.framework"),
+        (
+            parent
+            for parent in (resolved_executable, *resolved_executable.parents)
+            if parent.name == "Python.framework"
+        ),
         None,
     )
     if framework is not None:
@@ -653,7 +690,11 @@ def _run_profile_command(
         runtime_roots.append(framework.parent.parent)
         runtime_files.append(Path("/usr/lib/libSystem.B.dylib"))
         version = next(
-            (parent.name for parent in resolved_executable.parents if parent.parent.name == "Versions"),
+            (
+                parent.name
+                for parent in resolved_executable.parents
+                if parent.parent.name == "Versions"
+            ),
             None,
         )
         homebrew = next(
@@ -663,7 +704,11 @@ def _run_profile_command(
         if version and homebrew is not None:
             runtime_roots.append(homebrew / "lib" / f"python{version}")
             formula_root = next(
-                (parent for parent in resolved_executable.parents if parent.parent.name == "Cellar"),
+                (
+                    parent
+                    for parent in resolved_executable.parents
+                    if parent.parent.name == "Cellar"
+                ),
                 None,
             )
             if formula_root is not None:
@@ -672,7 +717,9 @@ def _run_profile_command(
     elif resolved_executable.parent == Path("/usr/bin"):
         # Keep the system interpreter supported only with its known system
         # runtime roots.  Unknown runtimes fail closed below.
-        runtime_roots.extend((Path("/usr/lib"), Path("/System/Library"), Path("/Library/Frameworks")))
+        runtime_roots.extend(
+            (Path("/usr/lib"), Path("/System/Library"), Path("/Library/Frameworks"))
+        )
     else:
         raise ProbeUnavailable("RUNTIME_ALLOWLIST_UNAVAILABLE")
     runtime_roots = [root for root in runtime_roots if root.is_dir()]
@@ -682,6 +729,7 @@ def _run_profile_command(
 
     def sandbox_path(path: str) -> str:
         return path.replace("\\", "\\\\").replace('"', '\\"')
+
     rules = [
         "(version 1)",
         "(deny default)",
@@ -692,8 +740,7 @@ def _run_profile_command(
         "(deny network*)",
     ]
     rules.extend(
-        f'(allow file-read* (subpath "{sandbox_path(str(root))}"))'
-        for root in runtime_roots
+        f'(allow file-read* (subpath "{sandbox_path(str(root))}"))' for root in runtime_roots
     )
     # Seatbelt resolves every directory component before opening the executable
     # and temporary roots.  Permit only those directory entries as literals;
@@ -704,8 +751,7 @@ def _run_profile_command(
         literal_paths.add(str(root))
     literal_paths.update({"/dev/null", "/dev/urandom", "/dev/random"})
     rules.extend(
-        f'(allow file-read* (literal "{sandbox_path(path)}"))'
-        for path in sorted(literal_paths)
+        f'(allow file-read* (literal "{sandbox_path(path)}"))' for path in sorted(literal_paths)
     )
     rules.append(f'(allow process-exec (literal "{sandbox_path(str(resolved_executable))}"))')
     rules.append(f'(allow file-read* (subpath "{sandbox_path(str(cwd))}"))')

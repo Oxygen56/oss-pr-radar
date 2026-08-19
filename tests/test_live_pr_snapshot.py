@@ -34,7 +34,9 @@ def _legacy_db(path: Path, *, wal: bool = False) -> sqlite3.Connection:
     return connection
 
 
-def _inputs(tmp_path: Path, *, wal: bool = False) -> tuple[Path, Path, Path, sqlite3.Connection | None]:
+def _inputs(
+    tmp_path: Path, *, wal: bool = False
+) -> tuple[Path, Path, Path, sqlite3.Connection | None]:
     source = tmp_path / "source.sqlite3"
     source_connection = _legacy_db(source)
     legacy_db = tmp_path / "legacy-war-room.sqlite3"
@@ -159,7 +161,9 @@ def test_live_snapshot_validator_failure_preserves_output_and_temp_free(tmp_path
             raise ValueError("invalid serialized snapshot")
 
     with pytest.raises(ValueError, match="invalid serialized snapshot"):
-        write_live_snapshot(output, {"url": "https://github.com/owner/repo/pull/1"}, validator=validator)
+        write_live_snapshot(
+            output, {"url": "https://github.com/owner/repo/pull/1"}, validator=validator
+        )
     assert calls == 2
     assert output.read_text(encoding="utf-8") == "previous"
     assert not list(tmp_path.glob(".live-states.json.*.tmp"))
@@ -209,7 +213,12 @@ def test_legacy_db_binding_tracks_wal_logical_changes(tmp_path):
         before = input_digests(legacy_db, reports, tmp_path / "followup.json")
         connection.execute(
             "INSERT INTO opportunities VALUES (?, ?, ?, ?)",
-            ("owner/repo#9", "https://github.com/owner/repo/issues/9", "NEW", "2026-08-19T00:01:00Z"),
+            (
+                "owner/repo#9",
+                "https://github.com/owner/repo/issues/9",
+                "NEW",
+                "2026-08-19T00:01:00Z",
+            ),
         )
         connection.commit()
         after = input_digests(legacy_db, reports, tmp_path / "followup.json")
@@ -243,7 +252,9 @@ def test_live_snapshot_rejects_stale_future_naive_and_tampered_evidence(tmp_path
         validate_snapshot_binding(old, **kwargs)
 
     future = deepcopy(snapshot)
-    future["generatedAt"] = (datetime.now(UTC) + timedelta(seconds=1)).isoformat().replace("+00:00", "Z")
+    future["generatedAt"] = (
+        (datetime.now(UTC) + timedelta(seconds=1)).isoformat().replace("+00:00", "Z")
+    )
     with pytest.raises(ValueError, match="future"):
         validate_snapshot_binding(future, **kwargs)
 

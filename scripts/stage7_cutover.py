@@ -56,7 +56,9 @@ def main() -> int:
     if args.phase == "stop-evidence":
         value = build_stop_evidence(args.runtime_root)
         args.out.parent.mkdir(parents=True, exist_ok=True)
-        args.out.write_text(json.dumps(value, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
+        args.out.write_text(
+            json.dumps(value, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8"
+        )
         os.chmod(args.out, 0o600)
     elif args.phase == "bootstrap":
         value = bootstrap(

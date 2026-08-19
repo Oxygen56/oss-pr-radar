@@ -145,7 +145,12 @@ def test_real_control_plane_adapter_path_reaches_all_projection_buckets(tmp_path
         "scanner_version": "scanner-e2e",
         "report_digest": "scan-digest",
         "candidate_details": [
-            {"repo": "owner/repo", "num": number, "url": f"https://github.com/owner/repo/issues/{number}", "auto_spawn": True}
+            {
+                "repo": "owner/repo",
+                "num": number,
+                "url": f"https://github.com/owner/repo/issues/{number}",
+                "auto_spawn": True,
+            }
             for number in range(1, 5)
         ],
     }
@@ -329,7 +334,9 @@ def test_real_control_plane_adapter_path_reaches_all_projection_buckets(tmp_path
         assert connection.execute("SELECT COUNT(*) FROM managed_opportunities").fetchone()[0] == 4
         assert connection.execute("SELECT COUNT(*) FROM managed_tasks").fetchone()[0] == 4
         assert connection.execute("SELECT COUNT(*) FROM managed_results").fetchone()[0] == 1
-        assert connection.execute("SELECT COUNT(*) FROM managed_lifecycle_events").fetchone()[0] >= 8
+        assert (
+            connection.execute("SELECT COUNT(*) FROM managed_lifecycle_events").fetchone()[0] >= 8
+        )
         assert connection.execute("SELECT COUNT(*) FROM managed_ci_runs").fetchone()[0] == 1
 
 
@@ -431,13 +438,19 @@ def test_publication_receipt_replays_finalize_without_second_external_effect(tmp
     assert replay["ok"] is True
     assert calls["count"] == 2
     with ManagedLedger(database)._connection() as connection:
-        assert connection.execute(
-            "SELECT state FROM managed_publication_reservations WHERE reservation_key=?",
-            (reservation["reservationKey"],),
-        ).fetchone()[0] == "FINALIZED"
-        assert connection.execute(
-            "SELECT COUNT(*) FROM managed_prs WHERE pr_key='owner/repo#9'"
-        ).fetchone()[0] == 1
+        assert (
+            connection.execute(
+                "SELECT state FROM managed_publication_reservations WHERE reservation_key=?",
+                (reservation["reservationKey"],),
+            ).fetchone()[0]
+            == "FINALIZED"
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM managed_prs WHERE pr_key='owner/repo#9'"
+            ).fetchone()[0]
+            == 1
+        )
 
 
 def test_blocked_publication_reservation_cannot_import_receipt(tmp_path):
@@ -468,9 +481,12 @@ def test_blocked_publication_reservation_cannot_import_receipt(tmp_path):
             receipt={"prUrl": "https://github.com/owner/repo/pull/6", "headSha": "head-6"},
         )
     with ManagedLedger(database)._connection() as connection:
-        assert connection.execute(
-            "SELECT COUNT(*) FROM managed_prs WHERE pr_key='owner/repo#6'"
-        ).fetchone()[0] == 0
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM managed_prs WHERE pr_key='owner/repo#6'"
+            ).fetchone()[0]
+            == 0
+        )
 
 
 def test_followup_reply_path_calls_prepare_and_defaults_to_draft(tmp_path):

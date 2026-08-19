@@ -36,8 +36,16 @@ def validate(value: dict) -> None:
         if event.get("status") != "PENDING":
             raise ValueError("War Room sender accepts PENDING events only")
         if set(event) != {
-            "eventId", "candidateKey", "taskId", "title", "reason", "nextAction",
-            "status", "idempotencyKey", "card", "attemptId",
+            "eventId",
+            "candidateKey",
+            "taskId",
+            "title",
+            "reason",
+            "nextAction",
+            "status",
+            "idempotencyKey",
+            "card",
+            "attemptId",
         }:
             raise ValueError("War Room queue event is not canonical")
 
@@ -68,41 +76,63 @@ def main() -> int:
     app_id = os.environ.get("FEISHU_APP_ID")
     app_secret = os.environ.get("FEISHU_APP_SECRET")
     chat_id = os.environ.get("FEISHU_CHAT_ID")
-    client = FeishuClient(app_id, app_secret, chat_id) if app_id and app_secret and chat_id else None
+    client = (
+        FeishuClient(app_id, app_secret, chat_id) if app_id and app_secret and chat_id else None
+    )
     for event in pending:
         if client is None:
-            receipts.append(sign_delivery_receipt(
-                artifact_digest=artifact["artifactDigest"], event=event, status="FAILED",
-                error="Feishu credentials are not configured",
-            ))
+            receipts.append(
+                sign_delivery_receipt(
+                    artifact_digest=artifact["artifactDigest"],
+                    event=event,
+                    status="FAILED",
+                    error="Feishu credentials are not configured",
+                )
+            )
             continue
         try:
             response = client.send_card(event["card"], idempotency_key=event["idempotencyKey"])
             message_id = str((response.get("data") or {}).get("message_id") or "").strip()
             if not message_id:
-                receipts.append(sign_delivery_receipt(
-                    artifact_digest=artifact["artifactDigest"], event=event, status="FAILED",
-                    error="Feishu response missing message_id; reconciliation required",
-                    reconciliation_required=True,
-                ))
+                receipts.append(
+                    sign_delivery_receipt(
+                        artifact_digest=artifact["artifactDigest"],
+                        event=event,
+                        status="FAILED",
+                        error="Feishu response missing message_id; reconciliation required",
+                        reconciliation_required=True,
+                    )
+                )
             else:
-                receipts.append(sign_delivery_receipt(
-                    artifact_digest=artifact["artifactDigest"], event=event, status="SENT",
-                    message_id=message_id,
-                ))
+                receipts.append(
+                    sign_delivery_receipt(
+                        artifact_digest=artifact["artifactDigest"],
+                        event=event,
+                        status="SENT",
+                        message_id=message_id,
+                    )
+                )
         except NotificationError as exc:
-            receipts.append(sign_delivery_receipt(
-                artifact_digest=artifact["artifactDigest"], event=event, status="FAILED",
-                error=str(exc), reconciliation_required=True,
-            ))
+            receipts.append(
+                sign_delivery_receipt(
+                    artifact_digest=artifact["artifactDigest"],
+                    event=event,
+                    status="FAILED",
+                    error=str(exc),
+                    reconciliation_required=True,
+                )
+            )
         except Exception as exc:  # keep ambiguous post-send failures fail-closed
-            receipts.append(sign_delivery_receipt(
-                artifact_digest=artifact["artifactDigest"], event=event, status="FAILED",
-                error=f"send failed: {exc}", reconciliation_required=True,
-            ))
-    receipt = build_receipt_document(
-        artifact_digest=artifact["artifactDigest"], receipts=receipts
-    )
+            receipts.append(
+                sign_delivery_receipt(
+                    artifact_digest=artifact["artifactDigest"],
+                    event=event,
+                    status="FAILED",
+                    error=f"send failed: {exc}",
+                    reconciliation_required=True,
+                )
+            )
+    receipt = build_receipt_document(artifact_digest=artifact["artifactDigest"], receipts=receipts)
     atomic_write_json(args.output, receipt)
     failed = sum(event.get("status") == "FAILED" for event in receipts)
     print(json.dumps({"sent": len(receipts) - failed, "failed": failed}))

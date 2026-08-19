@@ -20,12 +20,18 @@ def main() -> int:
     parser.add_argument("--runtime-root", type=Path, required=True)
     parser.add_argument("--managed-counts-evidence", type=Path)
     parser.add_argument("--automation-snapshot", type=Path)
-    parser.add_argument("--preflight", action="store_true", help="check all gates before workers are loaded")
-    parser.add_argument("--private", action="store_true", help="emit restricted operational details")
+    parser.add_argument(
+        "--preflight", action="store_true", help="check all gates before workers are loaded"
+    )
+    parser.add_argument(
+        "--private", action="store_true", help="emit restricted operational details"
+    )
     parser.add_argument("--out", type=Path)
     args = parser.parse_args()
     if args.managed_counts_evidence is None or args.automation_snapshot is None:
-        parser.error("production-strict acceptance requires --managed-counts-evidence and --automation-snapshot")
+        parser.error(
+            "production-strict acceptance requires --managed-counts-evidence and --automation-snapshot"
+        )
     result = check(
         args.runtime_root,
         managed_counts_evidence=args.managed_counts_evidence,

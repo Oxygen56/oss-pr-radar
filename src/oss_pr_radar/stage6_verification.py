@@ -51,7 +51,9 @@ def _copy_definitions() -> dict[str, Any]:
     return json.loads(canonical_json(VERSIONED_DEFINITIONS))
 
 
-def build_verification_manifest(code_head: str, *, results: dict[str, Any] | None = None) -> dict[str, Any]:
+def build_verification_manifest(
+    code_head: str, *, results: dict[str, Any] | None = None
+) -> dict[str, Any]:
     if not _HEAD_RE.fullmatch(code_head):
         raise ValueError("verification manifest requires a full 40-character commit SHA")
     definitions = _copy_definitions()
@@ -90,7 +92,9 @@ def validate_verification_manifest(manifest: object, code_head: str) -> dict[str
     if set(results) != command_ids:
         missing = sorted(command_ids - set(results))
         extra = sorted(set(results) - command_ids)
-        raise ValueError(f"verification manifest command results are incomplete: missing={missing}, extra={extra}")
+        raise ValueError(
+            f"verification manifest command results are incomplete: missing={missing}, extra={extra}"
+        )
     for result_id, result in results.items():
         if not isinstance(result, dict):
             raise ValueError(f"verification result is not canonical: {result_id}")
@@ -98,7 +102,9 @@ def validate_verification_manifest(manifest: object, code_head: str) -> dict[str
             raise ValueError(f"verification result is not canonical: {result_id}")
         if result.get("status") != "passed" or result.get("exitCode") != 0:
             raise ValueError(f"verification result did not pass: {result_id}")
-        if not isinstance(result.get("outputDigest"), str) or not re.fullmatch(r"[0-9a-f]{64}", result["outputDigest"]):
+        if not isinstance(result.get("outputDigest"), str) or not re.fullmatch(
+            r"[0-9a-f]{64}", result["outputDigest"]
+        ):
             raise ValueError(f"verification result digest is invalid: {result_id}")
     unsigned = {key: manifest[key] for key in manifest if key != "manifestDigest"}
     if manifest.get("manifestDigest") != sha256_json(unsigned):

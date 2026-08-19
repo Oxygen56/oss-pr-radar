@@ -111,7 +111,9 @@ def verify_delivery_receipt(
         raise ValueError("delivery receipt signature is invalid or stale")
 
 
-def build_receipt_document(*, artifact_digest: str, receipts: list[dict[str, Any]]) -> dict[str, Any]:
+def build_receipt_document(
+    *, artifact_digest: str, receipts: list[dict[str, Any]]
+) -> dict[str, Any]:
     event_ids = [receipt.get("eventId") for receipt in receipts]
     if any(not event_id for event_id in event_ids) or len(event_ids) != len(set(event_ids)):
         raise ValueError("delivery receipt contains duplicate or missing events")
@@ -144,4 +146,6 @@ def validate_receipt_document(
     if set(ids) - set(events):
         raise ValueError("delivery receipt contains an unknown event")
     for event in received:
-        verify_delivery_receipt(event, artifact_digest=artifact_digest, event=events[event["eventId"]])
+        verify_delivery_receipt(
+            event, artifact_digest=artifact_digest, event=events[event["eventId"]]
+        )

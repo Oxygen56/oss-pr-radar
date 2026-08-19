@@ -339,6 +339,7 @@ def test_copy_migration_is_atomic_and_rollback_preserves_existing_open_pr_origin
     with pytest.raises(ValueError, match="target"):
         rollback_copy(tmp_path / "wrong.sqlite3", result["rollbackManifest"])
 
+
 def test_thin_copy_records_commit_without_activation(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", "d" * 32)
     source = tmp_path / "source"
@@ -402,7 +403,9 @@ def test_thin_copy_subprocess_uses_verified_release_from_non_repo_cwd(tmp_path: 
     build_copy(source, copy)
     poisoned = runtime / "scripts"
     poisoned.mkdir()
-    (poisoned / "war_room_entrypoint.py").write_text("raise SystemExit('poisoned')\n", encoding="utf-8")
+    (poisoned / "war_room_entrypoint.py").write_text(
+        "raise SystemExit('poisoned')\n", encoding="utf-8"
+    )
     environment = os.environ.copy()
     environment.pop("PYTHONPATH", None)
     completed = subprocess.run(
@@ -429,7 +432,9 @@ def test_thin_copy_rejects_dirty_source_and_tampering(tmp_path: Path, monkeypatc
     source = tmp_path / "source"
     (source / "scripts").mkdir(parents=True)
     entry = source / "scripts" / "war_room_entrypoint.py"
-    entry.write_text("from oss_pr_radar.war_room_projection import export_projection\n", encoding="utf-8")
+    entry.write_text(
+        "from oss_pr_radar.war_room_projection import export_projection\n", encoding="utf-8"
+    )
     subprocess.run(["git", "init", "-q"], cwd=source, check=True)
     subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=source, check=True)
     subprocess.run(["git", "config", "user.name", "Test"], cwd=source, check=True)
@@ -438,7 +443,9 @@ def test_thin_copy_rejects_dirty_source_and_tampering(tmp_path: Path, monkeypatc
     entry.write_text("dirty\n", encoding="utf-8")
     with pytest.raises(RuntimeError, match="clean"):
         build_copy(source, tmp_path / "dirty-target")
-    entry.write_text("from oss_pr_radar.war_room_projection import export_projection\n", encoding="utf-8")
+    entry.write_text(
+        "from oss_pr_radar.war_room_projection import export_projection\n", encoding="utf-8"
+    )
     subprocess.run(["git", "checkout", "--", "."], cwd=source, check=True)
     with pytest.raises(ValueError, match="does not match HEAD"):
         build_copy(source, tmp_path / "mismatch-target", source_commit="0" * 40)

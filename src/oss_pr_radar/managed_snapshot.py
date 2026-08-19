@@ -78,10 +78,17 @@ def _opportunity_probe_metadata(raw: str) -> dict[str, Any]:
     evidence = parsed.get("preTaskEvidence")
     if not isinstance(evidence, dict):
         evidence = {}
-    paths = parsed.get("codePaths") or evidence.get("codePaths") or evidence.get("codePathsPlan") or []
+    paths = (
+        parsed.get("codePaths") or evidence.get("codePaths") or evidence.get("codePathsPlan") or []
+    )
     return {
-        "selectedBaseSha": parsed.get("selectedBaseSha") or parsed.get("baseSha") or evidence.get("selectedBaseSha") or evidence.get("baseSha"),
-        "codePaths": [str(path) for path in paths if str(path).strip()] if isinstance(paths, list) else [],
+        "selectedBaseSha": parsed.get("selectedBaseSha")
+        or parsed.get("baseSha")
+        or evidence.get("selectedBaseSha")
+        or evidence.get("baseSha"),
+        "codePaths": [str(path) for path in paths if str(path).strip()]
+        if isinstance(paths, list)
+        else [],
     }
 
 
@@ -171,7 +178,9 @@ def _snapshot_rows(path: Path) -> dict[str, list[dict[str, Any]]]:
                 "repo": row["repo"],
                 "issueNumber": row["issue_number"],
                 "issueUrl": row["issue_url"],
-                "selectedBaseSha": _opportunity_probe_metadata(row["metadata_json"]).get("selectedBaseSha"),
+                "selectedBaseSha": _opportunity_probe_metadata(row["metadata_json"]).get(
+                    "selectedBaseSha"
+                ),
                 "codePaths": _opportunity_probe_metadata(row["metadata_json"]).get("codePaths", []),
                 "state": row["state"],
                 "source": row["source"],
@@ -197,16 +206,22 @@ def _snapshot_rows(path: Path) -> dict[str, list[dict[str, Any]]]:
             {
                 "taskId": row["task_id"],
                 "opportunityKey": row["opportunity_key"],
-                "threadFingerprint": thread_fingerprint(row["thread_id"]) if row["thread_id"] else None,
+                "threadFingerprint": thread_fingerprint(row["thread_id"])
+                if row["thread_id"]
+                else None,
                 "state": row["state"],
                 "source": row["source"],
                 "observedAt": row["observed_at"],
                 "provenanceDigest": _safe_digest(row["provenance_json"]),
                 "taskStage": _task_probe_metadata(row["provenance_json"]).get("taskStage"),
                 "probeLevel": _task_probe_metadata(row["provenance_json"]).get("probeLevel"),
-                "probeReceiptDigest": _task_probe_metadata(row["provenance_json"]).get("probeReceiptDigest"),
+                "probeReceiptDigest": _task_probe_metadata(row["provenance_json"]).get(
+                    "probeReceiptDigest"
+                ),
                 "probeReceipt": _task_probe_metadata(row["provenance_json"]).get("probeReceipt"),
-                "selectedBaseSha": _task_probe_metadata(row["provenance_json"]).get("selectedBaseSha"),
+                "selectedBaseSha": _task_probe_metadata(row["provenance_json"]).get(
+                    "selectedBaseSha"
+                ),
                 "codePaths": _task_probe_metadata(row["provenance_json"]).get("codePaths") or [],
                 "headSha": _task_probe_metadata(row["provenance_json"]).get("headSha"),
                 "commitSha": _task_probe_metadata(row["provenance_json"]).get("commitSha"),
@@ -227,7 +242,9 @@ def _snapshot_rows(path: Path) -> dict[str, list[dict[str, Any]]]:
                 "maintainerResponse": bool(row["maintainer_response"]),
                 "sourceKind": row["source_kind"],
                 "originKind": row["origin_kind"],
-                "originObservationDigest": _origin_observation_digest(row["origin_observation_json"]),
+                "originObservationDigest": _origin_observation_digest(
+                    row["origin_observation_json"]
+                ),
                 "originHeadSha": row["origin_head_sha"],
                 "originPrUrl": row["origin_pr_url"],
                 "source": row["source"],
@@ -427,7 +444,9 @@ def _snapshot_rows(path: Path) -> dict[str, list[dict[str, Any]]]:
                 "opportunityKey": row["opportunity_key"],
                 "repo": row["repo"],
                 "issueUrl": row["issue_url"],
-                "threadFingerprint": thread_fingerprint(row["thread_id"]) if row["thread_id"] else None,
+                "threadFingerprint": thread_fingerprint(row["thread_id"])
+                if row["thread_id"]
+                else None,
                 "defaultBranch": row["default_branch"],
                 "selectedBaseSha": row["selected_base_sha"],
                 "codePaths": json.loads(row["code_paths_json"]),
@@ -509,9 +528,7 @@ def _snapshot_authenticated(snapshot: dict[str, Any], *, current_only: bool = Tr
     signature = snapshot.get("rootSignature")
     if not key_id or not signature:
         return False
-    payload = {
-        key: value for key, value in snapshot.items() if key != "rootSignature"
-    }
+    payload = {key: value for key, value in snapshot.items() if key != "rootSignature"}
     verifier = verify_current if current_only else verify_current_or_previous
     return verifier(
         payload,
@@ -766,16 +783,8 @@ def _insert_snapshot(connection: sqlite3.Connection, rows: dict[str, list[dict[s
                     {
                         "selectedBaseSha": row.get("selectedBaseSha"),
                         "codePaths": row.get("codePaths") or [],
-                        **(
-                            {"title": row["displayTitle"]}
-                            if row.get("displayTitle")
-                            else {}
-                        ),
-                        **(
-                            {"originKind": row["originKind"]}
-                            if row.get("originKind")
-                            else {}
-                        ),
+                        **({"title": row["displayTitle"]} if row.get("displayTitle") else {}),
+                        **({"originKind": row["originKind"]} if row.get("originKind") else {}),
                     }
                 ),
             ),
@@ -886,11 +895,26 @@ def _insert_snapshot(connection: sqlite3.Connection, rows: dict[str, list[dict[s
                 started_at,lease_expires_at,attempt_count)
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,NULL,NULL,?)""",
             (
-                row["probeKey"], row["taskId"], row["opportunityKey"], row["repo"], row["issueUrl"],
-                None, row["defaultBranch"], row["selectedBaseSha"], canonical_json(row.get("codePaths") or []),
-                row.get("profileId"), None, row["headSha"], row["commitSha"], row["resultDigest"],
-                restored_state, canonical_json(receipt), row.get("error"),
-                row.get("idempotencyKey") or row["probeKey"], row["createdAt"], row["updatedAt"],
+                row["probeKey"],
+                row["taskId"],
+                row["opportunityKey"],
+                row["repo"],
+                row["issueUrl"],
+                None,
+                row["defaultBranch"],
+                row["selectedBaseSha"],
+                canonical_json(row.get("codePaths") or []),
+                row.get("profileId"),
+                None,
+                row["headSha"],
+                row["commitSha"],
+                row["resultDigest"],
+                restored_state,
+                canonical_json(receipt),
+                row.get("error"),
+                row.get("idempotencyKey") or row["probeKey"],
+                row["createdAt"],
+                row["updatedAt"],
                 int(row.get("attemptCount") or 0),
             ),
         )
@@ -1053,9 +1077,11 @@ def _insert_snapshot(connection: sqlite3.Connection, rows: dict[str, list[dict[s
                 row["prKey"],
                 row["maintainerEventKey"],
                 row["resultDigest"],
-                row["mode"] if row["policyDigest"] == public_reply_policy_digest()
+                row["mode"]
+                if row["policyDigest"] == public_reply_policy_digest()
                 and render_reply_template(row["templateId"], row["templateParams"])
-                and _safe_digest(render_reply_template(row["templateId"], row["templateParams"])) == row["bodyDigest"]
+                and _safe_digest(render_reply_template(row["templateId"], row["templateParams"]))
+                == row["bodyDigest"]
                 and row["policyDigest"]
                 else "DRAFT",
                 render_reply_template(row["templateId"], row["templateParams"]) or "",
@@ -1078,7 +1104,9 @@ def _insert_snapshot(connection: sqlite3.Connection, rows: dict[str, list[dict[s
                VALUES (?,?,?,?,?,?)""",
             (
                 row["replyKey"],
-                row["state"] if restorable and row["state"] in {"QUEUED", "SENDING", "SENT", "BLOCKED", "FAILED"} else "BLOCKED",
+                row["state"]
+                if restorable and row["state"] in {"QUEUED", "SENDING", "SENT", "BLOCKED", "FAILED"}
+                else "BLOCKED",
                 row["externalId"],
                 row["receiptDigest"],
                 row["error"] or (None if restorable else "RESTORED_REPLY_NOT_AUTHORIZED"),

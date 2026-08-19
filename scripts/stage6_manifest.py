@@ -57,7 +57,9 @@ def main() -> int:
     results = {}
     command_environment = os.environ.copy()
     interpreter_bin = str(Path(sys.executable).parent)
-    command_environment["PATH"] = f"{interpreter_bin}{os.pathsep}{command_environment.get('PATH', '')}"
+    command_environment["PATH"] = (
+        f"{interpreter_bin}{os.pathsep}{command_environment.get('PATH', '')}"
+    )
     if args.results:
         results = json.loads(args.results.read_text(encoding="utf-8"))
     elif args.run:
@@ -87,8 +89,15 @@ def main() -> int:
     verification = validate_verification_manifest(verification, code_head)
     root = args.artifact_root.resolve()
     verification_path = args.verification_out.resolve()
-    if verification_path == root or verification_path.parent == root or root in verification_path.parents or verification_path.parent in root.parents:
-        raise ValueError("verification output must use a separate root from the Stage 6 artifact root")
+    if (
+        verification_path == root
+        or verification_path.parent == root
+        or root in verification_path.parents
+        or verification_path.parent in root.parents
+    ):
+        raise ValueError(
+            "verification output must use a separate root from the Stage 6 artifact root"
+        )
     secure_atomic_private_json(verification_path, verification)
     persisted_verification = json.loads(verification_path.read_text(encoding="utf-8"))
     validate_verification_manifest(persisted_verification, code_head)
@@ -96,7 +105,9 @@ def main() -> int:
     secure_permissions(root)
     envelope_path = root / "stage6-public-envelope.json"
     envelope_path.unlink(missing_ok=True)
-    manifest = artifact_manifest(root, exclude_names={"stage6-public-summary.json", envelope_path.name})
+    manifest = artifact_manifest(
+        root, exclude_names={"stage6-public-summary.json", envelope_path.name}
+    )
     report = {
         "schema": "oss-pr-radar.stage6.report.v2",
         "codeHead": code_head,
@@ -119,7 +130,17 @@ def main() -> int:
     )
     secure_permissions(root)
     validate_detached_report_envelope(report_path, envelope_path, code_head=code_head)
-    print(json.dumps({"ok": True, "publicSafe": public_safe_scan(root)["publicSafe"], "fileCount": len(envelope_inventory["files"]), "verificationOut": str(verification_path)}, sort_keys=True))
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "publicSafe": public_safe_scan(root)["publicSafe"],
+                "fileCount": len(envelope_inventory["files"]),
+                "verificationOut": str(verification_path),
+            },
+            sort_keys=True,
+        )
+    )
     return 0
 
 

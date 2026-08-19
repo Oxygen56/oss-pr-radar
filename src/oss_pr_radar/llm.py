@@ -170,10 +170,8 @@ class DeepSeekEvaluator:
                 "repository.policy",
             }
             if normalized["semanticSignal"] == "NO_OBJECTION" and (
-                not evidence_ids or not all(
-                    evidence_id in known_evidence
-                    for evidence_id in evidence_ids
-                )
+                not evidence_ids
+                or not all(evidence_id in known_evidence for evidence_id in evidence_ids)
             ):
                 normalized["semanticSignal"] = "RETRY"
             if normalized.get("contradictions") or normalized.get("invalidEnum"):
@@ -194,7 +192,11 @@ class DeepSeekEvaluator:
                 candidate["notify"] = False
                 accepted.append(candidate)
                 continue
-            if normalized["semanticSignal"] == "FILTER" or normalized["score"] < 6 or no_code_action:
+            if (
+                normalized["semanticSignal"] == "FILTER"
+                or normalized["score"] < 6
+                or no_code_action
+            ):
                 key = f"{candidate.get('repo')}#{candidate.get('num')}"
                 self.rejected_candidates[key] = {
                     "reason": (

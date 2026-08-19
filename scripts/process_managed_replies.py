@@ -23,9 +23,7 @@ def main() -> int:
     if args.receipts and args.receipts.exists():
         value = json.loads(args.receipts.read_text(encoding="utf-8"))
         receipts = value if isinstance(value, dict) else {}
-    result = ManagedAdapter(ROOT, args.ledger).process_reply_outbox(
-        sender=None, receipts=receipts
-    )
+    result = ManagedAdapter(ROOT, args.ledger).process_reply_outbox(sender=None, receipts=receipts)
     print(json.dumps(result, sort_keys=True))
     return 0 if result["ok"] else 1
 

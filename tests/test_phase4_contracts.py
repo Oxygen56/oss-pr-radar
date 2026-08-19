@@ -21,9 +21,9 @@ def test_scheduled_workflow_uses_only_the_versioned_war_room_actionable_path():
     assert "send_war_room_outbox.py" in workflow
     assert "merge_war_room_receipt.py" in workflow
     assert "--artifact reports/war_room_projection.json" in workflow
-    projection_step = workflow.split(
-        "- name: Import follow-up and ensure managed projection", 1
-    )[1].split("\n      - name:", 1)[0]
+    projection_step = workflow.split("- name: Import follow-up and ensure managed projection", 1)[
+        1
+    ].split("\n      - name:", 1)[0]
     continuation = chr(92)
     assert "export_war_room_projection.py " + continuation in projection_step
     assert "--ledger-copy state/radar_ledger.sqlite3 " + continuation in projection_step
@@ -46,11 +46,13 @@ def test_workflow_exporter_multiline_script_smoke_creates_all_outputs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     workflow = (ROOT / ".github/workflows/radar.yml").read_text(encoding="utf-8")
-    block = workflow.split(
-        "- name: Import follow-up and ensure managed projection", 1
-    )[1].split("\n      - name:", 1)[0]
+    block = workflow.split("- name: Import follow-up and ensure managed projection", 1)[1].split(
+        "\n      - name:", 1
+    )[0]
     lines = block.splitlines()
-    start = next(index for index, line in enumerate(lines) if "export_war_room_projection.py" in line)
+    start = next(
+        index for index, line in enumerate(lines) if "export_war_room_projection.py" in line
+    )
     command = "\n".join(line.strip() for line in lines[start:] if line.strip())
 
     sandbox = tmp_path / "workflow"

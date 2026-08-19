@@ -257,7 +257,9 @@ def external_outbox_event_reason(event: dict[str, Any]) -> str | None:
         return "REVALIDATION_REQUIRED:CANDIDATE_STATES_MISSING"
     if not isinstance(keys, list) or not keys:
         return "REVALIDATION_REQUIRED:CANDIDATE_KEYS_MISSING"
-    if any(not isinstance(key, str) or not re.fullmatch(r"[^/\s]+/[^#\s]+#\d+", key) for key in keys):
+    if any(
+        not isinstance(key, str) or not re.fullmatch(r"[^/\s]+/[^#\s]+#\d+", key) for key in keys
+    ):
         return "REVALIDATION_REQUIRED:CANDIDATE_KEY_INVALID"
     state_keys: list[str] = []
     for state in states:
@@ -268,14 +270,25 @@ def external_outbox_event_reason(event: dict[str, Any]) -> str | None:
             return "REVALIDATION_REQUIRED:CANDIDATE_KEY_INVALID"
         if not isinstance(state.get("stateId"), str) or not state["stateId"]:
             return "REVALIDATION_REQUIRED:STATE_ID_MISSING"
-        if not isinstance(state.get("kind"), str) or state["kind"] not in {"immediate", "review", "watch"}:
+        if not isinstance(state.get("kind"), str) or state["kind"] not in {
+            "immediate",
+            "review",
+            "watch",
+        }:
             return "REVALIDATION_REQUIRED:EVENT_KIND_INVALID"
-        if not isinstance(state.get("maturity"), str) or state["maturity"] not in {"mature", "exploration"}:
+        if not isinstance(state.get("maturity"), str) or state["maturity"] not in {
+            "mature",
+            "exploration",
+        }:
             return "REVALIDATION_REQUIRED:MATURITY_INVALID"
         if not isinstance(state.get("notify"), bool):
             return "REVALIDATION_REQUIRED:NOTIFY_INVALID"
         state_keys.append(key)
-    if sorted(state_keys) != sorted(keys) or str(event.get("kind") or "") not in {"immediate", "review", "watch"}:
+    if sorted(state_keys) != sorted(keys) or str(event.get("kind") or "") not in {
+        "immediate",
+        "review",
+        "watch",
+    }:
         return "REVALIDATION_REQUIRED:CANDIDATE_KEY_MISMATCH"
     if all(state["maturity"] == "mature" and state["notify"] for state in states):
         return None

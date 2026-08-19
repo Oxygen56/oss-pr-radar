@@ -52,7 +52,9 @@ def populated_source(tmp_path: Path, name: str = "source.sqlite3"):
         state="OPEN",
         auto_created=True,
     )
-    ledger.bind_task(task_id="task-1", opportunity_key="owner/repo#1", thread_id=None, worktree_path=None)
+    ledger.bind_task(
+        task_id="task-1", opportunity_key="owner/repo#1", thread_id=None, worktree_path=None
+    )
     ledger.record_result(
         task_id="task-1",
         result_digest="result-1",
@@ -84,7 +86,11 @@ def populated_source(tmp_path: Path, name: str = "source.sqlite3"):
         queries=[
             {"endpoint": "repos/owner/repo/branches/feature/1", "ok": True, "exists": False},
             {"endpoint": "repos/owner/repo/git/commits/head-1", "ok": True, "exists": False},
-            {"endpoint": "repos/owner/repo/pulls?head=owner:feature/1&state=all", "ok": True, "exists": False},
+            {
+                "endpoint": "repos/owner/repo/pulls?head=owner:feature/1&state=all",
+                "ok": True,
+                "exists": False,
+            },
         ],
         local_effect={"endpoint": "local:publication_effects", "ok": True, "exists": False},
         observed_at="2026-08-19T00:02:00Z",
@@ -94,7 +100,9 @@ def populated_source(tmp_path: Path, name: str = "source.sqlite3"):
     return database, ledger
 
 
-@pytest.mark.parametrize("collection", ["prs", "results", "absenceAttestations", "attestationNonceConsumptions"])
+@pytest.mark.parametrize(
+    "collection", ["prs", "results", "absenceAttestations", "attestationNonceConsumptions"]
+)
 def test_root_hmac_rejects_collection_deletion_after_content_digest_recompute(tmp_path, collection):
     source, _ = populated_source(tmp_path, f"source-{collection}.sqlite3")
     snapshot = build_snapshot(source)
@@ -125,7 +133,9 @@ def test_root_signature_required_unknown_key_and_previous_key_rotation(tmp_path,
 
     monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", "round7-next-key-bbbbbbbb")
     monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY_ID", "round7-next")
-    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY_PREVIOUS", "managed-test-signing-key-0123456789abcdef")
+    monkeypatch.setenv(
+        "RADAR_DISPATCH_HMAC_KEY_PREVIOUS", "managed-test-signing-key-0123456789abcdef"
+    )
     monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY_PREVIOUS_ID", "test-current")
     rotated_target, _ = ledger_at(tmp_path, "rotated-root.sqlite3")
     with pytest.raises(ValueError, match="root authentication"):
@@ -154,7 +164,10 @@ def test_restore_completely_replaces_consumption_and_managed_collections(tmp_pat
     snapshot = tmp_path / "replace.snapshot.gz"
     export_snapshot(source, snapshot)
     import_snapshot(target, snapshot)
-    with target_ledger._connection() as connection, source_ledger._connection() as source_connection:
+    with (
+        target_ledger._connection() as connection,
+        source_ledger._connection() as source_connection,
+    ):
         for table in (
             "managed_opportunities",
             "managed_prs",
@@ -162,12 +175,16 @@ def test_restore_completely_replaces_consumption_and_managed_collections(tmp_pat
             "managed_publication_absence_attestations",
             "attestation_nonce_consumptions",
         ):
-            assert connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == source_connection.execute(
-                f"SELECT COUNT(*) FROM {table}"
+            assert (
+                connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                == source_connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM managed_opportunities WHERE opportunity_key='extra/repo#99'"
             ).fetchone()[0]
-        assert connection.execute(
-            "SELECT COUNT(*) FROM managed_opportunities WHERE opportunity_key='extra/repo#99'"
-        ).fetchone()[0] == 0
+            == 0
+        )
 
 
 def test_v6_to_v7_downgrades_authorization_and_requires_new_attestation(tmp_path):
@@ -184,14 +201,27 @@ def test_v6_to_v7_downgrades_authorization_and_requires_new_attestation(tmp_path
     assert result["toVersion"] == 7
     migrated = ManagedLedger(target)
     with migrated._connection() as connection:
-        assert connection.execute("SELECT state FROM managed_publication_reservations").fetchone()[0] == "CHECK_ABSENCE_REQUIRED"
-        validation = json.loads(connection.execute("SELECT validation_json FROM managed_results").fetchone()[0])
+        assert (
+            connection.execute("SELECT state FROM managed_publication_reservations").fetchone()[0]
+            == "CHECK_ABSENCE_REQUIRED"
+        )
+        validation = json.loads(
+            connection.execute("SELECT validation_json FROM managed_results").fetchone()[0]
+        )
         assert validation["authenticationStatus"] == "UNAUTHENTICATED"
         assert validation["authorizationState"] == "LEGACY_REAUTH_REQUIRED"
-        assert connection.execute("SELECT authentication_status FROM managed_publication_absence_attestations").fetchone()[0] == "LEGACY_REAUTH_REQUIRED"
-        assert connection.execute(
-            "SELECT event_type,state FROM managed_lifecycle_events WHERE event_type='MANAGED_SCHEMA_MIGRATED'"
-        ).fetchone()[1] == "LEGACY_REAUTH_REQUIRED"
+        assert (
+            connection.execute(
+                "SELECT authentication_status FROM managed_publication_absence_attestations"
+            ).fetchone()[0]
+            == "LEGACY_REAUTH_REQUIRED"
+        )
+        assert (
+            connection.execute(
+                "SELECT event_type,state FROM managed_lifecycle_events WHERE event_type='MANAGED_SCHEMA_MIGRATED'"
+            ).fetchone()[1]
+            == "LEGACY_REAUTH_REQUIRED"
+        )
     with pytest.raises(PermissionError):
         migrated.apply_absence_attestation(
             {"authenticationStatus": "LEGACY_REAUTH_REQUIRED"}, now="2026-08-19T00:03:00Z"

@@ -344,19 +344,19 @@ def collect_followup(
             and str(check.get("conclusion") or "").lower() in FAILURE_CONCLUSIONS
         ]
         ci_status = "UNKNOWN"
-        if checks and all(str(check.get("status") or "").lower() == "completed" for check in checks):
+        if checks and all(
+            str(check.get("status") or "").lower() == "completed" for check in checks
+        ):
             ci_status = (
                 "PASSED"
                 if all(
-                    str(check.get("conclusion") or "").lower()
-                    in {"success", "neutral", "skipped"}
+                    str(check.get("conclusion") or "").lower() in {"success", "neutral", "skipped"}
                     for check in checks
                 )
                 else "FAILED"
             )
         elif any(
-            str(check.get("status") or "").lower() in {"queued", "in_progress"}
-            for check in checks
+            str(check.get("status") or "").lower() in {"queued", "in_progress"} for check in checks
         ):
             ci_status = "RUNNING"
         changed_files = {str(item.get("filename") or "") for item in files if item.get("filename")}
@@ -420,7 +420,10 @@ def collect_followup(
             key=lambda item: (str(item["reviewer"] or ""), str(item["submittedAt"] or "")),
         )
         maintainer_events = []
-        for field, event_type in (("requested_reviewers", "INVITATION"), ("assignees", "ASSIGNMENT")):
+        for field, event_type in (
+            ("requested_reviewers", "INVITATION"),
+            ("assignees", "ASSIGNMENT"),
+        ):
             for actor in pull.get(field) or []:
                 if not isinstance(actor, dict) or not actor.get("login"):
                     continue
@@ -439,9 +442,7 @@ def collect_followup(
                         "eventType": event_type,
                         "actorLogin": actor.get("login"),
                         "actorType": actor.get("type") or actor.get("__typename") or "",
-                        "authorAssociation": str(
-                            actor.get("author_association") or ""
-                        ).upper(),
+                        "authorAssociation": str(actor.get("author_association") or "").upper(),
                         "targetRepo": repo,
                         "targetPrKey": key,
                         "opportunityKey": key,

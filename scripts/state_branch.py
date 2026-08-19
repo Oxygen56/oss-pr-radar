@@ -154,7 +154,10 @@ def _scan_snapshot(value: object, *, key: str = "") -> None:
 def _validate_state_file(remote_name: str, raw: bytes) -> None:
     value = _decode_state_json(remote_name, raw)
     if remote_name.endswith("managed_lifecycle.snapshot.json.gz"):
-        if not isinstance(value, dict) or value.get("snapshotSchema") != "managed_lifecycle_snapshot_v5":
+        if (
+            not isinstance(value, dict)
+            or value.get("snapshotSchema") != "managed_lifecycle_snapshot_v5"
+        ):
             raise RuntimeError("managed lifecycle snapshot schema is invalid")
         try:
             validate_snapshot(value)
@@ -163,9 +166,15 @@ def _validate_state_file(remote_name: str, raw: bytes) -> None:
         _scan_snapshot(value)
         serialized = json.dumps(value, ensure_ascii=False, sort_keys=True)
         for name, value in os.environ.items():
-            if value and len(value) >= 8 and any(
-                marker in name.casefold() for marker in ("token", "secret", "password", "api_key")
-            ) and value in serialized:
+            if (
+                value
+                and len(value) >= 8
+                and any(
+                    marker in name.casefold()
+                    for marker in ("token", "secret", "password", "api_key")
+                )
+                and value in serialized
+            ):
                 raise RuntimeError(f"managed snapshot contains environment secret: {name}")
 
 

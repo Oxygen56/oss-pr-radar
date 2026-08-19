@@ -74,13 +74,21 @@ def main() -> int:
             managed_counts_evidence=args.managed_counts_evidence,
             home=args.home,
         )
-        print(json.dumps({
-            "ok": True,
-            "schema": value["schema"],
-            "scope": value["scope"],
-            "path": str(args.runtime_root.resolve() / "state" / "worker-staging-authorization.json"),
-            "expiresAt": value["expiresAt"],
-        }, ensure_ascii=False, sort_keys=True))
+        print(
+            json.dumps(
+                {
+                    "ok": True,
+                    "schema": value["schema"],
+                    "scope": value["scope"],
+                    "path": str(
+                        args.runtime_root.resolve() / "state" / "worker-staging-authorization.json"
+                    ),
+                    "expiresAt": value["expiresAt"],
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        )
     else:
         value = issue_operational_authorization(
             args.runtime_root,
@@ -88,13 +96,19 @@ def main() -> int:
             automation_snapshot=args.automation_snapshot,
             home=args.home,
         )
-        print(json.dumps({
-            "ok": True,
-            "schema": value["schema"],
-            "path": str(authorization_path(args.runtime_root)),
-            "releaseId": value["releaseId"],
-            "ledgerTarget": value["ledgerTarget"],
-        }, ensure_ascii=False, sort_keys=True))
+        print(
+            json.dumps(
+                {
+                    "ok": True,
+                    "schema": value["schema"],
+                    "path": str(authorization_path(args.runtime_root)),
+                    "releaseId": value["releaseId"],
+                    "ledgerTarget": value["ledgerTarget"],
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        )
     return 0
 
 

@@ -387,9 +387,9 @@ def validate_projection(value: dict[str, Any]) -> None:
         raise ProjectionError("candidate appears in more than one bucket")
     # The item view is globally sorted, while the bucket view is intentionally
     # grouped by lifecycle bucket. Compare identities after normalizing order.
-    if [item["candidateKey"] for item in sorted(flattened, key=lambda item: item["candidateKey"])] != [
-        item["candidateKey"] for item in sorted(items, key=lambda item: item["candidateKey"])
-    ]:
+    if [
+        item["candidateKey"] for item in sorted(flattened, key=lambda item: item["candidateKey"])
+    ] != [item["candidateKey"] for item in sorted(items, key=lambda item: item["candidateKey"])]:
         raise ProjectionError("bucket view differs from item view")
     digestable = {key: item for key, item in value.items() if key != "artifactDigest"}
     if value.get("artifactDigest") != sha256_json(digestable):

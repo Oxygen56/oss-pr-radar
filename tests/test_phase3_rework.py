@@ -167,7 +167,9 @@ def test_all_notification_kinds_and_sender_skip_exploration(tmp_path, monkeypatc
                 "createdAt": iso_z(NOW),
                 "kind": "watch",
                 "candidateKeys": ["owner/repo#7"],
-                "candidateStates": [{"key": "owner/repo#7", "maturity": "exploration", "notify": True}],
+                "candidateStates": [
+                    {"key": "owner/repo#7", "maturity": "exploration", "notify": True}
+                ],
                 "card": {},
             }
         ],
@@ -262,15 +264,24 @@ def test_live_base_drift_is_recorded_and_never_creates_task(tmp_path, monkeypatc
     monkeypatch.setattr(BRIDGE, "authorize", lambda *_args, **_kwargs: allow_verdict())
 
     result = BRIDGE.claim_intent(
-        SimpleNamespace(ledger=database, intent_id=queued["intentId"], owner="controller", lease_minutes=15, prepare=False)
+        SimpleNamespace(
+            ledger=database,
+            intent_id=queued["intentId"],
+            owner="controller",
+            lease_minutes=15,
+            prepare=False,
+        )
     )
     assert result["authorized"] is False
     assert result["decision"]["reason_code"] == "STATE_DRIFT"
     with ManagedLedger(database)._connection() as connection:
         assert connection.execute("SELECT COUNT(*) FROM managed_tasks").fetchone()[0] == 0
-        assert connection.execute(
-            "SELECT result_type FROM managed_results WHERE result_type='state_drift'"
-        ).fetchone()[0] == "state_drift"
+        assert (
+            connection.execute(
+                "SELECT result_type FROM managed_results WHERE result_type='state_drift'"
+            ).fetchone()[0]
+            == "state_drift"
+        )
     assert ("branch", "owner/repo:main") in client.calls
 
 
@@ -285,10 +296,18 @@ def test_live_issue_state_is_rechecked_before_probe_can_authorize(tmp_path, monk
     monkeypatch.setattr(
         BRIDGE,
         "collect_evidence",
-        lambda *_args, **_kwargs: replace(evidence_bundle(), issue={"state": "closed", "assignees": []}),
+        lambda *_args, **_kwargs: replace(
+            evidence_bundle(), issue={"state": "closed", "assignees": []}
+        ),
     )
     result = BRIDGE.claim_intent(
-        SimpleNamespace(ledger=database, intent_id=queued["intentId"], owner="controller", lease_minutes=15, prepare=False)
+        SimpleNamespace(
+            ledger=database,
+            intent_id=queued["intentId"],
+            owner="controller",
+            lease_minutes=15,
+            prepare=False,
+        )
     )
     assert result["authorized"] is False
     assert result["decision"]["reason_code"] == "ISSUE_NOT_OPEN"
@@ -307,7 +326,13 @@ def test_probe_receipt_is_required_before_fake_thread_bind(tmp_path, monkeypatch
     monkeypatch.setattr(BRIDGE, "authorize", lambda *_args, **_kwargs: allow_verdict())
 
     held = BRIDGE.claim_intent(
-        SimpleNamespace(ledger=database, intent_id=queued["intentId"], owner="controller", lease_minutes=15, prepare=False)
+        SimpleNamespace(
+            ledger=database,
+            intent_id=queued["intentId"],
+            owner="controller",
+            lease_minutes=15,
+            prepare=False,
+        )
     )
     assert held["authorized"] is False
     assert held["decision"]["reason_code"] == "REPO_PATHS_REQUIRED"
@@ -324,12 +349,20 @@ def test_passed_probe_claim_then_actual_bind_creates_one_task(tmp_path, monkeypa
     monkeypatch.setattr(BRIDGE, "collect_evidence", lambda *_args, **_kwargs: evidence_bundle())
     monkeypatch.setattr(BRIDGE, "authorize", lambda *_args, **_kwargs: allow_verdict())
     claimed = BRIDGE.claim_intent(
-        SimpleNamespace(ledger=database, intent_id=queued["intentId"], owner="controller", lease_minutes=15, prepare=False)
+        SimpleNamespace(
+            ledger=database,
+            intent_id=queued["intentId"],
+            owner="controller",
+            lease_minutes=15,
+            prepare=False,
+        )
     )
     assert claimed["claimed"] is True
     assert claimed["probeLevel"] == PATHS_VERIFIED
     assert claimed["taskStage"] == "REPRODUCTION_REQUIRED"
-    started = BRIDGE.creation_start(SimpleNamespace(ledger=database, intent_id=queued["intentId"], owner="controller"))
+    started = BRIDGE.creation_start(
+        SimpleNamespace(ledger=database, intent_id=queued["intentId"], owner="controller")
+    )
     bound = BRIDGE.creation_bind(
         SimpleNamespace(
             ledger=database,
@@ -342,8 +375,14 @@ def test_passed_probe_claim_then_actual_bind_creates_one_task(tmp_path, monkeypa
     assert bound["clientThreadId"] == "thread-real-1"
     with ManagedLedger(database)._connection() as connection:
         assert connection.execute("SELECT COUNT(*) FROM managed_tasks").fetchone()[0] == 1
-        assert connection.execute("SELECT thread_id FROM managed_tasks").fetchone()[0] == "thread-real-1"
-        assert connection.execute("SELECT state FROM managed_tasks").fetchone()[0] == "REPRODUCTION_REQUIRED"
+        assert (
+            connection.execute("SELECT thread_id FROM managed_tasks").fetchone()[0]
+            == "thread-real-1"
+        )
+        assert (
+            connection.execute("SELECT state FROM managed_tasks").fetchone()[0]
+            == "REPRODUCTION_REQUIRED"
+        )
 
 
 def test_probe_levels_and_current_only_authorization(monkeypatch, tmp_path):
@@ -398,7 +437,10 @@ def test_probe_levels_and_current_only_authorization(monkeypatch, tmp_path):
     monkeypatch.setitem(
         TRUSTED_PROBE_PROFILES,
         "test-real-checkout",
-        {"reproductionArgv": ["python3", "probe_target.py"], "validationArgv": ["python3", "probe_target.py"]},
+        {
+            "reproductionArgv": ["python3", "probe_target.py"],
+            "validationArgv": ["python3", "probe_target.py"],
+        },
     )
     full = run_reproduction_probe(
         checkout_path=checkout,
@@ -472,7 +514,9 @@ def test_probe_levels_and_current_only_authorization(monkeypatch, tmp_path):
     )
 
 
-def test_reproduction_receipt_is_required_for_fix_ready_and_then_allows_publication(tmp_path, monkeypatch):
+def test_reproduction_receipt_is_required_for_fix_ready_and_then_allows_publication(
+    tmp_path, monkeypatch
+):
     monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", KEY)
     checkout = tmp_path / "checkout"
     checkout.mkdir()
@@ -488,7 +532,10 @@ def test_reproduction_receipt_is_required_for_fix_ready_and_then_allows_publicat
     monkeypatch.setitem(
         TRUSTED_PROBE_PROFILES,
         "test-adapter-real",
-        {"reproductionArgv": ["python3", "probe_target.py"], "validationArgv": ["python3", "probe_target.py"]},
+        {
+            "reproductionArgv": ["python3", "probe_target.py"],
+            "validationArgv": ["python3", "probe_target.py"],
+        },
     )
     receipt = run_reproduction_probe(
         checkout_path=checkout,
@@ -541,8 +588,8 @@ def test_reproduction_receipt_is_required_for_fix_ready_and_then_allows_publicat
         candidate=implementation_candidate,
         value={
             "stage": "FIX_READY",
-                "commitSha": "commit-a",
-                "headSha": "head-a",
+            "commitSha": "commit-a",
+            "headSha": "head-a",
             "previousHeadSha": "base-a",
             "validation": {"passed": True, "evidence": ["unit-test"]},
             "reproductionReceipt": receipt,
@@ -558,7 +605,15 @@ def test_outbox_sender_rejects_old_and_malformed_events():
     malformed = {
         "kind": "immediate",
         "candidateKeys": ["owner/repo#7"],
-        "candidateStates": [{"key": "other/repo#7", "stateId": "x", "kind": "immediate", "maturity": "mature", "notify": True}],
+        "candidateStates": [
+            {
+                "key": "other/repo#7",
+                "stateId": "x",
+                "kind": "immediate",
+                "maturity": "mature",
+                "notify": True,
+            }
+        ],
     }
     assert external_outbox_event_allowed(old) is False
     assert external_outbox_event_reason(old).startswith("REVALIDATION_REQUIRED:")
@@ -579,7 +634,9 @@ def test_thread_bind_failure_is_recorded_for_reconciliation(tmp_path, monkeypatc
     def fail_bind(*_args, **_kwargs):
         raise RuntimeError("managed bind interrupted")
 
-    monkeypatch.setattr("oss_pr_radar.managed_adapter.ManagedAdapter.bind_task_after_thread", fail_bind)
+    monkeypatch.setattr(
+        "oss_pr_radar.managed_adapter.ManagedAdapter.bind_task_after_thread", fail_bind
+    )
     try:
         BRIDGE.creation_bind(
             SimpleNamespace(

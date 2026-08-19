@@ -52,7 +52,11 @@ def test_legacy_history_is_sanitized_and_idempotent(tmp_path, monkeypatch):
                 }
             ],
             "outcomes": [
-                {"opportunity_key": "owner/repo#7", "quality_json": '{"api_key":"sk-secret"}', "updated_at": ""}
+                {
+                    "opportunity_key": "owner/repo#7",
+                    "quality_json": '{"api_key":"sk-secret"}',
+                    "updated_at": "",
+                }
             ],
         },
     )
@@ -60,14 +64,28 @@ def test_legacy_history_is_sanitized_and_idempotent(tmp_path, monkeypatch):
     _db(
         war_room,
         ["CREATE TABLE opportunities (opportunity_key TEXT PRIMARY KEY, url TEXT, status TEXT)"],
-        {"opportunities": [{"opportunity_key": "owner/repo#7", "url": "https://github.com/owner/repo/issues/7", "status": "candidate"}]},
+        {
+            "opportunities": [
+                {
+                    "opportunity_key": "owner/repo#7",
+                    "url": "https://github.com/owner/repo/issues/7",
+                    "status": "candidate",
+                }
+            ]
+        },
     )
     reports = tmp_path / "reports"
     reports.mkdir()
-    (reports / "report.json").write_text(json.dumps({"worktreePath": "/Users/oxygen/private", "count": 1}), encoding="utf-8")
+    (reports / "report.json").write_text(
+        json.dumps({"worktreePath": "/Users/oxygen/private", "count": 1}), encoding="utf-8"
+    )
     target = tmp_path / "managed.sqlite3"
-    first = import_legacy_history(target, production_ledger=production, war_room_db=war_room, reports_dir=reports)
-    second = import_legacy_history(target, production_ledger=production, war_room_db=war_room, reports_dir=reports)
+    first = import_legacy_history(
+        target, production_ledger=production, war_room_db=war_room, reports_dir=reports
+    )
+    second = import_legacy_history(
+        target, production_ledger=production, war_room_db=war_room, reports_dir=reports
+    )
     assert first["sources"]["production"]["opportunities"]["records"] == 1
     assert first["sources"]["warRoom"]["opportunities"]["records"] == 0
     assert first["sources"]["warRoom"]["opportunities"]["duplicates"] == 0
@@ -75,17 +93,26 @@ def test_legacy_history_is_sanitized_and_idempotent(tmp_path, monkeypatch):
     ledger = ManagedLedger(target)
     with ledger._connection() as connection:
         assert connection.execute("SELECT COUNT(*) FROM managed_opportunities").fetchone()[0] == 1
-        assert connection.execute(
-            "SELECT COUNT(*) FROM managed_lifecycle_events WHERE event_type IN ('LEGACY_RECORD_IMPORTED','LEGACY_REPORT_MANIFEST_IMPORTED')"
-        ).fetchone()[0] == 4
-        payloads = [row[0] for row in connection.execute("SELECT payload_json FROM managed_lifecycle_events")]
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM managed_lifecycle_events WHERE event_type IN ('LEGACY_RECORD_IMPORTED','LEGACY_REPORT_MANIFEST_IMPORTED')"
+            ).fetchone()[0]
+            == 4
+        )
+        payloads = [
+            row[0]
+            for row in connection.execute("SELECT payload_json FROM managed_lifecycle_events")
+        ]
     encoded = "\n".join(payloads)
     assert "sk-secret" not in encoded
     assert "/Users/oxygen" not in encoded
     projection = build_projection(target, source_commit="stage6-test")
     assert len(projection["items"]) == 1
     assert set(projection["buckets"]) == {
-        "DECISION_REQUIRED", "SYSTEM_PROCESSING", "WAITING_EXTERNAL", "PORTFOLIO_READY"
+        "DECISION_REQUIRED",
+        "SYSTEM_PROCESSING",
+        "WAITING_EXTERNAL",
+        "PORTFOLIO_READY",
     }
     monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", "legacy-migration-test-key-0123456789")
     monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY_ID", "legacy-migration-test")
@@ -93,7 +120,10 @@ def test_legacy_history_is_sanitized_and_idempotent(tmp_path, monkeypatch):
     restored = tmp_path / "restored.sqlite3"
     export_snapshot(target, snapshot)
     import_snapshot(restored, snapshot)
-    assert build_projection(restored, source_commit="stage6-test")["artifactDigest"] == projection["artifactDigest"]
+    assert (
+        build_projection(restored, source_commit="stage6-test")["artifactDigest"]
+        == projection["artifactDigest"]
+    )
 
 
 def test_repeated_open_pr_observation_without_timestamp_is_stable(tmp_path):
@@ -175,16 +205,36 @@ def test_legacy_terminal_labels_cannot_authorize_projection(tmp_path):
         ],
         {
             "opportunities": [
-                {"key": "owner/repo#1", "issue_url": "https://github.com/owner/repo/issues/1", "stage": "FIX_READY", "updated_at": ""},
-                {"key": "owner/repo#2", "issue_url": "https://github.com/owner/repo/issues/2", "stage": "PR_OPEN", "updated_at": ""},
-                {"key": "owner/repo#3", "issue_url": "https://github.com/owner/repo/issues/3", "stage": "PORTFOLIO_READY", "updated_at": ""},
+                {
+                    "key": "owner/repo#1",
+                    "issue_url": "https://github.com/owner/repo/issues/1",
+                    "stage": "FIX_READY",
+                    "updated_at": "",
+                },
+                {
+                    "key": "owner/repo#2",
+                    "issue_url": "https://github.com/owner/repo/issues/2",
+                    "stage": "PR_OPEN",
+                    "updated_at": "",
+                },
+                {
+                    "key": "owner/repo#3",
+                    "issue_url": "https://github.com/owner/repo/issues/3",
+                    "stage": "PORTFOLIO_READY",
+                    "updated_at": "",
+                },
             ]
         },
     )
     target = tmp_path / "managed.sqlite3"
     import_legacy_history(target, production_ledger=source)
     with ManagedLedger(target)._connection() as connection:
-        states = [row[0] for row in connection.execute("SELECT state FROM managed_opportunities ORDER BY opportunity_key")]
+        states = [
+            row[0]
+            for row in connection.execute(
+                "SELECT state FROM managed_opportunities ORDER BY opportunity_key"
+            )
+        ]
         task_count = connection.execute("SELECT COUNT(*) FROM managed_tasks").fetchone()[0]
     assert states == ["SYSTEM_PROCESSING", "SYSTEM_PROCESSING", "SYSTEM_PROCESSING"]
     assert task_count == 0

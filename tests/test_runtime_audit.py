@@ -73,9 +73,7 @@ def test_collect_snapshot_reads_pid_and_version_from_fast_worker(tmp_path, monke
             "policyDigest": "policy-a",
         },
     )
-    monkeypatch.setattr(
-        "oss_pr_radar.runtime_audit.disk_snapshot", lambda _root: {"level": "ok"}
-    )
+    monkeypatch.setattr("oss_pr_radar.runtime_audit.disk_snapshot", lambda _root: {"level": "ok"})
     monkeypatch.setattr(
         "oss_pr_radar.runtime_audit.process_probe",
         lambda _pid, **_kwargs: {
@@ -211,9 +209,7 @@ def test_collect_snapshot_replays_real_journal_sqlite_effect_and_disk_evidence(t
         '{"state":"CREATING","inFlight":true,"operation":"publication"}\n',
         encoding="utf-8",
     )
-    (state / "sqlite-interrupted.json").write_text(
-        '{"interrupted":true}\n', encoding="utf-8"
-    )
+    (state / "sqlite-interrupted.json").write_text('{"interrupted":true}\n', encoding="utf-8")
 
     snapshot = collect_snapshot(
         target,

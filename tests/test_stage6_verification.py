@@ -33,7 +33,10 @@ def _passed_results() -> dict[str, dict[str, object]]:
 
 def test_verification_manifest_is_bound_to_versioned_definitions_and_head():
     manifest = build_verification_manifest(HEAD, results=_passed_results())
-    assert validate_verification_manifest(manifest, HEAD)["definitionDigest"] == manifest["definitionDigest"]
+    assert (
+        validate_verification_manifest(manifest, HEAD)["definitionDigest"]
+        == manifest["definitionDigest"]
+    )
 
     forged = json.loads(json.dumps(manifest))
     forged["definitions"]["faultTests"].append("forged-fault")
@@ -54,7 +57,11 @@ def test_verification_manifest_is_bound_to_versioned_definitions_and_head():
         validate_verification_manifest(forged_result, HEAD)
 
     non_canonical = json.loads(json.dumps(manifest))
-    non_canonical["results"]["full-pytest"] = {"status": "passed", "exitCode": 0, "outputDigest": "bad"}
+    non_canonical["results"]["full-pytest"] = {
+        "status": "passed",
+        "exitCode": 0,
+        "outputDigest": "bad",
+    }
     non_canonical["manifestDigest"] = sha256_json(
         {key: value for key, value in non_canonical.items() if key != "manifestDigest"}
     )
@@ -63,11 +70,26 @@ def test_verification_manifest_is_bound_to_versioned_definitions_and_head():
 
     for invalid in (
         {},
-        {**_passed_results(), "extra": {"status": "passed", "exitCode": 0, "outputDigest": "a" * 64}},
-        {**_passed_results(), "full-pytest": {"status": "failed", "exitCode": 1, "outputDigest": "a" * 64}},
-        {**_passed_results(), "full-pytest": {"status": "skipped", "exitCode": 0, "outputDigest": "a" * 64}},
-        {**_passed_results(), "full-pytest": {"status": "passed", "exitCode": 1, "outputDigest": "a" * 64}},
-        {**_passed_results(), "full-pytest": {"status": "passed", "exitCode": 0, "outputDigest": "short"}},
+        {
+            **_passed_results(),
+            "extra": {"status": "passed", "exitCode": 0, "outputDigest": "a" * 64},
+        },
+        {
+            **_passed_results(),
+            "full-pytest": {"status": "failed", "exitCode": 1, "outputDigest": "a" * 64},
+        },
+        {
+            **_passed_results(),
+            "full-pytest": {"status": "skipped", "exitCode": 0, "outputDigest": "a" * 64},
+        },
+        {
+            **_passed_results(),
+            "full-pytest": {"status": "passed", "exitCode": 1, "outputDigest": "a" * 64},
+        },
+        {
+            **_passed_results(),
+            "full-pytest": {"status": "passed", "exitCode": 0, "outputDigest": "short"},
+        },
     ):
         invalid_manifest = build_verification_manifest(HEAD, results=invalid)
         with pytest.raises(ValueError):
@@ -127,7 +149,9 @@ def test_stage6_manifest_results_output_is_directly_consumable(tmp_path):
         ignore=shutil.ignore_patterns(".git", ".venv", ".pytest_cache", "__pycache__"),
     )
     subprocess.run(["git", "init", "-q"], cwd=clean_root, check=True)
-    subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=clean_root, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.invalid"], cwd=clean_root, check=True
+    )
     subprocess.run(["git", "config", "user.name", "Test"], cwd=clean_root, check=True)
     subprocess.run(["git", "add", "-A"], cwd=clean_root, check=True)
     subprocess.run(["git", "commit", "-qm", "clean candidate"], cwd=clean_root, check=True)
@@ -154,7 +178,9 @@ def test_stage6_manifest_results_output_is_directly_consumable(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     persisted = json.loads(verification_path.read_text(encoding="utf-8"))
-    actual_head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=clean_root, text=True).strip()
+    actual_head = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=clean_root, text=True
+    ).strip()
     assert validate_verification_manifest(persisted, actual_head)["codeHead"] == actual_head
     assert verification_path.stat().st_mode & 0o777 == 0o600
     assert json.loads(result.stdout)["verificationOut"] == str(verification_path.resolve())
@@ -193,10 +219,19 @@ def test_stage6_manifest_results_output_is_directly_consumable(tmp_path):
     (target / "parent.txt").write_text("parent\n", encoding="utf-8")
     subprocess.run(["git", "add", "parent.txt"], cwd=target, check=True)
     subprocess.run(["git", "commit", "-qm", "parent"], cwd=target, check=True)
-    parent_head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=target, text=True).strip()
+    parent_head = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=target, text=True
+    ).strip()
     (target / "dirty-parent.txt").write_text("dirty\n", encoding="utf-8")
     deploy = subprocess.run(
-        [sys.executable, str(clean_root / "scripts" / "deploy_local_runtime.py"), "--source", str(clean_root), "--target", str(target)],
+        [
+            sys.executable,
+            str(clean_root / "scripts" / "deploy_local_runtime.py"),
+            "--source",
+            str(clean_root),
+            "--target",
+            str(target),
+        ],
         cwd=clean_root,
         check=False,
         capture_output=True,
@@ -205,7 +240,9 @@ def test_stage6_manifest_results_output_is_directly_consumable(tmp_path):
     assert deploy.returncode == 0, deploy.stderr
     release = (target / "current-release").resolve()
     identity_command = next(
-        item["command"] for item in VERSIONED_DEFINITIONS["commands"] if item["id"] == "code-integrity"
+        item["command"]
+        for item in VERSIONED_DEFINITIONS["commands"]
+        if item["id"] == "code-integrity"
     )
     command_env = os.environ.copy()
     command_env["PATH"] = f"{Path(sys.executable).parent}{os.pathsep}{command_env.get('PATH', '')}"
@@ -255,11 +292,15 @@ def test_stage6_manifest_rejects_clean_head_change_before_writing(tmp_path, monk
         ignore=shutil.ignore_patterns(".git", ".venv", ".pytest_cache", "__pycache__"),
     )
     subprocess.run(["git", "init", "-q"], cwd=clean_root, check=True)
-    subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=clean_root, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.invalid"], cwd=clean_root, check=True
+    )
     subprocess.run(["git", "config", "user.name", "Test"], cwd=clean_root, check=True)
     subprocess.run(["git", "add", "-A"], cwd=clean_root, check=True)
     subprocess.run(["git", "commit", "-qm", "clean candidate"], cwd=clean_root, check=True)
-    module_spec = importlib.util.spec_from_file_location("stage6_manifest_change_test", clean_root / "scripts" / "stage6_manifest.py")
+    module_spec = importlib.util.spec_from_file_location(
+        "stage6_manifest_change_test", clean_root / "scripts" / "stage6_manifest.py"
+    )
     assert module_spec and module_spec.loader
     module = importlib.util.module_from_spec(module_spec)
     module_spec.loader.exec_module(module)
@@ -309,13 +350,19 @@ def _write_release(root: Path, commit: str) -> Path:
     script.write_text("VERSION = 1\n", encoding="utf-8")
     digest = hashlib.sha256(script.read_bytes()).hexdigest()
     files = [{"path": "scripts/runner.py", "bytes": script.stat().st_size, "sha256": digest}]
+
     def canonical(value: object) -> bytes:
-        return json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
+
     payload = {
         "schemaVersion": "oss-pr-radar_release_v1",
         "commit": commit,
         "files": files,
-        "policyDigest": hashlib.sha256(canonical([{"path": "scripts/runner.py", "sha256": digest}])).hexdigest(),
+        "policyDigest": hashlib.sha256(
+            canonical([{"path": "scripts/runner.py", "sha256": digest}])
+        ).hexdigest(),
     }
     manifest_sha = hashlib.sha256(canonical(payload)).hexdigest()
     payload["manifestSha256"] = manifest_sha
@@ -354,7 +401,9 @@ def test_code_identity_uses_release_manifest_not_dirty_parent_git(tmp_path):
 def test_compact_final_identity_guard_rejects_release_change_before_report(tmp_path):
     source = Path(__file__).parents[1]
     release = _write_release(tmp_path, "d" * 40)
-    module_spec = importlib.util.spec_from_file_location("stage6_compact_guard_test", source / "scripts" / "stage6_compact_rehearsal.py")
+    module_spec = importlib.util.spec_from_file_location(
+        "stage6_compact_guard_test", source / "scripts" / "stage6_compact_rehearsal.py"
+    )
     assert module_spec and module_spec.loader
     module = importlib.util.module_from_spec(module_spec)
     module_spec.loader.exec_module(module)

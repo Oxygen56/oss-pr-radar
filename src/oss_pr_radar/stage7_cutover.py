@@ -73,10 +73,14 @@ def _validate_file_inventory(manifest: dict[str, Any], *, include_target: bool =
         if not isinstance(item, dict) or not isinstance(item.get("path"), str):
             raise RuntimeError("cutover file inventory entry is invalid")
         path = Path(item["path"]).resolve()
-        if not include_target and path.name == target_name and not (
-            isinstance(manifest.get("gitPreservation"), dict)
-            and manifest["gitPreservation"].get("archivePath")
-            and Path(str(manifest["gitPreservation"]["archivePath"])).resolve() in path.parents
+        if (
+            not include_target
+            and path.name == target_name
+            and not (
+                isinstance(manifest.get("gitPreservation"), dict)
+                and manifest["gitPreservation"].get("archivePath")
+                and Path(str(manifest["gitPreservation"]["archivePath"])).resolve() in path.parents
+            )
         ):
             if skipped_target:
                 raise RuntimeError("cutover file inventory contains a duplicate target")
@@ -281,7 +285,11 @@ def _git_preservation(repo: Path | None, archive: Path) -> dict[str, Any]:
 
 
 def _sign(manifest: dict[str, Any]) -> dict[str, Any]:
-    unsigned = {key: value for key, value in manifest.items() if key not in {"manifestDigest", "keyId", "signature"}}
+    unsigned = {
+        key: value
+        for key, value in manifest.items()
+        if key not in {"manifestDigest", "keyId", "signature"}
+    }
     digest = sha256_json(unsigned)
     key_id = os.environ.get("RADAR_DISPATCH_HMAC_KEY_ID", "dispatch-current")
     payload = {**unsigned, "manifestDigest": digest, "keyId": key_id}
@@ -292,7 +300,11 @@ def _sign(manifest: dict[str, Any]) -> dict[str, Any]:
 
 
 def _verify(manifest: dict[str, Any]) -> None:
-    unsigned = {key: value for key, value in manifest.items() if key not in {"manifestDigest", "keyId", "signature"}}
+    unsigned = {
+        key: value
+        for key, value in manifest.items()
+        if key not in {"manifestDigest", "keyId", "signature"}
+    }
     digest = sha256_json(unsigned)
     if manifest.get("manifestDigest") != digest:
         raise ValueError("cutover manifest digest mismatch")
@@ -365,7 +377,16 @@ def _begin_rollback_nonce(state: Path, nonce: str, *, manifest_path: Path, diges
     if nonce in in_progress and in_progress[nonce] != marker:
         raise RuntimeError("rollback nonce is in progress for a different manifest")
     if nonce not in in_progress:
-        _write(path, _sign({"schema": ROLLBACK_NONCE_SCHEMA, "nonces": sorted(value["nonces"]), "inProgress": {**in_progress, nonce: marker}}))
+        _write(
+            path,
+            _sign(
+                {
+                    "schema": ROLLBACK_NONCE_SCHEMA,
+                    "nonces": sorted(value["nonces"]),
+                    "inProgress": {**in_progress, nonce: marker},
+                }
+            ),
+        )
 
 
 def _finish_rollback_nonce(state: Path, nonce: str) -> None:
@@ -375,12 +396,17 @@ def _finish_rollback_nonce(state: Path, nonce: str) -> None:
         raise RuntimeError("rollback nonce is not in progress")
     marker = in_progress[nonce]
     completed = value.get("completed") if isinstance(value.get("completed"), dict) else {}
-    _write(path, _sign({
-        "schema": ROLLBACK_NONCE_SCHEMA,
-        "nonces": sorted([*value["nonces"], nonce]),
-        "inProgress": {key: item for key, item in in_progress.items() if key != nonce},
-        "completed": {**completed, nonce: marker},
-    }))
+    _write(
+        path,
+        _sign(
+            {
+                "schema": ROLLBACK_NONCE_SCHEMA,
+                "nonces": sorted([*value["nonces"], nonce]),
+                "inProgress": {key: item for key, item in in_progress.items() if key != nonce},
+                "completed": {**completed, nonce: marker},
+            }
+        ),
+    )
 
 
 def _pointer_target(state: Path) -> tuple[str | None, str | None]:
@@ -416,7 +442,11 @@ def _service_stopped(evidence_path: Path) -> dict[str, Any]:
     except (KeyError, ValueError) as exc:
         raise ValueError("service-stopped evidence time is invalid") from exc
     now_value = utc_now()
-    if observed > now_value + timedelta(minutes=1) or expires < now_value or expires - observed > timedelta(minutes=10):
+    if (
+        observed > now_value + timedelta(minutes=1)
+        or expires < now_value
+        or expires - observed > timedelta(minutes=10)
+    ):
         raise ValueError("service-stopped evidence is expired or outside its validity window")
     if value.get("allStopped") is not True:
         raise ValueError("service-stopped evidence must prove all workers are stopped")
@@ -427,8 +457,10 @@ def _service_stopped(evidence_path: Path) -> dict[str, Any]:
         if not isinstance(item, dict) or item.get("loaded") is True or item.get("pidAlive") is True:
             raise ValueError(f"service-stopped evidence reports an active worker: {worker}")
     legacy = value.get("legacy")
-    if not isinstance(legacy, dict) or set(legacy) != set(LEGACY_LABELS) or any(
-        not isinstance(item, dict) or item.get("loaded") is True for item in legacy.values()
+    if (
+        not isinstance(legacy, dict)
+        or set(legacy) != set(LEGACY_LABELS)
+        or any(not isinstance(item, dict) or item.get("loaded") is True for item in legacy.values())
     ):
         raise ValueError("service-stopped evidence has an incomplete or active legacy key set")
     return value
@@ -445,7 +477,8 @@ def _live_services_stopped(runtime_root: Path) -> dict[str, Any]:
         process = item.get("process") if isinstance(item.get("process"), dict) else {}
         raw = launchctl_print(label)
         loaded = bool(raw.strip()) and not any(
-            marker in raw.casefold() for marker in ("could not find", "service not found", "no such process")
+            marker in raw.casefold()
+            for marker in ("could not find", "service not found", "no such process")
         )
         workers[worker] = {
             "label": label,
@@ -457,8 +490,10 @@ def _live_services_stopped(runtime_root: Path) -> dict[str, Any]:
     for label in LEGACY_LABELS:
         raw = launchctl_print(label)
         legacy[label] = {
-            "loaded": bool(raw.strip()) and not any(
-                marker in raw.casefold() for marker in ("could not find", "service not found", "no such process")
+            "loaded": bool(raw.strip())
+            and not any(
+                marker in raw.casefold()
+                for marker in ("could not find", "service not found", "no such process")
             )
         }
     if any(item["loaded"] or item["pidAlive"] for item in workers.values()) or any(
@@ -569,7 +604,12 @@ def bootstrap(
     )
     manifest_path = runtime_root / "reports" / "stage7" / f"bootstrap-{nonce[:16]}.json"
     _write(manifest_path, manifest)
-    return {"ok": True, "phase": "BOOTSTRAPPED", "manifestPath": str(manifest_path), "manifest": manifest}
+    return {
+        "ok": True,
+        "phase": "BOOTSTRAPPED",
+        "manifestPath": str(manifest_path),
+        "manifest": manifest,
+    }
 
 
 def prepare(
@@ -598,7 +638,9 @@ def prepare(
     require_free_space(runtime_root, source.stat().st_size * copies + 2 * 1024 * 1024)
     target_name = f"{before['generation'][:24]}-{nonce[:16]}.sqlite3"
     target = versions / target_name
-    copy = stable_sqlite_copy(source, target, quiesce_token=quiesce_token, max_attempts=max_attempts)
+    copy = stable_sqlite_copy(
+        source, target, quiesce_token=quiesce_token, max_attempts=max_attempts
+    )
     if _sqlite_integrity(target) != "ok":
         raise RuntimeError("prepared ledger integrity check failed")
     observation_time = resolve_observation_time({}, explicit=observed_at)
@@ -642,7 +684,12 @@ def prepare(
     )
     manifest_path = runtime_root / "reports" / "stage7" / f"{cutover_id}.json"
     _write(manifest_path, manifest)
-    return {"ok": True, "phase": "PREPARED", "manifestPath": str(manifest_path), "manifest": manifest}
+    return {
+        "ok": True,
+        "phase": "PREPARED",
+        "manifestPath": str(manifest_path),
+        "manifest": manifest,
+    }
 
 
 def activate(runtime_root: Path, manifest_path: Path) -> dict[str, Any]:
@@ -668,7 +715,16 @@ def activate(runtime_root: Path, manifest_path: Path) -> dict[str, Any]:
     temporary.replace(pointer)
     _fsync_directory(state)
     activated = {**manifest, "phase": "ACTIVATED"}
-    _write(manifest_path, _sign({key: value for key, value in activated.items() if key not in {"manifestDigest", "keyId", "signature"}}))
+    _write(
+        manifest_path,
+        _sign(
+            {
+                key: value
+                for key, value in activated.items()
+                if key not in {"manifestDigest", "keyId", "signature"}
+            }
+        ),
+    )
     return {"ok": True, "phase": "ACTIVATED", "pointer": str(pointer), "target": str(target)}
 
 
@@ -694,24 +750,56 @@ def rollback(runtime_root: Path, manifest_path: Path) -> dict[str, Any]:
     if not previous_path.is_file() or _sha(previous_path) != manifest.get("previousTargetSha256"):
         raise RuntimeError("retained previous ledger is unavailable or changed")
     revoke_operational_authorization(runtime_root)
-    in_progress = nonce_state.get("inProgress") if isinstance(nonce_state.get("inProgress"), dict) else {}
+    in_progress = (
+        nonce_state.get("inProgress") if isinstance(nonce_state.get("inProgress"), dict) else {}
+    )
     marker = in_progress.get(nonce)
     expected_marker = {
         "manifestPath": str(manifest_path.resolve()),
         "manifestDigest": str(manifest.get("manifestDigest") or ""),
     }
     if nonce in nonce_state["nonces"]:
-        completed = nonce_state.get("completed") if isinstance(nonce_state.get("completed"), dict) else {}
+        completed = (
+            nonce_state.get("completed") if isinstance(nonce_state.get("completed"), dict) else {}
+        )
         if current == previous and completed.get(nonce) == expected_marker:
             rolled = {**manifest, "phase": "ROLLED_BACK"}
-            _write(manifest_path, _sign({key: value for key, value in rolled.items() if key not in {"manifestDigest", "keyId", "signature"}}))
-            return {"ok": True, "phase": "ROLLED_BACK", "pointer": str(state / POINTER_NAME), "target": str(previous_path)}
+            _write(
+                manifest_path,
+                _sign(
+                    {
+                        key: value
+                        for key, value in rolled.items()
+                        if key not in {"manifestDigest", "keyId", "signature"}
+                    }
+                ),
+            )
+            return {
+                "ok": True,
+                "phase": "ROLLED_BACK",
+                "pointer": str(state / POINTER_NAME),
+                "target": str(previous_path),
+            }
         raise RuntimeError("rollback nonce has already been consumed")
     if current == previous and marker == expected_marker:
         _finish_rollback_nonce(state, nonce)
         rolled = {**manifest, "phase": "ROLLED_BACK"}
-        _write(manifest_path, _sign({key: value for key, value in rolled.items() if key not in {"manifestDigest", "keyId", "signature"}}))
-        return {"ok": True, "phase": "ROLLED_BACK", "pointer": str(state / POINTER_NAME), "target": str(previous_path)}
+        _write(
+            manifest_path,
+            _sign(
+                {
+                    key: value
+                    for key, value in rolled.items()
+                    if key not in {"manifestDigest", "keyId", "signature"}
+                }
+            ),
+        )
+        return {
+            "ok": True,
+            "phase": "ROLLED_BACK",
+            "pointer": str(state / POINTER_NAME),
+            "target": str(previous_path),
+        }
     if current != manifest.get("target"):
         raise RuntimeError("current pointer is not the cutover target")
     _begin_rollback_nonce(
@@ -727,8 +815,22 @@ def rollback(runtime_root: Path, manifest_path: Path) -> dict[str, Any]:
     _fsync_directory(state)
     _finish_rollback_nonce(state, nonce)
     rolled = {**manifest, "phase": "ROLLED_BACK"}
-    _write(manifest_path, _sign({key: value for key, value in rolled.items() if key not in {"manifestDigest", "keyId", "signature"}}))
-    return {"ok": True, "phase": "ROLLED_BACK", "pointer": str(state / POINTER_NAME), "target": str(previous_path)}
+    _write(
+        manifest_path,
+        _sign(
+            {
+                key: value
+                for key, value in rolled.items()
+                if key not in {"manifestDigest", "keyId", "signature"}
+            }
+        ),
+    )
+    return {
+        "ok": True,
+        "phase": "ROLLED_BACK",
+        "pointer": str(state / POINTER_NAME),
+        "target": str(previous_path),
+    }
 
 
 def _git_value(repo: Path, *arguments: str) -> str:
@@ -755,7 +857,9 @@ def _restore_preflight(
     top_level = Path(_git_value(repo, "rev-parse", "--show-toplevel")).resolve()
     expected_root = Path(str(repository.get("root"))).resolve()
     if require_identity and top_level != expected_root:
-        raise RuntimeError("restore target repository identity does not match the preservation manifest")
+        raise RuntimeError(
+            "restore target repository identity does not match the preservation manifest"
+        )
     if _git_value(repo, "rev-parse", "HEAD") != repository.get("baselineHead"):
         raise RuntimeError("restore target HEAD does not match the preservation baseline")
     status = subprocess.run(
@@ -786,7 +890,11 @@ def _preservation_metadata(
     repository = metadata.get("repository")
     tracked = metadata.get("trackedPatch")
     untracked = metadata.get("untrackedFiles")
-    if not isinstance(repository, dict) or not isinstance(tracked, dict) or not isinstance(untracked, list):
+    if (
+        not isinstance(repository, dict)
+        or not isinstance(tracked, dict)
+        or not isinstance(untracked, list)
+    ):
         raise RuntimeError("git preservation archive manifest is incomplete")
     signed_repository = preservation.get("repository")
     signed_tracked = preservation.get("trackedPatch")
@@ -794,15 +902,22 @@ def _preservation_metadata(
     if signed_repository is not None and signed_repository != repository:
         raise RuntimeError("git preservation repository metadata has multiple inconsistent sources")
     if signed_tracked is not None and signed_tracked != tracked:
-        raise RuntimeError("git preservation tracked patch metadata has multiple inconsistent sources")
+        raise RuntimeError(
+            "git preservation tracked patch metadata has multiple inconsistent sources"
+        )
     if signed_untracked is not None and signed_untracked != untracked:
         raise RuntimeError("git preservation untracked metadata has multiple inconsistent sources")
-    if repository.get("statusSha256") != hashlib.sha256(str(repository.get("status", "")).encode()).hexdigest():
+    if (
+        repository.get("statusSha256")
+        != hashlib.sha256(str(repository.get("status", "")).encode()).hexdigest()
+    ):
         raise RuntimeError("git preservation status digest is invalid")
     return repository, tracked, untracked
 
 
-def _apply_preservation_to_repo(repo: Path, manifest: dict[str, Any], journal: Path) -> dict[str, Any]:
+def _apply_preservation_to_repo(
+    repo: Path, manifest: dict[str, Any], journal: Path
+) -> dict[str, Any]:
     preservation = manifest.get("gitPreservation")
     if not isinstance(preservation, dict) or preservation.get("available") is not True:
         raise RuntimeError("git preservation is unavailable")
@@ -819,11 +934,37 @@ def _apply_preservation_to_repo(repo: Path, manifest: dict[str, Any], journal: P
     ):
         raise RuntimeError("tracked preservation patch is missing or changed")
     journal.parent.mkdir(parents=True, exist_ok=True)
-    _write(journal, {"schema": "oss-pr-radar.stage7-restore.v1", "phase": "STAGED", "manifestDigest": manifest.get("manifestDigest"), "repo": str(repo.resolve())})
+    _write(
+        journal,
+        {
+            "schema": "oss-pr-radar.stage7-restore.v1",
+            "phase": "STAGED",
+            "manifestDigest": manifest.get("manifestDigest"),
+            "repo": str(repo.resolve()),
+        },
+    )
     if expected_patch_bytes:
-        subprocess.run(["git", "apply", "--check", "--binary", str(tracked_patch)], cwd=repo, check=True, capture_output=True)
-        subprocess.run(["git", "apply", "--binary", str(tracked_patch)], cwd=repo, check=True, capture_output=True)
-    _write(journal, {"schema": "oss-pr-radar.stage7-restore.v1", "phase": "TRACKED_APPLIED", "manifestDigest": manifest.get("manifestDigest"), "repo": str(repo.resolve())})
+        subprocess.run(
+            ["git", "apply", "--check", "--binary", str(tracked_patch)],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "apply", "--binary", str(tracked_patch)],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+    _write(
+        journal,
+        {
+            "schema": "oss-pr-radar.stage7-restore.v1",
+            "phase": "TRACKED_APPLIED",
+            "manifestDigest": manifest.get("manifestDigest"),
+            "repo": str(repo.resolve()),
+        },
+    )
     for item in untracked_files:
         if not isinstance(item, dict):
             raise RuntimeError("untracked preservation entry is invalid")
@@ -840,10 +981,22 @@ def _apply_preservation_to_repo(repo: Path, manifest: dict[str, Any], journal: P
         os.chmod(temporary, int(str(item["mode"]), 8))
         os.replace(temporary, destination)
         os.chmod(destination, int(str(item["mode"]), 8))
-        if _sha(destination) != item.get("sha256") or destination.stat().st_size != item.get("bytes"):
+        if _sha(destination) != item.get("sha256") or destination.stat().st_size != item.get(
+            "bytes"
+        ):
             raise RuntimeError("restored untracked file does not match preservation evidence")
-    _write(journal, {"schema": "oss-pr-radar.stage7-restore.v1", "phase": "VERIFYING", "manifestDigest": manifest.get("manifestDigest"), "repo": str(repo.resolve())})
-    if tracked_patch.stat().st_size != expected_patch_bytes or _sha(tracked_patch) != tracked_meta.get("sha256"):
+    _write(
+        journal,
+        {
+            "schema": "oss-pr-radar.stage7-restore.v1",
+            "phase": "VERIFYING",
+            "manifestDigest": manifest.get("manifestDigest"),
+            "repo": str(repo.resolve()),
+        },
+    )
+    if tracked_patch.stat().st_size != expected_patch_bytes or _sha(
+        tracked_patch
+    ) != tracked_meta.get("sha256"):
         raise RuntimeError("tracked preservation patch changed during restore")
     expected_status = str(repository.get("status") or "")
     actual_status = subprocess.run(
@@ -857,7 +1010,11 @@ def _apply_preservation_to_repo(repo: Path, manifest: dict[str, Any], journal: P
         raise RuntimeError("restored repository status does not match preservation evidence")
     for item in untracked_files:
         destination = repo / Path(str(item["path"]))
-        if _sha(destination) != item.get("sha256") or destination.stat().st_size != item.get("bytes") or oct(destination.stat().st_mode & 0o777) != item.get("mode"):
+        if (
+            _sha(destination) != item.get("sha256")
+            or destination.stat().st_size != item.get("bytes")
+            or oct(destination.stat().st_mode & 0o777) != item.get("mode")
+        ):
             raise RuntimeError("restored untracked file integrity verification failed")
     journal.unlink(missing_ok=True)
     return {"ok": True, "phase": "VERIFIED", "repo": str(repo.resolve()), "status": actual_status}
@@ -886,7 +1043,9 @@ def _rollback_failed_restore(
             continue
         if destination.is_file() and not destination.is_symlink():
             try:
-                matches = _sha(destination) == item.get("sha256") and oct(destination.stat().st_mode & 0o777) == item.get("mode")
+                matches = _sha(destination) == item.get("sha256") and oct(
+                    destination.stat().st_mode & 0o777
+                ) == item.get("mode")
             except OSError:
                 matches = False
             if matches:
@@ -895,7 +1054,12 @@ def _rollback_failed_restore(
                 concurrent.append(str(relative))
         else:
             concurrent.append(str(relative))
-    subprocess.run(["git", "reset", "--hard", str(repository["baselineHead"])], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "reset", "--hard", str(repository["baselineHead"])],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
     preservation_status = subprocess.run(
         ["git", "status", "--porcelain=v1", "--untracked-files=all"],
         cwd=repo,
@@ -903,7 +1067,11 @@ def _rollback_failed_restore(
         capture_output=True,
         text=True,
     ).stdout
-    if concurrent or preservation_status != expected_status or _git_value(repo, "rev-parse", "HEAD") != repository["baselineHead"]:
+    if (
+        concurrent
+        or preservation_status != expected_status
+        or _git_value(repo, "rev-parse", "HEAD") != repository["baselineHead"]
+    ):
         raise RuntimeError("restore failed and target rollback could not be verified")
     journal.unlink(missing_ok=True)
 
@@ -934,27 +1102,57 @@ def restore_git_preservation(manifest_path: Path, repo: Path, *, mode: str) -> d
     if mode == "apply":
         if repo.resolve() != source_repo:
             raise RuntimeError("apply restore requires the exact repository identity")
-        _restore_preflight(repo, repository, require_identity=True, require_clean=True, check_origin=True)
+        _restore_preflight(
+            repo, repository, require_identity=True, require_clean=True, check_origin=True
+        )
         journal = repo.parent / f".{repo.name}.oss-pr-radar-restore.json"
-        with tempfile.TemporaryDirectory(prefix="oss-pr-radar-restore-stage-", dir=repo.parent) as directory:
+        with tempfile.TemporaryDirectory(
+            prefix="oss-pr-radar-restore-stage-", dir=repo.parent
+        ) as directory:
             staging = Path(directory) / "repo"
-            subprocess.run(["git", "clone", "--local", "--no-hardlinks", str(repo), str(staging)], check=True, capture_output=True, text=True)
-            _restore_preflight(staging, repository, require_identity=False, require_clean=True, check_origin=False)
+            subprocess.run(
+                ["git", "clone", "--local", "--no-hardlinks", str(repo), str(staging)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            _restore_preflight(
+                staging, repository, require_identity=False, require_clean=True, check_origin=False
+            )
             _apply_preservation_to_repo(staging, manifest, Path(directory) / "stage-journal.json")
             expected_status = _restore_status(repo)
             try:
                 _apply_preservation_to_repo(repo, manifest, journal)
             except Exception:
-                untracked = preservation.get("untrackedFiles") if isinstance(preservation.get("untrackedFiles"), list) else []
+                untracked = (
+                    preservation.get("untrackedFiles")
+                    if isinstance(preservation.get("untrackedFiles"), list)
+                    else []
+                )
                 _rollback_failed_restore(repo, repository, expected_status, untracked, journal)
                 raise
-        return {"ok": True, "phase": "VERIFIED", "mode": "apply", "repo": str(repo.resolve()), "status": str(repository.get("status") or "")}
+        return {
+            "ok": True,
+            "phase": "VERIFIED",
+            "mode": "apply",
+            "repo": str(repo.resolve()),
+            "status": str(repository.get("status") or ""),
+        }
     _restore_preflight(source_repo, repository, require_identity=True, require_clean=False)
     with tempfile.TemporaryDirectory(prefix="oss-pr-radar-restore-") as directory:
         clone = Path(directory) / "repo"
-        subprocess.run(["git", "clone", "--local", "--no-hardlinks", str(source_repo), str(clone)], check=True, capture_output=True, text=True)
-        _restore_preflight(clone, repository, require_identity=False, require_clean=True, check_origin=False)
-        return _apply_preservation_to_repo(clone, manifest, Path(directory) / "restore-journal.json") | {"mode": "rehearse"}
+        subprocess.run(
+            ["git", "clone", "--local", "--no-hardlinks", str(source_repo), str(clone)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        _restore_preflight(
+            clone, repository, require_identity=False, require_clean=True, check_origin=False
+        )
+        return _apply_preservation_to_repo(
+            clone, manifest, Path(directory) / "restore-journal.json"
+        ) | {"mode": "rehearse"}
 
 
 def status(runtime_root: Path) -> dict[str, Any]:
@@ -964,8 +1162,13 @@ def status(runtime_root: Path) -> dict[str, Any]:
     manifests = sorted(str(path) for path in (runtime_root / "reports" / "stage7").glob("*.json"))
     return {
         "ok": True,
-        "release": {"releaseId": binding.release_id, "manifestSha256": binding.release.get("manifestSha256")},
+        "release": {
+            "releaseId": binding.release_id,
+            "manifestSha256": binding.release.get("manifestSha256"),
+        },
         "pointer": {"path": str(state / POINTER_NAME), "target": relative, "sha256": digest},
-        "retainedLedgerVersions": sorted(str(path.relative_to(state)) for path in (state / VERSIONS_DIR).glob("*.sqlite3")),
+        "retainedLedgerVersions": sorted(
+            str(path.relative_to(state)) for path in (state / VERSIONS_DIR).glob("*.sqlite3")
+        ),
         "manifests": manifests,
     }

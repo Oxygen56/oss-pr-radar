@@ -422,9 +422,7 @@ def registered_store(tmp_path: Path, worktree: Path | None = None) -> tuple[Rada
     worktree = worktree or tmp_path / "worktree"
     worktree.mkdir(parents=True)
     run_git(worktree, "init")
-    (worktree / ".git" / "info" / "exclude").write_text(
-        ".oss-pr-radar/\n", encoding="utf-8"
-    )
+    (worktree / ".git" / "info" / "exclude").write_text(".oss-pr-radar/\n", encoding="utf-8")
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     now = datetime.now(UTC)
     store.enqueue(
@@ -1010,9 +1008,12 @@ def test_workspace_task_context_is_private_and_git_ignored(tmp_path):
             branch="fix-runtime",
             evidence={},
         )
-    assert store.task_context(
-        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
-    )["stage"] == "FIX_READY"
+    assert (
+        store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")[
+            "stage"
+        ]
+        == "FIX_READY"
+    )
     assert store.task_context_candidates()[0]["threadId"] == "thread-1"
 
 
@@ -1388,10 +1389,10 @@ def test_shared_context_recovery_marks_clean_published_result_as_consumed(monkey
                 "threadId": "thread-1",
                 "worktreePath": str(worktree.resolve()),
                 "stage": "FIX_READY",
-                    "handoffMode": "controller_commit_complete",
-                    "branch": run_git(worktree, "symbolic-ref", "--short", "HEAD"),
-                    "controllerCommitChangedFiles": ["runtime.py"],
-                    "taskStage": "IMPLEMENTATION_READY",
+                "handoffMode": "controller_commit_complete",
+                "branch": run_git(worktree, "symbolic-ref", "--short", "HEAD"),
+                "controllerCommitChangedFiles": ["runtime.py"],
+                "taskStage": "IMPLEMENTATION_READY",
                 "taskId": "intent-1",
                 "probeRequired": True,
                 "probeLevel": "REPRODUCED_VALIDATED",
@@ -1491,9 +1492,7 @@ def test_clean_pr_followup_result_restores_its_wake_receipt(tmp_path):
     worktree = tmp_path / "worktree"
     worktree.mkdir()
     run_git(worktree, "init")
-    (worktree / ".git" / "info" / "exclude").write_text(
-        ".oss-pr-radar/\n", encoding="utf-8"
-    )
+    (worktree / ".git" / "info" / "exclude").write_text(".oss-pr-radar/\n", encoding="utf-8")
     run_git(worktree, "config", "user.name", "Test Contributor")
     run_git(worktree, "config", "user.email", "test@example.com")
     (worktree / "runtime.py").write_text("value = 1\n", encoding="utf-8")
@@ -5032,7 +5031,7 @@ def test_pr_followup_commit_cannot_self_attest_independent_review(monkeypatch, t
                 "followupDigest": candidate["wakeDigest"],
                 "handoffMode": "controller_commit_required",
                 "commitSha": None,
-                    "branch": run_git(worktree, "symbolic-ref", "--short", "HEAD"),
+                "branch": run_git(worktree, "symbolic-ref", "--short", "HEAD"),
                 "commitMessage": "fix: address runtime review",
                 "changedFiles": ["runtime.py"],
                 "tests": [{"command": "pytest tests/runtime", "exitCode": 0}],
@@ -5719,9 +5718,9 @@ def test_controller_ingests_followup_fix_as_update_to_exact_existing_pr(tmp_path
                 "controllerCommitChangedFiles": ["runtime.py"],
                 "commitMessage": "fix: preserve runtime boundary",
                 "changedFiles": ["runtime.py"],
-                    "headSha": head_sha,
-                    "previousCommitSha": previous_head,
-                    "selectedBaseSha": base_sha,
+                "headSha": head_sha,
+                "previousCommitSha": previous_head,
+                "selectedBaseSha": base_sha,
                 "taskId": "intent-1",
                 "codePaths": ["runtime.py"],
                 "preTaskEvidence": {
@@ -6143,9 +6142,7 @@ def _controller_commit_result(
             for item in store.task_result_candidates()
             if item["key"] == "a/b#1" and item["threadId"] == "thread-1"
         )
-        context = json.loads(
-            (result_path.parent / "task-context.json").read_text(encoding="utf-8")
-        )
+        context = json.loads((result_path.parent / "task-context.json").read_text(encoding="utf-8"))
         result, _raw = MODULE._finalize_controller_commit(
             candidate=candidate_record,
             context=context,
@@ -6201,9 +6198,7 @@ def _refresh_reproduction_certificate(result_path: Path) -> str:
         unsigned["branch"] = existing.get("headRef") or value.get(
             "branch", "fix/1-runtime-boundary"
         )
-        unsigned["controllerCommitChangedFiles"] = list(
-            value.get("changedFiles") or ["runtime.py"]
-        )
+        unsigned["controllerCommitChangedFiles"] = list(value.get("changedFiles") or ["runtime.py"])
         publication = unsigned.get("publication")
         if isinstance(publication, dict):
             unsigned["publication"] = dict(publication) | {"baseBranch": "main"}
@@ -6361,9 +6356,9 @@ def _sign_reproduction_certificate(
             thread_id=str(value["threadId"]),
             cwd=worktree,
         )
-        value["contextDigest"] = json.loads(
-            context_path.read_text(encoding="utf-8")
-        )["contextDigest"]
+        value["contextDigest"] = json.loads(context_path.read_text(encoding="utf-8"))[
+            "contextDigest"
+        ]
         if (
             isinstance(value.get("quality"), dict)
             and value["quality"].get("independent_review_passed") is True
@@ -6382,9 +6377,7 @@ def _legal_queue_publication_fixture(tmp_path: Path, *, request_id: str = "reque
     worktree = tmp_path / f"worktree-{request_id}"
     worktree.mkdir()
     run_git(worktree, "init")
-    (worktree / ".git" / "info" / "exclude").write_text(
-        ".oss-pr-radar/\n", encoding="utf-8"
-    )
+    (worktree / ".git" / "info" / "exclude").write_text(".oss-pr-radar/\n", encoding="utf-8")
     run_git(worktree, "config", "user.name", "Test Contributor")
     run_git(worktree, "config", "user.email", "test@example.com")
     (worktree / "runtime.py").write_text("value = 2\n", encoding="utf-8")
@@ -8064,9 +8057,12 @@ def test_complete_fix_ready_requires_managed_write_before_legacy_stage(tmp_path,
     first = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
 
     assert first["ok"] is False
-    assert store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")[
-        "stage"
-    ] != "FIX_READY"
+    assert (
+        store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")[
+            "stage"
+        ]
+        != "FIX_READY"
+    )
 
 
 def test_fix_ready_replays_legacy_projection_after_managed_success(tmp_path, monkeypatch):
@@ -8084,18 +8080,24 @@ def test_fix_ready_replays_legacy_projection_after_managed_success(tmp_path, mon
     first = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
 
     assert first["ok"] is False, first
-    assert store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")[
-        "stage"
-    ] != "FIX_READY"
+    assert (
+        store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")[
+            "stage"
+        ]
+        != "FIX_READY"
+    )
     with sqlite3.connect(tmp_path / "ledger.sqlite3") as connection:
         assert connection.execute("SELECT COUNT(*) FROM managed_results").fetchone()[0] == 1
 
     replay = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
 
     assert replay["ok"] is True
-    assert store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")[
-        "stage"
-    ] == "FIX_READY"
+    assert (
+        store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")[
+            "stage"
+        ]
+        == "FIX_READY"
+    )
     with sqlite3.connect(tmp_path / "ledger.sqlite3") as connection:
         assert connection.execute("SELECT COUNT(*) FROM managed_results").fetchone()[0] == 1
 
@@ -8133,7 +8135,7 @@ def test_validation_followup_uses_cumulative_files_for_first_publication(tmp_pat
             "headSha": followup_head,
             "controllerCommitChangedFiles": ["test_runtime.py"],
             "commitMessage": "test: cover runtime boundary",
-                "changedFiles": ["runtime.py", "test_runtime.py"],
+            "changedFiles": ["runtime.py", "test_runtime.py"],
             "quality": {field: True for field in QUALITY_FIELDS},
         }
     )
@@ -9172,7 +9174,9 @@ def test_publication_cap_blocks_before_push_or_create_pr(monkeypatch, tmp_path):
             auto_created=True,
         )
     evidence_path = tmp_path / "result.json"
-    evidence_path.write_text(json.dumps({"quality": {"independent_review_passed": True}}), encoding="utf-8")
+    evidence_path.write_text(
+        json.dumps({"quality": {"independent_review_passed": True}}), encoding="utf-8"
+    )
     blocked = []
 
     class Store:
@@ -9233,9 +9237,7 @@ def test_publication_cap_blocks_before_push_or_create_pr(monkeypatch, tmp_path):
 def test_publication_finalize_failure_reconciles_without_second_create_pr(monkeypatch, tmp_path):
     ledger_path = tmp_path / "ledger.sqlite3"
     ManagedLedger(ledger_path, ensure_schema=True)
-    fixture = _legal_queue_publication_fixture(
-        tmp_path, request_id="request-reconcile-queue"
-    )
+    fixture = _legal_queue_publication_fixture(tmp_path, request_id="request-reconcile-queue")
     request = fixture["request"]
     calls = []
 
@@ -9286,7 +9288,9 @@ def test_publication_finalize_failure_reconciles_without_second_create_pr(monkey
     second = MODULE.run_publication_queue(SimpleNamespace(ledger=ledger_path))
 
     assert first["published"] == []
-    assert first["errors"] == [{"requestId": "request-reconcile-queue", "error": "finalize interrupted"}]
+    assert first["errors"] == [
+        {"requestId": "request-reconcile-queue", "error": "finalize interrupted"}
+    ]
     assert second["published"] == [
         {
             "requestId": "request-reconcile-queue",
@@ -9408,7 +9412,9 @@ def test_bridge_operation_requires_runtime_root_before_dispatch(monkeypatch, cap
     assert "runtime-root" in result["error"]
 
 
-def test_every_bridge_operation_requires_authorization_before_dispatch(monkeypatch, tmp_path, capsys):
+def test_every_bridge_operation_requires_authorization_before_dispatch(
+    monkeypatch, tmp_path, capsys
+):
     monkeypatch.setattr(MODULE, "bind_runtime", lambda *_args, **_kwargs: object())
     monkeypatch.setattr(
         MODULE,

@@ -43,7 +43,8 @@ def receipt_snapshot(root: Path) -> dict[str, object]:
             if path.is_file()
             and (
                 path.name == "local_dispatch_receipts.json"
-                or path.parent.name in {"receipt", "receipts", "root_task_receipts", "task_turn_receipts"}
+                or path.parent.name
+                in {"receipt", "receipts", "root_task_receipts", "task_turn_receipts"}
             )
         ]
         for path in sorted(candidates):
@@ -117,8 +118,12 @@ def main() -> int:
         "--source-root", type=Path, default=Path("/Users/oxygen/Documents/github/oss-pr-radar")
     )
     parser.add_argument("--followup", type=Path)
-    parser.add_argument("--copy", type=Path, default=ROOT / ".artifacts" / "radar_ledger.rehearsal.sqlite3")
-    parser.add_argument("--report", type=Path, default=ROOT / "reports" / "managed-migration-rehearsal.json")
+    parser.add_argument(
+        "--copy", type=Path, default=ROOT / ".artifacts" / "radar_ledger.rehearsal.sqlite3"
+    )
+    parser.add_argument(
+        "--report", type=Path, default=ROOT / "reports" / "managed-migration-rehearsal.json"
+    )
     args = parser.parse_args()
     source = args.source.resolve()
     source_root = args.source_root.resolve()
@@ -136,7 +141,9 @@ def main() -> int:
     target_connection = sqlite3.connect(target)
     try:
         source_journal_mode = str(source_journal.execute("PRAGMA journal_mode").fetchone()[0])
-        target_journal_mode_before = str(target_connection.execute("PRAGMA journal_mode").fetchone()[0])
+        target_journal_mode_before = str(
+            target_connection.execute("PRAGMA journal_mode").fetchone()[0]
+        )
     finally:
         source_journal.close()
         target_connection.close()
@@ -149,7 +156,11 @@ def main() -> int:
     )
     managed_after_import = _managed_counts(target)
     adapter = ManagedAdapter(ROOT, target)
-    followup_state = json.loads(followup_path.read_text(encoding="utf-8")) if followup_path.is_file() else {"items": []}
+    followup_state = (
+        json.loads(followup_path.read_text(encoding="utf-8"))
+        if followup_path.is_file()
+        else {"items": []}
+    )
     managed_followup = adapter.record_followup(
         followup_state, {"run_id": "managed-migration-rehearsal"}
     )
@@ -186,8 +197,12 @@ def main() -> int:
         },
         "openPrImport": {
             "beforeAfter": _pr_summary(observations),
-            "import": {key: value for key, value in import_result.items() if key not in {"before", "after"}},
-            "replay": {key: value for key, value in replay_import.items() if key not in {"before", "after"}},
+            "import": {
+                key: value for key, value in import_result.items() if key not in {"before", "after"}
+            },
+            "replay": {
+                key: value for key, value in replay_import.items() if key not in {"before", "after"}
+            },
             "managedCountsBeforeImport": managed_before_import,
             "managedCountsAfterImport": managed_after_import,
             "managedCountsBeforeReplay": managed_before_replay,
@@ -195,9 +210,7 @@ def main() -> int:
             "replayNoGrowth": managed_before_replay == managed_after_replay,
         },
         "managedFollowup": managed_followup,
-        "projectionBucketCounts": {
-            key: len(value) for key, value in projection["buckets"].items()
-        },
+        "projectionBucketCounts": {key: len(value) for key, value in projection["buckets"].items()},
         "source": "read_only_sqlite_backup_and_local_war_room_snapshot",
         "secretsIncluded": False,
         "target": str(target),

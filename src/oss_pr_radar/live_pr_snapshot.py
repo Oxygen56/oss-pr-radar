@@ -92,7 +92,9 @@ def _followup_items(path: Path) -> list[dict[str, Any]]:
         if not isinstance(item, dict):
             raise ValueError("follow-up snapshot contains an invalid item")
         if item.get("url") and item.get("headSha"):
-            items.append({"url": str(item["url"]), "headSha": str(item["headSha"]), "state": "OPEN"})
+            items.append(
+                {"url": str(item["url"]), "headSha": str(item["headSha"]), "state": "OPEN"}
+            )
     return items
 
 
@@ -243,7 +245,9 @@ def _fetch_observation(client: GitHubClient, key: str) -> dict[str, Any]:
     }
 
 
-def fetch_observations(client: GitHubClient, keys: list[str], *, workers: int) -> list[dict[str, Any]]:
+def fetch_observations(
+    client: GitHubClient, keys: list[str], *, workers: int
+) -> list[dict[str, Any]]:
     if not 1 <= workers <= MAX_WORKERS:
         raise ValueError(f"workers must be between 1 and {MAX_WORKERS}")
     with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="live-pr") as executor:
@@ -275,7 +279,9 @@ def build_live_snapshot(
     for _attempt in range(1, max_attempts + 1):
         before = input_binding(source, legacy_db, legacy_reports, followup)
         try:
-            with tempfile.TemporaryDirectory(prefix=".live-pr-state-", dir=source.parent) as directory:
+            with tempfile.TemporaryDirectory(
+                prefix=".live-pr-state-", dir=source.parent
+            ) as directory:
                 source_backup = Path(directory) / "source-backup.sqlite3"
                 target = Path(directory) / "migrated.sqlite3"
                 stable_sqlite_copy(
@@ -345,7 +351,9 @@ def validate_snapshot_binding(
         raise ValueError("live-state snapshot schema is unsupported")
     now = datetime.now(UTC)
     generated_at = _fresh_utc(snapshot.get("generatedAt"), field="generatedAt", now=now)
-    binding = input_binding(source.resolve(), legacy_db.resolve(), legacy_reports.resolve(), followup.resolve())
+    binding = input_binding(
+        source.resolve(), legacy_db.resolve(), legacy_reports.resolve(), followup.resolve()
+    )
     if snapshot.get("sourceGeneration") != binding["sourceGeneration"]:
         raise ValueError("live-state snapshot source generation does not match inputs")
     if snapshot.get("inputDigests") != binding["inputDigests"]:
@@ -377,14 +385,27 @@ def validate_snapshot_binding(
         state = observation.get("state")
         url = observation.get("url")
         head_sha = observation.get("headSha")
-        if state not in {"OPEN", "CLOSED", "MERGED"} or url != expected_url or not isinstance(head_sha, str) or not head_sha:
+        if (
+            state not in {"OPEN", "CLOSED", "MERGED"}
+            or url != expected_url
+            or not isinstance(head_sha, str)
+            or not head_sha
+        ):
             raise ValueError(f"live-state observation fields are invalid for {key}")
-        if evidence.get("state") != state or evidence.get("url") != url or evidence.get("headSha") != head_sha:
+        if (
+            evidence.get("state") != state
+            or evidence.get("url") != url
+            or evidence.get("headSha") != head_sha
+        ):
             raise ValueError(f"live-state API evidence does not match observation for {key}")
         if evidence.get("endpoint") != f"repos/{owner_repo}/pulls/{int(number_text)}":
             raise ValueError(f"live-state endpoint does not match observation for {key}")
         digest = evidence.get("responseDigest")
-        if not isinstance(digest, str) or len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+        if (
+            not isinstance(digest, str)
+            or len(digest) != 64
+            or any(char not in "0123456789abcdef" for char in digest)
+        ):
             raise ValueError(f"live-state response digest is invalid for {key}")
         fetched_at = _fresh_utc(evidence.get("fetchedAt"), field=f"fetchedAt for {key}", now=now)
         if fetched_at > generated_at:

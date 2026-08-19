@@ -32,15 +32,18 @@ def test_expired_reservation_requires_positive_absence_before_retry(tmp_path):
         now="2026-08-19T00:00:00Z",
     )
     assert ledger.expire_publication_reservations(now="2026-08-19T00:01:00Z") == 1
-    assert ledger.reserve_publication_slot(
-        reservation_key="publication:crash",
-        request_id="crash",
-        repo="owner/repo",
-        head_ref="feature/crash",
-        head_sha="head-crash",
-        idempotency_key="publication:crash",
-        now="2026-08-19T00:01:01Z",
-    )["state"] == "CHECK_ABSENCE_REQUIRED"
+    assert (
+        ledger.reserve_publication_slot(
+            reservation_key="publication:crash",
+            request_id="crash",
+            repo="owner/repo",
+            head_ref="feature/crash",
+            head_sha="head-crash",
+            idempotency_key="publication:crash",
+            now="2026-08-19T00:01:01Z",
+        )["state"]
+        == "CHECK_ABSENCE_REQUIRED"
+    )
 
     class FailingGithub:
         def query_branch(self, repo, head_ref):

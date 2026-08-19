@@ -60,7 +60,9 @@ def test_pre_task_gate_requires_live_open_issue_and_pinned_base():
     assert closed["allowed"] is False
     assert closed["classification"] == "task_no_go"
 
-    assigned = pre_task_gate(candidate(), evidence(issue={"state": "open", "assignees": ["maintainer"]}))
+    assigned = pre_task_gate(
+        candidate(), evidence(issue={"state": "open", "assignees": ["maintainer"]})
+    )
     assert "issue_assigned" in assigned["reasons"]
     assert assigned["allowed"] is False
 
@@ -90,7 +92,8 @@ def test_policy_duplicate_and_code_surface_fail_closed():
     assert "assignment_required" in assignment["reasons"]
 
     disclosure = pre_task_gate(
-        candidate(), evidence(aiDisclosureConflict=True, policy={"status": "ai_disclosure_conflict"})
+        candidate(),
+        evidence(aiDisclosureConflict=True, policy={"status": "ai_disclosure_conflict"}),
     )
     assert disclosure["allowed"] is False
     assert disclosure["classification"] == "blocked_pre_task"
@@ -100,7 +103,8 @@ def test_policy_duplicate_and_code_surface_fail_closed():
     assert "no_code_surface" in docs["reasons"]
 
     strong = pre_task_gate(
-        candidate(), evidence(duplicate={"status": "covered_strong"}, duplicateStatus="covered_strong")
+        candidate(),
+        evidence(duplicate={"status": "covered_strong"}, duplicateStatus="covered_strong"),
     )
     assert strong["classification"] == "task_no_go"
     assert "strong_existing_pr" in strong["reasons"]
@@ -126,8 +130,13 @@ def test_ci_failure_does_not_erase_strong_pr_evidence():
 
 
 def test_capacity_is_stable_and_never_backfills_exploration():
-    mature = [{"repo": "mature/project", "num": index, "maturity": "mature", "score": index} for index in range(3)]
-    exploration = [{"repo": "explore/project", "num": index, "maturity": "exploration"} for index in range(4)]
+    mature = [
+        {"repo": "mature/project", "num": index, "maturity": "mature", "score": index}
+        for index in range(3)
+    ]
+    exploration = [
+        {"repo": "explore/project", "num": index, "maturity": "exploration"} for index in range(4)
+    ]
     first = allocate_capacity(mature + exploration, capacity=10, seed="run-1")
     second = allocate_capacity(mature + exploration, capacity=10, seed="run-1")
     assert first["selectedKeys"] == second["selectedKeys"]
@@ -140,8 +149,20 @@ def test_learning_cohort_keeps_censored_separate_from_success_and_failure():
     now = datetime(2026, 8, 19, tzinfo=UTC)
     report = cohort_report(
         [
-            {"key": "a", "selectedAt": "2026-06-01T00:00:00Z", "selected": True, "task": True, "outcome": "success"},
-            {"key": "b", "selectedAt": "2026-06-01T00:00:00Z", "selected": True, "task": True, "outcome": "failure"},
+            {
+                "key": "a",
+                "selectedAt": "2026-06-01T00:00:00Z",
+                "selected": True,
+                "task": True,
+                "outcome": "success",
+            },
+            {
+                "key": "b",
+                "selectedAt": "2026-06-01T00:00:00Z",
+                "selected": True,
+                "task": True,
+                "outcome": "failure",
+            },
             {"key": "c", "selectedAt": "2026-06-01T00:00:00Z", "selected": True, "task": True},
         ],
         now=now,
@@ -167,7 +188,10 @@ def test_scan_to_task_gate_only_creates_task_for_passed_candidate(tmp_path: Path
     adapter = ManagedAdapter(tmp_path, database)
     adapter.ensure()
     passed_gate = pre_task_gate(candidate(), evidence())
-    blocked_gate = pre_task_gate(candidate(repo="mature/project", num=8), evidence(issue={"state": "closed", "assignees": []}))
+    blocked_gate = pre_task_gate(
+        candidate(repo="mature/project", num=8),
+        evidence(issue={"state": "closed", "assignees": []}),
+    )
     common = {
         "url": "https://github.com/mature/project/issues/7",
         "title": "Runtime state is lost",

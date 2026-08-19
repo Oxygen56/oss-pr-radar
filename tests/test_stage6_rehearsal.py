@@ -65,7 +65,13 @@ def test_stable_copy_requires_proof_and_preserves_target_on_source_change(tmp_pa
         connection.close()
 
     with pytest.raises(QuiescenceError, match="did not stabilize"):
-        stable_sqlite_copy(source, failed_target, quiesce_token="stage6-test", max_attempts=2, generation_hook=always_writer)
+        stable_sqlite_copy(
+            source,
+            failed_target,
+            quiesce_token="stage6-test",
+            max_attempts=2,
+            generation_hook=always_writer,
+        )
     assert not failed_target.exists()
     with sqlite3.connect(source) as connection:
         assert connection.execute("SELECT COUNT(*) FROM data").fetchone()[0] == 4
@@ -119,7 +125,12 @@ def test_detached_report_envelope_binds_report_bytes_and_head(tmp_path):
     report = tmp_path / "stage6-public-summary.json"
     envelope = tmp_path / "stage6-public-envelope.json"
     secure_atomic_json(report, {"codeHead": "a" * 40, "status": "ok"})
-    write_detached_report_envelope(report, envelope, code_head="a" * 40, inventory=artifact_manifest(tmp_path, exclude_names={envelope.name}))
+    write_detached_report_envelope(
+        report,
+        envelope,
+        code_head="a" * 40,
+        inventory=artifact_manifest(tmp_path, exclude_names={envelope.name}),
+    )
     validate_detached_report_envelope(report, envelope, code_head="a" * 40)
     report.write_text(report.read_text(encoding="utf-8") + "\n", encoding="utf-8")
     with pytest.raises(ValueError, match="report bytes"):

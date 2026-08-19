@@ -26,16 +26,14 @@ def test_sqlite_interrupted_transaction_rolls_back_before_restart(tmp_path):
 
     with pytest.raises(sqlite3.OperationalError, match="interrupted"):
         with store.transaction() as connection:
-            connection.execute(
-                "UPDATE opportunities SET title='uncommitted' WHERE key='a/b#1'"
-            )
+            connection.execute("UPDATE opportunities SET title='uncommitted' WHERE key='a/b#1'")
             raise sqlite3.OperationalError("interrupted")
 
     restarted = RadarLedger(database)
     with restarted.connect() as connection:
-        title = connection.execute(
-            "SELECT title FROM opportunities WHERE key='a/b#1'"
-        ).fetchone()[0]
+        title = connection.execute("SELECT title FROM opportunities WHERE key='a/b#1'").fetchone()[
+            0
+        ]
     assert title == "Bug"
     replay = audit_snapshot(
         {
@@ -68,9 +66,7 @@ def test_creating_and_attempted_effects_are_retained_and_idempotent(tmp_path):
             (effect_id,),
         )
     with pytest.raises(LedgerError, match="authenticated reproduction is required"):
-        restarted.publication_effect(
-            permit_id="permit-1", action="push", request_digest="digest"
-        )
+        restarted.publication_effect(permit_id="permit-1", action="push", request_digest="digest")
     assert restarted.publication_request("request-1")["status"] == "BLOCKED"
 
 

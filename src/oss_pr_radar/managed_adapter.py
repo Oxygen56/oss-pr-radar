@@ -51,7 +51,11 @@ class GitHubAbsenceQueries:
         )
         if not isinstance(value, list):
             raise RuntimeError("GitHub pull request response is uncertain")
-        matching = [item for item in value if isinstance(item, dict) and item.get("head", {}).get("sha") == head_sha]
+        matching = [
+            item
+            for item in value
+            if isinstance(item, dict) and item.get("head", {}).get("sha") == head_sha
+        ]
         return {"exists": bool(matching), "result": len(matching)}
 
 
@@ -121,7 +125,9 @@ class ManagedAdapter:
             preflight = candidate.get("preTaskGate") or candidate.get("pre_task_gate")
             preflight = preflight if isinstance(preflight, dict) else {}
             classification = preflight.get("classification")
-            opportunity_state = "DECISION_REQUIRED" if candidate.get("auto_spawn") else "SYSTEM_PROCESSING"
+            opportunity_state = (
+                "DECISION_REQUIRED" if candidate.get("auto_spawn") else "SYSTEM_PROCESSING"
+            )
             if classification == "blocked_pre_task":
                 opportunity_state = "WAITING_EXTERNAL"
             elif classification in {"task_no_go", "scan_false_positive", "state_drift"}:
@@ -180,14 +186,20 @@ class ManagedAdapter:
                     "autoSpawn": candidate.get("auto_spawn"),
                     "score": candidate.get("score"),
                     "ranking": candidate.get("ranking") or {},
-                    "preTaskGate": candidate.get("preTaskGate") or candidate.get("pre_task_gate") or {},
+                    "preTaskGate": candidate.get("preTaskGate")
+                    or candidate.get("pre_task_gate")
+                    or {},
                     "maturity": candidate.get("maturity") or "mature",
                     "capacityDisposition": candidate.get("capacityDisposition"),
                 },
             )
-            if candidate.get("auto_spawn") is True and (
-                candidate.get("preTaskGate") or candidate.get("pre_task_gate") or {}
-            ).get("allowed") is True:
+            if (
+                candidate.get("auto_spawn") is True
+                and (candidate.get("preTaskGate") or candidate.get("pre_task_gate") or {}).get(
+                    "allowed"
+                )
+                is True
+            ):
                 ledger.record_event(
                     event_type="OPPORTUNITY_SELECTED",
                     idempotency_key=f"select:{report.get('run_id') or report.get('now')}:{key}",
@@ -349,19 +361,32 @@ class ManagedAdapter:
         owner, repo, number, issue_url = _issue_parts(key)
         opportunity_key = f"{owner}/{repo}#{number}"
         requested_stage = state or str(intent.get("taskStage") or "REPRODUCTION_REQUIRED")
-        pre_task = intent.get("preTaskEvidence") if isinstance(intent.get("preTaskEvidence"), dict) else {}
+        pre_task = (
+            intent.get("preTaskEvidence") if isinstance(intent.get("preTaskEvidence"), dict) else {}
+        )
         code_paths = [
             str(path)
-            for path in (intent.get("codePaths") or pre_task.get("codePaths") or pre_task.get("codePathsPlan") or [])
+            for path in (
+                intent.get("codePaths")
+                or pre_task.get("codePaths")
+                or pre_task.get("codePathsPlan")
+                or []
+            )
             if str(path).strip()
         ]
         selected_base = str(intent.get("selectedBaseSha") or pre_task.get("baseSha") or "")
         default_branch = str(intent.get("defaultBranch") or pre_task.get("defaultBranch") or "main")
-        result_digest = str(intent.get("resultDigest") or intent.get("preTaskEvidenceDigest") or sha256_json({
-            "taskId": str(intent.get("intentId") or opportunity_key),
-            "baseSha": selected_base,
-            "codePaths": code_paths,
-        }))
+        result_digest = str(
+            intent.get("resultDigest")
+            or intent.get("preTaskEvidenceDigest")
+            or sha256_json(
+                {
+                    "taskId": str(intent.get("intentId") or opportunity_key),
+                    "baseSha": selected_base,
+                    "codePaths": code_paths,
+                }
+            )
+        )
         requested_receipt = intent.get("reproductionReceipt") or intent.get("probeReceipt")
         expected_opportunity = self.ledger.opportunity_identity(opportunity_key)
         if expected_opportunity is None:
@@ -392,7 +417,9 @@ class ManagedAdapter:
                     if expected_opportunity
                     else ""
                 ),
-                base_sha=(expected_opportunity.get("selectedBaseSha") if expected_opportunity else ""),
+                base_sha=(
+                    expected_opportunity.get("selectedBaseSha") if expected_opportunity else ""
+                ),
                 code_paths=code_paths,
                 required_level=REPRODUCED_VALIDATED,
                 issue_url=(expected_opportunity.get("issueUrl") if expected_opportunity else None),
@@ -429,7 +456,9 @@ class ManagedAdapter:
                 "taskStage": requested_stage,
                 "probeLevel": str(intent.get("probeLevel") or "UNVERIFIED"),
                 "probeReceiptDigest": intent.get("probeReceiptDigest"),
-                "probeReceipt": requested_receipt if requested_stage == "IMPLEMENTATION_READY" else None,
+                "probeReceipt": requested_receipt
+                if requested_stage == "IMPLEMENTATION_READY"
+                else None,
                 **probe_provenance,
             },
             observed_at=str(intent.get("issuedAt") or "") or None,
@@ -524,11 +553,20 @@ class ManagedAdapter:
         if not str(thread_id or "").strip():
             raise RuntimeError("managed result requires an already-created Codex thread")
         existing_opportunity = ledger.opportunity_identity(opportunity_key)
-        pre_task = candidate.get("preTaskEvidence") if isinstance(candidate.get("preTaskEvidence"), dict) else {}
+        pre_task = (
+            candidate.get("preTaskEvidence")
+            if isinstance(candidate.get("preTaskEvidence"), dict)
+            else {}
+        )
         selected_base = str(candidate.get("selectedBaseSha") or pre_task.get("baseSha") or "")
         code_paths = [
             str(path)
-            for path in (candidate.get("codePaths") or pre_task.get("codePathsPlan") or pre_task.get("codePaths") or [])
+            for path in (
+                candidate.get("codePaths")
+                or pre_task.get("codePathsPlan")
+                or pre_task.get("codePaths")
+                or []
+            )
             if str(path).strip()
         ]
         if existing_opportunity is None:
@@ -566,7 +604,9 @@ class ManagedAdapter:
         pr_key = pr_key_from_url(pr_url) if pr_url else None
         head_sha = str(value.get("headSha") or value.get("head_sha") or "") or None
         quality = value.get("quality") if isinstance(value.get("quality"), dict) else {}
-        validation = value.get("validation") if isinstance(value.get("validation"), dict) else quality
+        validation = (
+            value.get("validation") if isinstance(value.get("validation"), dict) else quality
+        )
         reproduction_receipt = value.get("reproductionReceipt") or value.get("probeReceipt")
         probe_paths = [
             str(path)
@@ -581,7 +621,11 @@ class ManagedAdapter:
         probe_verified = verify_probe_receipt(
             reproduction_receipt if isinstance(reproduction_receipt, dict) else {},
             repo=f"{owner}/{repo}",
-            base_sha=str(candidate.get("selectedBaseSha") or (candidate.get("preTaskEvidence") or {}).get("baseSha") or ""),
+            base_sha=str(
+                candidate.get("selectedBaseSha")
+                or (candidate.get("preTaskEvidence") or {}).get("baseSha")
+                or ""
+            ),
             code_paths=probe_paths,
             required_level=REPRODUCED_VALIDATED,
             issue_url=normalized_url,
@@ -631,7 +675,10 @@ class ManagedAdapter:
             worker_state=(
                 "reproduction_required"
                 if not probe_verified
-                else str(value.get("workerState") or ("patched" if stage == "FIX_READY" else stage or "queued"))
+                else str(
+                    value.get("workerState")
+                    or ("patched" if stage == "FIX_READY" else stage or "queued")
+                )
             ),
             result_type=_stage_result_type(stage, value),
             pr_key=pr_key,
@@ -642,14 +689,21 @@ class ManagedAdapter:
             new_head_sha=head_sha,
             waiting_external=stage in {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED"},
             source="dispatch-result",
-            provenance={"issueUrl": normalized_url, "stage": stage, "probeLevel": REPRODUCED_VALIDATED if probe_verified else "PATHS_VERIFIED"},
+            provenance={
+                "issueUrl": normalized_url,
+                "stage": stage,
+                "probeLevel": REPRODUCED_VALIDATED if probe_verified else "PATHS_VERIFIED",
+            },
         )
         return {
             "ok": True,
             "result": result,
             "reproductionValidated": probe_verified,
-            "implementationAuthorized": candidate.get("taskStage") == "IMPLEMENTATION_READY" and probe_verified,
-            "publicationAllowed": stage == "FIX_READY" and candidate.get("taskStage") == "IMPLEMENTATION_READY" and probe_verified,
+            "implementationAuthorized": candidate.get("taskStage") == "IMPLEMENTATION_READY"
+            and probe_verified,
+            "publicationAllowed": stage == "FIX_READY"
+            and candidate.get("taskStage") == "IMPLEMENTATION_READY"
+            and probe_verified,
         }
 
     def transition_to_implementation(
@@ -673,7 +727,11 @@ class ManagedAdapter:
         if not verify_probe_receipt(
             receipt,
             repo=f"{owner}/{repo}",
-            base_sha=str(candidate.get("selectedBaseSha") or (candidate.get("preTaskEvidence") or {}).get("baseSha") or ""),
+            base_sha=str(
+                candidate.get("selectedBaseSha")
+                or (candidate.get("preTaskEvidence") or {}).get("baseSha")
+                or ""
+            ),
             code_paths=paths,
             issue_url=normalized_url,
             task_id=task_id,
@@ -713,7 +771,9 @@ class ManagedAdapter:
         pr_key = pr_key_from_url(pr_url)
         owner_repo, number_text = pr_key.rsplit("#", 1)
         owner, repo = owner_repo.split("/", 1)
-        head_sha = str(receipt.get("headSha") or receipt.get("remoteSha") or request.get("commitSha") or "")
+        head_sha = str(
+            receipt.get("headSha") or receipt.get("remoteSha") or request.get("commitSha") or ""
+        )
         if not head_sha:
             raise ValueError("publication receipt is missing head SHA")
         issue_url = str(request.get("issueUrl") or "")
@@ -732,7 +792,9 @@ class ManagedAdapter:
             code_paths=code_paths,
             required_level=REPRODUCED_VALIDATED,
             issue_url=normalized_issue_url,
-            task_id=str(request.get("taskId") or request.get("intentId") or request.get("threadId") or ""),
+            task_id=str(
+                request.get("taskId") or request.get("intentId") or request.get("threadId") or ""
+            ),
             head_sha=head_sha,
             commit_sha=str(request.get("commitSha") or ""),
             result_digest=str(request.get("resultDigest") or ""),
@@ -752,7 +814,10 @@ class ManagedAdapter:
             reservation_key=reservation_key,
             source_kind="MANAGED_PUBLICATION_RECEIPT",
             source="publication",
-            provenance={"requestId": request.get("requestId"), "receiptDigest": sha256_json(receipt)},
+            provenance={
+                "requestId": request.get("requestId"),
+                "receiptDigest": sha256_json(receipt),
+            },
         )
         if reservation_key:
             self.ledger.finalize_publication_reservation(
@@ -818,9 +883,7 @@ class ManagedAdapter:
         github_client: Any | None,
         now: str | None = None,
     ) -> dict[str, Any]:
-        return PublicationAbsenceReconciler(
-            self.ledger, github_client, now=now
-        ).reconcile(
+        return PublicationAbsenceReconciler(self.ledger, github_client, now=now).reconcile(
             reservation_key=reservation_key,
             repo=repo,
             head_ref=head_ref,
@@ -874,7 +937,9 @@ class ManagedAdapter:
                 repo=repo,
                 number=int(number_text),
                 head_sha=head_sha,
-                pr_url=str(item.get("url") or f"https://github.com/{owner_repo}/pull/{number_text}"),
+                pr_url=str(
+                    item.get("url") or f"https://github.com/{owner_repo}/pull/{number_text}"
+                ),
                 state="OPEN",
                 auto_created=False,
                 source_kind="FOLLOWUP_OBSERVATION",
@@ -989,4 +1054,8 @@ class ManagedAdapter:
         dispatch = self.ledger.dispatch_reply_outbox(
             sender, live_revalidator=live_revalidator, limit=limit
         )
-        return {"ok": not reconciliation["errors"] and not dispatch["errors"], "reconcile": reconciliation, "dispatch": dispatch}
+        return {
+            "ok": not reconciliation["errors"] and not dispatch["errors"],
+            "reconcile": reconciliation,
+            "dispatch": dispatch,
+        }

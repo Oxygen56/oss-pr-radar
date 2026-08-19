@@ -99,19 +99,23 @@ def test_deploy_ignores_runtime_artifacts_and_preserves_private_exclude(tmp_path
     MODULE.deploy(source, target)
 
     assert (target / "tracked.txt").read_bytes() == tracked_before
-    assert subprocess.run(
-        ["git", "diff", "--exit-code"], cwd=target, check=False
-    ).returncode == 0
-    assert subprocess.run(
-        ["git", "diff", "--cached", "--exit-code"], cwd=target, check=False
-    ).returncode == 0
-    assert subprocess.run(
-        ["git", "status", "--porcelain=v1", "--untracked-files=all"],
-        cwd=target,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout == ""
+    assert subprocess.run(["git", "diff", "--exit-code"], cwd=target, check=False).returncode == 0
+    assert (
+        subprocess.run(
+            ["git", "diff", "--cached", "--exit-code"], cwd=target, check=False
+        ).returncode
+        == 0
+    )
+    assert (
+        subprocess.run(
+            ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+            cwd=target,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        == ""
+    )
     private_rules = exclude.read_text(encoding="utf-8")
     assert "# keep this local rule\n*.local\n" in private_rules
     for pattern in MODULE.LOCAL_RUNTIME_IGNORE_PATTERNS:
@@ -120,12 +124,18 @@ def test_deploy_ignores_runtime_artifacts_and_preserves_private_exclude(tmp_path
     assert "!/state/.gitkeep" in (Path(__file__).parents[1] / ".gitignore").read_text(
         encoding="utf-8"
     )
-    assert subprocess.run(
-        ["git", "check-ignore", "-q", "current-release"], cwd=target, check=False
-    ).returncode == 0
-    assert subprocess.run(
-        ["git", "check-ignore", "-q", "releases/example"], cwd=target, check=False
-    ).returncode == 0
+    assert (
+        subprocess.run(
+            ["git", "check-ignore", "-q", "current-release"], cwd=target, check=False
+        ).returncode
+        == 0
+    )
+    assert (
+        subprocess.run(
+            ["git", "check-ignore", "-q", "releases/example"], cwd=target, check=False
+        ).returncode
+        == 0
+    )
 
 
 def test_deploy_preserves_existing_target_dirt_and_stage7_rehearses_only_that_dirt(
@@ -155,11 +165,14 @@ def test_deploy_preserves_existing_target_dirt_and_stage7_rehearses_only_that_di
         text=True,
     )
     MODULE.deploy(source_repo, target)
-    assert subprocess.check_output(
-        ["git", "status", "--porcelain=v1", "--untracked-files=all"],
-        cwd=target,
-        text=True,
-    ) == status_before
+    assert (
+        subprocess.check_output(
+            ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+            cwd=target,
+            text=True,
+        )
+        == status_before
+    )
     state = target / "state"
     versions = state / "ledger-releases"
     versions.mkdir(parents=True)
@@ -192,11 +205,14 @@ def test_deploy_preserves_existing_target_dirt_and_stage7_rehearses_only_that_di
         production_repo=target,
     )
     preservation = result["manifest"]["gitPreservation"]
-    assert subprocess.check_output(
-        ["git", "status", "--porcelain=v1", "--untracked-files=all"],
-        cwd=target,
-        text=True,
-    ) == status_before
+    assert (
+        subprocess.check_output(
+            ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+            cwd=target,
+            text=True,
+        )
+        == status_before
+    )
     assert {item["path"] for item in preservation["untrackedFiles"]} == {"user-note.txt"}
     rehearsed = restore_git_preservation(Path(result["manifestPath"]), target, mode="rehearse")
     assert rehearsed["ok"] is True

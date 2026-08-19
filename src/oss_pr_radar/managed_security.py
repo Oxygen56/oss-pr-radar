@@ -113,7 +113,9 @@ def sign_current(payload: dict[str, Any], *, context: str) -> dict[str, Any]:
     derived = hmac.new(master, CONTEXTS[context].encode(), hashlib.sha256).digest()
     return {
         "keyId": key_id,
-        "signature": hmac.new(derived, canonical_json(payload).encode(), hashlib.sha256).hexdigest(),
+        "signature": hmac.new(
+            derived, canonical_json(payload).encode(), hashlib.sha256
+        ).hexdigest(),
     }
 
 

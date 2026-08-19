@@ -75,9 +75,7 @@ def test_slow_reconciler_signs_exact_absence_and_releases(tmp_path):
     reserve_expired(ledger)
     github = AbsentGithub()
 
-    result = PublicationAbsenceReconciler(
-        ledger, github, now="2026-08-19T00:02:00Z"
-    ).reconcile(
+    result = PublicationAbsenceReconciler(ledger, github, now="2026-08-19T00:02:00Z").reconcile(
         reservation_key="publication:round5",
         repo="owner/repo",
         head_ref="feature/round5",
@@ -161,7 +159,11 @@ def test_attestation_wrong_endpoint_tamper_stale_and_replay_are_rejected(tmp_pat
         queries=[
             {"endpoint": "repos/owner/repo/branches/feature/round5", "ok": True, "exists": False},
             {"endpoint": "repos/owner/repo/git/commits/head-round5", "ok": True, "exists": False},
-            {"endpoint": "repos/owner/repo/pulls?head=owner:feature/round5&state=all", "ok": True, "exists": False},
+            {
+                "endpoint": "repos/owner/repo/pulls?head=owner:feature/round5&state=all",
+                "ok": True,
+                "exists": False,
+            },
         ],
         local_effect={"endpoint": "local:publication_effects", "ok": True, "exists": False},
         observed_at="2026-08-19T00:02:00Z",
@@ -254,7 +256,9 @@ def test_sensitive_idempotency_fingerprint_survives_snapshot_and_raw_replay(tmp_
     with restored._connection() as connection:
         row = connection.execute("SELECT * FROM managed_lifecycle_events").fetchone()
         assert row["idempotency_fingerprint"] == stable_fingerprint(raw_key)
-        assert connection.execute("SELECT COUNT(*) FROM managed_lifecycle_events").fetchone()[0] == 1
+        assert (
+            connection.execute("SELECT COUNT(*) FROM managed_lifecycle_events").fetchone()[0] == 1
+        )
     assert raw_key not in snapshot.read_bytes().decode("latin1", errors="ignore")
 
 
@@ -337,7 +341,9 @@ def test_full_certified_reply_and_reservation_restore_is_authorized(tmp_path):
         new_head_sha="head-full",
     )
     assert result["advanced"] is True
-    ledger.record_ci_run(ci_key="ci-full", pr_key="owner/repo#9", head_sha="head-full", status="PASSED")
+    ledger.record_ci_run(
+        ci_key="ci-full", pr_key="owner/repo#9", head_sha="head-full", status="PASSED"
+    )
     ledger.record_maintainer_event(
         event_key="event-full",
         pr_key="owner/repo#9",
@@ -405,7 +411,9 @@ def _absence_attestation(ledger, reservation_key, *, observed_at, nonce, query_o
 
 def test_snapshot_rejects_unsigned_self_consistent_certificate(tmp_path):
     source, ledger = make_ledger(tmp_path, "forged-cert.sqlite3")
-    ledger.bind_task(task_id="task-cert", opportunity_key="owner/repo#1", thread_id=None, worktree_path=None)
+    ledger.bind_task(
+        task_id="task-cert", opportunity_key="owner/repo#1", thread_id=None, worktree_path=None
+    )
     ledger.record_result(
         task_id="task-cert",
         result_digest="result-cert",
@@ -424,7 +432,11 @@ def test_snapshot_rejects_unsigned_self_consistent_certificate(tmp_path):
     certificate["keyId"] = None
     certificate["signature"] = None
     certificate["contentDigest"] = _digest(
-        {key: value for key, value in certificate.items() if key not in {"contentDigest", "keyId", "signature"}}
+        {
+            key: value
+            for key, value in certificate.items()
+            if key not in {"contentDigest", "keyId", "signature"}
+        }
     )
     result["validationCertificate"] = certificate
     snapshot["contentDigest"] = _digest(snapshot["rows"])
@@ -468,14 +480,19 @@ def test_attestation_migration_removes_v6_single_reservation_constraint(tmp_path
         nonce="version-2",
     )
     with ledger._connection() as connection:
-        assert connection.execute(
-            "SELECT COUNT(*) FROM managed_publication_absence_attestations WHERE reservation_key='publication:versions'"
-        ).fetchone()[0] == 2
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM managed_publication_absence_attestations WHERE reservation_key='publication:versions'"
+            ).fetchone()[0]
+            == 2
+        )
 
 
 def test_snapshot_allows_explicit_unauthenticated_result_but_never_ready(tmp_path):
     source, ledger = make_ledger(tmp_path, "ordinary-result.sqlite3")
-    ledger.bind_task(task_id="task-ordinary", opportunity_key="owner/repo#2", thread_id=None, worktree_path=None)
+    ledger.bind_task(
+        task_id="task-ordinary", opportunity_key="owner/repo#2", thread_id=None, worktree_path=None
+    )
     ledger.record_result(
         task_id="task-ordinary",
         result_digest="queued-result",
@@ -518,7 +535,10 @@ def test_nonce_consumption_is_atomic_and_cross_round_replay_is_rejected(tmp_path
     replay = ledger.apply_absence_attestation(attestation, now="2026-08-19T00:02:02Z")
     assert replay["reason"] == "REPLAY_REJECTED"
     with ledger._connection() as connection:
-        assert connection.execute("SELECT COUNT(*) FROM attestation_nonce_consumptions").fetchone()[0] == 1
+        assert (
+            connection.execute("SELECT COUNT(*) FROM attestation_nonce_consumptions").fetchone()[0]
+            == 1
+        )
 
     snapshot = tmp_path / "nonce.snapshot.gz"
     export_snapshot(source, snapshot)
@@ -527,7 +547,10 @@ def test_nonce_consumption_is_atomic_and_cross_round_replay_is_rejected(tmp_path
     cross_round = restored.apply_absence_attestation(attestation, now="2026-08-19T00:02:03Z")
     assert cross_round["reason"] == "REPLAY_REJECTED"
     with restored._connection() as connection:
-        assert connection.execute("SELECT COUNT(*) FROM attestation_nonce_consumptions").fetchone()[0] == 1
+        assert (
+            connection.execute("SELECT COUNT(*) FROM attestation_nonce_consumptions").fetchone()[0]
+            == 1
+        )
 
 
 def test_nonce_consumption_waiting_tamper_rotation_and_concurrency(tmp_path, monkeypatch):
@@ -552,7 +575,10 @@ def test_nonce_consumption_waiting_tamper_rotation_and_concurrency(tmp_path, mon
     )
     waiting_result = ledger.apply_absence_attestation(waiting, now="2026-08-19T00:02:01Z")
     assert waiting_result["state"] == "WAITING_EXTERNAL"
-    assert ledger.apply_absence_attestation(waiting, now="2026-08-19T00:02:02Z")["reason"] == "REPLAY_REJECTED"
+    assert (
+        ledger.apply_absence_attestation(waiting, now="2026-08-19T00:02:02Z")["reason"]
+        == "REPLAY_REJECTED"
+    )
 
     tampered = dict(waiting)
     tampered["contentDigest"] = "0" * 64
@@ -578,7 +604,9 @@ def test_nonce_consumption_waiting_tamper_rotation_and_concurrency(tmp_path, mon
     )
     monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", "nonce-current-key-bbbbbbbb")
     monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY_ID", "nonce-current")
-    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY_PREVIOUS", "managed-test-signing-key-0123456789abcdef")
+    monkeypatch.setenv(
+        "RADAR_DISPATCH_HMAC_KEY_PREVIOUS", "managed-test-signing-key-0123456789abcdef"
+    )
     monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY_PREVIOUS_ID", "test-current")
     with pytest.raises(PermissionError):
         ledger.apply_absence_attestation(rotation_attestation, now="2026-08-19T00:02:04Z")
@@ -613,4 +641,7 @@ def test_nonce_consumption_waiting_tamper_rotation_and_concurrency(tmp_path, mon
     assert sum(result.get("released") is True for result in results) == 1
     assert sum(result.get("reason") == "REPLAY_REJECTED" for result in results) == 1
     with concurrent_ledger._connection() as connection:
-        assert connection.execute("SELECT COUNT(*) FROM attestation_nonce_consumptions").fetchone()[0] == 1
+        assert (
+            connection.execute("SELECT COUNT(*) FROM attestation_nonce_consumptions").fetchone()[0]
+            == 1
+        )

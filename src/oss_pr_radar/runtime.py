@@ -281,9 +281,7 @@ def evaluate_health(
             max_failures=max_failures,
         )
         workers[worker] = result
-        issues.extend(
-            f"{worker}:{issue}" if nested else issue for issue in result["issues"]
-        )
+        issues.extend(f"{worker}:{issue}" if nested else issue for issue in result["issues"])
     if not nested:
         queue_success = _parse_epoch(state.get("queueImportSuccessAt"))
         if queue_success is None or current - queue_success > max_queue_age_seconds:
@@ -405,9 +403,7 @@ def update_worker_observation(
         state["schemaVersion"] = RUNTIME_SCHEMA
         state["workers"] = workers
         current_deployment = (
-            dict(state.get("deployment"))
-            if isinstance(state.get("deployment"), dict)
-            else {}
+            dict(state.get("deployment")) if isinstance(state.get("deployment"), dict) else {}
         )
         if deployment:
             current_deployment.update(deployment)

@@ -220,18 +220,27 @@ def build_queue(
             "authorizationSource": "signed_live_revalidation_required",
             "publicationMode": mode,
             "llmReview": {
-                ("waitReason" if key == "wait_reason" else "semanticSignal" if key == "semanticSignal" else key): (
-                    candidate.get("llm_review") or {}
-                ).get(key)
-                for key in ("status", "decision", "wait_reason", "confidence", "model", "semanticSignal")
+                (
+                    "waitReason"
+                    if key == "wait_reason"
+                    else "semanticSignal"
+                    if key == "semanticSignal"
+                    else key
+                ): (candidate.get("llm_review") or {}).get(key)
+                for key in (
+                    "status",
+                    "decision",
+                    "wait_reason",
+                    "confidence",
+                    "model",
+                    "semanticSignal",
+                )
             },
             "actionabilityEvidence": candidate.get("actionability_evidence") or {},
             "preTaskEvidence": candidate.get("preTaskEvidence")
             or candidate.get("pre_task_evidence")
             or {},
-            "preTaskGate": candidate.get("preTaskGate")
-            or candidate.get("pre_task_gate")
-            or {},
+            "preTaskGate": candidate.get("preTaskGate") or candidate.get("pre_task_gate") or {},
             "defaultBranch": (
                 candidate.get("preTaskEvidence") or candidate.get("pre_task_evidence") or {}
             ).get("defaultBranch"),

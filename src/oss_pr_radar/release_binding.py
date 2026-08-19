@@ -62,11 +62,7 @@ def verify_release(release: Path, *, require_directory_identity: bool = True) ->
         raise RuntimeError("release manifest is invalid")
     expected_digest = hashlib.sha256(
         _canonical(
-            {
-                key: item
-                for key, item in value.items()
-                if key not in {"manifestSha256", "releaseId"}
-            }
+            {key: item for key, item in value.items() if key not in {"manifestSha256", "releaseId"}}
         )
     ).hexdigest()
     if value.get("manifestSha256") != expected_digest:
@@ -187,7 +183,11 @@ def bind_runtime(
         if not (allow_unreleased_code and code_root is not None):
             raise
         explicit = code_root.resolve()
-        if not explicit.is_dir() or not (explicit / "src").is_dir() or not (explicit / "scripts").is_dir():
+        if (
+            not explicit.is_dir()
+            or not (explicit / "src").is_dir()
+            or not (explicit / "scripts").is_dir()
+        ):
             raise RuntimeError("explicit development code root is incomplete") from None
         return RuntimeBinding(
             runtime_root=runtime_root,

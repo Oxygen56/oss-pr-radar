@@ -141,8 +141,19 @@ def _bootstrap(runtime: Path, legacy: Path, tmp_path: Path) -> None:
         "observedAt": now,
         "expiresAt": expires,
         "allStopped": True,
-        "workers": {worker: {"loaded": False, "pidAlive": False} for worker in ("fast", "slow", "queue-importer")},
-        "legacy": {label: {"loaded": False} for label in ("com.oss-pr-radar.local-publication-agent", "com.oss-pr-radar.local-publication-worker", "com.oss-pr-radar.local-dispatch-bridge", "com.oss-pr-radar.local-publication-legacy")},
+        "workers": {
+            worker: {"loaded": False, "pidAlive": False}
+            for worker in ("fast", "slow", "queue-importer")
+        },
+        "legacy": {
+            label: {"loaded": False}
+            for label in (
+                "com.oss-pr-radar.local-publication-agent",
+                "com.oss-pr-radar.local-publication-worker",
+                "com.oss-pr-radar.local-dispatch-bridge",
+                "com.oss-pr-radar.local-publication-legacy",
+            )
+        },
     }
     auth = sign_current(unsigned, context="stage7-stop-evidence-v1")
     evidence = tmp_path / "stopped.json"
@@ -174,7 +185,10 @@ def _signed_staging_fixture(tmp_path: Path) -> tuple[Path, Path, list[dict[str, 
     counts_path = tmp_path / "counts.json"
     counts_path.write_text(
         json.dumps(
-            {**counts_unsigned, **sign_current(counts_unsigned, context="stage7-counts-evidence-v1")}
+            {
+                **counts_unsigned,
+                **sign_current(counts_unsigned, context="stage7-counts-evidence-v1"),
+            }
         )
         + "\n",
         encoding="utf-8",
@@ -195,7 +209,12 @@ def _signed_staging_fixture(tmp_path: Path) -> tuple[Path, Path, list[dict[str, 
     )
     assert "automationSnapshotPath" not in staging_token
     assert "automationSnapshotSha256" not in staging_token
-    return runtime, home, specs_value, operational_auth_module.worker_staging_authorization_path(runtime)
+    return (
+        runtime,
+        home,
+        specs_value,
+        operational_auth_module.worker_staging_authorization_path(runtime),
+    )
 
 
 @pytest.mark.parametrize(
@@ -334,9 +353,12 @@ def test_stage7_preserves_git_bytes_modes_and_source(tmp_path, monkeypatch):
         "z-untracked.bin",
     }
     assert source.read_bytes() == source_before
-    assert subprocess.check_output(
-        ["git", "status", "--porcelain=v1", "--untracked-files=all"], cwd=repo, text=True
-    ) == status_before
+    assert (
+        subprocess.check_output(
+            ["git", "status", "--porcelain=v1", "--untracked-files=all"], cwd=repo, text=True
+        )
+        == status_before
+    )
     assert all((item["mode"] == "0o600") for item in result["manifest"]["fileInventory"])
     restored = restore_git_preservation(Path(result["manifestPath"]), repo, mode="rehearse")
     assert restored["ok"] is True
@@ -446,7 +468,12 @@ def test_stage7_restore_apply_rolls_back_after_tracked_failure(tmp_path, monkeyp
     monkeypatch.setattr(cutover_module, "_apply_preservation_to_repo", fail_after_target)
     with pytest.raises(RuntimeError, match="injected tracked apply failure"):
         restore_git_preservation(Path(result["manifestPath"]), repo, mode="apply")
-    assert subprocess.check_output(["git", "status", "--porcelain=v1", "--untracked-files=all"], cwd=repo, text=True) == ""
+    assert (
+        subprocess.check_output(
+            ["git", "status", "--porcelain=v1", "--untracked-files=all"], cwd=repo, text=True
+        )
+        == ""
+    )
     assert not (repo / "untracked.bin").exists()
     assert not (repo / "z-untracked.bin").exists()
     assert not list(repo.rglob("*.restore.*.tmp"))
@@ -478,7 +505,12 @@ def test_stage7_restore_apply_rolls_back_after_untracked_failure(tmp_path, monke
     monkeypatch.setattr(cutover_module, "_private_bytes", fail_second_untracked)
     with pytest.raises(RuntimeError, match="injected untracked failure"):
         restore_git_preservation(Path(result["manifestPath"]), repo, mode="apply")
-    assert subprocess.check_output(["git", "status", "--porcelain=v1", "--untracked-files=all"], cwd=repo, text=True) == ""
+    assert (
+        subprocess.check_output(
+            ["git", "status", "--porcelain=v1", "--untracked-files=all"], cwd=repo, text=True
+        )
+        == ""
+    )
     assert not (repo / "untracked.bin").exists()
     assert not (repo / "z-untracked.bin").exists()
     assert not list(repo.rglob("*.restore.*.tmp"))
@@ -492,12 +524,18 @@ def test_stage7_signed_stop_evidence_is_rechecked_for_toctou(tmp_path, monkeypat
     runtime = _runtime(tmp_path)
     source = tmp_path / "source.sqlite3"
     _source(source, "one")
-    monkeypatch.setattr(cutover_module, "_live_services_stopped", lambda _root: (_ for _ in ()).throw(RuntimeError("service restarted")))
+    monkeypatch.setattr(
+        cutover_module,
+        "_live_services_stopped",
+        lambda _root: (_ for _ in ()).throw(RuntimeError("service restarted")),
+    )
     with pytest.raises(RuntimeError, match="service restarted"):
         _bootstrap(runtime, source, tmp_path)
 
 
-def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(tmp_path, monkeypatch):
+def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
+    tmp_path, monkeypatch
+):
     monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", "stage7-strict-key" * 4)
     monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY_ID", "stage7-current")
     runtime = _runtime(tmp_path)
@@ -543,7 +581,7 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(t
                     "duplicates": [],
                     "headMismatches": [],
                     "managedPrProjectionDigest": projection_summary([])["digest"],
-                }
+                },
             }
         )
         + "\n",
@@ -577,7 +615,7 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(t
             lines.extend(
                 [
                     f"cwds = {json.dumps(spec['cwds'])}",
-                    f"target = {{ type = \"project\", project_id = {json.dumps(spec['target']['projectId'])} }}",
+                    f'target = {{ type = "project", project_id = {json.dumps(spec["target"]["projectId"])} }}',
                     f"model = {json.dumps(spec['model'])}",
                     f"reasoning_effort = {json.dumps(spec['reasoningEffort'])}",
                     f"execution_environment = {json.dumps(spec['executionEnvironment'])}",
@@ -593,7 +631,9 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(t
     outputs = {}
     for label, spec in contracts["workers"].items():
         args = "\n".join(f"  {arg}" for arg in spec["command"])
-        outputs[label] = f"state = waiting\nprogram = {spec['command'][0]}\narguments = {{\n{args}\n}}\nworking directory = {spec['workdir']}\nlast exit code = 0\n"
+        outputs[label] = (
+            f"state = waiting\nprogram = {spec['command'][0]}\narguments = {{\n{args}\n}}\nworking directory = {spec['workdir']}\nlast exit code = 0\n"
+        )
 
     def launchctl(label: str) -> str:
         return outputs.get(label, "Could not find service")
@@ -605,7 +645,9 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(t
     counts_path = tmp_path / "managed-counts.json"
     automation_path = tmp_path / "automation-snapshot.json"
     counts_path.write_text(json.dumps(counts, sort_keys=True) + "\n", encoding="utf-8")
-    specs_value = worker_specs(runtime / "releases" / "stage7-test", home=home, runtime_root=runtime)
+    specs_value = worker_specs(
+        runtime / "releases" / "stage7-test", home=home, runtime_root=runtime
+    )
     issue_worker_staging_authorization(
         runtime,
         managed_counts_evidence=counts_path,
@@ -617,7 +659,9 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(t
         "launchctl",
         lambda *args, **kwargs: subprocess.CompletedProcess(args, 1, "", ""),
     )
-    workers_module.stage_workers(specs_value, home=home, domain=f"gui/{operational_auth_module.os.getuid()}")
+    workers_module.stage_workers(
+        specs_value, home=home, domain=f"gui/{operational_auth_module.os.getuid()}"
+    )
     assert sorted(path.name for path in launch_dir.glob("*.plist")) == sorted(
         f"{spec['Label']}.plist" for spec in specs_value
     )
@@ -628,46 +672,62 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(t
         home=home,
         observed_at=now,
     )
-    automation_unsigned = {key: value for key, value in automation.items() if key not in {"keyId", "signature"}}
+    automation_unsigned = {
+        key: value for key, value in automation.items() if key not in {"keyId", "signature"}
+    }
     auth = {key: value for key, value in automation.items() if key in {"keyId", "signature"}}
-    automation_path.write_text(json.dumps({**automation_unsigned, **auth}, sort_keys=True) + "\n", encoding="utf-8")
+    automation_path.write_text(
+        json.dumps({**automation_unsigned, **auth}, sort_keys=True) + "\n", encoding="utf-8"
+    )
     staged_records = []
     for spec in specs_value:
         label = str(spec["Label"])
         plist = (launch_dir / f"{label}.plist").resolve()
-        staged_records.append({
-            "worker": label,
-            "label": label,
-            "plistPath": str(plist),
-            "plistSha256": hashlib.sha256(plist.read_bytes()).hexdigest(),
-            "mode": "0o600",
-            "ownerUid": plist.stat().st_uid,
-            "regular": True,
-            "symlink": False,
-            "loaded": False,
-            "pid": None,
-            "specDigest": worker_spec_digest(specs_value),
-            "observedAt": iso_z(utc_now()),
-        })
-    first_receipt = consume_worker_staging_authorization(runtime, specs=specs_value, worker_records=staged_records)
+        staged_records.append(
+            {
+                "worker": label,
+                "label": label,
+                "plistPath": str(plist),
+                "plistSha256": hashlib.sha256(plist.read_bytes()).hexdigest(),
+                "mode": "0o600",
+                "ownerUid": plist.stat().st_uid,
+                "regular": True,
+                "symlink": False,
+                "loaded": False,
+                "pid": None,
+                "specDigest": worker_spec_digest(specs_value),
+                "observedAt": iso_z(utc_now()),
+            }
+        )
+    first_receipt = consume_worker_staging_authorization(
+        runtime, specs=specs_value, worker_records=staged_records
+    )
     receipt_value = json.loads(staged_worker_receipt_path(runtime).read_text(encoding="utf-8"))
     assert "automationSnapshotPath" not in receipt_value
     assert "automationSnapshotSha256" not in receipt_value
     receipt_path = staged_worker_receipt_path(runtime)
     receipt_bytes = receipt_path.read_bytes()
     receipt_stat = receipt_path.stat()
-    second_receipt = consume_worker_staging_authorization(runtime, specs=specs_value, worker_records=staged_records)
+    second_receipt = consume_worker_staging_authorization(
+        runtime, specs=specs_value, worker_records=staged_records
+    )
     assert second_receipt == first_receipt
-    assert hashlib.sha256(receipt_bytes).hexdigest() == hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+    assert (
+        hashlib.sha256(receipt_bytes).hexdigest()
+        == hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+    )
     assert receipt_path.stat().st_mtime_ns == receipt_stat.st_mtime_ns
-    assert check(
-        runtime,
-        home=home,
-        launchctl_runner=lambda _label: "Could not find service",
-        managed_counts_evidence=counts,
-        automation_snapshot={**automation_unsigned, **auth},
-        require_workers_loaded=False,
-    )["ok"] is True
+    assert (
+        check(
+            runtime,
+            home=home,
+            launchctl_runner=lambda _label: "Could not find service",
+            managed_counts_evidence=counts,
+            automation_snapshot={**automation_unsigned, **auth},
+            require_workers_loaded=False,
+        )["ok"]
+        is True
+    )
     issue_operational_authorization(
         runtime,
         managed_counts_evidence=counts_path,
@@ -701,14 +761,17 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(t
     staged_worker_receipt_path(runtime).chmod(0o600)
 
     def assert_staged_receipt_drift_rejected() -> None:
-        assert check(
-            runtime,
-            home=home,
-            launchctl_runner=lambda _label: "Could not find service",
-            managed_counts_evidence=counts_path,
-            automation_snapshot=automation_path,
-            require_workers_loaded=False,
-        )["ok"] is False
+        assert (
+            check(
+                runtime,
+                home=home,
+                launchctl_runner=lambda _label: "Could not find service",
+                managed_counts_evidence=counts_path,
+                automation_snapshot=automation_path,
+                require_workers_loaded=False,
+            )["ok"]
+            is False
+        )
 
     activation_plist = launch_dir / "com.oss-pr-radar.local-publication.plist"
     activation_bytes = activation_plist.read_bytes()
@@ -740,14 +803,29 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(t
     activation_plist.write_bytes(activation_bytes)
     finalize_operational_authorization(runtime)
     assert not staged_worker_receipt_path(runtime).exists()
-    result = check(runtime, home=home, launchctl_runner=launchctl, managed_counts_evidence=counts_path, automation_snapshot=automation_path)
+    result = check(
+        runtime,
+        home=home,
+        launchctl_runner=launchctl,
+        managed_counts_evidence=counts_path,
+        automation_snapshot=automation_path,
+    )
     assert result["ok"] is True
     assert result["operationalAuthorizationValid"] is True
     assert result["operationalAuthorizationEvidenceMatch"] is True
     drift_plist = launch_dir / "com.oss-pr-radar.local-publication.plist"
     drift_bytes = drift_plist.read_bytes()
     drift_plist.write_bytes(drift_bytes + b"\n")
-    assert check(runtime, home=home, launchctl_runner=launchctl, managed_counts_evidence=counts_path, automation_snapshot=automation_path)["ok"] is False
+    assert (
+        check(
+            runtime,
+            home=home,
+            launchctl_runner=launchctl,
+            managed_counts_evidence=counts_path,
+            automation_snapshot=automation_path,
+        )["ok"]
+        is False
+    )
     drift_plist.write_bytes(drift_bytes)
     heartbeat_text = heartbeat_toml.read_text(encoding="utf-8")
     heartbeat_toml.write_text(heartbeat_text + "command = []\n", encoding="utf-8")
@@ -755,104 +833,224 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(t
         build_automation_snapshot(runtime, heartbeat_toml, daily_toml, home=home, observed_at=now)
     heartbeat_toml.write_text(heartbeat_text, encoding="utf-8")
     daily_text = daily_toml.read_text(encoding="utf-8")
-    daily_prompt = canonical_prompt("dailyWarRoom", runtime, contracts["dailyWarRoom"]["releaseCommand"])
-    no_send_prompt = canonical_prompt("dailyWarRoom", runtime, contracts["dailyWarRoom"]["releaseCommand"][:-1])
-    daily_toml.write_text(daily_text.replace(json.dumps(daily_prompt), json.dumps(no_send_prompt)), encoding="utf-8")
+    daily_prompt = canonical_prompt(
+        "dailyWarRoom", runtime, contracts["dailyWarRoom"]["releaseCommand"]
+    )
+    no_send_prompt = canonical_prompt(
+        "dailyWarRoom", runtime, contracts["dailyWarRoom"]["releaseCommand"][:-1]
+    )
+    daily_toml.write_text(
+        daily_text.replace(json.dumps(daily_prompt), json.dumps(no_send_prompt)), encoding="utf-8"
+    )
     with pytest.raises(ValueError, match="canonical template"):
         build_automation_snapshot(runtime, heartbeat_toml, daily_toml, home=home, observed_at=now)
     daily_toml.write_text(daily_text, encoding="utf-8")
-    assert check(runtime, home=home, launchctl_runner=launchctl, automation_snapshot={**automation_unsigned, **auth})["ok"] is False
+    assert (
+        check(
+            runtime,
+            home=home,
+            launchctl_runner=launchctl,
+            automation_snapshot={**automation_unsigned, **auth},
+        )["ok"]
+        is False
+    )
     stale_unsigned = {**automation_unsigned, "observedAt": iso_z(utc_now() - timedelta(minutes=11))}
     stale_auth = sign_current(stale_unsigned, context="stage7-automation-snapshot-v1")
-    assert check(runtime, home=home, launchctl_runner=launchctl, managed_counts_evidence=counts, automation_snapshot={**stale_unsigned, **stale_auth})["ok"] is False
-    outputs["com.oss-pr-radar.local-publication"] = outputs["com.oss-pr-radar.local-publication"].replace(
-        "working directory = ", "working directory = /poisoned-runtime/"
+    assert (
+        check(
+            runtime,
+            home=home,
+            launchctl_runner=launchctl,
+            managed_counts_evidence=counts,
+            automation_snapshot={**stale_unsigned, **stale_auth},
+        )["ok"]
+        is False
     )
-    assert check(runtime, home=home, launchctl_runner=launchctl, managed_counts_evidence=counts, automation_snapshot={**automation_unsigned, **auth})["ok"] is False
+    outputs["com.oss-pr-radar.local-publication"] = outputs[
+        "com.oss-pr-radar.local-publication"
+    ].replace("working directory = ", "working directory = /poisoned-runtime/")
+    assert (
+        check(
+            runtime,
+            home=home,
+            launchctl_runner=launchctl,
+            managed_counts_evidence=counts,
+            automation_snapshot={**automation_unsigned, **auth},
+        )["ok"]
+        is False
+    )
     outputs["com.oss-pr-radar.local-publication-legacy"] = "state = waiting\n"
-    assert check(runtime, home=home, launchctl_runner=launchctl, managed_counts_evidence=counts, automation_snapshot={**automation_unsigned, **auth})["ok"] is False
+    assert (
+        check(
+            runtime,
+            home=home,
+            launchctl_runner=launchctl,
+            managed_counts_evidence=counts,
+            automation_snapshot={**automation_unsigned, **auth},
+        )["ok"]
+        is False
+    )
 
     bad_dir = tmp_path / "bad-stage6"
     bad_dir.mkdir()
     bad_report = bad_dir / "report.json"
     bad_envelope = bad_dir / "envelope.json"
     bad_report.write_text(
-        json.dumps({
-            "codeHead": "a" * 40,
-            "verification": _verification("a" * 40),
-            "prInvariant": {
-                "totalRecords": 999,
-                "currentOpen": 999,
-                "closedOrMerged": 0,
-                "allManagedKeysObserved": True,
-                "liveOpenCount": 999,
-                "missing": [],
-                "unexpected": [],
-                "duplicates": [],
-                "headMismatches": [],
-                "managedPrProjectionDigest": projection_summary([])["digest"],
+        json.dumps(
+            {
+                "codeHead": "a" * 40,
+                "verification": _verification("a" * 40),
+                "prInvariant": {
+                    "totalRecords": 999,
+                    "currentOpen": 999,
+                    "closedOrMerged": 0,
+                    "allManagedKeysObserved": True,
+                    "liveOpenCount": 999,
+                    "missing": [],
+                    "unexpected": [],
+                    "duplicates": [],
+                    "headMismatches": [],
+                    "managedPrProjectionDigest": projection_summary([])["digest"],
+                },
             }
-        }) + "\n",
+        )
+        + "\n",
         encoding="utf-8",
     )
     bad_report.chmod(0o600)
     bad_inventory = artifact_manifest(bad_dir, exclude_names={bad_envelope.name})
-    write_detached_report_envelope(bad_report, bad_envelope, code_head="a" * 40, inventory=bad_inventory)
-    bad_counts = build_managed_counts_evidence(runtime, bad_report, bad_envelope, code_head="a" * 40)
-    assert check(runtime, home=home, launchctl_runner=launchctl, managed_counts_evidence=bad_counts, automation_snapshot={**automation_unsigned, **auth})["ok"] is False
+    write_detached_report_envelope(
+        bad_report, bad_envelope, code_head="a" * 40, inventory=bad_inventory
+    )
+    bad_counts = build_managed_counts_evidence(
+        runtime, bad_report, bad_envelope, code_head="a" * 40
+    )
+    assert (
+        check(
+            runtime,
+            home=home,
+            launchctl_runner=launchctl,
+            managed_counts_evidence=bad_counts,
+            automation_snapshot={**automation_unsigned, **auth},
+        )["ok"]
+        is False
+    )
 
     identity_dir = tmp_path / "identity-stage6"
     identity_dir.mkdir()
     identity_report = identity_dir / "report.json"
     identity_envelope = identity_dir / "envelope.json"
     identity_report.write_text(
-        json.dumps({
-            "codeHead": "a" * 40,
-            "verification": _verification("a" * 40),
-            "prInvariant": {
-                "totalRecords": 0,
-                "currentOpen": 0,
-                "closedOrMerged": 0,
-                "allManagedKeysObserved": True,
-                "liveOpenCount": 0,
-                "missing": [],
-                "unexpected": [],
-                "duplicates": [],
-                "headMismatches": [],
-                "managedPrProjectionDigest": "b" * 64,
-            },
-        }) + "\n",
+        json.dumps(
+            {
+                "codeHead": "a" * 40,
+                "verification": _verification("a" * 40),
+                "prInvariant": {
+                    "totalRecords": 0,
+                    "currentOpen": 0,
+                    "closedOrMerged": 0,
+                    "allManagedKeysObserved": True,
+                    "liveOpenCount": 0,
+                    "missing": [],
+                    "unexpected": [],
+                    "duplicates": [],
+                    "headMismatches": [],
+                    "managedPrProjectionDigest": "b" * 64,
+                },
+            }
+        )
+        + "\n",
         encoding="utf-8",
     )
     identity_report.chmod(0o600)
     identity_inventory = artifact_manifest(identity_dir, exclude_names={identity_envelope.name})
-    write_detached_report_envelope(identity_report, identity_envelope, code_head="a" * 40, inventory=identity_inventory)
-    identity_counts = build_managed_counts_evidence(runtime, identity_report, identity_envelope, code_head="a" * 40)
-    assert check(runtime, home=home, launchctl_runner=launchctl, managed_counts_evidence=identity_counts, automation_snapshot={**automation_unsigned, **auth})["ok"] is False
+    write_detached_report_envelope(
+        identity_report, identity_envelope, code_head="a" * 40, inventory=identity_inventory
+    )
+    identity_counts = build_managed_counts_evidence(
+        runtime, identity_report, identity_envelope, code_head="a" * 40
+    )
+    assert (
+        check(
+            runtime,
+            home=home,
+            launchctl_runner=launchctl,
+            managed_counts_evidence=identity_counts,
+            automation_snapshot={**automation_unsigned, **auth},
+        )["ok"]
+        is False
+    )
 
     def write_health(timestamp: str, exit_code: object = 0) -> None:
         state["workers"] = {
-            worker: {"lastSuccessAt": timestamp, "queueImportSuccessAt": timestamp, "lastExitCode": exit_code}
+            worker: {
+                "lastSuccessAt": timestamp,
+                "queueImportSuccessAt": timestamp,
+                "lastExitCode": exit_code,
+            }
             for worker in ("fast", "slow", "queue-importer")
         }
         (runtime / "state" / "runtime-health.json").write_text(json.dumps(state), encoding="utf-8")
 
     write_health(iso_z(utc_now() - timedelta(minutes=3)))
-    assert check(runtime, home=home, launchctl_runner=launchctl, managed_counts_evidence=counts, automation_snapshot={**automation_unsigned, **auth})["ok"] is False
+    assert (
+        check(
+            runtime,
+            home=home,
+            launchctl_runner=launchctl,
+            managed_counts_evidence=counts,
+            automation_snapshot={**automation_unsigned, **auth},
+        )["ok"]
+        is False
+    )
     write_health(iso_z(utc_now() + timedelta(minutes=1)))
-    assert check(runtime, home=home, launchctl_runner=launchctl, managed_counts_evidence=counts, automation_snapshot={**automation_unsigned, **auth})["ok"] is False
+    assert (
+        check(
+            runtime,
+            home=home,
+            launchctl_runner=launchctl,
+            managed_counts_evidence=counts,
+            automation_snapshot={**automation_unsigned, **auth},
+        )["ok"]
+        is False
+    )
     write_health(datetime.now().isoformat())
-    assert check(runtime, home=home, launchctl_runner=launchctl, managed_counts_evidence=counts, automation_snapshot={**automation_unsigned, **auth})["ok"] is False
+    assert (
+        check(
+            runtime,
+            home=home,
+            launchctl_runner=launchctl,
+            managed_counts_evidence=counts,
+            automation_snapshot={**automation_unsigned, **auth},
+        )["ok"]
+        is False
+    )
     write_health(now, None)
-    assert check(runtime, home=home, launchctl_runner=launchctl, managed_counts_evidence=counts, automation_snapshot={**automation_unsigned, **auth})["ok"] is False
+    assert (
+        check(
+            runtime,
+            home=home,
+            launchctl_runner=launchctl,
+            managed_counts_evidence=counts,
+            automation_snapshot={**automation_unsigned, **auth},
+        )["ok"]
+        is False
+    )
     assert verify_operational_authorization(runtime, now=utc_now() + timedelta(days=365))
     authorization_path(runtime).unlink()
-    assert check(runtime, home=home, launchctl_runner=launchctl, managed_counts_evidence=counts, automation_snapshot={**automation_unsigned, **auth})["ok"] is False
+    assert (
+        check(
+            runtime,
+            home=home,
+            launchctl_runner=launchctl,
+            managed_counts_evidence=counts,
+            automation_snapshot={**automation_unsigned, **auth},
+        )["ok"]
+        is False
+    )
 
 
-def test_private_authorization_commit_point_survives_directory_fsync_failure(
-    tmp_path, monkeypatch
-):
+def test_private_authorization_commit_point_survives_directory_fsync_failure(tmp_path, monkeypatch):
     target = tmp_path / "state" / "authorization.json"
     original_fsync = operational_auth_module.os.fsync
     calls = 0
@@ -903,8 +1101,16 @@ def test_stage7_acceptance_and_contracts_bind_to_one_release(tmp_path):
     for index, item in enumerate(plan):
         assert item["requires"] == order[:index]
         assert ("command" in item) ^ ("action" in item)
-        section_name, contract_name = item["contractRef"].split(".", 1) if "." in item["contractRef"] else (None, item["contractRef"])
-        implementation = contracts["deployment"] if section_name is None else contracts[section_name][contract_name]
+        section_name, contract_name = (
+            item["contractRef"].split(".", 1)
+            if "." in item["contractRef"]
+            else (None, item["contractRef"])
+        )
+        implementation = (
+            contracts["deployment"]
+            if section_name is None
+            else contracts[section_name][contract_name]
+        )
         assert item.get("command", implementation.get("command")) == implementation.get("command")
         assert item.get("action", implementation.get("action")) == implementation.get("action")
     assert "--live-states" not in contracts["stage7"]["prepare"]["command"]
@@ -918,19 +1124,32 @@ def test_stage7_acceptance_and_contracts_bind_to_one_release(tmp_path):
     activate_command = contracts["stage7"]["activateWorkers"]["command"]
     assert activate_command[-3:] == ["--runtime-root", str(runtime.resolve()), "--activate"]
     assert contracts["heartbeat"]["releaseCommand"][1].endswith("/scripts/controller_cycle.py")
-    assert contracts["dailyWarRoom"]["releaseCommand"][1].endswith("/scripts/daily_war_room_cycle.py")
+    assert contracts["dailyWarRoom"]["releaseCommand"][1].endswith(
+        "/scripts/daily_war_room_cycle.py"
+    )
     assert contracts["dailyWarRoom"]["releaseCommand"][-1] == "--send"
-    heartbeat_prompt = canonical_prompt("heartbeat", runtime, contracts["heartbeat"]["releaseCommand"])
-    assert "desktopHandoff.prompt unchanged exactly once to desktopHandoff.threadId" in heartbeat_prompt
+    heartbeat_prompt = canonical_prompt(
+        "heartbeat", runtime, contracts["heartbeat"]["releaseCommand"]
+    )
+    assert (
+        "desktopHandoff.prompt unchanged exactly once to desktopHandoff.threadId"
+        in heartbeat_prompt
+    )
     assert heartbeat_prompt.count("desktopHandoff.prompt") == 1
     assert "运行正常；当前没有需要你处理的事情。" in heartbeat_prompt
     assert "已开始或继续处理；你无需操作。" in heartbeat_prompt
     assert "never show JSON, paths, logs, prompts, or internal fields" in heartbeat_prompt
-    assert heartbeat_prompt.index("if the command fails or final JSON ok=false") < heartbeat_prompt.index("if it succeeds without desktopHandoff")
-    daily_prompt = canonical_prompt("dailyWarRoom", runtime, contracts["dailyWarRoom"]["releaseCommand"])
+    assert heartbeat_prompt.index(
+        "if the command fails or final JSON ok=false"
+    ) < heartbeat_prompt.index("if it succeeds without desktopHandoff")
+    daily_prompt = canonical_prompt(
+        "dailyWarRoom", runtime, contracts["dailyWarRoom"]["releaseCommand"]
+    )
     assert "检查已完成；当前没有需要你处理的事情。" in daily_prompt
     assert "--send" in daily_prompt
-    assert daily_prompt.index("if the command fails or final JSON ok=false") < daily_prompt.index("only when it succeeds")
+    assert daily_prompt.index("if the command fails or final JSON ok=false") < daily_prompt.index(
+        "only when it succeeds"
+    )
     public = shareable_acceptance_report(acceptance)
     public_text = json.dumps(public, ensure_ascii=False)
     assert "/private/" not in public_text
@@ -1002,7 +1221,9 @@ def test_daily_cycle_does_not_resend_unchanged_actionable_item(tmp_path, monkeyp
         provenance={"title": "候选一"},
         metadata={"title": "候选一", "preTaskGate": {"allowed": True}},
     )
-    ledger.bind_task(task_id="task-1", opportunity_key="owner/repo#1", thread_id="t1", worktree_path=None)
+    ledger.bind_task(
+        task_id="task-1", opportunity_key="owner/repo#1", thread_id="t1", worktree_path=None
+    )
     ledger.authorize_task_creation(
         task_id="task-1",
         opportunity_key="owner/repo#1",

@@ -246,9 +246,7 @@ def controller_cycle(
     )
 
     final_blockers = _final_blockers(stages)
-    stages["absenceReconcile"] = managed_adapter.reconcile_pending_absences(
-        GitHubAbsenceQueries()
-    )
+    stages["absenceReconcile"] = managed_adapter.reconcile_pending_absences(GitHubAbsenceQueries())
     reply_flow = managed_adapter.process_reply_outbox(sender=None, receipts={})
     stages["replyQueue"] = {"ok": True, "stage": "queue_public_reply"}
     stages["replyDispatch"] = reply_flow["dispatch"]

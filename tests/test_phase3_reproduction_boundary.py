@@ -139,7 +139,10 @@ def test_print_profile_and_issue_command_cannot_become_full_receipt(monkeypatch,
     monkeypatch.setitem(
         TRUSTED_PROBE_PROFILES,
         "untrusted-print-profile",
-        {"reproductionArgv": ["python3", "-c", "print('passed')"], "validationArgv": ["python3", "target.py"]},
+        {
+            "reproductionArgv": ["python3", "-c", "print('passed')"],
+            "validationArgv": ["python3", "target.py"],
+        },
     )
     receipt = run_reproduction_probe(
         checkout_path=checkout,
@@ -201,13 +204,19 @@ def test_legacy_request_and_effect_are_blocked_without_external_replay(tmp_path)
     with pytest.raises(LedgerError, match="reproduction"):
         store.publication_effect(permit_id=permit_id, action="push", request_digest="legacy")
     with store.connect() as connection:
-        assert connection.execute(
-            "SELECT status,reason FROM publication_requests WHERE request_id=?",
-            (request["request_id"],),
-        ).fetchone()["reason"] == "BLOCKED_REPRODUCTION_REQUIRED"
-        assert connection.execute(
-            "SELECT status FROM publication_permits WHERE permit_id=?", (permit_id,)
-        ).fetchone()["status"] == "BLOCKED"
+        assert (
+            connection.execute(
+                "SELECT status,reason FROM publication_requests WHERE request_id=?",
+                (request["request_id"],),
+            ).fetchone()["reason"]
+            == "BLOCKED_REPRODUCTION_REQUIRED"
+        )
+        assert (
+            connection.execute(
+                "SELECT status FROM publication_permits WHERE permit_id=?", (permit_id,)
+            ).fetchone()["status"]
+            == "BLOCKED"
+        )
 
 
 def _real_probe(
@@ -248,7 +257,9 @@ def test_symlink_nested_symlink_and_toctou_never_authorize_probe(monkeypatch, tm
     outside = tmp_path / "outside.py"
     outside.write_text("raise SystemExit(0)\n", encoding="utf-8")
     (checkout / "escape.py").symlink_to(outside)
-    symlink_receipt = _real_probe(checkout, sha, task_id="symlink", code_paths=["target.py", "escape.py"])
+    symlink_receipt = _real_probe(
+        checkout, sha, task_id="symlink", code_paths=["target.py", "escape.py"]
+    )
     assert symlink_receipt["probeLevel"] == "UNVERIFIED"
     assert not verify_probe_receipt(
         symlink_receipt,
@@ -266,7 +277,11 @@ def test_symlink_nested_symlink_and_toctou_never_authorize_probe(monkeypatch, tm
     (checkout / "nested").mkdir()
     (checkout / "nested" / "link").symlink_to(outside)
     nested = _real_probe(
-        checkout, sha, task_id="nested", result_digest="nested-result", code_paths=["target.py", "nested/link"]
+        checkout,
+        sha,
+        task_id="nested",
+        result_digest="nested-result",
+        code_paths=["target.py", "nested/link"],
     )
     assert nested["probeLevel"] == "UNVERIFIED"
     (checkout / "nested" / "link").unlink()
@@ -373,8 +388,12 @@ raise SystemExit(0 if read_denied and tmp_read_denied and write_denied and netwo
 """,
         encoding="utf-8",
     )
-    subprocess.run(["git", "add", "tests/security_probe.py"], cwd=checkout, check=True, capture_output=True)
-    subprocess.run(["git", "commit", "-m", "security probe"], cwd=checkout, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "add", "tests/security_probe.py"], cwd=checkout, check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "commit", "-m", "security probe"], cwd=checkout, check=True, capture_output=True
+    )
     sha = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=checkout, check=True, capture_output=True, text=True
     ).stdout.strip()
@@ -417,7 +436,9 @@ def test_git_archive_rejects_committed_symlink_object(tmp_path):
     outside.write_text("raise SystemExit(0)\n", encoding="utf-8")
     (checkout / "link.py").symlink_to(outside)
     subprocess.run(["git", "add", "link.py"], cwd=checkout, check=True, capture_output=True)
-    subprocess.run(["git", "commit", "-m", "symlink"], cwd=checkout, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "symlink"], cwd=checkout, check=True, capture_output=True
+    )
     sha = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=checkout, check=True, capture_output=True, text=True
     ).stdout.strip()
@@ -431,20 +452,36 @@ def test_probe_crash_after_command_leaves_no_attempt_sandbox_and_reclaims(tmp_pa
     database = tmp_path / "crash.sqlite3"
     ledger = ManagedLedger(database, ensure_schema=True)
     ledger.upsert_opportunity(
-        opportunity_key="owner/repo#1", owner="owner", repo="repo", issue_number=1,
-        issue_url="https://github.com/owner/repo/issues/1", state="SYSTEM_PROCESSING",
-        source="test", provenance={}, metadata={"selectedBaseSha": sha, "codePaths": ["target.py"]},
+        opportunity_key="owner/repo#1",
+        owner="owner",
+        repo="repo",
+        issue_number=1,
+        issue_url="https://github.com/owner/repo/issues/1",
+        state="SYSTEM_PROCESSING",
+        source="test",
+        provenance={},
+        metadata={"selectedBaseSha": sha, "codePaths": ["target.py"]},
     )
     ledger.bind_task(
-        task_id="crash-task", opportunity_key="owner/repo#1",
-        thread_id="thread-crash", worktree_path=str(checkout),
+        task_id="crash-task",
+        opportunity_key="owner/repo#1",
+        thread_id="thread-crash",
+        worktree_path=str(checkout),
     )
     ledger.queue_reproduction_probe(
-        task_id="crash-task", opportunity_key="owner/repo#1", repo="owner/repo",
-        issue_url="https://github.com/owner/repo/issues/1", default_branch="main",
-        selected_base_sha=sha, code_paths=["target.py"], profile_id=None,
-        checkout_path=str(checkout), head_sha=sha, commit_sha=sha,
-        result_digest="crash-result", idempotency_key="crash-intent",
+        task_id="crash-task",
+        opportunity_key="owner/repo#1",
+        repo="owner/repo",
+        issue_url="https://github.com/owner/repo/issues/1",
+        default_branch="main",
+        selected_base_sha=sha,
+        code_paths=["target.py"],
+        profile_id=None,
+        checkout_path=str(checkout),
+        head_sha=sha,
+        commit_sha=sha,
+        result_digest="crash-result",
+        idempotency_key="crash-intent",
     )
     claimed = ledger.claim_reproduction_probe(worker_nonce="crash-worker")
     assert claimed
@@ -456,9 +493,7 @@ def test_probe_crash_after_command_leaves_no_attempt_sandbox_and_reclaims(tmp_pa
         "validationArgv": ["python3", "target.py"],
     }
     seen_cwd = []
-    before = set(
-        Path("/private/tmp").glob(f"oss-pr-radar-probe-attempt-{claimed['attempt_id']}-*")
-    )
+    before = set(Path("/private/tmp").glob(f"oss-pr-radar-probe-attempt-{claimed['attempt_id']}-*"))
     try:
         with pytest.raises(KeyboardInterrupt):
             run_reproduction_probe(
@@ -474,15 +509,18 @@ def test_probe_crash_after_command_leaves_no_attempt_sandbox_and_reclaims(tmp_pa
                 commit_sha=sha,
                 result_digest="crash-result",
                 attempt_id=claimed["attempt_id"],
-                command_runner=lambda _command, cwd: seen_cwd.append(cwd) or (_ for _ in ()).throw(KeyboardInterrupt()),
+                command_runner=lambda _command, cwd: (
+                    seen_cwd.append(cwd) or (_ for _ in ()).throw(KeyboardInterrupt())
+                ),
                 _test_only_command_runner=True,
             )
     finally:
         TRUSTED_PROBE_PROFILES.pop(profile_id, None)
     assert seen_cwd and seen_cwd[0] != checkout and not seen_cwd[0].exists()
-    assert set(
-        Path("/private/tmp").glob(f"oss-pr-radar-probe-attempt-{claimed['attempt_id']}-*")
-    ) == before
+    assert (
+        set(Path("/private/tmp").glob(f"oss-pr-radar-probe-attempt-{claimed['attempt_id']}-*"))
+        == before
+    )
     with ledger._connection() as connection:
         events = connection.execute(
             "SELECT event FROM managed_reproduction_attempt_events WHERE attempt_id=?",
@@ -502,19 +540,36 @@ def test_probe_lease_claim_reclaim_stale_and_max_attempts(tmp_path):
     database = tmp_path / "managed.sqlite3"
     ledger = ManagedLedger(database, ensure_schema=True)
     ledger.upsert_opportunity(
-        opportunity_key="owner/repo#1", owner="owner", repo="repo", issue_number=1,
-        issue_url="https://github.com/owner/repo/issues/1", state="SYSTEM_PROCESSING",
-        source="test", provenance={}, metadata={"selectedBaseSha": sha, "codePaths": ["target.py"]},
+        opportunity_key="owner/repo#1",
+        owner="owner",
+        repo="repo",
+        issue_number=1,
+        issue_url="https://github.com/owner/repo/issues/1",
+        state="SYSTEM_PROCESSING",
+        source="test",
+        provenance={},
+        metadata={"selectedBaseSha": sha, "codePaths": ["target.py"]},
     )
     ledger.bind_task(
-        task_id="lease-task", opportunity_key="owner/repo#1", thread_id="thread-lease", worktree_path=str(checkout)
+        task_id="lease-task",
+        opportunity_key="owner/repo#1",
+        thread_id="thread-lease",
+        worktree_path=str(checkout),
     )
     ledger.queue_reproduction_probe(
-        task_id="lease-task", opportunity_key="owner/repo#1", repo="owner/repo",
-        issue_url="https://github.com/owner/repo/issues/1", default_branch="main",
-        selected_base_sha=sha, code_paths=["target.py"], profile_id=None,
-        checkout_path=str(checkout), head_sha=sha, commit_sha=sha,
-        result_digest="lease-result", idempotency_key="lease-intent",
+        task_id="lease-task",
+        opportunity_key="owner/repo#1",
+        repo="owner/repo",
+        issue_url="https://github.com/owner/repo/issues/1",
+        default_branch="main",
+        selected_base_sha=sha,
+        code_paths=["target.py"],
+        profile_id=None,
+        checkout_path=str(checkout),
+        head_sha=sha,
+        commit_sha=sha,
+        result_digest="lease-result",
+        idempotency_key="lease-intent",
     )
     first = ledger.claim_reproduction_probe(worker_nonce="worker-a", lease_seconds=60)
     assert first and first["attempt_count"] == 1
@@ -557,33 +612,49 @@ def test_probe_lease_claim_reclaim_stale_and_max_attempts(tmp_path):
     [None, "2000-01-01T00:00:00Z", "2099-01-01T00:00:00Z"],
     ids=["missing", "expired", "future-stranded"],
 )
-def test_exhausted_running_probe_is_terminalized_before_candidate_filter(
-    tmp_path, lease_value
-):
+def test_exhausted_running_probe_is_terminalized_before_candidate_filter(tmp_path, lease_value):
     checkout, sha = real_checkout(tmp_path)
     ledger = ManagedLedger(tmp_path / "exhausted.sqlite3", ensure_schema=True)
     ledger.upsert_opportunity(
-        opportunity_key="owner/repo#1", owner="owner", repo="repo", issue_number=1,
-        issue_url="https://github.com/owner/repo/issues/1", state="SYSTEM_PROCESSING",
-        source="test", provenance={}, metadata={"selectedBaseSha": sha, "codePaths": ["target.py"]},
+        opportunity_key="owner/repo#1",
+        owner="owner",
+        repo="repo",
+        issue_number=1,
+        issue_url="https://github.com/owner/repo/issues/1",
+        state="SYSTEM_PROCESSING",
+        source="test",
+        provenance={},
+        metadata={"selectedBaseSha": sha, "codePaths": ["target.py"]},
     )
     ledger.bind_task(
-        task_id="exhausted-task", opportunity_key="owner/repo#1",
-        thread_id="exhausted-thread", worktree_path=str(checkout),
+        task_id="exhausted-task",
+        opportunity_key="owner/repo#1",
+        thread_id="exhausted-thread",
+        worktree_path=str(checkout),
     )
     ledger.queue_reproduction_probe(
-        task_id="exhausted-task", opportunity_key="owner/repo#1", repo="owner/repo",
-        issue_url="https://github.com/owner/repo/issues/1", default_branch="main",
-        selected_base_sha=sha, code_paths=["target.py"], profile_id=None,
-        checkout_path=str(checkout), head_sha=sha, commit_sha=sha,
-        result_digest="exhausted-result", idempotency_key="exhausted-intent",
+        task_id="exhausted-task",
+        opportunity_key="owner/repo#1",
+        repo="owner/repo",
+        issue_url="https://github.com/owner/repo/issues/1",
+        default_branch="main",
+        selected_base_sha=sha,
+        code_paths=["target.py"],
+        profile_id=None,
+        checkout_path=str(checkout),
+        head_sha=sha,
+        commit_sha=sha,
+        result_digest="exhausted-result",
+        idempotency_key="exhausted-intent",
     )
     for worker in ("exhausted-a", "exhausted-b", "exhausted-c"):
         claimed = ledger.claim_reproduction_probe(worker_nonce=worker)
         assert claimed
         if worker != "exhausted-c":
             ledger.fail_reproduction_probe(
-                probe_key=claimed["probe_key"], attempt_id=claimed["attempt_id"], error="worker-failed"
+                probe_key=claimed["probe_key"],
+                attempt_id=claimed["attempt_id"],
+                error="worker-failed",
             )
     with ledger._connection() as connection:
         connection.execute(
@@ -614,24 +685,39 @@ def test_exhausted_running_probe_is_terminalized_before_candidate_filter(
     assert len(events) == 1
     assert ledger.claim_reproduction_probe(worker_nonce="second-must-not-retry") is None
     with ledger._connection() as connection:
-        assert connection.execute(
-            "SELECT COUNT(*) FROM managed_lifecycle_events "
-            "WHERE event_type='REPRODUCTION_RETRY_EXHAUSTED'"
-        ).fetchone()[0] == 1
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM managed_lifecycle_events "
+                "WHERE event_type='REPRODUCTION_RETRY_EXHAUSTED'"
+            ).fetchone()[0]
+            == 1
+        )
 
 
 def test_opportunity_identity_is_canonical_and_immutable(tmp_path):
     ledger = ManagedLedger(tmp_path / "canonical.sqlite3", ensure_schema=True)
     with pytest.raises(ValueError, match="identity"):
         ledger.upsert_opportunity(
-            opportunity_key="owner/repo#7", owner="owner", repo="repo", issue_number=8,
-            issue_url="https://github.com/owner/repo/issues/7", state="SYSTEM_PROCESSING",
-            source="test", provenance={}, metadata={},
+            opportunity_key="owner/repo#7",
+            owner="owner",
+            repo="repo",
+            issue_number=8,
+            issue_url="https://github.com/owner/repo/issues/7",
+            state="SYSTEM_PROCESSING",
+            source="test",
+            provenance={},
+            metadata={},
         )
     ledger.upsert_opportunity(
-        opportunity_key="owner/repo#7", owner="owner", repo="repo", issue_number=7,
-        issue_url="https://github.com/owner/repo/issues/7", state="SYSTEM_PROCESSING",
-        source="test", provenance={}, metadata={},
+        opportunity_key="owner/repo#7",
+        owner="owner",
+        repo="repo",
+        issue_number=7,
+        issue_url="https://github.com/owner/repo/issues/7",
+        state="SYSTEM_PROCESSING",
+        source="test",
+        provenance={},
+        metadata={},
     )
     with ledger._connection() as connection:
         connection.execute(
@@ -644,28 +730,49 @@ def test_url_opportunity_key_uses_canonical_storage_and_event_identity(tmp_path)
     ledger = ManagedLedger(tmp_path / "url-key.sqlite3", ensure_schema=True)
     issue_url = "https://github.com/owner/repo/issues/7"
     first = ledger.upsert_opportunity(
-        opportunity_key=issue_url, owner="owner", repo="repo", issue_number=7,
-        issue_url=issue_url, state="SYSTEM_PROCESSING", source="test", provenance={}, metadata={},
+        opportunity_key=issue_url,
+        owner="owner",
+        repo="repo",
+        issue_number=7,
+        issue_url=issue_url,
+        state="SYSTEM_PROCESSING",
+        source="test",
+        provenance={},
+        metadata={},
     )
     second = ledger.upsert_opportunity(
-        opportunity_key="owner/repo#7", owner="owner", repo="repo", issue_number=7,
-        issue_url=issue_url, state="DECISION_REQUIRED", source="test", provenance={}, metadata={},
+        opportunity_key="owner/repo#7",
+        owner="owner",
+        repo="repo",
+        issue_number=7,
+        issue_url=issue_url,
+        state="DECISION_REQUIRED",
+        source="test",
+        provenance={},
+        metadata={},
     )
     assert first["opportunity_key"] == "owner/repo#7"
     assert second["opportunity_key"] == "owner/repo#7"
     assert ledger.opportunity_identity(issue_url)["opportunityKey"] == "owner/repo#7"
     assert ledger.read_opportunity(issue_url)["opportunity_key"] == "owner/repo#7"
     with ledger._connection() as connection:
-        assert connection.execute(
-            "SELECT COUNT(*) FROM managed_opportunities WHERE opportunity_key='owner/repo#7'"
-        ).fetchone()[0] == 1
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM managed_opportunities WHERE opportunity_key='owner/repo#7'"
+            ).fetchone()[0]
+            == 1
+        )
     event = ledger.record_event(
-        event_type="URL_IDENTITY_TEST", idempotency_key="url-identity-event",
-        opportunity_key=issue_url, source="test",
+        event_type="URL_IDENTITY_TEST",
+        idempotency_key="url-identity-event",
+        opportunity_key=issue_url,
+        source="test",
     )
     replay = ledger.record_event(
-        event_type="URL_IDENTITY_TEST", idempotency_key="url-identity-event",
-        opportunity_key="owner/repo#7", source="test",
+        event_type="URL_IDENTITY_TEST",
+        idempotency_key="url-identity-event",
+        opportunity_key="owner/repo#7",
+        source="test",
     )
     assert event["created"] is True
     assert replay["created"] is False
@@ -702,18 +809,29 @@ def test_upsert_post_insert_failure_rolls_back_row_and_event(tmp_path, monkeypat
     with pytest.raises(RuntimeError, match="post-insert"):
         ledger.upsert_opportunity(
             opportunity_key="https://github.com/owner/repo/issues/7",
-            owner="owner", repo="repo", issue_number=7,
-            issue_url="https://github.com/owner/repo/issues/7", state="SYSTEM_PROCESSING",
-            source="test", provenance={}, metadata={},
+            owner="owner",
+            repo="repo",
+            issue_number=7,
+            issue_url="https://github.com/owner/repo/issues/7",
+            state="SYSTEM_PROCESSING",
+            source="test",
+            provenance={},
+            metadata={},
         )
     monkeypatch.undo()
     with ledger._connection() as connection:
-        assert connection.execute(
-            "SELECT COUNT(*) FROM managed_opportunities WHERE opportunity_key='owner/repo#7'"
-        ).fetchone()[0] == 0
-        assert connection.execute(
-            "SELECT COUNT(*) FROM managed_lifecycle_events WHERE opportunity_key='owner/repo#7'"
-        ).fetchone()[0] == 0
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM managed_opportunities WHERE opportunity_key='owner/repo#7'"
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM managed_lifecycle_events WHERE opportunity_key='owner/repo#7'"
+            ).fetchone()[0]
+            == 0
+        )
 
 
 def test_snapshot_cannot_reauthorize_inconsistent_opportunity_identity(tmp_path):
@@ -721,15 +839,27 @@ def test_snapshot_cannot_reauthorize_inconsistent_opportunity_identity(tmp_path)
     target = tmp_path / "target.sqlite3"
     source_ledger = ManagedLedger(source, ensure_schema=True)
     source_ledger.upsert_opportunity(
-        opportunity_key="owner/repo#7", owner="owner", repo="repo", issue_number=7,
-        issue_url="https://github.com/owner/repo/issues/7", state="SYSTEM_PROCESSING",
-        source="test", provenance={}, metadata={},
+        opportunity_key="owner/repo#7",
+        owner="owner",
+        repo="repo",
+        issue_number=7,
+        issue_url="https://github.com/owner/repo/issues/7",
+        state="SYSTEM_PROCESSING",
+        source="test",
+        provenance={},
+        metadata={},
     )
     target_ledger = ManagedLedger(target, ensure_schema=True)
     target_ledger.upsert_opportunity(
-        opportunity_key="sentinel/repo#1", owner="sentinel", repo="repo", issue_number=1,
-        issue_url="https://github.com/sentinel/repo/issues/1", state="SYSTEM_PROCESSING",
-        source="test", provenance={}, metadata={},
+        opportunity_key="sentinel/repo#1",
+        owner="sentinel",
+        repo="repo",
+        issue_number=1,
+        issue_url="https://github.com/sentinel/repo/issues/1",
+        state="SYSTEM_PROCESSING",
+        source="test",
+        provenance={},
+        metadata={},
     )
     snapshot_path = tmp_path / "identity.snapshot.gz"
     export_snapshot(source, snapshot_path)
@@ -746,12 +876,18 @@ def test_snapshot_cannot_reauthorize_inconsistent_opportunity_identity(tmp_path)
     with pytest.raises(ValueError, match="identity"):
         import_snapshot(target, snapshot_path)
     with target_ledger._connection() as connection:
-        assert connection.execute(
-            "SELECT COUNT(*) FROM managed_opportunities WHERE opportunity_key='sentinel/repo#1'"
-        ).fetchone()[0] == 1
-        assert connection.execute(
-            "SELECT COUNT(*) FROM managed_opportunities WHERE opportunity_key='owner/repo#7'"
-        ).fetchone()[0] == 0
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM managed_opportunities WHERE opportunity_key='sentinel/repo#1'"
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM managed_opportunities WHERE opportunity_key='owner/repo#7'"
+            ).fetchone()[0]
+            == 0
+        )
 
 
 def test_lease_rfc3339_boundaries_and_malformed_recovery(tmp_path):
@@ -773,20 +909,36 @@ def test_lease_rfc3339_boundaries_and_malformed_recovery(tmp_path):
     database = tmp_path / "malformed-lease.sqlite3"
     ledger = ManagedLedger(database, ensure_schema=True)
     ledger.upsert_opportunity(
-        opportunity_key="owner/repo#1", owner="owner", repo="repo", issue_number=1,
-        issue_url="https://github.com/owner/repo/issues/1", state="SYSTEM_PROCESSING",
-        source="test", provenance={}, metadata={"selectedBaseSha": sha, "codePaths": ["target.py"]},
+        opportunity_key="owner/repo#1",
+        owner="owner",
+        repo="repo",
+        issue_number=1,
+        issue_url="https://github.com/owner/repo/issues/1",
+        state="SYSTEM_PROCESSING",
+        source="test",
+        provenance={},
+        metadata={"selectedBaseSha": sha, "codePaths": ["target.py"]},
     )
     ledger.bind_task(
-        task_id="malformed-lease-task", opportunity_key="owner/repo#1",
-        thread_id="thread-malformed", worktree_path=str(checkout),
+        task_id="malformed-lease-task",
+        opportunity_key="owner/repo#1",
+        thread_id="thread-malformed",
+        worktree_path=str(checkout),
     )
     ledger.queue_reproduction_probe(
-        task_id="malformed-lease-task", opportunity_key="owner/repo#1", repo="owner/repo",
-        issue_url="https://github.com/owner/repo/issues/1", default_branch="main",
-        selected_base_sha=sha, code_paths=["target.py"], profile_id=None,
-        checkout_path=str(checkout), head_sha=sha, commit_sha=sha,
-        result_digest="malformed-lease-result", idempotency_key="malformed-lease-intent",
+        task_id="malformed-lease-task",
+        opportunity_key="owner/repo#1",
+        repo="owner/repo",
+        issue_url="https://github.com/owner/repo/issues/1",
+        default_branch="main",
+        selected_base_sha=sha,
+        code_paths=["target.py"],
+        profile_id=None,
+        checkout_path=str(checkout),
+        head_sha=sha,
+        commit_sha=sha,
+        result_digest="malformed-lease-result",
+        idempotency_key="malformed-lease-intent",
     )
     first = ledger.claim_reproduction_probe(worker_nonce="malformed-worker-a")
     assert first
@@ -809,21 +961,37 @@ def test_probe_queue_rejects_receipt_identity_not_derived_from_opportunity(tmp_p
     checkout, sha = real_checkout(tmp_path)
     ledger = ManagedLedger(tmp_path / "identity.sqlite3", ensure_schema=True)
     ledger.upsert_opportunity(
-        opportunity_key="owner/repo#1", owner="owner", repo="repo", issue_number=1,
-        issue_url="https://github.com/owner/repo/issues/1", state="SYSTEM_PROCESSING",
-        source="test", provenance={}, metadata={"selectedBaseSha": sha, "codePaths": ["target.py"]},
+        opportunity_key="owner/repo#1",
+        owner="owner",
+        repo="repo",
+        issue_number=1,
+        issue_url="https://github.com/owner/repo/issues/1",
+        state="SYSTEM_PROCESSING",
+        source="test",
+        provenance={},
+        metadata={"selectedBaseSha": sha, "codePaths": ["target.py"]},
     )
     ledger.bind_task(
-        task_id="identity-task", opportunity_key="owner/repo#1",
-        thread_id="thread-identity", worktree_path=str(checkout),
+        task_id="identity-task",
+        opportunity_key="owner/repo#1",
+        thread_id="thread-identity",
+        worktree_path=str(checkout),
     )
     with pytest.raises(ValueError, match="bound to its opportunity"):
         ledger.queue_reproduction_probe(
-            task_id="identity-task", opportunity_key="owner/repo#1", repo="other/repo",
-            issue_url="https://github.com/other/repo/issues/1", default_branch="main",
-            selected_base_sha="wrong-base", code_paths=["other.py"], profile_id=None,
-            checkout_path=str(checkout), head_sha=sha, commit_sha=sha,
-            result_digest="identity-result", idempotency_key="identity-intent",
+            task_id="identity-task",
+            opportunity_key="owner/repo#1",
+            repo="other/repo",
+            issue_url="https://github.com/other/repo/issues/1",
+            default_branch="main",
+            selected_base_sha="wrong-base",
+            code_paths=["other.py"],
+            profile_id=None,
+            checkout_path=str(checkout),
+            head_sha=sha,
+            commit_sha=sha,
+            result_digest="identity-result",
+            idempotency_key="identity-intent",
         )
 
 
@@ -833,17 +1001,36 @@ def test_running_probe_snapshot_restores_as_retryable_without_lock(tmp_path):
     target = tmp_path / "target.sqlite3"
     ledger = ManagedLedger(source, ensure_schema=True)
     ledger.upsert_opportunity(
-        opportunity_key="owner/repo#1", owner="owner", repo="repo", issue_number=1,
-        issue_url="https://github.com/owner/repo/issues/1", state="SYSTEM_PROCESSING",
-        source="test", provenance={}, metadata={"selectedBaseSha": sha, "codePaths": ["target.py"]},
+        opportunity_key="owner/repo#1",
+        owner="owner",
+        repo="repo",
+        issue_number=1,
+        issue_url="https://github.com/owner/repo/issues/1",
+        state="SYSTEM_PROCESSING",
+        source="test",
+        provenance={},
+        metadata={"selectedBaseSha": sha, "codePaths": ["target.py"]},
     )
-    ledger.bind_task(task_id="snapshot-task", opportunity_key="owner/repo#1", thread_id="thread", worktree_path=str(checkout))
+    ledger.bind_task(
+        task_id="snapshot-task",
+        opportunity_key="owner/repo#1",
+        thread_id="thread",
+        worktree_path=str(checkout),
+    )
     ledger.queue_reproduction_probe(
-        task_id="snapshot-task", opportunity_key="owner/repo#1", repo="owner/repo",
-        issue_url="https://github.com/owner/repo/issues/1", default_branch="main",
-        selected_base_sha=sha, code_paths=["target.py"], profile_id=None,
-        checkout_path=str(checkout), head_sha=sha, commit_sha=sha,
-        result_digest="snapshot-result", idempotency_key="snapshot-intent",
+        task_id="snapshot-task",
+        opportunity_key="owner/repo#1",
+        repo="owner/repo",
+        issue_url="https://github.com/owner/repo/issues/1",
+        default_branch="main",
+        selected_base_sha=sha,
+        code_paths=["target.py"],
+        profile_id=None,
+        checkout_path=str(checkout),
+        head_sha=sha,
+        commit_sha=sha,
+        result_digest="snapshot-result",
+        idempotency_key="snapshot-intent",
     )
     claimed = ledger.claim_reproduction_probe(worker_nonce="crashed-worker")
     assert claimed and claimed["state"] == "RUNNING"

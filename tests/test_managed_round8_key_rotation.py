@@ -29,6 +29,7 @@ pytestmark = pytest.mark.usefixtures("current_signing_key")
 def disable_host_keychain(monkeypatch):
     monkeypatch.setattr("oss_pr_radar.managed_security._keychain_current_key", lambda: None)
 
+
 CURRENT_ENV = "RADAR_DISPATCH_HMAC_KEY"
 CURRENT_ID_ENV = "RADAR_DISPATCH_HMAC_KEY_ID"
 PREVIOUS_ENV = "RADAR_DISPATCH_HMAC_KEY_PREVIOUS"

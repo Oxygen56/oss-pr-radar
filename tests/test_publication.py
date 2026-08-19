@@ -466,7 +466,9 @@ def test_followup_publication_is_bound_to_existing_pr_and_previous_head(tmp_path
     quality = {field: True for field in QUALITY_FIELDS}
     store.record_stage("example/project#7", "FIX_READY", evidence=quality)
     evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
-    refresh_reproduction_evidence(evidence, worktree=worktree, tmp_path=tmp_path, commit_sha=current)
+    refresh_reproduction_evidence(
+        evidence, worktree=worktree, tmp_path=tmp_path, commit_sha=current
+    )
     evidence_path.write_text(json.dumps(evidence, sort_keys=True), encoding="utf-8")
     write_explicit_review_receipt(evidence, tmp_path=tmp_path)
 
@@ -554,7 +556,9 @@ def test_broker_allows_bound_update_despite_a_competing_pr(monkeypatch, tmp_path
     quality = {field: True for field in QUALITY_FIELDS}
     store.record_stage("example/project#7", "FIX_READY", evidence=quality)
     evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
-    refresh_reproduction_evidence(evidence, worktree=worktree, tmp_path=tmp_path, commit_sha=current)
+    refresh_reproduction_evidence(
+        evidence, worktree=worktree, tmp_path=tmp_path, commit_sha=current
+    )
     evidence["changedFiles"] = ["file.txt", "second.txt"]
     evidence_path.write_text(json.dumps(evidence, sort_keys=True), encoding="utf-8")
     write_explicit_review_receipt(evidence, tmp_path=tmp_path)
@@ -667,7 +671,9 @@ def test_broker_allows_bound_update_when_related_pr_enrichment_is_partial(monkey
     quality = {field: True for field in QUALITY_FIELDS}
     store.record_stage("example/project#7", "FIX_READY", evidence=quality)
     evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
-    refresh_reproduction_evidence(evidence, worktree=worktree, tmp_path=tmp_path, commit_sha=current)
+    refresh_reproduction_evidence(
+        evidence, worktree=worktree, tmp_path=tmp_path, commit_sha=current
+    )
     evidence_path.write_text(json.dumps(evidence, sort_keys=True), encoding="utf-8")
     write_explicit_review_receipt(evidence, tmp_path=tmp_path)
     update = request_publication(
@@ -783,7 +789,9 @@ def test_merge_update_uses_live_repository_base_not_pr_snapshot(tmp_path, live_b
     quality = {field: True for field in QUALITY_FIELDS}
     store.record_stage("example/project#7", "FIX_READY", evidence=quality)
     evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
-    refresh_reproduction_evidence(evidence, worktree=worktree, tmp_path=tmp_path, commit_sha=current)
+    refresh_reproduction_evidence(
+        evidence, worktree=worktree, tmp_path=tmp_path, commit_sha=current
+    )
     evidence.update(
         {
             "handoffMode": "controller_merge_complete",

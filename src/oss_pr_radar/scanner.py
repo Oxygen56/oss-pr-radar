@@ -2472,13 +2472,19 @@ class Radar:
         commit = branch_data.get("commit") if isinstance(branch_data, dict) else {}
         base_sha = str(commit.get("sha") or "") if isinstance(commit, dict) else ""
         if branch_err or not base_sha:
-            result = {"status": "lookup_failed", "reason": branch_err or "base_sha_missing", "defaultBranch": branch}
+            result = {
+                "status": "lookup_failed",
+                "reason": branch_err or "base_sha_missing",
+                "defaultBranch": branch,
+            }
         else:
             result = {
                 "status": "ok",
                 "defaultBranch": branch,
                 "baseSha": base_sha,
-                "evidenceDigest": sha256_json({"repo": repo, "defaultBranch": branch, "baseSha": base_sha}),
+                "evidenceDigest": sha256_json(
+                    {"repo": repo, "defaultBranch": branch, "baseSha": base_sha}
+                ),
             }
         self.base_head_cache[repo] = result
         return result
@@ -3304,6 +3310,7 @@ class Radar:
             best = max(merged_direct, key=lambda item: item["score"])
         elif active_direct:
             best = max(active_direct, key=lambda item: item["score"])
+
         # Direct association and recent activity are auxiliary signals. A PR
         # is strong only with root-cause coverage plus two independent proofs.
         def strong_pr(item: dict[str, Any]) -> bool:
@@ -4213,17 +4220,23 @@ class Radar:
                 "defaultBranch": base_evidence.get("defaultBranch"),
                 "baseLookupStatus": base_evidence.get("status"),
                 "policy": {"status": policy},
-                "assignmentRequired": policy in {"needs_assignment", "ai_disclosure_and_assignment"},
-                "aiDisclosureConflict": policy in {"ai_disclosure_conflict", "ai_disclosure_and_assignment"},
+                "assignmentRequired": policy
+                in {"needs_assignment", "ai_disclosure_and_assignment"},
+                "aiDisclosureConflict": policy
+                in {"ai_disclosure_conflict", "ai_disclosure_and_assignment"},
                 "codePathsPlan": actionability.get("code_anchors") or [],
                 "reproductionPathPlan": bool(actionability.get("probe_ready")),
                 "validationPathPlan": bool(scored.get("test_path")),
                 "probeRequired": True,
-                "matureRepository": base["repo"] in known or self.repo_quality(base["repo"], False)[0],
+                "matureRepository": base["repo"] in known
+                or self.repo_quality(base["repo"], False)[0],
                 "duplicate": pr_assessment,
                 "duplicateStatus": pr_assessment.get("status"),
                 "designDigest": sha256_json(
-                    {"needsConfirmation": actionability.get("needs_confirmation"), "design": actionability.get("design_confirmation")}
+                    {
+                        "needsConfirmation": actionability.get("needs_confirmation"),
+                        "design": actionability.get("design_confirmation"),
+                    }
                 ),
                 "assigneeDigest": sha256_json(issue.get("assignees") or []),
                 "duplicateDigest": sha256_json(pr_assessment),
@@ -4231,9 +4244,12 @@ class Radar:
             expected = {
                 "baseSha": base.get("expected_base_sha") or base.get("expectedBaseSha"),
                 "issueDigest": base.get("expected_issue_digest") or base.get("expectedIssueDigest"),
-                "designDigest": base.get("expected_design_digest") or base.get("expectedDesignDigest"),
-                "assigneeDigest": base.get("expected_assignee_digest") or base.get("expectedAssigneeDigest"),
-                "duplicateDigest": base.get("expected_duplicate_digest") or base.get("expectedDuplicateDigest"),
+                "designDigest": base.get("expected_design_digest")
+                or base.get("expectedDesignDigest"),
+                "assigneeDigest": base.get("expected_assignee_digest")
+                or base.get("expectedAssigneeDigest"),
+                "duplicateDigest": base.get("expected_duplicate_digest")
+                or base.get("expectedDuplicateDigest"),
             }
             scored["pre_task_evidence"] = pre_task_evidence
             scored["preTaskEvidence"] = pre_task_evidence
@@ -4251,9 +4267,8 @@ class Radar:
                 scored["notify"] = False
                 scored["gate_decision"] = "HUMAN_REVIEW"
                 scored["category"] = "WAIT_MAINTAINER"
-                scored["risk"] = (
-                    f"{scored.get('risk') or ''}；预审未通过："
-                    + ", ".join(scored["pre_task_gate"]["reasons"][:4])
+                scored["risk"] = f"{scored.get('risk') or ''}；预审未通过：" + ", ".join(
+                    scored["pre_task_gate"]["reasons"][:4]
                 )
             scored["_llm_context"] = {
                 "issue_body": (issue.get("body") or "")[:16000],
@@ -4491,29 +4506,45 @@ class Radar:
                 candidate["preTaskGate"] = candidate["pre_task_gate"]
             phase3_candidates = any(
                 isinstance(candidate, dict)
-                and ("preTaskGate" in candidate or "pre_task_gate" in candidate or "ranking" in candidate)
+                and (
+                    "preTaskGate" in candidate
+                    or "pre_task_gate" in candidate
+                    or "ranking" in candidate
+                )
                 for candidate in candidates
             )
             allocation = (
                 allocate_capacity(
                     candidates,
-                    capacity=int(os.environ.get("RADAR_OPPORTUNITY_CAPACITY", OPPORTUNITY_CAPACITY)),
+                    capacity=int(
+                        os.environ.get("RADAR_OPPORTUNITY_CAPACITY", OPPORTUNITY_CAPACITY)
+                    ),
                     seed=str(self.analyzed),
                 )
                 if phase3_candidates
-                else {"schema": "opportunity_capacity_v1", "seed": str(self.analyzed), "capacity": 0, "slots": {"mature": 0, "exploration": 0}, "mature": [], "exploration": [], "unused": {}, "selectedKeys": []}
+                else {
+                    "schema": "opportunity_capacity_v1",
+                    "seed": str(self.analyzed),
+                    "capacity": 0,
+                    "slots": {"mature": 0, "exploration": 0},
+                    "mature": [],
+                    "exploration": [],
+                    "unused": {},
+                    "selectedKeys": [],
+                }
             )
             self.capacity_allocation = allocation
             selected_keys = set(allocation["selectedKeys"])
             selected_exploration = {
-                f"{item.get('repo')}#{item.get('num')}"
-                for item in allocation["exploration"]
+                f"{item.get('repo')}#{item.get('num')}" for item in allocation["exploration"]
             }
-            for candidate in (candidates if phase3_candidates else []):
+            for candidate in candidates if phase3_candidates else []:
                 key = f"{candidate.get('repo')}#{candidate.get('num')}"
                 if candidate.get("maturity") == "exploration":
                     candidate["capacityDisposition"] = (
-                        "EXPLORATION_SELECTED" if key in selected_exploration else "EXPLORATION_UNUSED"
+                        "EXPLORATION_SELECTED"
+                        if key in selected_exploration
+                        else "EXPLORATION_UNUSED"
                     )
                     candidate["auto_spawn"] = False
                     candidate["notify"] = False

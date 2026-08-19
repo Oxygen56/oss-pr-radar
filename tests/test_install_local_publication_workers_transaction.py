@@ -192,8 +192,7 @@ def test_first_worker_failure_does_not_touch_later_loaded_workers(
         "print",
     ]
     assert not any(
-        call[0] in {"bootout", "kickstart"} and call[1] in set(services[1:])
-        for call in fake.calls
+        call[0] in {"bootout", "kickstart"} and call[1] in set(services[1:]) for call in fake.calls
     )
     assert not any(
         call[0] == "bootstrap" and str(plist_path(home, str(spec["Label"]))) in call
@@ -271,7 +270,9 @@ def test_worker_write_modes_require_authorization_before_any_launchctl_or_plist_
         monkeypatch.setattr(
             INSTALL,
             "require_worker_staging_authorization",
-            lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("missing staging authorization")),
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                RuntimeError("missing staging authorization")
+            ),
         )
     else:
         monkeypatch.setattr(
@@ -305,23 +306,33 @@ def test_authorized_stage_uses_only_the_three_current_worker_specs(
         "active_release_evidence",
         lambda _root: {"valid": True, "path": str(tmp_path / "release"), "releaseId": "r1"},
     )
-    monkeypatch.setattr(INSTALL, "require_worker_staging_authorization", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        INSTALL, "require_worker_staging_authorization", lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr(
         INSTALL,
         "consume_worker_staging_authorization",
-        lambda *_args, **_kwargs: {"schema": "receipt", "state": "CONSUMED", "workerSpecDigest": "test"},
+        lambda *_args, **_kwargs: {
+            "schema": "receipt",
+            "state": "CONSUMED",
+            "workerSpecDigest": "test",
+        },
     )
     monkeypatch.setattr(INSTALL, "worker_specs", lambda *_args, **_kwargs: worker_specs_value)
     monkeypatch.setattr(
         INSTALL,
         "stage_workers",
-        lambda worker_specs, **_kwargs: calls.append(
-            ("stage", [str(spec["Label"]) for spec in worker_specs])
-        )
-        or {"ok": True, "staged": True},
+        lambda worker_specs, **_kwargs: (
+            calls.append(("stage", [str(spec["Label"]) for spec in worker_specs]))
+            or {"ok": True, "staged": True}
+        ),
     )
     monkeypatch.setattr(INSTALL, "_staging_records", lambda *_args, **_kwargs: [])
-    monkeypatch.setattr(sys, "argv", ["install_local_publication_workers.py", "--runtime-root", str(tmp_path), "--stage"])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["install_local_publication_workers.py", "--runtime-root", str(tmp_path), "--stage"],
+    )
 
     assert INSTALL.main() == 0
     assert calls == [
@@ -349,7 +360,9 @@ def test_worker_installer_rejects_tampered_or_missing_release_before_auth(
         "require_operational_authorization",
         lambda _root: pytest.fail("authorization must not run for a bad release"),
     )
-    monkeypatch.setattr(INSTALL, "launchctl", lambda *_args, **_kwargs: pytest.fail("must fail closed"))
+    monkeypatch.setattr(
+        INSTALL, "launchctl", lambda *_args, **_kwargs: pytest.fail("must fail closed")
+    )
     monkeypatch.setattr(
         sys,
         "argv",
@@ -488,6 +501,7 @@ def test_stage_transaction_lock_serializes_two_stagers(tmp_path: Path) -> None:
     release = threading.Event()
 
     with INSTALL.worker_staging_transaction_lock(tmp_path):
+
         def contender() -> None:
             with INSTALL.worker_staging_transaction_lock(tmp_path):
                 acquired.append(True)
@@ -546,7 +560,9 @@ def test_first_activation_rejects_loaded_launchd_cache_before_finalize(
     fake = FakeLaunchctl(domain, loaded)
     auth = {"state": "STAGED", "workerConfigDigest": INSTALL.worker_spec_digest(worker_specs)}
     monkeypatch.setattr(INSTALL, "launchctl", fake)
-    monkeypatch.setattr(INSTALL, "require_operational_authorization", lambda *_args, **_kwargs: auth)
+    monkeypatch.setattr(
+        INSTALL, "require_operational_authorization", lambda *_args, **_kwargs: auth
+    )
     monkeypatch.setattr(
         INSTALL,
         "finalize_operational_authorization",
@@ -576,7 +592,9 @@ def test_ensure_requires_exact_loaded_launchd_command_and_workdir(
     domain = f"gui/{os.getuid()}"
     services = {f"{domain}/{spec['Label']}" for spec in worker_specs}
 
-    def launch_output(spec: dict[str, object], *, command: list[str] | None = None, workdir: str | None = None) -> str:
+    def launch_output(
+        spec: dict[str, object], *, command: list[str] | None = None, workdir: str | None = None
+    ) -> str:
         arguments = command or [str(value) for value in spec["ProgramArguments"]]
         cwd = workdir or str(spec["WorkingDirectory"])
         lines = ["state = waiting", f"program = {arguments[0]}", "arguments = {"]
@@ -584,9 +602,7 @@ def test_ensure_requires_exact_loaded_launchd_command_and_workdir(
         lines.extend(["}", f"working directory = {cwd}", "last exit code = 0"])
         return "\n".join(lines) + "\n"
 
-    outputs = {
-        f"{domain}/{spec['Label']}": launch_output(spec) for spec in worker_specs
-    }
+    outputs = {f"{domain}/{spec['Label']}": launch_output(spec) for spec in worker_specs}
     loaded = services
     if case == "old-command":
         first = worker_specs[0]
@@ -595,16 +611,20 @@ def test_ensure_requires_exact_loaded_launchd_command_and_workdir(
         )
     elif case == "old-workdir":
         first = worker_specs[0]
-        outputs[f"{domain}/{first['Label']}"] = launch_output(
-            first, workdir="/old/runtime"
-        )
+        outputs[f"{domain}/{first['Label']}"] = launch_output(first, workdir="/old/runtime")
     elif case == "partial-old-cache":
         loaded = {f"{domain}/{worker_specs[0]['Label']}"}
-        outputs = {f"{domain}/{worker_specs[0]['Label']}": launch_output(worker_specs[0], command=["/old/runtime/worker"])}
+        outputs = {
+            f"{domain}/{worker_specs[0]['Label']}": launch_output(
+                worker_specs[0], command=["/old/runtime/worker"]
+            )
+        }
     fake = FakeLaunchctl(domain, loaded, print_outputs=outputs)
     auth = {"state": "ACTIVE", "workerConfigDigest": INSTALL.worker_spec_digest(worker_specs)}
     monkeypatch.setattr(INSTALL, "launchctl", fake)
-    monkeypatch.setattr(INSTALL, "require_operational_authorization", lambda *_args, **_kwargs: auth)
+    monkeypatch.setattr(
+        INSTALL, "require_operational_authorization", lambda *_args, **_kwargs: auth
+    )
     for spec in worker_specs:
         path = plist_path(home, str(spec["Label"]))
         path.write_bytes(plistlib.dumps(spec, fmt=plistlib.FMT_XML))
@@ -667,7 +687,9 @@ def test_two_complete_stage_transactions_have_one_receipt_and_one_write(
         lambda _root: {"valid": True, "path": str(tmp_path / "release"), "releaseId": "r1"},
     )
     monkeypatch.setattr(INSTALL, "worker_specs", lambda *_args, **_kwargs: worker_specs)
-    monkeypatch.setattr(INSTALL, "require_worker_staging_authorization", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        INSTALL, "require_worker_staging_authorization", lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr(INSTALL, "consume_worker_staging_authorization", consume)
     monkeypatch.setattr(INSTALL.Path, "home", classmethod(lambda _cls: home))
     monkeypatch.setattr(sys, "argv", ["installer", "--runtime-root", str(runtime), "--stage"])
@@ -710,8 +732,14 @@ def test_stage_failure_after_plist_writes_removes_only_new_plists(
         lambda _root: {"valid": True, "path": str(tmp_path / "release"), "releaseId": "r1"},
     )
     monkeypatch.setattr(INSTALL, "worker_specs", lambda *_args, **_kwargs: worker_specs)
-    monkeypatch.setattr(INSTALL, "require_worker_staging_authorization", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(INSTALL, "_staging_records", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("injected crash")))
+    monkeypatch.setattr(
+        INSTALL, "require_worker_staging_authorization", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(
+        INSTALL,
+        "_staging_records",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("injected crash")),
+    )
     monkeypatch.setattr(INSTALL, "launchctl", FakeLaunchctl(domain, set()))
     monkeypatch.setattr(sys, "argv", ["installer", "--runtime-root", str(runtime), "--stage"])
 

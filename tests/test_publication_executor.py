@@ -837,7 +837,9 @@ def test_authorized_publication_cli_reaches_operation_without_external_process(
 ):
     calls = []
     monkeypatch.setattr(MODULE, "bind_runtime", lambda *_args, **_kwargs: object())
-    monkeypatch.setattr(MODULE, "require_operational_authorization", lambda root: calls.append(root))
+    monkeypatch.setattr(
+        MODULE, "require_operational_authorization", lambda root: calls.append(root)
+    )
     monkeypatch.setattr(MODULE, "RadarLedger", lambda _path: object())
     monkeypatch.setattr(MODULE, "push", lambda _args, _store: {"ok": True, "pushed": True})
     monkeypatch.setattr(

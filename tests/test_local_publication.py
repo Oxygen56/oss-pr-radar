@@ -556,6 +556,7 @@ def test_fast_cycle_does_not_call_network_or_publication_operations(monkeypatch,
     monkeypatch.setattr(
         "oss_pr_radar.local_publication.disk_snapshot", lambda _root: {"level": "ok"}
     )
+
     def runner(_root: Path, operation: str):
         if operation != "local-receipt-enqueue":
             raise AssertionError(operation)

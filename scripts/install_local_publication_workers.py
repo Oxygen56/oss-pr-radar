@@ -173,14 +173,10 @@ def _restore_snapshot(snapshot: PlistSnapshot) -> None:
         snapshot.path.unlink(missing_ok=True)
 
 
-def _rollback(
-    snapshots: list[PlistSnapshot], touched: list[str], *, domain: str
-) -> list[str]:
+def _rollback(snapshots: list[PlistSnapshot], touched: list[str], *, domain: str) -> list[str]:
     errors: list[str] = []
     touched_services = set(touched)
-    touched_snapshots = [
-        snapshot for snapshot in snapshots if snapshot.service in touched_services
-    ]
+    touched_snapshots = [snapshot for snapshot in snapshots if snapshot.service in touched_services]
     for service in reversed(touched):
         try:
             launchctl("bootout", service, check=False)
@@ -225,10 +221,9 @@ def _launchctl_config_matches(service: str, expected: dict[str, object]) -> bool
     if result.returncode != 0:
         return False
     actual = parse_launchctl_config(result.stdout or "")
-    return (
-        actual.get("ProgramArguments") == [str(item) for item in expected["ProgramArguments"]]
-        and actual.get("WorkingDirectory") == str(expected["WorkingDirectory"])
-    )
+    return actual.get("ProgramArguments") == [
+        str(item) for item in expected["ProgramArguments"]
+    ] and actual.get("WorkingDirectory") == str(expected["WorkingDirectory"])
 
 
 def service_status(service: str, plist_path: Path, expected: dict) -> dict:
@@ -393,7 +388,9 @@ def stage_workers(
     }
 
 
-def _staging_records(specs: list[dict[str, object]], *, home: Path, domain: str) -> list[dict[str, object]]:
+def _staging_records(
+    specs: list[dict[str, object]], *, home: Path, domain: str
+) -> list[dict[str, object]]:
     records: list[dict[str, object]] = []
     launch_dir = (home / "Library" / "LaunchAgents").resolve()
     digest = worker_spec_digest(specs)
@@ -427,7 +424,11 @@ def _staging_records(specs: list[dict[str, object]], *, home: Path, domain: str)
 
 
 def activate_staged_workers(
-    specs: list[dict[str, object]], *, home: Path, domain: str, runtime_root: Path,
+    specs: list[dict[str, object]],
+    *,
+    home: Path,
+    domain: str,
+    runtime_root: Path,
     require_stage_receipt: bool = True,
 ) -> dict[str, object]:
     """Load workers only after the current operational authorization verifies."""
@@ -459,7 +460,10 @@ def activate_staged_workers(
             "loaded": True,
             "workers": [{"label": str(spec["Label"]), "activated": True} for spec in specs],
         }
-    if any(snapshot.loaded or not _config_matches(snapshot.path, spec) for snapshot, spec in zip(snapshots, specs, strict=True)):
+    if any(
+        snapshot.loaded or not _config_matches(snapshot.path, spec)
+        for snapshot, spec in zip(snapshots, specs, strict=True)
+    ):
         raise RuntimeError("workers must be staged and unloaded before activation")
     touched: list[str] = []
     try:
@@ -506,7 +510,10 @@ def ensure_workers(
             "changed": False,
             "workers": [{"label": str(spec["Label"]), "ensured": True} for spec in specs],
         }
-    if all(_config_matches(snapshot.path, spec) for snapshot, spec in zip(snapshots, specs, strict=True)):
+    if all(
+        _config_matches(snapshot.path, spec)
+        for snapshot, spec in zip(snapshots, specs, strict=True)
+    ):
         return activate_staged_workers(
             specs, home=home, domain=domain, runtime_root=runtime_root, require_stage_receipt=False
         )
@@ -516,9 +523,7 @@ def ensure_workers(
     )
 
 
-def _uninstall_labels(
-    labels: tuple[str, ...], *, home: Path, domain: str
-) -> dict[str, object]:
+def _uninstall_labels(labels: tuple[str, ...], *, home: Path, domain: str) -> dict[str, object]:
     errors: list[str] = []
     for label in labels:
         service = f"{domain}/{label}"
@@ -594,7 +599,10 @@ def main() -> int:
             require_operational_authorization(runtime_root)
             result = uninstall_workers(specs, home=home, domain=domain)
         elif args.stage:
-            if authorization_path(runtime_root).exists() or authorization_path(runtime_root).is_symlink():
+            if (
+                authorization_path(runtime_root).exists()
+                or authorization_path(runtime_root).is_symlink()
+            ):
                 raise RuntimeError("--stage refuses to modify an already authorized runtime")
             with worker_staging_transaction_lock(runtime_root):
                 if not staged_worker_receipt_path(runtime_root).exists():
@@ -616,7 +624,11 @@ def main() -> int:
                     # cleanup after receipt creation.
                     if not staged_worker_receipt_path(runtime_root).exists():
                         for snapshot, spec in zip(initial, specs, strict=True):
-                            if not snapshot.exists and not _loaded(snapshot.service) and _config_matches(snapshot.path, spec):
+                            if (
+                                not snapshot.exists
+                                and not _loaded(snapshot.service)
+                                and _config_matches(snapshot.path, spec)
+                            ):
                                 snapshot.path.unlink(missing_ok=True)
                     raise
             result["receipt"] = {

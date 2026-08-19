@@ -37,9 +37,7 @@ def _source_commit(source: Path) -> str:
 
 
 def _git(source: Path, *args: str, text: bool = False) -> bytes | str:
-    result = subprocess.run(
-        ["git", *args], cwd=source, check=True, capture_output=True, text=text
-    )
+    result = subprocess.run(["git", *args], cwd=source, check=True, capture_output=True, text=text)
     return result.stdout if text else result.stdout
 
 
@@ -146,9 +144,7 @@ def build_copy(source: Path, target: Path, *, source_commit: str | None = None) 
     target = target.resolve()
     if source == target:
         raise ValueError("deployment source and target must differ")
-    status = str(
-        _git(source, "status", "--porcelain", "--untracked-files=all", text=True)
-    )
+    status = str(_git(source, "status", "--porcelain", "--untracked-files=all", text=True))
     if status.strip():
         raise RuntimeError("deployment source worktree must be clean")
     head = _source_commit(source)
@@ -173,9 +169,7 @@ def build_copy(source: Path, target: Path, *, source_commit: str | None = None) 
             destination = temporary / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(content)
-            entries.append(
-                {"path": str(relative), "sha256": hashlib.sha256(content).hexdigest()}
-            )
+            entries.append({"path": str(relative), "sha256": hashlib.sha256(content).hexdigest()})
         manifest = {
             "schema": DEPLOY_SCHEMA,
             "sourceCommit": commit,

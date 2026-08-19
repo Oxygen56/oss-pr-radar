@@ -85,7 +85,7 @@ def _write_private(path: Path, value: dict[str, Any]) -> None:
         payload = (canonical_json(value) + "\n").encode("utf-8")
         view = memoryview(payload)
         while view:
-            view = view[os.write(descriptor, view):]
+            view = view[os.write(descriptor, view) :]
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
@@ -117,7 +117,7 @@ def _write_private_commit_point(path: Path, value: dict[str, Any]) -> None:
         payload = (canonical_json(value) + "\n").encode("utf-8")
         view = memoryview(payload)
         while view:
-            view = view[os.write(descriptor, view):]
+            view = view[os.write(descriptor, view) :]
         os.fsync(descriptor)
         os.close(descriptor)
         descriptor = -1
@@ -292,7 +292,11 @@ def _read_bound_evidence(
     except (KeyError, TypeError, ValueError) as exc:
         raise RuntimeError("worker staging evidence timestamp is invalid") from exc
     now = datetime.now(UTC)
-    if observed.tzinfo is None or observed > now or now - observed > WORKER_STAGING_MAX_EVIDENCE_AGE:
+    if (
+        observed.tzinfo is None
+        or observed > now
+        or now - observed > WORKER_STAGING_MAX_EVIDENCE_AGE
+    ):
         raise RuntimeError("worker staging evidence is stale")
     if digest != stable_evidence_digest(path):
         raise RuntimeError("worker staging evidence changed while being read")
@@ -351,12 +355,15 @@ def _require_worker_staging_authorization_unlocked(
     if expires - issued > WORKER_STAGING_AUTH_TTL:
         raise RuntimeError("worker staging authorization lifetime is too long")
     current = _current_ledger_identity(runtime_root)
-    if any(value.get(key) != current[current_key] for key, current_key in (
-        ("ledgerTarget", "target"),
-        ("ledgerGeneration", "generation"),
-        ("ledgerSha256", "sha256"),
-        ("managedPrProjectionDigest", "managedPrProjectionDigest"),
-    )):
+    if any(
+        value.get(key) != current[current_key]
+        for key, current_key in (
+            ("ledgerTarget", "target"),
+            ("ledgerGeneration", "generation"),
+            ("ledgerSha256", "sha256"),
+            ("managedPrProjectionDigest", "managedPrProjectionDigest"),
+        )
+    ):
         raise RuntimeError("worker staging authorization ledger binding mismatch")
     if value.get("workerSpecDigest") != worker_spec_digest(specs):
         raise RuntimeError("worker staging authorization worker spec mismatch")
@@ -399,7 +406,14 @@ def _issue_worker_staging_authorization_unlocked(
     runtime_root = runtime_root.resolve()
     path = worker_staging_authorization_path(runtime_root)
     receipt = staged_worker_receipt_path(runtime_root)
-    if path.exists() or path.is_symlink() or receipt.exists() or receipt.is_symlink() or authorization_path(runtime_root).exists() or authorization_path(runtime_root).is_symlink():
+    if (
+        path.exists()
+        or path.is_symlink()
+        or receipt.exists()
+        or receipt.is_symlink()
+        or authorization_path(runtime_root).exists()
+        or authorization_path(runtime_root).is_symlink()
+    ):
         raise RuntimeError("worker staging authorization already exists")
     release_path, binding = active_release(runtime_root)
     counts, counts_digest = _read_bound_evidence(
@@ -410,11 +424,14 @@ def _issue_worker_staging_authorization_unlocked(
         release_id=str(binding["releaseId"]),
     )
     current = _current_ledger_identity(runtime_root)
-    if any(counts.get(key) != current[current_key] for key, current_key in (
-        ("ledgerGeneration", "generation"),
-        ("ledgerSha256", "sha256"),
-        ("managedPrProjectionDigest", "managedPrProjectionDigest"),
-    )):
+    if any(
+        counts.get(key) != current[current_key]
+        for key, current_key in (
+            ("ledgerGeneration", "generation"),
+            ("ledgerSha256", "sha256"),
+            ("managedPrProjectionDigest", "managedPrProjectionDigest"),
+        )
+    ):
         raise RuntimeError("managed-counts evidence does not match current ledger")
     from .local_publication import worker_specs
 
@@ -470,7 +487,11 @@ def _validate_worker_records(
         raise RuntimeError("staged worker receipt labels are not exact")
     for item in normalized:
         observed = datetime.fromisoformat(str(item["observedAt"]).replace("Z", "+00:00"))
-        if observed.tzinfo is None or observed > datetime.now(UTC) or datetime.now(UTC) - observed > timedelta(minutes=10):
+        if (
+            observed.tzinfo is None
+            or observed > datetime.now(UTC)
+            or datetime.now(UTC) - observed > timedelta(minutes=10)
+        ):
             raise RuntimeError("staged worker observation is stale")
         if (
             item.get("loaded") is not False
@@ -502,7 +523,12 @@ def _read_staged_receipt(runtime_root: Path) -> dict[str, Any]:
     ):
         raise RuntimeError("staged worker receipt schema is invalid")
     unsigned = {key: item for key, item in value.items() if key not in {"keyId", "signature"}}
-    if not verify_current(unsigned, context=STAGED_WORKER_RECEIPT_CONTEXT, key_id=value.get("keyId"), signature=value.get("signature")):
+    if not verify_current(
+        unsigned,
+        context=STAGED_WORKER_RECEIPT_CONTEXT,
+        key_id=value.get("keyId"),
+        signature=value.get("signature"),
+    ):
         raise RuntimeError("staged worker receipt authentication failed")
     return value
 
@@ -516,7 +542,12 @@ def _read_json_signed_staging(path: Path) -> dict[str, Any]:
         not isinstance(value, dict)
         or value.get("schema") != WORKER_STAGING_AUTH_SCHEMA
         or value.get("state") not in {"ACTIVE", "CONSUMED"}
-        or not verify_current(unsigned, context=WORKER_STAGING_AUTH_CONTEXT, key_id=value.get("keyId"), signature=value.get("signature"))
+        or not verify_current(
+            unsigned,
+            context=WORKER_STAGING_AUTH_CONTEXT,
+            key_id=value.get("keyId"),
+            signature=value.get("signature"),
+        )
     ):
         raise RuntimeError("staging authorization authentication failed")
     return value
@@ -527,7 +558,9 @@ def _receipt_matches_files(value: dict[str, Any], *, specs: list[dict[str, Any]]
     if not isinstance(records, list):
         return False
     try:
-        normalized = _validate_worker_records(records, specs=specs, spec_digest=str(value["workerSpecDigest"]))
+        normalized = _validate_worker_records(
+            records, specs=specs, spec_digest=str(value["workerSpecDigest"])
+        )
     except (KeyError, TypeError, ValueError, RuntimeError):
         return False
     for item in normalized:
@@ -556,11 +589,13 @@ def consume_worker_staging_authorization(
 ) -> dict[str, Any]:
     """Consume a stage permit once; retries return the same verified receipt."""
 
-    with (nullcontext() if _lock_held else _WorkerStagingLock(runtime_root)):
+    with nullcontext() if _lock_held else _WorkerStagingLock(runtime_root):
         receipt_path = staged_worker_receipt_path(runtime_root)
         if receipt_path.exists() or receipt_path.is_symlink():
             value = _read_staged_receipt(runtime_root)
-            if value.get("workerSpecDigest") != worker_spec_digest(specs) or not _receipt_matches_files(value, specs=specs):
+            if value.get("workerSpecDigest") != worker_spec_digest(
+                specs
+            ) or not _receipt_matches_files(value, specs=specs):
                 raise RuntimeError("existing staged receipt conflicts with current worker files")
             staging_path = worker_staging_authorization_path(runtime_root)
             staging = _read_json_signed_staging(staging_path)
@@ -573,12 +608,14 @@ def consume_worker_staging_authorization(
                     for key, item in staging.items()
                     if key not in {"keyId", "signature", "state", "consumedAt", "receiptSha256"}
                 }
-                consumed.update({
-                    "state": "CONSUMED",
-                    "initialAuthorizationDigest": original_digest,
-                    "consumedAt": iso_z(datetime.now(UTC)),
-                    "receiptSha256": stable_evidence_digest(receipt_path),
-                })
+                consumed.update(
+                    {
+                        "state": "CONSUMED",
+                        "initialAuthorizationDigest": original_digest,
+                        "consumedAt": iso_z(datetime.now(UTC)),
+                        "receiptSha256": stable_evidence_digest(receipt_path),
+                    }
+                )
                 signed = sign_current(consumed, context=WORKER_STAGING_AUTH_CONTEXT)
                 _write_private(staging_path, {**consumed, **signed})
             return value
@@ -626,7 +663,10 @@ def consume_worker_staging_authorization(
             }
         )
         consumed_signed = sign_current(consumed_unsigned, context=WORKER_STAGING_AUTH_CONTEXT)
-        _write_private(worker_staging_authorization_path(runtime_root), {**consumed_unsigned, **consumed_signed})
+        _write_private(
+            worker_staging_authorization_path(runtime_root),
+            {**consumed_unsigned, **consumed_signed},
+        )
         return receipt
 
 
@@ -643,16 +683,19 @@ def verify_staged_worker_receipt(
         value = _read_staged_receipt(runtime_root)
         binding = active_release(runtime_root)[1]
         current = _current_ledger_identity(runtime_root)
-        if any(value.get(key) != expected for key, expected in (
-            ("runtimeRootDigest", runtime_root_digest(runtime_root)),
-            ("releaseId", binding.get("releaseId")),
-            ("releaseHead", binding.get("commit")),
-            ("releaseManifestSha256", binding.get("manifestSha256")),
-            ("ledgerTarget", current["target"]),
-            ("ledgerGeneration", current["generation"]),
-            ("ledgerSha256", current["sha256"]),
-            ("managedPrProjectionDigest", current["managedPrProjectionDigest"]),
-        )):
+        if any(
+            value.get(key) != expected
+            for key, expected in (
+                ("runtimeRootDigest", runtime_root_digest(runtime_root)),
+                ("releaseId", binding.get("releaseId")),
+                ("releaseHead", binding.get("commit")),
+                ("releaseManifestSha256", binding.get("manifestSha256")),
+                ("ledgerTarget", current["target"]),
+                ("ledgerGeneration", current["generation"]),
+                ("ledgerSha256", current["sha256"]),
+                ("managedPrProjectionDigest", current["managedPrProjectionDigest"]),
+            )
+        ):
             return False
         if value.get("workerSpecDigest") != worker_spec_digest(specs):
             return False
@@ -669,7 +712,10 @@ def verify_staged_worker_receipt(
                 return False
         if value.get("authorizationDigest") != staging.get("initialAuthorizationDigest"):
             return False
-        if stable_evidence_digest(Path(str(value["managedCountsEvidencePath"]))) != value["managedCountsEvidenceSha256"]:
+        if (
+            stable_evidence_digest(Path(str(value["managedCountsEvidencePath"])))
+            != value["managedCountsEvidenceSha256"]
+        ):
             return False
         records = value.get("workers")
         reports = {str(item.get("label")): item for item in worker_reports}
@@ -757,19 +803,30 @@ def issue_operational_authorization(
     runtime_root = runtime_root.resolve()
     _, manifest = active_release(runtime_root)
     pointer = runtime_root / "state" / "current-ledger"
-    if not pointer.is_symlink() or pointer.resolve().parent != (runtime_root / "state" / "ledger-releases").resolve():
+    if (
+        not pointer.is_symlink()
+        or pointer.resolve().parent != (runtime_root / "state" / "ledger-releases").resolve()
+    ):
         raise RuntimeError("operational authorization requires an active managed ledger")
     receipt_path = staged_worker_receipt_path(runtime_root)
     receipt = _read_staged_receipt(runtime_root)
-    if not _receipt_matches_files(receipt, specs=[
-        {"Label": str(item.get("label"))} for item in receipt.get("workers", [])
-    ]):
+    if not _receipt_matches_files(
+        receipt, specs=[{"Label": str(item.get("label"))} for item in receipt.get("workers", [])]
+    ):
         raise RuntimeError("operational authorization requires an intact staged receipt")
     receipt_digest = stable_evidence_digest(receipt_path)
     worker_bindings = [
         {
             key: item[key]
-            for key in ("label", "plistPath", "plistSha256", "mode", "ownerUid", "regular", "symlink")
+            for key in (
+                "label",
+                "plistPath",
+                "plistSha256",
+                "mode",
+                "ownerUid",
+                "regular",
+                "symlink",
+            )
         }
         for item in receipt["workers"]
     ]
@@ -786,10 +843,13 @@ def issue_operational_authorization(
         "ledgerGeneration": ledger_info.get("generation"),
         "ledgerSha256AtIssue": ledger_info.get("sha256"),
         "managedPrProjectionDigest": ledger_info.get("managedPrProjectionDigest"),
-        "managedCountsEvidenceSha256": managed_counts_evidence_sha256 or stable_evidence_digest(managed_counts_evidence),
-        "automationSnapshotSha256": automation_snapshot_sha256 or stable_evidence_digest(automation_snapshot),
+        "managedCountsEvidenceSha256": managed_counts_evidence_sha256
+        or stable_evidence_digest(managed_counts_evidence),
+        "automationSnapshotSha256": automation_snapshot_sha256
+        or stable_evidence_digest(automation_snapshot),
         "issuedAt": iso_z(issued),
-        "workerConfigDigest": preflight.get("workerSpecDigest") or sha256_json(preflight.get("workers")),
+        "workerConfigDigest": preflight.get("workerSpecDigest")
+        or sha256_json(preflight.get("workers")),
         "stagedWorkerReceiptSha256": receipt_digest,
         "stagingNonce": receipt.get("stagingNonce"),
         "workerPlistBindings": worker_bindings,
@@ -849,7 +909,12 @@ def verify_operational_authorization(
     if value.get("state") == "STAGED" and not require_staged_receipt:
         raise RuntimeError("operational authorization has not been activated")
     unsigned = {key: item for key, item in value.items() if key not in {"keyId", "signature"}}
-    if not verify_current(unsigned, context=OPERATIONAL_AUTH_CONTEXT, key_id=value.get("keyId"), signature=value.get("signature")):
+    if not verify_current(
+        unsigned,
+        context=OPERATIONAL_AUTH_CONTEXT,
+        key_id=value.get("keyId"),
+        signature=value.get("signature"),
+    ):
         raise RuntimeError("operational authorization authentication failed")
     if path.stat().st_mode & 0o777 != 0o600:
         raise RuntimeError("operational authorization permissions are unsafe")
@@ -862,7 +927,10 @@ def verify_operational_authorization(
     ):
         raise RuntimeError("operational authorization release binding mismatch")
     pointer = runtime_root / "state" / "current-ledger"
-    if not pointer.is_symlink() or pointer.resolve().parent != (runtime_root / "state" / "ledger-releases").resolve():
+    if (
+        not pointer.is_symlink()
+        or pointer.resolve().parent != (runtime_root / "state" / "ledger-releases").resolve()
+    ):
         raise RuntimeError("operational authorization ledger pointer is invalid")
     if value.get("ledgerTarget") != str(pointer.resolve().relative_to(runtime_root / "state")):
         raise RuntimeError("operational authorization ledger binding mismatch")
@@ -875,10 +943,16 @@ def verify_operational_authorization(
         raise RuntimeError("operational authorization is not yet valid")
     bindings = value.get("workerPlistBindings")
     receipt = staged_worker_receipt_path(runtime_root)
-    if not isinstance(value.get("stagedWorkerReceiptSha256"), str) or not _verify_worker_plist_bindings(bindings):
+    if not isinstance(
+        value.get("stagedWorkerReceiptSha256"), str
+    ) or not _verify_worker_plist_bindings(bindings):
         raise RuntimeError("operational authorization worker binding is invalid")
     if require_staged_receipt or value.get("state") == "STAGED":
-        if receipt.is_symlink() or not receipt.is_file() or stable_evidence_digest(receipt) != value.get("stagedWorkerReceiptSha256"):
+        if (
+            receipt.is_symlink()
+            or not receipt.is_file()
+            or stable_evidence_digest(receipt) != value.get("stagedWorkerReceiptSha256")
+        ):
             raise RuntimeError("operational authorization staged receipt is missing or changed")
     return value
 
@@ -886,7 +960,9 @@ def verify_operational_authorization(
 def require_operational_authorization(
     runtime_root: Path, *, require_staged_receipt: bool = False
 ) -> dict[str, Any]:
-    return verify_operational_authorization(runtime_root, require_staged_receipt=require_staged_receipt)
+    return verify_operational_authorization(
+        runtime_root, require_staged_receipt=require_staged_receipt
+    )
 
 
 def finalize_operational_authorization(runtime_root: Path) -> dict[str, Any]:

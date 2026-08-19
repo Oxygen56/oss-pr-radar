@@ -144,15 +144,13 @@ def test_restore_uses_private_ref_when_shared_fetch_head_is_cleared(tmp_path, mo
     MODULE.restore(restored, "radar-state")
 
     assert json.loads((restored / "state" / "seen.json").read_text()) == {}
-    assert (
-        subprocess.run(
-            ["git", "rev-parse", MODULE.isolated_state_ref("radar-state")],
-            cwd=restored,
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout.strip()
-    )
+    assert subprocess.run(
+        ["git", "rev-parse", MODULE.isolated_state_ref("radar-state")],
+        cwd=restored,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
 
 
 def test_concurrent_restores_use_independent_explicit_refs(tmp_path):
@@ -270,7 +268,7 @@ def test_managed_snapshot_persists_lifecycle_cap_and_idempotency_across_workspac
     export_snapshot(database, snapshot)
     compressed = snapshot.read_bytes()
     public_text = gzip.decompress(compressed).decode("utf-8")
-    assert "\\\"/" not in public_text
+    assert '\\"/' not in public_text
     assert "/tmp/" not in public_text
     assert "codex-thread-private" not in public_text
     assert "threadFingerprint" in public_text
@@ -290,11 +288,16 @@ def test_managed_snapshot_persists_lifecycle_cap_and_idempotency_across_workspac
     assert restored_ledger.open_unanswered_auto_pr_count("owner/repo") == 5
     assert restored_ledger.publication_gate(repo="owner/repo")["allowed"] is False
     with restored_ledger._connection() as connection:
-        assert connection.execute(
-            "SELECT state FROM managed_publication_reservations WHERE request_id='run1-reservation'"
-        ).fetchone()[0] == "ACTIVE"
+        assert (
+            connection.execute(
+                "SELECT state FROM managed_publication_reservations WHERE request_id='run1-reservation'"
+            ).fetchone()[0]
+            == "ACTIVE"
+        )
     with restored_ledger._connection() as connection:
-        event_count = connection.execute("SELECT COUNT(*) FROM managed_lifecycle_events").fetchone()[0]
+        event_count = connection.execute(
+            "SELECT COUNT(*) FROM managed_lifecycle_events"
+        ).fetchone()[0]
     adapter_restored = ManagedAdapter(restored, restored_database)
     adapter_restored.record_scan_report(
         {
@@ -304,7 +307,10 @@ def test_managed_snapshot_persists_lifecycle_cap_and_idempotency_across_workspac
         }
     )
     with restored_ledger._connection() as connection:
-        assert connection.execute("SELECT COUNT(*) FROM managed_lifecycle_events").fetchone()[0] == event_count
+        assert (
+            connection.execute("SELECT COUNT(*) FROM managed_lifecycle_events").fetchone()[0]
+            == event_count
+        )
     assert set(restored_ledger.projection()["buckets"]) == {
         "DECISION_REQUIRED",
         "SYSTEM_PROCESSING",
@@ -387,7 +393,9 @@ def test_script_level_fix_ready_reply_snapshot_replays_into_fresh_workspace(tmp_
         },
     )
     adapter.ledger.transition_task_to_implementation(
-        task_id="task-script-1", receipt_digest=probe_receipt["receiptDigest"], receipt=probe_receipt
+        task_id="task-script-1",
+        receipt_digest=probe_receipt["receiptDigest"],
+        receipt=probe_receipt,
     )
     for number in range(1, 6):
         adapter.ledger.upsert_pr(
@@ -473,13 +481,26 @@ def test_script_level_fix_ready_reply_snapshot_replays_into_fresh_workspace(tmp_
         text=True,
     )
     subprocess.run(
-        [python, str(import_script), "--ledger", str(run2_db), "--snapshot", str(run2 / "state" / "managed_lifecycle.snapshot.json.gz")],
+        [
+            python,
+            str(import_script),
+            "--ledger",
+            str(run2_db),
+            "--snapshot",
+            str(run2 / "state" / "managed_lifecycle.snapshot.json.gz"),
+        ],
         cwd=run2,
         check=True,
         capture_output=True,
         text=True,
     )
-    subprocess.run([python, str(process_script), "--ledger", str(run2_db)], cwd=run2, check=True, capture_output=True, text=True)
+    subprocess.run(
+        [python, str(process_script), "--ledger", str(run2_db)],
+        cwd=run2,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
     projection = json.loads(
         subprocess.run(
             [python, str(projection_script), "--db-copy", str(run2_db)],
@@ -489,7 +510,9 @@ def test_script_level_fix_ready_reply_snapshot_replays_into_fresh_workspace(tmp_
             text=True,
         ).stdout
     )
-    assert any(item["taskId"] == "task-script-1" for item in projection["buckets"]["PORTFOLIO_READY"])
+    assert any(
+        item["taskId"] == "task-script-1" for item in projection["buckets"]["PORTFOLIO_READY"]
+    )
     with ManagedLedger(run2_db)._connection() as connection:
         reply = connection.execute(
             "SELECT * FROM managed_public_replies WHERE reply_key=?",
@@ -503,8 +526,11 @@ def test_script_level_fix_ready_reply_snapshot_replays_into_fresh_workspace(tmp_
         assert reply["body_digest"] == queued["body_digest"]
         assert reply["template_id"] == queued["template_id"]
         assert delivery["state"] == "QUEUED"
-        assert connection.execute(
-            "SELECT COUNT(*) FROM managed_reply_deliveries WHERE reply_key=?",
-            (reply["reply_key"],),
-        ).fetchone()[0] == 1
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM managed_reply_deliveries WHERE reply_key=?",
+                (reply["reply_key"],),
+            ).fetchone()[0]
+            == 1
+        )
     assert json.loads(import_result.stdout)["ok"] is True

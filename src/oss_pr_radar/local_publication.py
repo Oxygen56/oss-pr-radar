@@ -333,8 +333,7 @@ def fast_advance_once(
             errors = list(ingestion.get("errors") or []) + list(ingestion.get("rejected") or [])
             _enqueue_slow_work(root, reason="local_ingest")
             result = {
-                "ok": not errors
-                and ingestion.get("ok") is not False,
+                "ok": not errors and ingestion.get("ok") is not False,
                 "activity": bool(ingestion.get("queued") or errors),
                 "receiptsQueued": list(ingestion.get("queued") or []),
                 "errors": errors,
@@ -403,7 +402,9 @@ def queue_import_once(
                 ok=bool(result.get("ok")),
                 exit_code=0 if result.get("ok") else 1,
                 started_at=started,
-                error_code=None if result.get("ok") else str(result.get("error") or "QUEUE_IMPORT_FAILED"),
+                error_code=None
+                if result.get("ok")
+                else str(result.get("error") or "QUEUE_IMPORT_FAILED"),
                 success_field="queueImportSuccessAt",
                 exit_field="queueLastExitCode",
                 failure_field="queueConsecutiveFailures",
@@ -459,7 +460,7 @@ def slow_advance_once(
                 }
             disk = disk_snapshot(root)
             failures = int(backoff.get("failureCount") or 0)
-            delay = min(3600, 60 * (2**min(failures, 5)))
+            delay = min(3600, 60 * (2 ** min(failures, 5)))
             retry_after = now + delay
             operation_id = f"{os.getpid()}-{time.time_ns()}"
             write_json(
@@ -993,7 +994,15 @@ def main() -> int:
     try:
         require_operational_authorization(args.root)
     except RuntimeError as exc:
-        print(json.dumps({"ok": False, "blocked": "operational authorization required", "error": str(exc)[:400]}))
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "blocked": "operational authorization required",
+                    "error": str(exc)[:400],
+                }
+            )
+        )
         return 1
     log_dir = Path.home() / "Library" / "Logs" / "oss-pr-radar"
     rotate_log(log_dir / "publication-agent.log")

@@ -115,7 +115,9 @@ def _ensure_runtime_ignored(target: Path) -> Path:
     exclude = _git_info_exclude(target)
     existing = exclude.read_bytes() if exclude.exists() else b""
     existing_lines = existing.decode("utf-8", errors="strict").splitlines()
-    additions = [pattern for pattern in LOCAL_RUNTIME_IGNORE_PATTERNS if pattern not in existing_lines]
+    additions = [
+        pattern for pattern in LOCAL_RUNTIME_IGNORE_PATTERNS if pattern not in existing_lines
+    ]
     if not additions:
         return exclude
 

@@ -146,8 +146,19 @@ def _import_table(ledger: ManagedLedger, path: Path, table: str, *, source: str)
             idempotency_key=f"legacy:{source}:{table}:{row_key}",
             opportunity_key=opportunity_key,
             source="legacy-migration",
-            provenance={"originKind": "LEGACY_HISTORY", "source": source, "table": table, "rowKey": row_key},
-            payload={"source": source, "table": table, "rowKey": row_key, "contentDigest": digest, "record": safe_row},
+            provenance={
+                "originKind": "LEGACY_HISTORY",
+                "source": source,
+                "table": table,
+                "rowKey": row_key,
+            },
+            payload={
+                "source": source,
+                "table": table,
+                "rowKey": row_key,
+                "contentDigest": digest,
+                "record": safe_row,
+            },
             observed_at=str(row["updated_at"] if "updated_at" in row.keys() else "") or None,
         )
         if not result.get("created", True):

@@ -119,7 +119,11 @@ def test_activate_rollback_preserves_ledger_receipt_queue_and_rejects_corruption
 def test_controller_never_resolves_executables_from_poisoned_runtime_scripts(tmp_path, monkeypatch):
     monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", "controller-stage7-key" * 4)
     source, target = repositories(tmp_path)
-    for name in ("local_dispatch_bridge.py", "install_local_publication_workers.py", "check_workflow_health.py"):
+    for name in (
+        "local_dispatch_bridge.py",
+        "install_local_publication_workers.py",
+        "check_workflow_health.py",
+    ):
         (source / "scripts" / name).write_text("# test release executable\n", encoding="utf-8")
     git(source, "add", "scripts")
     git(
@@ -154,9 +158,13 @@ def test_controller_never_resolves_executables_from_poisoned_runtime_scripts(tmp
             return {"ok": True}
         return {"ok": True}
 
-    monkeypatch.setattr("oss_pr_radar.controller.require_operational_authorization", lambda _root: {})
+    monkeypatch.setattr(
+        "oss_pr_radar.controller.require_operational_authorization", lambda _root: {}
+    )
     controller_cycle(target, code_root=release, runner=runner, notify=False)
-    executable_args = [argument for _stage, argv in calls for argument in argv if argument.endswith(".py")]
+    executable_args = [
+        argument for _stage, argv in calls for argument in argv if argument.endswith(".py")
+    ]
     assert executable_args
     assert all(str(release) in argument for argument in executable_args)
     assert all(str(target / "scripts") not in argument for argument in executable_args)

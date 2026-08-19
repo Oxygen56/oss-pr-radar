@@ -260,7 +260,9 @@ def validation_certificate(
     for item in evidence_items:
         candidate = item
         if isinstance(item, dict):
-            candidate = item.get("checkId") or item.get("check_id") or item.get("name") or item.get("id")
+            candidate = (
+                item.get("checkId") or item.get("check_id") or item.get("name") or item.get("id")
+            )
         check_id = _sanitize_check_id(candidate)
         if check_id and check_id not in check_ids:
             check_ids.append(check_id)
@@ -298,20 +300,14 @@ def validation_certificate(
     if not auth["keyId"] or not auth["signature"]:
         raise PermissionError("validation certificate signing key is unavailable")
     certificate["keyId"] = auth["keyId"]
-    certificate["signature"] = sign_current(
-        certificate, context="evidence-cert-v1"
-    )["signature"]
+    certificate["signature"] = sign_current(certificate, context="evidence-cert-v1")["signature"]
     return certificate
 
 
-def _certificate_signature_valid(
-    certificate: dict[str, Any], *, current_only: bool
-) -> bool:
+def _certificate_signature_valid(certificate: dict[str, Any], *, current_only: bool) -> bool:
     verifier = verify_current if current_only else verify_current_or_previous
     return _certificate_structure_valid(certificate) and verifier(
-        {
-            key: value for key, value in certificate.items() if key != "signature"
-        },
+        {key: value for key, value in certificate.items() if key != "signature"},
         context="evidence-cert-v1",
         key_id=certificate.get("keyId"),
         signature=certificate.get("signature"),
@@ -406,7 +402,12 @@ def public_reply_policy_digest() -> str:
         {
             "version": PUBLIC_REPLY_POLICY_VERSION,
             "allowedTemplate": REPLY_TEMPLATE_ID,
-            "requires": ["maintainer_event", "patched_result", "validation_certificate", "passed_ci"],
+            "requires": [
+                "maintainer_event",
+                "patched_result",
+                "validation_certificate",
+                "passed_ci",
+            ],
         }
     )
 
@@ -876,7 +877,9 @@ def migrate_schema(
             ).fetchall()
         }
         if "head_ref" not in reservation_columns:
-            connection.execute("ALTER TABLE managed_publication_reservations ADD COLUMN head_ref TEXT")
+            connection.execute(
+                "ALTER TABLE managed_publication_reservations ADD COLUMN head_ref TEXT"
+            )
         attestation_indexes = connection.execute(
             "PRAGMA index_list(managed_publication_absence_attestations)"
         ).fetchall()
@@ -886,9 +889,7 @@ def migrate_schema(
                 continue
             columns = [
                 str(item[2])
-                for item in connection.execute(
-                    f'PRAGMA index_info("{index[1]}")'
-                ).fetchall()
+                for item in connection.execute(f'PRAGMA index_info("{index[1]}")').fetchall()
             ]
             if columns == ["reservation_key"]:
                 has_reservation_unique = True
@@ -1054,7 +1055,9 @@ def migrate_v6_to_v7(
     if not current_signing_key_id():
         raise PermissionError("v6 migration requires the current signing key")
     target.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary_name = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=target.parent)
+    fd, temporary_name = tempfile.mkstemp(
+        prefix=f".{target.name}.", suffix=".tmp", dir=target.parent
+    )
     os.close(fd)
     temporary = Path(temporary_name)
     try:
@@ -1125,7 +1128,10 @@ def migrate_v6_to_v7(
             state="LEGACY_REAUTH_REQUIRED",
             source="managed-migration",
             provenance={"fromVersion": 6, "toVersion": 7, "authorization": "reauth_required"},
-            payload={"certificates": "UNAUTHENTICATED", "absenceAttestations": "LEGACY_REAUTH_REQUIRED"},
+            payload={
+                "certificates": "UNAUTHENTICATED",
+                "absenceAttestations": "LEGACY_REAUTH_REQUIRED",
+            },
         )
         from .managed_snapshot import export_snapshot
 
@@ -1526,7 +1532,9 @@ class ManagedLedger:
                     if expected_opportunity
                     else ""
                 ),
-                base_sha=(expected_opportunity.get("selectedBaseSha") if expected_opportunity else ""),
+                base_sha=(
+                    expected_opportunity.get("selectedBaseSha") if expected_opportunity else ""
+                ),
                 code_paths=expected_paths,
                 required_level=REPRODUCED_VALIDATED,
                 issue_url=(expected_opportunity.get("issueUrl") if expected_opportunity else None),
@@ -1758,8 +1766,10 @@ class ManagedLedger:
                     raise PermissionError("finalized reservation has no recorded PR")
             if existing and existing["origin_kind"] == "EXISTING_OPEN_PR":
                 auto_created = False
-            auto_creation = auto_created and state == "OPEN" and (
-                existing is None or not existing["auto_created"]
+            auto_creation = (
+                auto_created
+                and state == "OPEN"
+                and (existing is None or not existing["auto_created"])
             )
             if auto_creation and (existing is None or not existing["auto_created"]):
                 gate = self._repo_pr_gate(
@@ -1847,7 +1857,10 @@ class ManagedLedger:
                 raise ValueError("task is not waiting for authenticated reproduction")
             provenance = json.loads(row["provenance_json"] or "{}")
             candidate_receipt = receipt or provenance.get("probeReceipt")
-            if not isinstance(candidate_receipt, dict) or candidate_receipt.get("receiptDigest") != receipt_digest:
+            if (
+                not isinstance(candidate_receipt, dict)
+                or candidate_receipt.get("receiptDigest") != receipt_digest
+            ):
                 raise PermissionError("complete signed reproduction receipt is required")
             opportunity = connection.execute(
                 "SELECT * FROM managed_opportunities WHERE opportunity_key=?",
@@ -1959,10 +1972,15 @@ class ManagedLedger:
                 existing_task = connection.execute(
                     "SELECT state FROM managed_tasks WHERE task_id=?", (task_id,)
                 ).fetchone()
-                if existing_task and existing_task["state"] in {
-                    "IMPLEMENTATION_READY",
-                    "PORTFOLIO_READY",
-                } and state in {"REPRODUCTION_REQUIRED", "SYSTEM_PROCESSING"}:
+                if (
+                    existing_task
+                    and existing_task["state"]
+                    in {
+                        "IMPLEMENTATION_READY",
+                        "PORTFOLIO_READY",
+                    }
+                    and state in {"REPRODUCTION_REQUIRED", "SYSTEM_PROCESSING"}
+                ):
                     state = existing_task["state"]
                 connection.execute(
                     "UPDATE managed_tasks SET state=? WHERE task_id=?", (state, task_id)
@@ -2085,10 +2103,15 @@ class ManagedLedger:
             existing_task = connection.execute(
                 "SELECT state FROM managed_tasks WHERE task_id=?", (task_id,)
             ).fetchone()
-            if existing_task and existing_task["state"] in {
-                "IMPLEMENTATION_READY",
-                "PORTFOLIO_READY",
-            } and state in {"REPRODUCTION_REQUIRED", "SYSTEM_PROCESSING"}:
+            if (
+                existing_task
+                and existing_task["state"]
+                in {
+                    "IMPLEMENTATION_READY",
+                    "PORTFOLIO_READY",
+                }
+                and state in {"REPRODUCTION_REQUIRED", "SYSTEM_PROCESSING"}
+            ):
                 state = existing_task["state"]
             connection.execute("UPDATE managed_tasks SET state=? WHERE task_id=?", (state, task_id))
             row = connection.execute(
@@ -2229,7 +2252,14 @@ class ManagedLedger:
         observed_at: str | None = None,
     ) -> dict[str, Any]:
         normalized_status = status.upper()
-        if normalized_status not in {"QUEUED", "RUNNING", "PASSED", "FAILED", "CANCELLED", "UNKNOWN"}:
+        if normalized_status not in {
+            "QUEUED",
+            "RUNNING",
+            "PASSED",
+            "FAILED",
+            "CANCELLED",
+            "UNKNOWN",
+        }:
             raise ValueError("invalid CI status")
         connection = self._connection()
         try:
@@ -2319,7 +2349,7 @@ class ManagedLedger:
         opportunity_key = canonical_opportunity_key(opportunity_key)
         normalized_paths = sorted({str(path) for path in code_paths if str(path).strip()})
         if not normalized_paths or any(
-            not path or path.startswith(('/', '\\')) or '..' in Path(path).parts
+            not path or path.startswith(("/", "\\")) or ".." in Path(path).parts
             for path in normalized_paths
         ):
             raise ValueError("reproduction probe code paths are invalid")
@@ -2369,7 +2399,11 @@ class ManagedLedger:
                 or opportunity_provenance.get("baseSha")
                 or ""
             )
-            expected_paths = opportunity_metadata.get("codePaths") or opportunity_provenance.get("codePaths") or []
+            expected_paths = (
+                opportunity_metadata.get("codePaths")
+                or opportunity_provenance.get("codePaths")
+                or []
+            )
             if (
                 repo != f"{opportunity_identity['owner']}/{opportunity_identity['repo']}"
                 or issue_url != opportunity_identity["issueUrl"]
@@ -2495,7 +2529,12 @@ class ManagedLedger:
                         exhaustion_key,
                         "managed-reproduction-worker",
                         stable_fingerprint(exhaustion_key),
-                        _json({"probeKey": stranded["probe_key"], "attemptCount": stranded["attempt_count"]}),
+                        _json(
+                            {
+                                "probeKey": stranded["probe_key"],
+                                "attemptCount": stranded["attempt_count"],
+                            }
+                        ),
                         now_text,
                         _json(
                             {
@@ -2556,7 +2595,9 @@ class ManagedLedger:
                 ),
             )
             if malformed_lease:
-                recovery_key = f"lease-recovered:{row['probe_key']}:{prior_attempt_id or 'none'}:{attempt_id}"
+                recovery_key = (
+                    f"lease-recovered:{row['probe_key']}:{prior_attempt_id or 'none'}:{attempt_id}"
+                )
                 fingerprint = stable_fingerprint(recovery_key)
                 connection.execute(
                     """INSERT OR IGNORE INTO managed_lifecycle_events
@@ -2771,11 +2812,17 @@ class ManagedLedger:
             probe_key = row["probe_key"]
             attempt_id = row["attempt_id"]
             if not row["profile_id"] or not row["checkout_path"]:
-                error = "TRUSTED_PROBE_PROFILE_UNAVAILABLE" if not row["profile_id"] else "CHECKOUT_UNAVAILABLE"
+                error = (
+                    "TRUSTED_PROBE_PROFILE_UNAVAILABLE"
+                    if not row["profile_id"]
+                    else "CHECKOUT_UNAVAILABLE"
+                )
                 finished = self.fail_reproduction_probe(
                     probe_key=probe_key, attempt_id=attempt_id, error=error
                 )
-                processed.append({"probeKey": probe_key, "state": finished["state"], "reason": error})
+                processed.append(
+                    {"probeKey": probe_key, "state": finished["state"], "reason": error}
+                )
                 continue
             receipt: dict[str, Any] = {}
             try:
@@ -2804,10 +2851,19 @@ class ManagedLedger:
                     finished = self.fail_reproduction_probe(
                         probe_key=probe_key, attempt_id=attempt_id, error=error
                     )
-                    processed.append({"probeKey": probe_key, "state": finished["state"], "error": error})
+                    processed.append(
+                        {"probeKey": probe_key, "state": finished["state"], "error": error}
+                    )
                 except RuntimeError:
-                    processed.append({"probeKey": probe_key, "state": "STALE_ATTEMPT", "error": error})
-        return {"ok": True, "processed": processed, "count": len(processed), "workerNonce": worker_nonce}
+                    processed.append(
+                        {"probeKey": probe_key, "state": "STALE_ATTEMPT", "error": error}
+                    )
+        return {
+            "ok": True,
+            "processed": processed,
+            "count": len(processed),
+            "workerNonce": worker_nonce,
+        }
 
     def _refresh_result_certificate(
         self,
@@ -2907,7 +2963,10 @@ class ManagedLedger:
                 return False
             if target_pr_key is not None and payload.get("targetPrKey") != target_pr_key:
                 return False
-            if target_opportunity_key is not None and payload.get("opportunityKey") != target_opportunity_key:
+            if (
+                target_opportunity_key is not None
+                and payload.get("opportunityKey") != target_opportunity_key
+            ):
                 return False
             return True
         finally:
@@ -2956,8 +3015,10 @@ class ManagedLedger:
     ) -> dict[str, Any]:
         current = _parse_time(_utc(now))
         observed = _utc(now)
-        lease_until = (current + timedelta(seconds=max(30, min(lease_seconds, 3600)))).isoformat().replace(
-            "+00:00", "Z"
+        lease_until = (
+            (current + timedelta(seconds=max(30, min(lease_seconds, 3600))))
+            .isoformat()
+            .replace("+00:00", "Z")
         )
         connection = self._connection()
         try:
@@ -3056,9 +3117,9 @@ class ManagedLedger:
                 "repo": repo,
                 "state": state,
                 "allowed": allowed,
-                "reason": "VERIFIED_MAINTAINER_INVITATION" if invitation else (
-                    "PUBLICATION_CAPACITY" if allowed else "BLOCKED_PRE_TASK"
-                ),
+                "reason": "VERIFIED_MAINTAINER_INVITATION"
+                if invitation
+                else ("PUBLICATION_CAPACITY" if allowed else "BLOCKED_PRE_TASK"),
                 "activePrs": active_prs,
                 "activeReservations": active_reservations,
                 "limit": OPEN_PR_CAP,
@@ -3139,7 +3200,11 @@ class ManagedLedger:
                 pr = connection.execute(
                     "SELECT * FROM managed_prs WHERE pr_key=?", (reservation["pr_key"],)
                 ).fetchone()
-                return dict(pr) | {"reservation": dict(reservation), "reconciled": True} if pr else None
+                return (
+                    dict(pr) | {"reservation": dict(reservation), "reconciled": True}
+                    if pr
+                    else None
+                )
             if reservation["state"] not in {"ACTIVE", "RECONCILE_REQUIRED"}:
                 return None
             candidates = connection.execute(
@@ -3182,7 +3247,11 @@ class ManagedLedger:
                 (reservation_key,),
             ).fetchone()
             if reservation is None or reservation["repo"] != repo:
-                return {"ok": False, "exists": None, "endpoint": "local:managed_publication_reservations"}
+                return {
+                    "ok": False,
+                    "exists": None,
+                    "endpoint": "local:managed_publication_reservations",
+                }
             try:
                 rows = connection.execute(
                     """SELECT e.effect_id,e.status FROM publication_effects e
@@ -3222,9 +3291,11 @@ class ManagedLedger:
             ).fetchone()
             if reservation is None:
                 raise ValueError("publication reservation is missing")
-            if reservation["repo"] != repo or (
-                reservation["head_ref"] and reservation["head_ref"] != head_ref
-            ) or (reservation["head_sha"] and reservation["head_sha"] != head_sha):
+            if (
+                reservation["repo"] != repo
+                or (reservation["head_ref"] and reservation["head_ref"] != head_ref)
+                or (reservation["head_sha"] and reservation["head_sha"] != head_sha)
+            ):
                 raise ValueError("absence attestation reservation binding mismatch")
         finally:
             connection.close()
@@ -3323,9 +3394,9 @@ class ManagedLedger:
                 "SELECT * FROM managed_publication_absence_attestations WHERE attestation_id=?",
                 (attestation_id,),
             ).fetchone()
-            if stored_attestation is None or stored_attestation["content_digest"] != attestation.get(
-                "contentDigest"
-            ):
+            if stored_attestation is None or stored_attestation[
+                "content_digest"
+            ] != attestation.get("contentDigest"):
                 raise PermissionError("absence attestation is not recorded")
             reservation = connection.execute(
                 "SELECT * FROM managed_publication_reservations WHERE reservation_key=?",
@@ -3335,8 +3406,14 @@ class ManagedLedger:
                 raise PermissionError("absence attestation reservation is missing")
             if (
                 reservation["repo"] != attestation.get("repo")
-                or (reservation["head_ref"] and reservation["head_ref"] != attestation.get("headRef"))
-                or (reservation["head_sha"] and reservation["head_sha"] != attestation.get("headSha"))
+                or (
+                    reservation["head_ref"]
+                    and reservation["head_ref"] != attestation.get("headRef")
+                )
+                or (
+                    reservation["head_sha"]
+                    and reservation["head_sha"] != attestation.get("headSha")
+                )
             ):
                 raise PermissionError("absence attestation head binding mismatch")
             if reservation["state"] in {"RELEASED", "FINALIZED"}:
@@ -3368,9 +3445,11 @@ class ManagedLedger:
                 f"repos/{repo}/git/commits/{head_sha}",
                 f"repos/{repo}/pulls?head={owner}:{head_ref}&state=all",
             }
-            if not isinstance(queries, list) or {
-                item.get("endpoint") for item in queries if isinstance(item, dict)
-            } != expected_endpoints:
+            if (
+                not isinstance(queries, list)
+                or {item.get("endpoint") for item in queries if isinstance(item, dict)}
+                != expected_endpoints
+            ):
                 raise PermissionError("absence attestation query binding mismatch")
             if len(queries) != 3 or not all(isinstance(item, dict) for item in queries):
                 raise PermissionError("absence attestation query shape mismatch")
@@ -3386,18 +3465,28 @@ class ManagedLedger:
                     _utc(now),
                 ),
             )
-            local_exists = local_effect.get("exists") is True if isinstance(local_effect, dict) else False
+            local_exists = (
+                local_effect.get("exists") is True if isinstance(local_effect, dict) else False
+            )
             if (
                 not isinstance(queries, list)
                 or not isinstance(local_effect, dict)
                 or any(item.get("ok") is not True for item in queries if isinstance(item, dict))
-                or any(item.get("exists") is not False for item in queries if isinstance(item, dict))
+                or any(
+                    item.get("exists") is not False for item in queries if isinstance(item, dict)
+                )
                 or local_effect.get("ok") is not True
                 or local_effect.get("exists") is not False
             ):
-                state = "RECONCILE_REQUIRED" if any(
-                    isinstance(item, dict) and item.get("exists") is True for item in queries or []
-                ) or local_exists else "WAITING_EXTERNAL"
+                state = (
+                    "RECONCILE_REQUIRED"
+                    if any(
+                        isinstance(item, dict) and item.get("exists") is True
+                        for item in queries or []
+                    )
+                    or local_exists
+                    else "WAITING_EXTERNAL"
+                )
                 connection.execute(
                     "UPDATE managed_publication_reservations SET state=?,updated_at=? WHERE reservation_key=?",
                     (state, _utc(now), attestation["reservationKey"]),
@@ -3409,7 +3498,11 @@ class ManagedLedger:
                 (_utc(now), attestation["reservationKey"]),
             )
             connection.commit()
-            return {"reservationKey": attestation["reservationKey"], "state": "RELEASED", "released": True}
+            return {
+                "reservationKey": attestation["reservationKey"],
+                "state": "RELEASED",
+                "released": True,
+            }
         except Exception:
             if connection.in_transaction:
                 connection.rollback()
@@ -3611,7 +3704,9 @@ class ManagedLedger:
                 certificate = stored_validation.get("certificate")
                 if not isinstance(certificate, dict):
                     evidence = stored_validation.get("evidence")
-                    certificate = evidence.get("certificate") if isinstance(evidence, dict) else None
+                    certificate = (
+                        evidence.get("certificate") if isinstance(evidence, dict) else None
+                    )
                 task_evidence = bool(
                     isinstance(certificate, dict)
                     and certificate.get("resultKey") == result["result_key"]
@@ -3630,7 +3725,11 @@ class ManagedLedger:
             allowed = allowed and template is not None
             del completed, objective_validation, uncertainty
             mode = "AUTO_REPLY_ALLOWED" if allowed else "DRAFT"
-            reason = "verified mechanical request" if allowed else "DECISION_REQUIRED: evidence closure required"
+            reason = (
+                "verified mechanical request"
+                if allowed
+                else "DECISION_REQUIRED: evidence closure required"
+            )
             reply_key = f"{pr_key}|{maintainer_event_key}|{result_digest}"
             existing = connection.execute(
                 "SELECT * FROM managed_public_replies WHERE reply_key=?", (reply_key,)
@@ -3797,7 +3896,11 @@ class ManagedLedger:
                 try:
                     connection.execute(
                         "UPDATE managed_reply_deliveries SET state='BLOCKED',error=?,updated_at=? WHERE reply_key=?",
-                        ("DECISION_REQUIRED: reply evidence or policy changed", _utc(), row["reply_key"]),
+                        (
+                            "DECISION_REQUIRED: reply evidence or policy changed",
+                            _utc(),
+                            row["reply_key"],
+                        ),
                     )
                     connection.execute(
                         "UPDATE managed_public_replies SET mode='DRAFT',reason=? WHERE reply_key=?",
@@ -3813,7 +3916,11 @@ class ManagedLedger:
                 try:
                     connection.execute(
                         "UPDATE managed_reply_deliveries SET state='BLOCKED',error=?,updated_at=? WHERE reply_key=?",
-                        ("DECISION_REQUIRED: live revalidation unavailable", _utc(), row["reply_key"]),
+                        (
+                            "DECISION_REQUIRED: live revalidation unavailable",
+                            _utc(),
+                            row["reply_key"],
+                        ),
                     )
                     connection.commit()
                 finally:
@@ -3936,7 +4043,10 @@ class ManagedLedger:
             ).fetchone()
             if row is None:
                 raise ValueError("reply delivery is missing")
-            if row["mode"] != "AUTO_REPLY_ALLOWED" or row["policy_digest"] != public_reply_policy_digest():
+            if (
+                row["mode"] != "AUTO_REPLY_ALLOWED"
+                or row["policy_digest"] != public_reply_policy_digest()
+            ):
                 raise PermissionError("reply evidence is no longer authorized")
             if row["body_digest"] != _digest(row["body"]):
                 raise PermissionError("reply body digest mismatch")
@@ -4203,17 +4313,23 @@ class ManagedLedger:
                     result and result["worker_state"] == "needs_human"
                 ):
                     bucket = "DECISION_REQUIRED"
-                elif state == "PORTFOLIO_READY" and (
-                    (
-                        result
-                        and result["commit_sha"]
-                        and _valid_validation(json_payload(result["validation_json"]))
+                elif (
+                    state == "PORTFOLIO_READY"
+                    and (
+                        (
+                            result
+                            and result["commit_sha"]
+                            and _valid_validation(json_payload(result["validation_json"]))
+                        )
+                        or not result
                     )
-                    or not result
-                ) and ci_status == "PASSED":
+                    and ci_status == "PASSED"
+                ):
                     bucket = "PORTFOLIO_READY"
-                elif state == "WAITING_EXTERNAL" or ci_status in {"QUEUED", "RUNNING"} or (
-                    task["pr_state"] == "OPEN" and not task["maintainer_response"]
+                elif (
+                    state == "WAITING_EXTERNAL"
+                    or ci_status in {"QUEUED", "RUNNING"}
+                    or (task["pr_state"] == "OPEN" and not task["maintainer_response"])
                 ):
                     bucket = "WAITING_EXTERNAL"
                 else:
@@ -4234,10 +4350,10 @@ class ManagedLedger:
                         },
                     }
                 )
-            task_pr_keys = {item["internal"]["prKey"] for item in items if item["internal"]["prKey"]}
-            for pr in connection.execute(
-                "SELECT * FROM managed_prs ORDER BY pr_key"
-            ).fetchall():
+            task_pr_keys = {
+                item["internal"]["prKey"] for item in items if item["internal"]["prKey"]
+            }
+            for pr in connection.execute("SELECT * FROM managed_prs ORDER BY pr_key").fetchall():
                 if pr["pr_key"] in task_pr_keys:
                     continue
                 bucket = (
@@ -4351,7 +4467,9 @@ class PublicationAbsenceReconciler:
             result = value.get("result")
         else:
             exists = value is not None and value != []
-            result = value if isinstance(value, (str, int, bool)) else ("present" if exists else "empty")
+            result = (
+                value if isinstance(value, (str, int, bool)) else ("present" if exists else "empty")
+            )
         if not isinstance(exists, bool):
             raise RuntimeError(f"external query is uncertain: {endpoint}")
         return {"endpoint": endpoint, "ok": True, "exists": exists, "result": result}
@@ -4639,9 +4757,7 @@ def reconcile_managed_pr_states(
             state=state,
             auto_created=False,
             source_kind=(
-                str(existing[pr_key]["source_kind"])
-                if pr_key in existing
-                else "EXISTING_OPEN_PR"
+                str(existing[pr_key]["source_kind"]) if pr_key in existing else "EXISTING_OPEN_PR"
             ),
             source=source,
             provenance={"reconciliation": "authoritative_read_only_api"},
@@ -4650,9 +4766,7 @@ def reconcile_managed_pr_states(
         )
         ledger.record_event(
             event_type="MANAGED_PR_STATE_RECONCILED",
-            idempotency_key=(
-                f"managed-pr-state:{pr_key}:{state}:{evidence['responseDigest']}"
-            ),
+            idempotency_key=(f"managed-pr-state:{pr_key}:{state}:{evidence['responseDigest']}"),
             pr_key=pr_key,
             state=state,
             source=source,

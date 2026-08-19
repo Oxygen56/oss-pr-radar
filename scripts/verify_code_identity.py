@@ -15,7 +15,12 @@ from oss_pr_radar.release_binding import resolve_code_identity  # noqa: E402
 
 def main() -> int:
     identity = resolve_code_identity(ROOT)
-    print(json.dumps({"root": str(identity.root), "commit": identity.commit, "kind": identity.kind}, sort_keys=True))
+    print(
+        json.dumps(
+            {"root": str(identity.root), "commit": identity.commit, "kind": identity.kind},
+            sort_keys=True,
+        )
+    )
     return 0
 
 

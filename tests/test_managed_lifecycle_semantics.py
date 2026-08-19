@@ -99,9 +99,12 @@ def test_result_semantics_require_new_head_and_validation(tmp_path):
             ("task-1", "owner/repo#1", "head-2"),
         ).fetchall()
         assert [row["is_current"] for row in current].count(1) == 1
-        assert connection.execute(
-            "SELECT COUNT(*) FROM managed_lifecycle_events WHERE event_type='RESULT_CLASSIFICATION_SUPERSEDED'"
-        ).fetchone()[0] == 1
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM managed_lifecycle_events WHERE event_type='RESULT_CLASSIFICATION_SUPERSEDED'"
+            ).fetchone()[0]
+            == 1
+        )
 
 
 def test_maintainer_qualification_and_public_reply_policy(tmp_path):
@@ -130,7 +133,10 @@ def test_maintainer_qualification_and_public_reply_policy(tmp_path):
         verified_permission=True,
     )
     ledger.bind_task(
-        task_id="task-1", opportunity_key="owner/repo#1", thread_id="thread-1", worktree_path="/tmp/task-1"
+        task_id="task-1",
+        opportunity_key="owner/repo#1",
+        thread_id="thread-1",
+        worktree_path="/tmp/task-1",
     )
     ledger.record_result(
         task_id="task-1",
@@ -173,7 +179,7 @@ def test_maintainer_qualification_and_public_reply_policy(tmp_path):
         ledger.prepare_public_reply(
             pr_key="owner/repo#1",
             maintainer_event_key="event-1",
-                result_digest="reply-result",
+            result_digest="reply-result",
             proposed_body="Fixed as requested.",
             completed=True,
             objective_validation=True,
@@ -223,7 +229,9 @@ def test_reply_outbox_revalidates_and_is_idempotent(tmp_path):
     )
     assert draft["mode"] == "DRAFT"
 
-    ledger.bind_task(task_id="task-2", opportunity_key="owner/repo#2", thread_id=None, worktree_path=None)
+    ledger.bind_task(
+        task_id="task-2", opportunity_key="owner/repo#2", thread_id=None, worktree_path=None
+    )
     ledger.record_result(
         task_id="task-2",
         result_digest="later",
@@ -265,13 +273,19 @@ def test_reply_outbox_revalidates_and_is_idempotent(tmp_path):
         "blocked": 0,
         "errors": [],
     }
-    assert ledger.dispatch_reply_outbox(fake_sender, live_revalidator=live_revalidator)["attempted"] == 0
+    assert (
+        ledger.dispatch_reply_outbox(fake_sender, live_revalidator=live_revalidator)["attempted"]
+        == 0
+    )
     assert sent[0]["reply_key"] == "owner/repo#2|mechanical-2|later"
     with ledger._connection() as connection:
-        assert connection.execute(
-            "SELECT state FROM managed_reply_deliveries WHERE reply_key=?",
-            (sent[0]["reply_key"],),
-        ).fetchone()[0] == "SENT"
+        assert (
+            connection.execute(
+                "SELECT state FROM managed_reply_deliveries WHERE reply_key=?",
+                (sent[0]["reply_key"],),
+            ).fetchone()[0]
+            == "SENT"
+        )
 
 
 def test_repo_cap_has_two_gates_and_verified_invitation_exemption(tmp_path):
@@ -544,9 +558,7 @@ def test_mature_cohort_right_censors_and_projection_has_four_buckets(tmp_path):
     censored = ledger.mature_cohort(horizon_days=14, now="2026-02-01T00:00:00Z")
     assert censored[0]["label"] == "censored"
     with pytest.raises(PermissionError):
-        ledger.record_external_outcome(
-            pr_key="owner/repo#1", horizon_days=14, label="censored"
-        )
+        ledger.record_external_outcome(pr_key="owner/repo#1", horizon_days=14, label="censored")
     ledger.record_external_outcome(
         pr_key="owner/repo#1", horizon_days=14, label="success", observed_at="2026-01-20T00:00:00Z"
     )

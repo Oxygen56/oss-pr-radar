@@ -213,8 +213,7 @@ def canonical_event_digest(event: dict[str, Any]) -> str:
 def validate_outboxes(artifact: dict[str, Any], outboxes: dict[str, dict[str, Any]]) -> None:
     for channel in ("feishu", "codex"):
         expected = [
-            event_binding(event)
-            for event in build_outbox(artifact, channel=channel)["events"]
+            event_binding(event) for event in build_outbox(artifact, channel=channel)["events"]
         ]
         outbox = outboxes.get(channel)
         if (

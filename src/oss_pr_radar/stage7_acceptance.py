@@ -67,9 +67,7 @@ def _ledger_check(path: Path) -> dict[str, Any]:
             "SELECT COALESCE(MAX(version), 0) FROM managed_schema_migrations"
         ).fetchone()[0]
         counts = {
-            table: int(
-                connection.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
-            )
+            table: int(connection.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0])
             for table in MANAGED_TABLES
         }
         pr_states = {
@@ -113,13 +111,18 @@ def _stage6_pr_invariant(report: Path) -> dict[str, Any]:
     }
     if not isinstance(invariant, dict) or set(invariant) != required:
         raise ValueError("Stage 6 report PR invariant is incomplete")
-    if any(not isinstance(invariant[key], int) for key in ("totalRecords", "currentOpen", "closedOrMerged", "liveOpenCount")):
+    if any(
+        not isinstance(invariant[key], int)
+        for key in ("totalRecords", "currentOpen", "closedOrMerged", "liveOpenCount")
+    ):
         raise ValueError("Stage 6 report PR invariant counts are invalid")
     if invariant["allManagedKeysObserved"] is not True or any(
         invariant[key] for key in ("missing", "unexpected", "duplicates", "headMismatches")
     ):
         raise ValueError("Stage 6 report PR invariant is not clean")
-    if not isinstance(invariant["managedPrProjectionDigest"], str) or not re.fullmatch(r"[0-9a-f]{64}", invariant["managedPrProjectionDigest"]):
+    if not isinstance(invariant["managedPrProjectionDigest"], str) or not re.fullmatch(
+        r"[0-9a-f]{64}", invariant["managedPrProjectionDigest"]
+    ):
         raise ValueError("Stage 6 report PR projection digest is invalid")
     code_head = value.get("codeHead")
     validate_verification_manifest(value.get("verification"), code_head)
@@ -127,8 +130,14 @@ def _stage6_pr_invariant(report: Path) -> dict[str, Any]:
 
 
 def _baseline_matches_ledger(baseline: dict[str, Any], evidence: dict[str, Any]) -> bool:
-    counts = evidence.get("managedCounts") if isinstance(evidence.get("managedCounts"), dict) else {}
-    states = evidence.get("managedPrStateCounts") if isinstance(evidence.get("managedPrStateCounts"), dict) else {}
+    counts = (
+        evidence.get("managedCounts") if isinstance(evidence.get("managedCounts"), dict) else {}
+    )
+    states = (
+        evidence.get("managedPrStateCounts")
+        if isinstance(evidence.get("managedPrStateCounts"), dict)
+        else {}
+    )
     return (
         baseline.get("totalRecords") == counts.get("managed_prs")
         and baseline.get("currentOpen") == states.get("OPEN")
@@ -172,7 +181,11 @@ def _stable_ledger_observation(path: Path, *, max_attempts: int = 3) -> dict[str
     """Read one normalized SQLite backup for counts, digest, and effects."""
 
     if not path.is_file():
-        return {"evidence": {"present": False, "integrity": "MISSING", "managedCounts": {}}, "sha256": None, "pendingEffects": -1}
+        return {
+            "evidence": {"present": False, "integrity": "MISSING", "managedCounts": {}},
+            "sha256": None,
+            "pendingEffects": -1,
+        }
     with tempfile.TemporaryDirectory(prefix="oss-pr-radar-stage7-ledger-") as directory:
         snapshot = Path(directory) / "ledger.sqlite3"
         copy = stable_sqlite_copy(
@@ -214,19 +227,22 @@ def _actual_plist(home: Path, label: str) -> dict[str, Any]:
 def _loaded(output: str) -> bool:
     lowered = output.casefold()
     return bool(output.strip()) and not any(
-        marker in lowered
-        for marker in ("could not find", "service not found", "no such process")
+        marker in lowered for marker in ("could not find", "service not found", "no such process")
     )
 
 
 _launch_config = parse_launchctl_config
 
 
-def _verify_bound_evidence(value: Any, *, schema: str, context: str, runtime_root: Path, release_id: str) -> dict[str, Any]:
+def _verify_bound_evidence(
+    value: Any, *, schema: str, context: str, runtime_root: Path, release_id: str
+) -> dict[str, Any]:
     if not isinstance(value, dict) or value.get("schema") != schema:
         raise ValueError("strict acceptance evidence schema is invalid")
     unsigned = {key: item for key, item in value.items() if key not in {"keyId", "signature"}}
-    if not verify_current(unsigned, context=context, key_id=value.get("keyId"), signature=value.get("signature")):
+    if not verify_current(
+        unsigned, context=context, key_id=value.get("keyId"), signature=value.get("signature")
+    ):
         raise ValueError("strict acceptance evidence authentication failed")
     if value.get("runtimeRootDigest") != runtime_root_digest(runtime_root):
         raise ValueError("strict acceptance evidence runtime binding mismatch")
@@ -269,7 +285,10 @@ def build_managed_counts_evidence(
         "managedCounts": evidence["managedCounts"],
         "ledgerSha256": observation["sha256"],
         "ledgerSnapshot": "sqlite-backup-wal-safe-v1",
-        "ledgerGeneration": observation.get("copy", {}).get("attempts", [{}])[-1].get("after", {}).get("generation"),
+        "ledgerGeneration": observation.get("copy", {})
+        .get("attempts", [{}])[-1]
+        .get("after", {})
+        .get("generation"),
         "managedPrProjectionDigest": evidence["managedPrProjectionDigest"],
         "sourceEnvelopeSha256": hashlib.sha256(envelope.read_bytes()).hexdigest(),
         "sourceReportSha256": hashlib.sha256(report.read_bytes()).hexdigest(),
@@ -349,7 +368,13 @@ def check(
                 else managed_counts_evidence
             )
             try:
-                bound = _verify_bound_evidence(raw, schema="oss-pr-radar.stage7-counts-evidence.v1", context="stage7-counts-evidence-v1", runtime_root=runtime_root, release_id=binding.release_id)
+                bound = _verify_bound_evidence(
+                    raw,
+                    schema="oss-pr-radar.stage7-counts-evidence.v1",
+                    context="stage7-counts-evidence-v1",
+                    runtime_root=runtime_root,
+                    release_id=binding.release_id,
+                )
                 exact_counts = bound.get("managedCounts")
                 stage6_baseline = bound.get("stage6ExpectedPrInvariant")
                 counts_evidence_ok = (
@@ -364,18 +389,26 @@ def check(
                     and isinstance(bound.get("sourceReportSha256"), str)
                     and isinstance(bound.get("sourceArtifactDigest"), str)
                     and bound.get("managedCounts") == ledger_evidence.get("managedCounts")
-                    and bound.get("managedPrProjectionDigest") == ledger_evidence.get("managedPrProjectionDigest")
+                    and bound.get("managedPrProjectionDigest")
+                    == ledger_evidence.get("managedPrProjectionDigest")
                 )
                 source_envelope = Path(str(bound.get("sourceEnvelopePath")))
                 source_report = Path(str(bound.get("sourceReportPath")))
                 if counts_evidence_ok:
                     try:
-                        validate_detached_report_envelope(source_report, source_envelope, code_head=str(binding.release.get("commit")))
+                        validate_detached_report_envelope(
+                            source_report,
+                            source_envelope,
+                            code_head=str(binding.release.get("commit")),
+                        )
                         source_value = json.loads(source_envelope.read_text(encoding="utf-8"))
                         counts_evidence_ok = (
-                            bound.get("sourceEnvelopeSha256") == hashlib.sha256(source_envelope.read_bytes()).hexdigest()
-                            and bound.get("sourceReportSha256") == hashlib.sha256(source_report.read_bytes()).hexdigest()
-                            and bound.get("sourceArtifactDigest") == sha256_json(source_value["artifactManifest"])
+                            bound.get("sourceEnvelopeSha256")
+                            == hashlib.sha256(source_envelope.read_bytes()).hexdigest()
+                            and bound.get("sourceReportSha256")
+                            == hashlib.sha256(source_report.read_bytes()).hexdigest()
+                            and bound.get("sourceArtifactDigest")
+                            == sha256_json(source_value["artifactManifest"])
                             and stage6_baseline == _stage6_pr_invariant(source_report)
                             and _baseline_matches_ledger(stage6_baseline, ledger_evidence)
                         )
@@ -384,8 +417,12 @@ def check(
             except (OSError, json.JSONDecodeError, ValueError):
                 counts_evidence_ok = False
     expected_ok = (
-        (not strict and (exact_counts is None or ledger_evidence.get("managedCounts") == exact_counts))
-        or (strict and isinstance(stage6_baseline, dict) and _baseline_matches_ledger(stage6_baseline, ledger_evidence))
+        not strict
+        and (exact_counts is None or ledger_evidence.get("managedCounts") == exact_counts)
+    ) or (
+        strict
+        and isinstance(stage6_baseline, dict)
+        and _baseline_matches_ledger(stage6_baseline, ledger_evidence)
     )
     automation_evidence_ok = not strict
     actual_automation = None
@@ -397,8 +434,16 @@ def check(
                     if isinstance(automation_snapshot, Path)
                     else automation_snapshot
                 )
-                actual_automation = _verify_bound_evidence(raw, schema=AUTOMATION_SNAPSHOT_SCHEMA, context="stage7-automation-snapshot-v1", runtime_root=runtime_root, release_id=binding.release_id)
-                observed = _utc_datetime(actual_automation.get("observedAt"), field="automation snapshot time")
+                actual_automation = _verify_bound_evidence(
+                    raw,
+                    schema=AUTOMATION_SNAPSHOT_SCHEMA,
+                    context="stage7-automation-snapshot-v1",
+                    runtime_root=runtime_root,
+                    release_id=binding.release_id,
+                )
+                observed = _utc_datetime(
+                    actual_automation.get("observedAt"), field="automation snapshot time"
+                )
                 files = actual_automation.get("sourceFiles")
                 automation_evidence_ok = (
                     datetime.now(UTC) - observed <= MAX_AUTOMATION_AGE
@@ -409,7 +454,13 @@ def check(
                 source_paths: dict[str, Path] = {}
                 source_resolved: set[str] = set()
                 for item in files if isinstance(files, list) else []:
-                    if not isinstance(item, dict) or set(item) != {"role", "path", "bytes", "sha256", "mtimeNs"}:
+                    if not isinstance(item, dict) or set(item) != {
+                        "role",
+                        "path",
+                        "bytes",
+                        "sha256",
+                        "mtimeNs",
+                    }:
                         automation_evidence_ok = False
                         continue
                     path = Path(str(item.get("path")))
@@ -476,7 +527,9 @@ def check(
         except Exception as exc:
             launch_error = f"{type(exc).__name__}:{str(exc)[:240]}"
     actual_configs = {
-        label: _actual_plist(home, label) if strict else {
+        label: _actual_plist(home, label)
+        if strict
+        else {
             "path": None,
             "present": True,
             "ProgramArguments": spec["ProgramArguments"],
@@ -492,19 +545,20 @@ def check(
         actual = actual_configs[label]
         actual_args = actual.get("ProgramArguments")
         actual_workdir = actual.get("WorkingDirectory")
-        launch_actual = _launch_config(launch_outputs.get(label, "")) if strict else {
-            "ProgramArguments": actual_args,
-            "WorkingDirectory": actual_workdir,
-        }
+        launch_actual = (
+            _launch_config(launch_outputs.get(label, ""))
+            if strict
+            else {
+                "ProgramArguments": actual_args,
+                "WorkingDirectory": actual_workdir,
+            }
+        )
         loaded = _loaded(launch_outputs.get(label, "")) if strict else False
-        launch_config_match = (
-            not strict
+        launch_config_match = not strict or (
+            not loaded
             or (
-                not loaded
-                or (
-                    launch_actual.get("ProgramArguments") == actual_args
-                    and launch_actual.get("WorkingDirectory") == actual_workdir
-                )
+                launch_actual.get("ProgramArguments") == actual_args
+                and launch_actual.get("WorkingDirectory") == actual_workdir
             )
         )
         actual_match = (
@@ -513,7 +567,9 @@ def check(
             and actual_workdir == expected["WorkingDirectory"]
         )
         if strict and loaded and isinstance(launch_actual.get("ProgramArguments"), list):
-            actual_loaded_arguments.extend(str(value) for value in launch_actual["ProgramArguments"])
+            actual_loaded_arguments.extend(
+                str(value) for value in launch_actual["ProgramArguments"]
+            )
         evidence = (snapshot or {}).get("workerProcesses", {}).get(worker, {})
         evidence = evidence if isinstance(evidence, dict) else {}
         launch = evidence.get("launchctl") if isinstance(evidence.get("launchctl"), dict) else {}
@@ -529,14 +585,18 @@ def check(
                 "expectedWorkdir": expected["WorkingDirectory"],
                 "actualConfigMatch": actual_match,
                 "launchConfigMatch": launch_config_match,
-                "releaseBound": isinstance(actual_args, list) and any(release_path in str(arg) for arg in actual_args),
-                "runtimeBound": isinstance(actual_args, list) and runtime_path in [str(arg) for arg in actual_args],
+                "releaseBound": isinstance(actual_args, list)
+                and any(release_path in str(arg) for arg in actual_args),
+                "runtimeBound": isinstance(actual_args, list)
+                and runtime_path in [str(arg) for arg in actual_args],
                 "loaded": loaded if strict else None,
                 "pid": pid,
                 "lastExitCode": launch.get("lastExitCode") if snapshot else None,
                 "processAlive": process.get("alive") if snapshot else None,
                 "processVersionMatched": process.get("versionMatched") if snapshot else None,
-                "processWorkingDirectoryMatched": process.get("workingDirectoryMatched") if snapshot else None,
+                "processWorkingDirectoryMatched": process.get("workingDirectoryMatched")
+                if snapshot
+                else None,
                 "freshness": _freshness(runtime_state, worker),
             }
         )
@@ -577,7 +637,8 @@ def check(
         for item in worker_reports
     )
     old_monolithic = any(_loaded(launch_outputs.get(label, "")) for label in LEGACY_LABELS) or any(
-        argument in {
+        argument
+        in {
             f"{runtime_path}/scripts/local_publication_agent.py",
             f"{runtime_path}/scripts/local_publication_worker.py",
             f"{runtime_path}/scripts/local_dispatch_bridge.py",
@@ -585,7 +646,9 @@ def check(
         for argument in actual_loaded_arguments
     )
     disk = disk_snapshot(runtime_root)
-    deployment = runtime_state.get("deployment") if isinstance(runtime_state.get("deployment"), dict) else {}
+    deployment = (
+        runtime_state.get("deployment") if isinstance(runtime_state.get("deployment"), dict) else {}
+    )
     identity_ok = (
         deployment.get("releaseVersion") == binding.release_id
         and deployment.get("policyDigest") == binding.release.get("policyDigest")
@@ -596,7 +659,9 @@ def check(
     disk_ok = disk.get("level") != "stop"
     runtime_git = runtime_root / ".git"
     code_git = binding.code_root / ".git"
-    shared_git = runtime_git.exists() and code_git.exists() and runtime_git.resolve() == code_git.resolve()
+    shared_git = (
+        runtime_git.exists() and code_git.exists() and runtime_git.resolve() == code_git.resolve()
+    )
     no_runtime_code_drift = all(
         not str(argument).startswith(runtime_path + "/scripts")
         for argument in actual_loaded_arguments
@@ -611,7 +676,9 @@ def check(
                 (managed_counts_evidence, "managedCountsEvidenceSha256"),
                 (automation_snapshot, "automationSnapshotSha256"),
             ):
-                if isinstance(evidence, Path) and authorization.get(field) != stable_evidence_digest(evidence):
+                if isinstance(evidence, Path) and authorization.get(
+                    field
+                ) != stable_evidence_digest(evidence):
                     operational_authorization_evidence_match = False
             operational_authorization_valid = operational_authorization_evidence_match
         except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
@@ -650,7 +717,12 @@ def check(
             "present": actual_automation is not None,
             "valid": automation_evidence_ok,
         },
-        "ledger": {"pointer": str(pointer), "pointerValid": pointer_target_ok, "path": str(ledger), **ledger_evidence},
+        "ledger": {
+            "pointer": str(pointer),
+            "pointerValid": pointer_target_ok,
+            "path": str(ledger),
+            **ledger_evidence,
+        },
         "noRuntimeCodeDrift": no_runtime_code_drift,
         "noSharedGitWrites": not shared_git,
         "disk": disk,
@@ -665,7 +737,9 @@ def check(
         "oldMonolithicWorkerReachable": old_monolithic,
         "launchctlError": launch_error,
         "strict": strict,
-        "strictMode": "final" if strict and require_workers_loaded else ("preflight" if strict else "development"),
+        "strictMode": "final"
+        if strict and require_workers_loaded
+        else ("preflight" if strict else "development"),
         "operationalAuthorizationValid": operational_authorization_valid,
         "stagedWorkerReceiptValid": staged_receipt_valid,
         "operationalAuthorizationEvidenceMatch": operational_authorization_evidence_match,

@@ -77,7 +77,10 @@ def _consume_rollback_nonce(manifest: dict[str, Any]) -> Path:
                     ledger = json.loads(consumption_path.read_text(encoding="utf-8"))
                 except (OSError, json.JSONDecodeError) as exc:
                     raise RuntimeError("rollback consumption ledger is invalid") from exc
-                if not isinstance(ledger, dict) or ledger.get("schema") != ROLLBACK_CONSUMPTION_SCHEMA:
+                if (
+                    not isinstance(ledger, dict)
+                    or ledger.get("schema") != ROLLBACK_CONSUMPTION_SCHEMA
+                ):
                     raise RuntimeError("rollback consumption ledger schema is invalid")
                 records = ledger.get("records")
                 if not isinstance(records, list):
@@ -86,7 +89,9 @@ def _consume_rollback_nonce(manifest: dict[str, Any]) -> Path:
                     if not isinstance(record, dict):
                         raise RuntimeError("rollback consumption ledger record is invalid")
                     unsigned = {
-                        key: value for key, value in record.items() if key not in {"keyId", "signature"}
+                        key: value
+                        for key, value in record.items()
+                        if key not in {"keyId", "signature"}
                     }
                     if not verify_current_or_previous(
                         unsigned,
@@ -95,7 +100,10 @@ def _consume_rollback_nonce(manifest: dict[str, Any]) -> Path:
                         signature=record.get("signature"),
                     ):
                         raise RuntimeError("rollback consumption ledger authentication failed")
-                    if record.get("manifestDigest") == digest or record.get("rollbackNonce") == nonce:
+                    if (
+                        record.get("manifestDigest") == digest
+                        or record.get("rollbackNonce") == nonce
+                    ):
                         raise RuntimeError("rollback manifest nonce has already been consumed")
             else:
                 records = []
@@ -132,7 +140,9 @@ def _managed_snapshot(path: Path) -> dict[str, Any]:
             try:
                 tables[table] = [
                     dict(row)
-                    for row in connection.execute(f"SELECT * FROM {table} ORDER BY rowid").fetchall()
+                    for row in connection.execute(
+                        f"SELECT * FROM {table} ORDER BY rowid"
+                    ).fetchall()
                 ]
             except sqlite3.OperationalError:
                 tables[table] = []
@@ -142,7 +152,11 @@ def _managed_snapshot(path: Path) -> dict[str, Any]:
 
 
 def _sign_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
-    unsigned = {key: value for key, value in manifest.items() if key not in {"manifestDigest", "keyId", "signature"}}
+    unsigned = {
+        key: value
+        for key, value in manifest.items()
+        if key not in {"manifestDigest", "keyId", "signature"}
+    }
     digest = sha256_json(unsigned)
     auth = sign_current(
         {**unsigned, "manifestDigest": digest},
@@ -158,7 +172,11 @@ def _sign_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
 
 
 def _verify_manifest(manifest: dict[str, Any]) -> None:
-    unsigned = {key: value for key, value in manifest.items() if key not in {"manifestDigest", "keyId", "signature"}}
+    unsigned = {
+        key: value
+        for key, value in manifest.items()
+        if key not in {"manifestDigest", "keyId", "signature"}
+    }
     digest = sha256_json(unsigned)
     if manifest.get("manifestDigest") != digest:
         raise RuntimeError("rollback manifest content digest mismatch")

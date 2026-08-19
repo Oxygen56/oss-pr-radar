@@ -100,7 +100,9 @@ def legal_publication_probe(
     git("worktree", "remove", "--force", str(checkout))
     evidence_path = worktree / ".oss-pr-radar" / "result.json"
     evidence_path.parent.mkdir()
-    evidence_path.write_text(json.dumps(unsigned | {"reproductionReceipt": receipt}), encoding="utf-8")
+    evidence_path.write_text(
+        json.dumps(unsigned | {"reproductionReceipt": receipt}), encoding="utf-8"
+    )
     return worktree, base_sha, head_sha, branch, receipt, result_digest, evidence_path
 
 

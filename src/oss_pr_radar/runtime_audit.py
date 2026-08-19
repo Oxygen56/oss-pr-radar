@@ -44,9 +44,7 @@ def active_release_evidence(root: Path) -> dict[str, Any]:
         return {"valid": False, "error": f"{type(exc).__name__}:{str(exc)[:300]}"}
 
 
-def parse_launchctl_output(
-    output: str, *, expected_label: str | None = None
-) -> dict[str, Any]:
+def parse_launchctl_output(output: str, *, expected_label: str | None = None) -> dict[str, Any]:
     pid = re.search(r"\bpid = (\d+)", output)
     last_exit = re.search(r"\blast exit code = (-?\d+)", output)
     state = re.search(r"\bstate = ([^\s]+)", output)
@@ -57,9 +55,7 @@ def parse_launchctl_output(
         "state": state.group(1) if state else "unknown",
     }
     if expected_label is not None:
-        result["labelMatched"] = (
-            observed_label is None or observed_label.group(1) == expected_label
-        )
+        result["labelMatched"] = observed_label is None or observed_label.group(1) == expected_label
         result["observedLabel"] = observed_label.group(1) if observed_label else expected_label
     return result
 
@@ -239,9 +235,7 @@ def audit_snapshot(snapshot: dict[str, Any], *, now: float | None = None) -> dic
     if release.get("valid") is not True:
         faults.append("ACTIVE_RELEASE_INVALID")
     process = snapshot.get("process") if isinstance(snapshot.get("process"), dict) else {}
-    launchctl = (
-        snapshot.get("launchctl") if isinstance(snapshot.get("launchctl"), dict) else {}
-    )
+    launchctl = snapshot.get("launchctl") if isinstance(snapshot.get("launchctl"), dict) else {}
     if process.get("alive") and (
         launchctl.get("lastExitCode") not in {None, 0}
         or state.get("lastExitCode") not in {None, 0}
@@ -277,7 +271,10 @@ def audit_snapshot(snapshot: dict[str, Any], *, now: float | None = None) -> dic
             faults.append(f"{worker.upper()}_LAST_EXIT_NONZERO")
         if launch.get("labelMatched") is False:
             faults.append(f"{worker.upper()}_LABEL_MISMATCH")
-        if actual.get("versionMatched") is not True or actual.get("releaseIdentityMatched") is not True:
+        if (
+            actual.get("versionMatched") is not True
+            or actual.get("releaseIdentityMatched") is not True
+        ):
             faults.append(f"{worker.upper()}_RELEASE_MISMATCH")
         if actual.get("workingDirectoryMatched") is not True:
             faults.append(f"{worker.upper()}_WORKDIR_MISMATCH")
@@ -311,7 +308,11 @@ def audit_snapshot(snapshot: dict[str, Any], *, now: float | None = None) -> dic
         for item in (state.get("workers") or {}).values()
         if isinstance(item, dict)
     ]
-    if snapshot.get("sqliteInterrupted") or state.get("lastErrorCode") == "SQLITE_INTERRUPT" or "SQLITE_INTERRUPT" in worker_errors:
+    if (
+        snapshot.get("sqliteInterrupted")
+        or state.get("lastErrorCode") == "SQLITE_INTERRUPT"
+        or "SQLITE_INTERRUPT" in worker_errors
+    ):
         faults.append("SQLITE_INTERRUPTED")
     if snapshot.get("lastErrno") == "ENOSPC":
         faults.append("ENOSPC")

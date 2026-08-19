@@ -146,7 +146,9 @@ def request_publication(
         raise PublicationError("invalid issue URL")
     repo = issue_match.group(1)
     probe_receipt = evidence.get("reproductionReceipt") or evidence.get("probeReceipt")
-    pre_task = evidence.get("preTaskEvidence") if isinstance(evidence.get("preTaskEvidence"), dict) else {}
+    pre_task = (
+        evidence.get("preTaskEvidence") if isinstance(evidence.get("preTaskEvidence"), dict) else {}
+    )
     code_paths = [
         str(path)
         for path in (
@@ -341,12 +343,21 @@ def audit_publication_request(
     if not result_digest or not verify_probe_receipt(
         receipt if isinstance(receipt, dict) else {},
         repo=repo,
-        base_sha=str(evidence_file.get("selectedBaseSha") or request.get("selectedBaseSha") or pre_task.get("baseSha") or ""),
+        base_sha=str(
+            evidence_file.get("selectedBaseSha")
+            or request.get("selectedBaseSha")
+            or pre_task.get("baseSha")
+            or ""
+        ),
         code_paths=code_paths,
         required_level=REPRODUCED_VALIDATED,
         issue_url=str(request.get("issueUrl") or ""),
-        task_id=str(request.get("taskId") or request.get("intentId") or request.get("threadId") or ""),
-        head_sha=str(evidence_file.get("headSha") or request.get("headSha") or request.get("commitSha") or ""),
+        task_id=str(
+            request.get("taskId") or request.get("intentId") or request.get("threadId") or ""
+        ),
+        head_sha=str(
+            evidence_file.get("headSha") or request.get("headSha") or request.get("commitSha") or ""
+        ),
         commit_sha=str(request.get("commitSha") or ""),
         result_digest=result_digest,
     ):

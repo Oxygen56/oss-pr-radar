@@ -66,7 +66,9 @@ def resolve_observation_time(
     return selected
 
 
-def require_free_space(root: Path, projected_bytes: int, *, minimum_bytes: int = MIN_FREE_BYTES) -> dict[str, int]:
+def require_free_space(
+    root: Path, projected_bytes: int, *, minimum_bytes: int = MIN_FREE_BYTES
+) -> dict[str, int]:
     """Fail before creating rehearsal files if the safety reserve would be crossed."""
 
     usage = os.statvfs(root)
@@ -117,13 +119,22 @@ def source_generation(path: Path) -> dict[str, Any]:
     """Return a content generation without exporting any row values."""
 
     digest, counts = _sqlite_content_digest(path)
-    return {"contentDigest": digest, "tableCounts": counts, "generation": _digest(counts | {"digest": digest})}
+    return {
+        "contentDigest": digest,
+        "tableCounts": counts,
+        "generation": _digest(counts | {"digest": digest}),
+    }
 
 
 def _require_quiescence_proof(token: str | None, lease: dict[str, Any] | None) -> dict[str, Any]:
     if isinstance(token, str) and token.strip():
         return {"mode": "explicit_token", "tokenDigest": _digest(token.strip())}
-    if isinstance(lease, dict) and lease.get("valid") is True and lease.get("owner") and lease.get("expiresAt"):
+    if (
+        isinstance(lease, dict)
+        and lease.get("valid") is True
+        and lease.get("owner")
+        and lease.get("expiresAt")
+    ):
         return {
             "mode": "writer_lease",
             "owner": str(lease["owner"]),
@@ -156,7 +167,9 @@ def stable_sqlite_copy(
     attempts: list[dict[str, Any]] = []
     for attempt in range(1, max_attempts + 1):
         before = source_generation(source)
-        fd, temporary_name = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=target.parent)
+        fd, temporary_name = tempfile.mkstemp(
+            prefix=f".{target.name}.", suffix=".tmp", dir=target.parent
+        )
         os.close(fd)
         temporary = Path(temporary_name)
         os.chmod(temporary, 0o600)
@@ -179,7 +192,9 @@ def stable_sqlite_copy(
                 generation_hook(attempt, source)
             after = source_generation(source)
             stable = before["generation"] == after["generation"]
-            attempts.append({"attempt": attempt, "before": before, "after": after, "stable": stable})
+            attempts.append(
+                {"attempt": attempt, "before": before, "after": after, "stable": stable}
+            )
             if stable:
                 with temporary.open("rb") as handle:
                     os.fsync(handle.fileno())
@@ -190,7 +205,12 @@ def stable_sqlite_copy(
                     os.fsync(directory_fd)
                 finally:
                     os.close(directory_fd)
-                return {"ok": True, "proof": proof, "attempts": attempts, "targetExisted": target_mode_before}
+                return {
+                    "ok": True,
+                    "proof": proof,
+                    "attempts": attempts,
+                    "targetExisted": target_mode_before,
+                }
         finally:
             if temporary.exists():
                 temporary.unlink()
@@ -222,7 +242,9 @@ def public_safe_scan(root: Path) -> dict[str, Any]:
         try:
             text = path.read_bytes().decode("utf-8")
         except UnicodeDecodeError:
-            violations.append({"path": str(path.relative_to(root)), "reason": "non_utf8_public_file"})
+            violations.append(
+                {"path": str(path.relative_to(root)), "reason": "non_utf8_public_file"}
+            )
             continue
         if _ABSOLUTE_PATH.search(text):
             violations.append({"path": str(path.relative_to(root)), "reason": "absolute_path"})
@@ -385,12 +407,18 @@ def validate_detached_report_envelope(report: Path, envelope: Path, *, code_head
     ):
         raise ValueError("detached report envelope names the wrong report")
     raw = report.read_bytes()
-    if report_meta.get("bytes") != len(raw) or report_meta.get("sha256") != hashlib.sha256(raw).hexdigest():
+    if (
+        report_meta.get("bytes") != len(raw)
+        or report_meta.get("sha256") != hashlib.sha256(raw).hexdigest()
+    ):
         raise ValueError("detached report envelope does not match report bytes")
     inventory = payload.get("artifactManifest")
     if not isinstance(inventory, dict):
         raise ValueError("detached report envelope is missing artifactManifest")
-    if inventory.get("rootRelativeOnly") is not True or inventory.get("completeFileInventory") is not True:
+    if (
+        inventory.get("rootRelativeOnly") is not True
+        or inventory.get("completeFileInventory") is not True
+    ):
         raise ValueError("artifact manifest is not a complete relative inventory")
     files = inventory.get("files")
     if not isinstance(files, list):

@@ -914,9 +914,7 @@ def fetch_cloud_queue() -> dict[str, Any]:
 
 
 def fetch_cloud_pr_followup() -> dict[str, Any]:
-    raw = command(
-        ["git", "show", "refs/radar/import/radar-state:pr_followup.json"], cwd=ROOT
-    )
+    raw = command(["git", "show", "refs/radar/import/radar-state:pr_followup.json"], cwd=ROOT)
     value = json.loads(raw)
     if not isinstance(value, dict):
         raise RuntimeError("invalid cloud PR follow-up state")
@@ -1680,12 +1678,12 @@ def _audit_intent(intent: dict[str, Any]) -> tuple[Any, Any]:
         current_actor=os.environ.get("GITHUB_ACTOR", "Oxygen56"),
         hardware_inventory=_hardware_inventory(),
     )
-    pre_task = intent.get("preTaskEvidence") if isinstance(intent.get("preTaskEvidence"), dict) else {}
+    pre_task = (
+        intent.get("preTaskEvidence") if isinstance(intent.get("preTaskEvidence"), dict) else {}
+    )
     default_branch = str(intent.get("defaultBranch") or pre_task.get("defaultBranch") or "")
     selected_base = str(intent.get("selectedBaseSha") or pre_task.get("baseSha") or "")
-    expected_digest = str(
-        intent.get("preTaskEvidenceDigest") or intent.get("evidenceDigest") or ""
-    )
+    expected_digest = str(intent.get("preTaskEvidenceDigest") or intent.get("evidenceDigest") or "")
     base_status = "OK"
     actual_branch = ""
     actual_base = ""
@@ -1966,7 +1964,9 @@ def claim_intent(args: argparse.Namespace) -> dict[str, Any]:
     )
     probe = getattr(evidence, "repo_probe_receipt", None) or {}
     probe_level = str(probe.get("probeLevel") or "UNVERIFIED")
-    task_stage = "IMPLEMENTATION_READY" if probe_level == REPRODUCED_VALIDATED else "REPRODUCTION_REQUIRED"
+    task_stage = (
+        "IMPLEMENTATION_READY" if probe_level == REPRODUCED_VALIDATED else "REPRODUCTION_REQUIRED"
+    )
     store.update_intent_probe_metadata(
         intent["intentId"],
         probe_level=probe_level,
@@ -2202,9 +2202,8 @@ def write_task_context(
             managed_provenance = json.loads(managed_task.get("provenance_json") or "{}")
         except (TypeError, json.JSONDecodeError):
             managed_provenance = {}
-        if (
-            managed_task.get("state") == "IMPLEMENTATION_READY"
-            and isinstance(managed_provenance.get("probeReceipt"), dict)
+        if managed_task.get("state") == "IMPLEMENTATION_READY" and isinstance(
+            managed_provenance.get("probeReceipt"), dict
         ):
             raw_task_stage = "IMPLEMENTATION_READY"
             raw_probe_level = str(managed_provenance.get("probeLevel") or "")
@@ -2221,11 +2220,14 @@ def write_task_context(
         repo_identity = issue_match.group(1)
         selected_base = str(context.get("selectedBaseSha") or "")
         code_paths = [str(path) for path in (context.get("codePaths") or []) if str(path).strip()]
-        expected_policy = str(
-            context.get("policyDigest")
-            or (context.get("preTaskEvidence") or {}).get("policyDigest")
-            or ""
-        ) or None
+        expected_policy = (
+            str(
+                context.get("policyDigest")
+                or (context.get("preTaskEvidence") or {}).get("policyDigest")
+                or ""
+            )
+            or None
+        )
         if (
             selected_base
             and code_paths
@@ -2233,7 +2235,9 @@ def write_task_context(
             and context.get("commitSha")
             and context.get("resultDigest")
         ):
-            verified_receipt = ManagedLedger(store.path, ensure_schema=True).current_reproduction_receipt(
+            verified_receipt = ManagedLedger(
+                store.path, ensure_schema=True
+            ).current_reproduction_receipt(
                 task_id=str(context.get("intentId") or ""),
                 receipt_digest=probe_receipt_digest,
                 repo=repo_identity,
@@ -2299,9 +2303,7 @@ def write_task_context(
 
 def _managed_bind_legacy_intent(store: RadarLedger, path: Path, intent_id: str) -> None:
     with store.connect() as connection:
-        row = connection.execute(
-            "SELECT * FROM intents WHERE intent_id=?", (intent_id,)
-        ).fetchone()
+        row = connection.execute("SELECT * FROM intents WHERE intent_id=?", (intent_id,)).fetchone()
     if row is None:
         raise RuntimeError("legacy intent disappeared before managed binding")
     intent = dict(row)
@@ -5985,7 +5987,10 @@ def _validation_prefetch_plan(
     result_path = worktree / ".oss-pr-radar" / "result.json"
     raw = result_path.read_bytes()
     result = json.loads(raw)
-    if not isinstance(result, dict) or _task_result_digest(result, raw) != candidate["resultDigest"]:
+    if (
+        not isinstance(result, dict)
+        or _task_result_digest(result, raw) != candidate["resultDigest"]
+    ):
         raise RuntimeError("validation result changed after it was queued")
     tests = result.get("tests") if isinstance(result, dict) else None
     if not isinstance(tests, list):
@@ -6820,9 +6825,7 @@ def _task_result_digest(value: dict[str, Any], raw: bytes) -> str:
     if value.get("handoffMode") == "controller_commit_required":
         unsigned["handoffMode"] = "controller_commit_complete"
         unsigned["commitSha"] = receipt.get("commitSha")
-        unsigned["controllerCommitChangedFiles"] = list(
-            value.get("changedFiles") or ["runtime.py"]
-        )
+        unsigned["controllerCommitChangedFiles"] = list(value.get("changedFiles") or ["runtime.py"])
         publication = unsigned.get("publication")
         if isinstance(publication, dict):
             unsigned["publication"] = dict(publication) | {"baseBranch": "main"}
@@ -6914,12 +6917,13 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 or managed_candidate.get("taskStage")
                 or "REPRODUCTION_REQUIRED"
             )
-            if (
-                task_stage == "REPRODUCTION_REQUIRED"
-                and value.get("contextDigest") == context.get("contextDigest")
+            if task_stage == "REPRODUCTION_REQUIRED" and value.get("contextDigest") == context.get(
+                "contextDigest"
             ):
                 stage_claim = str(value.get("stage") or "")
-                declared_changes = value.get("changedFiles") or value.get("controllerCommitChangedFiles")
+                declared_changes = value.get("changedFiles") or value.get(
+                    "controllerCommitChangedFiles"
+                )
                 worktree_status = subprocess.run(
                     ["git", "status", "--porcelain"],
                     cwd=Path(candidate["worktreePath"]),
@@ -6934,14 +6938,17 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     "REPRODUCED_VALIDATED",
                 }
                 if candidate["stage"] in {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED"}:
-                    allowed_readonly_stages.update(
-                        {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED"}
-                    )
+                    allowed_readonly_stages.update({"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED"})
                 if stage_claim not in allowed_readonly_stages:
                     violations.append("stage_not_reproduction")
                 if declared_changes:
                     violations.append("changed_files_declared")
-                if value.get("commitSha") or value.get("handoffMode") or value.get("publication") or value.get("prUrl"):
+                if (
+                    value.get("commitSha")
+                    or value.get("handoffMode")
+                    or value.get("publication")
+                    or value.get("prUrl")
+                ):
                     violations.append("implementation_or_publication_claim")
                 if worktree_status:
                     violations.append("worktree_modified")
@@ -7506,7 +7513,8 @@ def _run_publication_queue_unlocked(args: argparse.Namespace) -> dict[str, Any]:
                                 head_ref=str(request.get("branch") or "") or None,
                                 head_sha=str(request.get("commitSha") or "") or None,
                                 opportunity_key=str(request.get("opportunityKey") or "") or None,
-                                invitation_event_key=str(request.get("invitationEventKey") or "") or None,
+                                invitation_event_key=str(request.get("invitationEventKey") or "")
+                                or None,
                             )
                         else:
                             reason = str(recovery.get("reason") or "WAITING_EXTERNAL")
@@ -7514,15 +7522,11 @@ def _run_publication_queue_unlocked(args: argparse.Namespace) -> dict[str, Any]:
                             blocked.append({"requestId": request_id, "reason": reason})
                             continue
                 if not reservation.get("allowed"):
-                    reason = str(
-                        reservation.get("reason") or "BLOCKED_PRE_TASK"
-                    )
+                    reason = str(reservation.get("reason") or "BLOCKED_PRE_TASK")
                     store.block_publication_request(request_id, reason)
                     blocked.append({"requestId": request_id, "reason": reason})
                     continue
-                request = dict(request) | {
-                    "reservationKey": reservation["reservationKey"]
-                }
+                request = dict(request) | {"reservationKey": reservation["reservationKey"]}
                 reconciled = managed_adapter.reconcile_publication(
                     reservation_key=reservation["reservationKey"],
                     repo=repo,

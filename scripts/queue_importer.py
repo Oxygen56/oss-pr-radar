@@ -23,7 +23,15 @@ def main() -> int:
     try:
         require_operational_authorization(args.root)
     except RuntimeError as exc:
-        print(json.dumps({"ok": False, "blocked": "operational authorization required", "error": str(exc)[:400]}))
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "blocked": "operational authorization required",
+                    "error": str(exc)[:400],
+                }
+            )
+        )
         return 1
     log_dir = Path.home() / "Library" / "Logs" / "oss-pr-radar"
     rotate_log(log_dir / "importer.log")

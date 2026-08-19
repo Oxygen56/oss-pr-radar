@@ -78,9 +78,7 @@ def _write_inputs(tmp_path: Path, artifact: dict, queue: dict) -> tuple[Path, Pa
 
 
 @pytest.mark.parametrize("status", ["SENT", "FAILED"])
-def test_sender_rejects_caller_supplied_terminal_queue_before_writing(
-    tmp_path: Path, status: str
-):
+def test_sender_rejects_caller_supplied_terminal_queue_before_writing(tmp_path: Path, status: str):
     artifact = _artifact(tmp_path)
     queue = build_outbox(artifact, channel="feishu")
     queue["events"][0]["status"] = status
@@ -227,7 +225,9 @@ def test_forged_receipts_missing_message_id_and_wrong_attempt_fail(
     artifact = _artifact(tmp_path)
     queue = build_outbox(artifact, channel="feishu")
     event = queue["events"][0]
-    merger = _load_script("merge_war_room_receipt_forged_test", ROOT / "scripts/merge_war_room_receipt.py")
+    merger = _load_script(
+        "merge_war_room_receipt_forged_test", ROOT / "scripts/merge_war_room_receipt.py"
+    )
 
     forged_sent = {
         "schema": "oss-pr-radar.war-room-delivery-receipt.v1",
@@ -284,7 +284,9 @@ def test_sender_turns_missing_message_id_into_authenticated_failed_receipt(
     monkeypatch.setenv("FEISHU_CHAT_ID", "chat")
     artifact = _artifact(tmp_path)
     queue = build_outbox(artifact, channel="feishu")
-    sender = _load_script("send_war_room_outbox_missing_id_test", ROOT / "scripts/send_war_room_outbox.py")
+    sender = _load_script(
+        "send_war_room_outbox_missing_id_test", ROOT / "scripts/send_war_room_outbox.py"
+    )
 
     class MissingMessageClient:
         def __init__(self, *_args):

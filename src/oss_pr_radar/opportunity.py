@@ -49,7 +49,10 @@ def classify_scan_outcome(status: str, reason: str = "") -> str:
         return "task_no_go"
     if status in {"deferred", "status_update", "lookup_failed", "inspection_budget_deferred"}:
         return "blocked_pre_task"
-    if any(marker in text for marker in ("blocked", "lookup_failed", "fetch_failed", "incomplete", "unknown")):
+    if any(
+        marker in text
+        for marker in ("blocked", "lookup_failed", "fetch_failed", "incomplete", "unknown")
+    ):
         return "blocked_pre_task"
     return "scan_false_positive"
 
@@ -135,16 +138,22 @@ def pre_task_gate(
         reasons.append("stale_or_bot_refresh")
     if issue.get("assignees") or evidence.get("assignees"):
         reasons.append("issue_assigned")
-    if policy.get("status") in {
-        "UNKNOWN",
-        "policy_unknown",
-        "AI_POLICY_REVIEW",
-        "ai_disclosure_conflict",
-        "ai_disclosure_and_assignment",
-    } or evidence.get("aiDisclosureConflict") is True:
+    if (
+        policy.get("status")
+        in {
+            "UNKNOWN",
+            "policy_unknown",
+            "AI_POLICY_REVIEW",
+            "ai_disclosure_conflict",
+            "ai_disclosure_and_assignment",
+        }
+        or evidence.get("aiDisclosureConflict") is True
+    ):
         reasons.append("policy_or_disclosure_uncertain")
     if policy.get("assignment_required") or evidence.get("assignmentRequired") is True:
-        if evidence.get("maintainerApproval") is not True and not evidence.get("assignmentEventKey"):
+        if evidence.get("maintainerApproval") is not True and not evidence.get(
+            "assignmentEventKey"
+        ):
             reasons.append("assignment_required")
     if evidence.get("claUncertain") is True or evidence.get("dcoUncertain") is True:
         reasons.append("legal_policy_uncertain")
@@ -176,7 +185,9 @@ def pre_task_gate(
     elif duplicate_status in {"lookup_failed", "uncertain"}:
         reasons.append("duplicate_evidence_uncertain")
     if require_semantic:
-        semantic = candidate.get("llm_review") if isinstance(candidate.get("llm_review"), dict) else {}
+        semantic = (
+            candidate.get("llm_review") if isinstance(candidate.get("llm_review"), dict) else {}
+        )
         normalized = normalize_semantic_signal(semantic)
         if normalized["semanticSignal"] != "NO_OBJECTION":
             reasons.append(f"semantic_{normalized['semanticSignal'].casefold()}")
@@ -186,7 +197,18 @@ def pre_task_gate(
     unique_reasons = list(dict.fromkeys(reasons))
     if state_drift or "stale_or_bot_refresh" in unique_reasons:
         classification = "state_drift"
-    elif any(reason in {"policy_or_disclosure_uncertain", "legal_policy_uncertain", "assignment_required", "duplicate_evidence_uncertain", "base_sha_missing", "reproduction_or_validation_missing"} for reason in unique_reasons):
+    elif any(
+        reason
+        in {
+            "policy_or_disclosure_uncertain",
+            "legal_policy_uncertain",
+            "assignment_required",
+            "duplicate_evidence_uncertain",
+            "base_sha_missing",
+            "reproduction_or_validation_missing",
+        }
+        for reason in unique_reasons
+    ):
         classification = "blocked_pre_task"
     elif any(reason.startswith("semantic_") for reason in unique_reasons):
         classification = "blocked_pre_task"
@@ -216,12 +238,18 @@ def score_existing_pr(pr: dict[str, Any]) -> dict[str, Any]:
     """Score competing PR strength without treating CI failure as ownership."""
 
     components = {
-        "rootCauseCoverage": 20 if pr.get("rootCauseCoverage") or pr.get("technical_complete") else 0,
+        "rootCauseCoverage": 20
+        if pr.get("rootCauseCoverage") or pr.get("technical_complete")
+        else 0,
         "tests": 18 if int(pr.get("testFiles") or pr.get("test_files") or 0) > 0 else 0,
         "draft": -12 if pr.get("isDraft") or pr.get("is_draft") else 0,
         "activity": 8 if int(pr.get("ageDays") or pr.get("age_days") or 999) < 30 else 0,
-        "maintainerRecognition": 12 if pr.get("maintainerOwned") or pr.get("maintainer_owned") or pr.get("reviewApproved") else 0,
-        "changeScope": -12 if int(pr.get("changedFiles") or pr.get("changed_files") or 0) > 18 else 6,
+        "maintainerRecognition": 12
+        if pr.get("maintainerOwned") or pr.get("maintainer_owned") or pr.get("reviewApproved")
+        else 0,
+        "changeScope": -12
+        if int(pr.get("changedFiles") or pr.get("changed_files") or 0) > 18
+        else 6,
         "runtimePath": 12 if pr.get("runtimePath") or pr.get("semanticOverlap") else 0,
     }
     score = max(0, min(100, sum(components.values())))
@@ -263,15 +291,31 @@ def rank_opportunity(
     action = candidate.get("actionability_evidence") or {}
     pr = candidate.get("open_pr_assessment") or {}
     components = {
-        "technicalDepth": min(20, int(candidate.get("difficultyScore") or candidate.get("score") or 0) * 2),
-        "actualImpact": min(18, 12 if str(candidate.get("impact") or "").casefold() == "high" else 7),
-        "rootCauseClarity": 15 if action.get("root_cause_signal") or action.get("rootCauseSignal") else 4,
-        "verifiability": min(15, int(action.get("public_repro_signals") or 0) * 4 + (3 if action.get("probe_ready") else 0)),
-        "maintainerAdoption": 12 if action.get("maintainer_approved") or action.get("maintainerApproved") else 0,
-        "duplicateRisk": -14 if pr.get("status") in {"weak_pr_competition_possible", "semantic_overlap_requires_review"} else 0,
+        "technicalDepth": min(
+            20, int(candidate.get("difficultyScore") or candidate.get("score") or 0) * 2
+        ),
+        "actualImpact": min(
+            18, 12 if str(candidate.get("impact") or "").casefold() == "high" else 7
+        ),
+        "rootCauseClarity": 15
+        if action.get("root_cause_signal") or action.get("rootCauseSignal")
+        else 4,
+        "verifiability": min(
+            15,
+            int(action.get("public_repro_signals") or 0) * 4
+            + (3 if action.get("probe_ready") else 0),
+        ),
+        "maintainerAdoption": 12
+        if action.get("maintainer_approved") or action.get("maintainerApproved")
+        else 0,
+        "duplicateRisk": -14
+        if pr.get("status") in {"weak_pr_competition_possible", "semantic_overlap_requires_review"}
+        else 0,
         "narrativeValue": 8 if candidate.get("track") in {"agent_ai_infra", "llm_algorithm"} else 0,
         "repositoryMaturity": min(10, int(repository.get("maturityScore") or 0)),
-        "portfolioDiversity": 5 if history.get("repoCount", 0) < 3 or history.get("topicCount", 0) < 3 else 0,
+        "portfolioDiversity": 5
+        if history.get("repoCount", 0) < 3 or history.get("topicCount", 0) < 3
+        else 0,
     }
     score = sum(components.values())
     reasons = [f"{key}:{value}" for key, value in components.items() if value]
@@ -293,13 +337,17 @@ def allocate_capacity(
     capacity = max(0, int(capacity))
     mature_slots = (capacity * 9) // 10
     exploration_slots = capacity - mature_slots
+
     def stable_key(item: dict[str, Any]) -> str:
         key = f"{seed}|{item.get('repo')}#{item.get('num')}"
         return hashlib.sha256(key.encode()).hexdigest()
 
     mature = sorted(
         [item for item in candidates if item.get("maturity") != "exploration"],
-        key=lambda item: (-int((item.get("ranking") or {}).get("score") or item.get("score") or 0), stable_key(item)),
+        key=lambda item: (
+            -int((item.get("ranking") or {}).get("score") or item.get("score") or 0),
+            stable_key(item),
+        ),
     )
     exploration = sorted(
         [item for item in candidates if item.get("maturity") == "exploration"],
@@ -307,7 +355,9 @@ def allocate_capacity(
     )
     selected_mature = mature[:mature_slots]
     selected_exploration = exploration[:exploration_slots]
-    selected_keys = {f"{item.get('repo')}#{item.get('num')}" for item in selected_mature + selected_exploration}
+    selected_keys = {
+        f"{item.get('repo')}#{item.get('num')}" for item in selected_mature + selected_exploration
+    }
     return {
         "schema": CAPACITY_SCHEMA,
         "seed": seed,
@@ -336,7 +386,9 @@ def cohort_report(records: list[dict[str, Any]], *, now: datetime) -> dict[str, 
             if not selected_at:
                 continue
             try:
-                due = datetime.fromisoformat(str(selected_at).replace("Z", "+00:00")) + timedelta(days=horizon)
+                due = datetime.fromisoformat(str(selected_at).replace("Z", "+00:00")) + timedelta(
+                    days=horizon
+                )
             except ValueError:
                 continue
             if due > now:
@@ -345,12 +397,24 @@ def cohort_report(records: list[dict[str, Any]], *, now: datetime) -> dict[str, 
             if label not in {"success", "failure", "censored"}:
                 label = "censored"
             eligible.append(record | {"horizonDays": horizon, "label": label})
-        funnel = {stage: sum(bool(record.get(stage)) for record in eligible) for stage in (
-            "selected", "task", "fix", "pr", "ci", "humanResponse", "portfolioOutcome"
-        )}
+        funnel = {
+            stage: sum(bool(record.get(stage)) for record in eligible)
+            for stage in (
+                "selected",
+                "task",
+                "fix",
+                "pr",
+                "ci",
+                "humanResponse",
+                "portfolioOutcome",
+            )
+        }
         output[str(horizon)] = {
             "eligible": len(eligible),
-            "labels": {label: sum(item["label"] == label for item in eligible) for label in ("success", "failure", "censored")},
+            "labels": {
+                label: sum(item["label"] == label for item in eligible)
+                for label in ("success", "failure", "censored")
+            },
             "funnel": funnel,
             "records": eligible,
         }
