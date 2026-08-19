@@ -26620,6 +26620,35 @@
     ],
     "why": "Issue clearly identifies a bug in mastra deploy where .npmrc is excluded from the archive due to missing dot:true, causing private registry installs to fail. Root cause is well-diagnosed with a suggested fix. However, the deterministic gate requires HUMAN_REVIEW, and the maintainer has only labeled for triage without confirming the fix approach. The suggested fix is simple but needs maintainer confirmation to avoid unintended inclusion of other dotfiles."
   },
+  "c53a280716ec5887262bec8e6cdf6fd4c9752d44f2d70846acb53e2274ab9a9a": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "components/src/dynamo/replay/main.py",
+      "lib/bindings/python/rust/llm/replay.rs",
+      "lib/mocker/src/replay/offline/agg.rs"
+    ],
+    "risks": [
+      "Existing PR #13501 may already fix the issue; creating a duplicate PR wastes effort.",
+      "Changes to replay wiring may affect other AIC-related behaviors."
+    ],
+    "root_cause_clarity": "high",
+    "score": 11,
+    "test_plan": [
+      "Add a regression test that runs dynamo.replay with --aic-nextn and asserts output tok/s differs from no-speculation baseline.",
+      "Run existing replay unit tests and targeted integration tests for the modified paths."
+    ],
+    "unknowns": [
+      "Whether PR #13501 actually fixes the reported issue; maintainer review needed."
+    ],
+    "wait_reason": "DUPLICATE_REVIEW",
+    "why": "Issue clearly identifies a wiring gap in dynamo.replay where --aic-nextn flags are ignored, with a concrete reproduction and root cause analysis. However, an existing PR #13501 has semantic overlap with the same code paths and may already address the issue, requiring maintainer comparison before creating a new PR."
+  },
   "c56177479bbdd33732b662bc286fd7c766afcbbcfbe7fdddb7f89a24c4879e23": {
     "confidence": 0.7,
     "contradictions": [
