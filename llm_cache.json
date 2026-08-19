@@ -3328,6 +3328,29 @@
     ],
     "why": "Issue provides a precise root cause (transaction ownership conflict between begin_nested and session.commit) with exact file/line references, a clear upgrade-triggered regression, and a concrete security leak (unbounded API key creation). No competing PR or related issue exists, and the fix is well-scoped: adjust transaction handling and move create_api_key after the fallible operation."
   },
+  "1ce9e972ac2a7c3fd8e7b5afe75d6d8ee6b39740b29d6acd2fbc37662e5a5a1d": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Candidate score 8 and category NEW_CLEAN_CANDIDATE conflict with low actionability evidence."
+    ],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "No clear code path to fix; may be a server-side issue not addressable in repo."
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "test_plan": [],
+    "unknowns": [
+      "Actual root cause; whether this is a client-side bug or transient server issue; maintainer interest."
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "Issue reports a transient server overload error with no reproducible steps, no code anchors, and no root cause signal. It is a usage/support report, not an actionable code contribution. The candidate's own evidence indicates no maintainer approval, no help-wanted, and no probe-ready state."
+  },
   "1ceb950426fd0b40590b4932e0103460c63e23808f75550b1e51d8537ef15f5a": {
     "confidence": 0.7,
     "contradictions": [
@@ -14284,6 +14307,25 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue clearly describes a v2 engine gap with a concrete repro and root cause, but multiple open PRs (#2764, #2996, #2948) already target the same code paths and semantics. The candidate's own assessment flags semantic overlap requiring manual comparison. Without maintainer confirmation on which PR to adopt or extend, starting new work risks duplication."
+  },
+  "6896c874aacc305f087559fbc115a676023df41f4d9bf21b81aed7ab3a33932c": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [],
+    "risks": [],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "test_plan": [],
+    "unknowns": [
+      "Whether the maintainer intends to implement a code change (e.g., documentation update or feature to allow custom developer token) or whether the issue is purely support."
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "The issue is a support request about shared developer token quota, not a code bug. The maintainer's comment already provides a workaround (custom auth config with own developer token). No code change is proposed or clearly needed; the actionable path is documentation or feature request, which is not a code contribution."
   },
   "68ad2f1f891552ce66b390fec41b7a1c389d1652badf0ba8dbd8d0f29256b417": {
     "confidence": 0.7,
@@ -34906,6 +34948,39 @@
       "Exact maintainer preference for fix approach (set cadence vs reject config) is not confirmed, but the issue suggests options and a collaborator asked for a PR, indicating openness."
     ],
     "why": "Issue identifies a precise root cause: next_decode_eligible_step is never set in the base scheduler, breaking the pp_size cadence guard under --no-async-scheduling, leading to out-of-bounds accesses and wrong output. The fix is a small, well-scoped change in the scheduler or config validation, with clear reproduction steps and controls."
+  },
+  "fbaed4e87b6f777ec3c1dda23e6491cf9e258ddd6250cb78448fffb87fa938fc": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "decision": "WAIT_MAINTAINER",
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/core/src/tool/runtime.ts",
+      "@opencode-ai/plugin package",
+      "plugin loading logic"
+    ],
+    "risks": [
+      "Changing decode path may affect performance or behavior for all plugins.",
+      "Re-exporting effect may create peer dependency conflicts.",
+      "Loud load-time failure could break existing setups that currently work despite drift."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 11,
+    "test_plan": [
+      "Create a minimal plugin using effect@4.0.0-beta.101 and run against a server bundling beta.107; assert tool input decode fails with 'Invalid tool input: Expected object'.",
+      "After fix, run the same repro and assert successful decode or a clear version-mismatch load error.",
+      "Add a regression test that simulates effect version drift between plugin and server."
+    ],
+    "unknowns": [
+      "Maintainer confirmation of root cause and preferred fix direction.",
+      "Whether the issue is already being tracked internally or has a related PR.",
+      "Exact effect internals that changed between beta.101 and beta.107 causing the decode failure."
+    ],
+    "wait_reason": "MISSING_EVIDENCE",
+    "why": "Issue describes a plausible version-drift bug in effect-based plugin tool decoding, with a concrete repro and suggested fixes. However, the root cause is not confirmed by maintainers, no code-level verification is provided, and the suggested directions have different design tradeoffs. The only comment is from an unaffiliated user and adds no authoritative evidence."
   },
   "fbf0275f8c8d9b2d4de82667b2e7615ad53e91748f395b874a2ae327d082d6c2": {
     "confidence": 0.7,
