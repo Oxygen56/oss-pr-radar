@@ -402,9 +402,38 @@ def test_runtime_root_replacement_rolls_back_through_held_descriptors(tmp_path, 
         MODULE.activate_release(target, first["releaseId"])
 
     assert marker.read_bytes() == b"keep"
-    assert (real_target / MODULE.RELEASE_POINTER).resolve().name == second["releaseId"]
+    pointer_target = os.readlink(real_target / MODULE.RELEASE_POINTER)
+    assert (
+        Path(pointer_target).resolve()
+        == (real_target / MODULE.RELEASES / second["releaseId"]).resolve()
+    )
+    assert (real_target / MODULE.RELEASE_POINTER).resolve() == (
+        real_target / MODULE.RELEASES / second["releaseId"]
+    ).resolve()
     assert (real_target / "state" / "runtime-health.json").read_bytes() == old_state
     assert not (real_target / "state" / runtime_module.RELEASE_ACTIVATION_JOURNAL).exists()
+
+
+def test_directory_fd_path_resolution_uses_macos_bytes_buffer(tmp_path, monkeypatch):
+    if not hasattr(release_binding_module.fcntl, "F_GETPATH"):
+        pytest.skip("macOS F_GETPATH is unavailable")
+    descriptor = os.open(tmp_path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    original = release_binding_module.fcntl.fcntl
+    seen: list[object] = []
+
+    def checked_fcntl(fd, command, argument):
+        seen.append(argument)
+        return original(fd, command, argument)
+
+    monkeypatch.setattr(release_binding_module.fcntl, "fcntl", checked_fcntl)
+    try:
+        assert (
+            release_binding_module._path_from_directory_fd(descriptor, label="test directory")
+            == tmp_path
+        )
+    finally:
+        os.close(descriptor)
+    assert seen and all(isinstance(argument, bytes) for argument in seen)
 
 
 def test_atomic_pointer_write_closes_owned_directory_on_validation_errors(tmp_path, monkeypatch):

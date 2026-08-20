@@ -35,10 +35,10 @@ def _path_from_directory_fd(descriptor: int, *, label: str) -> Path:
     """Resolve a directory path from its opened identity, never its source name."""
 
     if hasattr(fcntl, "F_GETPATH"):
-        buffer = bytearray(1024)
+        buffer = b"\0" * 1024
         try:
             result = fcntl.fcntl(descriptor, fcntl.F_GETPATH, buffer)
-        except OSError as exc:
+        except (OSError, TypeError) as exc:
             raise RuntimeError(f"{label} identity cannot be resolved") from exc
         raw = result if isinstance(result, bytes) else bytes(buffer)
     else:

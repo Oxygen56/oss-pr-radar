@@ -24,7 +24,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Iterator
 
-from .release_binding import open_directory_handle, validate_runtime_file, validate_runtime_layout
+from .release_binding import (
+    _path_from_directory_fd,
+    open_directory_handle,
+    validate_runtime_file,
+    validate_runtime_layout,
+)
 
 RUNTIME_STATE = "runtime-health.json"
 QUEUE_STATE = "queue-import-state.json"
@@ -548,7 +553,12 @@ def activate_release_pointer(
             except Exception:
                 if journal_written:
                     if old_target_value is not None:
-                        _restore_pointer_target(pointer.name, old_target_value, root_fd)
+                        restore_target = old_target_value
+                        if old_release_fd is not None:
+                            restore_target = str(
+                                _path_from_directory_fd(old_release_fd, label="previous release")
+                            )
+                        _restore_pointer_target(pointer.name, restore_target, root_fd)
                     else:
                         _unlink_at(pointer.name, root_fd)
                         os.fsync(root_fd)
