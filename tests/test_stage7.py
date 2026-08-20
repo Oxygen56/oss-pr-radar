@@ -21,7 +21,7 @@ from oss_pr_radar.automation_snapshot import (
     canonical_prompt,
 )
 from oss_pr_radar.daily_war_room import run_daily_cycle
-from oss_pr_radar.local_publication import worker_specs
+from oss_pr_radar.local_publication import slow_advance_once, worker_specs
 from oss_pr_radar.managed_lifecycle import ManagedLedger
 from oss_pr_radar.managed_security import sign_current
 from oss_pr_radar.operational_auth import (
@@ -650,12 +650,34 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
     contracts = build_contracts(runtime, home=home)
     launch_dir = home / "Library" / "LaunchAgents"
     now = iso_z(utc_now())
-    state = json.loads((runtime / "state" / "runtime-health.json").read_text(encoding="utf-8"))
+    health_path = runtime / "state" / "runtime-health.json"
+    state = json.loads(health_path.read_text(encoding="utf-8"))
     state["workers"] = {
-        worker: {"lastSuccessAt": now, "queueImportSuccessAt": now, "lastExitCode": 0}
-        for worker in ("fast", "slow", "queue-importer")
+        "fast": {"lastSuccessAt": now, "lastExitCode": 0},
+        "queue-importer": {"queueImportSuccessAt": now, "queueLastExitCode": 0},
     }
-    (runtime / "state" / "runtime-health.json").write_text(json.dumps(state), encoding="utf-8")
+    health_path.write_text(json.dumps(state), encoding="utf-8")
+    retry_at = utc_now().timestamp() + 300
+    (runtime / "state" / "slow-worker-backoff.json").write_text(
+        json.dumps(
+            {
+                "schemaVersion": "slow_backoff_v1",
+                "failureCount": 1,
+                "nextAttemptAt": retry_at,
+                "retryAfter": retry_at,
+                "inFlight": False,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    def must_not_run_slow(_root: Path, _operation: str):
+        raise AssertionError("persisted backoff should not run slow work")
+
+    slow_result = slow_advance_once(runtime, runner=must_not_run_slow)
+    assert slow_result["reason"] == "PERSISTED_BACKOFF"
+    assert json.loads(health_path.read_text(encoding="utf-8"))["workers"]["slow"]["lastSuccessAt"]
     report_dir = tmp_path / "stage6"
     report_dir.mkdir()
     report = report_dir / "report.json"

@@ -22,6 +22,7 @@ from oss_pr_radar.local_publication import (
     slow_launch_agent_spec,
     sync_cloud_queue_if_due,
 )
+from oss_pr_radar.runtime import RuntimeLockBusy
 
 pytestmark = pytest.mark.usefixtures("current_signing_key")
 
@@ -751,6 +752,65 @@ def test_slow_worker_persists_backoff_after_network_failure(monkeypatch, tmp_pat
     backoff = json.loads((tmp_path / "state" / "slow-worker-backoff.json").read_text())
     assert backoff["failureCount"] == 1
     assert backoff["backoffSeconds"] == 60
+
+
+@pytest.mark.parametrize(
+    ("in_flight", "reason"),
+    [
+        (False, "PERSISTED_BACKOFF"),
+        (True, "PERSISTED_INFLIGHT_BACKOFF"),
+    ],
+)
+def test_slow_worker_persisted_backoff_first_run_records_fresh_health(tmp_path, in_flight, reason):
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    retry_at = time.time() + 3600
+    (state_dir / "slow-worker-backoff.json").write_text(
+        json.dumps(
+            {
+                "schemaVersion": "slow_backoff_v1",
+                "failureCount": 1,
+                "nextAttemptAt": 0 if in_flight else retry_at,
+                "retryAfter": retry_at,
+                "inFlight": in_flight,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    def must_not_run(_root: Path, _operation: str):
+        raise AssertionError("persisted backoff should not run slow work")
+
+    result = slow_advance_once(tmp_path, runner=must_not_run)
+
+    assert result["ok"] is True
+    assert result["deferred"] is True
+    assert result["reason"] == reason
+    health = json.loads((state_dir / "runtime-health.json").read_text(encoding="utf-8"))
+    slow = health["workers"]["slow"]
+    assert slow["lastSuccessAt"]
+    assert slow["lastExitCode"] == 0
+    assert slow["consecutiveFailures"] == 0
+    assert "slowNoopReason" not in slow
+
+
+def test_slow_worker_lock_busy_does_not_manufacture_success_health(monkeypatch, tmp_path):
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+
+    def busy_lock(*_args, **_kwargs):
+        raise RuntimeLockBusy("slow worker is already running")
+
+    monkeypatch.setattr("oss_pr_radar.local_publication.exclusive_lock", busy_lock)
+
+    def must_not_run(_root: Path, _operation: str):
+        raise AssertionError("lock busy should not run slow work")
+
+    result = slow_advance_once(tmp_path, runner=must_not_run)
+
+    assert result == {"ok": True, "busy": True, "errors": []}
+    assert not (state_dir / "runtime-health.json").exists()
 
 
 def test_slow_worker_persists_exception_failure_before_restart(monkeypatch, tmp_path):
