@@ -130,7 +130,10 @@ receiving their own worktrees.
   and prepares a deterministic isolated worktree under
   `~/Documents/github/.oss-pr-radar/worktrees/`. The Codex task itself starts in
   the single `github` project and consumes a per-issue bootstrap context from
-  `.oss-pr-radar/task-contexts/`. This keeps UI ownership stable while preserving
+  `.oss-pr-radar/task-contexts/`. New contexts use the bounded, reversible
+  `.oss-pr-radar/task-contexts/v2/<owner-token>/<repo-token>/<issue>.json`
+  layout; legacy root-level names remain readable only when their repository
+  identity is unambiguous. This keeps UI ownership stable while preserving
   repository isolation and avoiding lazy partial-clone timeouts.
 - Before queue sync, `orphan-list` reconciles asynchronous worktree creations
   whose real task ID appeared after the controller's initial lookup. Only one

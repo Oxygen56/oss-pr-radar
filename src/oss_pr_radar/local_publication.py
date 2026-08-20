@@ -805,6 +805,7 @@ def advance_once(
         drain.get("action")
         and drain.get("action") not in {"none", "not_triggered", "drain_already_running"}
     )
+    non_quarantine_blocked = any(item.get("reason") != "ACTIVE_TASK_QUARANTINE" for item in blocked)
     activity = bool(
         ingested
         or requests
@@ -812,7 +813,7 @@ def advance_once(
         or archived
         or published
         or publication_feedback.get("reconciled")
-        or blocked
+        or non_quarantine_blocked
         or errors
         or drain_activity
         or queue_sync.get("inserted")

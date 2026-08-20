@@ -95,6 +95,10 @@ MAX_TITLE_CHARS = 59
 TASK_PRIVATE_DIR = ".oss-pr-radar"
 TASK_CONTEXT_SCHEMA = "radar-task-context-v1"
 TASK_RESULT_SCHEMA = "radar-task-result-v1"
+MAX_GITHUB_OWNER_CHARS = 39
+MAX_GITHUB_REPOSITORY_CHARS = 100
+MAX_GITHUB_ISSUE_NUMBER = 9_999_999_999
+GITHUB_ID_SEGMENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
 ORPHAN_ABANDON_MIN_AGE_MINUTES = 70
 PR_FOLLOWUP_ACTIVE_DEFERRAL_MINUTES = 30
 PR_FOLLOWUP_ABANDON_MIN_AGE_MINUTES = 90
@@ -649,12 +653,40 @@ def _is_immediate_recovery(state: dict[str, Any] | None) -> bool:
     )
 
 
+def _ensure_private_task_root(*, create: bool) -> Path:
+    """Create or validate the private shared root without following links."""
+
+    github_fd, github_path = open_directory_handle(GITHUB_ROOT, label="GitHub root", create=create)
+    private_fd = -1
+    try:
+        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            private_fd = os.open(TASK_PRIVATE_DIR, flags, dir_fd=github_fd)
+        except FileNotFoundError:
+            if not create:
+                raise
+            os.mkdir(TASK_PRIVATE_DIR, 0o700, dir_fd=github_fd)
+            private_fd = os.open(TASK_PRIVATE_DIR, flags, dir_fd=github_fd)
+        metadata = os.fstat(private_fd)
+        if (
+            not stat.S_ISDIR(metadata.st_mode)
+            or metadata.st_uid != os.getuid()
+            or stat.S_IMODE(metadata.st_mode) != 0o700
+        ):
+            raise RuntimeError("Radar private root is not a private directory")
+        return github_path / TASK_PRIVATE_DIR
+    finally:
+        if private_fd >= 0:
+            os.close(private_fd)
+        os.close(github_fd)
+
+
 def managed_worktree_root() -> Path:
-    return (GITHUB_ROOT / TASK_PRIVATE_DIR / "worktrees").resolve()
+    return _ensure_private_task_root(create=True) / "worktrees"
 
 
 def shared_context_root() -> Path:
-    return (GITHUB_ROOT / TASK_PRIVATE_DIR / "task-contexts").resolve()
+    return GITHUB_ROOT / TASK_PRIVATE_DIR / "task-contexts"
 
 
 def shared_context_quarantine_root() -> Path:
@@ -675,8 +707,12 @@ def managed_worktree_path(intent_id: str, repo: str) -> Path:
 
 
 def shared_context_path(issue_url: str) -> Path:
-    match = ISSUE_URL.match(issue_url)
-    if not match:
+    return shared_context_root() / _canonical_shared_context_relative_path(issue_url)
+
+
+def _legacy_shared_context_filename(issue_url: str) -> str:
+    match = ISSUE_URL.fullmatch(issue_url)
+    if match is None:
         raise RuntimeError("invalid issue URL")
     repo, number = match.groups()
     owner, repository = repo.split("/", 1)
@@ -684,7 +720,386 @@ def shared_context_path(issue_url: str) -> Path:
         re.sub(r"[^A-Za-z0-9._-]+", "-", value).strip("-._")
         for value in (owner, repository, number)
     )
-    return shared_context_root() / f"{safe}.json"
+    return f"{safe}.json"
+
+
+def _validated_context_identity(issue_url: str) -> tuple[str, str, str]:
+    match = ISSUE_URL.fullmatch(issue_url)
+    if match is None:
+        raise RuntimeError("invalid issue URL")
+    repo, number = match.groups()
+    owner, repository = repo.split("/", 1)
+    if (
+        len(owner) > MAX_GITHUB_OWNER_CHARS
+        or len(repository) > MAX_GITHUB_REPOSITORY_CHARS
+        or not GITHUB_ID_SEGMENT.fullmatch(owner)
+        or not GITHUB_ID_SEGMENT.fullmatch(repository)
+    ):
+        raise RuntimeError("GitHub repository identity exceeds v2 path limits")
+    if not 1 <= int(number) <= MAX_GITHUB_ISSUE_NUMBER:
+        raise RuntimeError("GitHub issue number exceeds v2 path limits")
+    return owner, repository, number
+
+
+def _context_segment_token(value: str) -> str:
+    token = base64.urlsafe_b64encode(value.encode("utf-8")).decode("ascii").rstrip("=")
+    if not token or len(token.encode("utf-8")) > 255:
+        raise RuntimeError("context identity path segment exceeds filesystem limit")
+    return token
+
+
+def _decode_context_segment(token: str) -> str | None:
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", token) or len(token.encode("utf-8")) > 255:
+        return None
+    try:
+        raw = base64.urlsafe_b64decode(token + "=" * (-len(token) % 4))
+        value = raw.decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if _context_segment_token(value) != token:
+        return None
+    return value
+
+
+def _canonical_shared_context_relative_path(issue_url: str) -> Path:
+    owner, repository, number = _validated_context_identity(issue_url)
+    return (
+        Path("v2")
+        / _context_segment_token(owner)
+        / _context_segment_token(repository)
+        / f"{number}.json"
+    )
+
+
+def _canonical_shared_context_filename(issue_url: str) -> str:
+    """Return the bounded leaf name of the v2 path for compatibility callers."""
+
+    return _canonical_shared_context_relative_path(issue_url).name
+
+
+def _legacy_filename_is_unambiguous(filename: str) -> bool:
+    match = re.fullmatch(r"(.+)--([1-9][0-9]*)\.json", filename)
+    if match is None:
+        return False
+    owner_and_repo = match.group(1).split("--")
+    return len(owner_and_repo) == 2 and all(
+        re.fullmatch(r"[A-Za-z0-9_.-]+", part) for part in owner_and_repo
+    )
+
+
+def _legacy_filename_identity(filename: str) -> tuple[str, str, str] | None:
+    if not _legacy_filename_is_unambiguous(filename):
+        return None
+    match = re.fullmatch(r"(.+)--([1-9][0-9]*)\.json", filename)
+    if match is None:
+        return None
+    owner, repository = match.group(1).split("--")
+    number = match.group(2)
+    return owner, repository, number
+
+
+def _shared_context_relative_path(path: Path) -> tuple[str, ...] | None:
+    try:
+        return tuple(path.relative_to(shared_context_root()).parts)
+    except ValueError:
+        return None
+
+
+def _shared_context_path_identity(path: Path) -> tuple[str, str, str] | None:
+    relative = _shared_context_relative_path(path)
+    if relative is None:
+        return None
+    if len(relative) == 4 and relative[0] == "v2":
+        owner = _decode_context_segment(relative[1])
+        repository = _decode_context_segment(relative[2])
+        match = re.fullmatch(r"([1-9][0-9]*)\.json", relative[3])
+        if owner is None or repository is None or match is None:
+            return None
+        number = match.group(1)
+        if (
+            len(owner) > MAX_GITHUB_OWNER_CHARS
+            or len(repository) > MAX_GITHUB_REPOSITORY_CHARS
+            or not GITHUB_ID_SEGMENT.fullmatch(owner)
+            or not GITHUB_ID_SEGMENT.fullmatch(repository)
+            or int(number) > MAX_GITHUB_ISSUE_NUMBER
+        ):
+            return None
+        return owner, repository, number
+    if len(relative) == 1:
+        return _legacy_filename_identity(relative[0])
+    return None
+
+
+def _shared_context_path_matches(path: Path, issue_url: str) -> bool:
+    match = ISSUE_URL.fullmatch(issue_url)
+    if match is None:
+        return False
+    repo, number = match.groups()
+    owner, repository = repo.split("/", 1)
+    expected = (owner, repository, number)
+    identity = _shared_context_path_identity(path)
+    return identity == expected and (
+        path == shared_context_root() / _canonical_shared_context_relative_path(issue_url)
+        or path == shared_context_root() / _legacy_shared_context_filename(issue_url)
+    )
+
+
+def _shared_context_filename_matches(filename: str, issue_url: str) -> bool:
+    """Legacy compatibility wrapper for callers that only have a leaf name."""
+
+    return filename == _legacy_shared_context_filename(issue_url)
+
+
+def _open_shared_context_directory(*, create: bool) -> tuple[int, Path, list[int]]:
+    """Open the private context root without following any path component."""
+
+    github_fd, github_path = open_directory_handle(GITHUB_ROOT, label="GitHub root")
+    handles = [github_fd]
+    try:
+        private_fd, private_path = _open_private_context_child(
+            github_fd, github_path, TASK_PRIVATE_DIR, "Radar private root", create=create
+        )
+        handles.append(private_fd)
+        context_fd, context_path = _open_private_context_child(
+            private_fd,
+            private_path,
+            "task-contexts",
+            "shared context root",
+            create=create,
+        )
+        handles.append(context_fd)
+        return context_fd, context_path, handles
+    except Exception:
+        for fd in reversed(handles):
+            os.close(fd)
+        raise
+
+
+def _open_private_context_child(
+    parent_fd: int,
+    parent_path: Path,
+    name: str,
+    label: str,
+    *,
+    create: bool,
+) -> tuple[int, Path]:
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", name):
+        raise RuntimeError(f"{label} name is invalid")
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(name, flags, dir_fd=parent_fd)
+    except FileNotFoundError:
+        if not create:
+            raise
+        os.mkdir(name, 0o700, dir_fd=parent_fd)
+        fd = os.open(name, flags, dir_fd=parent_fd)
+    metadata = os.fstat(fd)
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+        or stat.S_IMODE(metadata.st_mode) != 0o700
+    ):
+        os.close(fd)
+        raise RuntimeError(f"{label} is not a private directory")
+    return fd, parent_path / name
+
+
+def _open_shared_context_parent(issue_url: str, *, create: bool) -> tuple[int, Path, list[int]]:
+    owner, repository, _number = _validated_context_identity(issue_url)
+    context_fd, context_root, handles = _open_shared_context_directory(create=create)
+    try:
+        v2_fd, v2_path = _open_private_context_child(
+            context_fd, context_root, "v2", "v2 context root", create=create
+        )
+        handles.append(v2_fd)
+        owner_fd, owner_path = _open_private_context_child(
+            v2_fd, v2_path, _context_segment_token(owner), "v2 owner directory", create=create
+        )
+        handles.append(owner_fd)
+        repository_fd, repository_path = _open_private_context_child(
+            owner_fd,
+            owner_path,
+            _context_segment_token(repository),
+            "v2 repository directory",
+            create=create,
+        )
+        handles.append(repository_fd)
+        return repository_fd, repository_path, handles
+    except Exception:
+        for fd in reversed(handles):
+            os.close(fd)
+        raise
+
+
+def _open_shared_context_parent_for_path(path: Path) -> tuple[int, Path, list[int], str]:
+    relative = _shared_context_relative_path(path)
+    if relative is None:
+        raise RuntimeError("shared context path is outside the private root")
+    context_fd, context_root, handles = _open_shared_context_directory(create=False)
+    try:
+        if len(relative) == 1:
+            return context_fd, context_root, handles, relative[0]
+        if len(relative) != 4 or relative[0] != "v2":
+            raise RuntimeError("shared context path layout is invalid")
+        v2_fd, v2_path = _open_private_context_child(
+            context_fd, context_root, "v2", "v2 context root", create=False
+        )
+        handles.append(v2_fd)
+        owner_fd, owner_path = _open_private_context_child(
+            v2_fd, v2_path, relative[1], "v2 owner directory", create=False
+        )
+        handles.append(owner_fd)
+        repository_fd, repository_path = _open_private_context_child(
+            owner_fd, owner_path, relative[2], "v2 repository directory", create=False
+        )
+        handles.append(repository_fd)
+        return repository_fd, repository_path, handles, relative[3]
+    except Exception:
+        for fd in reversed(handles):
+            os.close(fd)
+        raise
+
+
+def _read_shared_context_file(path: Path) -> tuple[bytes, os.stat_result, Path]:
+    parent_fd, parent_path, handles, leaf = _open_shared_context_parent_for_path(path)
+    descriptor = -1
+    try:
+        descriptor = os.open(
+            leaf,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=parent_fd,
+        )
+        first = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(first.st_mode)
+            or first.st_uid != os.getuid()
+            or stat.S_IMODE(first.st_mode) != 0o600
+        ):
+            raise RuntimeError("shared task context is not a private regular file")
+        chunks: list[bytes] = []
+        while True:
+            chunk = os.read(descriptor, 1024 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        second = os.fstat(descriptor)
+        if (first.st_dev, first.st_ino, first.st_size, first.st_mtime_ns, first.st_ctime_ns) != (
+            second.st_dev,
+            second.st_ino,
+            second.st_size,
+            second.st_mtime_ns,
+            second.st_ctime_ns,
+        ):
+            raise RuntimeError("shared task context changed while reading")
+        return b"".join(chunks), second, parent_path / leaf
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        for fd in reversed(handles):
+            os.close(fd)
+
+
+def _list_shared_context_paths() -> list[Path]:
+    """List legacy files and v2 files through private dirfds only."""
+
+    context_fd, context_root, handles = _open_shared_context_directory(create=False)
+    paths: list[Path] = []
+    try:
+        for name in sorted(os.listdir(context_fd)):
+            if name.endswith(".json"):
+                paths.append(context_root / name)
+                continue
+            if name != "v2":
+                raise RuntimeError(f"unexpected shared context root entry: {name}")
+            v2_fd, v2_path = _open_private_context_child(
+                context_fd, context_root, name, "v2 context root", create=False
+            )
+            handles.append(v2_fd)
+            for owner_token in sorted(os.listdir(v2_fd)):
+                owner_fd, owner_path = _open_private_context_child(
+                    v2_fd, v2_path, owner_token, "v2 owner directory", create=False
+                )
+                handles.append(owner_fd)
+                for repository_token in sorted(os.listdir(owner_fd)):
+                    repository_fd, repository_path = _open_private_context_child(
+                        owner_fd,
+                        owner_path,
+                        repository_token,
+                        "v2 repository directory",
+                        create=False,
+                    )
+                    handles.append(repository_fd)
+                    for leaf in sorted(os.listdir(repository_fd)):
+                        paths.append(repository_path / leaf)
+                    os.close(handles.pop())
+                os.close(handles.pop())
+            os.close(handles.pop())
+        return paths
+    finally:
+        for fd in reversed(handles):
+            os.close(fd)
+
+
+def _deduplicate_shared_context_paths(
+    paths: list[Path],
+) -> tuple[list[Path], list[dict[str, str]]]:
+    """Prefer identical canonical v2 bytes; reject legacy/v2 conflicts."""
+
+    grouped: dict[tuple[str, str, str], list[Path]] = {}
+    unbound: list[Path] = []
+    for path in paths:
+        identity = _shared_context_path_identity(path)
+        if identity is None:
+            unbound.append(path)
+        else:
+            grouped.setdefault(identity, []).append(path)
+    selected = list(unbound)
+    conflicts: list[dict[str, str]] = []
+    for _identity, candidates in grouped.items():
+        if len(candidates) == 1:
+            selected.append(candidates[0])
+            continue
+        observations: list[tuple[Path, bytes]] = []
+        try:
+            observations = [(path, _read_shared_context_file(path)[0]) for path in candidates]
+        except (OSError, RuntimeError) as exc:
+            conflicts.append(
+                {
+                    "path": str(shared_context_root()),
+                    "error": f"duplicate context cannot be read safely: {str(exc)[:240]}",
+                }
+            )
+            continue
+
+        def comparable(raw: bytes) -> str | bytes:
+            try:
+                value = json.loads(raw)
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                return raw
+            if not isinstance(value, dict):
+                return raw
+            value = dict(value)
+            # The two trusted layouts necessarily have different bootstrap
+            # paths; all authenticated task content must otherwise agree.
+            value.pop("bootstrapContextPath", None)
+            return canonical_json(value)
+
+        if len({comparable(raw) for _path, raw in observations}) != 1:
+            conflicts.append(
+                {
+                    "path": str(shared_context_root()),
+                    "error": "legacy and v2 context bytes conflict for one identity",
+                }
+            )
+            continue
+        canonical = [
+            path
+            for path, _raw in observations
+            if _shared_context_relative_path(path)
+            and _shared_context_relative_path(path)[0] == "v2"
+        ]
+        selected.append(canonical[0] if canonical else candidates[0])
+    return sorted(selected), conflicts
 
 
 def _is_within(path: Path, root: Path) -> bool:
@@ -1350,16 +1765,29 @@ def _legacy_result_requires_migration(
     }
 
 
+class _SharedContextValidationError(RuntimeError):
+    def __init__(self, message: str, *, raw: bytes, source_stat: os.stat_result, source_path: Path):
+        super().__init__(message)
+        self.raw = raw
+        self.source_stat = source_stat
+        self.source_path = source_path
+
+
 def _verified_shared_task_context(path: Path) -> tuple[dict[str, Any], str]:
-    if path.is_symlink():
-        raise RuntimeError("shared task context is not a regular file")
-    if not path.is_file():
-        if not path.exists():
-            raise FileNotFoundError(path)
-        raise RuntimeError("shared task context is not a regular file")
-    if path.stat().st_mode & 0o022:
-        raise RuntimeError("shared task context is group or world writable")
-    raw = path.read_bytes()
+    raw, source_stat, secure_path = _read_shared_context_file(path)
+    try:
+        return _verified_shared_task_context_from_raw(secure_path, raw, source_stat)
+    except TaskContextWorktreeUnavailable:
+        raise
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise _SharedContextValidationError(
+            str(exc), raw=raw, source_stat=source_stat, source_path=secure_path
+        ) from exc
+
+
+def _verified_shared_task_context_from_raw(
+    path: Path, raw: bytes, source_stat: os.stat_result
+) -> tuple[dict[str, Any], str]:
     try:
         context = json.loads(raw)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -1374,9 +1802,15 @@ def _verified_shared_task_context(path: Path) -> tuple[dict[str, Any], str]:
     repo, issue_number = match.groups()
     if context.get("key") != f"{repo}#{issue_number}":
         raise RuntimeError("shared task context key does not match issue URL")
-    if path.resolve() != shared_context_path(issue_url):
+    if not _shared_context_path_matches(path, issue_url):
         raise RuntimeError("shared task context path does not match issue identity")
-    if Path(str(context.get("bootstrapContextPath") or "")).resolve() != path.resolve():
+    bootstrap_path = Path(str(context.get("bootstrapContextPath") or ""))
+    if (
+        bootstrap_path != path
+        or not bootstrap_path.is_absolute()
+        or any(part == ".." for part in bootstrap_path.parts)
+        or not _shared_context_path_matches(bootstrap_path, issue_url)
+    ):
         raise RuntimeError("shared task context bootstrap path is invalid")
 
     for key, expected in {
@@ -1457,7 +1891,7 @@ def _verified_shared_task_context(path: Path) -> tuple[dict[str, Any], str]:
             cwd=worktree,
         )
     source_updated_at = iso_z(
-        datetime.fromtimestamp(max(path.stat().st_mtime, local_path.stat().st_mtime), tz=UTC)
+        datetime.fromtimestamp(max(source_stat.st_mtime, local_path.stat().st_mtime), tz=UTC)
     )
     return context, source_updated_at
 
@@ -1540,8 +1974,9 @@ def _recoverable_published_result(
 
 
 def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
-    root = shared_context_root()
-    if not root.exists():
+    try:
+        context_fd, root, handles = _open_shared_context_directory(create=False)
+    except FileNotFoundError:
         return {
             "verified": 0,
             "restored": [],
@@ -1550,12 +1985,35 @@ def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
             "quarantined": [],
             "errors": [],
         }
+    except (OSError, RuntimeError) as exc:
+        return {
+            "verified": 0,
+            "restored": [],
+            "resultReceiptsRestored": 0,
+            "unavailable": [],
+            "quarantined": [],
+            "errors": [{"path": str(shared_context_root()), "error": str(exc)[:300]}],
+        }
+    for fd in reversed(handles):
+        os.close(fd)
+    try:
+        paths = _list_shared_context_paths()
+        paths, path_errors = _deduplicate_shared_context_paths(paths)
+    except (OSError, RuntimeError) as exc:
+        return {
+            "verified": 0,
+            "restored": [],
+            "resultReceiptsRestored": 0,
+            "unavailable": [],
+            "quarantined": [],
+            "errors": [{"path": str(root), "error": str(exc)[:300]}],
+        }
     restored: list[dict[str, Any]] = []
     unavailable: list[dict[str, Any]] = []
     quarantined: list[dict[str, Any]] = []
-    errors: list[dict[str, str]] = []
+    errors: list[dict[str, str]] = list(path_errors)
     result_receipts_restored = 0
-    for path in sorted(root.glob("*.json")):
+    for path in paths:
         try:
             context, source_updated_at = _verified_shared_task_context(path)
             result_receipt = _recoverable_published_result(context, store=store)
@@ -1597,6 +2055,32 @@ def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
                     "reason": exc.reason,
                 }
             )
+        except _SharedContextValidationError as exc:
+            try:
+                item = _quarantine_shared_context(
+                    store,
+                    exc.source_path,
+                    exc,
+                    raw=exc.raw,
+                    source_stat=exc.source_stat,
+                )
+            except (OSError, RuntimeError, ValueError, sqlite3.Error) as quarantine_exc:
+                errors.append(
+                    {
+                        "path": str(exc.source_path),
+                        "error": f"context quarantine persistence failed: {str(quarantine_exc)[:240]}",
+                    }
+                )
+            else:
+                if item is None:
+                    errors.append(
+                        {
+                            "path": str(exc.source_path),
+                            "error": "shared task context identity is unavailable for quarantine",
+                        }
+                    )
+                else:
+                    quarantined.append(item)
         except FileNotFoundError as exc:
             # Cleanup may remove a terminal task context after glob() has
             # enumerated it. Only treat that exact disappearance as benign;
@@ -2640,13 +3124,15 @@ def _atomic_private_json(
             os.close(directory_fd)
 
 
-def _shared_context_identity_from_filename(path: Path) -> tuple[str, str] | None:
-    match = re.fullmatch(r"([A-Za-z0-9_.-]+)--([A-Za-z0-9_.-]+)--([1-9][0-9]*)\.json", path.name)
-    if match is None:
-        return None
-    owner, repository, number = match.groups()
-    repo = f"{owner}/{repository}"
-    return f"{repo}#{number}", f"https://github.com/{repo}/issues/{number}"
+def _atomic_shared_context_json(issue_url: str, value: dict[str, Any]) -> Path:
+    context_fd, context_parent, handles = _open_shared_context_parent(issue_url, create=True)
+    path = context_parent / _canonical_shared_context_relative_path(issue_url).name
+    try:
+        _atomic_private_json(path, value, directory_fd=context_fd)
+        return path
+    finally:
+        for fd in reversed(handles):
+            os.close(fd)
 
 
 def _shared_context_quarantine_reason(exc: BaseException) -> str:
@@ -2658,6 +3144,25 @@ def _shared_context_quarantine_reason(exc: BaseException) -> str:
     return "SHARED_CONTEXT_INVALID"
 
 
+def _shared_context_identity_from_filename(path: Path, raw: bytes) -> tuple[str, str] | None:
+    """Derive identity from trusted bytes and a one-to-one filename binding."""
+
+    try:
+        value = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(value, dict):
+        return None
+    issue_url = str(value.get("issueUrl") or "")
+    match = ISSUE_URL.fullmatch(issue_url)
+    if match is None or not _shared_context_path_matches(path, issue_url):
+        return None
+    repo, issue_number = match.groups()
+    if value.get("key") != f"{repo}#{issue_number}":
+        return None
+    return f"{repo}#{issue_number}", issue_url
+
+
 def _ensure_context_quarantine_artifact(
     artifact_path: Path,
     *,
@@ -2667,6 +3172,7 @@ def _ensure_context_quarantine_artifact(
     source_path: Path,
     raw: bytes,
     source_digest: str,
+    source_mode: int,
     error: str,
 ) -> dict[str, Any]:
     """Create once, then only verify a quarantine artifact under a file lock."""
@@ -2763,7 +3269,7 @@ def _ensure_context_quarantine_artifact(
             "reason": reason,
             "error": error,
             "originalPath": str(source_path),
-            "originalMode": source_path.stat().st_mode & 0o777,
+            "originalMode": source_mode,
             "originalBytesSha256": source_digest,
             "originalBytesBase64": base64.b64encode(raw).decode("ascii"),
             "observedAt": iso_z(datetime.now(UTC)),
@@ -2779,14 +3285,20 @@ def _ensure_context_quarantine_artifact(
 
 
 def _quarantine_shared_context(
-    store: RadarLedger, path: Path, exc: BaseException
+    store: RadarLedger,
+    path: Path,
+    exc: BaseException,
+    *,
+    raw: bytes | None = None,
+    source_stat: os.stat_result | None = None,
 ) -> dict[str, Any] | None:
     """Persist one untrusted context without allowing it into the queue."""
 
-    identity = _shared_context_identity_from_filename(path)
-    if identity is None or path.is_symlink() or not path.is_file():
+    if raw is None or source_stat is None:
+        raw, source_stat, path = _read_shared_context_file(path)
+    identity = _shared_context_identity_from_filename(path, raw)
+    if identity is None:
         return None
-    raw = path.read_bytes()
     source_digest = hashlib.sha256(raw).hexdigest()
     key, issue_url = identity
     reason = _shared_context_quarantine_reason(exc)
@@ -2807,6 +3319,7 @@ def _quarantine_shared_context(
         source_path=path,
         raw=raw,
         source_digest=source_digest,
+        source_mode=source_stat.st_mode & 0o777,
         error=str(exc)[:500],
     )
     persisted = store.record_shared_context_quarantine(
@@ -3011,11 +3524,19 @@ def write_task_context(
     path = private_dir / "task-context.json"
     bootstrap_path = None
     if managed:
-        bootstrap_path = shared_context_path(issue_url)
+        context_fd, context_parent, context_handles = _open_shared_context_parent(
+            issue_url, create=True
+        )
+        bootstrap_path = context_parent / _canonical_shared_context_relative_path(issue_url).name
         payload["bootstrapContextPath"] = str(bootstrap_path)
-    _atomic_json(path, payload)
-    if bootstrap_path is not None:
-        _atomic_json(bootstrap_path, payload)
+    try:
+        _atomic_json(path, payload)
+        if bootstrap_path is not None:
+            _atomic_private_json(bootstrap_path, payload, directory_fd=context_fd)
+    finally:
+        if bootstrap_path is not None:
+            for fd in reversed(context_handles):
+                os.close(fd)
     return path
 
 
@@ -7944,6 +8465,15 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 and not possible_policy_recovery
                 and not initial_review_recoverable
             ):
+                active_quarantine = store.active_task_quarantine(candidate["key"])
+                if active_quarantine is not None:
+                    quarantined_already_recorded.append(
+                        {
+                            "key": candidate["key"],
+                            "reason": active_quarantine["reason"],
+                            "alreadyRecorded": True,
+                        }
+                    )
                 continue
             context_path = result_path.parent / "task-context.json"
             context = json.loads(context_path.read_text(encoding="utf-8"))
@@ -8804,6 +9334,15 @@ def _run_publication_queue_unlocked(args: argparse.Namespace) -> dict[str, Any]:
                     "pushReconciled": push_result.get("reconciled", False),
                 }
             )
+        except PermissionError as exc:
+            blocked.append(
+                {
+                    "requestId": request_id,
+                    "reason": "ACTIVE_TASK_QUARANTINE",
+                    "detail": str(exc)[:240],
+                }
+            )
+            continue
         except (KeyError, OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
             errors.append({"requestId": request_id, "error": str(exc)[:400]})
     return {
@@ -8898,11 +9437,20 @@ def submit_publication_request(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def publication_check(args: argparse.Namespace) -> dict[str, Any]:
-    permit = ledger(args.ledger).publication_permit(
-        issue_url=args.issue_url,
-        commit_sha=args.commit_sha,
-        branch=args.branch,
-    )
+    try:
+        permit = ledger(args.ledger).publication_permit(
+            issue_url=args.issue_url,
+            commit_sha=args.commit_sha,
+            branch=args.branch,
+        )
+    except PermissionError as exc:
+        return {
+            "ok": False,
+            "blocked": "ACTIVE_TASK_QUARANTINE",
+            "reason": str(exc)[:240],
+            "permitId": None,
+            "expiresAt": None,
+        }
     return {
         "ok": permit is not None,
         "permitId": permit.get("permit_id") if permit else None,

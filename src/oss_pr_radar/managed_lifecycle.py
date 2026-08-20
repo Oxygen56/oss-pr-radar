@@ -32,6 +32,7 @@ from .task_quarantine import backfill_from_managed_events
 from .task_quarantine import clear as clear_quarantine
 from .task_quarantine import payload as quarantine_payload
 from .task_quarantine import record as record_quarantine
+from .task_quarantine import require_clear as require_quarantine_clear
 from .util import canonical_json, iso_z
 
 MANAGED_SCHEMA_VERSION = 7
@@ -3190,6 +3191,24 @@ class ManagedLedger:
         connection = self._connection()
         try:
             connection.execute("BEGIN IMMEDIATE")
+            if opportunity_key:
+                require_quarantine_clear(
+                    connection,
+                    opportunity_key=opportunity_key,
+                    operation="managed publication reservation",
+                )
+            else:
+                quarantined = connection.execute(
+                    """SELECT opportunity_key FROM task_quarantines
+                       WHERE opportunity_key LIKE ? AND status='ACTIVE'
+                       ORDER BY quarantine_id DESC LIMIT 1""",
+                    (f"{repo}#%",),
+                ).fetchone()
+                if quarantined is not None:
+                    raise PermissionError(
+                        "managed publication reservation blocked by active task quarantine: "
+                        f"{quarantined['opportunity_key']}"
+                    )
             existing = connection.execute(
                 "SELECT * FROM managed_publication_reservations WHERE request_id=? OR reservation_key=?",
                 (request_id, reservation_key),
@@ -3317,6 +3336,11 @@ class ManagedLedger:
             ).fetchone()
             if row is None:
                 raise ValueError("publication reservation is missing")
+            require_quarantine_clear(
+                connection,
+                opportunity_key=str(row["opportunity_key"] or pr_key),
+                operation="managed publication finalize",
+            )
             if pr_key.split("#", 1)[0] != row["repo"]:
                 raise ValueError("publication receipt repository does not match reservation")
             if row["state"] == "FINALIZED":

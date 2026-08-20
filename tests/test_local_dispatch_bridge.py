@@ -21,6 +21,7 @@ import pytest
 
 from oss_pr_radar.independent_review import REVIEW_SCHEMA, _receipt_path, _source_digest
 from oss_pr_radar.ledger import LedgerError, RadarLedger
+from oss_pr_radar.local_publication import slow_advance_once
 from oss_pr_radar.managed_lifecycle import ManagedLedger
 from oss_pr_radar.metrics import QUALITY_FIELDS
 from oss_pr_radar.util import iso_z, parse_time, sha256_json
@@ -28,10 +29,22 @@ from oss_pr_radar.util import iso_z, parse_time, sha256_json
 pytestmark = pytest.mark.usefixtures("current_signing_key")
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "local_dispatch_bridge.py"
+HOST_SHARED_CONTEXT_ROOT = Path("/Users/oxygen/Documents/github/.oss-pr-radar/task-contexts")
 SPEC = importlib.util.spec_from_file_location("local_dispatch_bridge", SCRIPT)
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC and SPEC.loader
 SPEC.loader.exec_module(MODULE)
+
+
+@pytest.fixture(autouse=True)
+def hermetic_bridge_shared_root(monkeypatch, tmp_path):
+    """Keep the dynamically loaded bridge module out of the host shared root."""
+
+    github_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", github_root)
+    private_root = github_root / MODULE.TASK_PRIVATE_DIR
+    private_root.mkdir(parents=True, exist_ok=True)
+    private_root.chmod(0o700)
 
 
 def test_orphan_reconcile_commits_unique_matches_and_abandons_proven_misses(monkeypatch):
@@ -1316,7 +1329,8 @@ def test_ingestion_quarantines_legacy_implementation_result_without_side_effect(
 
     assert repeated["ok"] is True, repeated.get("errors")
     assert repeated.get("quarantined", []) == []
-    assert len(repeated["quarantinedAlreadyRecorded"]) == 1
+    assert "quarantinedAlreadyRecorded" not in repeated
+    assert repeated["ingested"] == []
 
     with pytest.raises(ValueError):
         store.clear_task_quarantine(
@@ -1363,7 +1377,7 @@ def test_shared_context_recovery_accepts_target_bound_context_without_errors(mon
 
     recovered = MODULE.recover_shared_task_contexts(store)
 
-    assert recovered["verified"] == 1
+    assert recovered["verified"] == 1, json.dumps(recovered, indent=2, default=str)
     assert recovered["errors"] == []
 
 
@@ -1565,10 +1579,17 @@ def test_shared_context_quarantine_artifact_mode_tamper_is_global_fail_closed(
 def test_shared_context_quarantine_path_hijack_fails_closed(monkeypatch, tmp_path, layout):
     project_root = tmp_path / "github"
     monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    private_root = project_root / MODULE.TASK_PRIVATE_DIR
+    private_root.mkdir(parents=True, exist_ok=True)
+    private_root.chmod(0o700)
     shared_root = MODULE.shared_context_root()
     shared_root.mkdir(parents=True)
+    shared_root.chmod(0o700)
     invalid = shared_root / "a--b--1.json"
-    invalid.write_bytes(b"not-json")
+    invalid.write_text(
+        json.dumps({"issueUrl": "https://github.com/a/b/issues/1", "key": "a/b#1"}),
+        encoding="utf-8",
+    )
     invalid.chmod(0o600)
     quarantine_root = MODULE.shared_context_quarantine_root()
     external = tmp_path / "external"
@@ -1627,8 +1648,12 @@ def test_shared_context_quarantine_concurrent_observation_has_one_artifact(monke
 def test_shared_context_unknown_filename_fails_without_quarantine_write(monkeypatch, tmp_path):
     project_root = tmp_path / "github"
     monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    private_root = project_root / MODULE.TASK_PRIVATE_DIR
+    private_root.mkdir(parents=True, exist_ok=True)
+    private_root.chmod(0o700)
     root = MODULE.shared_context_root()
     root.mkdir(parents=True)
+    root.chmod(0o700)
     path = root / "untrusted.json"
     path.write_bytes(b"not-json")
     path.chmod(0o600)
@@ -1663,14 +1688,18 @@ def _shared_context_inventory(root: Path) -> str:
 
 
 def test_shared_context_recovery_is_hermetic_against_host_inventory(monkeypatch, tmp_path):
-    host_contexts = Path.home() / "Documents" / "github" / ".oss-pr-radar" / "task-contexts"
+    host_contexts = HOST_SHARED_CONTEXT_ROOT
     before = _shared_context_inventory(host_contexts)
     project_root = tmp_path / "github"
     monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
     root = MODULE.shared_context_root()
     root.mkdir(parents=True)
+    root.chmod(0o700)
     invalid = root / "a--b--1.json"
-    invalid.write_bytes(b"not-json")
+    invalid.write_text(
+        json.dumps({"issueUrl": "https://github.com/a/b/issues/1", "key": "a/b#1"}),
+        encoding="utf-8",
+    )
     invalid.chmod(0o600)
 
     recovered = MODULE.recover_shared_task_contexts(RadarLedger(tmp_path / "ledger.sqlite3"))
@@ -1823,6 +1852,103 @@ def test_shared_context_recovery_defers_and_repairs_a_missing_worktree_mirror(
     assert json.loads(local_path.read_text(encoding="utf-8")) == json.loads(
         MODULE.shared_context_path("https://github.com/a/b/issues/1").read_text(encoding="utf-8")
     )
+
+
+def test_v2_shared_context_path_bounds_identity_segments_and_issue_number():
+    url = "https://github.com/" + "o" * 39 + "/" + "r" * 100 + "/issues/9999999999"
+    path = MODULE.shared_context_path(url)
+    relative = path.relative_to(MODULE.shared_context_root())
+    assert relative.parts[0] == "v2"
+    assert all(len(part.encode("utf-8")) <= 255 for part in relative.parts)
+    assert MODULE._shared_context_path_identity(path) == (
+        "o" * 39,
+        "r" * 100,
+        "9999999999",
+    )
+
+    with pytest.raises(RuntimeError):
+        MODULE.shared_context_path("https://github.com/" + "o" * 40 + "/repo/issues/1")
+    with pytest.raises(RuntimeError):
+        MODULE.shared_context_path("https://github.com/owner/" + "r" * 101 + "/issues/1")
+    with pytest.raises(RuntimeError):
+        MODULE.shared_context_path("https://github.com/owner/repo/issues/10000000000")
+
+
+def test_legacy_and_v2_shared_context_duplicates_prefer_v2_or_fail_on_bytes_conflict(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", tmp_path / "github")
+    context_root = MODULE.shared_context_root()
+    context_root.mkdir(parents=True, mode=0o700)
+    os.chmod(context_root, 0o700)
+    url = "https://github.com/a/b/issues/1"
+    canonical = MODULE.shared_context_path(url)
+    canonical.parent.mkdir(parents=True, mode=0o700)
+    os.chmod(canonical.parent, 0o700)
+    os.chmod(canonical.parent.parent, 0o700)
+    os.chmod(canonical.parent.parent.parent, 0o700)
+    legacy = context_root / MODULE._legacy_shared_context_filename(url)
+    canonical.write_bytes(b"same")
+    legacy.write_bytes(b"same")
+    os.chmod(canonical, 0o600)
+    os.chmod(legacy, 0o600)
+    selected, errors = MODULE._deduplicate_shared_context_paths([legacy, canonical])
+    assert selected == [canonical]
+    assert errors == []
+
+    legacy.write_bytes(b"different")
+    selected, errors = MODULE._deduplicate_shared_context_paths([legacy, canonical])
+    assert selected == []
+    assert errors and "conflict" in errors[0]["error"]
+
+
+def test_shared_context_unknown_root_entry_fails_closed(monkeypatch, tmp_path):
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", tmp_path / "github")
+    context_root = MODULE.shared_context_root()
+    context_root.mkdir(parents=True, mode=0o700)
+    os.chmod(context_root, 0o700)
+    (context_root / "unexpected").symlink_to(tmp_path / "outside")
+    result = MODULE.recover_shared_task_contexts(RadarLedger(tmp_path / "ledger.sqlite3"))
+    assert result["verified"] == 0
+    assert result["errors"]
+    assert "unexpected shared context root entry" in result["errors"][0]["error"]
+
+
+def test_shared_context_recovery_deduplicates_trusted_legacy_and_v2_contexts(monkeypatch, tmp_path):
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    store, worktree, local_path, canonical = _context_digest_fixture(tmp_path / "fixture")
+    legacy = MODULE.shared_context_root() / MODULE._legacy_shared_context_filename(
+        "https://github.com/a/b/issues/1"
+    )
+    value = json.loads(canonical.read_text(encoding="utf-8"))
+    legacy_value = value | {"bootstrapContextPath": str(legacy)}
+    legacy.write_text(json.dumps(legacy_value), encoding="utf-8")
+    os.chmod(legacy, 0o600)
+
+    try:
+        MODULE._verified_shared_task_context(canonical)
+    except Exception as exc:
+        raise AssertionError(f"canonical verification failed: {type(exc).__name__}: {exc}") from exc
+    listed = MODULE._list_shared_context_paths()
+    selected, dedup_errors = MODULE._deduplicate_shared_context_paths(listed)
+    assert canonical in listed, {
+        "root": str(MODULE.shared_context_root()),
+        "listed": [str(p) for p in listed],
+    }
+    assert selected == [canonical], {"selected": [str(p) for p in selected], "errors": dedup_errors}
+
+    recovered = MODULE.recover_shared_task_contexts(store)
+    assert recovered["errors"] == []
+    assert recovered["verified"] == 1, json.dumps(recovered, indent=2, default=str)
+    assert len(recovered["restored"]) == 1
+    assert recovered["restored"][0]["key"] == "a/b#1"
+
+    legacy.write_text(json.dumps(legacy_value | {"threadId": "other"}), encoding="utf-8")
+    os.chmod(legacy, 0o600)
+    conflicted = MODULE.recover_shared_task_contexts(RadarLedger(tmp_path / "conflict.sqlite3"))
+    assert conflicted["verified"] == 0
+    assert any("conflict" in item["error"] for item in conflicted["errors"])
 
 
 def test_fresh_signed_intent_can_replace_a_task_whose_workspace_was_lost(tmp_path):
@@ -10828,6 +10954,59 @@ def test_bridge_operation_requires_runtime_root_before_dispatch(monkeypatch, cap
     assert "runtime-root" in result["error"]
 
 
+def test_fresh_subprocess_bridge_uses_private_home_without_host_root_access(tmp_path):
+    home = tmp_path / "home"
+    for path in (
+        home,
+        home / ".config",
+        home / ".local" / "share",
+        home / ".local" / "state",
+        home / ".cache",
+        home / ".codex",
+    ):
+        path.mkdir(parents=True, exist_ok=True)
+        path.chmod(0o700)
+    env = os.environ.copy()
+    env.update(
+        {
+            "HOME": str(home),
+            "XDG_CONFIG_HOME": str(home / ".config"),
+            "XDG_DATA_HOME": str(home / ".local" / "share"),
+            "XDG_STATE_HOME": str(home / ".local" / "state"),
+            "XDG_CACHE_HOME": str(home / ".cache"),
+            "CODEX_HOME": str(home / ".codex"),
+            "PYTHONPATH": str(Path(__file__).parents[1] / "src"),
+        }
+    )
+    before = _shared_context_inventory(HOST_SHARED_CONTEXT_ROOT)
+    probe = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import json, runpy; ns=runpy.run_path(%r); "
+                "print(json.dumps({'githubRoot': str(ns['GITHUB_ROOT']), "
+                "'sharedRoot': str(ns['GITHUB_ROOT'] / ns['TASK_PRIVATE_DIR'] / 'task-contexts')}))"
+            )
+            % str(SCRIPT),
+        ],
+        cwd=Path(__file__).parents[1],
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert probe.returncode == 0, probe.stderr
+    assert json.loads(probe.stdout) == {
+        "githubRoot": str(home / "Documents" / "github"),
+        "sharedRoot": str(
+            home / "Documents" / "github" / MODULE.TASK_PRIVATE_DIR / "task-contexts"
+        ),
+    }
+    assert not (home / "Documents" / "github" / MODULE.TASK_PRIVATE_DIR).exists()
+    assert _shared_context_inventory(HOST_SHARED_CONTEXT_ROOT) == before
+
+
 def test_every_bridge_operation_requires_authorization_before_dispatch(
     monkeypatch, tmp_path, capsys
 ):
@@ -10961,6 +11140,519 @@ def test_reproduction_probe_entrypoint_persists_missing_profile_failure(tmp_path
         row = connection.execute("SELECT state, error FROM managed_reproduction_probes").fetchone()
     assert row["state"] == "WAITING_EXTERNAL"
     assert row["error"] == "TRUSTED_PROBE_PROFILE_UNAVAILABLE"
+
+
+def test_slow_cycle_quarantine_excludes_bad_result_and_continues_normal_task(monkeypatch, tmp_path):
+    """Exercise recovery, ingestion, and the slow cycle with two real tasks."""
+
+    monkeypatch.setattr(MODULE, "ROOT", tmp_path)
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", tmp_path / "github")
+    monkeypatch.setattr(MODULE, "WORKTREE_ROOT", tmp_path / "worktrees")
+    ledger_path = tmp_path / "state" / "radar_ledger.sqlite3"
+    ledger_path.parent.mkdir(parents=True)
+    store = RadarLedger(ledger_path)
+    now = datetime.now(UTC)
+
+    def add_task(intent_id: str, key: str, issue_url: str, thread_id: str) -> Path:
+        worktree = tmp_path / "github" / MODULE.TASK_PRIVATE_DIR / "worktrees" / intent_id
+        worktree.mkdir(parents=True)
+        run_git(worktree, "init")
+        run_git(
+            worktree,
+            "remote",
+            "add",
+            "origin",
+            f"https://github.com/{key.split('#', 1)[0]}.git",
+        )
+        (worktree / ".git" / "info" / "exclude").write_text(".oss-pr-radar/\n", encoding="utf-8")
+        store.enqueue(
+            {
+                "intentId": intent_id,
+                "key": key,
+                "repo": key.split("#", 1)[0],
+                "issueNumber": int(key.rsplit("#", 1)[1]),
+                "issueUrl": issue_url,
+                "title": "Runtime task",
+                "mode": "canary",
+                "score": 9,
+                "snapshotId": "snapshot",
+                "decisionDigest": "decision",
+                "issuedAt": iso_z(now),
+                "expiresAt": iso_z(now + timedelta(hours=1)),
+                "autoSubmitAuthorized": True,
+                "publicSubmissionAllowed": True,
+                "authorizationSource": "signed_live_revalidation_required",
+                "publicationMode": "canary",
+            }
+        )
+        store.claim(intent_id, "controller")
+        store.commit_dispatch(
+            intent_id,
+            owner="controller",
+            thread_id=thread_id,
+            project_id="github",
+            worktree_path=str(worktree),
+            title_time="08-20 16:03",
+        )
+        store.record_audit_snapshot(
+            key,
+            evidence={
+                "authorization": {"status": "ALLOW"},
+                "evidenceDigest": f"{intent_id}-evidence",
+                "liveAudit": {
+                    "capturedAt": iso_z(now),
+                    "evidence": {"digest": f"{intent_id}-evidence", "issue": {"state": "open"}},
+                },
+            },
+            dedupe_key=f"{intent_id}-audit",
+        )
+        MODULE.write_task_context(
+            store,
+            issue_url=issue_url,
+            thread_id=thread_id,
+            cwd=worktree,
+        )
+        return worktree
+
+    add_task("intent-bad", "a/b#1", "https://github.com/a/b/issues/1", "thread-bad")
+    normal_worktree = add_task(
+        "intent-normal", "c/d#2", "https://github.com/c/d/issues/2", "thread-normal"
+    )
+    bad_context_path = MODULE.shared_context_path("https://github.com/a/b/issues/1")
+    bad_context = json.loads(bad_context_path.read_text(encoding="utf-8"))
+    bad_context["contextDigest"] = "f" * 64
+    MODULE._atomic_json(bad_context_path, bad_context)
+    Path(bad_context["resultPath"]).write_text(
+        json.dumps(
+            {
+                "schemaVersion": MODULE.TASK_RESULT_SCHEMA,
+                "contextDigest": "f" * 64,
+                "key": "a/b#1",
+                "issueUrl": "https://github.com/a/b/issues/1",
+                "threadId": "thread-bad",
+                "worktreePath": str(
+                    (
+                        tmp_path / "github" / MODULE.TASK_PRIVATE_DIR / "worktrees" / "intent-bad"
+                    ).resolve()
+                ),
+                "stage": "FIX_READY",
+                "reason": "EVIDENCE_INCOMPLETE",
+            }
+        ),
+        encoding="utf-8",
+    )
+    normal_context_path = MODULE.shared_context_path("https://github.com/c/d/issues/2")
+    normal_context = json.loads(normal_context_path.read_text(encoding="utf-8"))
+    Path(normal_context["resultPath"]).write_text(
+        json.dumps(
+            {
+                "schemaVersion": MODULE.TASK_RESULT_SCHEMA,
+                "contextDigest": normal_context["contextDigest"],
+                "key": "c/d#2",
+                "issueUrl": "https://github.com/c/d/issues/2",
+                "threadId": "thread-normal",
+                "worktreePath": str(normal_worktree.resolve()),
+                "stage": "AUDIT_NO_GO",
+                "reason": "EVIDENCE_INCOMPLETE",
+            }
+        ),
+        encoding="utf-8",
+    )
+    ManagedLedger(ledger_path, ensure_schema=True)
+    assert {item["key"] for item in store.task_result_candidates()} == {"a/b#1", "c/d#2"}
+    calls: list[str] = []
+    observed: dict[str, object] = {}
+
+    def runner(root: Path, operation: str) -> dict[str, object]:
+        calls.append(operation)
+        args = SimpleNamespace(ledger=ledger_path)
+        if operation == "context-recover":
+            value = MODULE.recover_task_contexts(args)
+            observed["candidateAfterRecovery"] = store.task_result_candidates()
+            return value
+        if operation == "ingest-results":
+            observed[operation] = MODULE.ingest_task_results(args)
+            return observed[operation]
+        if operation == "reproduction-probe":
+            return MODULE.run_reproduction_probes(args)
+        if operation == "publication-run":
+            return MODULE.run_publication_queue(args)
+        if operation == "publication-feedback-list":
+            return MODULE.publication_feedback_list(args)
+        return {
+            "ok": True,
+            "updated": [],
+            "renamed": [],
+            "archived": [],
+            "published": [],
+            "pending": [],
+            "blocked": [],
+            "errors": [],
+        }
+
+    result = slow_advance_once(tmp_path, runner=runner)
+
+    assert result["ok"] is True, result
+    assert {"context-recover", "ingest-results", "reproduction-probe"} <= set(calls)
+    assert result["publicationRequests"] == []
+    assert result["published"] == []
+    assert any(item["key"] == "a/b#1" for item in result["contextsQuarantined"])
+    assert any(item["key"] == "c/d#2" for item in result["resultsIngested"]), {
+        "result": result,
+        "observed": observed,
+    }
+    assert store.active_task_quarantine("a/b#1") is not None
+    assert store.publication_work_items() == []
+
+
+def test_real_slow_worker_subprocess_quarantines_history_without_publication(monkeypatch, tmp_path):
+    """Run the deployed slow CLI and real bridge subprocess in an isolated home."""
+
+    import plistlib
+
+    import oss_pr_radar.operational_auth as operational_auth
+    import scripts.deploy_local_runtime as deploy_local_runtime
+    from oss_pr_radar.local_publication import worker_specs
+    from oss_pr_radar.managed_security import sign_current
+    from oss_pr_radar.operational_auth import (
+        consume_worker_staging_authorization,
+        finalize_operational_authorization,
+        issue_operational_authorization,
+        issue_worker_staging_authorization,
+        worker_spec_digest,
+    )
+    from oss_pr_radar.release_binding import verify_release
+
+    home = tmp_path / "home"
+    runtime = tmp_path / "runtime"
+    github_root = home / "Documents" / "github"
+    worktree_root = github_root / MODULE.TASK_PRIVATE_DIR / "worktrees"
+    home.mkdir(parents=True, exist_ok=True)
+    runtime.mkdir(mode=0o700)
+    runtime.chmod(0o700)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(home / ".local" / "share"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(home / ".local" / "state"))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(home / ".cache"))
+    monkeypatch.setenv("CODEX_HOME", str(home / ".codex"))
+    for directory in (
+        home / ".config",
+        home / ".local" / "share",
+        home / ".local" / "state",
+        home / ".cache",
+        home / ".codex",
+    ):
+        directory.mkdir(parents=True, mode=0o700, exist_ok=True)
+        directory.chmod(0o700)
+    monkeypatch.setattr(MODULE, "ROOT", runtime)
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", github_root)
+    monkeypatch.setattr(MODULE, "WORKTREE_ROOT", home / ".codex" / "worktrees")
+    github_root.mkdir(parents=True, mode=0o700, exist_ok=True)
+    github_root.chmod(0o700)
+    private_root = github_root / MODULE.TASK_PRIVATE_DIR
+    private_root.mkdir(mode=0o700, exist_ok=True)
+    private_root.chmod(0o700)
+    worktree_root.mkdir(parents=True, mode=0o700, exist_ok=True)
+    worktree_root.chmod(0o700)
+    ledger_path = runtime / "state" / "ledger-releases" / "managed.sqlite3"
+    ledger_path.parent.mkdir(parents=True, mode=0o700)
+    ledger_path.parent.chmod(0o700)
+    (runtime / "releases").mkdir(mode=0o700)
+    (runtime / "releases").chmod(0o700)
+    store = RadarLedger(ledger_path)
+    ManagedLedger(ledger_path, ensure_schema=True)
+
+    # Build a real immutable release in the temporary runtime.  The child
+    # bridge is loaded from this release and therefore exercises the same
+    # release binding and operational authorization checks as deployment.
+    release_build = runtime / "releases" / ".release-build"
+    release_build.mkdir(mode=0o700)
+    release_build.chmod(0o700)
+    shutil.copytree(
+        SCRIPT.parents[1] / "src" / "oss_pr_radar", release_build / "src" / "oss_pr_radar"
+    )
+    release_bridge = release_build / "scripts" / "local_dispatch_bridge.py"
+    release_bridge.parent.mkdir(mode=0o700)
+    shutil.copy2(SCRIPT, release_bridge)
+    os.chmod(release_bridge, 0o600)
+    release_files = {
+        path.relative_to(release_build)
+        for path in release_build.rglob("*")
+        if path.is_file() and not path.is_symlink()
+    }
+    release_manifest = deploy_local_runtime.build_manifest(release_build, release_files, "a" * 40)
+    (release_build / "release-manifest.json").write_bytes(
+        (json.dumps(release_manifest, sort_keys=True, indent=2) + "\n").encode()
+    )
+    os.chmod(release_build / "release-manifest.json", 0o600)
+    verify_release(release_build, require_directory_identity=False)
+    release = runtime / "releases" / str(release_manifest["releaseId"])
+    release_build.rename(release)
+    os.chmod(release, 0o700)
+    (runtime / "current-release").symlink_to(release)
+
+    (runtime / "state" / "current-ledger").symlink_to(Path("ledger-releases") / "managed.sqlite3")
+    now = datetime.now(UTC)
+
+    def add_task(intent_id: str, key: str, issue_url: str, thread_id: str) -> Path:
+        worktree = worktree_root / intent_id
+        worktree.mkdir(parents=True)
+        run_git(worktree, "init")
+        run_git(
+            worktree,
+            "remote",
+            "add",
+            "origin",
+            f"https://github.com/{key.split('#', 1)[0]}.git",
+        )
+        store.enqueue(
+            {
+                "intentId": intent_id,
+                "key": key,
+                "repo": key.split("#", 1)[0],
+                "issueNumber": int(key.rsplit("#", 1)[1]),
+                "issueUrl": issue_url,
+                "title": "Runtime task",
+                "mode": "canary",
+                "score": 9,
+                "snapshotId": "snapshot",
+                "decisionDigest": "decision",
+                "issuedAt": iso_z(now),
+                "expiresAt": iso_z(now + timedelta(hours=1)),
+                "autoSubmitAuthorized": True,
+                "publicSubmissionAllowed": True,
+                "authorizationSource": "signed_live_revalidation_required",
+                "publicationMode": "canary",
+            }
+        )
+        store.claim(intent_id, "controller")
+        store.commit_dispatch(
+            intent_id,
+            owner="controller",
+            thread_id=thread_id,
+            project_id="github",
+            worktree_path=str(worktree),
+            title_time="08-20 16:03",
+        )
+        store.record_audit_snapshot(
+            key,
+            evidence={
+                "authorization": {"status": "ALLOW"},
+                "evidenceDigest": f"{intent_id}-evidence",
+                "liveAudit": {
+                    "capturedAt": iso_z(now),
+                    "evidence": {"digest": f"{intent_id}-evidence", "issue": {"state": "open"}},
+                },
+            },
+            dedupe_key=f"{intent_id}-audit",
+        )
+        MODULE.write_task_context(store, issue_url=issue_url, thread_id=thread_id, cwd=worktree)
+        return worktree
+
+    add_task("intent-bad", "a/b#1", "https://github.com/a/b/issues/1", "thread-bad")
+    normal_worktree = add_task(
+        "intent-normal", "c/d#2", "https://github.com/c/d/issues/2", "thread-normal"
+    )
+    bad_context_path = MODULE.shared_context_path("https://github.com/a/b/issues/1")
+    bad_context = json.loads(bad_context_path.read_text(encoding="utf-8"))
+    bad_context["contextDigest"] = "f" * 64
+    MODULE._atomic_json(bad_context_path, bad_context)
+    Path(bad_context["resultPath"]).write_text(
+        json.dumps(
+            {
+                "schemaVersion": MODULE.TASK_RESULT_SCHEMA,
+                "contextDigest": "f" * 64,
+                "key": "a/b#1",
+                "issueUrl": "https://github.com/a/b/issues/1",
+                "threadId": "thread-bad",
+                "worktreePath": str((worktree_root / "intent-bad").resolve()),
+                "stage": "FIX_READY",
+            }
+        ),
+        encoding="utf-8",
+    )
+    normal_context_path = MODULE.shared_context_path("https://github.com/c/d/issues/2")
+    normal_context = json.loads(normal_context_path.read_text(encoding="utf-8"))
+    Path(normal_context["resultPath"]).write_text(
+        json.dumps(
+            {
+                "schemaVersion": MODULE.TASK_RESULT_SCHEMA,
+                "contextDigest": normal_context["contextDigest"],
+                "key": "c/d#2",
+                "issueUrl": "https://github.com/c/d/issues/2",
+                "threadId": "thread-normal",
+                "worktreePath": str(normal_worktree.resolve()),
+                "stage": "AUDIT_NO_GO",
+                "reason": "EVIDENCE_INCOMPLETE",
+            }
+        ),
+        encoding="utf-8",
+    )
+    thread_db = home / ".codex" / "state_5.sqlite"
+    connection = sqlite3.connect(thread_db)
+    try:
+        connection.execute(
+            "CREATE TABLE threads ("
+            "id TEXT PRIMARY KEY, title TEXT, archived INTEGER NOT NULL, "
+            "updated_at INTEGER NOT NULL, rollout_path TEXT, first_user_message TEXT, "
+            "cwd TEXT, git_origin_url TEXT)"
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    # Create the real stage receipt and long-lived operational authorization;
+    # no authentication or runtime-binding function is replaced in the child.
+    counts_path = tmp_path / "managed-counts.json"
+    current = operational_auth._current_ledger_identity(runtime)
+    counts_unsigned = {
+        "schema": "oss-pr-radar.stage7-counts-evidence.v1",
+        "runtimeRootDigest": operational_auth.runtime_root_digest(runtime),
+        "releaseId": str(release_manifest["releaseId"]),
+        "releaseHead": "a" * 40,
+        "observedAt": iso_z(datetime.now(UTC)),
+        "ledgerGeneration": current["generation"],
+        "ledgerSha256": current["sha256"],
+        "managedPrProjectionDigest": current["managedPrProjectionDigest"],
+    }
+    counts_path.write_text(
+        json.dumps(
+            {
+                **counts_unsigned,
+                **sign_current(counts_unsigned, context="stage7-counts-evidence-v1"),
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    os.chmod(counts_path, 0o600)
+    specs = worker_specs(release, home=home, runtime_root=runtime)
+    issue_worker_staging_authorization(runtime, managed_counts_evidence=counts_path, home=home)
+    launch_agents = home / "Library" / "LaunchAgents"
+    launch_agents.mkdir(parents=True, mode=0o700)
+    worker_records = []
+    for spec in specs:
+        plist_path = launch_agents / f"{spec['Label']}.plist"
+        plist_path.write_bytes(plistlib.dumps(spec, fmt=plistlib.FMT_XML, sort_keys=True))
+        os.chmod(plist_path, 0o600)
+        worker_records.append(
+            {
+                "label": spec["Label"],
+                "observedAt": iso_z(datetime.now(UTC)),
+                "loaded": False,
+                "pid": None,
+                "specDigest": worker_spec_digest(specs),
+                "plistPath": str(plist_path),
+                "plistSha256": hashlib.sha256(plist_path.read_bytes()).hexdigest(),
+                "mode": "0o600",
+                "ownerUid": os.getuid(),
+                "regular": True,
+                "symlink": False,
+            }
+        )
+    consume_worker_staging_authorization(runtime, specs=specs, worker_records=worker_records)
+    automation_path = tmp_path / "automation-snapshot.json"
+    automation_path.write_text('{"schema":"isolated-automation-snapshot"}\n', encoding="utf-8")
+    os.chmod(automation_path, 0o600)
+    preflight = {
+        "ok": True,
+        "strictMode": "preflight",
+        "managedCountsEvidenceValid": True,
+        "stagedWorkerReceiptValid": True,
+        "actualAutomationEvidence": {"valid": True},
+        "pendingPublicationEffectsValid": True,
+        "diskStopThresholdOk": True,
+        "runtimeReleasePolicyIdentityMatch": True,
+        "noRuntimeCodeDrift": True,
+        "noSharedGitWrites": True,
+        "dangerousBridgeReachable": False,
+        "oldMonolithicWorkerReachable": False,
+        "workerSpecDigest": worker_spec_digest(specs),
+        "ledger": current,
+        "workers": [
+            {
+                "label": spec["Label"],
+                "actualConfigMatch": True,
+                "launchConfigMatch": True,
+                "loaded": False,
+            }
+            for spec in specs
+        ],
+    }
+    issue_operational_authorization(
+        runtime,
+        preflight=preflight,
+        managed_counts_evidence=counts_path,
+        automation_snapshot=automation_path,
+    )
+    finalize_operational_authorization(runtime)
+    operational_auth.require_operational_authorization(runtime)
+
+    sitecustomize = tmp_path / "sitecustomize.py"
+    sitecustomize.write_text(
+        """import json, os, subprocess, sys
+from pathlib import Path
+import oss_pr_radar.local_publication as _publication
+from oss_pr_radar.release_binding import runtime_ledger_path
+_bridge = Path(os.environ['RADAR_TEST_BRIDGE'])
+def _real_bridge(root, operation, **kwargs):
+    completed = subprocess.run(
+        [sys.executable, str(_bridge), '--runtime-root', str(root),
+         '--ledger', str(runtime_ledger_path(root)), operation],
+        capture_output=True, text=True, check=False)
+    if completed.returncode != 0:
+        Path(os.environ['RADAR_BRIDGE_ERROR']).write_text(
+            completed.stderr or completed.stdout, encoding='utf-8'
+        )
+        raise RuntimeError(completed.stderr or completed.stdout)
+    return json.loads(completed.stdout)
+_publication.run_bridge = _real_bridge
+_original_slow = _publication.slow_advance_once
+def _slow(root, **kwargs):
+    return _original_slow(root, runner=_real_bridge)
+_publication.slow_advance_once = _slow
+""",
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env["RADAR_TEST_BRIDGE"] = str(release / "scripts" / "local_dispatch_bridge.py")
+    env["RADAR_BRIDGE_ERROR"] = str(tmp_path / "bridge-error.txt")
+    env["PYTHONPATH"] = os.pathsep.join(
+        [str(tmp_path), str(SCRIPT.parents[1] / "src"), str(SCRIPT.parents[1])]
+    )
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT.parents[1] / "scripts" / "local_publication_agent.py"),
+            "--root",
+            str(runtime),
+            "--mode",
+            "slow",
+            "--json",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    bridge_error = (
+        (tmp_path / "bridge-error.txt").read_text(encoding="utf-8")
+        if (tmp_path / "bridge-error.txt").exists()
+        else ""
+    )
+    assert completed.returncode == 0, bridge_error or completed.stderr or completed.stdout
+    result = json.loads(completed.stdout)
+    assert result["ok"] is True, result
+    assert any(item["key"] == "a/b#1" for item in result["contextsQuarantined"])
+    assert any(item["key"] == "c/d#2" for item in result["resultsIngested"]), json.dumps(
+        result, ensure_ascii=False, indent=2
+    )
+    assert result["publicationRequests"] == []
+    assert result["published"] == []
+    assert result["slowWorkerDiagnostic"]["contextRecovery"]["errors"] == 0
+    assert result["slowWorkerDiagnostic"]["contextRecovery"]["quarantined"] >= 1
 
 
 def test_bridge_help_has_no_auth_bypass_option():
@@ -11097,7 +11789,7 @@ def test_orphan_list_recovers_unique_async_worktree_task(monkeypatch, tmp_path):
 def test_duplicate_task_list_only_returns_stale_unbound_raw_tasks(monkeypatch, tmp_path):
     now = datetime.now(UTC)
     project_root = tmp_path / "github"
-    project_root.mkdir()
+    project_root.mkdir(exist_ok=True)
     thread_db = tmp_path / "threads.sqlite3"
     prompt = MODULE.issue_prompt("https://github.com/a/b/issues/1")
     with sqlite3.connect(thread_db) as connection:
@@ -11174,7 +11866,7 @@ def test_duplicate_task_list_only_returns_stale_unbound_raw_tasks(monkeypatch, t
 def test_orphan_list_recovers_thread_created_in_github_project(monkeypatch, tmp_path):
     now = datetime.now(UTC)
     project_root = tmp_path / "github"
-    project_root.mkdir()
+    project_root.mkdir(exist_ok=True)
     thread_db = tmp_path / "threads.sqlite3"
     with sqlite3.connect(thread_db) as connection:
         connection.execute(

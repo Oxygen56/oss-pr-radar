@@ -19,6 +19,7 @@ from .task_quarantine import clear as clear_quarantine
 from .task_quarantine import ensure_schema as ensure_quarantine_schema
 from .task_quarantine import payload as quarantine_payload
 from .task_quarantine import record as record_quarantine
+from .task_quarantine import require_clear as require_quarantine_clear
 from .util import canonical_json, iso_z, parse_time, sha256_json, sha256_text
 
 STAGES = (
@@ -3949,6 +3950,10 @@ class RadarLedger:
                           i.worktree_path,i.status,i.payload_json
                    FROM opportunities o JOIN intents i ON i.opportunity_key=o.key
                    WHERE i.thread_id IS NOT NULL AND i.worktree_path IS NOT NULL
+                     AND NOT EXISTS (
+                       SELECT 1 FROM task_quarantines q
+                       WHERE q.opportunity_key=o.key AND q.status='ACTIVE'
+                     )
                      AND (
                        i.status='DISPATCHED'
                        OR o.stage IN ('PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED')
@@ -4040,6 +4045,9 @@ class RadarLedger:
                 raise LedgerError("opportunity is not submit-ready")
             if row["thread_id"] != thread_id:
                 raise LedgerError("publication thread identity mismatch")
+            require_quarantine_clear(
+                connection, opportunity_key=str(row["key"]), operation="publication request"
+            )
             if Path(str(row["worktree_path"] or "")).resolve() != Path(worktree_path).resolve():
                 raise LedgerError("publication worktree mismatch")
             payload = json.loads(row["payload_json"])
@@ -4630,6 +4638,11 @@ class RadarLedger:
             ).fetchone()
             if request is None or request["status"] not in {"PENDING", "GRANTED"}:
                 raise LedgerError("publication request is not grantable")
+            require_quarantine_clear(
+                connection,
+                opportunity_key=str(request["opportunity_key"]),
+                operation="publication grant",
+            )
             request_payload = json.loads(request["request_json"])
             if not _publication_probe_valid(request_payload, evidence):
                 connection.execute(
@@ -4718,9 +4731,15 @@ class RadarLedger:
             if row is None:
                 return None
             request_row = connection.execute(
-                "SELECT request_json FROM publication_requests WHERE request_id=?",
+                "SELECT opportunity_key,request_json FROM publication_requests WHERE request_id=?",
                 (row["request_id"],),
             ).fetchone()
+            if request_row is not None:
+                require_quarantine_clear(
+                    connection,
+                    opportunity_key=str(request_row["opportunity_key"]),
+                    operation="publication permit",
+                )
             if request_row is None or not _publication_probe_valid_json(
                 request_row["request_json"]
             ):
@@ -4750,9 +4769,15 @@ class RadarLedger:
             if row is None:
                 return None
             request_row = connection.execute(
-                "SELECT request_json FROM publication_requests WHERE request_id=?",
+                "SELECT opportunity_key,request_json FROM publication_requests WHERE request_id=?",
                 (row["request_id"],),
             ).fetchone()
+            if request_row is not None:
+                require_quarantine_clear(
+                    connection,
+                    opportunity_key=str(request_row["opportunity_key"]),
+                    operation="publication permit",
+                )
             if request_row is None or not _publication_probe_valid_json(
                 request_row["request_json"]
             ):
@@ -4786,9 +4811,15 @@ class RadarLedger:
             if permit is None:
                 return None
             request_row = connection.execute(
-                "SELECT request_json FROM publication_requests WHERE request_id=?",
+                "SELECT opportunity_key,request_json FROM publication_requests WHERE request_id=?",
                 (permit["request_id"],),
             ).fetchone()
+            if request_row is not None:
+                require_quarantine_clear(
+                    connection,
+                    opportunity_key=str(request_row["opportunity_key"]),
+                    operation="publication effect permit",
+                )
             if request_row is None or not _publication_probe_valid_json(
                 request_row["request_json"]
             ):
@@ -4874,6 +4905,19 @@ class RadarLedger:
                         ("BLOCKED_REPRODUCTION_REQUIRED", now, authorization["request_id"]),
                     )
                 blocked = True
+            else:
+                request = connection.execute(
+                    "SELECT opportunity_key FROM publication_requests WHERE request_id=?",
+                    (authorization["request_id"],),
+                ).fetchone()
+                if request is None:
+                    blocked = True
+                else:
+                    require_quarantine_clear(
+                        connection,
+                        opportunity_key=str(request["opportunity_key"]),
+                        operation="publication effect",
+                    )
             if not blocked:
                 existing = connection.execute(
                     "SELECT * FROM publication_effects WHERE effect_id=?", (effect_id,)
@@ -6399,6 +6443,20 @@ class RadarLedger:
         if status not in {"SUCCEEDED", "RECONCILE_REQUIRED", "FAILED"}:
             raise ValueError("invalid publication effect status")
         with self.transaction() as connection:
+            request = connection.execute(
+                """SELECT r.opportunity_key
+                   FROM publication_effects e
+                   JOIN publication_permits p ON p.permit_id=e.permit_id
+                   JOIN publication_requests r ON r.request_id=p.request_id
+                   WHERE e.effect_id=?""",
+                (effect_id,),
+            ).fetchone()
+            if request is not None:
+                require_quarantine_clear(
+                    connection,
+                    opportunity_key=str(request["opportunity_key"]),
+                    operation="publication effect completion",
+                )
             connection.execute(
                 """UPDATE publication_effects SET status=?,result_json=?,updated_at=?
                    WHERE effect_id=?""",
@@ -6456,7 +6514,7 @@ class RadarLedger:
             if permit is None or permit["status"] != "ACTIVE":
                 raise LedgerError("publication permit is not active")
             request_row = connection.execute(
-                "SELECT request_json FROM publication_requests WHERE request_id=?",
+                "SELECT opportunity_key,request_json FROM publication_requests WHERE request_id=?",
                 (permit["request_id"],),
             ).fetchone()
             if request_row is None or not _publication_probe_valid_json(
@@ -6474,6 +6532,11 @@ class RadarLedger:
                 raise LedgerError(
                     "publication receipt blocked: authenticated reproduction is required"
                 )
+            require_quarantine_clear(
+                connection,
+                opportunity_key=str(request_row["opportunity_key"]),
+                operation="publication permit consumption",
+            )
             connection.execute(
                 """UPDATE publication_permits SET status='CONSUMED',pr_url=?,updated_at=?
                    WHERE permit_id=?""",
@@ -6651,6 +6714,11 @@ class RadarLedger:
             ).fetchone()
             if row is None:
                 raise LedgerError("publication feedback is stale or already reserved")
+            require_quarantine_clear(
+                connection,
+                opportunity_key=str(row["key"]),
+                operation="publication feedback reservation",
+            )
             self._event(
                 connection,
                 row["key"],
@@ -6832,6 +6900,17 @@ class RadarLedger:
                 raise LedgerError("publication permit is not consumable")
             if permit["status"] == "EXPIRED" and effect["status"] != "RECONCILE_REQUIRED":
                 raise LedgerError("expired permit can only reconcile an ambiguous effect")
+            request = connection.execute(
+                "SELECT opportunity_key FROM publication_requests WHERE request_id=?",
+                (permit["request_id"],),
+            ).fetchone()
+            if request is None:
+                raise LedgerError("publication request is missing")
+            require_quarantine_clear(
+                connection,
+                opportunity_key=str(request["opportunity_key"]),
+                operation="pull-request effect completion",
+            )
             connection.execute(
                 """UPDATE publication_effects SET status='SUCCEEDED',result_json=?,updated_at=?
                    WHERE effect_id=?""",

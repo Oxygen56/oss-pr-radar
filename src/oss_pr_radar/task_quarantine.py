@@ -157,6 +157,14 @@ def active(
     return dict(row) if row else None
 
 
+def require_clear(connection: sqlite3.Connection, *, opportunity_key: str, operation: str) -> None:
+    """Fail closed for a publication mutation while a task quarantine is active."""
+
+    row = active(connection, opportunity_key=opportunity_key)
+    if row is not None:
+        raise PermissionError(f"{operation} blocked by active task quarantine: {opportunity_key}")
+
+
 def clear(
     connection: sqlite3.Connection,
     *,

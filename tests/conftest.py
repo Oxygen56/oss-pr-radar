@@ -3,6 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import subprocess
+import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -13,37 +16,213 @@ def _host_radar_inventory(root: Path) -> str:
 
     entries = []
     if root.exists():
-        for path in sorted(root.rglob("*")):
-            relative = path.relative_to(root)
-            if relative.parts and relative.parts[0] == "worktrees":
+        for current, dirs, files in os.walk(root, followlinks=False):
+            current_path = Path(current)
+            relative_current = current_path.relative_to(root)
+            if relative_current.parts and relative_current.parts[0] == "worktrees":
+                dirs[:] = []
                 continue
-            stat_result = path.lstat()
-            if path.is_symlink():
-                entries.append((str(relative), "symlink", os.readlink(path)))
-            elif path.is_file():
-                entries.append(
-                    (
-                        str(relative),
-                        "file",
-                        stat_result.st_mode & 0o777,
-                        hashlib.sha256(path.read_bytes()).hexdigest(),
+            dirs[:] = [name for name in dirs if name != "worktrees"]
+            for name in dirs + files:
+                path = current_path / name
+                relative = path.relative_to(root)
+                stat_result = path.lstat()
+                if path.is_symlink():
+                    entries.append((str(relative), "symlink", os.readlink(path)))
+                elif path.is_file():
+                    entries.append(
+                        (
+                            str(relative),
+                            "file",
+                            stat_result.st_mode & 0o777,
+                            hashlib.sha256(path.read_bytes()).hexdigest(),
+                        )
                     )
-                )
-            else:
-                entries.append((str(relative), "directory", stat_result.st_mode & 0o777))
+                else:
+                    entries.append((str(relative), "directory", stat_result.st_mode & 0o777))
+    entries.sort()
     payload = json.dumps(entries, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _host_radar_shared_inventory(root: Path) -> str:
+    """Fingerprint the shared task directories for transient-write detection."""
+
+    entries = [(_host_radar_inventory(root),)]
+    for name in ("task-contexts", "context-quarantine"):
+        path = root / name
+        entries.append((name, _host_radar_inventory(path)))
+    return hashlib.sha256(
+        json.dumps(entries, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
 @pytest.fixture(scope="session", autouse=True)
-def no_host_radar_private_writes():
+def no_host_radar_private_writes(tmp_path_factory):
     """Make the full suite fail if it writes the live shared radar root."""
 
     root = Path.home() / "Documents" / "github" / ".oss-pr-radar"
     before = _host_radar_inventory(root)
-    yield
-    after = _host_radar_inventory(root)
-    assert after == before, "tests modified the live .oss-pr-radar shared state"
+    shared_before = _host_radar_shared_inventory(root)
+    watcher_code = r"""
+import hashlib
+import json
+import os
+import sys
+import time
+from pathlib import Path
+
+root = Path(sys.argv[1])
+baseline = sys.argv[2]
+flag = Path(sys.argv[3])
+ready = Path(sys.argv[4])
+
+def inventory(path):
+    entries = []
+    if path.exists():
+        for current, dirs, files in os.walk(path, followlinks=False):
+            current_path = Path(current)
+            relative_current = current_path.relative_to(path)
+            if relative_current.parts and relative_current.parts[0] == "worktrees":
+                dirs[:] = []
+                continue
+            dirs[:] = [name for name in dirs if name != "worktrees"]
+            for name in dirs + files:
+                item = current_path / name
+                relative = item.relative_to(path)
+                stat_result = item.lstat()
+                if item.is_symlink():
+                    entries.append((str(relative), "symlink", os.readlink(item)))
+                elif item.is_file():
+                    entries.append((str(relative), "file", stat_result.st_mode & 0o777, hashlib.sha256(item.read_bytes()).hexdigest()))
+                else:
+                    entries.append((str(relative), "directory", stat_result.st_mode & 0o777))
+    entries.sort()
+    payload = json.dumps(entries, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+def write_marker(path, payload):
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        os.write(fd, payload)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+if inventory(root) != baseline:
+    write_marker(flag, b"host radar state changed before ready")
+    raise SystemExit(2)
+write_marker(ready, b"ready")
+while True:
+    if inventory(root) != baseline:
+        write_marker(flag, b"host radar state changed")
+        raise SystemExit(2)
+    time.sleep(0.05)
+"""
+    watcher_dir = tmp_path_factory.mktemp("radar-host-watch") / "watch"
+    watcher_dir.mkdir(mode=0o700)
+    watcher_flag = watcher_dir / f"{os.getpid()}.flag"
+    watcher_ready = watcher_dir / f"{os.getpid()}.ready"
+    watcher_stderr_path = watcher_dir / f"{os.getpid()}.stderr"
+    watcher_stderr = os.fdopen(
+        os.open(
+            watcher_stderr_path,
+            os.O_RDWR | os.O_CREAT | os.O_EXCL,
+            0o600,
+        ),
+        "w+b",
+    )
+    watcher = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            watcher_code,
+            str(root),
+            before,
+            str(watcher_flag),
+            str(watcher_ready),
+        ],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=watcher_stderr,
+        close_fds=True,
+    )
+    try:
+        ready_deadline = time.monotonic() + 5
+        while not watcher_ready.exists() and time.monotonic() < ready_deadline:
+            if watcher.poll() is not None:
+                watcher_stderr.flush()
+                watcher_stderr.seek(0)
+                diagnostic = watcher_stderr.read()[-4000:].decode("utf-8", "replace")
+                raise AssertionError(
+                    f"host watcher exited before ready: code={watcher.returncode}, "
+                    f"stderr={diagnostic!r}"
+                )
+            time.sleep(0.05)
+        if not watcher_ready.exists():
+            raise AssertionError("host watcher did not become ready")
+        yield
+    finally:
+        exit_code = watcher.poll()
+        if exit_code is None:
+            watcher.terminate()
+        try:
+            watcher.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            watcher.kill()
+            watcher.wait(timeout=2)
+        watcher_stderr.flush()
+        watcher_stderr.seek(0)
+        diagnostic = watcher_stderr.read()[-4000:].decode("utf-8", "replace")
+        watcher_stderr.close()
+        after = _host_radar_inventory(root)
+        assert after == before, (
+            f"tests modified the live .oss-pr-radar shared state: before={before} after={after}"
+        )
+        assert exit_code in (None, 0), (
+            f"host watcher exited unexpectedly: code={exit_code}, stderr={diagnostic!r}"
+        )
+        assert not watcher_flag.exists(), (
+            "tests transiently modified the live shared radar state: "
+            f"baseline={before} flag={watcher_flag.read_bytes()!r}"
+            if watcher_flag.exists()
+            else "tests transiently modified the live shared radar state"
+        )
+    assert _host_radar_shared_inventory(root) == shared_before
+
+
+@pytest.fixture(autouse=True)
+def hermetic_local_dispatch_bridge(monkeypatch, tmp_path_factory):
+    """Keep local bridge tests out of the user's shared task directory."""
+
+    from scripts import local_dispatch_bridge
+
+    hermetic_root = tmp_path_factory.mktemp("radar-hermetic")
+    home = hermetic_root / "home"
+    private_env = {
+        "HOME": home,
+        "XDG_CONFIG_HOME": home / ".config",
+        "XDG_DATA_HOME": home / ".local" / "share",
+        "XDG_STATE_HOME": home / ".local" / "state",
+        "XDG_CACHE_HOME": home / ".cache",
+        "CODEX_HOME": home / ".codex",
+        "TMPDIR": hermetic_root / "tmp",
+    }
+    for path in private_env.values():
+        path.mkdir(parents=True, exist_ok=True)
+        path.chmod(0o700)
+    for name, path in private_env.items():
+        monkeypatch.setenv(name, str(path))
+
+    github_root = hermetic_root / "github_root"
+    monkeypatch.setattr(local_dispatch_bridge, "GITHUB_ROOT", github_root)
+    for module in list(sys.modules.values()):
+        bridge = getattr(module, "BRIDGE", None)
+        if getattr(bridge, "__file__", "").endswith("scripts/local_dispatch_bridge.py"):
+            monkeypatch.setattr(bridge, "GITHUB_ROOT", github_root)
+    private_root = github_root / local_dispatch_bridge.TASK_PRIVATE_DIR
+    private_root.mkdir(parents=True, exist_ok=True)
+    private_root.chmod(0o700)
 
 
 @pytest.fixture(autouse=True)
