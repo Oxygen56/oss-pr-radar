@@ -33051,6 +33051,30 @@
     ],
     "why": "Issue reports a watchdog timeout in sglang with a complex configuration, but lacks a minimal reproducer and root cause analysis. The deterministic gate requires HUMAN_REVIEW, and open PR/related issue lookups timed out, so duplicate work cannot be excluded. Actionability is low without maintainer guidance or a clear code path."
   },
+  "dfb1504fbb652f47ef522a783bdb20b08e8a345654096543541f58b02abc2b36": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/distributed/kv_transfer/kv_connector/v1/mooncake/store/worker.py",
+      "vllm/distributed/kv_transfer/kv_connector/v1/mooncake/store/data.py"
+    ],
+    "risks": [
+      "The fix must maintain alignment of token ranges, keys, group indices, addresses, and sizes when filtering null blocks."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided commands for state-spaces/mamba-130m-hf, verify that the fix prevents publishing NULL_BLOCK_ID boundaries and that the consumer output matches the cold baseline exactly."
+    ],
+    "unknowns": [
+      "Whether the existing open PRs (e.g., #50021) already fix this exact issue, requiring comparison before implementation."
+    ],
+    "why": "The issue provides a detailed, reproducible bug in the MooncakeStoreConnector save path where NULL_BLOCK_ID recurrent states are published as valid external prefix-cache keys, causing silent output corruption. It includes root-cause evidence, code anchors, and a clear fix direction. The track is llm_algorithm because it involves model architecture (recurrent states) and evaluation methodology (deterministic output comparison)."
+  },
   "dfd3cb1d1ee639f9f03b6dccae66ada238707644371821e20975acb9f104cee7": {
     "confidence": 0.7,
     "contradictions": [
