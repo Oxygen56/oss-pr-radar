@@ -31662,6 +31662,35 @@
     "wait_reason": null,
     "why": "Issue describes a concrete, reproducible bug with a clear root cause (cachetools raises ValueError when item exceeds maxsize) and a proposed fix (size guard at insert sites). No competing open PR; existing PR is unrelated and merged. The fix is local and testable."
   },
+  "d6dcf2cfda6e57ed0dec2732cb56e61bf7c1b8a06188bce0b4b06c5e094923f6": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "deepspeed/runtime/zero/stage_1_and_2.py",
+      "Parameter grouping/partition mapping logic",
+      "Gradient reduction loop handling of zero-sized parameters"
+    ],
+    "risks": [
+      "Potential behavior change for edge-case models; need to decide whether to skip zero-sized parameters or reject them at initialization.",
+      "May interact with partition mapping logic; ensure no regression for normal parameter groups."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided repro.py with ZeRO stage 1 and 2 on a single GPU and assert no KeyError and correct loss/step.",
+      "Add a regression test that constructs a model with a trailing zero-sized trainable parameter and verifies ZeRO-1/2 backward/step completes.",
+      "Compare against ZeRO-0 and DDP baselines to confirm parity."
+    ],
+    "unknowns": [
+      "No explicit maintainer confirmation of desired fix approach (skip vs reject), though comments indicate approval of PR #8280 with a request."
+    ],
+    "why": "The issue provides a minimal reproducer, exact traceback, root-cause analysis (zero-sized parameter absent from param_to_partition_ids), and a clear expected behavior. It is a concrete distributed-training invariant bug in ZeRO-1/2, with a reference behavior (ZeRO-0/DDP) and a validation path (single-GPU FP32 reproducer)."
+  },
   "d6f5c17e0a453451c25fd087020d0c4c4c9d041e8b8ad9a434f049f228f87ef8": {
     "confidence": 0.8,
     "contradictions": [
@@ -34310,6 +34339,34 @@
     ],
     "why": "Issue provides a clear, reproducible bug with a detailed matrix of failing configurations, but the root cause is not identified. An existing PR (#8611) attempts a fix but is closed and has failed CI, and the repository requires assignment. Maintainer confirmation is needed before starting new work."
   },
+  "e4da855f9c0c329abd63059838d3de767c4c4b5bf452986f6c662ae565c121a8": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "litellm/proxy/utils.py",
+      "litellm/proxy/hooks/responses_id_security.py",
+      "litellm/litellm_core_utils/llm_response_utils/convert_dict_to_response.py"
+    ],
+    "risks": [
+      "Potential behavior change in streaming response handling may affect other interception hooks; need to ensure backward compatibility.",
+      "Cache corruption fix may require careful handling of cache key and response shape to avoid breaking existing cached entries."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use the provided mock provider and config to reproduce the TypeError with stream:true and code_interpreter_interception; add a regression test that asserts a proper SSE stream is returned.",
+      "Add a test that verifies the response cache stores a full chat.completion object, not a chunk, when streaming is requested with interception."
+    ],
+    "unknowns": [
+      "Whether the maintainers have a preferred design for supporting streaming with code_interpreter_interception (e.g., reject with 4xx vs. implement streaming).",
+      "Exact caching backend and configuration used in the production incident, which may affect reproduction of the cache corruption."
+    ],
+    "why": "The issue provides a clear, reproducible bug with a minimal local repro, a precise traceback pointing to the faulty code path, and a concrete expected behavior. The root cause is identified as a non-iterable object returned when converting a non-streaming response to a fake stream, causing downstream async-for failures and cache corruption. This is a high-value fix in the proxy's streaming and caching logic."
+  },
   "e50476dd7fb544c08c3afe3c784235163af4ce54291601de1140082a58905f91": {
     "confidence": 0.85,
     "contradictions": [],
@@ -35086,6 +35143,29 @@
       "Whether maintainers prefer mirroring resume tags or pre-determining sleep_level"
     ],
     "why": "The issue identifies a concrete state-machine ordering bug in the LoRA adapter path of verl's engine_workers.py, with a clear root cause: resume('weights') is called before sleep_level is set, causing a KeyError in SGLang's strict set removal. The fix is actionable and testable, and no competing PR exists."
+  },
+  "e980453ecaa28d375baa0a18072235967fd9cdec604b1c54f1c108618c5cfa6a": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "litellm/cost_calculator.py: add 'ON_DEMAND_FLEX' to _GEMINI_TRAFFIC_TYPE_TO_SERVICE_TIER"
+    ],
+    "risks": [
+      "Potential need to also add flex pricing fields for models like gemini-3.5-flash, but that is a separate data gap."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that mocks a response with usageMetadata.trafficType='ON_DEMAND_FLEX' and verifies that generic_cost_per_token() uses flex pricing when available."
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred approach for handling missing traffic types, but the suggested fix is straightforward."
+    ],
+    "why": "The issue precisely identifies a missing mapping in a cost calculation dictionary, provides a clear reproduction path, and suggests a minimal fix. The root cause is well-defined and the change is low-risk."
   },
   "e9bfdd9cbcb0365db984ef2b26abd59b03ffa4df6aa5e01ec859e6fb9edc9eea": {
     "confidence": 0.8,
