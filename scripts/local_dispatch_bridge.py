@@ -1087,9 +1087,17 @@ def _list_shared_context_paths() -> list[Path]:
             os.close(fd)
 
 
+class _SharedContextValidationError(RuntimeError):
+    def __init__(self, message: str, *, raw: bytes, source_stat: os.stat_result, source_path: Path):
+        super().__init__(message)
+        self.raw = raw
+        self.source_stat = source_stat
+        self.source_path = source_path
+
+
 def _deduplicate_shared_context_paths(
     paths: list[Path],
-) -> tuple[list[Path], list[dict[str, str]]]:
+) -> tuple[list[Path], list[dict[str, str] | _SharedContextValidationError]]:
     """Prefer identical canonical v2 bytes; reject legacy/v2 conflicts."""
 
     grouped: dict[tuple[str, str, str], list[Path]] = {}
@@ -1101,21 +1109,26 @@ def _deduplicate_shared_context_paths(
         else:
             grouped.setdefault(identity, []).append(path)
     selected = list(unbound)
-    conflicts: list[dict[str, str]] = []
+    conflicts: list[dict[str, str] | _SharedContextValidationError] = []
     for _identity, candidates in grouped.items():
         if len(candidates) == 1:
             selected.append(candidates[0])
             continue
-        observations: list[tuple[Path, bytes]] = []
-        try:
-            observations = [(path, _read_shared_context_file(path)[0]) for path in candidates]
-        except (OSError, RuntimeError) as exc:
-            conflicts.append(
-                {
-                    "path": str(shared_context_root()),
-                    "error": f"duplicate context cannot be read safely: {str(exc)[:240]}",
-                }
-            )
+        observations: list[tuple[Path, bytes, os.stat_result]] = []
+        for path in candidates:
+            try:
+                raw, source_stat, secure_path = _read_shared_context_file(path)
+            except (OSError, RuntimeError) as exc:
+                conflicts.append(
+                    {
+                        "path": str(path),
+                        "error": f"duplicate context cannot be read safely: {str(exc)[:240]}",
+                    }
+                )
+                observations = []
+                break
+            observations.append((secure_path, raw, source_stat))
+        if not observations:
             continue
 
         def comparable(raw: bytes) -> str | bytes:
@@ -1131,17 +1144,20 @@ def _deduplicate_shared_context_paths(
             value.pop("bootstrapContextPath", None)
             return canonical_json(value)
 
-        if len({comparable(raw) for _path, raw in observations}) != 1:
-            conflicts.append(
-                {
-                    "path": str(shared_context_root()),
-                    "error": "legacy and v2 context bytes conflict for one identity",
-                }
-            )
+        if len({comparable(raw) for _path, raw, _source_stat in observations}) != 1:
+            for path, raw, source_stat in observations:
+                conflicts.append(
+                    _SharedContextValidationError(
+                        "legacy and v2 context bytes conflict for one identity",
+                        raw=raw,
+                        source_stat=source_stat,
+                        source_path=path,
+                    )
+                )
             continue
         canonical = [
             path
-            for path, _raw in observations
+            for path, _raw, _source_stat in observations
             if _shared_context_relative_path(path)
             and _shared_context_relative_path(path)[0] == "v2"
         ]
@@ -1812,14 +1828,6 @@ def _legacy_result_requires_migration(
     }
 
 
-class _SharedContextValidationError(RuntimeError):
-    def __init__(self, message: str, *, raw: bytes, source_stat: os.stat_result, source_path: Path):
-        super().__init__(message)
-        self.raw = raw
-        self.source_stat = source_stat
-        self.source_path = source_path
-
-
 def _verified_shared_task_context(path: Path) -> tuple[dict[str, Any], str]:
     raw, source_stat, secure_path = _read_shared_context_file(path)
     try:
@@ -2055,8 +2063,37 @@ def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
     restored: list[dict[str, Any]] = []
     unavailable: list[dict[str, Any]] = []
     quarantined: list[dict[str, Any]] = []
-    errors: list[dict[str, str]] = list(path_errors)
+    errors: list[dict[str, str]] = []
     result_receipts_restored = 0
+    for item in path_errors:
+        if isinstance(item, _SharedContextValidationError):
+            try:
+                quarantined_item = _quarantine_shared_context(
+                    store,
+                    item.source_path,
+                    item,
+                    raw=item.raw,
+                    source_stat=item.source_stat,
+                )
+            except (OSError, RuntimeError, ValueError, sqlite3.Error) as quarantine_exc:
+                errors.append(
+                    {
+                        "path": str(item.source_path),
+                        "error": f"context quarantine persistence failed: {str(quarantine_exc)[:240]}",
+                    }
+                )
+            else:
+                if quarantined_item is None:
+                    errors.append(
+                        {
+                            "path": str(item.source_path),
+                            "error": "shared task context identity is unavailable for quarantine",
+                        }
+                    )
+                else:
+                    quarantined.append(quarantined_item)
+        else:
+            errors.append(item)
     for path in paths:
         try:
             context, source_updated_at = _verified_shared_task_context(path)
@@ -3181,6 +3218,8 @@ def _atomic_shared_context_json(issue_url: str, value: dict[str, Any]) -> Path:
 
 def _shared_context_quarantine_reason(exc: BaseException) -> str:
     message = str(exc)
+    if "legacy and v2 context bytes conflict" in message:
+        return "SHARED_CONTEXT_LAYOUT_CONFLICT"
     if "digest mismatch" in message:
         return "SHARED_CONTEXT_DIGEST_MISMATCH"
     if "bootstrap path" in message:
@@ -11384,7 +11423,7 @@ def enqueue_local_receipts(path: Path = LEDGER_PATH) -> dict[str, Any]:
     entries = dict(previous.get("entries") or {}) if isinstance(previous, dict) else {}
     queued: list[dict[str, Any]] = []
     rejected: list[dict[str, str]] = []
-    for candidate in store.task_result_candidates():
+    for candidate in store.local_receipt_candidates():
         try:
             result = _read_task_result_bytes_if_present(candidate)
             if result is None:

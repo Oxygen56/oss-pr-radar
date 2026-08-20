@@ -2049,7 +2049,9 @@ def test_legacy_and_v2_shared_context_duplicates_prefer_v2_or_fail_on_bytes_conf
     legacy.write_bytes(b"different")
     selected, errors = MODULE._deduplicate_shared_context_paths([legacy, canonical])
     assert selected == []
-    assert errors and "conflict" in errors[0]["error"]
+    assert len(errors) == 2
+    assert all(isinstance(error, MODULE._SharedContextValidationError) for error in errors)
+    assert {error.source_path for error in errors} == {legacy, canonical}
 
 
 def test_shared_context_unknown_root_entry_fails_closed(monkeypatch, tmp_path):
@@ -2098,7 +2100,75 @@ def test_shared_context_recovery_deduplicates_trusted_legacy_and_v2_contexts(mon
     os.chmod(legacy, 0o600)
     conflicted = MODULE.recover_shared_task_contexts(RadarLedger(tmp_path / "conflict.sqlite3"))
     assert conflicted["verified"] == 0
-    assert any("conflict" in item["error"] for item in conflicted["errors"])
+    assert conflicted["errors"] == []
+    assert [item["reason"] for item in conflicted["quarantined"]] == [
+        "SHARED_CONTEXT_LAYOUT_CONFLICT",
+        "SHARED_CONTEXT_LAYOUT_CONFLICT",
+    ]
+    assert [item["new"] for item in conflicted["quarantined"]] == [True, True]
+
+    repeated = MODULE.recover_shared_task_contexts(RadarLedger(tmp_path / "conflict.sqlite3"))
+    assert repeated["errors"] == []
+    assert [item["new"] for item in repeated["quarantined"]] == [False, False]
+
+
+def test_shared_context_layout_conflict_without_bindable_identity_fails_closed(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", tmp_path / "github")
+    context_root = MODULE.shared_context_root()
+    context_root.mkdir(parents=True, mode=0o700)
+    os.chmod(context_root, 0o700)
+    url = "https://github.com/a/b/issues/1"
+    canonical = MODULE.shared_context_path(url)
+    canonical.parent.mkdir(parents=True, mode=0o700)
+    os.chmod(canonical.parent, 0o700)
+    os.chmod(canonical.parent.parent, 0o700)
+    os.chmod(canonical.parent.parent.parent, 0o700)
+    legacy = context_root / MODULE._legacy_shared_context_filename(url)
+    canonical.write_text(
+        json.dumps({"issueUrl": "https://github.com/x/y/issues/2", "key": "x/y#2"}),
+        encoding="utf-8",
+    )
+    legacy.write_text(
+        json.dumps({"issueUrl": "https://github.com/x/y/issues/3", "key": "x/y#3"}),
+        encoding="utf-8",
+    )
+    os.chmod(canonical, 0o600)
+    os.chmod(legacy, 0o600)
+
+    result = MODULE.recover_shared_task_contexts(RadarLedger(tmp_path / "ledger.sqlite3"))
+
+    assert result["verified"] == 0
+    assert result["quarantined"] == []
+    assert len(result["errors"]) == 2
+    assert all("identity is unavailable" in item["error"] for item in result["errors"])
+
+
+def test_shared_context_layout_conflict_quarantine_persistence_failure_blocks_controller(
+    monkeypatch, tmp_path
+):
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    _store, _worktree, _local_path, canonical = _context_digest_fixture(tmp_path / "fixture")
+    legacy = MODULE.shared_context_root() / MODULE._legacy_shared_context_filename(
+        "https://github.com/a/b/issues/1"
+    )
+    value = json.loads(canonical.read_text(encoding="utf-8"))
+    legacy.write_text(json.dumps(value | {"threadId": "other"}), encoding="utf-8")
+    os.chmod(legacy, 0o600)
+
+    def fail_record(*_args, **_kwargs):
+        raise sqlite3.Error("simulated persistence failure")
+
+    monkeypatch.setattr(RadarLedger, "_record_shared_context_quarantine", fail_record)
+
+    result = MODULE.recover_shared_task_contexts(RadarLedger(tmp_path / "ledger.sqlite3"))
+
+    assert result["verified"] == 0
+    assert result["quarantined"] == []
+    assert len(result["errors"]) == 2
+    assert all("quarantine persistence failed" in item["error"] for item in result["errors"])
 
 
 def test_fresh_signed_intent_can_replace_a_task_whose_workspace_was_lost(tmp_path):
@@ -10538,6 +10608,71 @@ def test_task_result_candidate_skips_missing_result_in_safe_private_dir(
         assert result["ok"] is True
         assert result["queued"] == []
         assert result["rejected"] == []
+
+
+def test_fast_receipt_skips_plain_published_history_with_missing_worktree(tmp_path):
+    store, worktree, _head_sha, _pr_url = _published_followup_store(tmp_path)
+    candidate = store.pr_followup_candidates()[0]
+    store.reserve_pr_followup(thread_id="thread-1", wake_digest=candidate["wakeDigest"])
+    store.commit_pr_followup(thread_id="thread-1", wake_digest=candidate["wakeDigest"])
+    store.record_followup_result(
+        "a/b#1",
+        wake_digest=candidate["wakeDigest"],
+        result_digest="already-ingested",
+        stage="PR_OPEN",
+    )
+    shutil.rmtree(worktree)
+
+    result = MODULE.enqueue_local_receipts(tmp_path / "ledger.sqlite3")
+
+    assert result["ok"] is True
+    assert result["queued"] == []
+    assert result["rejected"] == []
+
+
+def test_fast_receipt_reports_unfinished_pr_followup_with_missing_worktree(tmp_path):
+    store, worktree, _head_sha, _pr_url = _published_followup_store(tmp_path)
+    candidate = store.pr_followup_candidates()[0]
+    store.reserve_pr_followup(thread_id="thread-1", wake_digest=candidate["wakeDigest"])
+    store.commit_pr_followup(thread_id="thread-1", wake_digest=candidate["wakeDigest"])
+    shutil.rmtree(worktree)
+
+    result = MODULE.enqueue_local_receipts(tmp_path / "ledger.sqlite3")
+
+    assert result["ok"] is False
+    assert result["queued"] == []
+    assert result["rejected"][0]["key"] == "a/b#1"
+    assert "worktree is missing" in result["rejected"][0]["error"]
+
+
+def test_fast_receipt_reports_unfinished_validation_followup_with_missing_worktree(tmp_path):
+    store, worktree, _result_path = _controller_commit_result(tmp_path)
+    value = json.loads(_result_path.read_text(encoding="utf-8"))
+    digest = hashlib.sha256(_result_path.read_bytes()).hexdigest()
+    store.record_stage(
+        "a/b#1",
+        "VALIDATION_PENDING",
+        evidence={"reason": "SUBMIT_READY_EVIDENCE_INCOMPLETE"},
+        dedupe_key=digest,
+    )
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest=digest,
+        missing=["relevant_tests_green"],
+    )
+    store.record_task_result_ingested("a/b#1", digest=digest, stage="VALIDATION_PENDING")
+    store.reserve_validation_followup(thread_id="thread-1", result_digest=digest)
+    store.commit_validation_followup(thread_id="thread-1", result_digest=digest)
+    assert value["key"] == "a/b#1"
+    shutil.rmtree(worktree)
+
+    result = MODULE.enqueue_local_receipts(tmp_path / "ledger.sqlite3")
+
+    assert result["ok"] is False
+    assert result["queued"] == []
+    assert result["rejected"][0]["key"] == "a/b#1"
+    assert "worktree is missing" in result["rejected"][0]["error"]
 
 
 def test_validation_result_absence_requires_existing_safe_private_dir(tmp_path):

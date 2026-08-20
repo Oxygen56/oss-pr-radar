@@ -2745,6 +2745,106 @@ def test_task_result_candidate_is_blocked_only_by_active_publication(
     assert len(store.task_result_candidates()) == expected_candidates
 
 
+def test_local_receipt_candidates_skip_plain_completed_published_history(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/missing-worktree",
+    )
+    store.record_stage("a/b#1", "CI_GREEN", evidence={"prUrl": "https://github.com/a/b/pull/9"})
+
+    assert [item["key"] for item in store.task_result_candidates()] == ["a/b#1"]
+    assert store.local_receipt_candidates() == []
+
+
+def test_local_receipt_candidates_keep_unfinished_pr_followup_until_result_ingested(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.restore_task_context(published_task_context())
+    wake_digest = "followup-wake"
+    old = iso_z(datetime.now(UTC) - timedelta(minutes=5))
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO events
+               (opportunity_key,event_type,dedupe_key,payload_json,created_at)
+               VALUES ('a/b#1','PR_FOLLOWUP_SENT',?,?,?)""",
+            (
+                wake_digest,
+                json.dumps(
+                    {
+                        "threadId": "thread-recovered",
+                        "prUrl": "https://github.com/a/b/pull/9",
+                    }
+                ),
+                old,
+            ),
+        )
+
+    assert [item["key"] for item in store.local_receipt_candidates()] == ["a/b#1"]
+
+    store.record_followup_result(
+        "a/b#1", wake_digest=wake_digest, result_digest="result", stage="PR_OPEN"
+    )
+
+    assert store.local_receipt_candidates() == []
+
+
+def test_local_receipt_candidates_keep_unfinished_validation_followup(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+    store.record_stage("a/b#1", "VALIDATION_PENDING")
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest="result-digest",
+        missing=["relevant_tests_green"],
+    )
+    store.reserve_validation_followup(thread_id="thread-1", result_digest="result-digest")
+    store.commit_validation_followup(thread_id="thread-1", result_digest="result-digest")
+
+    assert [item["key"] for item in store.local_receipt_candidates()] == ["a/b#1"]
+
+
+def test_local_receipt_candidates_exclude_active_quarantine_without_changing_audit_scope(
+    tmp_path,
+):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+    store.record_stage("a/b#1", "PR_OPEN", evidence={"prUrl": "https://github.com/a/b/pull/9"})
+    assert [item["key"] for item in store.task_result_candidates()] == ["a/b#1"]
+    assert store.local_receipt_candidates() == []
+
+    store.record_shared_context_quarantine(
+        key="a/b#1",
+        reason="SHARED_CONTEXT_LAYOUT_CONFLICT",
+        dedupe_key="layout-conflict",
+        payload={"issueUrl": "https://github.com/a/b/issues/1"},
+        created_at=iso_z(datetime.now(UTC)),
+    )
+
+    assert store.local_receipt_candidates() == []
+
+
 def test_expired_intent_cannot_be_claimed(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(intent(expiresAt="2020-01-01T00:00:00Z"))

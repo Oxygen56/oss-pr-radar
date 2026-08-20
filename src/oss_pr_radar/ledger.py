@@ -4211,8 +4211,24 @@ class RadarLedger:
             "intent": json.loads(row["payload_json"]),
         }
 
+    @staticmethod
+    def _task_result_candidates_from_rows(rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
+        return [
+            {
+                "key": row["key"],
+                "stage": row["stage"],
+                "issueUrl": row["issue_url"],
+                "intentId": row["intent_id"],
+                "threadId": row["thread_id"],
+                "worktreePath": row["worktree_path"],
+                "intentStatus": row["status"],
+                "intent": json.loads(row["payload_json"]),
+            }
+            for row in rows
+        ]
+
     def task_result_candidates(self) -> list[dict[str, Any]]:
-        """Return thread-bound tasks whose private workspace result can be ingested."""
+        """Return the broad historical audit set of thread-bound task results."""
 
         with self.connect() as connection:
             rows = connection.execute(
@@ -4238,19 +4254,57 @@ class RadarLedger:
                      )
                    ORDER BY i.updated_at"""
             ).fetchall()
-        return [
-            {
-                "key": row["key"],
-                "stage": row["stage"],
-                "issueUrl": row["issue_url"],
-                "intentId": row["intent_id"],
-                "threadId": row["thread_id"],
-                "worktreePath": row["worktree_path"],
-                "intentStatus": row["status"],
-                "intent": json.loads(row["payload_json"]),
-            }
-            for row in rows
-        ]
+        return self._task_result_candidates_from_rows(rows)
+
+    def local_receipt_candidates(self) -> list[dict[str, Any]]:
+        """Return only tasks that the fast local receipt worker should inspect."""
+
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT o.key,o.stage,o.issue_url,i.intent_id,i.thread_id,
+                          i.worktree_path,i.status,i.payload_json
+                   FROM opportunities o JOIN intents i ON i.opportunity_key=o.key
+                   WHERE i.thread_id IS NOT NULL AND i.worktree_path IS NOT NULL
+                     AND NOT EXISTS (
+                       SELECT 1 FROM task_quarantines q
+                       WHERE q.opportunity_key=o.key AND q.status='ACTIVE'
+                     )
+                     AND (
+                       i.status='DISPATCHED'
+                       OR (
+                         o.stage IN ('VALIDATION_PENDING','FIX_READY')
+                         AND NOT EXISTS (
+                           SELECT 1 FROM publication_requests p
+                           WHERE p.opportunity_key=o.key
+                             AND p.status IN ('PENDING','GRANTED')
+                         )
+                       )
+                       OR (
+                         o.stage IN ('PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED')
+                         AND EXISTS (
+                           SELECT 1 FROM events sent
+                           WHERE sent.opportunity_key=o.key
+                             AND sent.event_type='PR_FOLLOWUP_SENT'
+                             AND NOT EXISTS (
+                               SELECT 1 FROM events result
+                               WHERE result.opportunity_key=o.key
+                                 AND result.event_type='PR_FOLLOWUP_RESULT_INGESTED'
+                                 AND result.dedupe_key=sent.dedupe_key
+                             )
+                             AND NOT EXISTS (
+                               SELECT 1 FROM events abandoned
+                               WHERE abandoned.opportunity_key=o.key
+                                 AND abandoned.event_type='PR_FOLLOWUP_DELIVERY_ABANDONED'
+                                 AND json_extract(abandoned.payload_json,'$.wakeDigest')=
+                                     sent.dedupe_key
+                                 AND abandoned.id>sent.id
+                             )
+                         )
+                       )
+                     )
+                   ORDER BY i.updated_at"""
+            ).fetchall()
+        return self._task_result_candidates_from_rows(rows)
 
     def has_live_handoff(self, *, issue_url: str) -> bool:
         now = iso_z(datetime.now(UTC))
