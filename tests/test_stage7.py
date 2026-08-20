@@ -812,17 +812,17 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
         == hashlib.sha256(receipt_path.read_bytes()).hexdigest()
     )
     assert receipt_path.stat().st_mtime_ns == receipt_stat.st_mtime_ns
-    assert (
-        check(
-            runtime,
-            home=home,
-            launchctl_runner=lambda _label: "Could not find service",
-            managed_counts_evidence=counts,
-            automation_snapshot={**automation_unsigned, **auth},
-            require_workers_loaded=False,
-        )["ok"]
-        is True
+    preflight = check(
+        runtime,
+        home=home,
+        launchctl_runner=lambda _label: "Could not find service",
+        managed_counts_evidence=counts,
+        automation_snapshot={**automation_unsigned, **auth},
+        require_workers_loaded=False,
     )
+    assert preflight["ok"] is True
+    assert preflight["stagedWorkerReceiptValid"] is True
+    assert preflight["runtimeReleasePolicyIdentityMatch"] is True
     issue_operational_authorization(
         runtime,
         managed_counts_evidence=counts_path,
