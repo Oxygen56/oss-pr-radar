@@ -81,7 +81,7 @@ def test_activate_rollback_preserves_ledger_receipt_queue_and_rejects_corruption
     first = DEPLOY.deploy(source, target)
     release_one = Path(first["releasePath"])
     state = target / "state"
-    state.mkdir()
+    state.mkdir(exist_ok=True)
     ledger = state / "radar_ledger.sqlite3"
     receipt = state / "task-turn-receipt.json"
     queue = state / "local-receipt-queue.json"

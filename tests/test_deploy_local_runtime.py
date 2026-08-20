@@ -4,10 +4,13 @@ import importlib.util
 import json
 import shutil
 import subprocess
+import threading
+import time
 from pathlib import Path
 
 import pytest
 
+from oss_pr_radar import runtime as runtime_module
 from oss_pr_radar.managed_lifecycle import ManagedLedger
 from oss_pr_radar.stage7_cutover import prepare, restore_git_preservation
 
@@ -64,6 +67,135 @@ def test_deploy_creates_immutable_release_and_preserves_runtime_state(tmp_path):
     assert manifest["commit"] == result["commit"]
     assert manifest["manifestSha256"] == result["manifestSha256"]
     assert MODULE.verify_release(release)["releaseId"] == result["releaseId"]
+
+
+def test_deploy_records_release_identity_without_overwriting_worker_health(tmp_path):
+    source, target = make_repositories(tmp_path)
+    state = target / "state" / "runtime-health.json"
+    state.parent.mkdir(parents=True)
+    workers = {"fast": {"lastSuccessAt": "old"}, "slow": {"lastExitCode": 1}}
+    state.write_text(
+        json.dumps(
+            {
+                "workers": workers,
+                "deployment": {
+                    "releaseVersion": "old-release",
+                    "policyDigest": "old-policy",
+                    "manifestVerified": True,
+                    "deploymentDirty": False,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = MODULE.deploy(source, target)
+
+    value = json.loads(state.read_text(encoding="utf-8"))
+    manifest = json.loads((Path(result["releasePath"]) / MODULE.MANIFEST).read_text())
+    assert value["workers"] == workers
+    assert value["deployment"] == {
+        "releaseVersion": result["releaseId"],
+        "policyDigest": manifest["policyDigest"],
+        "manifestVerified": True,
+        "deploymentDirty": False,
+    }
+
+
+def test_release_activation_write_failure_restores_pointer_and_health(tmp_path, monkeypatch):
+    source, target = make_repositories(tmp_path)
+    first = MODULE.deploy(source, target)
+    (source / "scripts" / "runner.py").write_text("VERSION = 3\n", encoding="utf-8")
+    git(source, "add", "scripts/runner.py")
+    git(
+        source,
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "-m",
+        "source-v3",
+    )
+    second = MODULE.deploy(source, target)
+    state_path = target / "state" / "runtime-health.json"
+    before_state = state_path.read_bytes()
+    original = runtime_module._atomic_write
+
+    def fail_health(path, value):
+        if path == state_path:
+            raise OSError("injected health write failure")
+        return original(path, value)
+
+    monkeypatch.setattr(runtime_module, "_atomic_write", fail_health)
+    with pytest.raises(OSError, match="injected health write failure"):
+        MODULE.activate_release(target, first["releaseId"])
+
+    assert (target / "current-release").resolve().name == second["releaseId"]
+    assert state_path.read_bytes() == before_state
+    assert not runtime_module.release_activation_journal_path(target).exists()
+
+
+def test_interrupted_release_activation_recovers_to_previous_pair(tmp_path):
+    source, target = make_repositories(tmp_path)
+    first = MODULE.deploy(source, target)
+    (source / "scripts" / "runner.py").write_text("VERSION = 3\n", encoding="utf-8")
+    git(source, "add", "scripts/runner.py")
+    git(
+        source,
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "-m",
+        "source-v3",
+    )
+    second = MODULE.deploy(source, target)
+    state_path = target / "state" / "runtime-health.json"
+    old_state = state_path.read_bytes()
+    first_manifest = MODULE.verify_release(target / MODULE.RELEASES / first["releaseId"])
+    journal = {
+        "schema": "oss-pr-radar.release-activation.v1",
+        "oldTarget": str((target / MODULE.RELEASES / second["releaseId"]).resolve()),
+        "newTarget": str((target / MODULE.RELEASES / first["releaseId"]).resolve()),
+        "oldStateBytes": __import__("base64").b64encode(old_state).decode("ascii"),
+        "oldStateMode": state_path.stat().st_mode & 0o777,
+        "newDeployment": {
+            "releaseVersion": first["releaseId"],
+            "policyDigest": first_manifest["policyDigest"],
+            "manifestVerified": True,
+            "deploymentDirty": False,
+        },
+        "phase": "pointer-active",
+    }
+    runtime_module._atomic_write(runtime_module.release_activation_journal_path(target), journal)
+    runtime_module._atomic_pointer_write(
+        target / MODULE.RELEASE_POINTER, target / MODULE.RELEASES / first["releaseId"]
+    )
+
+    assert runtime_module.recover_release_activation(target) == "rolled_back"
+    assert (target / MODULE.RELEASE_POINTER).resolve().name == second["releaseId"]
+    assert state_path.read_bytes() == old_state
+    assert not runtime_module.release_activation_journal_path(target).exists()
+
+
+def test_release_activation_waits_for_runtime_lock(tmp_path):
+    source, target = make_repositories(tmp_path)
+    result = MODULE.deploy(source, target)
+    finished = threading.Event()
+
+    def activate_again():
+        MODULE.activate_release(target, result["releaseId"])
+        finished.set()
+
+    with runtime_module.exclusive_lock(runtime_module.runtime_state_lock_path(target)):
+        thread = threading.Thread(target=activate_again)
+        thread.start()
+        time.sleep(0.05)
+        assert not finished.is_set()
+    thread.join(timeout=5)
+    assert finished.is_set()
 
 
 def test_deploy_ignores_runtime_artifacts_and_preserves_private_exclude(tmp_path):

@@ -32,7 +32,13 @@ from .operational_auth import (
 )
 from .pr_projection import ledger_projection
 from .release_binding import bind_runtime, runtime_ledger_path, runtime_root_digest
-from .runtime import REQUIRED_WORKERS, disk_snapshot, pending_publication_effects, read_json
+from .runtime import (
+    REQUIRED_WORKERS,
+    disk_snapshot,
+    pending_publication_effects,
+    read_json,
+    release_activation_journal_path,
+)
 from .runtime_audit import LEGACY_LABELS, WORKER_LABELS, collect_snapshot, launchctl_print
 from .stage6_rehearsal import redact_public, stable_sqlite_copy, validate_detached_report_envelope
 from .stage6_verification import validate_verification_manifest
@@ -697,7 +703,9 @@ def check(
         runtime_state.get("deployment") if isinstance(runtime_state.get("deployment"), dict) else {}
     )
     identity_ok = (
-        deployment.get("releaseVersion") == binding.release_id
+        not release_activation_journal_path(runtime_root).exists()
+        and not release_activation_journal_path(runtime_root).is_symlink()
+        and deployment.get("releaseVersion") == binding.release_id
         and deployment.get("policyDigest") == binding.release.get("policyDigest")
         and deployment.get("manifestVerified") is True
         and deployment.get("deploymentDirty") is not True
@@ -779,6 +787,7 @@ def check(
         "pendingPublicationEffectsClear": pending_effects == 0,
         "managedCountsEvidenceValid": counts_evidence_ok,
         "runtimeReleasePolicyIdentityMatch": identity_ok,
+        "releaseActivationJournalClear": not release_activation_journal_path(runtime_root).exists(),
         "signingCapabilityAvailable": current_signing_key_available(),
         "dangerousBridgeReachable": old_monolithic,
         "oldMonolithicWorkerReachable": old_monolithic,

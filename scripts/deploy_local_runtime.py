@@ -23,6 +23,7 @@ from oss_pr_radar.release_binding import (  # noqa: E402
     RELEASES,
     verify_release,
 )
+from oss_pr_radar.runtime import activate_release_pointer  # noqa: E402
 
 LOCAL_RUNTIME_IGNORE_PATTERNS = (
     "/current-release",
@@ -170,14 +171,6 @@ def build_manifest(source: Path, files: set[Path], commit: str) -> dict[str, obj
     }
 
 
-def _activate(target: Path, release: Path) -> None:
-    pointer = target / RELEASE_POINTER
-    temporary = target / f".{RELEASE_POINTER}.{os.getpid()}.tmp"
-    temporary.unlink(missing_ok=True)
-    temporary.symlink_to(release)
-    temporary.replace(pointer)
-
-
 def activate_release(target: Path, release_id: str) -> dict[str, object]:
     """Verify and activate an existing immutable release for rollback."""
 
@@ -186,7 +179,7 @@ def activate_release(target: Path, release_id: str) -> dict[str, object]:
     manifest = verify_release(release)
     if manifest.get("releaseId") != release_id:
         raise RuntimeError("release directory does not match its manifest")
-    _activate(target, release)
+    activate_release_pointer(target, release, manifest)
     return manifest
 
 

@@ -7,6 +7,7 @@ plane is able to process it safely.
 
 from __future__ import annotations
 
+import base64
 import errno
 import fcntl
 import hashlib
@@ -15,6 +16,7 @@ import os
 import shutil
 import sqlite3
 import subprocess
+import tempfile
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -27,6 +29,7 @@ QUEUE_STATE = "queue-import-state.json"
 OPERATIONS_DIR = "runtime-operations"
 RELEASE_POINTER = "current-release"
 RELEASE_MANIFEST = "release-manifest.json"
+RELEASE_ACTIVATION_JOURNAL = "release-activation.json"
 RUNTIME_SCHEMA = "runtime_health_v1"
 GIB = 1024**3
 REQUIRED_WORKERS = ("fast", "slow", "queue-importer")
@@ -51,14 +54,49 @@ def utc_now() -> str:
 
 
 def _atomic_write(path: Path, value: object) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    temporary.write_text(
-        json.dumps(value, ensure_ascii=True, sort_keys=True, indent=2) + "\n",
-        encoding="utf-8",
+    _atomic_write_bytes(
+        path,
+        (json.dumps(value, ensure_ascii=True, sort_keys=True, indent=2) + "\n").encode("utf-8"),
+        mode=0o600,
     )
-    os.chmod(temporary, 0o600)
-    os.replace(temporary, path)
+
+
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _atomic_write_bytes(path: Path, payload: bytes, *, mode: int) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        os.fchmod(descriptor, mode)
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        _fsync_directory(path.parent)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _atomic_pointer_write(pointer: Path, target: Path) -> None:
+    pointer.parent.mkdir(parents=True, exist_ok=True)
+    temporary = pointer.parent / f".{pointer.name}.{os.getpid()}.{time.time_ns()}.tmp"
+    temporary.unlink(missing_ok=True)
+    try:
+        temporary.symlink_to(target)
+        os.replace(temporary, pointer)
+        _fsync_directory(pointer.parent)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def write_json(path: Path, value: object) -> None:
@@ -80,6 +118,155 @@ def runtime_state_path(root: Path) -> Path:
 
 def runtime_state_lock_path(root: Path) -> Path:
     return root / "state" / "runtime-health.lock"
+
+
+def release_activation_journal_path(root: Path) -> Path:
+    return root / "state" / RELEASE_ACTIVATION_JOURNAL
+
+
+def _strict_runtime_state(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("runtime health state is unreadable") from exc
+    if not isinstance(value, dict):
+        raise RuntimeError("runtime health state is not an object")
+    return value
+
+
+def _deployment_identity(manifest: dict[str, Any]) -> dict[str, Any]:
+    release_id = manifest.get("releaseId")
+    policy_digest = manifest.get("policyDigest")
+    if not isinstance(release_id, str) or not release_id:
+        raise RuntimeError("release identity is missing a releaseId")
+    if not isinstance(policy_digest, str) or not policy_digest:
+        raise RuntimeError("release identity is missing a policyDigest")
+    return {
+        "releaseVersion": release_id,
+        "policyDigest": policy_digest,
+        "manifestVerified": True,
+        "deploymentDirty": False,
+    }
+
+
+def _pointer_target(pointer: Path) -> str | None:
+    if not pointer.is_symlink():
+        return None
+    return str(pointer.resolve())
+
+
+def _restore_runtime_state(path: Path, payload: bytes | None, mode: int | None) -> None:
+    if payload is None:
+        path.unlink(missing_ok=True)
+        _fsync_directory(path.parent)
+        return
+    _atomic_write_bytes(path, payload, mode=mode or 0o600)
+
+
+def _recover_release_activation_unlocked(root: Path) -> str | None:
+    journal_path = release_activation_journal_path(root)
+    if not journal_path.exists():
+        return None
+    journal = _strict_runtime_state(journal_path)
+    pointer = root / RELEASE_POINTER
+    state_path = runtime_state_path(root)
+    new_target = str(journal.get("newTarget") or "")
+    old_target = journal.get("oldTarget")
+    new_identity = journal.get("newDeployment")
+    current_state = _strict_runtime_state(state_path)
+    current_deployment = current_state.get("deployment")
+    current_target = _pointer_target(pointer)
+    committed = (
+        current_target == new_target
+        and isinstance(current_deployment, dict)
+        and all(current_deployment.get(key) == value for key, value in new_identity.items())
+    )
+    if committed:
+        journal_path.unlink(missing_ok=True)
+        _fsync_directory(journal_path.parent)
+        return "committed"
+
+    if old_target:
+        _atomic_pointer_write(pointer, Path(str(old_target)))
+    else:
+        pointer.unlink(missing_ok=True)
+        _fsync_directory(pointer.parent)
+    encoded = journal.get("oldStateBytes")
+    old_payload = base64.b64decode(encoded) if isinstance(encoded, str) else None
+    _restore_runtime_state(state_path, old_payload, journal.get("oldStateMode"))
+    journal_path.unlink(missing_ok=True)
+    _fsync_directory(journal_path.parent)
+    return "rolled_back"
+
+
+def recover_release_activation(root: Path) -> str | None:
+    """Finish or roll back an interrupted release/health transaction."""
+
+    root = root.resolve()
+    with exclusive_lock(runtime_state_lock_path(root), blocking=True):
+        return _recover_release_activation_unlocked(root)
+
+
+def activate_release_pointer(root: Path, release: Path, manifest: dict[str, Any]) -> dict[str, Any]:
+    """Atomically bind the active release pointer to its runtime identity.
+
+    The journal makes a crash between pointer replacement and health-state
+    replacement recoverable. A failed write restores both previous files; a
+    pending journal causes strict readers to remain fail-closed until the next
+    activation call repairs it.
+    """
+
+    root = root.resolve()
+    release = release.resolve()
+    pointer = root / RELEASE_POINTER
+    state_path = runtime_state_path(root)
+    journal_path = release_activation_journal_path(root)
+    identity = _deployment_identity(manifest)
+    with exclusive_lock(runtime_state_lock_path(root), blocking=True):
+        _recover_release_activation_unlocked(root)
+        old_target = _pointer_target(pointer)
+        old_state_payload = state_path.read_bytes() if state_path.exists() else None
+        old_state_mode = state_path.stat().st_mode & 0o777 if state_path.exists() else None
+        journal = {
+            "schema": "oss-pr-radar.release-activation.v1",
+            "oldTarget": old_target,
+            "newTarget": str(release),
+            "oldStateBytes": base64.b64encode(old_state_payload).decode("ascii")
+            if old_state_payload is not None
+            else None,
+            "oldStateMode": old_state_mode,
+            "newDeployment": identity,
+            "phase": "prepared",
+        }
+        _atomic_write(journal_path, journal)
+        try:
+            _atomic_pointer_write(pointer, release)
+            journal["phase"] = "pointer-active"
+            _atomic_write(journal_path, journal)
+            state = _strict_runtime_state(state_path)
+            deployment = state.get("deployment")
+            deployment = dict(deployment) if isinstance(deployment, dict) else {}
+            deployment.update(identity)
+            state["schemaVersion"] = RUNTIME_SCHEMA
+            state["deployment"] = deployment
+            _atomic_write(state_path, state)
+            journal["phase"] = "health-active"
+            _atomic_write(journal_path, journal)
+            journal_path.unlink(missing_ok=True)
+            _fsync_directory(journal_path.parent)
+        except Exception:
+            if old_target:
+                _atomic_pointer_write(pointer, Path(old_target))
+            else:
+                pointer.unlink(missing_ok=True)
+                _fsync_directory(pointer.parent)
+            _restore_runtime_state(state_path, old_state_payload, old_state_mode)
+            journal_path.unlink(missing_ok=True)
+            _fsync_directory(journal_path.parent)
+            raise
+    return identity
 
 
 def queue_state_path(root: Path) -> Path:

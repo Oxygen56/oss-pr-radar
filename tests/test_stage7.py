@@ -12,6 +12,7 @@ import pytest
 
 import oss_pr_radar.operational_auth as operational_auth_module
 import oss_pr_radar.stage7_cutover as cutover_module
+import scripts.deploy_local_runtime as deploy_local_runtime
 import scripts.install_local_publication_workers as workers_module
 from oss_pr_radar.automation_contracts import build_contracts
 from oss_pr_radar.automation_snapshot import (
@@ -124,6 +125,36 @@ def test_prompt_digest_accepts_only_codex_terminal_lf_removal(tmp_path):
                 runtime_root=runtime,
                 release_command=command,
             )
+
+
+def test_staged_receipt_rejects_observations_older_than_freshness_window():
+    observed_at = iso_z(utc_now() - timedelta(minutes=11))
+    digest = "a" * 64
+    labels = [
+        "com.oss-pr-radar.local-publication",
+        "com.oss-pr-radar.local-publication-slow",
+        "com.oss-pr-radar.queue-importer",
+    ]
+    specs = [{"Label": label} for label in labels]
+    records = [
+        {
+            "label": label,
+            "observedAt": observed_at,
+            "loaded": False,
+            "pid": None,
+            "specDigest": digest,
+            "plistPath": f"/tmp/{label}.plist",
+            "plistSha256": "b" * 64,
+            "mode": "0o600",
+            "ownerUid": operational_auth_module.os.getuid(),
+            "regular": True,
+            "symlink": False,
+        }
+        for label in labels
+    ]
+
+    with pytest.raises(RuntimeError, match="staged worker observation is stale"):
+        operational_auth_module._validate_worker_records(records, specs=specs, spec_digest=digest)
 
 
 def test_final_ledger_append_only_guard_preserves_exact_pr_invariants():
@@ -614,21 +645,15 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
     _bootstrap(runtime, source, tmp_path)
     prepared = prepare(runtime, source, quiesce_token="writer-stopped")
     activate(runtime, Path(prepared["manifestPath"]))
+    deploy_local_runtime.activate_release(runtime, "stage7-test")
     home = tmp_path / "home"
     contracts = build_contracts(runtime, home=home)
     launch_dir = home / "Library" / "LaunchAgents"
     now = iso_z(utc_now())
-    state = {
-        "workers": {
-            worker: {"lastSuccessAt": now, "queueImportSuccessAt": now, "lastExitCode": 0}
-            for worker in ("fast", "slow", "queue-importer")
-        },
-        "deployment": {
-            "releaseVersion": "stage7-test",
-            "policyDigest": hashlib.sha256(b"[]").hexdigest(),
-            "manifestVerified": True,
-            "deploymentDirty": False,
-        },
+    state = json.loads((runtime / "state" / "runtime-health.json").read_text(encoding="utf-8"))
+    state["workers"] = {
+        worker: {"lastSuccessAt": now, "queueImportSuccessAt": now, "lastExitCode": 0}
+        for worker in ("fast", "slow", "queue-importer")
     }
     (runtime / "state" / "runtime-health.json").write_text(json.dumps(state), encoding="utf-8")
     report_dir = tmp_path / "stage6"

@@ -221,7 +221,8 @@ python scripts/local_dispatch_bridge.py --runtime-root "$RUNTIME_ROOT" sync
 # Import signed write intents only; no context recovery or publication work
 python scripts/local_dispatch_bridge.py --runtime-root "$RUNTIME_ROOT" queue-import
 
-# Build and activate a clean immutable release; durable state is preserved
+# Build and activate a clean immutable release; durable state is preserved and
+# runtime-health deployment identity is updated atomically with the pointer
 python scripts/deploy_local_runtime.py \
   --target /Users/oxygen/Documents/github/oss-pr-radar
 

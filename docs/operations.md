@@ -95,9 +95,15 @@ receiving their own worktrees.
 - Deploy local controller updates only through `scripts/deploy_local_runtime.py`.
 - The deployment source must be clean. The deployer creates a new immutable
   `releases/<commit>-<manifest-digest>/` directory, verifies every file hash,
-  then atomically moves `current-release`. It never overwrites a previous
-  release or durable `state`; rollback means pointing the activation pointer at
-  a previously verified release.
+  then atomically moves `current-release` together with the verified
+  `state/runtime-health.json` deployment identity (`releaseVersion`,
+  `policyDigest`, `manifestVerified`, and `deploymentDirty`). Existing worker
+  observations and other runtime state are preserved. A private, recoverable
+  activation journal protects the pointer/health pair across a crash; any
+  write failure restores both sides, and a pending journal keeps strict
+  acceptance fail-closed until recovered. It never overwrites a previous
+  release or durable state; rollback uses the same transaction to point at a
+  previously verified release and update its identity.
 - Repair task title drift with `local_dispatch_bridge.py title-reconcile`; it applies
   and verifies lifecycle titles through the local Codex app-server protocol.
 - A missing or corrupt state manifest stops the scan. Run
