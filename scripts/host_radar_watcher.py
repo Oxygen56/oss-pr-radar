@@ -46,10 +46,22 @@ def parse_inotify_events(payload: bytes) -> tuple[tuple[int, int, int, bytes], .
             raise ValueError("truncated inotify event header")
         watch_descriptor, mask, cookie, name_length = _INOTIFY_EVENT.unpack_from(payload, offset)
         offset += _INOTIFY_EVENT.size
+        if name_length and name_length % 4:
+            raise ValueError("unaligned inotify event name")
         end = offset + name_length
         if end > len(payload):
             raise ValueError("truncated inotify event name")
-        events.append((watch_descriptor, mask, cookie, payload[offset:end].rstrip(b"\0")))
+        name_field = payload[offset:end]
+        if name_length:
+            nul = name_field.find(b"\0")
+            if nul < 0:
+                raise ValueError("inotify event name is not NUL-terminated")
+            if any(name_field[nul:]):
+                raise ValueError("inotify event name padding is not NUL")
+            name = name_field[:nul]
+        else:
+            name = b""
+        events.append((watch_descriptor, mask, cookie, name))
         offset = end
     return tuple(events)
 
@@ -66,6 +78,22 @@ def _inotify_failure(mask: int) -> str:
 
 def _is_ignored_worktrees_event(mask: int, name: bytes) -> bool:
     return name == b"worktrees" and bool(mask & IN_ISDIR)
+
+
+def _inotify_event_failure(
+    watch_descriptor: int,
+    mask: int,
+    name: bytes,
+    known_watch_descriptors: set[int],
+    ignored_parent_descriptors: set[int] | frozenset[int],
+) -> str | None:
+    if mask & (IN_Q_OVERFLOW | IN_UNMOUNT | IN_IGNORED):
+        return _inotify_failure(mask)
+    if watch_descriptor not in known_watch_descriptors:
+        return f"unknown inotify watch descriptor={watch_descriptor}"
+    if watch_descriptor in ignored_parent_descriptors and _is_ignored_worktrees_event(mask, name):
+        return None
+    return _inotify_failure(mask)
 
 
 def _inventory(path: Path) -> str:
@@ -228,14 +256,114 @@ def _safe_open_child(parent_descriptor: int, entry, flag: Path) -> tuple[int, bo
     return descriptor, is_directory
 
 
-def _collect_existing_inotify_items(root: Path, flag: Path) -> list[tuple[int, int]]:
-    chain_descriptors, missing_component = _open_existing_directory_chain(root, flag)
+def _create_inotify(nonblocking: bool):
+    import ctypes
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.inotify_init1.argtypes = [ctypes.c_int]
+    libc.inotify_init1.restype = ctypes.c_int
+    libc.inotify_add_watch.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_uint32]
+    libc.inotify_add_watch.restype = ctypes.c_int
+    flags = getattr(os, "O_CLOEXEC", 0)
+    if nonblocking:
+        flags |= getattr(os, "O_NONBLOCK", 0)
+    notify_fd = libc.inotify_init1(flags)
+    if notify_fd < 0:
+        raise OSError(ctypes.get_errno(), "inotify_init1 failed")
+    return libc, notify_fd
+
+
+def _add_inotify_watch(libc, notify_fd: int, descriptor: int, mask: int, flag: Path) -> int:
+    watch_descriptor = libc.inotify_add_watch(
+        notify_fd,
+        os.fsencode(f"/proc/self/fd/{descriptor}"),
+        mask,
+    )
+    if watch_descriptor < 0:
+        _fail_closed(flag, "inotify_add_watch failed")
+    return watch_descriptor
+
+
+def _drain_inotify(
+    notify_fd: int,
+    flag: Path,
+    known_watch_descriptors: set[int],
+    ignored_parent_descriptors: set[int] | frozenset[int],
+) -> None:
+    while True:
+        try:
+            payload = os.read(notify_fd, 65536)
+        except BlockingIOError:
+            return
+        if not payload:
+            _fail_closed(flag, "inotify stream closed")
+        try:
+            events = parse_inotify_events(payload)
+        except ValueError as exc:
+            _fail_closed(flag, f"malformed inotify event: {exc}")
+        for watch_descriptor, mask, _, name in events:
+            failure = _inotify_event_failure(
+                watch_descriptor,
+                mask,
+                name,
+                known_watch_descriptors,
+                ignored_parent_descriptors,
+            )
+            if failure is not None:
+                _fail_closed(flag, failure)
+
+
+def _verify_existing_root_state(
+    root: Path, expected_chain: list[int], baseline: str, flag: Path
+) -> None:
+    if not _chain_matches(root, expected_chain, None, flag):
+        _fail_closed(flag, "existing-root path changed before inotify ready")
+    try:
+        current = _inventory(root)
+    except (OSError, RuntimeError) as exc:
+        _fail_closed(flag, f"existing-root inventory failed before inotify ready: {exc}")
+    if current != baseline:
+        _fail_closed(flag, "host radar state changed before inotify ready")
+
+
+def _watch_existing_root_inotify(
+    root: Path,
+    baseline: str,
+    flag: Path,
+    ready: Path,
+    pause: Path | None,
+    gate: Path | None,
+) -> None:
+    try:
+        chain_descriptors, missing_component = _open_existing_directory_chain(root, flag)
+    except OSError:
+        _fail_closed(flag, "existing-root watcher could not securely open root chain")
     if missing_component is not None:
         _fail_closed(flag, "existing-root target is missing")
-    items = [(descriptor, _INOTIFY_SELF_EVENTS) for descriptor in chain_descriptors[:-1]]
-    items.append((chain_descriptors[-1], _INOTIFY_DIRECTORY_EVENTS))
-    pending_directories = [chain_descriptors[-1]]
     try:
+        libc, notify_fd = _create_inotify(nonblocking=True)
+    except OSError:
+        for descriptor in chain_descriptors:
+            os.close(descriptor)
+        _fail_closed(flag, "inotify_init1 failed")
+    descriptors = list(chain_descriptors)
+    known_watch_descriptors = set()
+    ignored_parent_descriptors = set()
+    try:
+        for index, descriptor in enumerate(chain_descriptors):
+            watch_mask = (
+                _INOTIFY_DIRECTORY_EVENTS
+                if index == len(chain_descriptors) - 1
+                else _INOTIFY_SELF_EVENTS
+            )
+            watch_descriptor = _add_inotify_watch(libc, notify_fd, descriptor, watch_mask, flag)
+            known_watch_descriptors.add(watch_descriptor)
+            if index == len(chain_descriptors) - 1:
+                ignored_parent_descriptors.add(watch_descriptor)
+        if pause is not None:
+            _write_marker(pause, b"root-registered")
+            _wait_for_gate(gate)
+        pending_directories = [chain_descriptors[-1]]
         while pending_directories:
             parent_descriptor = pending_directories.pop()
             with os.scandir(f"/proc/self/fd/{parent_descriptor}") as entries:
@@ -244,49 +372,21 @@ def _collect_existing_inotify_items(root: Path, flag: Path) -> list[tuple[int, i
                     if entry.name == "worktrees" and stat.S_ISDIR(entry_stat.st_mode):
                         continue
                     descriptor, is_directory = _safe_open_child(parent_descriptor, entry, flag)
+                    descriptors.append(descriptor)
+                    watch_mask = _INOTIFY_DIRECTORY_EVENTS if is_directory else _INOTIFY_FILE_EVENTS
+                    watch_descriptor = _add_inotify_watch(
+                        libc, notify_fd, descriptor, watch_mask, flag
+                    )
+                    known_watch_descriptors.add(watch_descriptor)
                     if is_directory:
-                        items.append((descriptor, _INOTIFY_DIRECTORY_EVENTS))
+                        ignored_parent_descriptors.add(watch_descriptor)
                         pending_directories.append(descriptor)
-                    else:
-                        items.append((descriptor, _INOTIFY_FILE_EVENTS))
-        return items
-    except BaseException:
-        for descriptor, _ in items:
-            try:
-                os.close(descriptor)
-            except OSError:
-                pass
-        raise
-
-
-def _watch_existing_root_inotify(root: Path, baseline: str, flag: Path, ready: Path) -> None:
-    import ctypes
-
-    try:
-        items = _collect_existing_inotify_items(root, flag)
-    except OSError:
-        _fail_closed(flag, "existing-root watcher could not securely enumerate paths")
-    libc = ctypes.CDLL(None, use_errno=True)
-    libc.inotify_init1.argtypes = [ctypes.c_int]
-    libc.inotify_init1.restype = ctypes.c_int
-    libc.inotify_add_watch.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_uint32]
-    libc.inotify_add_watch.restype = ctypes.c_int
-    notify_fd = libc.inotify_init1(getattr(os, "O_CLOEXEC", 0))
-    if notify_fd < 0:
-        for descriptor, _ in items:
-            os.close(descriptor)
-        _fail_closed(flag, "inotify_init1 failed")
-    try:
-        for descriptor, watch_mask in items:
-            watch_descriptor = libc.inotify_add_watch(
-                notify_fd,
-                os.fsencode(f"/proc/self/fd/{descriptor}"),
-                watch_mask,
-            )
-            if watch_descriptor < 0:
-                _fail_closed(flag, "inotify_add_watch failed")
-        if _inventory(root) != baseline:
-            _fail_closed(flag, "host radar state changed before inotify ready")
+        _drain_inotify(notify_fd, flag, known_watch_descriptors, ignored_parent_descriptors)
+        _verify_existing_root_state(root, chain_descriptors, baseline, flag)
+        _drain_inotify(notify_fd, flag, known_watch_descriptors, ignored_parent_descriptors)
+        _verify_existing_root_state(root, chain_descriptors, baseline, flag)
+        _drain_inotify(notify_fd, flag, known_watch_descriptors, ignored_parent_descriptors)
+        os.set_blocking(notify_fd, True)
         _write_marker(ready, b"inotify-active")
         while True:
             try:
@@ -296,13 +396,19 @@ def _watch_existing_root_inotify(root: Path, baseline: str, flag: Path, ready: P
                 events = parse_inotify_events(payload)
             except ValueError as exc:
                 _fail_closed(flag, f"malformed inotify event: {exc}")
-            for _, mask, _, name in events:
-                if _is_ignored_worktrees_event(mask, name):
-                    continue
-                _fail_closed(flag, _inotify_failure(mask))
+            for watch_descriptor, mask, _, name in events:
+                failure = _inotify_event_failure(
+                    watch_descriptor,
+                    mask,
+                    name,
+                    known_watch_descriptors,
+                    ignored_parent_descriptors,
+                )
+                if failure is not None:
+                    _fail_closed(flag, failure)
     finally:
         os.close(notify_fd)
-        for descriptor, _ in items:
+        for descriptor in descriptors:
             try:
                 os.close(descriptor)
             except OSError:
@@ -354,16 +460,8 @@ def _watch_missing_root(
             finally:
                 kqueue.close()
         elif sys.platform.startswith("linux"):
-            import ctypes
-
-            libc = ctypes.CDLL(None, use_errno=True)
-            libc.inotify_init1.argtypes = [ctypes.c_int]
-            libc.inotify_init1.restype = ctypes.c_int
-            libc.inotify_add_watch.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_uint32]
-            libc.inotify_add_watch.restype = ctypes.c_int
-            notify_fd = libc.inotify_init1(getattr(os, "O_CLOEXEC", 0))
-            if notify_fd < 0:
-                raise OSError(ctypes.get_errno(), "inotify_init1 failed")
+            libc, notify_fd = _create_inotify(nonblocking=False)
+            known_watch_descriptors = set()
             try:
                 for descriptor in chain_descriptors:
                     watch_mask = (
@@ -371,13 +469,10 @@ def _watch_missing_root(
                         if descriptor == parent_descriptor
                         else _INOTIFY_SELF_EVENTS
                     )
-                    watch_descriptor = libc.inotify_add_watch(
-                        notify_fd,
-                        os.fsencode(f"/proc/self/fd/{descriptor}"),
-                        watch_mask,
+                    watch_descriptor = _add_inotify_watch(
+                        libc, notify_fd, descriptor, watch_mask, flag
                     )
-                    if watch_descriptor < 0:
-                        raise OSError(ctypes.get_errno(), "inotify_add_watch failed")
+                    known_watch_descriptors.add(watch_descriptor)
                 if pause is not None:
                     _write_marker(pause, b"registered")
                     _wait_for_gate(gate)
@@ -394,10 +489,12 @@ def _watch_missing_root(
                         events = parse_inotify_events(payload)
                     except ValueError as exc:
                         _fail_closed(flag, f"malformed inotify event: {exc}")
-                    for _, mask, _, name in events:
-                        if _is_ignored_worktrees_event(mask, name):
-                            continue
-                        _fail_closed(flag, _inotify_failure(mask))
+                    for watch_descriptor, mask, _, name in events:
+                        failure = _inotify_event_failure(
+                            watch_descriptor, mask, name, known_watch_descriptors, frozenset()
+                        )
+                        if failure is not None:
+                            _fail_closed(flag, failure)
             finally:
                 os.close(notify_fd)
         else:
@@ -407,9 +504,16 @@ def _watch_missing_root(
             os.close(descriptor)
 
 
-def _watch_existing_root(root: Path, baseline: str, flag: Path, ready: Path) -> None:
+def _watch_existing_root(
+    root: Path,
+    baseline: str,
+    flag: Path,
+    ready: Path,
+    pause: Path | None,
+    gate: Path | None,
+) -> None:
     if sys.platform.startswith("linux"):
-        _watch_existing_root_inotify(root, baseline, flag, ready)
+        _watch_existing_root_inotify(root, baseline, flag, ready, pause, gate)
         return
     if not hasattr(select, "kqueue"):
         _fail_closed(flag, "existing-root kernel event watcher is unsupported on this platform")
@@ -494,7 +598,7 @@ def main(argv: list[str]) -> None:
     if not baseline_exists:
         _watch_missing_root(root, flag, ready, pause, gate)
     else:
-        _watch_existing_root(root, baseline, flag, ready)
+        _watch_existing_root(root, baseline, flag, ready, pause, gate)
 
 
 if __name__ == "__main__":
