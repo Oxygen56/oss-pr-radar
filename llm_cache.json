@@ -22525,6 +22525,32 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue reports a concrete AttributeError in ParallelLMHead during NVFP4 Marlin path, with a plausible root cause and executable repro command. However, a potential duplicate issue #52407 shares stack signatures and failure paths, and the maintainer has not confirmed the diagnosis or assigned ownership. The candidate is technically actionable but requires maintainer confirmation to avoid duplicate work."
   },
+  "9b36a78ba9de32f1519b6a55f4f052db38854ce52519cdf04b4269b57570c03c": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "DatabaseSessionService.create_session transaction handling",
+      "Error handling for same-session_id race to return 409 instead of 500"
+    ],
+    "risks": [
+      "Potential complexity in reproducing the race condition under test; may require mocking or fault injection.",
+      "Changing error handling might affect existing API behavior; need to ensure backward compatibility."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Write a regression test that simulates concurrent create_session calls with the same session_id and verifies no orphaned session rows and proper 409 response.",
+      "Add a test that simulates task cancellation during commit to ensure atomicity."
+    ],
+    "unknowns": [
+      "Exact root cause of the race condition is not confirmed; maintainer design preferences unknown."
+    ],
+    "why": "Issue reports a production data-integrity bug in DatabaseSessionService where sessions can be created without user_state rows, causing permanent failures on append_event. It includes reproduction steps, ruled-out causes, and a clear expected behavior. The track is agent_ai_infra, and the issue is actionable with a concrete validation path (reproduce and fix atomicity)."
+  },
   "9b6186d41b23dc14e8161eec43190a7a17d066425808168fb276f0416a5fd6c6": {
     "confidence": 0.85,
     "contradictions": [],
@@ -25897,6 +25923,33 @@
       "Exact implementation details of existing PR #3260 to avoid duplication."
     ],
     "why": "The issue clearly identifies a client-side bug where expired DCR client secrets are never invalidated, causing permanent auth failure. The existing PR #3260 is a draft with incomplete evidence and lacks a deterministic reproduction, leaving room for a stronger PR with a failing test and robust fix."
+  },
+  "b6eedd046ca39d7273f2cb0c46f4067f6655b4f1083a03472dd5e2884c4e771e": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "tcp_transport.cpp",
+      "connection pool default behavior"
+    ],
+    "risks": [
+      "Changing default connection pool behavior may affect performance or compatibility; needs maintainer design confirmation."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a regression test that starts multiple Mooncake instances on the same node with DP and verifies TCP connections succeed without the workaround flag."
+    ],
+    "unknowns": [
+      "Exact code path for port-list contamination and maintainer preference for default enabling the connection pool."
+    ],
+    "why": "Issue reports a reproducible TCP connection failure in Mooncake when running multiple instances with DP on a single node. Root cause is identified as port-list contamination in TCP transport, and a workaround (MC_TCP_ENABLE_CONNECTION_POOL=1) is confirmed by the reporter. This is a concrete bug in a critical path with clear reproduction steps and a known fix area."
   },
   "b733419b3096d69ec38edd5dcabf803766d1e788fc7cf2f66b6d557bdbf589ee": {
     "confidence": 0.7,
@@ -29483,6 +29536,32 @@
     ],
     "wait_reason": null,
     "why": "Issue provides a concrete encoder-only reproducer and root cause in deepseek_v4_encoding.py, with reference fixtures supporting the expected output. Existing PR #46257 overlaps semantically but is authored by NONE, lacks issue linkage, and has CI failures; a stronger PR with a regression test and maintainer engagement is plausible."
+  },
+  "cf1b6bbab27cb94a1283c3a40b0241053000476267768ea3766820b4543d32b6": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/mcp/src/server/server.ts",
+      "packages/mcp/src/server/types.ts",
+      "packages/mcp/src/server/server-modern-era-http.test.ts"
+    ],
+    "risks": [
+      "Potential API behavior changes if protocolVersion flag is not opt-in; need to ensure backward compatibility for 2025-era clients."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce the gap on @mastra/mcp@1.16.0 by grepping dist/index.js for modern-era symbols; then verify @mastra/mcp@1.17.0 serves 2026-07-28 with protocolVersion flag and cacheHints, including dual-era mode."
+    ],
+    "unknowns": [
+      "Exact maintainer preference for exposing cache hints on registration surface; but shipped implementation already covers it."
+    ],
+    "why": "Issue provides a precise, evidence-backed diagnosis (bundle grep, SDK internals) of a real protocol gap, and the suggested direction matches the shipped implementation in #20929/#20931. The maintainer bot confirms the fix is released in @mastra/mcp@1.17.0, so the issue is actionable and resolved."
   },
   "cf1eb4e8c323079c2eca94153aa33c81eb9c117a08c0419799fd44913b562d16": {
     "confidence": 0.8,
