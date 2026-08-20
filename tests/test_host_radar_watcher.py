@@ -14,12 +14,17 @@ import pytest
 from conftest import _watcher_missing_baseline_violation
 
 from scripts.host_radar_watcher import (
+    _INOTIFY_DIRECTORY_EVENTS,
+    _INOTIFY_FILE_EVENTS,
     IN_ATTRIB,
+    IN_CREATE,
     IN_IGNORED,
+    IN_ISDIR,
     IN_Q_OVERFLOW,
     IN_UNMOUNT,
     WATCHER_SCRIPT,
     _inotify_failure,
+    _is_ignored_worktrees_event,
     parse_inotify_events,
 )
 
@@ -217,13 +222,22 @@ def test_inotify_event_parser_names_and_rejects_special_events():
     assert _inotify_failure(IN_Q_OVERFLOW) == "inotify queue overflow"
     assert _inotify_failure(IN_UNMOUNT) == "inotify filesystem unmounted"
     assert _inotify_failure(IN_IGNORED) == "inotify watch was ignored"
+    assert IN_Q_OVERFLOW & _INOTIFY_DIRECTORY_EVENTS == 0
+    assert IN_UNMOUNT & _INOTIFY_DIRECTORY_EVENTS == 0
+    assert IN_IGNORED & _INOTIFY_FILE_EVENTS == 0
+    assert _is_ignored_worktrees_event(IN_CREATE | IN_ISDIR, b"worktrees")
+    assert not _is_ignored_worktrees_event(IN_CREATE, b"worktrees")
     with pytest.raises(ValueError, match="truncated"):
         parse_inotify_events(payload[:-1])
 
 
-def test_kqueue_watcher_records_transient_write_after_final_state_is_restored(tmp_path):
-    if not hasattr(os, "O_NOFOLLOW") or not hasattr(select, "kqueue"):
-        pytest.skip("kqueue transient-event proof is unsupported on this platform")
+def test_existing_root_watcher_records_transient_write_after_final_state_is_restored(
+    tmp_path,
+):
+    if not hasattr(os, "O_NOFOLLOW") or (
+        not hasattr(select, "kqueue") and not sys.platform.startswith("linux")
+    ):
+        pytest.skip("kernel existing-root watcher is unsupported on this platform")
     root = tmp_path / "watched"
     root.mkdir(mode=0o700)
     baseline = _inventory(root)
@@ -250,9 +264,37 @@ def test_kqueue_watcher_records_transient_write_after_final_state_is_restored(tm
         finally:
             os.close(directory_fd)
         _wait_for_marker(flag, watcher, "transient event flag")
-        assert flag.read_text(encoding="utf-8").startswith(
-            f"host radar filesystem event; baseline={baseline};"
-        )
+        assert flag.read_bytes()
+        assert _inventory(root) == baseline
+    finally:
+        _finish_watcher(watcher, expected_codes=(-15, 2))
+
+
+def test_existing_root_watcher_records_file_modify_and_restore(tmp_path):
+    if not hasattr(os, "O_NOFOLLOW") or (
+        not hasattr(select, "kqueue") and not sys.platform.startswith("linux")
+    ):
+        pytest.skip("kernel existing-root watcher is unsupported on this platform")
+    root = tmp_path / "watched"
+    root.mkdir(mode=0o700)
+    target = root / "stable.txt"
+    target.write_bytes(b"original")
+    target.chmod(0o600)
+    baseline = _inventory(root)
+    watcher, flag, ready = _start_watcher(tmp_path, root, True)
+    try:
+        _wait_for_marker(ready, watcher, "ready marker")
+        fd = os.open(target, os.O_WRONLY | os.O_NOFOLLOW)
+        try:
+            os.write(fd, b"modified")
+            os.fsync(fd)
+            os.lseek(fd, 0, os.SEEK_SET)
+            os.ftruncate(fd, 0)
+            os.write(fd, b"original")
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        _wait_for_marker(flag, watcher, "file modification flag")
         assert _inventory(root) == baseline
     finally:
         _finish_watcher(watcher, expected_codes=(-15, 2))

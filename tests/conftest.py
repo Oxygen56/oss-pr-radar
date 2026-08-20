@@ -119,8 +119,9 @@ def no_host_radar_private_writes(tmp_path_factory):
             b"kqueue-active",
             b"kqueue-missing-root-active",
             b"inotify-missing-root-active",
+            b"inotify-active",
         }
-        if ready_value not in valid_ready and not ready_value.startswith(b"unsupported:"):
+        if ready_value not in valid_ready:
             raise AssertionError(f"host watcher did not activate: {ready_value!r}")
         yield
     finally:
