@@ -6100,6 +6100,34 @@ class RadarLedger:
                         AND json_extract(r.request_json,'$.recoveredFromTaskContext')=1)
                      )
                      AND NOT EXISTS (
+                       SELECT 1 FROM task_quarantines quarantine
+                       WHERE quarantine.opportunity_key=o.key
+                         AND quarantine.status='ACTIVE'
+                         AND (
+                           quarantine.reason<>'PR_FOLLOWUP_REBIND_REQUIRED'
+                           OR (
+                             COALESCE(
+                               json_extract(
+                                 quarantine.payload_json,'$.replacementWakeDigest'
+                               ),
+                               ''
+                             )<>f.wake_digest
+                             AND NOT (
+                               COALESCE(
+                                 json_extract(
+                                   quarantine.payload_json,'$.reservationPending'
+                                 ),
+                                 0
+                               )=1
+                               AND COALESCE(
+                                 json_extract(quarantine.payload_json,'$.wakeDigest'),
+                                 ''
+                               )=f.wake_digest
+                             )
+                           )
+                         )
+                     )
+                     AND NOT EXISTS (
                        SELECT 1 FROM events e WHERE e.opportunity_key=o.key
                          AND e.event_type='PR_FOLLOWUP_RESULT_INGESTED'
                          AND e.dedupe_key=f.wake_digest

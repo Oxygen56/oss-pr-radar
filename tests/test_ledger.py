@@ -2904,6 +2904,249 @@ def test_commit_without_lease_is_rejected(tmp_path):
         )
 
 
+def _make_pr_followup_candidate(
+    store: RadarLedger,
+    *,
+    key: str = "a/b#1",
+    issue_url: str = "https://github.com/a/b/issues/1",
+    pr_url: str = "https://github.com/a/b/pull/9",
+    intent_id: str = "intent-1",
+    thread_id: str = "thread-1",
+    worktree_path: str = "/tmp/worktree",
+    head_sha: str = "b" * 40,
+) -> str:
+    store.enqueue(
+        intent(
+            intentId=intent_id,
+            key=key,
+            repo=key.split("#", 1)[0],
+            issueNumber=int(key.rsplit("#", 1)[1]),
+            issueUrl=issue_url,
+            autoSubmitAuthorized=True,
+            publicSubmissionAllowed=True,
+            authorizationSource="signed_live_revalidation_required",
+            publicationMode="canary",
+        )
+    )
+    store.claim(intent_id, "controller")
+    store.commit_dispatch(
+        intent_id,
+        owner="controller",
+        thread_id=thread_id,
+        project_id="github",
+        worktree_path=worktree_path,
+    )
+    store.record_stage(key, "PR_OPEN", evidence={"prUrl": pr_url})
+    published_at = iso_z(datetime.now(UTC) - timedelta(minutes=2))
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO publication_requests
+               (request_id,opportunity_key,thread_id,commit_sha,branch,worktree_path,
+                evidence_digest,status,request_json,created_at,updated_at)
+               VALUES (?,?,?,?,?,?,?,'CONSUMED','{}',?,?)""",
+            (
+                f"request-{intent_id}",
+                key,
+                thread_id,
+                "a" * 40,
+                f"fix/{intent_id}",
+                worktree_path,
+                f"evidence-{intent_id}",
+                published_at,
+                published_at,
+            ),
+        )
+        connection.execute(
+            """INSERT INTO publication_permits
+               (permit_id,request_id,issue_url,commit_sha,branch,status,expires_at,pr_url,
+                evidence_json,created_at,updated_at)
+               VALUES (?,?,?,?,?,'CONSUMED',?,?,'{}',?,?)""",
+            (
+                f"permit-{intent_id}",
+                f"request-{intent_id}",
+                issue_url,
+                "a" * 40,
+                f"fix/{intent_id}",
+                iso_z(datetime.now(UTC) + timedelta(hours=1)),
+                pr_url,
+                published_at,
+                published_at,
+            ),
+        )
+    imported = store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": iso_z(datetime.now(UTC)),
+            "items": [
+                {
+                    "url": pr_url,
+                    "headSha": head_sha,
+                    "actionDigest": f"action-{intent_id}",
+                    "taskActionDigest": f"task-action-{intent_id}",
+                    "taskFollowupRequired": True,
+                    "taskActions": ["current branch check failed"],
+                    "evidence": {"actionableCheckNames": ["Ruff"]},
+                    "checkedAt": iso_z(datetime.now(UTC)),
+                }
+            ],
+        }
+    )
+    assert imported["inserted"] == 1
+    return key
+
+
+def test_pr_followup_candidates_exclude_active_task_quarantine(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    key = _make_pr_followup_candidate(store)
+    assert [candidate["key"] for candidate in store.pr_followup_candidates()] == [key]
+
+    from oss_pr_radar.task_quarantine import record
+
+    now = iso_z(datetime.now(UTC))
+    with store.transaction() as connection:
+        record(
+            connection,
+            opportunity_key=key,
+            reason="LEGACY_RESULT_REQUIRES_MIGRATION",
+            dedupe_key="legacy-result",
+            payload={"requiresMigration": True},
+            created_at=now,
+        )
+
+    assert store.pr_followup_candidates() == []
+    with pytest.raises(LedgerError):
+        store.reserve_pr_followup(thread_id="thread-1", wake_digest="missing")
+
+
+def test_pr_followup_candidates_keep_quarantine_exclusion_idempotent(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    key = _make_pr_followup_candidate(store)
+
+    from oss_pr_radar.task_quarantine import record
+
+    now = iso_z(datetime.now(UTC))
+    with store.transaction() as connection:
+        first = record(
+            connection,
+            opportunity_key=key,
+            reason="SHARED_CONTEXT_LAYOUT_CONFLICT",
+            dedupe_key="rebind",
+            payload={"observedHeadSha": "c" * 40},
+            created_at=now,
+        )
+        repeated = record(
+            connection,
+            opportunity_key=key,
+            reason="SHARED_CONTEXT_LAYOUT_CONFLICT",
+            dedupe_key="rebind",
+            payload={"observedHeadSha": "c" * 40},
+            created_at=now,
+        )
+        newer = record(
+            connection,
+            opportunity_key=key,
+            reason="SHARED_CONTEXT_LAYOUT_CONFLICT",
+            dedupe_key="rebind|generation=2",
+            payload={"observedHeadSha": "d" * 40},
+            created_at=now,
+        )
+
+    assert first["created"] is True
+    assert repeated["created"] is False
+    assert newer["created"] is True
+    assert store.pr_followup_candidates() == []
+
+    store.clear_task_quarantine(
+        key,
+        reason="SHARED_CONTEXT_LAYOUT_CONFLICT",
+        evidence={"revalidated": True, "rebindId": "rebuilt"},
+    )
+    assert [candidate["key"] for candidate in store.pr_followup_candidates()] == [key]
+
+
+def test_pr_followup_candidates_keep_unquarantined_followups(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    first = _make_pr_followup_candidate(store)
+    second = _make_pr_followup_candidate(
+        store,
+        key="c/d#2",
+        issue_url="https://github.com/c/d/issues/2",
+        pr_url="https://github.com/c/d/pull/10",
+        intent_id="intent-2",
+        thread_id="thread-2",
+        worktree_path="/tmp/worktree-2",
+        head_sha="c" * 40,
+    )
+
+    from oss_pr_radar.task_quarantine import record
+
+    with store.transaction() as connection:
+        record(
+            connection,
+            opportunity_key=first,
+            reason="LEGACY_RESULT_REQUIRES_MIGRATION",
+            dedupe_key="legacy-result",
+            payload={"requiresMigration": True},
+            created_at=iso_z(datetime.now(UTC)),
+        )
+
+    assert [candidate["key"] for candidate in store.pr_followup_candidates()] == [second]
+
+
+def test_pr_followup_rebind_gate_does_not_bypass_other_quarantine(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    key = _make_pr_followup_candidate(store)
+    rebound = store.rearm_pr_followup_after_task_drift(
+        key,
+        expected_prepared_head_sha="c" * 40,
+        observed_head_sha="d" * 40,
+    )
+    assert store.pr_followup_candidates()[0]["wakeDigest"] == rebound[
+        "replacementWakeDigest"
+    ]
+
+    from oss_pr_radar.task_quarantine import record
+
+    now = iso_z(datetime.now(UTC))
+    with store.transaction() as connection:
+        record(
+            connection,
+            opportunity_key=key,
+            reason="LEGACY_RESULT_REQUIRES_MIGRATION",
+            dedupe_key="legacy-result",
+            payload={"requiresMigration": True},
+            created_at=now,
+        )
+    assert store.pr_followup_candidates() == []
+
+
+def test_pr_followup_rebind_gate_does_not_bypass_stale_rebind_quarantine(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    key = _make_pr_followup_candidate(store)
+    rebound = store.rearm_pr_followup_after_task_drift(
+        key,
+        expected_prepared_head_sha="c" * 40,
+        observed_head_sha="d" * 40,
+    )
+    assert store.pr_followup_candidates()[0]["wakeDigest"] == rebound[
+        "replacementWakeDigest"
+    ]
+
+    from oss_pr_radar.task_quarantine import record
+
+    with store.transaction() as connection:
+        record(
+            connection,
+            opportunity_key=key,
+            reason="PR_FOLLOWUP_REBIND_REQUIRED",
+            dedupe_key="stale-rebind",
+            payload={"replacementWakeDigest": "f" * 64},
+            created_at=iso_z(datetime.now(UTC)),
+        )
+
+    assert store.pr_followup_candidates() == []
+
+
 def test_pr_followup_is_bound_to_existing_task_and_sent_once(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(
