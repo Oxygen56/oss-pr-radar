@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import sqlite3
 
+import pytest
+
 from oss_pr_radar.ledger import RadarLedger
 from oss_pr_radar.managed_lifecycle import (
+    KNOWN_MANAGED_SCHEMA_V7_DIGESTS,
+    MANAGED_SCHEMA_VERSION,
     ManagedLedger,
     migrate_copy,
     migrate_schema,
     rollback_schema,
+    schema_digest,
     schema_status,
 )
 
@@ -25,9 +30,9 @@ def test_migration_is_additive_idempotent_and_rollback_preserves_legacy_tables(t
         }
     result = migrate_copy(source, target)
     assert result["legacyUnchanged"] is True
-    assert result["schema"]["current"] == 7
+    assert result["schema"]["current"] == 8
     assert migrate_schema(target)["applied"] is False
-    assert schema_status(target)["current"] == 7
+    assert schema_status(target)["current"] == 8
 
     rollback_schema(target)
     with sqlite3.connect(target) as connection:
@@ -145,3 +150,81 @@ def test_task_quarantine_backfill_is_idempotent_across_managed_reopens(tmp_path)
     migrate_schema(database)
     with sqlite3.connect(database) as connection:
         assert connection.execute("SELECT COUNT(*) FROM task_quarantines").fetchone()[0] == 2
+
+
+def test_schema_status_and_migrate_fail_closed_on_current_digest_mismatch(tmp_path):
+    database = tmp_path / "bad-current-digest.sqlite3"
+    RadarLedger(database)
+    ManagedLedger(database, ensure_schema=True)
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE managed_schema_migrations SET migration_digest=? WHERE version=?",
+            ("bad-digest", MANAGED_SCHEMA_VERSION),
+        )
+
+    with pytest.raises(ValueError, match="current digest mismatch"):
+        schema_status(database)
+    with pytest.raises(ValueError, match="current digest mismatch"):
+        migrate_schema(database)
+
+    with sqlite3.connect(database) as connection:
+        assert (
+            connection.execute(
+                "SELECT migration_digest FROM managed_schema_migrations WHERE version=?",
+                (MANAGED_SCHEMA_VERSION,),
+            ).fetchone()[0]
+            == "bad-digest"
+        )
+
+
+@pytest.mark.parametrize("known_digest", sorted(KNOWN_MANAGED_SCHEMA_V7_DIGESTS))
+def test_migrate_schema_accepts_known_local_v7_digests(tmp_path, known_digest):
+    database = tmp_path / f"known-v7-{known_digest[:8]}.sqlite3"
+    RadarLedger(database)
+    ManagedLedger(database, ensure_schema=True)
+    with sqlite3.connect(database) as connection:
+        connection.execute("DELETE FROM managed_schema_migrations WHERE version>=7")
+        connection.execute(
+            "INSERT INTO managed_schema_migrations(version,applied_at,migration_digest) "
+            "VALUES (7, '2026-08-19T00:00:00Z', ?)",
+            (known_digest,),
+        )
+
+    result = migrate_schema(database)
+    assert result["applied"] is True
+    assert schema_status(database)["current"] == MANAGED_SCHEMA_VERSION
+    with sqlite3.connect(database) as connection:
+        assert (
+            connection.execute(
+                "SELECT migration_digest FROM managed_schema_migrations WHERE version=?",
+                (MANAGED_SCHEMA_VERSION,),
+            ).fetchone()[0]
+            == schema_digest()
+        )
+
+
+def test_migrate_schema_rejects_unknown_local_v7_digest(tmp_path):
+    database = tmp_path / "unknown-v7.sqlite3"
+    RadarLedger(database)
+    ManagedLedger(database, ensure_schema=True)
+    with sqlite3.connect(database) as connection:
+        connection.execute("DELETE FROM managed_schema_migrations WHERE version>=7")
+        connection.execute(
+            "INSERT INTO managed_schema_migrations(version,applied_at,migration_digest) "
+            "VALUES (7, '2026-08-19T00:00:00Z', ?)",
+            ("9" * 64,),
+        )
+
+    with pytest.raises(ValueError, match="v7 digest mismatch"):
+        schema_status(database)
+    with pytest.raises(ValueError, match="v7 digest mismatch"):
+        migrate_schema(database)
+
+    with sqlite3.connect(database) as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM managed_schema_migrations WHERE version=?",
+                (MANAGED_SCHEMA_VERSION,),
+            ).fetchone()[0]
+            == 0
+        )

@@ -8,6 +8,7 @@ import json
 import os
 import re
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -35,7 +36,30 @@ from .managed_security import (
 from .repo_probe import thread_fingerprint, verify_probe_receipt
 from .util import canonical_json
 
-SNAPSHOT_SCHEMA_VERSION = "managed_lifecycle_snapshot_v5"
+SNAPSHOT_SCHEMA_VERSION = "managed_lifecycle_snapshot_v6"
+LEGACY_SNAPSHOT_SCHEMA_VERSION = "managed_lifecycle_snapshot_v5"
+LEGACY_MANAGED_SCHEMA_VERSION = 7
+LEGACY_MANAGED_SCHEMA_V7_DIGEST = "10ed2d89cd0357806d3e62f3ef140f42c2c234b9cb4b82ed406ce24983153a0e"
+LEGACY_V7_ROW_KEYS = frozenset(
+    {
+        "opportunities",
+        "tasks",
+        "prs",
+        "results",
+        "events",
+        "maintainerEvents",
+        "ciRuns",
+        "outcomes",
+        "replies",
+        "deliveries",
+        "reservations",
+        "absenceAttestations",
+        "attestationNonceConsumptions",
+        "reproductionProbes",
+        "reproductionAttemptEvents",
+    }
+)
+CURRENT_ROW_KEYS = frozenset(LEGACY_V7_ROW_KEYS | {"taskQuarantines"})
 SNAPSHOT_AUTH_CONTEXT = "managed-snapshot-v1"
 _FORBIDDEN_KEYS = {
     "threadid",
@@ -44,6 +68,10 @@ _FORBIDDEN_KEYS = {
     "worktree_path",
     "absolutepath",
     "absolute_path",
+    "artifactpath",
+    "artifact_path",
+    "originalpath",
+    "original_path",
     "private_text",
     "token",
     "secret",
@@ -146,6 +174,195 @@ def _safe_idempotency(value: str) -> str:
     """Expose a raw key only when it cannot carry local identity or paths."""
 
     return stable_fingerprint(value) if sensitive_identity(value) else value
+
+
+_SAFE_QUARANTINE_DIGEST_FIELDS = {
+    "wakeDigest",
+    "replacementWakeDigest",
+    "followupDigest",
+    "resultDigest",
+    "reservationDigest",
+    "deliveryToken",
+}
+_SAFE_QUARANTINE_BOOL_FIELDS = {"reservationPending"}
+_QUARANTINE_EVENT_TYPES = {
+    "LEGACY_RESULT_REQUIRES_MIGRATION",
+    "PUBLISHED_TASK_WORKTREE_MISSING",
+    "PR_FOLLOWUP_REBIND_REQUIRED",
+    "SHARED_CONTEXT_BOOTSTRAP_PATH_INVALID",
+    "SHARED_CONTEXT_LAYOUT_CONFLICT",
+    "TASK_QUARANTINE_CLEARED",
+}
+_QUARANTINE_ROW_KEYS = frozenset(
+    {
+        "opportunityKey",
+        "reason",
+        "dedupeFingerprint",
+        "payload",
+        "status",
+        "createdAt",
+        "clearedAt",
+        "clearPayloadDigest",
+    }
+)
+_QUARANTINE_PAYLOAD_KEYS = frozenset(
+    {"payloadDigest"} | _SAFE_QUARANTINE_DIGEST_FIELDS | _SAFE_QUARANTINE_BOOL_FIELDS
+)
+
+
+def _is_sha256(value: object) -> bool:
+    return isinstance(value, str) and bool(re.fullmatch(r"[0-9a-f]{64}", value))
+
+
+def _quarantine_dedupe_fingerprint(value: str) -> str:
+    if value.startswith("snapshot:") and _is_sha256(value.removeprefix("snapshot:")):
+        return value.removeprefix("snapshot:")
+    return stable_fingerprint(value)
+
+
+def _validate_canonical_quarantine_payload(payload: object) -> dict[str, Any] | None:
+    if not isinstance(payload, dict) or not _is_sha256(payload.get("payloadDigest")):
+        return None
+    if not set(payload) <= _QUARANTINE_PAYLOAD_KEYS:
+        return None
+    canonical = {"payloadDigest": payload["payloadDigest"]}
+    for key in sorted(_SAFE_QUARANTINE_DIGEST_FIELDS):
+        value = payload.get(key)
+        if value is not None:
+            if not _is_sha256(value):
+                return None
+            canonical[key] = value
+    for key in sorted(_SAFE_QUARANTINE_BOOL_FIELDS):
+        value = payload.get(key)
+        if value is not None:
+            if not isinstance(value, bool):
+                return None
+            canonical[key] = value
+    return canonical
+
+
+def _validate_timestamp(value: object, *, field: str) -> None:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"managed snapshot quarantine {field} time is invalid")
+    try:
+        parsed = datetime.fromisoformat(value[:-1] + "+00:00" if value.endswith("Z") else value)
+    except ValueError as exc:
+        raise ValueError(f"managed snapshot quarantine {field} time is invalid") from exc
+    if parsed.tzinfo is None:
+        raise ValueError(f"managed snapshot quarantine {field} time is missing timezone")
+
+
+def _safe_quarantine_payload(raw: str, *, dedupe_key: str) -> dict[str, Any]:
+    try:
+        parsed = json.loads(raw or "{}")
+    except (TypeError, json.JSONDecodeError):
+        parsed = {}
+    if not isinstance(parsed, dict):
+        parsed = {}
+    if dedupe_key.startswith("snapshot:"):
+        canonical = _validate_canonical_quarantine_payload(parsed)
+        if canonical is not None:
+            return canonical
+    safe: dict[str, Any] = {"payloadDigest": _safe_digest(raw or "{}")}
+    for key in sorted(_SAFE_QUARANTINE_DIGEST_FIELDS):
+        value = parsed.get(key)
+        if _is_sha256(value):
+            safe[key] = value
+    for key in sorted(_SAFE_QUARANTINE_BOOL_FIELDS):
+        value = parsed.get(key)
+        if isinstance(value, bool):
+            safe[key] = value
+    return safe
+
+
+def _safe_quarantine_clear_payload_digest(raw: str | None, *, dedupe_key: str) -> str | None:
+    if raw is None:
+        return None
+    if dedupe_key.startswith("snapshot:"):
+        try:
+            parsed = json.loads(raw)
+        except (TypeError, json.JSONDecodeError):
+            parsed = None
+        if (
+            isinstance(parsed, dict)
+            and frozenset(parsed) == {"clearPayloadDigest"}
+            and _is_sha256(parsed.get("clearPayloadDigest"))
+        ):
+            return parsed["clearPayloadDigest"]
+    return _safe_digest(raw)
+
+
+def _snapshot_quarantine_event_identity(row: dict[str, Any]) -> tuple[str, str]:
+    key = str(row["idempotencyKey"])
+    fingerprint = str(row.get("idempotencyFingerprint") or stable_fingerprint(key))
+    match = re.fullmatch(r"task-quarantine:snapshot:([0-9a-f]{64})", key)
+    if match is not None:
+        expected = stable_fingerprint(key)
+        if fingerprint != expected:
+            raise ValueError("managed snapshot quarantine audit event identity is invalid")
+        return key, fingerprint
+    canonical_key = f"task-quarantine:snapshot:{fingerprint}"
+    return canonical_key, stable_fingerprint(canonical_key)
+
+
+def _snapshot_event_identity(row: dict[str, Any]) -> tuple[str, str]:
+    if row["eventType"] in _QUARANTINE_EVENT_TYPES:
+        return _snapshot_quarantine_event_identity(row)
+    key = _safe_idempotency(str(row["idempotencyKey"]))
+    return key, str(row.get("idempotencyFingerprint") or stable_fingerprint(key))
+
+
+def _snapshot_event_payload_digest(row: sqlite3.Row) -> str:
+    if row["event_type"] in _QUARANTINE_EVENT_TYPES:
+        return _safe_digest("{}")
+    return _safe_digest(row["payload_json"])
+
+
+def _validate_snapshot_quarantine(row: dict[str, Any]) -> None:
+    if not isinstance(row, dict):
+        raise ValueError("managed snapshot quarantine row is invalid")
+    if frozenset(row) != _QUARANTINE_ROW_KEYS:
+        raise ValueError("managed snapshot quarantine row shape is invalid")
+    match = re.fullmatch(r"([^/\s#]+)/([^/\s#]+)#([1-9][0-9]*)", str(row["opportunityKey"]))
+    if match is None:
+        raise ValueError("managed snapshot quarantine opportunity key is invalid")
+    owner, repo, number = match.groups()
+    _validate_snapshot_opportunity(
+        {
+            "opportunityKey": row["opportunityKey"],
+            "owner": owner,
+            "repo": repo,
+            "issueNumber": int(number),
+            "issueUrl": f"https://github.com/{owner}/{repo}/issues/{number}",
+        }
+    )
+    reason = row.get("reason")
+    if not isinstance(reason, str) or not re.fullmatch(r"[A-Z][A-Z0-9_]{2,80}", reason):
+        raise ValueError("managed snapshot quarantine reason is invalid")
+    if not _is_sha256(row.get("dedupeFingerprint")):
+        raise ValueError("managed snapshot quarantine dedupe fingerprint is invalid")
+    status = row.get("status")
+    if status not in {"ACTIVE", "CLEARED"}:
+        raise ValueError("managed snapshot quarantine status is invalid")
+    _validate_timestamp(row.get("createdAt"), field="created")
+    if status == "ACTIVE":
+        if row.get("clearedAt") is not None or row.get("clearPayloadDigest") is not None:
+            raise ValueError("managed snapshot active quarantine clear fields are invalid")
+    else:
+        _validate_timestamp(row.get("clearedAt"), field="clear")
+        if not _is_sha256(row.get("clearPayloadDigest")):
+            raise ValueError("managed snapshot quarantine clear payload is invalid")
+    payload = row.get("payload")
+    if not isinstance(payload, dict) or not _is_sha256(payload.get("payloadDigest")):
+        raise ValueError("managed snapshot quarantine payload is invalid")
+    if not set(payload) <= _QUARANTINE_PAYLOAD_KEYS:
+        raise ValueError("managed snapshot quarantine payload contains unsupported fields")
+    for key in _SAFE_QUARANTINE_DIGEST_FIELDS:
+        if key in payload and not _is_sha256(payload[key]):
+            raise ValueError("managed snapshot quarantine digest field is invalid")
+    for key in _SAFE_QUARANTINE_BOOL_FIELDS:
+        if key in payload and not isinstance(payload[key], bool):
+            raise ValueError("managed snapshot quarantine bool field is invalid")
 
 
 def _safe_validation(raw: str, *, result_key: str, result_digest: str) -> dict[str, Any]:
@@ -282,23 +499,31 @@ def _snapshot_rows(path: Path) -> dict[str, list[dict[str, Any]]]:
                 "SELECT * FROM managed_results ORDER BY result_key"
             ).fetchall()
         ]
-        events = [
-            {
-                "opportunityKey": row["opportunity_key"],
-                "taskId": row["task_id"],
-                "prKey": row["pr_key"],
-                "eventType": row["event_type"],
-                "state": row["state"],
-                "idempotencyKey": _safe_idempotency(row["idempotency_key"]),
-                "idempotencyFingerprint": row["idempotency_fingerprint"],
-                "source": row["source"],
-                "observedAt": row["observed_at"],
-                "payloadDigest": _safe_digest(row["payload_json"]),
-            }
-            for row in connection.execute(
-                "SELECT * FROM managed_lifecycle_events ORDER BY event_id"
-            ).fetchall()
-        ]
+        events = []
+        for row in connection.execute(
+            "SELECT * FROM managed_lifecycle_events ORDER BY event_id"
+        ).fetchall():
+            idempotency_key, idempotency_fingerprint = _snapshot_event_identity(
+                {
+                    "eventType": row["event_type"],
+                    "idempotencyKey": row["idempotency_key"],
+                    "idempotencyFingerprint": row["idempotency_fingerprint"],
+                }
+            )
+            events.append(
+                {
+                    "opportunityKey": row["opportunity_key"],
+                    "taskId": row["task_id"],
+                    "prKey": row["pr_key"],
+                    "eventType": row["event_type"],
+                    "state": row["state"],
+                    "idempotencyKey": idempotency_key,
+                    "idempotencyFingerprint": idempotency_fingerprint,
+                    "source": row["source"],
+                    "observedAt": row["observed_at"],
+                    "payloadDigest": _snapshot_event_payload_digest(row),
+                }
+            )
         maintainer_events = [
             {
                 "eventKey": row["event_key"],
@@ -437,6 +662,25 @@ def _snapshot_rows(path: Path) -> dict[str, list[dict[str, Any]]]:
                 "SELECT * FROM attestation_nonce_consumptions ORDER BY consumption_id"
             ).fetchall()
         ]
+        task_quarantines = [
+            {
+                "opportunityKey": row["opportunity_key"],
+                "reason": row["reason"],
+                "dedupeFingerprint": _quarantine_dedupe_fingerprint(row["dedupe_key"]),
+                "payload": _safe_quarantine_payload(
+                    row["payload_json"], dedupe_key=row["dedupe_key"]
+                ),
+                "status": row["status"],
+                "createdAt": row["created_at"],
+                "clearedAt": row["cleared_at"],
+                "clearPayloadDigest": _safe_quarantine_clear_payload_digest(
+                    row["clear_payload_json"], dedupe_key=row["dedupe_key"]
+                ),
+            }
+            for row in connection.execute(
+                "SELECT * FROM task_quarantines ORDER BY quarantine_id"
+            ).fetchall()
+        ]
         reproduction_probes = [
             {
                 "probeKey": row["probe_key"],
@@ -497,6 +741,7 @@ def _snapshot_rows(path: Path) -> dict[str, list[dict[str, Any]]]:
             "reservations": reservations,
             "absenceAttestations": attestations,
             "attestationNonceConsumptions": consumptions,
+            "taskQuarantines": task_quarantines,
             "reproductionProbes": reproduction_probes,
             "reproductionAttemptEvents": reproduction_attempt_events,
         }
@@ -538,6 +783,27 @@ def _snapshot_authenticated(snapshot: dict[str, Any], *, current_only: bool = Tr
     )
 
 
+def _is_legacy_v7_snapshot(snapshot: dict[str, Any]) -> bool:
+    return (
+        snapshot.get("snapshotSchema") == LEGACY_SNAPSHOT_SCHEMA_VERSION
+        and snapshot.get("managedSchemaVersion") == LEGACY_MANAGED_SCHEMA_VERSION
+        and snapshot.get("managedSchemaDigest") == LEGACY_MANAGED_SCHEMA_V7_DIGEST
+    )
+
+
+def _snapshot_rows_for_current(snapshot: dict[str, Any]) -> dict[str, Any]:
+    rows = snapshot.get("rows")
+    if not isinstance(rows, dict):
+        raise ValueError("managed snapshot rows are invalid")
+    if _is_legacy_v7_snapshot(snapshot):
+        if frozenset(rows) != LEGACY_V7_ROW_KEYS:
+            raise ValueError("legacy v7 managed snapshot row shape is invalid")
+        return {**rows, "taskQuarantines": []}
+    if frozenset(rows) != CURRENT_ROW_KEYS:
+        raise ValueError("managed snapshot row shape is invalid")
+    return rows
+
+
 def _walk(value: object, *, key: str = "") -> None:
     lowered = key.casefold().replace("-", "_")
     if lowered in _FORBIDDEN_KEYS:
@@ -553,18 +819,35 @@ def _walk(value: object, *, key: str = "") -> None:
             raise ValueError("managed snapshot contains an absolute path")
 
 
-def validate_snapshot(snapshot: dict[str, Any], *, current_only: bool = True) -> None:
-    if snapshot.get("snapshotSchema") != SNAPSHOT_SCHEMA_VERSION:
+def validate_snapshot(
+    snapshot: dict[str, Any],
+    *,
+    current_only: bool = True,
+    allow_legacy: bool = False,
+) -> None:
+    legacy_v7 = _is_legacy_v7_snapshot(snapshot)
+    if legacy_v7 and not allow_legacy:
+        raise ValueError("legacy managed snapshot is not allowed in this path")
+    if snapshot.get("snapshotSchema") != SNAPSHOT_SCHEMA_VERSION and not legacy_v7:
         raise ValueError("unsupported managed snapshot schema")
     if not _snapshot_authenticated(snapshot, current_only=current_only):
         raise ValueError("managed snapshot root authentication failed")
-    if snapshot.get("managedSchemaVersion") != MANAGED_SCHEMA_VERSION:
+    if legacy_v7:
+        if "taskQuarantines" in snapshot.get("rows", {}):
+            raise ValueError("legacy v7 managed snapshot row shape is invalid")
+    elif snapshot.get("managedSchemaVersion") != MANAGED_SCHEMA_VERSION:
         raise ValueError("managed snapshot schema version mismatch")
-    if snapshot.get("managedSchemaDigest") != schema_digest():
+    if not legacy_v7 and snapshot.get("managedSchemaDigest") != schema_digest():
         raise ValueError("managed snapshot schema digest mismatch")
-    rows = snapshot.get("rows")
+    rows = _snapshot_rows_for_current(snapshot)
     if not isinstance(rows, dict) or snapshot.get("contentDigest") != _digest(rows):
-        raise ValueError("managed snapshot content digest mismatch")
+        if not legacy_v7:
+            raise ValueError("managed snapshot content digest mismatch")
+        legacy_rows = snapshot.get("rows")
+        if not isinstance(legacy_rows, dict) or snapshot.get("contentDigest") != _digest(
+            legacy_rows
+        ):
+            raise ValueError("managed snapshot content digest mismatch")
     for opportunity in rows.get("opportunities", []):
         _validate_snapshot_opportunity(opportunity)
     for result in rows.get("results", []):
@@ -591,6 +874,20 @@ def validate_snapshot(snapshot: dict[str, Any], *, current_only: bool = True) ->
             reply.get("bodyDigest"), str
         ):
             raise ValueError("managed snapshot contains an invalid reply certificate")
+    if not legacy_v7:
+        if "taskQuarantines" not in rows:
+            raise ValueError("managed snapshot quarantine rows are missing")
+        quarantine_keys: set[tuple[str, str, str]] = set()
+        for quarantine in rows.get("taskQuarantines", []):
+            _validate_snapshot_quarantine(quarantine)
+            quarantine_key = (
+                quarantine["opportunityKey"],
+                quarantine["reason"],
+                quarantine["dedupeFingerprint"],
+            )
+            if quarantine_key in quarantine_keys:
+                raise ValueError("managed snapshot duplicate quarantine row")
+            quarantine_keys.add(quarantine_key)
     for event in rows.get("events", []):
         fingerprint = event.get("idempotencyFingerprint")
         key = str(event.get("idempotencyKey"))
@@ -657,19 +954,24 @@ def validate_snapshot(snapshot: dict[str, Any], *, current_only: bool = True) ->
 
 
 def encode_snapshot(snapshot: dict[str, Any]) -> bytes:
-    validate_snapshot(snapshot, current_only=True)
+    validate_snapshot(snapshot, current_only=True, allow_legacy=False)
     raw = canonical_json(snapshot).encode("utf-8")
     return gzip.compress(raw, compresslevel=9, mtime=0)
 
 
-def decode_snapshot(raw: bytes, *, current_only: bool = True) -> dict[str, Any]:
+def decode_snapshot(
+    raw: bytes,
+    *,
+    current_only: bool = True,
+    allow_legacy: bool = False,
+) -> dict[str, Any]:
     try:
         snapshot = json.loads(gzip.decompress(raw).decode("utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError("managed snapshot is not valid compressed JSON") from exc
     if not isinstance(snapshot, dict):
         raise ValueError("managed snapshot must be an object")
-    validate_snapshot(snapshot, current_only=current_only)
+    validate_snapshot(snapshot, current_only=current_only, allow_legacy=allow_legacy)
     return snapshot
 
 
@@ -678,7 +980,7 @@ def inspect_snapshot(snapshot_path: Path) -> dict[str, Any]:
 
     if not snapshot_path.exists():
         raise FileNotFoundError(snapshot_path)
-    return decode_snapshot(snapshot_path.read_bytes(), current_only=False)
+    return decode_snapshot(snapshot_path.read_bytes(), current_only=False, allow_legacy=True)
 
 
 def export_snapshot(database: Path, output: Path) -> dict[str, Any]:
@@ -714,9 +1016,7 @@ def _insert_snapshot(connection: sqlite3.Connection, rows: dict[str, list[dict[s
     # present in the target, but a different event under the same idempotency
     # key is corruption and must abort before any managed row is replaced.
     for row in rows["events"]:
-        fingerprint = row.get("idempotencyFingerprint") or stable_fingerprint(
-            str(row["idempotencyKey"])
-        )
+        _, fingerprint = _snapshot_event_identity(row)
         existing = connection.execute(
             """SELECT opportunity_key,task_id,pr_key,event_type,state,source,observed_at
                FROM managed_lifecycle_events WHERE idempotency_fingerprint=?""",
@@ -764,6 +1064,49 @@ def _insert_snapshot(connection: sqlite3.Connection, rows: dict[str, list[dict[s
         "managed_lifecycle_events",
     ):
         connection.execute(f'DELETE FROM "{table}"')
+    for row in rows.get("taskQuarantines", []):
+        _validate_snapshot_quarantine(row)
+        dedupe_key = f"snapshot:{row['dedupeFingerprint']}"
+        payload_json = canonical_json(row["payload"])
+        clear_payload = (
+            canonical_json({"clearPayloadDigest": row["clearPayloadDigest"]})
+            if row.get("clearPayloadDigest")
+            else None
+        )
+        existing = connection.execute(
+            """SELECT status FROM task_quarantines
+               WHERE opportunity_key=? AND reason=? AND dedupe_key=?""",
+            (row["opportunityKey"], row["reason"], dedupe_key),
+        ).fetchone()
+        if existing is None:
+            connection.execute(
+                """INSERT INTO task_quarantines
+                   (opportunity_key,reason,dedupe_key,payload_json,status,created_at,cleared_at,clear_payload_json)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                (
+                    row["opportunityKey"],
+                    row["reason"],
+                    dedupe_key,
+                    payload_json,
+                    row["status"],
+                    row["createdAt"],
+                    row.get("clearedAt"),
+                    clear_payload,
+                ),
+            )
+        elif row["status"] == "ACTIVE" and existing["status"] == "CLEARED":
+            connection.execute(
+                """UPDATE task_quarantines
+                   SET payload_json=?, status='ACTIVE', created_at=?, cleared_at=NULL, clear_payload_json=NULL
+                   WHERE opportunity_key=? AND reason=? AND dedupe_key=? AND status='CLEARED'""",
+                (
+                    payload_json,
+                    row["createdAt"],
+                    row["opportunityKey"],
+                    row["reason"],
+                    dedupe_key,
+                ),
+            )
     for row in rows["opportunities"]:
         connection.execute(
             """INSERT INTO managed_opportunities
@@ -995,9 +1338,7 @@ def _insert_snapshot(connection: sqlite3.Connection, rows: dict[str, list[dict[s
             ),
         )
     for row in rows["events"]:
-        fingerprint = row.get("idempotencyFingerprint") or stable_fingerprint(
-            str(row["idempotencyKey"])
-        )
+        event_idempotency_key, fingerprint = _snapshot_event_identity(row)
         connection.execute(
             """INSERT INTO managed_lifecycle_events
                (opportunity_key,task_id,pr_key,event_type,state,idempotency_key,source,
@@ -1009,7 +1350,7 @@ def _insert_snapshot(connection: sqlite3.Connection, rows: dict[str, list[dict[s
                 row["prKey"],
                 row["eventType"],
                 row["state"],
-                row["idempotencyKey"],
+                event_idempotency_key,
                 row["source"],
                 fingerprint,
                 "{}",
@@ -1235,12 +1576,12 @@ def import_snapshot(
         raise FileNotFoundError(snapshot_path)
     # Live restore is intentionally current-key-only.  Historical verification
     # is available through inspect_snapshot and cannot write a database.
-    snapshot = decode_snapshot(snapshot_path.read_bytes(), current_only=True)
+    snapshot = decode_snapshot(snapshot_path.read_bytes(), current_only=True, allow_legacy=True)
     ledger = ManagedLedger(database, ensure_schema=True)
     connection = ledger._connection()
     try:
         connection.execute("BEGIN IMMEDIATE")
-        _insert_snapshot(connection, snapshot["rows"])
+        _insert_snapshot(connection, _snapshot_rows_for_current(snapshot))
         connection.commit()
     except Exception:
         if connection.in_transaction:

@@ -36,7 +36,13 @@ from .task_quarantine import record as record_quarantine
 from .task_quarantine import require_clear as require_quarantine_clear
 from .util import canonical_json, iso_z
 
-MANAGED_SCHEMA_VERSION = 7
+MANAGED_SCHEMA_VERSION = 8
+KNOWN_MANAGED_SCHEMA_V7_DIGESTS = frozenset(
+    {
+        "10ed2d89cd0357806d3e62f3ef140f42c2c234b9cb4b82ed406ce24983153a0e",
+        "02ea3f38a042c2c48ad61089777d9cf0817190f413270b74010e64a5a860e360",
+    }
+)
 MANAGED_TABLES = (
     "managed_public_replies",
     "managed_reply_deliveries",
@@ -760,6 +766,25 @@ def _attestation_authenticated_current(attestation: dict[str, Any]) -> bool:
     )
 
 
+def _read_schema_migration_rows(connection: sqlite3.Connection) -> list[sqlite3.Row]:
+    try:
+        rows = connection.execute(
+            "SELECT version,applied_at,migration_digest FROM managed_schema_migrations ORDER BY version"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    current_digest = schema_digest()
+    for row in rows:
+        version = int(row["version"])
+        if version > MANAGED_SCHEMA_VERSION:
+            raise ValueError(f"unknown managed schema version: {version}")
+        if version == 7 and row["migration_digest"] not in KNOWN_MANAGED_SCHEMA_V7_DIGESTS:
+            raise ValueError("managed schema v7 digest mismatch")
+        if version == MANAGED_SCHEMA_VERSION and row["migration_digest"] != current_digest:
+            raise ValueError("managed schema current digest mismatch")
+    return rows
+
+
 def migrate_schema(
     path: Path,
     *,
@@ -774,16 +799,10 @@ def migrate_schema(
     connection = connect(path)
     try:
         existing_version = 0
-        try:
-            existing_version = int(
-                connection.execute(
-                    "SELECT COALESCE(MAX(version),0) FROM managed_schema_migrations"
-                ).fetchone()[0]
-            )
-        except sqlite3.OperationalError:
-            pass
+        rows = _read_schema_migration_rows(connection)
+        existing_version = int(rows[-1]["version"]) if rows else 0
         if existing_version == 6 and not _allow_v6_upgrade:
-            raise ValueError("managed schema v6 requires migrate_v6_to_v7")
+            raise ValueError("managed schema v6 requires migrate_v6_to_current")
         connection.executescript(SCHEMA_SQL)
         backfill_from_managed_events(connection, action_guard_root=ledger_action_guard_root(path))
         connection.execute("BEGIN IMMEDIATE")
@@ -1063,7 +1082,7 @@ def migrate_schema(
         connection.close()
 
 
-def migrate_v6_to_v7(
+def migrate_v6_to_current(
     source: Path,
     target: Path,
     *,
@@ -1147,10 +1166,14 @@ def migrate_v6_to_v7(
         migrated = ManagedLedger(temporary)
         migrated.record_event(
             event_type="MANAGED_SCHEMA_MIGRATED",
-            idempotency_key="managed-schema:v6-to-v7",
+            idempotency_key=f"managed-schema:v6-to-v{MANAGED_SCHEMA_VERSION}",
             state="LEGACY_REAUTH_REQUIRED",
             source="managed-migration",
-            provenance={"fromVersion": 6, "toVersion": 7, "authorization": "reauth_required"},
+            provenance={
+                "fromVersion": 6,
+                "toVersion": MANAGED_SCHEMA_VERSION,
+                "authorization": "reauth_required",
+            },
             payload={
                 "certificates": "UNAUTHENTICATED",
                 "absenceAttestations": "LEGACY_REAUTH_REQUIRED",
@@ -1165,7 +1188,7 @@ def migrate_v6_to_v7(
         return {
             "ok": True,
             "fromVersion": 6,
-            "toVersion": 7,
+            "toVersion": MANAGED_SCHEMA_VERSION,
             "target": str(target),
             "snapshot": snapshot_result,
             "authorization": "LEGACY_REAUTH_REQUIRED",
@@ -1173,6 +1196,17 @@ def migrate_v6_to_v7(
     finally:
         if temporary and temporary != Path() and temporary.exists():
             temporary.unlink()
+
+
+def migrate_v6_to_v7(
+    source: Path,
+    target: Path,
+    *,
+    snapshot_output: Path | None = None,
+) -> dict[str, Any]:
+    """Compatibility entrypoint: migrate v6 to the current managed schema."""
+
+    return migrate_v6_to_current(source, target, snapshot_output=snapshot_output)
 
 
 def rollback_schema(path: Path, *, target_version: int = 0) -> dict[str, Any]:
@@ -4980,12 +5014,7 @@ class PublicationAbsenceReconciler:
 def schema_status(path: Path) -> dict[str, Any]:
     connection = connect(path)
     try:
-        try:
-            rows = connection.execute(
-                "SELECT version,applied_at,migration_digest FROM managed_schema_migrations ORDER BY version"
-            ).fetchall()
-        except sqlite3.OperationalError:
-            rows = []
+        rows = _read_schema_migration_rows(connection)
         return {
             "versions": [dict(row) for row in rows],
             "current": rows[-1]["version"] if rows else 0,

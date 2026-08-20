@@ -3,6 +3,7 @@ from __future__ import annotations
 import gzip
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -10,10 +11,11 @@ from pathlib import Path
 
 import pytest
 from test_ledger import legal_publication_probe
+from test_managed_round7_security import legacy_v7_snapshot, write_snapshot
 
 from oss_pr_radar.ledger import RadarLedger
 from oss_pr_radar.managed_adapter import ManagedAdapter
-from oss_pr_radar.managed_lifecycle import ManagedLedger
+from oss_pr_radar.managed_lifecycle import MANAGED_SCHEMA_VERSION, ManagedLedger, schema_status
 from oss_pr_radar.managed_snapshot import export_snapshot, import_snapshot
 
 pytestmark = pytest.mark.usefixtures("current_signing_key")
@@ -38,6 +40,89 @@ def initialized_repo(tmp_path):
     (root / "state").mkdir()
     (root / "state" / "seen.json").write_text("{}\n", encoding="utf-8")
     return root, origin
+
+
+def publish_raw_state(root: Path, branch: str, available: dict[str, Path]) -> None:
+    manifest = MODULE.build_manifest(
+        root,
+        available,
+        allow_legacy_managed_snapshot=True,
+    )
+    manifest_bytes = (
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
+    index = root / ".git" / f"test-{branch}.index"
+    env = {**os.environ, "GIT_INDEX_FILE": str(index)}
+    subprocess.run(["git", "read-tree", "--empty"], cwd=root, check=True, env=env)
+    for remote_name, source in available.items():
+        blob = subprocess.run(
+            ["git", "hash-object", "-w", str(source)],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        subprocess.run(
+            ["git", "update-index", "--add", "--cacheinfo", "100644", blob, remote_name],
+            cwd=root,
+            check=True,
+            env=env,
+        )
+    manifest_path = root / ".git" / f"{branch}.manifest"
+    manifest_path.write_bytes(manifest_bytes)
+    manifest_blob = subprocess.run(
+        ["git", "hash-object", "-w", str(manifest_path)],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    subprocess.run(
+        [
+            "git",
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            "100644",
+            manifest_blob,
+            MODULE.MANIFEST,
+        ],
+        cwd=root,
+        check=True,
+        env=env,
+    )
+    tree = subprocess.run(
+        ["git", "write-tree"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    ).stdout.strip()
+    commit = subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=test",
+            "-c",
+            "user.email=test@example.com",
+            "commit-tree",
+            tree,
+            "-m",
+            "legacy state",
+        ],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    subprocess.run(
+        ["git", "push", "--force", "origin", f"{commit}:refs/heads/{branch}"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
 
 
 def test_publish_and_restore_verify_manifest(tmp_path):
@@ -317,6 +402,34 @@ def test_managed_snapshot_persists_lifecycle_cap_and_idempotency_across_workspac
         "WAITING_EXTERNAL",
         "PORTFOLIO_READY",
     }
+
+
+def test_state_restore_accepts_exact_legacy_v7_snapshot_but_publish_rejects_it(tmp_path):
+    root, origin = initialized_repo(tmp_path)
+    database = root / "state" / "radar_ledger.sqlite3"
+    RadarLedger(database)
+    adapter = ManagedAdapter(root, database)
+    adapter.record_scan_report(
+        {
+            "run_id": "legacy-v7",
+            "now": "2026-08-19T00:00:00Z",
+            "candidate_details": [{"repo": "owner/repo", "num": 1}],
+        }
+    )
+    legacy = legacy_v7_snapshot(database)
+    snapshot = root / "state" / "managed_lifecycle.snapshot.json.gz"
+    write_snapshot(snapshot, legacy)
+    with pytest.raises(RuntimeError, match="legacy managed snapshot"):
+        MODULE.publish(root, "radar-state")
+
+    publish_raw_state(root, "radar-state", {"managed_lifecycle.snapshot.json.gz": snapshot})
+    restored = tmp_path / "legacy-restored"
+    git("clone", str(origin), str(restored), cwd=tmp_path)
+    MODULE.restore(restored, "radar-state")
+    restored_database = restored / "state" / "radar_ledger.sqlite3"
+    RadarLedger(restored_database)
+    import_snapshot(restored_database, restored / "state" / "managed_lifecycle.snapshot.json.gz")
+    assert schema_status(restored_database)["current"] == MANAGED_SCHEMA_VERSION
 
 
 def test_managed_snapshot_restore_is_atomic_on_corruption(tmp_path):

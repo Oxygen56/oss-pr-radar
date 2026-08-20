@@ -151,16 +151,18 @@ def _scan_snapshot(value: object, *, key: str = "") -> None:
             raise RuntimeError("managed snapshot contains a token-like value")
 
 
-def _validate_state_file(remote_name: str, raw: bytes) -> None:
+def _validate_state_file(
+    remote_name: str,
+    raw: bytes,
+    *,
+    allow_legacy_managed_snapshot: bool = False,
+) -> None:
     value = _decode_state_json(remote_name, raw)
     if remote_name.endswith("managed_lifecycle.snapshot.json.gz"):
-        if (
-            not isinstance(value, dict)
-            or value.get("snapshotSchema") != "managed_lifecycle_snapshot_v5"
-        ):
+        if not isinstance(value, dict):
             raise RuntimeError("managed lifecycle snapshot schema is invalid")
         try:
-            validate_snapshot(value)
+            validate_snapshot(value, allow_legacy=allow_legacy_managed_snapshot)
         except ValueError as exc:
             raise RuntimeError(f"managed lifecycle snapshot integrity is invalid: {exc}") from exc
         _scan_snapshot(value)
@@ -240,7 +242,7 @@ def restore(
         raw = result.stdout
         if digest_bytes(raw) != metadata.get("sha256"):
             raise RuntimeError(f"state file digest mismatch: {remote_name}")
-        _validate_state_file(remote_name, raw)
+        _validate_state_file(remote_name, raw, allow_legacy_managed_snapshot=True)
         atomic_write(root / files[remote_name], raw)
     for remote_name, source in files.items():
         if remote_name not in listed:
@@ -253,11 +255,16 @@ def build_manifest(
     available: dict[str, Path],
     *,
     manifest_version: str = MANIFEST_VERSION,
+    allow_legacy_managed_snapshot: bool = False,
 ) -> dict[str, object]:
     files = {}
     for remote_name, source in available.items():
         raw = source.read_bytes()
-        _validate_state_file(remote_name, raw)
+        _validate_state_file(
+            remote_name,
+            raw,
+            allow_legacy_managed_snapshot=allow_legacy_managed_snapshot,
+        )
         files[remote_name] = {"sha256": digest_bytes(raw), "bytes": len(raw)}
     return {
         "version": manifest_version,
@@ -367,7 +374,11 @@ def migrate(
     for remote_name in files:
         result = git_bytes("show", f"{ref}:{remote_name}", cwd=root, check=False)
         if result.returncode == 0:
-            _validate_state_file(remote_name, result.stdout)
+            _validate_state_file(
+                remote_name,
+                result.stdout,
+                allow_legacy_managed_snapshot=True,
+            )
             available_raw[remote_name] = result.stdout
     if not available_raw:
         raise RuntimeError("legacy state branch has no recognized JSON state")
@@ -405,7 +416,12 @@ def migrate(
             source = work / remote_name
             atomic_write(source, raw)
             available[remote_name] = source
-        manifest = build_manifest(work, available, manifest_version=manifest_version)
+        manifest = build_manifest(
+            work,
+            available,
+            manifest_version=manifest_version,
+            allow_legacy_managed_snapshot=True,
+        )
         (work / manifest_name).write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",

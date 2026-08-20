@@ -9,6 +9,7 @@ from test_managed_round7_security import populated_source
 
 from oss_pr_radar.ledger import RadarLedger
 from oss_pr_radar.managed_lifecycle import (
+    MANAGED_SCHEMA_VERSION,
     ManagedLedger,
     _attestation_authenticated,
     migrate_v6_to_v7,
@@ -83,7 +84,7 @@ def _absence(ledger: ManagedLedger, reservation_key: str, *, nonce: str) -> dict
 
 def _mark_v6(database: Path) -> None:
     with ManagedLedger(database)._connection() as connection:
-        connection.execute("DELETE FROM managed_schema_migrations WHERE version=7")
+        connection.execute("DELETE FROM managed_schema_migrations WHERE version>=7")
         connection.execute(
             "INSERT INTO managed_schema_migrations(version,applied_at,migration_digest) "
             "VALUES (6, '2026-08-19T00:00:00Z', 'legacy-v6')"
@@ -239,6 +240,6 @@ def test_v6_migration_signing_requires_current_and_uses_current_during_rotation(
     monkeypatch.setenv(PREVIOUS_ENV, ORIGINAL_KEY)
     monkeypatch.setenv(PREVIOUS_ID_ENV, ORIGINAL_ID)
     result = migrate_v6_to_v7(source, rotated_target, snapshot_output=rotated_snapshot)
-    assert result["toVersion"] == 7
+    assert result["toVersion"] == MANAGED_SCHEMA_VERSION
     rotated = json.loads(gzip.decompress(rotated_snapshot.read_bytes()))
     assert rotated["keyId"] == "rotation-current"

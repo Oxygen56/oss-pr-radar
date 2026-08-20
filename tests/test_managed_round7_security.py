@@ -8,21 +8,39 @@ import pytest
 
 from oss_pr_radar.ledger import RadarLedger
 from oss_pr_radar.managed_lifecycle import (
+    MANAGED_SCHEMA_VERSION,
     ManagedLedger,
     PublicationAbsenceReconciler,
     _digest,
     migrate_v6_to_v7,
     schema_status,
 )
+from oss_pr_radar.managed_security import sign_current, stable_fingerprint
 from oss_pr_radar.managed_snapshot import (
+    LEGACY_MANAGED_SCHEMA_V7_DIGEST,
+    LEGACY_MANAGED_SCHEMA_VERSION,
+    LEGACY_SNAPSHOT_SCHEMA_VERSION,
+    SNAPSHOT_AUTH_CONTEXT,
+    SNAPSHOT_SCHEMA_VERSION,
     build_snapshot,
+    decode_snapshot,
     export_snapshot,
     import_snapshot,
     inspect_snapshot,
+    validate_snapshot,
 )
 from oss_pr_radar.util import canonical_json
 
 pytestmark = pytest.mark.usefixtures("current_signing_key")
+
+QUARANTINE_EVENT_TYPES = {
+    "LEGACY_RESULT_REQUIRES_MIGRATION",
+    "PUBLISHED_TASK_WORKTREE_MISSING",
+    "PR_FOLLOWUP_REBIND_REQUIRED",
+    "SHARED_CONTEXT_BOOTSTRAP_PATH_INVALID",
+    "SHARED_CONTEXT_LAYOUT_CONFLICT",
+    "TASK_QUARANTINE_CLEARED",
+}
 
 
 @pytest.fixture(autouse=True)
@@ -38,6 +56,33 @@ def ledger_at(tmp_path: Path, name: str):
 
 def write_snapshot(path: Path, snapshot: dict) -> None:
     path.write_bytes(gzip.compress(canonical_json(snapshot).encode("utf-8"), mtime=0))
+
+
+def read_snapshot(path: Path) -> dict:
+    return json.loads(gzip.decompress(path.read_bytes()))
+
+
+def resign_snapshot(snapshot: dict) -> dict:
+    snapshot.pop("rootSignature", None)
+    snapshot.pop("keyId", None)
+    auth = sign_current(snapshot, context=SNAPSHOT_AUTH_CONTEXT)
+    assert auth["keyId"]
+    snapshot["keyId"] = auth["keyId"]
+    snapshot["rootSignature"] = sign_current(
+        {key: value for key, value in snapshot.items() if key != "rootSignature"},
+        context=SNAPSHOT_AUTH_CONTEXT,
+    )["signature"]
+    return snapshot
+
+
+def legacy_v7_snapshot(source: Path) -> dict:
+    snapshot = build_snapshot(source)
+    snapshot["snapshotSchema"] = LEGACY_SNAPSHOT_SCHEMA_VERSION
+    snapshot["managedSchemaVersion"] = LEGACY_MANAGED_SCHEMA_VERSION
+    snapshot["managedSchemaDigest"] = LEGACY_MANAGED_SCHEMA_V7_DIGEST
+    snapshot["rows"].pop("taskQuarantines", None)
+    snapshot["contentDigest"] = _digest(snapshot["rows"])
+    return resign_snapshot(snapshot)
 
 
 def populated_source(tmp_path: Path, name: str = "source.sqlite3"):
@@ -98,6 +143,63 @@ def populated_source(tmp_path: Path, name: str = "source.sqlite3"):
     )
     ledger.apply_absence_attestation(attestation, now="2026-08-19T00:02:01Z")
     return database, ledger
+
+
+def quarantine_snapshot_projection(snapshot: dict) -> dict:
+    rows = snapshot["rows"]
+    return {
+        "taskQuarantines": rows["taskQuarantines"],
+        "quarantineEvents": [
+            {
+                "opportunityKey": event["opportunityKey"],
+                "eventType": event["eventType"],
+                "idempotencyKey": event["idempotencyKey"],
+                "idempotencyFingerprint": event["idempotencyFingerprint"],
+                "payloadDigest": event["payloadDigest"],
+            }
+            for event in rows["events"]
+            if event["eventType"] in QUARANTINE_EVENT_TYPES
+        ],
+    }
+
+
+def assert_quarantine_snapshot_round_trips_without_drift(
+    tmp_path: Path, source: Path, *, prefix: str
+) -> None:
+    snapshot_path = tmp_path / f"{prefix}-0.snapshot.gz"
+    export_snapshot(source, snapshot_path)
+
+    current_snapshot = snapshot_path
+    baseline: dict | None = None
+    baseline_snapshot: dict | None = None
+    baseline_rows_digest: str | None = None
+    for index in range(1, 5):
+        target, _ = ledger_at(tmp_path, f"{prefix}-{index}.sqlite3")
+        import_snapshot(target, current_snapshot)
+        with ManagedLedger(target)._connection() as connection:
+            assert connection.execute("SELECT COUNT(*) FROM task_quarantines").fetchone()[0] == 1
+        current_snapshot = tmp_path / f"{prefix}-{index}.snapshot.gz"
+        export_snapshot(target, current_snapshot)
+        snapshot = read_snapshot(current_snapshot)
+        assert snapshot["contentDigest"] == _digest(snapshot["rows"])
+        if baseline is None:
+            baseline_snapshot = snapshot
+            baseline = quarantine_snapshot_projection(snapshot)
+            baseline_rows_digest = _digest(snapshot["rows"])
+            assert len(baseline["taskQuarantines"]) == 1
+            assert baseline["quarantineEvents"]
+        else:
+            assert baseline_snapshot is not None
+            assert baseline_rows_digest is not None
+            assert snapshot["contentDigest"] == baseline_snapshot["contentDigest"]
+            assert _digest(snapshot["rows"]) == baseline_rows_digest
+            assert quarantine_snapshot_projection(snapshot) == baseline
+        with ManagedLedger(target)._connection() as connection:
+            assert connection.execute(
+                "SELECT COUNT(*) FROM managed_lifecycle_events WHERE event_type IN "
+                f"({','.join('?' for _ in QUARANTINE_EVENT_TYPES)})",
+                tuple(QUARANTINE_EVENT_TYPES),
+            ).fetchone()[0] == len(baseline["quarantineEvents"])
 
 
 @pytest.mark.parametrize(
@@ -187,18 +289,482 @@ def test_restore_completely_replaces_consumption_and_managed_collections(tmp_pat
         )
 
 
-def test_v6_to_v7_downgrades_authorization_and_requires_new_attestation(tmp_path):
+def test_current_snapshot_exports_and_restores_task_quarantines_without_leaking_private_payload(
+    tmp_path,
+):
+    source, ledger = populated_source(tmp_path, "quarantine-source.sqlite3")
+    digest = "a" * 64
+    replacement = "b" * 64
+    reasons = [
+        "PUBLISHED_TASK_WORKTREE_MISSING",
+        "SHARED_CONTEXT_BOOTSTRAP_PATH_INVALID",
+        "SHARED_CONTEXT_LAYOUT_CONFLICT",
+        "LEGACY_RESULT_REQUIRES_MIGRATION",
+        "PR_FOLLOWUP_REBIND_REQUIRED",
+    ]
+    for index in range(124):
+        issue = index + 10
+        key = f"owner/repo#{issue}"
+        ledger.upsert_opportunity(
+            opportunity_key=key,
+            owner="owner",
+            repo="repo",
+            issue_number=issue,
+            issue_url=f"https://github.com/owner/repo/issues/{issue}",
+            state="SYSTEM_PROCESSING",
+            source="test",
+            provenance={},
+        )
+        ledger.record_task_quarantine(
+            opportunity_key=key,
+            reason=reasons[index % len(reasons)],
+            dedupe_key=f"/Users/oxygen/private/worktree/{index}",
+            payload={
+                "wakeDigest": digest,
+                "replacementWakeDigest": replacement,
+                "reservationPending": index % 2 == 0,
+                "artifactPath": f"/Users/oxygen/artifacts/{index}.json",
+                "originalPath": f"/Users/oxygen/original/{index}.json",
+                "worktreePath": f"/Users/oxygen/worktrees/{index}",
+                "threadId": f"019f-private-{index}",
+            },
+            observed_at=f"2026-08-19T00:{index // 60:02d}:{index % 60:02d}Z",
+        )
+
+    snapshot_path = tmp_path / "quarantines.snapshot.gz"
+    export_snapshot(source, snapshot_path)
+    snapshot_text = gzip.decompress(snapshot_path.read_bytes()).decode("utf-8")
+    assert "/Users/" not in snapshot_text
+    assert "artifactPath" not in snapshot_text
+    assert "originalPath" not in snapshot_text
+    assert "worktreePath" not in snapshot_text
+    assert "threadId" not in snapshot_text
+    snapshot = json.loads(snapshot_text)
+    validate_snapshot(snapshot)
+    assert snapshot["snapshotSchema"] == SNAPSHOT_SCHEMA_VERSION
+    assert snapshot["managedSchemaVersion"] == MANAGED_SCHEMA_VERSION
+    assert len(snapshot["rows"]["taskQuarantines"]) == 124
+    assert {
+        "wakeDigest",
+        "replacementWakeDigest",
+        "reservationPending",
+    } <= set(snapshot["rows"]["taskQuarantines"][0]["payload"])
+
+    target, _ = ledger_at(tmp_path, "quarantine-target.sqlite3")
+    import_snapshot(target, snapshot_path)
+    with ManagedLedger(target)._connection() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM task_quarantines").fetchone()[0] == 124
+
+
+def test_task_quarantine_snapshot_import_is_additive_and_keeps_stable_dedupe_fingerprints(
+    tmp_path,
+):
+    first, ledger = ledger_at(tmp_path, "quarantine-first.sqlite3")
+    ledger.upsert_opportunity(
+        opportunity_key="owner/repo#77",
+        owner="owner",
+        repo="repo",
+        issue_number=77,
+        issue_url="https://github.com/owner/repo/issues/77",
+        state="SYSTEM_PROCESSING",
+        source="test",
+        provenance={},
+    )
+    source_dedupe = "/Users/oxygen/private/rebind"
+    fingerprint = stable_fingerprint(source_dedupe)
+    ledger.record_task_quarantine(
+        opportunity_key="owner/repo#77",
+        reason="PR_FOLLOWUP_REBIND_REQUIRED",
+        dedupe_key=source_dedupe,
+        payload={"wakeDigest": "c" * 64, "reservationPending": True},
+        observed_at="2026-08-19T01:00:00Z",
+    )
+    first_snapshot = tmp_path / "first.snapshot.gz"
+    export_snapshot(first, first_snapshot)
+    first_rows = json.loads(gzip.decompress(first_snapshot.read_bytes()))["rows"]["taskQuarantines"]
+    assert first_rows[0]["dedupeFingerprint"] == fingerprint
+
+    second, _ = ledger_at(tmp_path, "quarantine-second.sqlite3")
+    import_snapshot(second, first_snapshot)
+    second_snapshot = tmp_path / "second.snapshot.gz"
+    export_snapshot(second, second_snapshot)
+    second_rows = json.loads(gzip.decompress(second_snapshot.read_bytes()))["rows"][
+        "taskQuarantines"
+    ]
+    assert second_rows[0]["dedupeFingerprint"] == fingerprint
+
+    third, _ = ledger_at(tmp_path, "quarantine-third.sqlite3")
+    import_snapshot(third, second_snapshot)
+    import_snapshot(third, second_snapshot)
+    with ManagedLedger(third)._connection() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM task_quarantines").fetchone()[0] == 1
+
+
+def test_active_task_quarantine_snapshot_round_trip_is_canonical(tmp_path):
+    source, ledger = ledger_at(tmp_path, "quarantine-active-source.sqlite3")
+    key = "owner/repo#79"
+    ledger.upsert_opportunity(
+        opportunity_key=key,
+        owner="owner",
+        repo="repo",
+        issue_number=79,
+        issue_url="https://github.com/owner/repo/issues/79",
+        state="SYSTEM_PROCESSING",
+        source="test",
+        provenance={},
+    )
+    ledger.record_task_quarantine(
+        opportunity_key=key,
+        reason="PR_FOLLOWUP_REBIND_REQUIRED",
+        dedupe_key="/Users/oxygen/private/active-rebind",
+        payload={
+            "wakeDigest": "a" * 64,
+            "replacementWakeDigest": "b" * 64,
+            "reservationPending": True,
+            "worktreePath": "/Users/oxygen/private/worktree",
+            "threadId": "019f-private-active",
+        },
+        observed_at="2026-08-19T01:10:00Z",
+    )
+
+    assert_quarantine_snapshot_round_trips_without_drift(tmp_path, source, prefix="active")
+
+
+def test_cleared_task_quarantine_snapshot_round_trip_is_canonical(tmp_path):
+    source, ledger = ledger_at(tmp_path, "quarantine-cleared-roundtrip-source.sqlite3")
+    key = "owner/repo#80"
+    ledger.upsert_opportunity(
+        opportunity_key=key,
+        owner="owner",
+        repo="repo",
+        issue_number=80,
+        issue_url="https://github.com/owner/repo/issues/80",
+        state="SYSTEM_PROCESSING",
+        source="test",
+        provenance={},
+    )
+    ledger.record_task_quarantine(
+        opportunity_key=key,
+        reason="LEGACY_RESULT_REQUIRES_MIGRATION",
+        dedupe_key="/Users/oxygen/private/legacy-result",
+        payload={
+            "wakeDigest": "c" * 64,
+            "artifactPath": "/Users/oxygen/private/artifact.json",
+            "originalPath": "/Users/oxygen/private/result.json",
+        },
+        observed_at="2026-08-19T01:20:00Z",
+    )
+    ledger.clear_task_quarantine(
+        key,
+        reason="LEGACY_RESULT_REQUIRES_MIGRATION",
+        evidence={
+            "revalidated": True,
+            "review": "ok",
+            "artifactPath": "/Users/oxygen/private/clear.json",
+        },
+        observed_at="2026-08-19T01:21:00Z",
+    )
+
+    assert_quarantine_snapshot_round_trips_without_drift(tmp_path, source, prefix="cleared")
+
+
+def test_task_quarantine_snapshot_cleared_rows_do_not_clear_local_active_rows(tmp_path):
+    source, ledger = ledger_at(tmp_path, "quarantine-cleared-source.sqlite3")
+    key = "owner/repo#88"
+    ledger.upsert_opportunity(
+        opportunity_key=key,
+        owner="owner",
+        repo="repo",
+        issue_number=88,
+        issue_url="https://github.com/owner/repo/issues/88",
+        state="SYSTEM_PROCESSING",
+        source="test",
+        provenance={},
+    )
+    dedupe = "/Users/oxygen/private/cleared"
+    fingerprint = stable_fingerprint(dedupe)
+    ledger.record_task_quarantine(
+        opportunity_key=key,
+        reason="LEGACY_RESULT_REQUIRES_MIGRATION",
+        dedupe_key=dedupe,
+        payload={"wakeDigest": "d" * 64},
+        observed_at="2026-08-19T02:00:00Z",
+    )
+    ledger.clear_task_quarantine(
+        key,
+        reason="LEGACY_RESULT_REQUIRES_MIGRATION",
+        evidence={"revalidated": True, "review": "ok"},
+        observed_at="2026-08-19T02:01:00Z",
+    )
+    snapshot_path = tmp_path / "cleared.snapshot.gz"
+    export_snapshot(source, snapshot_path)
+
+    target, target_ledger = ledger_at(tmp_path, "quarantine-cleared-target.sqlite3")
+    target_ledger.upsert_opportunity(
+        opportunity_key=key,
+        owner="owner",
+        repo="repo",
+        issue_number=88,
+        issue_url="https://github.com/owner/repo/issues/88",
+        state="SYSTEM_PROCESSING",
+        source="test",
+        provenance={},
+    )
+    target_ledger.record_task_quarantine(
+        opportunity_key=key,
+        reason="LEGACY_RESULT_REQUIRES_MIGRATION",
+        dedupe_key=f"snapshot:{fingerprint}",
+        payload={"wakeDigest": "e" * 64},
+        observed_at="2026-08-19T03:00:00Z",
+    )
+    import_snapshot(target, snapshot_path)
+    with ManagedLedger(target)._connection() as connection:
+        rows = connection.execute(
+            "SELECT status,payload_json FROM task_quarantines WHERE opportunity_key=?",
+            (key,),
+        ).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["status"] == "ACTIVE"
+    assert json.loads(rows[0]["payload_json"])["wakeDigest"] == "e" * 64
+
+
+def test_task_quarantine_snapshot_active_row_reisolates_local_cleared_row(tmp_path):
+    source, ledger = ledger_at(tmp_path, "quarantine-active-source.sqlite3")
+    key = "owner/repo#89"
+    ledger.upsert_opportunity(
+        opportunity_key=key,
+        owner="owner",
+        repo="repo",
+        issue_number=89,
+        issue_url="https://github.com/owner/repo/issues/89",
+        state="SYSTEM_PROCESSING",
+        source="test",
+        provenance={},
+    )
+    dedupe = "/Users/oxygen/private/reactivated"
+    fingerprint = stable_fingerprint(dedupe)
+    ledger.record_task_quarantine(
+        opportunity_key=key,
+        reason="PR_FOLLOWUP_REBIND_REQUIRED",
+        dedupe_key=dedupe,
+        payload={"wakeDigest": "a" * 64, "reservationPending": True},
+        observed_at="2026-08-19T03:10:00Z",
+    )
+    snapshot_path = tmp_path / "active-priority.snapshot.gz"
+    export_snapshot(source, snapshot_path)
+
+    target, _ = ledger_at(tmp_path, "quarantine-active-priority-target.sqlite3")
+    with ManagedLedger(target)._connection() as connection:
+        connection.execute(
+            """INSERT INTO task_quarantines
+               (opportunity_key,reason,dedupe_key,payload_json,status,created_at,cleared_at,clear_payload_json)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            (
+                key,
+                "PR_FOLLOWUP_REBIND_REQUIRED",
+                f"snapshot:{fingerprint}",
+                canonical_json({"wakeDigest": "b" * 64}),
+                "CLEARED",
+                "2026-08-19T03:00:00Z",
+                "2026-08-19T03:05:00Z",
+                canonical_json({"revalidated": True}),
+            ),
+        )
+
+    import_snapshot(target, snapshot_path)
+    with ManagedLedger(target)._connection() as connection:
+        row = connection.execute(
+            "SELECT status,payload_json,cleared_at,clear_payload_json FROM task_quarantines "
+            "WHERE opportunity_key=? AND reason=? AND dedupe_key=?",
+            (key, "PR_FOLLOWUP_REBIND_REQUIRED", f"snapshot:{fingerprint}"),
+        ).fetchone()
+    assert row["status"] == "ACTIVE"
+    assert json.loads(row["payload_json"])["wakeDigest"] == "a" * 64
+    assert row["cleared_at"] is None
+    assert row["clear_payload_json"] is None
+
+
+def test_task_quarantine_snapshot_keeps_cleared_when_both_sides_cleared(tmp_path):
+    source, ledger = ledger_at(tmp_path, "quarantine-both-cleared-source.sqlite3")
+    key = "owner/repo#90"
+    ledger.upsert_opportunity(
+        opportunity_key=key,
+        owner="owner",
+        repo="repo",
+        issue_number=90,
+        issue_url="https://github.com/owner/repo/issues/90",
+        state="SYSTEM_PROCESSING",
+        source="test",
+        provenance={},
+    )
+    dedupe = "/Users/oxygen/private/both-cleared"
+    fingerprint = stable_fingerprint(dedupe)
+    ledger.record_task_quarantine(
+        opportunity_key=key,
+        reason="LEGACY_RESULT_REQUIRES_MIGRATION",
+        dedupe_key=dedupe,
+        payload={"wakeDigest": "c" * 64},
+        observed_at="2026-08-19T03:20:00Z",
+    )
+    ledger.clear_task_quarantine(
+        key,
+        reason="LEGACY_RESULT_REQUIRES_MIGRATION",
+        evidence={"revalidated": True},
+        observed_at="2026-08-19T03:21:00Z",
+    )
+    snapshot_path = tmp_path / "both-cleared.snapshot.gz"
+    export_snapshot(source, snapshot_path)
+
+    target, _ = ledger_at(tmp_path, "quarantine-both-cleared-target.sqlite3")
+    with ManagedLedger(target)._connection() as connection:
+        connection.execute(
+            """INSERT INTO task_quarantines
+               (opportunity_key,reason,dedupe_key,payload_json,status,created_at,cleared_at,clear_payload_json)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            (
+                key,
+                "LEGACY_RESULT_REQUIRES_MIGRATION",
+                f"snapshot:{fingerprint}",
+                canonical_json({"wakeDigest": "d" * 64}),
+                "CLEARED",
+                "2026-08-19T03:00:00Z",
+                "2026-08-19T03:05:00Z",
+                canonical_json({"clearPayloadDigest": "e" * 64}),
+            ),
+        )
+
+    import_snapshot(target, snapshot_path)
+    with ManagedLedger(target)._connection() as connection:
+        row = connection.execute(
+            "SELECT status,payload_json,cleared_at,clear_payload_json FROM task_quarantines "
+            "WHERE opportunity_key=? AND reason=? AND dedupe_key=?",
+            (key, "LEGACY_RESULT_REQUIRES_MIGRATION", f"snapshot:{fingerprint}"),
+        ).fetchone()
+    assert row["status"] == "CLEARED"
+    assert json.loads(row["payload_json"])["wakeDigest"] == "d" * 64
+    assert row["cleared_at"] == "2026-08-19T03:05:00Z"
+    assert json.loads(row["clear_payload_json"])["clearPayloadDigest"] == "e" * 64
+
+
+def test_importing_legacy_v7_snapshot_upgrades_only_exact_old_shape(tmp_path):
+    source, _ = populated_source(tmp_path, "legacy-v7-source.sqlite3")
+    snapshot = legacy_v7_snapshot(source)
+    validate_snapshot(snapshot, allow_legacy=True)
+    with pytest.raises(ValueError, match="legacy"):
+        validate_snapshot(snapshot)
+
+    snapshot_path = tmp_path / "legacy-v7.snapshot.gz"
+    write_snapshot(snapshot_path, snapshot)
+    with pytest.raises(ValueError, match="legacy"):
+        decode_snapshot(snapshot_path.read_bytes())
+    target, _ = ledger_at(tmp_path, "legacy-v7-target.sqlite3")
+    import_snapshot(target, snapshot_path)
+    assert schema_status(target)["current"] == MANAGED_SCHEMA_VERSION
+    with ManagedLedger(target)._connection() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM task_quarantines").fetchone()[0] == 0
+
+    extra = json.loads(gzip.decompress(snapshot_path.read_bytes()))
+    extra["rows"]["unexpectedRows"] = []
+    extra["contentDigest"] = _digest(extra["rows"])
+    resign_snapshot(extra)
+    extra_path = tmp_path / "legacy-extra.snapshot.gz"
+    write_snapshot(extra_path, extra)
+    with pytest.raises(ValueError, match="row shape"):
+        import_snapshot(tmp_path / "legacy-extra-target.sqlite3", extra_path)
+
+    wrong_digest = json.loads(gzip.decompress(snapshot_path.read_bytes()))
+    wrong_digest["managedSchemaDigest"] = (
+        "02ea3f38a042c2c48ad61089777d9cf0817190f413270b74010e64a5a860e360"
+    )
+    resign_snapshot(wrong_digest)
+    wrong_digest_path = tmp_path / "legacy-wrong-digest.snapshot.gz"
+    write_snapshot(wrong_digest_path, wrong_digest)
+    with pytest.raises(ValueError, match="unsupported|mismatch"):
+        import_snapshot(tmp_path / "legacy-wrong-digest.sqlite3", wrong_digest_path)
+
+
+def test_current_snapshot_requires_exact_row_collections(tmp_path):
+    source, _ = populated_source(tmp_path, "current-row-shape-source.sqlite3")
+    snapshot = build_snapshot(source)
+
+    extra = json.loads(json.dumps(snapshot))
+    extra["rows"]["futureRows"] = []
+    extra["contentDigest"] = _digest(extra["rows"])
+    resign_snapshot(extra)
+    with pytest.raises(ValueError, match="row shape"):
+        validate_snapshot(extra)
+
+    missing = json.loads(json.dumps(snapshot))
+    missing["rows"].pop("taskQuarantines")
+    missing["contentDigest"] = _digest(missing["rows"])
+    resign_snapshot(missing)
+    with pytest.raises(ValueError, match="row shape"):
+        validate_snapshot(missing)
+
+
+def test_snapshot_rejects_quarantine_shape_drift_and_duplicates(tmp_path):
+    source, ledger = ledger_at(tmp_path, "quarantine-shape.sqlite3")
+    key = "owner/repo#99"
+    ledger.upsert_opportunity(
+        opportunity_key=key,
+        owner="owner",
+        repo="repo",
+        issue_number=99,
+        issue_url="https://github.com/owner/repo/issues/99",
+        state="SYSTEM_PROCESSING",
+        source="test",
+        provenance={},
+    )
+    ledger.record_task_quarantine(
+        opportunity_key=key,
+        reason="PR_FOLLOWUP_REBIND_REQUIRED",
+        dedupe_key="dedupe-99",
+        payload={"wakeDigest": "f" * 64},
+        observed_at="2026-08-19T04:00:00Z",
+    )
+    snapshot = build_snapshot(source)
+
+    extra_field = json.loads(json.dumps(snapshot))
+    extra_field["rows"]["taskQuarantines"][0]["futureField"] = True
+    extra_field["contentDigest"] = _digest(extra_field["rows"])
+    resign_snapshot(extra_field)
+    with pytest.raises(ValueError, match="row shape"):
+        validate_snapshot(extra_field)
+
+    bad_active = json.loads(json.dumps(snapshot))
+    bad_active["rows"]["taskQuarantines"][0]["clearedAt"] = "2026-08-19T04:01:00Z"
+    bad_active["contentDigest"] = _digest(bad_active["rows"])
+    resign_snapshot(bad_active)
+    with pytest.raises(ValueError, match="active quarantine clear fields"):
+        validate_snapshot(bad_active)
+
+    bad_time = json.loads(json.dumps(snapshot))
+    bad_time["rows"]["taskQuarantines"][0]["createdAt"] = "2026-08-19T04:00:00"
+    bad_time["contentDigest"] = _digest(bad_time["rows"])
+    resign_snapshot(bad_time)
+    with pytest.raises(ValueError, match="missing timezone"):
+        validate_snapshot(bad_time)
+
+    duplicate = json.loads(json.dumps(snapshot))
+    duplicate["rows"]["taskQuarantines"].append(dict(duplicate["rows"]["taskQuarantines"][0]))
+    duplicate["contentDigest"] = _digest(duplicate["rows"])
+    resign_snapshot(duplicate)
+    with pytest.raises(ValueError, match="duplicate quarantine"):
+        validate_snapshot(duplicate)
+
+
+def test_v6_to_current_downgrades_authorization_and_requires_new_attestation(tmp_path):
     source, ledger = populated_source(tmp_path, "v6-source.sqlite3")
     with ledger._connection() as connection:
-        connection.execute("DELETE FROM managed_schema_migrations WHERE version=7")
+        connection.execute("DELETE FROM managed_schema_migrations WHERE version>=7")
         connection.execute(
             "INSERT INTO managed_schema_migrations(version,applied_at,migration_digest) VALUES (6, '2026-08-19T00:00:00Z', 'legacy-v6')"
         )
     assert schema_status(source)["current"] == 6
-    target = tmp_path / "v7-target.sqlite3"
-    snapshot = tmp_path / "v7.snapshot.gz"
+    target = tmp_path / "current-target.sqlite3"
+    snapshot = tmp_path / "current.snapshot.gz"
     result = migrate_v6_to_v7(source, target, snapshot_output=snapshot)
-    assert result["toVersion"] == 7
+    assert result["toVersion"] == MANAGED_SCHEMA_VERSION
     migrated = ManagedLedger(target)
     with migrated._connection() as connection:
         assert (
@@ -256,7 +822,7 @@ def test_v6_to_v7_downgrades_authorization_and_requires_new_attestation(tmp_path
 def test_v6_migration_missing_key_leaves_target_unchanged(tmp_path, monkeypatch):
     source, ledger = populated_source(tmp_path, "v6-no-key.sqlite3")
     with ledger._connection() as connection:
-        connection.execute("DELETE FROM managed_schema_migrations WHERE version=7")
+        connection.execute("DELETE FROM managed_schema_migrations WHERE version>=7")
         connection.execute(
             "INSERT INTO managed_schema_migrations(version,applied_at,migration_digest) VALUES (6, '2026-08-19T00:00:00Z', 'legacy-v6')"
         )

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Migrate a managed schema v6 copy with explicit reauthorization downgrade."""
+"""Migrate a managed schema v6 copy to the current schema with explicit reauthorization."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from oss_pr_radar.managed_lifecycle import migrate_v6_to_v7  # noqa: E402
+from oss_pr_radar.managed_lifecycle import migrate_v6_to_current  # noqa: E402
 
 
 def main() -> int:
@@ -20,7 +20,7 @@ def main() -> int:
     parser.add_argument("--target", type=Path, required=True)
     parser.add_argument("--snapshot", type=Path)
     args = parser.parse_args()
-    result = migrate_v6_to_v7(args.source, args.target, snapshot_output=args.snapshot)
+    result = migrate_v6_to_current(args.source, args.target, snapshot_output=args.snapshot)
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     return 0
 
