@@ -214,6 +214,61 @@ def test_advance_once_does_not_report_recorded_quarantine_as_activity(monkeypatc
     assert result["quarantined"][0]["new"] is False
 
 
+def test_slow_cycle_is_successful_with_task_local_context_quarantine(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "oss_pr_radar.local_publication.disk_snapshot", lambda _root: {"level": "ok"}
+    )
+    monkeypatch.setattr(
+        "oss_pr_radar.local_publication.sync_cloud_queue_if_due",
+        lambda *args, **kwargs: {"ok": True, "errors": [], "pending": []},
+    )
+
+    def runner(_root: Path, operation: str):
+        if operation == "reproduction-probe":
+            return {"ok": True, "count": 0, "errors": []}
+        if operation == "context-recover":
+            return {
+                "ok": True,
+                "verified": 39,
+                "unavailable": [],
+                "quarantined": [
+                    {"key": "a/b#1", "reason": "SHARED_CONTEXT_DIGEST_MISMATCH", "new": False}
+                ],
+                "errors": [],
+            }
+        if operation == "ingest-results":
+            return {
+                "ok": True,
+                "ingested": [],
+                "publicationRequests": [],
+                "validationDeferred": [],
+                "quarantined": [],
+                "errors": [],
+            }
+        if operation == "publication-feedback-list":
+            return {"ok": True, "candidates": [], "unresolved": [], "errors": []}
+        if operation == "recovery-list":
+            return {"ok": True, "recoverable": [], "errors": []}
+        return {
+            "ok": True,
+            "updated": [],
+            "renamed": [],
+            "archived": [],
+            "published": [],
+            "pending": [],
+            "blocked": [],
+            "errors": [],
+        }
+
+    result = slow_advance_once(tmp_path, runner=runner)
+
+    assert result["ok"] is True
+    assert result["activity"] is False
+    assert result["slowWorkerDiagnostic"]["worker"] == "slow"
+    assert result["slowWorkerDiagnostic"]["contextRecovery"]["quarantined"] == 1
+    assert result["slowWorkerDiagnostic"]["reproductionProbe"]["ok"] is True
+
+
 def test_terminalized_live_audit_is_published_before_cycle_finishes(tmp_path):
     calls = []
 

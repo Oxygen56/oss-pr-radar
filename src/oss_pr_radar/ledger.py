@@ -4238,6 +4238,70 @@ class RadarLedger:
             "createdAt": row["created_at"],
         }
 
+    def record_shared_context_quarantine(
+        self,
+        *,
+        key: str,
+        reason: str,
+        dedupe_key: str,
+        payload: dict[str, Any],
+        created_at: str,
+    ) -> dict[str, Any]:
+        """Persist a context quarantine and audit event in one transaction."""
+
+        with self.transaction() as connection:
+            ensure_quarantine_schema(connection)
+            rows = connection.execute(
+                """SELECT dedupe_key,status FROM task_quarantines
+                   WHERE opportunity_key=? AND reason=?
+                     AND (dedupe_key=? OR dedupe_key LIKE ? OR dedupe_key LIKE ?)""",
+                (key, reason, dedupe_key, f"{dedupe_key}|reobserved", f"{dedupe_key}|generation=%"),
+            ).fetchall()
+            active = next((row for row in rows if row["status"] == "ACTIVE"), None)
+            if active is not None:
+                effective_key = str(active["dedupe_key"])
+            else:
+                generation = 0
+                for row in rows:
+                    value = str(row["dedupe_key"])
+                    if value == dedupe_key:
+                        generation = max(generation, 1)
+                    elif value == f"{dedupe_key}|reobserved":
+                        generation = max(generation, 2)
+                    elif value.startswith(f"{dedupe_key}|generation="):
+                        try:
+                            generation = max(generation, int(value.rsplit("=", 1)[1]))
+                        except ValueError as exc:
+                            raise LedgerError("task quarantine generation is invalid") from exc
+                effective_key = (
+                    dedupe_key if generation == 0 else f"{dedupe_key}|generation={generation + 1}"
+                )
+            row = record_quarantine(
+                connection,
+                opportunity_key=key,
+                reason=reason,
+                dedupe_key=effective_key,
+                payload=payload,
+                created_at=created_at,
+            )
+            # A recovery ledger can intentionally be empty. The quarantine
+            # row remains the authoritative audit/gate in that case; an event
+            # is added when the corresponding opportunity exists so the
+            # legacy event stream stays useful without violating its FK.
+            if (
+                connection.execute("SELECT 1 FROM opportunities WHERE key=?", (key,)).fetchone()
+                is not None
+            ):
+                self._event(
+                    connection,
+                    key,
+                    "SHARED_TASK_CONTEXT_QUARANTINED",
+                    effective_key,
+                    {"reason": reason, **payload},
+                    created_at,
+                )
+            return {"created": bool(row.get("created")), "dedupeKey": effective_key}
+
     def clear_task_quarantine(self, key: str, *, reason: str, evidence: dict[str, Any]) -> None:
         """Clear a task quarantine only after a fresh controller rebind succeeds."""
 

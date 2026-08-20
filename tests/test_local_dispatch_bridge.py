@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import fcntl
 import hashlib
 import importlib.util
@@ -1385,7 +1386,298 @@ def test_shared_context_recovery_rejects_target_base_tampering(monkeypatch, tmp_
     recovered = MODULE.recover_shared_task_contexts(store)
 
     assert recovered["verified"] == 0
-    assert recovered["errors"][0]["error"] == "shared task context digest mismatch"
+    assert recovered["errors"] == []
+    assert recovered["quarantined"][0]["reason"] == "SHARED_CONTEXT_DIGEST_MISMATCH"
+
+
+def test_shared_context_digest_quarantine_is_private_and_idempotent(monkeypatch, tmp_path):
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    store, _worktree, local_path, shared_path = _context_digest_fixture(tmp_path / "fixture")
+    value = json.loads(local_path.read_text(encoding="utf-8"))
+    value["contextDigest"] = "f" * 64
+    MODULE._atomic_json(shared_path, value)
+    request_now = iso_z(datetime.now(UTC))
+    with store.transaction() as connection:
+        connection.execute(
+            """INSERT INTO publication_requests
+               (request_id,opportunity_key,thread_id,commit_sha,branch,worktree_path,
+                evidence_digest,status,request_json,created_at,updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                "request-context-quarantine",
+                "a/b#1",
+                "thread-1",
+                "a" * 40,
+                "fix/runtime",
+                str(_worktree),
+                "evidence",
+                "PENDING",
+                json.dumps({"opportunityKey": "a/b#1"}),
+                request_now,
+                request_now,
+            ),
+        )
+
+    first = MODULE.recover_shared_task_contexts(store)
+    artifact_path = Path(first["quarantined"][0]["artifactPath"])
+    artifact_bytes = artifact_path.read_bytes()
+    artifact_mtime = artifact_path.stat().st_mtime_ns
+    second = MODULE.recover_shared_task_contexts(store)
+
+    assert first["errors"] == []
+    assert first["quarantined"][0]["new"] is True
+    assert second["errors"] == []
+    assert second["quarantined"][0]["new"] is False
+    assert artifact_path.read_bytes() == artifact_bytes
+    assert artifact_path.stat().st_mtime_ns == artifact_mtime
+    assert store.publication_work_items() == []
+    artifact = json.loads(Path(first["quarantined"][0]["artifactPath"]).read_text())
+    assert artifact["originalBytesSha256"] == first["quarantined"][0]["originalBytesSha256"]
+    assert base64.b64decode(artifact["originalBytesBase64"]) == shared_path.read_bytes()
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM task_quarantines WHERE opportunity_key='a/b#1'"
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM events WHERE opportunity_key='a/b#1' "
+                "AND event_type='SHARED_TASK_CONTEXT_QUARANTINED'"
+            ).fetchone()[0]
+            == 1
+        )
+
+
+def test_shared_context_bootstrap_path_is_quarantined_separately(monkeypatch, tmp_path):
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    store, _worktree, local_path, shared_path = _context_digest_fixture(tmp_path / "fixture")
+    value = json.loads(local_path.read_text(encoding="utf-8"))
+    value["bootstrapContextPath"] = str(tmp_path / "other-context.json")
+    MODULE._atomic_json(local_path, value)
+    MODULE._atomic_json(shared_path, value)
+
+    recovered = MODULE.recover_shared_task_contexts(store)
+
+    assert recovered["verified"] == 0
+    assert recovered["errors"] == []
+    assert recovered["quarantined"][0]["reason"] == "SHARED_CONTEXT_BOOTSTRAP_PATH_INVALID"
+
+
+def test_shared_context_quarantine_artifact_identity_includes_reason(monkeypatch, tmp_path):
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    reasons = iter(["SHARED_CONTEXT_DIGEST_MISMATCH", "SHARED_CONTEXT_BOOTSTRAP_PATH_INVALID"])
+    monkeypatch.setattr(MODULE, "_shared_context_quarantine_reason", lambda _exc: next(reasons))
+    store, _worktree, local_path, shared_path = _context_digest_fixture(tmp_path / "fixture")
+    value = json.loads(local_path.read_text(encoding="utf-8"))
+    value["contextDigest"] = "f" * 64
+    MODULE._atomic_json(shared_path, value)
+
+    first = MODULE.recover_shared_task_contexts(store)
+    second = MODULE.recover_shared_task_contexts(store)
+
+    first_path = Path(first["quarantined"][0]["artifactPath"])
+    second_path = Path(second["quarantined"][0]["artifactPath"])
+    assert first_path != second_path
+    assert "SHARED_CONTEXT_DIGEST_MISMATCH" in first_path.name
+    assert "SHARED_CONTEXT_BOOTSTRAP_PATH_INVALID" in second_path.name
+    assert first_path.exists()
+    assert second_path.exists()
+
+
+def test_shared_context_quarantine_reactivates_each_cleared_generation(monkeypatch, tmp_path):
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    store, _worktree, local_path, shared_path = _context_digest_fixture(tmp_path / "fixture")
+    value = json.loads(local_path.read_text(encoding="utf-8"))
+    value["contextDigest"] = "f" * 64
+    MODULE._atomic_json(shared_path, value)
+
+    first = MODULE.recover_shared_task_contexts(store)
+    store.clear_task_quarantine(
+        "a/b#1", reason="SHARED_CONTEXT_DIGEST_MISMATCH", evidence={"revalidated": True}
+    )
+    second = MODULE.recover_shared_task_contexts(store)
+    store.clear_task_quarantine(
+        "a/b#1", reason="SHARED_CONTEXT_DIGEST_MISMATCH", evidence={"revalidated": True}
+    )
+    third = MODULE.recover_shared_task_contexts(store)
+
+    assert [
+        item["new"]
+        for item in (first["quarantined"] + second["quarantined"] + third["quarantined"])
+    ] == [True, True, True]
+    assert store.active_task_quarantine("a/b#1") is not None
+    with store.connect() as connection:
+        rows = connection.execute(
+            "SELECT dedupe_key,status FROM task_quarantines "
+            "WHERE opportunity_key='a/b#1' AND reason='SHARED_CONTEXT_DIGEST_MISMATCH' "
+            "ORDER BY quarantine_id"
+        ).fetchall()
+    assert [row["status"] for row in rows] == ["CLEARED", "CLEARED", "ACTIVE"]
+    assert rows[0]["dedupe_key"] != rows[1]["dedupe_key"] != rows[2]["dedupe_key"]
+
+
+def test_shared_context_quarantine_artifact_tamper_is_global_fail_closed(monkeypatch, tmp_path):
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    store, _worktree, local_path, shared_path = _context_digest_fixture(tmp_path / "fixture")
+    value = json.loads(local_path.read_text(encoding="utf-8"))
+    value["contextDigest"] = "f" * 64
+    MODULE._atomic_json(shared_path, value)
+    first = MODULE.recover_shared_task_contexts(store)
+    artifact = Path(first["quarantined"][0]["artifactPath"])
+    original = artifact.read_bytes()
+    artifact.write_bytes(original.replace(b"shared-context-quarantine-v1", b"tampered-context-v1"))
+    artifact.chmod(0o600)
+
+    second = MODULE.recover_shared_task_contexts(store)
+
+    assert second["quarantined"] == []
+    assert "quarantine persistence failed" in second["errors"][0]["error"]
+    assert artifact.read_bytes() != original
+
+
+def test_shared_context_quarantine_artifact_mode_tamper_is_global_fail_closed(
+    monkeypatch, tmp_path
+):
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    store, _worktree, local_path, shared_path = _context_digest_fixture(tmp_path / "fixture")
+    value = json.loads(local_path.read_text(encoding="utf-8"))
+    value["contextDigest"] = "f" * 64
+    MODULE._atomic_json(shared_path, value)
+    first = MODULE.recover_shared_task_contexts(store)
+    artifact = Path(first["quarantined"][0]["artifactPath"])
+    artifact.chmod(0o644)
+
+    second = MODULE.recover_shared_task_contexts(store)
+
+    assert second["quarantined"] == []
+    assert "quarantine persistence failed" in second["errors"][0]["error"]
+
+
+@pytest.mark.parametrize("layout", ["root-symlink", "root-mode", "lock-symlink"])
+def test_shared_context_quarantine_path_hijack_fails_closed(monkeypatch, tmp_path, layout):
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    shared_root = MODULE.shared_context_root()
+    shared_root.mkdir(parents=True)
+    invalid = shared_root / "a--b--1.json"
+    invalid.write_bytes(b"not-json")
+    invalid.chmod(0o600)
+    quarantine_root = MODULE.shared_context_quarantine_root()
+    external = tmp_path / "external"
+    external.mkdir()
+    if layout == "root-symlink":
+        external.chmod(0o700)
+        quarantine_root.parent.mkdir(parents=True, exist_ok=True)
+        quarantine_root.symlink_to(external, target_is_directory=True)
+    else:
+        quarantine_root.mkdir(parents=True)
+        quarantine_root.chmod(0o750 if layout == "root-mode" else 0o700)
+        if layout == "lock-symlink":
+            (external / "lock-target").touch()
+            (quarantine_root / ".context-quarantine.lock").symlink_to(external / "lock-target")
+
+    recovered = MODULE.recover_shared_task_contexts(RadarLedger(tmp_path / "ledger.sqlite3"))
+
+    assert recovered["quarantined"] == []
+    assert "quarantine persistence failed" in recovered["errors"][0]["error"]
+    assert list(external.iterdir()) == (
+        [external / "lock-target"] if layout == "lock-symlink" else []
+    )
+
+
+def test_shared_context_quarantine_concurrent_observation_has_one_artifact(monkeypatch, tmp_path):
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    store, _worktree, local_path, shared_path = _context_digest_fixture(tmp_path / "fixture")
+    value = json.loads(local_path.read_text(encoding="utf-8"))
+    value["contextDigest"] = "f" * 64
+    MODULE._atomic_json(shared_path, value)
+    results = []
+
+    def recover():
+        results.append(MODULE.recover_shared_task_contexts(store))
+
+    threads = [threading.Thread(target=recover) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5)
+
+    assert len(results) == 2
+    assert [result["errors"] for result in results] == [[], []]
+    paths = {result["quarantined"][0]["artifactPath"] for result in results}
+    assert len(paths) == 1
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM task_quarantines WHERE opportunity_key='a/b#1'"
+            ).fetchone()[0]
+            == 1
+        )
+
+
+def test_shared_context_unknown_filename_fails_without_quarantine_write(monkeypatch, tmp_path):
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    root = MODULE.shared_context_root()
+    root.mkdir(parents=True)
+    path = root / "untrusted.json"
+    path.write_bytes(b"not-json")
+    path.chmod(0o600)
+
+    recovered = MODULE.recover_shared_task_contexts(RadarLedger(tmp_path / "ledger.sqlite3"))
+
+    assert recovered["quarantined"] == []
+    assert recovered["errors"][0]["error"].endswith("identity is unavailable for quarantine")
+    assert not MODULE.shared_context_quarantine_root().exists()
+
+
+def _shared_context_inventory(root: Path) -> str:
+    entries = []
+    if root.exists():
+        for path in sorted(root.rglob("*")):
+            relative = str(path.relative_to(root))
+            stat_result = path.lstat()
+            if path.is_symlink():
+                entries.append((relative, "symlink", os.readlink(path)))
+            elif path.is_file():
+                entries.append(
+                    (
+                        relative,
+                        "file",
+                        stat_result.st_mode & 0o777,
+                        hashlib.sha256(path.read_bytes()).hexdigest(),
+                    )
+                )
+            else:
+                entries.append((relative, "directory", stat_result.st_mode & 0o777))
+    return sha256_json(entries)
+
+
+def test_shared_context_recovery_is_hermetic_against_host_inventory(monkeypatch, tmp_path):
+    host_contexts = Path.home() / "Documents" / "github" / ".oss-pr-radar" / "task-contexts"
+    before = _shared_context_inventory(host_contexts)
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    root = MODULE.shared_context_root()
+    root.mkdir(parents=True)
+    invalid = root / "a--b--1.json"
+    invalid.write_bytes(b"not-json")
+    invalid.chmod(0o600)
+
+    recovered = MODULE.recover_shared_task_contexts(RadarLedger(tmp_path / "ledger.sqlite3"))
+
+    assert recovered["errors"] == []
+    assert recovered["quarantined"][0]["new"] is True
+    assert _shared_context_inventory(host_contexts) == before
 
 
 def test_published_legacy_context_without_target_base_is_accepted(monkeypatch, tmp_path):
@@ -1646,7 +1938,8 @@ def test_shared_context_recovery_does_not_rebuild_a_dispatched_task(monkeypatch,
 
     assert result["verified"] == 0
     assert result["restored"] == []
-    assert result["errors"][0]["error"] == "active task context disagrees with the ledger"
+    assert result["errors"] == []
+    assert result["quarantined"][0]["reason"] == "SHARED_CONTEXT_INVALID"
 
 
 def test_shared_context_recovery_fails_closed_when_mirrors_disagree(monkeypatch, tmp_path):
@@ -1670,7 +1963,8 @@ def test_shared_context_recovery_fails_closed_when_mirrors_disagree(monkeypatch,
 
     assert result["verified"] == 0
     assert result["restored"] == []
-    assert result["errors"][0]["error"] == "shared and worktree task context mirrors disagree"
+    assert result["errors"] == []
+    assert result["quarantined"][0]["reason"] == "SHARED_CONTEXT_INVALID"
 
 
 def test_shared_context_recovery_marks_clean_published_result_as_consumed(monkeypatch, tmp_path):

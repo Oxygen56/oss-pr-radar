@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import fcntl
 import hashlib
 import html
@@ -13,8 +14,10 @@ import re
 import selectors
 import shutil
 import sqlite3
+import stat
 import subprocess
 import sys
+import time
 import tomllib
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -52,6 +55,7 @@ from oss_pr_radar.publication import (  # noqa: E402
 )
 from oss_pr_radar.release_binding import (  # noqa: E402
     bind_runtime,
+    open_directory_handle,
     runtime_ledger_path,
     runtime_python,
 )
@@ -651,6 +655,12 @@ def managed_worktree_root() -> Path:
 
 def shared_context_root() -> Path:
     return (GITHUB_ROOT / TASK_PRIVATE_DIR / "task-contexts").resolve()
+
+
+def shared_context_quarantine_root() -> Path:
+    # Keep this lexical so open_directory_handle can reject a pre-existing
+    # symlink instead of resolving it into an attacker-controlled directory.
+    return GITHUB_ROOT / TASK_PRIVATE_DIR / "context-quarantine"
 
 
 def managed_worktree_path(intent_id: str, repo: str) -> Path:
@@ -1537,10 +1547,12 @@ def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
             "restored": [],
             "resultReceiptsRestored": 0,
             "unavailable": [],
+            "quarantined": [],
             "errors": [],
         }
     restored: list[dict[str, Any]] = []
     unavailable: list[dict[str, Any]] = []
+    quarantined: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
     result_receipts_restored = 0
     for path in sorted(root.glob("*.json")):
@@ -1593,12 +1605,31 @@ def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
                 continue
             errors.append({"path": str(path), "error": str(exc)[:300]})
         except (OSError, RuntimeError, ValueError) as exc:
-            errors.append({"path": str(path), "error": str(exc)[:300]})
+            try:
+                item = _quarantine_shared_context(store, path, exc)
+            except (OSError, RuntimeError, ValueError, sqlite3.Error) as quarantine_exc:
+                errors.append(
+                    {
+                        "path": str(path),
+                        "error": f"context quarantine persistence failed: {str(quarantine_exc)[:240]}",
+                    }
+                )
+            else:
+                if item is None:
+                    errors.append(
+                        {
+                            "path": str(path),
+                            "error": "shared task context identity is unavailable for quarantine",
+                        }
+                    )
+                else:
+                    quarantined.append(item)
     return {
         "verified": len(restored),
         "restored": restored,
         "resultReceiptsRestored": result_receipts_restored,
         "unavailable": unavailable,
+        "quarantined": quarantined,
         "errors": errors,
     }
 
@@ -1637,7 +1668,13 @@ def sync_queue(path: Path = LEDGER_PATH) -> dict[str, Any]:
             "taskContextRecovery": context_recovery,
             "prFollowup": {"status": "deferred", "reason": "task_context_recovery_failed"},
         }
-    incoming_by_key = {str(item.get("key") or ""): item for item in intents}
+    quarantined_keys = {
+        str(item.get("key") or "")
+        for item in context_recovery.get("quarantined") or []
+        if item.get("key")
+    }
+    safe_intents = [item for item in intents if str(item.get("key") or "") not in quarantined_keys]
+    incoming_by_key = {str(item.get("key") or ""): item for item in safe_intents}
     workspace_superseded: list[dict[str, str]] = []
     for unavailable in context_recovery["unavailable"]:
         if unavailable.get("published"):
@@ -1660,9 +1697,9 @@ def sync_queue(path: Path = LEDGER_PATH) -> dict[str, Any]:
             )
     stale_terminal = store.reconcile_terminal_intents()
     superseded = store.reconcile_pending(
-        {str(item["intentId"]) for item in intents if item.get("intentId")}
+        {str(item["intentId"]) for item in safe_intents if item.get("intentId")}
     )
-    inserted = sum(store.enqueue(item) for item in intents)
+    inserted = sum(store.enqueue(item) for item in safe_intents)
     followup_import: dict[str, Any]
     try:
         followup = fetch_cloud_pr_followup()
@@ -1703,6 +1740,7 @@ def sync_queue(path: Path = LEDGER_PATH) -> dict[str, Any]:
         "staleTerminalRejected": len(stale_terminal),
         "missingWorkspacesSuperseded": workspace_superseded,
         "taskContextRecovery": context_recovery,
+        "quarantined": context_recovery.get("quarantined", []),
         "prFollowup": followup_import,
     }
 
@@ -2553,6 +2591,246 @@ def _atomic_json(path: Path, value: dict[str, Any]) -> None:
     )
     os.chmod(temporary, 0o600)
     os.replace(temporary, path)
+
+
+def _atomic_private_json(
+    path: Path, value: dict[str, Any], *, directory_fd: int | None = None
+) -> None:
+    """Persist private quarantine evidence with exact raw bytes embedded."""
+
+    payload = (json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode(
+        "utf-8"
+    )
+    owns_directory = directory_fd is None
+    if owns_directory:
+        directory_fd, _ = open_directory_handle(
+            path.parent, label="context quarantine", create=True
+        )
+    assert directory_fd is not None
+    temporary_name = f".context-quarantine-{os.getpid()}-{time.time_ns()}.tmp"
+    descriptor = -1
+    try:
+        descriptor = os.open(
+            temporary_name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+            dir_fd=directory_fd,
+        )
+        view = memoryview(payload)
+        while view:
+            view = view[os.write(descriptor, view) :]
+        os.fsync(descriptor)
+        os.close(descriptor)
+        descriptor = -1
+        os.replace(
+            temporary_name,
+            path.name,
+            src_dir_fd=directory_fd,
+            dst_dir_fd=directory_fd,
+        )
+        os.fsync(directory_fd)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        try:
+            os.unlink(temporary_name, dir_fd=directory_fd)
+        except FileNotFoundError:
+            pass
+        if owns_directory:
+            os.close(directory_fd)
+
+
+def _shared_context_identity_from_filename(path: Path) -> tuple[str, str] | None:
+    match = re.fullmatch(r"([A-Za-z0-9_.-]+)--([A-Za-z0-9_.-]+)--([1-9][0-9]*)\.json", path.name)
+    if match is None:
+        return None
+    owner, repository, number = match.groups()
+    repo = f"{owner}/{repository}"
+    return f"{repo}#{number}", f"https://github.com/{repo}/issues/{number}"
+
+
+def _shared_context_quarantine_reason(exc: BaseException) -> str:
+    message = str(exc)
+    if "digest mismatch" in message:
+        return "SHARED_CONTEXT_DIGEST_MISMATCH"
+    if "bootstrap path" in message:
+        return "SHARED_CONTEXT_BOOTSTRAP_PATH_INVALID"
+    return "SHARED_CONTEXT_INVALID"
+
+
+def _ensure_context_quarantine_artifact(
+    artifact_path: Path,
+    *,
+    key: str,
+    issue_url: str,
+    reason: str,
+    source_path: Path,
+    raw: bytes,
+    source_digest: str,
+    error: str,
+) -> dict[str, Any]:
+    """Create once, then only verify a quarantine artifact under a file lock."""
+
+    parent_fd, _ = open_directory_handle(
+        artifact_path.parent, label="context quarantine", create=True
+    )
+    if stat.S_IMODE(os.fstat(parent_fd).st_mode) != 0o700:
+        os.close(parent_fd)
+        raise RuntimeError("context quarantine directory is not private")
+    lock_name = ".context-quarantine.lock"
+    lock_fd = -1
+    try:
+        for attempt in range(20):
+            try:
+                lock_fd = os.open(
+                    lock_name,
+                    os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
+                    0o600,
+                    dir_fd=parent_fd,
+                )
+                break
+            except FileNotFoundError:
+                if attempt == 19:
+                    raise
+                time.sleep(0.001)
+    except Exception:
+        os.close(parent_fd)
+        raise
+    try:
+        lock_stat = os.fstat(lock_fd)
+        if (
+            not stat.S_ISREG(lock_stat.st_mode)
+            or lock_stat.st_uid != os.getuid()
+            or stat.S_IMODE(lock_stat.st_mode) != 0o600
+        ):
+            raise RuntimeError("context quarantine lock is unsafe")
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        try:
+            artifact_stat = os.stat(artifact_path.name, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            artifact_stat = None
+        if artifact_stat is not None:
+            if (
+                stat.S_ISLNK(artifact_stat.st_mode)
+                or not stat.S_ISREG(artifact_stat.st_mode)
+                or artifact_stat.st_uid != os.getuid()
+                or stat.S_IMODE(artifact_stat.st_mode) != 0o600
+            ):
+                raise RuntimeError("shared context quarantine artifact is not a regular file")
+            try:
+                artifact_fd = os.open(
+                    artifact_path.name,
+                    os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                    dir_fd=parent_fd,
+                )
+                with os.fdopen(artifact_fd, "r", encoding="utf-8") as handle:
+                    artifact = json.load(handle)
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as artifact_exc:
+                raise RuntimeError(
+                    "shared context quarantine artifact is invalid"
+                ) from artifact_exc
+            if not isinstance(artifact, dict):
+                raise RuntimeError("shared context quarantine artifact is invalid")
+            if any(
+                artifact.get(name) != expected
+                for name, expected in {
+                    "schemaVersion": "shared-context-quarantine-v1",
+                    "key": key,
+                    "issueUrl": issue_url,
+                    "reason": reason,
+                    "originalPath": str(source_path),
+                    "originalBytesSha256": source_digest,
+                }.items()
+            ):
+                raise RuntimeError("shared context quarantine artifact binding changed")
+            try:
+                encoded_original = base64.b64decode(
+                    str(artifact.get("originalBytesBase64") or ""), validate=True
+                )
+            except (ValueError, TypeError) as artifact_exc:
+                raise RuntimeError(
+                    "shared context quarantine artifact bytes are invalid"
+                ) from artifact_exc
+            if encoded_original != raw:
+                raise RuntimeError("shared context quarantine artifact bytes changed")
+            if not isinstance(artifact.get("observedAt"), str) or not artifact["observedAt"]:
+                raise RuntimeError("shared context quarantine artifact timestamp is invalid")
+            return artifact
+        artifact = {
+            "schemaVersion": "shared-context-quarantine-v1",
+            "key": key,
+            "issueUrl": issue_url,
+            "reason": reason,
+            "error": error,
+            "originalPath": str(source_path),
+            "originalMode": source_path.stat().st_mode & 0o777,
+            "originalBytesSha256": source_digest,
+            "originalBytesBase64": base64.b64encode(raw).decode("ascii"),
+            "observedAt": iso_z(datetime.now(UTC)),
+        }
+        _atomic_private_json(artifact_path, artifact, directory_fd=parent_fd)
+        return artifact
+    finally:
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        finally:
+            os.close(lock_fd)
+            os.close(parent_fd)
+
+
+def _quarantine_shared_context(
+    store: RadarLedger, path: Path, exc: BaseException
+) -> dict[str, Any] | None:
+    """Persist one untrusted context without allowing it into the queue."""
+
+    identity = _shared_context_identity_from_filename(path)
+    if identity is None or path.is_symlink() or not path.is_file():
+        return None
+    raw = path.read_bytes()
+    source_digest = hashlib.sha256(raw).hexdigest()
+    key, issue_url = identity
+    reason = _shared_context_quarantine_reason(exc)
+    dedupe_key = hashlib.sha256(
+        f"shared-context|{path}|{source_digest}|{reason}".encode("utf-8")
+    ).hexdigest()
+    if re.fullmatch(r"[A-Z0-9_]+", reason) is None:
+        raise RuntimeError("shared context quarantine reason is unsafe")
+    artifact_path = (
+        shared_context_quarantine_root()
+        / f"{key.replace('/', '--').replace('#', '--')}-{reason}-{source_digest}.json"
+    )
+    artifact = _ensure_context_quarantine_artifact(
+        artifact_path,
+        key=key,
+        issue_url=issue_url,
+        reason=reason,
+        source_path=path,
+        raw=raw,
+        source_digest=source_digest,
+        error=str(exc)[:500],
+    )
+    persisted = store.record_shared_context_quarantine(
+        key=key,
+        reason=reason,
+        dedupe_key=dedupe_key,
+        payload={
+            "issueUrl": issue_url,
+            "originalPath": str(path),
+            "originalBytesSha256": source_digest,
+            "artifactPath": str(artifact_path),
+            "error": str(exc)[:500],
+        },
+        created_at=artifact["observedAt"],
+    )
+    return {
+        "key": key,
+        "issueUrl": issue_url,
+        "path": str(path),
+        "reason": reason,
+        "artifactPath": str(artifact_path),
+        "originalBytesSha256": source_digest,
+        "new": bool(persisted.get("created")),
+    }
 
 
 def _exclude_private_task_dir(worktree: Path) -> None:

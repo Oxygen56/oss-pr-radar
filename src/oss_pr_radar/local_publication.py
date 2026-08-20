@@ -52,6 +52,36 @@ SLOW_BACKOFF_STATE = "slow-worker-backoff.json"
 MAX_FAST_OPERATION_SECONDS = 15
 
 
+def _slow_worker_diagnostic(
+    root: Path,
+    result: dict[str, Any] | None = None,
+    reproduction: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    release = active_release_evidence(root)
+    value = result if isinstance(result, dict) else {}
+    recovery = value.get("taskContextRecovery")
+    recovery = recovery if isinstance(recovery, dict) else {}
+    return {
+        "worker": "slow",
+        "release": {
+            key: release.get(key)
+            for key in ("valid", "releaseId", "commit", "manifestSha256", "policyDigest")
+        },
+        "contextRecovery": {
+            "verified": int(recovery.get("verified") or 0),
+            "unavailable": len(recovery.get("unavailable") or []),
+            "quarantined": len(recovery.get("quarantined") or []),
+            "errors": len(recovery.get("errors") or []),
+        },
+        "reproductionProbe": {
+            "ok": reproduction.get("ok") if isinstance(reproduction, dict) else None,
+            "errors": list(reproduction.get("errors") or [])[:3]
+            if isinstance(reproduction, dict)
+            else [],
+        },
+    }
+
+
 def _terminate_process_group(process: subprocess.Popen[str]) -> None:
     try:
         os.killpg(process.pid, signal.SIGTERM)
@@ -494,6 +524,11 @@ def slow_advance_once(
                     reproduction = runner(root, "reproduction-probe")
                     result = advance_once(root, runner=runner, queue_sync_interval_seconds=None)
                     result["reproductionProbe"] = reproduction
+                    result["slowWorkerDiagnostic"] = _slow_worker_diagnostic(
+                        root, result, reproduction
+                    )
+                if "slowWorkerDiagnostic" not in result:
+                    result["slowWorkerDiagnostic"] = _slow_worker_diagnostic(root, result)
             except BaseException as exc:
                 failure_retry = time.time() + delay
                 error_code = (
@@ -539,7 +574,11 @@ def slow_advance_once(
                 )
                 if isinstance(exc, (KeyboardInterrupt, SystemExit)):
                     raise
-                return {"ok": False, "errors": [{"error": str(exc)[:400]}]}
+                return {
+                    "ok": False,
+                    "errors": [{"error": str(exc)[:400]}],
+                    "slowWorkerDiagnostic": _slow_worker_diagnostic(root),
+                }
             ok = bool(result.get("ok"))
             completed_retry = time.time() if ok else time.time() + delay
             write_json(
@@ -589,11 +628,13 @@ def advance_once(
     queue_sync_interval_seconds: int | None = None,
 ) -> dict[str, Any]:
     root = root.resolve()
-    recovery = runner(root, "context-recover")
-    recovery_errors = list(recovery.get("errors") or [])
-    recovery_unavailable = list(recovery.get("unavailable") or [])
+    context_recovery = runner(root, "context-recover")
+    recovery_errors = list(context_recovery.get("errors") or [])
+    recovery_unavailable = list(context_recovery.get("unavailable") or [])
+    recovery_quarantined = list(context_recovery.get("quarantined") or [])
     public_unavailable = recovery_unavailable[:5]
-    if recovery.get("ok") is False or recovery_errors:
+    public_quarantined = recovery_quarantined[:5]
+    if context_recovery.get("ok") is False or recovery_errors:
         return {
             "ok": False,
             "activity": True,
@@ -606,14 +647,13 @@ def advance_once(
             "blocked": [],
             "contextsUnavailable": public_unavailable,
             "contextsUnavailableCount": len(recovery_unavailable),
+            "contextsQuarantined": public_quarantined,
+            "contextsQuarantinedCount": len(recovery_quarantined),
             "errors": recovery_errors
             or [{"error": "task context recovery failed before result ingestion"}],
         }
     ingestion = runner(root, "ingest-results")
     ingestion_quarantined = list(ingestion.get("quarantined") or [])
-    ingestion_quarantine_activity = [
-        item for item in ingestion_quarantined if item.get("new", True) is not False
-    ]
     ingestion_errors = list(ingestion.get("errors") or [])
     if ingestion.get("ok") is False or ingestion_errors:
         return {
@@ -628,6 +668,8 @@ def advance_once(
             "blocked": [],
             "contextsUnavailable": public_unavailable,
             "contextsUnavailableCount": len(recovery_unavailable),
+            "contextsQuarantined": public_quarantined,
+            "contextsQuarantinedCount": len(recovery_quarantined),
             "quarantined": ingestion_quarantined,
             "errors": ingestion_errors
             or [{"error": "task result ingestion failed before publication"}],
@@ -649,6 +691,8 @@ def advance_once(
             "blocked": [],
             "contextsUnavailable": public_unavailable,
             "contextsUnavailableCount": len(recovery_unavailable),
+            "contextsQuarantined": public_quarantined,
+            "contextsQuarantinedCount": len(recovery_quarantined),
             "quarantined": ingestion_quarantined,
             "errors": review_errors or [{"error": "independent review failed before publication"}],
         }
@@ -659,9 +703,6 @@ def advance_once(
     )
     post_review_errors = list(post_review_ingestion.get("errors") or [])
     post_review_quarantined = list(post_review_ingestion.get("quarantined") or [])
-    post_review_quarantine_activity = [
-        item for item in post_review_quarantined if item.get("new", True) is not False
-    ]
     if post_review_ingestion.get("ok") is False or post_review_errors:
         return {
             "ok": False,
@@ -685,6 +726,8 @@ def advance_once(
             "blocked": [],
             "contextsUnavailable": public_unavailable,
             "contextsUnavailableCount": len(recovery_unavailable),
+            "contextsQuarantined": public_quarantined,
+            "contextsQuarantinedCount": len(recovery_quarantined),
             "quarantined": ingestion_quarantined + post_review_quarantined,
             "errors": post_review_errors
             or [{"error": "task result ingestion failed after independent review"}],
@@ -723,7 +766,6 @@ def advance_once(
         *list(post_review_ingestion.get("validationDeferred") or []),
     ]
     quarantined = ingestion_quarantined + post_review_quarantined
-    quarantine_activity = ingestion_quarantine_activity + post_review_quarantine_activity
     blocked = list(publication.get("blocked") or [])
     pending = list(publication.get("pending") or [])
     renamed = list(title_reconciliation.get("renamed") or [])
@@ -771,7 +813,6 @@ def advance_once(
         or published
         or publication_feedback.get("reconciled")
         or blocked
-        or quarantine_activity
         or errors
         or drain_activity
         or queue_sync.get("inserted")
@@ -806,6 +847,9 @@ def advance_once(
         "blocked": blocked,
         "contextsUnavailable": public_unavailable,
         "contextsUnavailableCount": len(recovery_unavailable),
+        "contextsQuarantined": public_quarantined,
+        "contextsQuarantinedCount": len(recovery_quarantined),
+        "taskContextRecovery": context_recovery,
         "quarantined": quarantined,
         "errors": errors,
     }
@@ -853,6 +897,8 @@ def compact_advance_result(result: dict[str, Any]) -> dict[str, Any]:
             "pending": len(queue_sync.get("pending") or []),
         },
         "contextsUnavailableCount": int(result.get("contextsUnavailableCount") or 0),
+        "contextsQuarantinedCount": int(result.get("contextsQuarantinedCount") or 0),
+        "slowWorkerDiagnostic": result.get("slowWorkerDiagnostic"),
         "errors": list(result.get("errors") or [])[:5],
     }
 
