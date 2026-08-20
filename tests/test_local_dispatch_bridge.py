@@ -6931,6 +6931,82 @@ def test_ingestion_accepts_current_ci_green_continuation_result(tmp_path):
     assert result["ingested"] == [{"key": "a/b#1", "stage": "CI_GREEN"}]
 
 
+def test_ingestion_skips_published_terminal_missing_worktree_after_result_ingested(tmp_path):
+    store, worktree, _head_sha, _pr_url = _published_followup_store(tmp_path)
+    store.record_stage("a/b#1", "CI_GREEN", evidence={"checks": "green"})
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    context = json.loads(context_path.read_text(encoding="utf-8"))
+    result_path = Path(context["resultPath"])
+    result_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": "radar-task-result-v1",
+                "contextDigest": context["contextDigest"],
+                "key": "a/b#1",
+                "issueUrl": "https://github.com/a/b/issues/1",
+                "threadId": "thread-1",
+                "worktreePath": str(worktree.resolve()),
+                "stage": "CI_GREEN",
+                "followupDigest": context["prFollowup"]["wakeDigest"],
+                "evidence": {"verified": True},
+            }
+        ),
+        encoding="utf-8",
+    )
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    assert first["ok"] is True, first["errors"]
+    assert first["ingested"] == [{"key": "a/b#1", "stage": "CI_GREEN"}]
+
+    shutil.rmtree(worktree)
+
+    second = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    third = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    for result in (second, third):
+        assert result["ok"] is True, result.get("errors")
+        assert result["errors"] == []
+        assert result["ingested"] == []
+        assert result["ignored"] == [
+            {
+                "key": "a/b#1",
+                "reason": "PUBLISHED_TERMINAL_WORKTREE_MISSING",
+            }
+        ]
+
+
+def test_ingestion_reports_unpublished_missing_worktree(tmp_path):
+    _store, worktree, _result_path = _controller_commit_result(tmp_path)
+    shutil.rmtree(worktree)
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert result["ok"] is False
+    assert result["ingested"] == []
+    assert result["errors"][0]["key"] == "a/b#1"
+    assert "worktree is missing" in result["errors"][0]["error"]
+
+
+def test_ingestion_reports_unfinished_followup_missing_worktree(tmp_path):
+    store, worktree, _head_sha, _pr_url = _published_followup_store(tmp_path)
+    store.record_task_result_ingested("a/b#1", digest="result", stage="PR_OPEN")
+    candidate = store.pr_followup_candidates()[0]
+    store.reserve_pr_followup(thread_id="thread-1", wake_digest=candidate["wakeDigest"])
+    store.commit_pr_followup(thread_id="thread-1", wake_digest=candidate["wakeDigest"])
+    shutil.rmtree(worktree)
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert result["ok"] is False
+    assert result["ingested"] == []
+    assert result["errors"][0]["key"] == "a/b#1"
+    assert "worktree is missing" in result["errors"][0]["error"]
+
+
 def test_pr_followup_reserve_refreshes_context_and_routes_to_shared_context(monkeypatch, tmp_path):
     store, worktree, _head_sha, pr_url = _published_followup_store(tmp_path)
     project_root = tmp_path / "github"

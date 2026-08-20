@@ -795,6 +795,59 @@ def test_slow_worker_persisted_backoff_first_run_records_fresh_health(tmp_path, 
     assert "slowNoopReason" not in slow
 
 
+def test_slow_worker_marks_terminal_missing_worktree_skip_as_success(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "oss_pr_radar.local_publication.disk_snapshot", lambda _root: {"level": "ok"}
+    )
+    calls = []
+
+    def runner(_root: Path, operation: str):
+        calls.append(operation)
+        if operation == "reproduction-probe":
+            return {"ok": True, "errors": []}
+        if operation == "context-recover":
+            return {"ok": True, "verified": 0, "unavailable": [], "errors": []}
+        if operation == "ingest-results":
+            return {
+                "ok": True,
+                "ingested": [],
+                "publicationRequests": [],
+                "validationDeferred": [],
+                "ignored": [
+                    {
+                        "key": "a/b#1",
+                        "reason": "PUBLISHED_TERMINAL_WORKTREE_MISSING",
+                    }
+                ],
+                "errors": [],
+            }
+        if operation == "independent-review-run":
+            return {"ok": True, "updated": [], "errors": []}
+        if operation == "title-reconcile":
+            return {"ok": True, "renamed": [], "errors": []}
+        if operation == "cleanup-reconcile":
+            return {"ok": True, "archived": [], "errors": []}
+        if operation == "publication-run":
+            return {"ok": True, "published": [], "pending": [], "blocked": [], "errors": []}
+        if operation == "publication-feedback-list":
+            return {"ok": True, "candidates": [], "unresolved": [], "reconciled": []}
+        if operation == "recovery-list":
+            return {"ok": True, "recoverable": []}
+        raise AssertionError(operation)
+
+    first = slow_advance_once(tmp_path, runner=runner)
+    second = slow_advance_once(tmp_path, runner=runner)
+
+    assert first["ok"] is True
+    assert second["ok"] is True
+    health = json.loads((tmp_path / "state" / "runtime-health.json").read_text())
+    slow = health["workers"]["slow"]
+    assert slow["lastExitCode"] == 0
+    assert slow["consecutiveFailures"] == 0
+    assert slow["consecutiveSuccesses"] == 2
+    assert calls.count("ingest-results") == 2
+
+
 def test_slow_worker_lock_busy_does_not_manufacture_success_health(monkeypatch, tmp_path):
     state_dir = tmp_path / "state"
     state_dir.mkdir()

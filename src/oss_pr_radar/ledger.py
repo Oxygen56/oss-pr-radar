@@ -7042,6 +7042,95 @@ class RadarLedger:
             ).fetchone()
         return row is not None
 
+    def published_task_result_is_terminal(self, key: str, *, thread_id: str) -> bool:
+        """Return whether a missing historical worktree no longer needs local ingestion."""
+
+        with self.connect() as connection:
+            row = connection.execute(
+                """SELECT 1
+                   FROM opportunities o
+                   JOIN intents i ON i.intent_id=(
+                     SELECT i2.intent_id FROM intents i2
+                     WHERE i2.opportunity_key=o.key
+                       AND i2.thread_id=?
+                       AND i2.worktree_path IS NOT NULL
+                     ORDER BY i2.updated_at DESC,i2.intent_id DESC LIMIT 1
+                   )
+                   WHERE o.key=?
+                     AND i.status='COMPLETED'
+                     AND o.stage IN ('PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED','MERGED','CLOSED')
+                     AND EXISTS (
+                       SELECT 1 FROM events result
+                       WHERE result.opportunity_key=o.key
+                         AND result.event_type='TASK_RESULT_INGESTED'
+                     )
+                     AND (
+                       EXISTS (
+                         SELECT 1 FROM events opened
+                         WHERE opened.opportunity_key=o.key
+                           AND opened.event_type='PR_OPEN'
+                       )
+                       OR EXISTS (
+                         SELECT 1 FROM publication_requests request
+                         JOIN publication_permits permit ON permit.request_id=request.request_id
+                         WHERE request.opportunity_key=o.key
+                           AND permit.pr_url IS NOT NULL
+                       )
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM publication_requests request
+                       WHERE request.opportunity_key=o.key
+                         AND request.status IN ('PENDING','GRANTED')
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events sent
+                       WHERE sent.opportunity_key=o.key
+                         AND sent.event_type='PR_FOLLOWUP_SENT'
+                         AND NOT EXISTS (
+                           SELECT 1 FROM events result
+                           WHERE result.opportunity_key=o.key
+                             AND result.event_type='PR_FOLLOWUP_RESULT_INGESTED'
+                             AND result.dedupe_key=sent.dedupe_key
+                         )
+                         AND NOT EXISTS (
+                           SELECT 1 FROM events abandoned
+                           WHERE abandoned.opportunity_key=o.key
+                             AND abandoned.event_type='PR_FOLLOWUP_DELIVERY_ABANDONED'
+                             AND json_extract(abandoned.payload_json,'$.wakeDigest')=
+                                 sent.dedupe_key
+                             AND abandoned.id>sent.id
+                         )
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events reserved
+                       WHERE reserved.opportunity_key=o.key
+                         AND reserved.event_type='PR_FOLLOWUP_RESERVED'
+                         AND NOT EXISTS (
+                           SELECT 1 FROM events sent
+                           WHERE sent.opportunity_key=o.key
+                             AND sent.event_type='PR_FOLLOWUP_SENT'
+                             AND sent.dedupe_key=reserved.dedupe_key
+                         )
+                         AND NOT EXISTS (
+                           SELECT 1 FROM events result
+                           WHERE result.opportunity_key=o.key
+                             AND result.event_type='PR_FOLLOWUP_RESULT_INGESTED'
+                             AND result.dedupe_key=reserved.dedupe_key
+                         )
+                         AND NOT EXISTS (
+                           SELECT 1 FROM events abandoned
+                           WHERE abandoned.opportunity_key=o.key
+                             AND abandoned.event_type='PR_FOLLOWUP_DELIVERY_ABANDONED'
+                             AND json_extract(abandoned.payload_json,'$.wakeDigest')=
+                                 reserved.dedupe_key
+                             AND abandoned.id>reserved.id
+                         )
+                       )
+                   LIMIT 1""",
+                (thread_id, key),
+            ).fetchone()
+        return row is not None
+
     def record_followup_result(
         self, key: str, *, wake_digest: str, result_digest: str, stage: str
     ) -> None:

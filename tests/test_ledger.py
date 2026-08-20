@@ -421,6 +421,56 @@ def test_verified_task_context_rebuilds_publication_and_suppresses_duplicate(tmp
     assert store.pr_followup_candidates() == []
 
 
+def test_published_terminal_missing_worktree_gate_requires_followup_result(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.restore_task_context(published_task_context())
+    store.record_task_result_ingested("a/b#1", digest="result", stage="PR_OPEN")
+    store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": iso_z(datetime.now(UTC)),
+            "items": [
+                {
+                    "url": "https://github.com/a/b/pull/9",
+                    "headSha": "a" * 40,
+                    "actionDigest": "action",
+                    "taskActionDigest": "task-action",
+                    "checkedAt": iso_z(datetime.now(UTC)),
+                    "taskActions": ["current branch check failed"],
+                    "taskFollowupRequired": True,
+                    "evidence": {"baseIntegrationRequired": True},
+                }
+            ],
+        }
+    )
+    candidate = store.pr_followup_candidates()[0]
+    store.reserve_pr_followup(
+        thread_id="thread-recovered",
+        wake_digest=candidate["wakeDigest"],
+    )
+    store.commit_pr_followup(
+        thread_id="thread-recovered",
+        wake_digest=candidate["wakeDigest"],
+    )
+
+    assert not store.published_task_result_is_terminal(
+        "a/b#1",
+        thread_id="thread-recovered",
+    )
+
+    store.record_followup_result(
+        "a/b#1",
+        wake_digest=candidate["wakeDigest"],
+        result_digest="followup-result",
+        stage="PR_OPEN",
+    )
+
+    assert store.published_task_result_is_terminal(
+        "a/b#1",
+        thread_id="thread-recovered",
+    )
+
+
 def test_pr_followup_import_suppresses_stale_head_but_accepts_later_external_head(
     tmp_path,
 ):

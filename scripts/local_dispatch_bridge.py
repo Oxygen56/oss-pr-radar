@@ -10388,6 +10388,28 @@ def _request_publication_from_task_result(
     return request
 
 
+def _worktree_path_missing(candidate: dict[str, Any]) -> bool:
+    try:
+        Path(str(candidate["worktreePath"])).lstat()
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return False
+
+
+def _terminal_published_result_missing_worktree(
+    store: RadarLedger,
+    candidate: dict[str, Any],
+) -> bool:
+    if not _worktree_path_missing(candidate):
+        return False
+    return store.published_task_result_is_terminal(
+        str(candidate["key"]),
+        thread_id=str(candidate["threadId"]),
+    )
+
+
 def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
     managed_adapter = ManagedAdapter(ROOT, args.ledger)
@@ -10405,6 +10427,14 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
         stack = ExitStack()
         candidate_failed = False
         try:
+            if _terminal_published_result_missing_worktree(store, candidate):
+                ignored.append(
+                    {
+                        "key": str(candidate["key"]),
+                        "reason": "PUBLISHED_TERMINAL_WORKTREE_MISSING",
+                    }
+                )
+                continue
             result_access = stack.enter_context(_task_worktree_private_descriptor(candidate))
             try:
                 raw = _read_task_result_bytes_from_private(result_access)
