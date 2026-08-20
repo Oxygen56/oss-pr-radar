@@ -2198,6 +2198,34 @@
     ],
     "why": "The issue clearly identifies a recurring bug: new Claude models fail because temperature is deprecated, and the fix requires a maintainable approach rather than adding each model to a hardcoded list. No existing PR addresses this issue, and the issue is actionable with a clear reproduction."
   },
+  "110997e82dcaa32e56ebe75ed994131e0496bc3f31dc305d7a47b5dd198a5dbd": {
+    "confidence": 0.85,
+    "contradictions": [
+      "User initially reported workaround success, then later confirmed the bug persists."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "knowledge pipeline credential setup flow",
+      "backend credential validation logic"
+    ],
+    "risks": [
+      "Potential behavior change in credential setup flow may affect other providers; need to ensure backward compatibility."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce by configuring an OpenAI API Compatible custom model and attempting to set credentials in a knowledge pipeline; assert no error and correct routing to model-level credential flow.",
+      "Add unit test for provider_credentials_validate when provider lacks provider_credential_schema but has model_credential_schema."
+    ],
+    "unknowns": [
+      "Exact maintainer preference for fix location (UI vs backend) is not confirmed."
+    ],
+    "why": "The issue provides a clear, reproducible bug with a full traceback and a confirmed root cause: the knowledge pipeline UI incorrectly routes to provider-level credential creation for providers that only support customizable-model credentials, causing a ValueError when no provider_credential_schema exists. The fix is well-scoped and testable."
+  },
   "1112f1b1e723d128844b06374130236b0caf3d2aefbae3b5758f2b5f7732e8c3": {
     "confidence": 0.7,
     "contradictions": [],
