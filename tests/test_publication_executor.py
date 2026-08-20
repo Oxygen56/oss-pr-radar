@@ -977,3 +977,49 @@ def test_publication_guard_linearizes_quarantine_before_callback(tmp_path):
     with pytest.raises(PermissionError, match="active quarantine"):
         MODULE._guarded_publication_action(args, store, lambda: called.append(True))
     assert called == []
+
+
+def test_publication_action_guard_holds_through_irreversible_callback(tmp_path):
+    args = pr_args(tmp_path)
+    from oss_pr_radar.action_guard import ledger_action_guard_root, opportunity_action_guard
+
+    class GuardedStore:
+        path = tmp_path / "ledger.sqlite3"
+
+        def __init__(self):
+            self.active = False
+
+        def active_task_quarantine(self, _key):
+            return {"reason": "ACTIVE_TASK_QUARANTINE"} if self.active else None
+
+    store = GuardedStore()
+    key = MODULE._publication_opportunity_key(args.issue_url)
+    quarantine_started = threading.Event()
+    quarantine_finished = threading.Event()
+    quarantine_errors = []
+
+    def activate():
+        quarantine_started.set()
+        try:
+            with opportunity_action_guard(ledger_action_guard_root(store.path), key):
+                store.active = True
+        except BaseException as exc:
+            quarantine_errors.append(exc)
+        finally:
+            quarantine_finished.set()
+
+    activation = threading.Thread(target=activate)
+
+    def irreversible_action():
+        activation.start()
+        assert quarantine_started.wait(2)
+        assert not quarantine_finished.is_set()
+        return {"ok": True, "irreversible": True}
+
+    result = MODULE._guarded_publication_action(args, store, irreversible_action)
+    activation.join(timeout=2)
+    assert result == {"ok": True, "irreversible": True}
+    assert not activation.is_alive()
+    assert quarantine_errors == []
+    assert quarantine_finished.is_set()
+    assert store.active is True

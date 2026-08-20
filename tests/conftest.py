@@ -76,6 +76,7 @@ import hashlib
 import json
 import os
 import select
+import stat
 import sys
 import time
 from pathlib import Path
@@ -118,21 +119,81 @@ def write_marker(path, payload):
     finally:
         os.close(fd)
 
-if not baseline_exists:
-    write_marker(ready, b"unsupported:missing-root")
-    while True:
-        if root.exists():
-            write_marker(flag, b"host radar root appeared after missing baseline")
-            raise SystemExit(2)
-        time.sleep(0.05)
-
 if not hasattr(select, "kqueue"):
+    if not baseline_exists:
+        write_marker(ready, b"unsupported:missing-root")
+        while True:
+            if root.exists():
+                write_marker(flag, b"host radar root appeared after missing baseline")
+                raise SystemExit(2)
+            time.sleep(0.05)
     write_marker(ready, b"unsupported:kqueue")
     while True:
         if inventory(root) != baseline:
             write_marker(flag, b"host radar state changed")
             raise SystemExit(2)
         time.sleep(0.05)
+
+if not baseline_exists:
+    parent = root.parent
+    while True:
+        try:
+            parent_stat = parent.lstat()
+        except FileNotFoundError:
+            if parent == parent.parent:
+                write_marker(flag, b"no existing parent is available for missing root")
+                raise SystemExit(2)
+            parent = parent.parent
+            continue
+        if stat.S_ISLNK(parent_stat.st_mode) or not stat.S_ISDIR(parent_stat.st_mode):
+            write_marker(flag, b"missing root parent is unsafe")
+            raise SystemExit(2)
+        break
+
+    kqueue = select.kqueue()
+    parent_fd = os.open(
+        parent,
+        os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
+    )
+    try:
+        parent_fd_stat = os.fstat(parent_fd)
+        if (
+            not stat.S_ISDIR(parent_fd_stat.st_mode)
+            or parent_fd_stat.st_uid != os.getuid()
+            or parent_fd_stat.st_mode & 0o022
+        ):
+            write_marker(flag, b"missing root parent failed private directory checks")
+            raise SystemExit(2)
+        kqueue.control(
+            [
+                select.kevent(
+                    parent_fd,
+                    filter=select.KQ_FILTER_VNODE,
+                    flags=select.KQ_EV_ADD | select.KQ_EV_ENABLE | select.KQ_EV_CLEAR,
+                    fflags=(
+                        select.KQ_NOTE_WRITE
+                        | select.KQ_NOTE_EXTEND
+                        | select.KQ_NOTE_DELETE
+                        | select.KQ_NOTE_RENAME
+                        | select.KQ_NOTE_LINK
+                    ),
+                )
+            ],
+            0,
+            0,
+        )
+        if root.exists():
+            write_marker(flag, b"host radar root appeared before missing-root ready")
+            raise SystemExit(2)
+        write_marker(ready, b"kqueue-missing-root-active")
+        while True:
+            events = kqueue.control(None, 1, 0.5)
+            if events or root.exists():
+                write_marker(flag, b"host radar root changed after missing-root ready")
+                raise SystemExit(2)
+    finally:
+        os.close(parent_fd)
+        kqueue.close()
 
 if root.is_symlink() or not root.is_dir():
     write_marker(flag, b"host radar root is unsafe before ready")

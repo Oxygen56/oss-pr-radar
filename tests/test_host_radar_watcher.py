@@ -49,6 +49,117 @@ def test_missing_baseline_detects_empty_directory(tmp_path):
     assert not _watcher_missing_baseline_violation(root, True)
 
 
+def test_kqueue_missing_root_detects_fast_create_delete(tmp_path):
+    if not hasattr(select, "kqueue"):
+        pytest.skip("kqueue transient-event proof is unsupported on this platform")
+    parent = tmp_path / "parent"
+    parent.mkdir(mode=0o700)
+    root = parent / "missing"
+    flag = tmp_path / "flag"
+    ready = tmp_path / "ready"
+    watcher = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            r"""
+import os
+import select
+import sys
+from pathlib import Path
+
+parent = Path(sys.argv[1])
+root = Path(sys.argv[2])
+flag = Path(sys.argv[3])
+ready = Path(sys.argv[4])
+
+def write(path, value):
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        os.write(fd, value)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+kq = select.kqueue()
+fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+try:
+    kq.control([select.kevent(
+        fd,
+        filter=select.KQ_FILTER_VNODE,
+        flags=select.KQ_EV_ADD | select.KQ_EV_ENABLE | select.KQ_EV_CLEAR,
+        fflags=(
+            select.KQ_NOTE_WRITE
+            | select.KQ_NOTE_EXTEND
+            | select.KQ_NOTE_DELETE
+            | select.KQ_NOTE_RENAME
+            | select.KQ_NOTE_LINK
+        ),
+    )], 0, 0)
+    if root.exists():
+        write(flag, b"root existed before missing-root ready")
+        raise SystemExit(2)
+    write(ready, b"kqueue-missing-root-active")
+    while True:
+        events = kq.control(None, 1, 1)
+        if events or root.exists():
+            write(flag, b"missing root changed")
+            raise SystemExit(2)
+finally:
+    os.close(fd)
+    kq.close()
+""",
+            str(parent),
+            str(root),
+            str(flag),
+            str(ready),
+        ],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        close_fds=True,
+    )
+    try:
+        deadline = time.monotonic() + 5
+        while not ready.exists() and time.monotonic() < deadline:
+            if watcher.poll() is not None:
+                stderr = watcher.communicate()[1].decode("utf-8", "replace")[-4000:]
+                raise AssertionError(
+                    f"missing-root watcher exited before ready: code={watcher.returncode}; "
+                    f"stderr={stderr!r}"
+                )
+            time.sleep(0.01)
+        assert ready.read_bytes() == b"kqueue-missing-root-active"
+
+        parent_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            root.mkdir(mode=0o700)
+            os.fsync(parent_fd)
+            root.rmdir()
+            os.fsync(parent_fd)
+        finally:
+            os.close(parent_fd)
+
+        deadline = time.monotonic() + 5
+        while not flag.exists() and time.monotonic() < deadline:
+            if watcher.poll() is not None:
+                stderr = watcher.communicate()[1].decode("utf-8", "replace")[-4000:]
+                raise AssertionError(
+                    f"missing-root watcher exited before flag: code={watcher.returncode}; "
+                    f"stderr={stderr!r}"
+                )
+            time.sleep(0.01)
+        assert flag.is_file()
+        assert not root.exists()
+    finally:
+        if watcher.poll() is None:
+            watcher.terminate()
+        _, stderr = watcher.communicate(timeout=2)
+        assert watcher.returncode in (-15, 2), (
+            f"missing-root watcher exited unexpectedly: code={watcher.returncode}; "
+            f"stderr={stderr.decode('utf-8', 'replace')[-4000:]!r}"
+        )
+
+
 def test_kqueue_watcher_records_transient_write_after_final_state_is_restored(tmp_path):
     if not hasattr(select, "kqueue"):
         pytest.skip("kqueue transient-event proof is unsupported on this platform")

@@ -5703,6 +5703,10 @@ def test_task_spawn_is_blocked_when_quarantine_wins_the_guard(monkeypatch, tmp_p
     store, _worktree, _head_sha, _pr_url = _published_followup_store(tmp_path)
     candidate = store.pr_followup_candidates()[0]
     key = candidate["key"]
+    store.reserve_pr_followup(
+        thread_id=candidate["threadId"],
+        wake_digest=candidate["wakeDigest"],
+    )
     release = threading.Event()
     ready = threading.Event()
     activation_errors = []
@@ -5753,6 +5757,85 @@ def test_task_spawn_is_blocked_when_quarantine_wins_the_guard(monkeypatch, tmp_p
     assert activation_errors == []
     assert isinstance(spawn_errors[0], PermissionError)
     assert popen_calls == []
+    assert store.active_task_quarantine(key) is not None
+
+
+def test_app_server_action_guard_holds_through_turn_start_before_quarantine(monkeypatch, tmp_path):
+    store, _worktree, _head_sha, _pr_url = _published_followup_store(tmp_path)
+    candidate = store.pr_followup_candidates()[0]
+    key = candidate["key"]
+    store.reserve_pr_followup(
+        thread_id=candidate["threadId"],
+        wake_digest=candidate["wakeDigest"],
+    )
+
+    class FakeStdin:
+        def __init__(self):
+            self.writes = []
+            self.flushes = 0
+
+        def write(self, value):
+            self.writes.append(value)
+
+        def flush(self):
+            self.flushes += 1
+
+    class FakeProcess:
+        def __init__(self):
+            self.stdin = FakeStdin()
+
+    process = FakeProcess()
+    monkeypatch.setattr(MODULE.subprocess, "Popen", lambda *_args, **_kwargs: process)
+    quarantine_started = threading.Event()
+    quarantine_finished = threading.Event()
+    quarantine_errors = []
+
+    def activate_quarantine():
+        quarantine_started.set()
+        try:
+            store.record_shared_context_quarantine(
+                key=key,
+                reason="SHARED_CONTEXT_INVALID",
+                dedupe_key="app-server-action-first",
+                payload={"source": "app-server-race"},
+                created_at=iso_z(datetime.now(UTC)),
+            )
+        except BaseException as exc:
+            quarantine_errors.append(exc)
+        finally:
+            quarantine_finished.set()
+
+    activation = threading.Thread(target=activate_quarantine)
+    with MODULE._app_server_action_session(
+        store,
+        opportunity_key=key,
+        argv=["codex", "app-server", "--stdio"],
+        cwd=tmp_path,
+    ) as started_process:
+        assert started_process is process
+        activation.start()
+        assert quarantine_started.wait(2)
+        assert not quarantine_finished.is_set()
+        process.stdin.write(b"initialize\nthread/resume\n")
+        process.stdin.flush()
+        MODULE._task_turn_start_unlocked(
+            store,
+            opportunity_key=key,
+            process=process,
+            thread_id=candidate["threadId"],
+            cwd=tmp_path,
+            prompt="continue",
+            delivery_kind="pr-followup",
+            delivery_token=candidate["wakeDigest"],
+        )
+        assert process.stdin.flushes == 2
+        assert b"turn/start" in process.stdin.writes[-1]
+        assert not quarantine_finished.is_set()
+
+    activation.join(timeout=2)
+    assert not activation.is_alive()
+    assert quarantine_errors == []
+    assert quarantine_finished.is_set()
     assert store.active_task_quarantine(key) is not None
 
 

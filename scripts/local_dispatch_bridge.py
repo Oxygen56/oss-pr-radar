@@ -19,6 +19,7 @@ import subprocess
 import sys
 import time
 import tomllib
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -3861,78 +3862,69 @@ def _app_server_request_worker(args: argparse.Namespace) -> dict[str, Any]:
     if match is None:
         raise RuntimeError("intent issue URL is invalid")
     opportunity_key = f"{match.group(1)}#{match.group(2)}"
-    process = _guarded_task_popen(
-        store,
-        opportunity_key=opportunity_key,
-        argv=[
-            executable,
-            "app-server",
-            "--disable",
-            "recommended_plugins",
-            "--disable",
-            "remote_plugin",
-            "--stdio",
-        ],
-        cwd=GITHUB_ROOT,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        bufsize=0,
-    )
+    process = None
     thread_id = ""
     turn_id = ""
+    buffer = b""
+    selector = selectors.DefaultSelector()
     try:
-        if process.stdin is None or process.stdout is None:
-            raise RuntimeError("app server pipes are unavailable")
-        requests = [
-            {
-                "id": 0,
-                "method": "initialize",
-                "params": {
-                    "clientInfo": {"name": "oss-pr-radar", "version": "1.0"},
-                    "capabilities": {"experimentalApi": True},
-                },
-            },
-            {
-                "id": 1,
-                "method": "thread/start",
-                "params": {
-                    "cwd": str(GITHUB_ROOT.resolve()),
-                    "sandbox": "danger-full-access",
-                    "approvalPolicy": "never",
-                    "threadSource": "appServer",
-                },
-            },
-        ]
-        with opportunity_action_guard(ledger_action_guard_root(store.path), opportunity_key):
-            _require_task_action_clear(store, opportunity_key)
+        with _app_server_action_session(
+            store,
+            opportunity_key=opportunity_key,
+            argv=[
+                executable,
+                "app-server",
+                "--disable",
+                "recommended_plugins",
+                "--disable",
+                "remote_plugin",
+                "--stdio",
+            ],
+            cwd=GITHUB_ROOT,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            bufsize=0,
+        ) as started_process:
+            process = started_process
+            if process.stdin is None or process.stdout is None:
+                raise RuntimeError("app server pipes are unavailable")
+            selector.register(process.stdout, selectors.EVENT_READ)
             process.stdin.write(
-                b"".join((json.dumps(item) + "\n").encode("utf-8") for item in requests)
+                b"".join(
+                    (json.dumps(item, ensure_ascii=False) + "\n").encode("utf-8")
+                    for item in (
+                        {
+                            "id": 0,
+                            "method": "initialize",
+                            "params": {
+                                "clientInfo": {"name": "oss-pr-radar", "version": "1.0"},
+                                "capabilities": {"experimentalApi": True},
+                            },
+                        },
+                        {
+                            "id": 1,
+                            "method": "thread/start",
+                            "params": {
+                                "cwd": str(GITHUB_ROOT.resolve()),
+                                "sandbox": "danger-full-access",
+                                "approvalPolicy": "never",
+                                "threadSource": "appServer",
+                            },
+                        },
+                    )
+                )
             )
             process.stdin.flush()
-        buffer = b""
-        deadline = monotonic() + 30
-        with selectors.DefaultSelector() as selector:
-            selector.register(process.stdout, selectors.EVENT_READ)
-            while monotonic() < deadline and not thread_id:
-                ready = selector.select(max(0.0, deadline - monotonic()))
-                if not ready:
-                    break
-                chunk = os.read(process.stdout.fileno(), 65536)
-                if not chunk:
-                    break
-                buffer += chunk
-                while b"\n" in buffer:
-                    raw, buffer = buffer.split(b"\n", 1)
-                    try:
-                        message = json.loads(raw)
-                    except json.JSONDecodeError:
-                        continue
-                    if message.get("id") == 1:
-                        thread_id = str(
-                            ((message.get("result") or {}).get("thread") or {}).get("id") or ""
-                        )
-                        break
+            buffer, message = _read_app_server_response(
+                process,
+                selector,
+                buffer,
+                response_id=1,
+                timeout=30,
+                action="thread/start",
+            )
+            thread_id = str(((message.get("result") or {}).get("thread") or {}).get("id") or "")
             if not thread_id:
                 raise RuntimeError("app server did not create a root task")
             store.bind_creation_client(
@@ -3942,98 +3934,70 @@ def _app_server_request_worker(args: argparse.Namespace) -> dict[str, Any]:
                 client_thread_id=thread_id,
             )
             _managed_bind_legacy_intent(store, args.ledger, args.intent_id)
-            process.stdin.write(
-                (
-                    json.dumps(
-                        {
-                            "id": 2,
-                            "method": "turn/start",
-                            "params": {
-                                "threadId": thread_id,
-                                "cwd": str(GITHUB_ROOT.resolve()),
-                                "input": [{"type": "text", "text": prompt, "text_elements": []}],
-                                "approvalPolicy": "never",
-                                "sandboxPolicy": {"type": "dangerFullAccess"},
-                                "summary": "auto",
-                            },
-                        },
-                        ensure_ascii=False,
-                    )
-                    + "\n"
-                ).encode("utf-8")
-            )
-            process.stdin.flush()
-            deadline = monotonic() + 45
-            while monotonic() < deadline and not turn_id:
-                ready = selector.select(max(0.0, deadline - monotonic()))
-                if not ready:
-                    break
-                chunk = os.read(process.stdout.fileno(), 65536)
-                if not chunk:
-                    break
-                buffer += chunk
-                while b"\n" in buffer:
-                    raw, buffer = buffer.split(b"\n", 1)
-                    try:
-                        message = json.loads(raw)
-                    except json.JSONDecodeError:
-                        continue
-                    if message.get("id") == 2:
-                        turn_id = str(
-                            ((message.get("result") or {}).get("turn") or {}).get("id") or ""
-                        )
-                        break
-            if not turn_id:
-                raise RuntimeError("app server did not start the root task turn")
-
-            deadline = monotonic() + 30
-            while monotonic() < deadline:
-                connection = sqlite3.connect(THREAD_DB)
-                try:
-                    row = connection.execute(
-                        "SELECT first_user_message FROM threads WHERE id=?", (thread_id,)
-                    ).fetchone()
-                finally:
-                    connection.close()
-                if row and canonical_prompt(str(row[0] or "")) == prompt:
-                    break
-                sleep(0.25)
-            else:
-                raise RuntimeError("root task was not persisted in the desktop index")
-
-            receipt = commit_receipt(
-                argparse.Namespace(
-                    ledger=args.ledger,
-                    intent_id=args.intent_id,
-                    owner=_active_owner(store, args),
-                    thread_id=thread_id,
-                    project_id=args.project_id,
-                    cwd=str(GITHUB_ROOT.resolve()),
-                    worktree=args.worktree,
-                    source_repo=args.source_repo,
-                    title_time=args.title_time,
-                )
-            )
-            _atomic_json(Path(args.receipt), {"ok": True, "turnId": turn_id} | receipt)
-
-            # Keep the stdio owner alive until the task turn completes. Poll the
-            # persisted turn as a watchdog because a lost completion notification
-            # must not leave one app-server process alive indefinitely.
-            terminal = _wait_for_app_server_terminal_turn(
+            _require_task_action_clear(store, opportunity_key)
+            _write_turn_start_request(
                 process,
-                selector,
-                buffer,
                 thread_id=thread_id,
-                turn_id=turn_id,
+                cwd=GITHUB_ROOT,
+                prompt=prompt,
             )
-            if terminal:
-                return {
-                    "ok": True,
-                    "threadId": thread_id,
-                    "turnId": turn_id,
-                    "turnStatus": terminal["status"],
-                }
-            return {"ok": True, "threadId": thread_id, "turnId": turn_id}
+        buffer, message = _read_app_server_response(
+            process,
+            selector,
+            buffer,
+            response_id=2,
+            timeout=45,
+            action="turn/start",
+        )
+        turn_id = str(((message.get("result") or {}).get("turn") or {}).get("id") or "")
+        if not turn_id:
+            raise RuntimeError("app server did not start the root task turn")
+
+        deadline = monotonic() + 30
+        while monotonic() < deadline:
+            connection = sqlite3.connect(THREAD_DB)
+            try:
+                row = connection.execute(
+                    "SELECT first_user_message FROM threads WHERE id=?", (thread_id,)
+                ).fetchone()
+            finally:
+                connection.close()
+            if row and canonical_prompt(str(row[0] or "")) == prompt:
+                break
+            sleep(0.25)
+        else:
+            raise RuntimeError("root task was not persisted in the desktop index")
+
+        receipt = commit_receipt(
+            argparse.Namespace(
+                ledger=args.ledger,
+                intent_id=args.intent_id,
+                owner=_active_owner(store, args),
+                thread_id=thread_id,
+                project_id=args.project_id,
+                cwd=str(GITHUB_ROOT.resolve()),
+                worktree=args.worktree,
+                source_repo=args.source_repo,
+                title_time=args.title_time,
+            )
+        )
+        _atomic_json(Path(args.receipt), {"ok": True, "turnId": turn_id} | receipt)
+
+        terminal = _wait_for_app_server_terminal_turn(
+            process,
+            selector,
+            buffer,
+            thread_id=thread_id,
+            turn_id=turn_id,
+        )
+        if terminal:
+            return {
+                "ok": True,
+                "threadId": thread_id,
+                "turnId": turn_id,
+                "turnStatus": terminal["status"],
+            }
+        return {"ok": True, "threadId": thread_id, "turnId": turn_id}
     except Exception as exc:
         receipt_path = Path(args.receipt)
         if not receipt_path.exists():
@@ -4043,7 +4007,8 @@ def _app_server_request_worker(args: argparse.Namespace) -> dict[str, Any]:
             )
         raise
     finally:
-        if process.poll() is None:
+        selector.close()
+        if process is not None and process.poll() is None:
             process.terminate()
             try:
                 process.wait(timeout=10)
@@ -4191,7 +4156,23 @@ def _guarded_task_popen(
         return subprocess.Popen(argv, cwd=cwd, **kwargs)
 
 
-def _guarded_task_turn_start(
+@contextmanager
+def _app_server_action_session(
+    store: RadarLedger,
+    *,
+    opportunity_key: str,
+    argv: list[str],
+    cwd: Path,
+    **kwargs: Any,
+):
+    """Hold the opportunity guard from app-server spawn through turn dispatch."""
+
+    with opportunity_action_guard(ledger_action_guard_root(store.path), opportunity_key):
+        _require_task_action_clear(store, opportunity_key)
+        yield subprocess.Popen(argv, cwd=cwd, **kwargs)
+
+
+def _task_turn_start_unlocked(
     store: RadarLedger,
     *,
     opportunity_key: str,
@@ -4204,35 +4185,81 @@ def _guarded_task_turn_start(
 ) -> None:
     if process.stdin is None:
         raise RuntimeError("app server input is unavailable")
+    _require_task_action_clear(store, opportunity_key)
+    store.authorize_task_turn_delivery(
+        delivery_kind=delivery_kind,
+        thread_id=thread_id,
+        delivery_token=delivery_token,
+    )
+    _write_turn_start_request(
+        process,
+        thread_id=thread_id,
+        cwd=cwd,
+        prompt=prompt,
+        delivery_kind=delivery_kind,
+        delivery_token=delivery_token,
+    )
+
+
+def _write_turn_start_request(
+    process: subprocess.Popen[Any],
+    *,
+    thread_id: str,
+    cwd: Path,
+    prompt: str,
+    delivery_kind: str = "",
+    delivery_token: str = "",
+) -> None:
+    if process.stdin is None:
+        raise RuntimeError("app server input is unavailable")
+    params = {
+        "threadId": thread_id,
+        "cwd": str(cwd),
+        "input": [{"type": "text", "text": prompt, "text_elements": []}],
+        "approvalPolicy": "never",
+        "sandboxPolicy": {"type": "dangerFullAccess"},
+        "summary": "auto",
+    }
+    if delivery_kind and delivery_token:
+        params["clientUserMessageId"] = f"oss-pr-radar:{delivery_kind}:{delivery_token}"
+    process.stdin.write(
+        (
+            json.dumps(
+                {
+                    "id": 2,
+                    "method": "turn/start",
+                    "params": params,
+                },
+                ensure_ascii=False,
+            )
+            + "\n"
+        ).encode("utf-8")
+    )
+    process.stdin.flush()
+
+
+def _guarded_task_turn_start(
+    store: RadarLedger,
+    *,
+    opportunity_key: str,
+    process: subprocess.Popen[Any],
+    thread_id: str,
+    cwd: Path,
+    prompt: str,
+    delivery_kind: str,
+    delivery_token: str,
+) -> None:
     with opportunity_action_guard(ledger_action_guard_root(store.path), opportunity_key):
-        _require_task_action_clear(store, opportunity_key)
-        store.authorize_task_turn_delivery(
-            delivery_kind=delivery_kind,
+        _task_turn_start_unlocked(
+            store,
+            opportunity_key=opportunity_key,
+            process=process,
             thread_id=thread_id,
+            cwd=cwd,
+            prompt=prompt,
+            delivery_kind=delivery_kind,
             delivery_token=delivery_token,
         )
-        process.stdin.write(
-            (
-                json.dumps(
-                    {
-                        "id": 2,
-                        "method": "turn/start",
-                        "params": {
-                            "threadId": thread_id,
-                            "cwd": str(cwd),
-                            "input": [{"type": "text", "text": prompt, "text_elements": []}],
-                            "approvalPolicy": "never",
-                            "sandboxPolicy": {"type": "dangerFullAccess"},
-                            "clientUserMessageId": f"oss-pr-radar:{delivery_kind}:{delivery_token}",
-                            "summary": "auto",
-                        },
-                    },
-                    ensure_ascii=False,
-                )
-                + "\n"
-            ).encode("utf-8")
-        )
-        process.stdin.flush()
 
 
 def _task_turn_prompt(delivery_kind: str, candidate: dict[str, Any]) -> str:
@@ -4341,6 +4368,40 @@ def _app_server_task_error(message: dict[str, Any], *, action: str) -> RuntimeEr
     return RuntimeError(f"APP_SERVER_{action.upper()}_FAILED:{detail[:240] or 'unknown error'}")
 
 
+def _read_app_server_response(
+    process: subprocess.Popen[Any],
+    selector: selectors.BaseSelector,
+    buffer: bytes,
+    *,
+    response_id: int,
+    timeout: float,
+    action: str,
+) -> tuple[bytes, dict[str, Any]]:
+    if process.stdout is None:
+        raise RuntimeError("app server output is unavailable")
+    deadline = monotonic() + timeout
+    while monotonic() < deadline:
+        ready = selector.select(max(0.0, deadline - monotonic()))
+        if not ready:
+            break
+        chunk = os.read(process.stdout.fileno(), 65536)
+        if not chunk:
+            break
+        buffer += chunk
+        while b"\n" in buffer:
+            raw, buffer = buffer.split(b"\n", 1)
+            try:
+                message = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if message.get("id") != response_id:
+                continue
+            if message.get("error"):
+                raise _app_server_task_error(message, action=action)
+            return buffer, message
+    raise RuntimeError(f"app server did not complete {action} request")
+
+
 def _app_server_task_turn_worker(args: argparse.Namespace) -> dict[str, Any]:
     """Resume one existing task and durably receipt the exact new turn."""
 
@@ -4360,84 +4421,74 @@ def _app_server_task_turn_worker(args: argparse.Namespace) -> dict[str, Any]:
     if not executable:
         raise RuntimeError("codex executable is unavailable")
     opportunity_key = _task_opportunity_key(candidate)
-    process = _guarded_task_popen(
-        store,
-        opportunity_key=opportunity_key,
-        argv=[
-            executable,
-            "app-server",
-            "--disable",
-            "recommended_plugins",
-            "--disable",
-            "remote_plugin",
-            "--stdio",
-        ],
-        cwd=cwd,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        bufsize=0,
-    )
+    process = None
     turn_id = ""
+    buffer = b""
+    selector = selectors.DefaultSelector()
     try:
-        if process.stdin is None or process.stdout is None:
-            raise RuntimeError("app server pipes are unavailable")
-        requests = [
-            {
-                "id": 0,
-                "method": "initialize",
-                "params": {
-                    "clientInfo": {"name": "oss-pr-radar", "version": "1.0"},
-                    "capabilities": {"experimentalApi": True},
-                },
-            },
-            {
-                "id": 1,
-                "method": "thread/resume",
-                "params": {
-                    "threadId": args.thread_id,
-                    "cwd": str(cwd),
-                    "sandbox": "danger-full-access",
-                    "approvalPolicy": "never",
-                    "excludeTurns": True,
-                },
-            },
-        ]
-        process.stdin.write(
-            b"".join(
-                (json.dumps(item, ensure_ascii=False) + "\n").encode("utf-8") for item in requests
-            )
-        )
-        process.stdin.flush()
-        buffer = b""
-        resumed_thread_id = ""
-        deadline = monotonic() + 30
-        with selectors.DefaultSelector() as selector:
+        with _app_server_action_session(
+            store,
+            opportunity_key=opportunity_key,
+            argv=[
+                executable,
+                "app-server",
+                "--disable",
+                "recommended_plugins",
+                "--disable",
+                "remote_plugin",
+                "--stdio",
+            ],
+            cwd=cwd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            bufsize=0,
+        ) as started_process:
+            process = started_process
+            if process.stdin is None or process.stdout is None:
+                raise RuntimeError("app server pipes are unavailable")
             selector.register(process.stdout, selectors.EVENT_READ)
-            while monotonic() < deadline and not resumed_thread_id:
-                ready = selector.select(max(0.0, deadline - monotonic()))
-                if not ready:
-                    break
-                chunk = os.read(process.stdout.fileno(), 65536)
-                if not chunk:
-                    break
-                buffer += chunk
-                while b"\n" in buffer:
-                    raw, buffer = buffer.split(b"\n", 1)
-                    try:
-                        message = json.loads(raw)
-                    except json.JSONDecodeError:
-                        continue
-                    if message.get("id") != 1:
-                        continue
-                    if message.get("error"):
-                        raise _app_server_task_error(message, action="resume")
-                    resumed_thread_id = str(
-                        ((message.get("result") or {}).get("thread") or {}).get("id") or ""
+            process.stdin.write(
+                b"".join(
+                    (json.dumps(item, ensure_ascii=False) + "\n").encode("utf-8")
+                    for item in (
+                        {
+                            "id": 0,
+                            "method": "initialize",
+                            "params": {
+                                "clientInfo": {"name": "oss-pr-radar", "version": "1.0"},
+                                "capabilities": {"experimentalApi": True},
+                            },
+                        },
+                        {
+                            "id": 1,
+                            "method": "thread/resume",
+                            "params": {
+                                "threadId": args.thread_id,
+                                "cwd": str(cwd),
+                                "sandbox": "danger-full-access",
+                                "approvalPolicy": "never",
+                                "excludeTurns": True,
+                            },
+                        },
                     )
+                )
+            )
+            process.stdin.flush()
+            buffer, message = _read_app_server_response(
+                process,
+                selector,
+                buffer,
+                response_id=1,
+                timeout=30,
+                action="resume",
+            )
+            resumed_thread_id = str(
+                ((message.get("result") or {}).get("thread") or {}).get("id") or ""
+            )
             if resumed_thread_id != args.thread_id:
                 raise RuntimeError("app server resumed the wrong task")
-            _guarded_task_turn_start(
+            _task_turn_start_unlocked(
                 store,
                 opportunity_key=opportunity_key,
                 process=process,
@@ -4447,95 +4498,85 @@ def _app_server_task_turn_worker(args: argparse.Namespace) -> dict[str, Any]:
                 delivery_kind=args.delivery_kind,
                 delivery_token=args.delivery_token,
             )
-            deadline = monotonic() + 45
-            while monotonic() < deadline and not turn_id:
-                ready = selector.select(max(0.0, deadline - monotonic()))
-                if not ready:
-                    break
-                chunk = os.read(process.stdout.fileno(), 65536)
-                if not chunk:
-                    break
-                buffer += chunk
-                while b"\n" in buffer:
-                    raw, buffer = buffer.split(b"\n", 1)
-                    try:
-                        message = json.loads(raw)
-                    except json.JSONDecodeError:
-                        continue
-                    if message.get("id") != 2:
-                        continue
-                    if message.get("error"):
-                        raise _app_server_task_error(message, action="start")
-                    turn_id = str(((message.get("result") or {}).get("turn") or {}).get("id") or "")
-            if not turn_id:
-                raise RuntimeError("app server did not receipt the task turn")
-            receipt = {
-                "ok": True,
-                "threadId": args.thread_id,
-                "turnId": turn_id,
-                "deliveryKind": args.delivery_kind,
-                "deliveryToken": args.delivery_token,
-            }
-            if args.delivery_kind != "publication-feedback":
+
+        buffer, message = _read_app_server_response(
+            process,
+            selector,
+            buffer,
+            response_id=2,
+            timeout=45,
+            action="start",
+        )
+        turn_id = str(((message.get("result") or {}).get("turn") or {}).get("id") or "")
+        if not turn_id:
+            raise RuntimeError("app server did not receipt the task turn")
+        receipt = {
+            "ok": True,
+            "threadId": args.thread_id,
+            "turnId": turn_id,
+            "deliveryKind": args.delivery_kind,
+            "deliveryToken": args.delivery_token,
+        }
+        if args.delivery_kind != "publication-feedback":
+            _commit_task_turn_delivery(
+                store,
+                delivery_kind=args.delivery_kind,
+                thread_id=args.thread_id,
+                delivery_token=args.delivery_token,
+            )
+            _atomic_json(Path(args.receipt), receipt)
+
+        terminal = _wait_for_app_server_terminal_turn(
+            process,
+            selector,
+            buffer,
+            thread_id=args.thread_id,
+            turn_id=turn_id,
+        )
+        if args.delivery_kind == "publication-feedback":
+            visible = False
+            if terminal and terminal["status"] == "completed":
+                visibility_deadline = monotonic() + 5
+                while monotonic() < visibility_deadline:
+                    if publication_feedback_materialized(
+                        _rollout_path,
+                        str(candidate.get("prUrl") or ""),
+                    ):
+                        visible = True
+                        break
+                    sleep(0.1)
+            if visible:
                 _commit_task_turn_delivery(
                     store,
                     delivery_kind=args.delivery_kind,
                     thread_id=args.thread_id,
                     delivery_token=args.delivery_token,
                 )
-                _atomic_json(Path(args.receipt), receipt)
-
-            terminal = _wait_for_app_server_terminal_turn(
-                process,
-                selector,
-                buffer,
-                thread_id=args.thread_id,
-                turn_id=turn_id,
-            )
-            if args.delivery_kind == "publication-feedback":
-                visible = False
-                if terminal and terminal["status"] == "completed":
-                    visibility_deadline = monotonic() + 5
-                    while monotonic() < visibility_deadline:
-                        if publication_feedback_materialized(
-                            _rollout_path,
-                            str(candidate.get("prUrl") or ""),
-                        ):
-                            visible = True
-                            break
-                        sleep(0.1)
-                if visible:
-                    _commit_task_turn_delivery(
-                        store,
-                        delivery_kind=args.delivery_kind,
-                        thread_id=args.thread_id,
-                        delivery_token=args.delivery_token,
-                    )
-                    terminal_receipt = receipt | {
-                        "turnStatus": "completed",
-                        "visibleReplyVerified": True,
-                    }
-                    _atomic_json(Path(args.receipt), terminal_receipt)
-                    return terminal_receipt
-                store.abandon_publication_feedback(
-                    thread_id=args.thread_id,
-                    reservation_nonce=args.delivery_token,
-                    reason="VISIBLE_STATUS_REPLY_MISSING",
-                    min_age_minutes=0,
-                )
-                retry_receipt = receipt | {
-                    "delivered": False,
-                    "retryable": True,
-                    "turnStatus": (terminal or {}).get("status") or "unknown",
-                    "reason": "VISIBLE_STATUS_REPLY_MISSING",
+                terminal_receipt = receipt | {
+                    "turnStatus": "completed",
+                    "visibleReplyVerified": True,
                 }
-                _atomic_json(Path(args.receipt), retry_receipt)
-                return retry_receipt
-            if terminal:
-                terminal_receipt = receipt | {"turnStatus": terminal["status"]}
                 _atomic_json(Path(args.receipt), terminal_receipt)
                 return terminal_receipt
-            return receipt
+            store.abandon_publication_feedback(
+                thread_id=args.thread_id,
+                reservation_nonce=args.delivery_token,
+                reason="VISIBLE_STATUS_REPLY_MISSING",
+                min_age_minutes=0,
+            )
+            retry_receipt = receipt | {
+                "delivered": False,
+                "retryable": True,
+                "turnStatus": (terminal or {}).get("status") or "unknown",
+                "reason": "VISIBLE_STATUS_REPLY_MISSING",
+            }
+            _atomic_json(Path(args.receipt), retry_receipt)
+            return retry_receipt
+        if terminal:
+            terminal_receipt = receipt | {"turnStatus": terminal["status"]}
+            _atomic_json(Path(args.receipt), terminal_receipt)
+            return terminal_receipt
+        return receipt
     except Exception as exc:
         receipt_path = Path(args.receipt)
         if not receipt_path.exists():
@@ -4550,7 +4591,8 @@ def _app_server_task_turn_worker(args: argparse.Namespace) -> dict[str, Any]:
             )
         raise
     finally:
-        if process.poll() is None:
+        selector.close()
+        if process is not None and process.poll() is None:
             process.terminate()
             try:
                 process.wait(timeout=10)
