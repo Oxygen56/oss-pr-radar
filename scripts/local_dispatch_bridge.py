@@ -15,7 +15,6 @@ import shutil
 import sqlite3
 import subprocess
 import sys
-import time
 import tomllib
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -69,6 +68,7 @@ from oss_pr_radar.target_branch import (  # noqa: E402
 )
 from oss_pr_radar.util import (  # noqa: E402
     atomic_write_json,
+    canonical_json,
     iso_z,
     parse_time,
     read_json,
@@ -685,6 +685,92 @@ def _is_within(path: Path, root: Path) -> bool:
 
 def _is_managed_worktree(path: Path) -> bool:
     return _is_within(path, managed_worktree_root())
+
+
+def _rebind_quarantine_location(candidate: dict[str, Any], expected: Path) -> tuple[Path, Path]:
+    """Return the deterministic private directory and marker for one rebind."""
+
+    identity = canonical_json(
+        {
+            "key": str(candidate.get("key") or ""),
+            "repo": str(candidate.get("repo") or ""),
+            "intentId": str(candidate.get("intentId") or ""),
+            "worktreePath": str(expected),
+        }
+    )
+    token = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:32]
+    safe_key = re.sub(r"[^A-Za-z0-9._-]+", "-", str(candidate["key"])).strip("-._")
+    parent = managed_worktree_root() / ".rebind-quarantine" / f"{safe_key}-{token}"
+    return parent / expected.name, parent / "rebind-intent.json"
+
+
+def _write_rebind_marker(path: Path, value: dict[str, Any]) -> None:
+    """Persist the move intent before changing Git's worktree registry."""
+
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(path.parent, 0o700)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    fd = os.open(path, flags, 0o600)
+    try:
+        payload = (json.dumps(value, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
+        view = memoryview(payload)
+        while view:
+            view = view[os.write(fd, view) :]
+        os.fsync(fd)
+    except Exception:
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        raise
+    finally:
+        os.close(fd)
+    directory_fd = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
+def _read_rebind_marker(
+    path: Path, *, candidate: dict[str, Any], expected: Path, destination: Path
+) -> dict[str, Any]:
+    if path.is_symlink() or not path.is_file() or path.stat().st_mode & 0o077:
+        raise RuntimeError("rebind intent marker is not private")
+    try:
+        marker = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("rebind intent marker is invalid") from exc
+    expected_fields = {
+        "schema": "oss-pr-radar.rebind-intent.v1",
+        "candidateKey": str(candidate["key"]),
+        "repo": str(candidate["repo"]),
+        "intentId": str(candidate["intentId"]),
+        "expectedWorktreePath": str(expected),
+        "quarantinePath": str(destination),
+    }
+    if not isinstance(marker, dict) or any(
+        marker.get(key) != value for key, value in expected_fields.items()
+    ):
+        raise RuntimeError("rebind intent marker binding is invalid")
+    return marker
+
+
+def _remove_rebind_marker(path: Path) -> None:
+    try:
+        path.unlink()
+        directory_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+        path.parent.rmdir()
+    except FileNotFoundError:
+        return
+    except OSError:
+        # The database binding is authoritative after it commits.  Leaving a
+        # verified marker is safer than failing a successful rebind on cleanup.
+        return
 
 
 def command(
@@ -6054,7 +6140,19 @@ def _recover_dirty_rebound_worktree_locked(
     stored_quarantine = str(rebind_status.get("quarantinePath") or "")
     if not worktree.is_dir():
         if not stored_quarantine:
-            raise RuntimeError("rebind quarantine path is missing for a moved workspace")
+            destination, marker_path = _rebind_quarantine_location(candidate, expected)
+            if not marker_path.exists():
+                raise RuntimeError("rebind quarantine path is missing for a moved workspace")
+            marker = _read_rebind_marker(
+                marker_path,
+                candidate=candidate,
+                expected=expected,
+                destination=destination,
+            )
+            stored_status_digest = str(rebind_status.get("statusDigest") or "")
+            if stored_status_digest and marker.get("statusDigest") != stored_status_digest:
+                raise RuntimeError("rebind intent marker status binding is invalid")
+            stored_quarantine = str(destination)
         quarantine_raw = Path(stored_quarantine)
         if quarantine_raw.is_symlink():
             raise RuntimeError("rebind quarantine path cannot be a symlink")
@@ -6065,6 +6163,20 @@ def _recover_dirty_rebound_worktree_locked(
         if quarantine.stat().st_mode & 0o077:
             raise RuntimeError("rebind quarantine directory is not private")
         source = source_repo(str(candidate["repo"]))
+        recovery = {
+            "oldWorktreePath": str(worktree),
+            "quarantinePath": str(quarantine),
+            "newWorktreePath": str(expected),
+            "rebind": dict(rebind_status),
+            "statusDigest": str(rebind_status.get("statusDigest") or ""),
+        }
+        if store is not None:
+            store.bind_task_quarantine_artifact(
+                candidate["key"],
+                reason=str(rebind_status.get("reason") or PR_FOLLOWUP_REBIND_REQUIRED),
+                artifact=recovery,
+            )
+            _remove_rebind_marker(_rebind_quarantine_location(candidate, expected)[1])
         recreated = prepare_managed_worktree(
             source,
             intent_id=str(candidate["intentId"]),
@@ -6072,13 +6184,8 @@ def _recover_dirty_rebound_worktree_locked(
         )
         if recreated != expected or not recreated.is_dir():
             raise RuntimeError("recreated PR follow-up workspace path mismatch")
-        return {
-            "oldWorktreePath": str(worktree),
-            "quarantinePath": str(quarantine),
-            "newWorktreePath": str(recreated),
-            "rebind": dict(rebind_status),
-            "statusDigest": str(rebind_status.get("statusDigest") or ""),
-        }
+        recovery["newWorktreePath"] = str(recreated)
+        return recovery
     status = subprocess.run(
         ["git", "status", "--porcelain=v1", "--untracked-files=all"],
         cwd=worktree,
@@ -6094,10 +6201,27 @@ def _recover_dirty_rebound_worktree_locked(
     source = _managed_worktree_source(worktree, str(candidate["repo"]))
     quarantine_root = managed_worktree_root() / ".rebind-quarantine"
     quarantine_root.mkdir(parents=True, exist_ok=True)
-    safe_key = re.sub(r"[^A-Za-z0-9._-]+", "-", str(candidate["key"])).strip("-._")
-    destination = quarantine_root / f"{safe_key}-{time.time_ns()}" / worktree.name
+    destination, marker_path = _rebind_quarantine_location(candidate, expected)
+    if destination.exists() or marker_path.exists():
+        raise RuntimeError("rebind quarantine location is already occupied")
+    status_digest = hashlib.sha256(status.stdout.encode("utf-8")).hexdigest()
+    recorded_status_digest = str(rebind_status.get("statusDigest") or "")
+    if recorded_status_digest and recorded_status_digest != status_digest:
+        raise RuntimeError("rebind worktree status changed before move")
     destination.parent.mkdir(parents=True, exist_ok=False, mode=0o700)
     os.chmod(destination.parent, 0o700)
+    _write_rebind_marker(
+        marker_path,
+        {
+            "schema": "oss-pr-radar.rebind-intent.v1",
+            "candidateKey": str(candidate["key"]),
+            "repo": str(candidate["repo"]),
+            "intentId": str(candidate["intentId"]),
+            "expectedWorktreePath": str(expected),
+            "quarantinePath": str(destination),
+            "statusDigest": status_digest,
+        },
+    )
     try:
         command(
             ["git", "worktree", "move", str(worktree), str(destination)],
@@ -6109,6 +6233,7 @@ def _recover_dirty_rebound_worktree_locked(
         # A failed Git move must leave both the user's checkout and no stale
         # quarantine staging directory behind for the next retry.
         try:
+            _remove_rebind_marker(marker_path)
             destination.parent.rmdir()
         except OSError:
             pass
@@ -6116,14 +6241,21 @@ def _recover_dirty_rebound_worktree_locked(
     recovery = {
         "quarantinePath": str(destination),
         "oldWorktreePath": str(worktree),
-        "statusDigest": hashlib.sha256(status.stdout.encode("utf-8")).hexdigest(),
+        "statusDigest": status_digest,
     }
     if store is not None:
-        store.bind_task_quarantine_artifact(
-            candidate["key"],
-            reason=str(rebind_status.get("reason") or PR_FOLLOWUP_REBIND_REQUIRED),
-            artifact=recovery,
-        )
+        try:
+            store.bind_task_quarantine_artifact(
+                candidate["key"],
+                reason=str(rebind_status.get("reason") or PR_FOLLOWUP_REBIND_REQUIRED),
+                artifact=recovery,
+            )
+        except Exception:
+            # The marker remains next to the moved worktree.  A later retry
+            # can verify the exact candidate identity and repair the DB row
+            # without guessing or touching the user's files.
+            raise
+        _remove_rebind_marker(marker_path)
     recreated = prepare_managed_worktree(
         source,
         intent_id=str(candidate["intentId"]),
@@ -6388,27 +6520,40 @@ def pr_followup_reserve(args: argparse.Namespace) -> dict[str, Any]:
     except Exception:
         _rollback_pr_followup_preparation(candidate, prepared_head_sha=prepared_head)
         raise
-    context_path = write_task_context(
-        store,
-        issue_url=candidate["issueUrl"],
-        thread_id=candidate["threadId"],
-        cwd=Path(candidate["worktreePath"]),
-        prepared_followup_head=prepared_head,
-    )
-    if recovery is not None:
-        clear_quarantine = getattr(store, "clear_task_quarantine", None)
-        if not callable(clear_quarantine):
-            raise RuntimeError("ledger cannot clear a completed task quarantine")
-        clear_quarantine(
-            candidate["key"],
-            reason=str(rebind_status.get("reason") or PR_FOLLOWUP_REBIND_REQUIRED),
+    try:
+        context_path = write_task_context(
+            store,
+            issue_url=candidate["issueUrl"],
+            thread_id=candidate["threadId"],
+            cwd=Path(candidate["worktreePath"]),
+            prepared_followup_head=prepared_head,
+        )
+        completion = getattr(store, "complete_pr_followup_reservation", None)
+        if not callable(completion):
+            raise RuntimeError("ledger cannot complete a PR follow-up reservation")
+        completion(
+            thread_id=candidate["threadId"],
+            wake_digest=candidate["wakeDigest"],
+            quarantine_reason=(
+                str(rebind_status.get("reason") or PR_FOLLOWUP_REBIND_REQUIRED)
+                if rebind_status is not None
+                else None
+            ),
             evidence={
-                "revalidated": True,
                 "replacementWakeDigest": candidate["wakeDigest"],
                 "preparedHeadSha": prepared_head,
-                "quarantinePath": recovery["quarantinePath"],
+                **({"quarantinePath": recovery["quarantinePath"]} if recovery is not None else {}),
             },
         )
+    except Exception as exc:
+        repair = getattr(store, "mark_pr_followup_reservation_repair_required", None)
+        if callable(repair):
+            repair(
+                thread_id=candidate["threadId"],
+                wake_digest=candidate["wakeDigest"],
+                reason=str(exc)[:300],
+            )
+        raise
     return {
         "ok": True,
         "key": reserved["key"],

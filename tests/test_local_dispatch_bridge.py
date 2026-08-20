@@ -3332,6 +3332,147 @@ def test_dirty_rebound_recreate_failure_persists_quarantine_for_retry(monkeypatc
     assert (Path(bound["quarantinePath"]) / "tracked.txt").read_text() == "user change\n"
 
 
+def test_dirty_rebound_db_bind_failure_leaves_marker_for_exact_retry(monkeypatch, tmp_path):
+    project_root = tmp_path / "github"
+    source = tmp_path / "source"
+    source.mkdir()
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    monkeypatch.setattr(MODULE, "source_repo", lambda _repo: source)
+    run_git(source, "init")
+    run_git(source, "config", "user.name", "Radar Test")
+    run_git(source, "config", "user.email", "radar@example.invalid")
+    (source / "tracked.txt").write_text("base\n", encoding="utf-8")
+    run_git(source, "add", "tracked.txt")
+    run_git(source, "commit", "-m", "baseline")
+    head = run_git(source, "rev-parse", "HEAD")
+    run_git(source, "remote", "add", "origin", "https://github.com/a/b.git")
+    run_git(source, "update-ref", "refs/remotes/origin/main", head)
+    run_git(source, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+    expected = MODULE.managed_worktree_path("intent-1", "a/b")
+    expected.parent.mkdir(parents=True, exist_ok=True)
+    run_git(source, "worktree", "add", "--detach", str(expected), head)
+    (expected / "tracked.txt").write_text("user change\n", encoding="utf-8")
+    note = expected / "user-note.txt"
+    note.write_text("keep me\n", encoding="utf-8")
+    note.chmod(0o640)
+
+    class Store:
+        def __init__(self):
+            self.attempts = 0
+
+        def bind_task_quarantine_artifact(self, _key, *, reason, artifact):
+            assert reason == MODULE.PR_FOLLOWUP_REBIND_REQUIRED
+            self.attempts += 1
+            if self.attempts == 1:
+                raise OSError("injected database bind failure")
+            self.artifact = dict(artifact)
+
+    store = Store()
+    candidate = {
+        "key": "a/b#1",
+        "repo": "a/b",
+        "intentId": "intent-1",
+        "worktreePath": str(expected),
+    }
+    status = {"reason": MODULE.PR_FOLLOWUP_REBIND_REQUIRED}
+    with pytest.raises(OSError, match="database bind failure"):
+        MODULE._recover_dirty_rebound_worktree(candidate, status, store=store)
+    assert not expected.exists()
+    marker = next(
+        (project_root / MODULE.TASK_PRIVATE_DIR / "worktrees" / ".rebind-quarantine").rglob(
+            "rebind-intent.json"
+        )
+    )
+    assert marker.stat().st_mode & 0o777 == 0o600
+    quarantined = Path(json.loads(marker.read_text(encoding="utf-8"))["quarantinePath"])
+    assert (quarantined / "tracked.txt").read_text(encoding="utf-8") == "user change\n"
+    assert (quarantined / "user-note.txt").stat().st_mode & 0o777 == 0o640
+
+    recovery = MODULE._recover_dirty_rebound_worktree(candidate, status, store=store)
+    assert recovery["quarantinePath"] == str(quarantined)
+    assert expected.is_dir()
+    assert run_git(expected, "status", "--porcelain") == ""
+    assert store.attempts == 2
+
+
+def test_pr_followup_clean_rebind_clears_gate_and_reopens_request(monkeypatch, tmp_path):
+    store, worktree, _head_sha, _pr_url = _published_followup_store(tmp_path)
+    candidate = store.pr_followup_candidates()[0]
+    store.rearm_pr_followup_after_task_drift(
+        candidate["key"], expected_prepared_head_sha="a" * 40, observed_head_sha="b" * 40
+    )
+    candidate = store.pr_followup_candidates()[0]
+    context_path = tmp_path / "task-context.json"
+    monkeypatch.setattr(MODULE, "_recover_dirty_rebound_worktree", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        MODULE, "_prepare_pr_followup", lambda _candidate: {"preparedHeadSha": "c" * 40}
+    )
+    monkeypatch.setattr(MODULE, "write_task_context", lambda *_args, **_kwargs: context_path)
+
+    result = MODULE.pr_followup_reserve(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            thread_id=candidate["threadId"],
+            wake_digest=candidate["wakeDigest"],
+        )
+    )
+
+    assert result["ok"] is True
+    assert store.active_task_quarantine(candidate["key"]) is None
+    assert store.pr_followup_candidates() == []
+
+
+@pytest.mark.parametrize("failure_point", ["context", "completion"])
+def test_pr_followup_reserve_failure_is_retryable_without_stuck_gate(
+    monkeypatch, tmp_path, failure_point
+):
+    store, _worktree, _head_sha, _pr_url = _published_followup_store(tmp_path)
+    candidate = store.pr_followup_candidates()[0]
+    store.rearm_pr_followup_after_task_drift(
+        candidate["key"], expected_prepared_head_sha="a" * 40, observed_head_sha="b" * 40
+    )
+    candidate = store.pr_followup_candidates()[0]
+    monkeypatch.setattr(MODULE, "_recover_dirty_rebound_worktree", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        MODULE, "_prepare_pr_followup", lambda _candidate: {"preparedHeadSha": "c" * 40}
+    )
+    context_path = tmp_path / "task-context.json"
+    original_complete = RadarLedger.complete_pr_followup_reservation
+    calls = {"context": 0, "completion": 0}
+
+    def write(*args, **kwargs):
+        calls["context"] += 1
+        if failure_point == "context" and calls["context"] == 1:
+            raise OSError("injected context write failure")
+        return context_path
+
+    def complete(self, *args, **kwargs):
+        calls["completion"] += 1
+        if failure_point == "completion" and calls["completion"] == 1:
+            raise OSError("injected quarantine clear failure")
+        return original_complete(self, *args, **kwargs)
+
+    monkeypatch.setattr(MODULE, "write_task_context", write)
+    monkeypatch.setattr(RadarLedger, "complete_pr_followup_reservation", complete)
+    first = SimpleNamespace(
+        ledger=tmp_path / "ledger.sqlite3",
+        thread_id=candidate["threadId"],
+        wake_digest=candidate["wakeDigest"],
+    )
+    with pytest.raises(OSError):
+        MODULE.pr_followup_reserve(first)
+    assert store.pr_followup_candidates()
+    assert store.active_task_quarantine(candidate["key"]) is not None
+
+    result = MODULE.pr_followup_reserve(first)
+    assert result["ok"] is True
+    assert store.active_task_quarantine(candidate["key"]) is None
+    assert store.pr_followup_candidates() == []
+    assert calls["context"] >= 1
+    if failure_point == "completion":
+        assert calls["completion"] >= 2
+
+
 def test_pr_followup_reserve_clears_rebind_gate_after_reprepare(monkeypatch, tmp_path):
     store, worktree, _head_sha, _pr_url = _published_followup_store(tmp_path)
     original = store.pr_followup_candidates()[0]

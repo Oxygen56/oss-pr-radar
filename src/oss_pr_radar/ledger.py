@@ -5499,9 +5499,23 @@ class RadarLedger:
                            SELECT 1 FROM events abandoned
                            WHERE abandoned.opportunity_key=reserved.opportunity_key
                              AND abandoned.event_type='PR_FOLLOWUP_DELIVERY_ABANDONED'
-                             AND json_extract(abandoned.payload_json,'$.wakeDigest')=
-                                 reserved.dedupe_key
-                             AND abandoned.id>reserved.id
+                           AND json_extract(abandoned.payload_json,'$.wakeDigest')=
+                               reserved.dedupe_key
+                           AND abandoned.id>reserved.id
+                         )
+                         AND NOT EXISTS (
+                           SELECT 1 FROM events repair
+                           WHERE repair.opportunity_key=reserved.opportunity_key
+                             AND repair.event_type='PR_FOLLOWUP_RESERVATION_REPAIR_REQUIRED'
+                             AND repair.dedupe_key=reserved.dedupe_key
+                             AND repair.id>reserved.id
+                             AND NOT EXISTS (
+                               SELECT 1 FROM events repaired
+                               WHERE repaired.opportunity_key=repair.opportunity_key
+                                 AND repaired.event_type='PR_FOLLOWUP_RESERVATION_REPAIRED'
+                                 AND repaired.dedupe_key=repair.dedupe_key
+                                 AND repaired.id>repair.id
+                             )
                          )
                      )
                      AND NOT EXISTS (
@@ -5527,6 +5541,20 @@ class RadarLedger:
                              AND json_extract(abandoned.payload_json,'$.wakeDigest')=
                                  active.dedupe_key
                              AND abandoned.id>active.id
+                         )
+                         AND NOT EXISTS (
+                           SELECT 1 FROM events repair
+                           WHERE repair.opportunity_key=active.opportunity_key
+                             AND repair.event_type='PR_FOLLOWUP_RESERVATION_REPAIR_REQUIRED'
+                             AND repair.dedupe_key=active.dedupe_key
+                             AND repair.id>active.id
+                             AND NOT EXISTS (
+                               SELECT 1 FROM events repaired
+                               WHERE repaired.opportunity_key=repair.opportunity_key
+                                 AND repaired.event_type='PR_FOLLOWUP_RESERVATION_REPAIRED'
+                                 AND repaired.dedupe_key=repair.dedupe_key
+                                 AND repaired.id>repair.id
+                             )
                          )
                      )
                    ORDER BY f.checked_at,r.updated_at DESC"""
@@ -5688,6 +5716,106 @@ class RadarLedger:
                     iso_z(datetime.now(UTC)),
                 )
         return snapshot_candidate
+
+    def mark_pr_followup_reservation_repair_required(
+        self, *, thread_id: str, wake_digest: str, reason: str
+    ) -> None:
+        """Make a failed post-reservation handoff immediately retryable.
+
+        The original reservation remains an immutable fact.  This event is the
+        compensating state that lets the same wake digest be retried without
+        creating a second reservation or releasing an unverified task.
+        """
+
+        if not reason:
+            raise LedgerError("PR follow-up repair reason is required")
+        now = iso_z(datetime.now(UTC))
+        with self.transaction() as connection:
+            row = connection.execute(
+                """SELECT opportunity_key FROM events
+                   WHERE event_type='PR_FOLLOWUP_RESERVED'
+                     AND dedupe_key=?
+                     AND json_extract(payload_json,'$.threadId')=?
+                   ORDER BY id DESC LIMIT 1""",
+                (wake_digest, thread_id),
+            ).fetchone()
+            if row is None:
+                raise LedgerError("PR follow-up reservation is unavailable for repair")
+            self._event(
+                connection,
+                row["opportunity_key"],
+                "PR_FOLLOWUP_RESERVATION_REPAIR_REQUIRED",
+                wake_digest,
+                {"threadId": thread_id, "wakeDigest": wake_digest, "reason": reason},
+                now,
+            )
+
+    def complete_pr_followup_reservation(
+        self,
+        *,
+        thread_id: str,
+        wake_digest: str,
+        quarantine_reason: str | None = None,
+        evidence: dict[str, Any] | None = None,
+    ) -> None:
+        """Commit the filesystem handoff and quarantine clear as one DB step."""
+
+        now = iso_z(datetime.now(UTC))
+        evidence = dict(evidence or {})
+        with self.transaction() as connection:
+            row = connection.execute(
+                """SELECT opportunity_key FROM events
+                   WHERE event_type='PR_FOLLOWUP_RESERVED'
+                     AND dedupe_key=?
+                     AND json_extract(payload_json,'$.threadId')=?
+                   ORDER BY id DESC LIMIT 1""",
+                (wake_digest, thread_id),
+            ).fetchone()
+            if row is None:
+                raise LedgerError("PR follow-up reservation is missing")
+            key = str(row["opportunity_key"])
+            preparation = connection.execute(
+                """SELECT 1 FROM events
+                   WHERE opportunity_key=?
+                     AND event_type='PR_FOLLOWUP_PREPARATION_BOUND'
+                     AND dedupe_key=?
+                   LIMIT 1""",
+                (key, wake_digest),
+            ).fetchone()
+            if preparation is None:
+                raise LedgerError("PR follow-up preparation is not bound")
+            if quarantine_reason:
+                cleared = clear_quarantine(
+                    connection,
+                    opportunity_key=key,
+                    reason=quarantine_reason,
+                    evidence={"revalidated": True, **evidence},
+                    cleared_at=now,
+                )
+                if cleared:
+                    connection.execute(
+                        """UPDATE publication_requests
+                           SET status='PENDING',reason='TASK_QUARANTINE_CLEARED',updated_at=?
+                           WHERE opportunity_key=? AND status='BLOCKED'
+                             AND reason='BLOCKED_REPRODUCTION_REQUIRED'""",
+                        (now, key),
+                    )
+                    self._event(
+                        connection,
+                        key,
+                        "TASK_QUARANTINE_CLEARED",
+                        sha256_text(f"{key}|{quarantine_reason}|{canonical_json(evidence)}"),
+                        {"reason": quarantine_reason, **evidence},
+                        now,
+                    )
+            self._event(
+                connection,
+                key,
+                "PR_FOLLOWUP_RESERVATION_REPAIRED",
+                wake_digest,
+                {"threadId": thread_id, "wakeDigest": wake_digest, **evidence},
+                now,
+            )
 
     def defer_pr_followup_snapshot(
         self,
