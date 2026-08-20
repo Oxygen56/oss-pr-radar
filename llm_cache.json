@@ -3569,6 +3569,30 @@
     ],
     "why": "Issue reports a regression in DeepSpeed launcher causing NCCL CUDA error 600 during process-group init, but root cause is unconfirmed; no maintainer investigation or design confirmation. Track requires concrete algorithm mechanism; this is a runtime/launcher bug with no clear algorithmic invariant or reference implementation."
   },
+  "1cb6cb60744ca6624683d8981e21489b35c5019198e94d35cfe562b7e64dabbb": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "sampling/logits pipeline",
+      "Qwen3_5ForConditionalGeneration handling"
+    ],
+    "risks": [
+      "Potential maintainer design preferences; fix may require careful handling of NVFP4 quantized models."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test using the provided curl command and model to assert non-repetitive output and correct finish_reason."
+    ],
+    "unknowns": [
+      "Exact root cause not yet identified; maintainer confirmation of desired fix approach is pending."
+    ],
+    "why": "Issue provides a clear regression with exact version break, minimal repro, and isolation from speculative decoding and parser. It is a user-visible generation bug in a core inference path, actionable for a runtime fix."
+  },
   "1cd4685b3e7aa1b7a8303d1283ef65a854a8263628728a78cf43b1c7658d0199": {
     "confidence": 0.85,
     "contradictions": [],
@@ -17984,6 +18008,30 @@
     ],
     "why": "Issue reports a concrete authentication failure in Azure OpenAI evaluator metrics with service principal auth, providing a minimal repro config and clear error. No competing PR or issue found. The root cause is likely a tenant mismatch in the auth flow for evaluator calls, but exact code path is unconfirmed."
   },
+  "767b3dcc52f0f8a4f70a7aae5b6ab58fdd619b73933dc6912a076d48ce5cba8b": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "litellm/llms/pass_through/guardrail_translation/handler.py",
+      "guardrail mode forwarding for non-bedrock passthrough routes"
+    ],
+    "risks": [
+      "Potential maintainer design preference for non-bedrock passthrough guardrail support; need to confirm before changing behavior."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that sends a request with a detectable secret via Gemini generateContent passthrough with guardrail mode=block and asserts HTTP 400/blocked outcome."
+    ],
+    "unknowns": [
+      "Whether maintainers have already decided to support guardrail mode on non-bedrock passthrough routes; need to check with maintainers before implementing."
+    ],
+    "why": "Issue provides a clear, reproducible bug with a suspected root cause and code anchors. The fix is actionable and security-relevant, and the issue explicitly offers verification support."
+  },
   "76b5c7c494964a6b044d1a2dc434e4bccf6ebbfc0123dd8ab67d992d87438234": {
     "confidence": 0.7,
     "contradictions": [],
@@ -23080,6 +23128,34 @@
       "Maintainer preference on whether to support the suffix or document it as invalid"
     ],
     "why": "The issue reports a user-facing bug where the Z.AI Coding Plan model variant `glm-5.2[1m]` fails with 'Unknown Model' through LiteLLM Proxy. The root cause is unclear: it could be a provider-side rejection, a LiteLLM model name parsing issue, or a documentation mismatch. The issue includes reproduction steps and multiple user confirmations, but the deterministic gate requires HUMAN_REVIEW and open PR lookup failed, so we cannot rule out existing work. The track is agent_ai_infra, not llm_algorithm, so algorithm evidence is not required. The candidate is actionable but needs maintainer confirmation on the intended fix (e.g., support the suffix or document it as invalid)."
+  },
+  "9bd8a08461be92098d7e0907bae3158d5b725575e29089b0f35f99c20953bbc0": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "orchestrator wake mechanism",
+      "kanban_wait tool",
+      "kanban_show summary mode"
+    ],
+    "risks": [
+      "Potential API behavior changes if wake mechanism is altered; need to ensure backward compatibility.",
+      "Server-side wait primitive may introduce new failure modes (timeouts, connection handling)."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with a mock dispatcher and worker completing a task; verify orchestrator is woken without polling.",
+      "Add integration test for kanban_wait long-poll returning on task completion.",
+      "Add unit test for kanban_show summary mode ensuring output size is bounded."
+    ],
+    "unknowns": [
+      "Maintainer design preferences or existing plans for the wake mechanism."
+    ],
+    "why": "The issue provides a detailed, evidence-backed performance bug with clear root cause (missing event-driven wake) and concrete reproduction steps. It identifies specific code anchors and suggests actionable fixes (event-driven wake, server-side wait primitive, compact kanban_show mode). The track is agent_ai_infra, which is appropriate for infrastructure-level improvements."
   },
   "9c1fb3e2991987f1a7f8345147e1298e9b6a8bed38e5f16a7327e38b76aa0708": {
     "confidence": 0.85,
