@@ -9,11 +9,15 @@ import subprocess
 import sys
 from pathlib import Path
 from time import sleep
-from typing import Any
+from typing import Any, Callable
 
 ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+from oss_pr_radar.action_guard import (  # noqa: E402
+    ledger_action_guard_root,
+    opportunity_action_guard,
+)
 from oss_pr_radar.ledger import RadarLedger  # noqa: E402
 from oss_pr_radar.operational_auth import require_operational_authorization  # noqa: E402
 from oss_pr_radar.publication import (  # noqa: E402
@@ -344,7 +348,37 @@ def transient_github_graphql_failure(detail: str) -> bool:
     )
 
 
+def _publication_opportunity_key(issue_url: str) -> str:
+    match = ISSUE_URL.fullmatch(issue_url)
+    if match is None:
+        raise RuntimeError("invalid issue URL")
+    return f"{match.group(1)}#{match.group(2)}"
+
+
+def _guarded_publication_action(
+    args: argparse.Namespace,
+    store: RadarLedger,
+    action: Callable[[], dict[str, Any]],
+) -> dict[str, Any]:
+    opportunity_key = _publication_opportunity_key(args.issue_url)
+    ledger_path = getattr(store, "path", None)
+    guard_root = (
+        ledger_action_guard_root(Path(ledger_path))
+        if ledger_path is not None
+        else Path(args.worktree).resolve().parent
+    )
+    with opportunity_action_guard(guard_root, opportunity_key):
+        active_quarantine = getattr(store, "active_task_quarantine", None)
+        if active_quarantine is not None and active_quarantine(opportunity_key) is not None:
+            raise PermissionError(f"publication blocked by active quarantine: {opportunity_key}")
+        return action()
+
+
 def push(args: argparse.Namespace, store: RadarLedger) -> dict[str, Any]:
+    return _guarded_publication_action(args, store, lambda: _push_unlocked(args, store))
+
+
+def _push_unlocked(args: argparse.Namespace, store: RadarLedger) -> dict[str, Any]:
     worktree = Path(args.worktree).resolve()
     if not public_branch_is_safe(args.branch):
         raise RuntimeError("public branch name exposes an AI tool")
@@ -484,6 +518,10 @@ def push(args: argparse.Namespace, store: RadarLedger) -> dict[str, Any]:
 
 
 def create_pr(args: argparse.Namespace, store: RadarLedger) -> dict[str, Any]:
+    return _guarded_publication_action(args, store, lambda: _create_pr_unlocked(args, store))
+
+
+def _create_pr_unlocked(args: argparse.Namespace, store: RadarLedger) -> dict[str, Any]:
     worktree = Path(args.worktree).resolve()
     if not public_branch_is_safe(args.branch):
         raise RuntimeError("public branch name exposes an AI tool")

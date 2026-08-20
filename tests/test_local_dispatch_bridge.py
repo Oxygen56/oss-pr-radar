@@ -5630,12 +5630,13 @@ def test_task_turn_delivery_rechecks_quarantine_before_starting_worker(monkeypat
             ),
         )
 
-    original_authorize = store.authorize_task_turn_delivery
-    raced = {"count": 0}
+    activation_started = threading.Event()
+    activation_finished = threading.Event()
+    activation_errors = []
 
-    def authorize_after_race(**kwargs):
-        raced["count"] += 1
-        if raced["count"] == 1:
+    def activate_quarantine():
+        activation_started.set()
+        try:
             store.record_shared_context_quarantine(
                 key=candidate["key"],
                 reason="SHARED_CONTEXT_INVALID",
@@ -5643,10 +5644,25 @@ def test_task_turn_delivery_rechecks_quarantine_before_starting_worker(monkeypat
                 payload={"source": "delivery-race"},
                 created_at=iso_z(datetime.now(UTC)),
             )
-        return original_authorize(**kwargs)
+        except BaseException as exc:
+            activation_errors.append(exc)
+        finally:
+            activation_finished.set()
+
+    with MODULE.opportunity_action_guard(
+        MODULE.ledger_action_guard_root(store.path), candidate["key"]
+    ):
+        activation = threading.Thread(target=activate_quarantine)
+        activation.start()
+        assert activation_started.wait(2)
+        assert not activation_finished.is_set()
+
+    activation.join(timeout=2)
+    assert not activation.is_alive()
+    assert activation_errors == []
+    assert activation_finished.is_set()
 
     popen_calls = []
-    monkeypatch.setattr(store, "authorize_task_turn_delivery", authorize_after_race)
     monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
     monkeypatch.setattr(MODULE, "STATE", tmp_path / "state")
     monkeypatch.setattr(MODULE, "WORKTREE_ROOT", tmp_path)
@@ -5654,13 +5670,10 @@ def test_task_turn_delivery_rechecks_quarantine_before_starting_worker(monkeypat
     monkeypatch.setattr(
         MODULE.subprocess,
         "Popen",
-        lambda *args, **kwargs: (
-            popen_calls.append((args, kwargs))
-            or pytest.fail("quarantine race must reject before starting a worker")
-        ),
+        lambda *_args, **_kwargs: pytest.fail("a quarantined task must not start a worker"),
     )
 
-    with pytest.raises(PermissionError, match="blocked by active task quarantine"):
+    with pytest.raises(PermissionError, match="blocked by active quarantine"):
         MODULE.task_turn_deliver(
             SimpleNamespace(
                 ledger=tmp_path / "ledger.sqlite3",
@@ -5670,20 +5683,8 @@ def test_task_turn_delivery_rechecks_quarantine_before_starting_worker(monkeypat
             )
         )
 
-    assert raced["count"] == 1
     assert popen_calls == []
-    receipt_key = MODULE.sha256_json(
-        {
-            "deliveryKind": "pr-followup",
-            "threadId": candidate["threadId"],
-            "deliveryToken": candidate["wakeDigest"],
-        }
-    )
-    receipt = json.loads(
-        (tmp_path / "state" / "task_turn_receipts" / f"{receipt_key}.json").read_text()
-    )
-    assert receipt["ok"] is False
-    assert receipt["turnStarted"] is False
+    assert store.active_task_quarantine(candidate["key"]) is not None
 
     store.clear_task_quarantine(
         candidate["key"],
@@ -5696,6 +5697,63 @@ def test_task_turn_delivery_rechecks_quarantine_before_starting_worker(monkeypat
         delivery_token=candidate["wakeDigest"],
     )
     assert authorized["deliveryToken"] == candidate["wakeDigest"]
+
+
+def test_task_spawn_is_blocked_when_quarantine_wins_the_guard(monkeypatch, tmp_path):
+    store, _worktree, _head_sha, _pr_url = _published_followup_store(tmp_path)
+    candidate = store.pr_followup_candidates()[0]
+    key = candidate["key"]
+    release = threading.Event()
+    ready = threading.Event()
+    activation_errors = []
+    spawn_errors = []
+    popen_calls = []
+
+    def activate():
+        try:
+            with MODULE.opportunity_action_guard(MODULE.ledger_action_guard_root(store.path), key):
+                store._record_shared_context_quarantine(
+                    key=key,
+                    reason="SHARED_CONTEXT_INVALID",
+                    dedupe_key="activation-first",
+                    payload={"source": "race"},
+                    created_at=iso_z(datetime.now(UTC)),
+                )
+                ready.set()
+                assert release.wait(2)
+        except BaseException as exc:
+            activation_errors.append(exc)
+
+    def spawn():
+        try:
+            MODULE._guarded_task_popen(
+                store,
+                opportunity_key=key,
+                argv=[sys.executable, "-c", "pass"],
+                cwd=tmp_path,
+            )
+        except BaseException as exc:
+            spawn_errors.append(exc)
+
+    monkeypatch.setattr(
+        MODULE.subprocess,
+        "Popen",
+        lambda *args, **kwargs: popen_calls.append((args, kwargs)),
+    )
+    activation = threading.Thread(target=activate)
+    activation.start()
+    assert ready.wait(2)
+    worker = threading.Thread(target=spawn)
+    worker.start()
+    time.sleep(0.05)
+    assert popen_calls == []
+    release.set()
+    activation.join(timeout=2)
+    worker.join(timeout=2)
+    assert activation_errors == []
+    assert isinstance(spawn_errors[0], PermissionError)
+    assert popen_calls == []
+    assert store.active_task_quarantine(key) is not None
 
 
 def test_task_turn_preflight_failure_writes_a_negative_receipt(monkeypatch, tmp_path):
@@ -12690,3 +12748,20 @@ def test_event_drain_prioritizes_visible_publication_feedback(monkeypatch, tmp_p
 
     assert result["action"] == "publication_feedback_dispatched"
     assert result["prUrl"] == "https://github.com/a/b/pull/9"
+
+
+def test_guarded_task_popen_blocks_active_quarantine_before_process_start(tmp_path):
+    class GuardedStore:
+        path = tmp_path / "ledger.sqlite3"
+
+        @staticmethod
+        def active_task_quarantine(_key):
+            return {"reason": "ACTIVE_TASK_QUARANTINE"}
+
+    with pytest.raises(PermissionError, match="active quarantine"):
+        MODULE._guarded_task_popen(
+            GuardedStore(),
+            opportunity_key="example/project#1",
+            argv=[sys.executable, "-c", "raise SystemExit(1)"],
+            cwd=tmp_path,
+        )

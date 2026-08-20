@@ -28,6 +28,10 @@ from typing import Any, Callable
 ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+from oss_pr_radar.action_guard import (  # noqa: E402
+    ledger_action_guard_root,
+    opportunity_action_guard,
+)
 from oss_pr_radar.decision import authorize  # noqa: E402
 from oss_pr_radar.dispatch import DispatchSigner, canonical_prompt, verify_queue  # noqa: E402
 from oss_pr_radar.evidence import collect_evidence  # noqa: E402
@@ -3374,30 +3378,31 @@ def _quarantine_shared_context(
         }
     )
     artifact_path = shared_context_quarantine_root() / f"q-{artifact_identity}.json"
-    artifact = _ensure_context_quarantine_artifact(
-        artifact_path,
-        key=key,
-        issue_url=issue_url,
-        reason=reason,
-        source_path=path,
-        raw=raw,
-        source_digest=source_digest,
-        source_mode=source_stat.st_mode & 0o777,
-        error=str(exc)[:500],
-    )
-    persisted = store.record_shared_context_quarantine(
-        key=key,
-        reason=reason,
-        dedupe_key=dedupe_key,
-        payload={
-            "issueUrl": issue_url,
-            "originalPath": str(path),
-            "originalBytesSha256": source_digest,
-            "artifactPath": str(artifact_path),
-            "error": str(exc)[:500],
-        },
-        created_at=artifact["observedAt"],
-    )
+    with opportunity_action_guard(ledger_action_guard_root(store.path), key):
+        artifact = _ensure_context_quarantine_artifact(
+            artifact_path,
+            key=key,
+            issue_url=issue_url,
+            reason=reason,
+            source_path=path,
+            raw=raw,
+            source_digest=source_digest,
+            source_mode=source_stat.st_mode & 0o777,
+            error=str(exc)[:500],
+        )
+        persisted = store._record_shared_context_quarantine(
+            key=key,
+            reason=reason,
+            dedupe_key=dedupe_key,
+            payload={
+                "issueUrl": issue_url,
+                "originalPath": str(path),
+                "originalBytesSha256": source_digest,
+                "artifactPath": str(artifact_path),
+                "error": str(exc)[:500],
+            },
+            created_at=artifact["observedAt"],
+        )
     return {
         "key": key,
         "issueUrl": issue_url,
@@ -3852,8 +3857,14 @@ def _app_server_request_worker(args: argparse.Namespace) -> dict[str, Any]:
     executable = shutil.which("codex")
     if not executable:
         raise RuntimeError("codex executable is unavailable")
-    process = subprocess.Popen(
-        [
+    match = ISSUE_URL.fullmatch(str(intent.get("issueUrl") or ""))
+    if match is None:
+        raise RuntimeError("intent issue URL is invalid")
+    opportunity_key = f"{match.group(1)}#{match.group(2)}"
+    process = _guarded_task_popen(
+        store,
+        opportunity_key=opportunity_key,
+        argv=[
             executable,
             "app-server",
             "--disable",
@@ -3893,10 +3904,12 @@ def _app_server_request_worker(args: argparse.Namespace) -> dict[str, Any]:
                 },
             },
         ]
-        process.stdin.write(
-            b"".join((json.dumps(item) + "\n").encode("utf-8") for item in requests)
-        )
-        process.stdin.flush()
+        with opportunity_action_guard(ledger_action_guard_root(store.path), opportunity_key):
+            _require_task_action_clear(store, opportunity_key)
+            process.stdin.write(
+                b"".join((json.dumps(item) + "\n").encode("utf-8") for item in requests)
+            )
+            process.stdin.flush()
         buffer = b""
         deadline = monotonic() + 30
         with selectors.DefaultSelector() as selector:
@@ -4152,6 +4165,76 @@ def _task_turn_reservation(
     raise RuntimeError("unsupported task-turn delivery kind")
 
 
+def _task_opportunity_key(candidate: dict[str, Any]) -> str:
+    issue_url = str(candidate.get("issueUrl") or candidate.get("issue_url") or "")
+    match = ISSUE_URL.fullmatch(issue_url)
+    if match is None:
+        raise RuntimeError("task action has an invalid issue URL")
+    return f"{match.group(1)}#{match.group(2)}"
+
+
+def _require_task_action_clear(store: RadarLedger, opportunity_key: str) -> None:
+    if store.active_task_quarantine(opportunity_key) is not None:
+        raise PermissionError(f"task action blocked by active quarantine: {opportunity_key}")
+
+
+def _guarded_task_popen(
+    store: RadarLedger,
+    *,
+    opportunity_key: str,
+    argv: list[str],
+    cwd: Path,
+    **kwargs: Any,
+) -> subprocess.Popen[Any]:
+    with opportunity_action_guard(ledger_action_guard_root(store.path), opportunity_key):
+        _require_task_action_clear(store, opportunity_key)
+        return subprocess.Popen(argv, cwd=cwd, **kwargs)
+
+
+def _guarded_task_turn_start(
+    store: RadarLedger,
+    *,
+    opportunity_key: str,
+    process: subprocess.Popen[Any],
+    thread_id: str,
+    cwd: Path,
+    prompt: str,
+    delivery_kind: str,
+    delivery_token: str,
+) -> None:
+    if process.stdin is None:
+        raise RuntimeError("app server input is unavailable")
+    with opportunity_action_guard(ledger_action_guard_root(store.path), opportunity_key):
+        _require_task_action_clear(store, opportunity_key)
+        store.authorize_task_turn_delivery(
+            delivery_kind=delivery_kind,
+            thread_id=thread_id,
+            delivery_token=delivery_token,
+        )
+        process.stdin.write(
+            (
+                json.dumps(
+                    {
+                        "id": 2,
+                        "method": "turn/start",
+                        "params": {
+                            "threadId": thread_id,
+                            "cwd": str(cwd),
+                            "input": [{"type": "text", "text": prompt, "text_elements": []}],
+                            "approvalPolicy": "never",
+                            "sandboxPolicy": {"type": "dangerFullAccess"},
+                            "clientUserMessageId": f"oss-pr-radar:{delivery_kind}:{delivery_token}",
+                            "summary": "auto",
+                        },
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            ).encode("utf-8")
+        )
+        process.stdin.flush()
+
+
 def _task_turn_prompt(delivery_kind: str, candidate: dict[str, Any]) -> str:
     if delivery_kind == "validation-followup":
         return _validation_followup_prompt(candidate)
@@ -4276,13 +4359,11 @@ def _app_server_task_turn_worker(args: argparse.Namespace) -> dict[str, Any]:
     executable = shutil.which("codex")
     if not executable:
         raise RuntimeError("codex executable is unavailable")
-    store.authorize_task_turn_delivery(
-        delivery_kind=args.delivery_kind,
-        thread_id=args.thread_id,
-        delivery_token=args.delivery_token,
-    )
-    process = subprocess.Popen(
-        [
+    opportunity_key = _task_opportunity_key(candidate)
+    process = _guarded_task_popen(
+        store,
+        opportunity_key=opportunity_key,
+        argv=[
             executable,
             "app-server",
             "--disable",
@@ -4356,30 +4437,16 @@ def _app_server_task_turn_worker(args: argparse.Namespace) -> dict[str, Any]:
                     )
             if resumed_thread_id != args.thread_id:
                 raise RuntimeError("app server resumed the wrong task")
-            process.stdin.write(
-                (
-                    json.dumps(
-                        {
-                            "id": 2,
-                            "method": "turn/start",
-                            "params": {
-                                "threadId": args.thread_id,
-                                "cwd": str(cwd),
-                                "input": [{"type": "text", "text": prompt, "text_elements": []}],
-                                "approvalPolicy": "never",
-                                "sandboxPolicy": {"type": "dangerFullAccess"},
-                                "clientUserMessageId": (
-                                    f"oss-pr-radar:{args.delivery_kind}:{args.delivery_token}"
-                                ),
-                                "summary": "auto",
-                            },
-                        },
-                        ensure_ascii=False,
-                    )
-                    + "\n"
-                ).encode("utf-8")
+            _guarded_task_turn_start(
+                store,
+                opportunity_key=opportunity_key,
+                process=process,
+                thread_id=args.thread_id,
+                cwd=cwd,
+                prompt=prompt,
+                delivery_kind=args.delivery_kind,
+                delivery_token=args.delivery_token,
             )
-            process.stdin.flush()
             deadline = monotonic() + 45
             while monotonic() < deadline and not turn_id:
                 ready = selector.select(max(0.0, deadline - monotonic()))
@@ -5144,12 +5211,38 @@ def task_turn_deliver(args: argparse.Namespace) -> dict[str, Any]:
             "reason": "DELIVERY_WORKER_OUTCOME_UNKNOWN",
         }
 
+    opportunity_key = _task_opportunity_key(candidate)
     try:
-        store.authorize_task_turn_delivery(
-            delivery_kind=args.delivery_kind,
-            thread_id=args.thread_id,
-            delivery_token=args.delivery_token,
-        )
+        with opportunity_action_guard(ledger_action_guard_root(store.path), opportunity_key):
+            _require_task_action_clear(store, opportunity_key)
+            store.authorize_task_turn_delivery(
+                delivery_kind=args.delivery_kind,
+                thread_id=args.thread_id,
+                delivery_token=args.delivery_token,
+            )
+            with log.open("ab") as handle:
+                worker = subprocess.Popen(
+                    [
+                        sys.executable,
+                        str(Path(__file__).resolve()),
+                        "--ledger",
+                        str(args.ledger),
+                        "task-turn-worker",
+                        "--delivery-kind",
+                        args.delivery_kind,
+                        "--thread-id",
+                        args.thread_id,
+                        "--delivery-token",
+                        args.delivery_token,
+                        "--receipt",
+                        str(receipt),
+                    ],
+                    cwd=ROOT,
+                    stdin=subprocess.DEVNULL,
+                    stdout=handle,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                )
     except Exception as exc:
         if not receipt.exists():
             _atomic_json(
@@ -5162,29 +5255,6 @@ def task_turn_deliver(args: argparse.Namespace) -> dict[str, Any]:
                 },
             )
         raise
-    with log.open("ab") as handle:
-        worker = subprocess.Popen(
-            [
-                sys.executable,
-                str(Path(__file__).resolve()),
-                "--ledger",
-                str(args.ledger),
-                "task-turn-worker",
-                "--delivery-kind",
-                args.delivery_kind,
-                "--thread-id",
-                args.thread_id,
-                "--delivery-token",
-                args.delivery_token,
-                "--receipt",
-                str(receipt),
-            ],
-            cwd=ROOT,
-            stdin=subprocess.DEVNULL,
-            stdout=handle,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
     _atomic_json(
         launch,
         {

@@ -57,11 +57,18 @@ def _host_radar_shared_inventory(root: Path) -> str:
     ).hexdigest()
 
 
+def _watcher_missing_baseline_violation(root: Path, baseline_exists: bool) -> bool:
+    """The missing-root watcher must treat an empty directory as a write."""
+
+    return not baseline_exists and root.exists()
+
+
 @pytest.fixture(scope="session", autouse=True)
 def no_host_radar_private_writes(tmp_path_factory):
     """Make the full suite fail if it writes the live shared radar root."""
 
     root = Path.home() / "Documents" / "github" / ".oss-pr-radar"
+    root_preexisting = root.exists()
     before = _host_radar_inventory(root)
     shared_before = _host_radar_shared_inventory(root)
     watcher_code = r"""
@@ -75,8 +82,9 @@ from pathlib import Path
 
 root = Path(sys.argv[1])
 baseline = sys.argv[2]
-flag = Path(sys.argv[3])
-ready = Path(sys.argv[4])
+baseline_exists = sys.argv[3] == "1"
+flag = Path(sys.argv[4])
+ready = Path(sys.argv[5])
 
 def inventory(path):
     entries = []
@@ -110,6 +118,14 @@ def write_marker(path, payload):
     finally:
         os.close(fd)
 
+if not baseline_exists:
+    write_marker(ready, b"unsupported:missing-root")
+    while True:
+        if root.exists():
+            write_marker(flag, b"host radar root appeared after missing baseline")
+            raise SystemExit(2)
+        time.sleep(0.05)
+
 if not hasattr(select, "kqueue"):
     write_marker(ready, b"unsupported:kqueue")
     while True:
@@ -118,9 +134,9 @@ if not hasattr(select, "kqueue"):
             raise SystemExit(2)
         time.sleep(0.05)
 
-if not root.is_dir() or root.is_symlink():
-    write_marker(ready, b"unsupported:missing-or-unsafe-root")
-    raise SystemExit(3)
+if root.is_symlink() or not root.is_dir():
+    write_marker(flag, b"host radar root is unsafe before ready")
+    raise SystemExit(2)
 
 if inventory(root) != baseline:
     write_marker(flag, b"host radar state changed before ready")
@@ -215,6 +231,7 @@ finally:
             watcher_code,
             str(root),
             before,
+            "1" if root_preexisting else "0",
             str(watcher_flag),
             str(watcher_ready),
         ],
@@ -223,7 +240,6 @@ finally:
         stderr=watcher_stderr,
         close_fds=True,
     )
-    watcher_unsupported = False
     try:
         ready_deadline = time.monotonic() + 5
         while not watcher_ready.exists() and time.monotonic() < ready_deadline:
@@ -241,17 +257,19 @@ finally:
         ready_value = watcher_ready.read_bytes()
         if ready_value != b"kqueue-active" and not ready_value.startswith(b"unsupported:"):
             raise AssertionError(f"host watcher did not activate kqueue: {ready_value!r}")
-        watcher_unsupported = ready_value.startswith(b"unsupported:")
         yield
     finally:
         exit_code = watcher.poll()
+        intentionally_terminated = False
         if exit_code is None:
+            intentionally_terminated = True
             watcher.terminate()
         try:
             watcher.wait(timeout=2)
         except subprocess.TimeoutExpired:
             watcher.kill()
             watcher.wait(timeout=2)
+        exit_code = watcher.returncode
         watcher_stderr.flush()
         watcher_stderr.seek(0)
         diagnostic = watcher_stderr.read()[-4000:].decode("utf-8", "replace")
@@ -260,7 +278,7 @@ finally:
         assert after == before, (
             f"tests modified the live .oss-pr-radar shared state: before={before} after={after}"
         )
-        allowed_exit_codes = (None, 0, -15) if watcher_unsupported else (None, 0)
+        allowed_exit_codes = (None, 0, -15) if intentionally_terminated else (0,)
         assert exit_code in allowed_exit_codes, (
             f"host watcher exited unexpectedly: code={exit_code}, stderr={diagnostic!r}"
         )

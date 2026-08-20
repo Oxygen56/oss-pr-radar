@@ -19,6 +19,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from .action_guard import ledger_action_guard_root, opportunity_action_guard
 from .managed_security import (
     current_signing_key_id,
     sign_current,
@@ -784,8 +785,8 @@ def migrate_schema(
         if existing_version == 6 and not _allow_v6_upgrade:
             raise ValueError("managed schema v6 requires migrate_v6_to_v7")
         connection.executescript(SCHEMA_SQL)
+        backfill_from_managed_events(connection, action_guard_root=ledger_action_guard_root(path))
         connection.execute("BEGIN IMMEDIATE")
-        backfill_from_managed_events(connection)
         result_columns = {
             str(row[1])
             for row in connection.execute("PRAGMA table_info(managed_results)").fetchall()
@@ -1333,6 +1334,35 @@ class ManagedLedger:
             connection.close()
 
     def record_task_quarantine(
+        self,
+        *,
+        opportunity_key: str,
+        reason: str,
+        dedupe_key: str,
+        task_id: str | None = None,
+        state: str = "VALIDATION_PENDING",
+        source: str = "managed",
+        provenance: dict[str, Any] | None = None,
+        payload: dict[str, Any] | None = None,
+        observed_at: str | None = None,
+    ) -> dict[str, Any]:
+        """Record a blocking quarantine under its opportunity action guard."""
+
+        opportunity_key = canonical_opportunity_key(opportunity_key)
+        with opportunity_action_guard(ledger_action_guard_root(self.path), opportunity_key):
+            return self._record_task_quarantine_unlocked(
+                opportunity_key=opportunity_key,
+                reason=reason,
+                dedupe_key=dedupe_key,
+                task_id=task_id,
+                state=state,
+                source=source,
+                provenance=provenance,
+                payload=payload,
+                observed_at=observed_at,
+            )
+
+    def _record_task_quarantine_unlocked(
         self,
         *,
         opportunity_key: str,

@@ -9,8 +9,11 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import ExitStack
+from pathlib import Path
 from typing import Any
 
+from .action_guard import opportunity_action_guard
 from .util import canonical_json
 
 QUARANTINE_SCHEMA_SQL = """
@@ -52,12 +55,20 @@ def ensure_schema(connection: sqlite3.Connection) -> None:
     )
 
 
-def backfill_from_radar_events(connection: sqlite3.Connection) -> None:
-    """Import legacy Radar event-only quarantines without reopening cleared rows."""
+def backfill_from_radar_events(connection: sqlite3.Connection, *, action_guard_root: Path) -> None:
+    """Shutdown/migration-only import guarded by every affected opportunity."""
 
     ensure_schema(connection)
-    connection.execute(
-        """INSERT OR IGNORE INTO task_quarantines
+    keys = connection.execute(
+        """SELECT DISTINCT opportunity_key FROM events
+           WHERE event_type IN ('LEGACY_RESULT_REQUIRES_MIGRATION',
+                                'PR_FOLLOWUP_REBIND_REQUIRED')"""
+    ).fetchall()
+    with ExitStack() as guards:
+        for row in sorted(keys, key=lambda value: str(value[0])):
+            guards.enter_context(opportunity_action_guard(action_guard_root, str(row[0])))
+        connection.execute(
+            """INSERT OR IGNORE INTO task_quarantines
            (opportunity_key,reason,dedupe_key,payload_json,status,created_at)
            SELECT q.opportunity_key,q.event_type,q.dedupe_key,q.payload_json,'ACTIVE',q.created_at
            FROM events q
@@ -75,11 +86,13 @@ def backfill_from_radar_events(connection: sqlite3.Connection) -> None:
                  AND c.event_type='TASK_QUARANTINE_CLEARED'
                  AND c.id>q.id
              )"""
-    )
+        )
 
 
-def backfill_from_managed_events(connection: sqlite3.Connection) -> None:
-    """Import managed lifecycle quarantines into the shared publication gate."""
+def backfill_from_managed_events(
+    connection: sqlite3.Connection, *, action_guard_root: Path
+) -> None:
+    """Shutdown/migration-only import guarded by every affected opportunity."""
 
     ensure_schema(connection)
     if (
@@ -89,8 +102,16 @@ def backfill_from_managed_events(connection: sqlite3.Connection) -> None:
         is None
     ):
         return
-    connection.execute(
-        """INSERT OR IGNORE INTO task_quarantines
+    keys = connection.execute(
+        """SELECT DISTINCT opportunity_key FROM managed_lifecycle_events
+           WHERE event_type IN ('LEGACY_RESULT_REQUIRES_MIGRATION',
+                                'PR_FOLLOWUP_REBIND_REQUIRED')"""
+    ).fetchall()
+    with ExitStack() as guards:
+        for row in sorted(keys, key=lambda value: str(value[0])):
+            guards.enter_context(opportunity_action_guard(action_guard_root, str(row[0])))
+        connection.execute(
+            """INSERT OR IGNORE INTO task_quarantines
            (opportunity_key,reason,dedupe_key,payload_json,status,created_at)
            SELECT q.opportunity_key,q.event_type,q.idempotency_key,q.payload_json,'ACTIVE',q.observed_at
            FROM managed_lifecycle_events q
@@ -109,7 +130,7 @@ def backfill_from_managed_events(connection: sqlite3.Connection) -> None:
                  AND c.event_type='TASK_QUARANTINE_CLEARED'
                  AND c.event_id>q.event_id
              )"""
-    )
+        )
 
 
 def record(

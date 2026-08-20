@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
+from .action_guard import ledger_action_guard_root, opportunity_action_guard
 from .repo_probe import REPRODUCED_VALIDATED, verify_probe_receipt
 from .task_quarantine import active as active_quarantine
 from .task_quarantine import attach_artifact as attach_quarantine_artifact
@@ -317,8 +318,12 @@ class RadarLedger:
                 );
                 """
             )
-            backfill_from_radar_events(connection)
-            backfill_from_managed_events(connection)
+            backfill_from_radar_events(
+                connection, action_guard_root=ledger_action_guard_root(self.path)
+            )
+            backfill_from_managed_events(
+                connection, action_guard_root=ledger_action_guard_root(self.path)
+            )
             columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(intents)")}
             if "title_time" not in columns:
                 connection.execute("ALTER TABLE intents ADD COLUMN title_time TEXT")
@@ -4351,6 +4356,24 @@ class RadarLedger:
         payload: dict[str, Any],
         created_at: str,
     ) -> dict[str, Any]:
+        with opportunity_action_guard(ledger_action_guard_root(self.path), key):
+            return self._record_shared_context_quarantine(
+                key=key,
+                reason=reason,
+                dedupe_key=dedupe_key,
+                payload=payload,
+                created_at=created_at,
+            )
+
+    def _record_shared_context_quarantine(
+        self,
+        *,
+        key: str,
+        reason: str,
+        dedupe_key: str,
+        payload: dict[str, Any],
+        created_at: str,
+    ) -> dict[str, Any]:
         """Persist a context quarantine and audit event in one transaction."""
 
         with self.transaction() as connection:
@@ -4545,6 +4568,24 @@ class RadarLedger:
                 raise LedgerError("publication request is not an existing PR update")
 
     def rearm_pr_followup_after_task_drift(
+        self,
+        key: str,
+        *,
+        expected_prepared_head_sha: str,
+        observed_head_sha: str,
+        reason: str = "PR_FOLLOWUP_REBIND_REQUIRED",
+    ) -> dict[str, Any]:
+        """Rebind one stale follow-up while holding its opportunity guard."""
+
+        with opportunity_action_guard(ledger_action_guard_root(self.path), key):
+            return self._rearm_pr_followup_after_task_drift_unlocked(
+                key,
+                expected_prepared_head_sha=expected_prepared_head_sha,
+                observed_head_sha=observed_head_sha,
+                reason=reason,
+            )
+
+    def _rearm_pr_followup_after_task_drift_unlocked(
         self,
         key: str,
         *,
@@ -5867,7 +5908,9 @@ class RadarLedger:
 
         with self.connect() as connection:
             ensure_quarantine_schema(connection)
-            backfill_from_managed_events(connection)
+            backfill_from_managed_events(
+                connection, action_guard_root=ledger_action_guard_root(self.path)
+            )
             quarantine = connection.execute(
                 """SELECT * FROM task_quarantines
                    WHERE opportunity_key=? AND reason='PR_FOLLOWUP_REBIND_REQUIRED'
@@ -6024,6 +6067,28 @@ class RadarLedger:
         return snapshot_candidate
 
     def mark_pr_followup_reservation_repair_required(
+        self, *, thread_id: str, wake_digest: str, reason: str
+    ) -> None:
+        """Record a reservation repair while holding its opportunity guard."""
+
+        with self.connect() as connection:
+            row = connection.execute(
+                """SELECT opportunity_key FROM events
+                   WHERE event_type='PR_FOLLOWUP_RESERVED'
+                     AND dedupe_key=?
+                     AND json_extract(payload_json,'$.threadId')=?
+                   ORDER BY id DESC LIMIT 1""",
+                (wake_digest, thread_id),
+            ).fetchone()
+        if row is None:
+            raise LedgerError("PR follow-up reservation is unavailable for repair")
+        key = str(row["opportunity_key"])
+        with opportunity_action_guard(ledger_action_guard_root(self.path), key):
+            self._mark_pr_followup_reservation_repair_required_unlocked(
+                thread_id=thread_id, wake_digest=wake_digest, reason=reason
+            )
+
+    def _mark_pr_followup_reservation_repair_required_unlocked(
         self, *, thread_id: str, wake_digest: str, reason: str
     ) -> None:
         """Make a failed post-reservation handoff immediately retryable.

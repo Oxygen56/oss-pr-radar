@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 
 import pytest
+from conftest import _watcher_missing_baseline_violation
 
 
 def _inventory(root: Path) -> str:
@@ -38,6 +39,14 @@ def _inventory(root: Path) -> str:
     return hashlib.sha256(
         json.dumps(entries, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
+
+
+def test_missing_baseline_detects_empty_directory(tmp_path):
+    root = tmp_path / "appeared"
+    assert not _watcher_missing_baseline_violation(root, False)
+    root.mkdir(mode=0o700)
+    assert _watcher_missing_baseline_violation(root, False)
+    assert not _watcher_missing_baseline_violation(root, True)
 
 
 def test_kqueue_watcher_records_transient_write_after_final_state_is_restored(tmp_path):

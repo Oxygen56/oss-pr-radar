@@ -4,6 +4,7 @@ import importlib.util
 import json
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -922,3 +923,57 @@ def test_publication_executor_help_has_no_auth_bypass_option():
     assert completed.returncode == 0
     assert "skip-auth" not in completed.stdout
     assert "allow-unreleased-code" not in completed.stdout
+
+
+def test_publication_guard_blocks_active_quarantine_before_action(tmp_path):
+    args = pr_args(tmp_path)
+
+    class GuardedStore:
+        path = tmp_path / "ledger.sqlite3"
+
+        @staticmethod
+        def active_task_quarantine(_key):
+            return {"reason": "ACTIVE_TASK_QUARANTINE"}
+
+    called = []
+    with pytest.raises(PermissionError, match="active quarantine"):
+        MODULE._guarded_publication_action(args, GuardedStore(), lambda: called.append(True))
+    assert called == []
+
+
+def test_publication_guard_linearizes_quarantine_before_callback(tmp_path):
+    args = pr_args(tmp_path)
+    from oss_pr_radar.action_guard import ledger_action_guard_root, opportunity_action_guard
+
+    class GuardedStore:
+        path = tmp_path / "ledger.sqlite3"
+
+        def __init__(self):
+            self.active = False
+
+        def active_task_quarantine(self, _key):
+            return {"reason": "ACTIVE_TASK_QUARANTINE"} if self.active else None
+
+    store = GuardedStore()
+    key = MODULE._publication_opportunity_key(args.issue_url)
+    started = threading.Event()
+    finished = threading.Event()
+
+    def activate():
+        started.set()
+        with opportunity_action_guard(ledger_action_guard_root(store.path), key):
+            store.active = True
+        finished.set()
+
+    with opportunity_action_guard(ledger_action_guard_root(store.path), key):
+        thread = threading.Thread(target=activate)
+        thread.start()
+        assert started.wait(2)
+        assert not finished.is_set()
+    thread.join(timeout=2)
+    assert finished.is_set()
+
+    called = []
+    with pytest.raises(PermissionError, match="active quarantine"):
+        MODULE._guarded_publication_action(args, store, lambda: called.append(True))
+    assert called == []
