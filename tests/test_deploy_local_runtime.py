@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import shutil
 import subprocess
 import threading
@@ -320,6 +321,118 @@ def test_release_activation_rechecks_target_before_pointer_replace(tmp_path, mon
         MODULE.activate_release(target, second["releaseId"])
 
     assert (target / MODULE.RELEASE_POINTER).resolve().name == first["releaseId"]
+
+
+def test_release_activation_rejects_same_name_release_replacement_and_rolls_back(
+    tmp_path, monkeypatch
+):
+    source, target = make_repositories(tmp_path)
+    first = MODULE.deploy(source, target)
+    (source / "scripts" / "runner.py").write_text("VERSION = 3\n", encoding="utf-8")
+    git(source, "add", "scripts/runner.py")
+    git(
+        source,
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "-m",
+        "source-v3",
+    )
+    second = MODULE.deploy(source, target)
+    MODULE.activate_release(target, first["releaseId"])
+    release = target / MODULE.RELEASES / second["releaseId"]
+    manifest = MODULE.verify_release(release)
+    original = runtime_module._atomic_pointer_write
+    swapped = False
+
+    def replace_with_same_name(pointer, destination, **kwargs):
+        nonlocal swapped
+        if pointer.name == MODULE.RELEASE_POINTER and not swapped:
+            swapped = True
+            release.rename(release.with_name("release-replaced"))
+            release.mkdir()
+        return original(pointer, destination, **kwargs)
+
+    monkeypatch.setattr(runtime_module, "_atomic_pointer_write", replace_with_same_name)
+    with pytest.raises(RuntimeError, match="release"):
+        runtime_module.activate_release_pointer(target, release, manifest)
+
+    assert (target / MODULE.RELEASE_POINTER).resolve().name == first["releaseId"]
+    assert not runtime_module.release_activation_journal_path(target).exists()
+
+
+def test_runtime_root_replacement_rolls_back_through_held_descriptors(tmp_path, monkeypatch):
+    source, target = make_repositories(tmp_path)
+    first = MODULE.deploy(source, target)
+    (source / "scripts" / "runner.py").write_text("VERSION = 3\n", encoding="utf-8")
+    git(source, "add", "scripts/runner.py")
+    git(
+        source,
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "-m",
+        "source-v3",
+    )
+    second = MODULE.deploy(source, target)
+    state_path = target / "state" / "runtime-health.json"
+    old_state = state_path.read_bytes()
+    outside = tmp_path / "outside-runtime"
+    outside.mkdir()
+    marker = outside / "marker"
+    marker.write_bytes(b"keep")
+    real_target = target.with_name("target-real")
+    original = runtime_module._atomic_write_bytes
+    swapped = False
+
+    def replace_root(path, payload, *, mode, **kwargs):
+        nonlocal swapped
+        if path.name == runtime_module.RELEASE_ACTIVATION_JOURNAL and not swapped:
+            swapped = True
+            target.rename(real_target)
+            target.symlink_to(outside, target_is_directory=True)
+        return original(path, payload, mode=mode, **kwargs)
+
+    monkeypatch.setattr(runtime_module, "_atomic_write_bytes", replace_root)
+    with pytest.raises(RuntimeError, match="runtime root|runtime state|release"):
+        MODULE.activate_release(target, first["releaseId"])
+
+    assert marker.read_bytes() == b"keep"
+    assert (real_target / MODULE.RELEASE_POINTER).resolve().name == second["releaseId"]
+    assert (real_target / "state" / "runtime-health.json").read_bytes() == old_state
+    assert not (real_target / "state" / runtime_module.RELEASE_ACTIVATION_JOURNAL).exists()
+
+
+def test_atomic_pointer_write_closes_owned_directory_on_validation_errors(tmp_path, monkeypatch):
+    parent = tmp_path / "runtime"
+    parent.mkdir()
+    pointer = parent / MODULE.RELEASE_POINTER
+    opened: list[int] = []
+    original = runtime_module.open_directory_handle
+
+    def track_open(*args, **kwargs):
+        descriptor, canonical = original(*args, **kwargs)
+        opened.append(descriptor)
+        return descriptor, canonical
+
+    monkeypatch.setattr(runtime_module, "open_directory_handle", track_open)
+    for _ in range(20):
+        with pytest.raises(FileNotFoundError):
+            runtime_module._atomic_pointer_write(pointer, parent / "missing-release")
+
+    leaked = []
+    for descriptor in opened:
+        try:
+            os.fstat(descriptor)
+        except OSError:
+            continue
+        leaked.append(descriptor)
+        os.close(descriptor)
+    assert leaked == []
 
 
 def test_activation_holds_state_directory_fd_when_state_is_replaced(tmp_path, monkeypatch):

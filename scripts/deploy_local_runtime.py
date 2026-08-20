@@ -187,7 +187,15 @@ def activate_release(target: Path, release_id: str) -> dict[str, object]:
     manifest = verify_release(release)
     if manifest.get("releaseId") != release_id:
         raise RuntimeError("release directory does not match its manifest")
-    activate_release_pointer(target, release, manifest)
+    release_metadata = os.lstat(release)
+    if not os.path.isdir(release) or os.path.islink(release):
+        raise RuntimeError("release activation target must be a real directory")
+    activate_release_pointer(
+        target,
+        release,
+        manifest,
+        expected_release_identity=(release_metadata.st_dev, release_metadata.st_ino),
+    )
     return manifest
 
 
