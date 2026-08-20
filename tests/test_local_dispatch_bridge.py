@@ -10,6 +10,8 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import threading
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -3422,9 +3424,17 @@ def test_pr_followup_clean_rebind_clears_gate_and_reopens_request(monkeypatch, t
     assert store.pr_followup_candidates() == []
 
 
-@pytest.mark.parametrize("failure_point", ["context", "completion"])
+@pytest.mark.parametrize(
+    ("failure_point", "repair_fails"),
+    [
+        ("context", False),
+        ("completion", False),
+        ("context", True),
+        ("completion", True),
+    ],
+)
 def test_pr_followup_reserve_failure_is_retryable_without_stuck_gate(
-    monkeypatch, tmp_path, failure_point
+    monkeypatch, tmp_path, failure_point, repair_fails
 ):
     store, _worktree, _head_sha, _pr_url = _published_followup_store(tmp_path)
     candidate = store.pr_followup_candidates()[0]
@@ -3438,6 +3448,7 @@ def test_pr_followup_reserve_failure_is_retryable_without_stuck_gate(
     )
     context_path = tmp_path / "task-context.json"
     original_complete = RadarLedger.complete_pr_followup_reservation
+    original_repair = RadarLedger.mark_pr_followup_reservation_repair_required
     calls = {"context": 0, "completion": 0}
 
     def write(*args, **kwargs):
@@ -3454,6 +3465,15 @@ def test_pr_followup_reserve_failure_is_retryable_without_stuck_gate(
 
     monkeypatch.setattr(MODULE, "write_task_context", write)
     monkeypatch.setattr(RadarLedger, "complete_pr_followup_reservation", complete)
+
+    def repair(self, *args, **kwargs):
+        calls.setdefault("repair", 0)
+        calls["repair"] += 1
+        if repair_fails and calls["repair"] == 1:
+            raise OSError("injected repair write failure")
+        return original_repair(self, *args, **kwargs)
+
+    monkeypatch.setattr(RadarLedger, "mark_pr_followup_reservation_repair_required", repair)
     first = SimpleNamespace(
         ledger=tmp_path / "ledger.sqlite3",
         thread_id=candidate["threadId"],
@@ -3463,6 +3483,7 @@ def test_pr_followup_reserve_failure_is_retryable_without_stuck_gate(
         MODULE.pr_followup_reserve(first)
     assert store.pr_followup_candidates()
     assert store.active_task_quarantine(candidate["key"]) is not None
+    assert store.active_task_count() == 0
 
     result = MODULE.pr_followup_reserve(first)
     assert result["ok"] is True
@@ -3471,6 +3492,96 @@ def test_pr_followup_reserve_failure_is_retryable_without_stuck_gate(
     assert calls["context"] >= 1
     if failure_point == "completion":
         assert calls["completion"] >= 2
+    if repair_fails:
+        assert calls["repair"] == 1
+
+    # A second completion is a harmless retry and cannot create a second
+    # reservation or completion event.
+    store.complete_pr_followup_reservation(
+        thread_id=candidate["threadId"],
+        wake_digest=candidate["wakeDigest"],
+        quarantine_reason=MODULE.PR_FOLLOWUP_REBIND_REQUIRED,
+    )
+    with store.connect() as connection:
+        counts = connection.execute(
+            """SELECT event_type,COUNT(*) AS count FROM events
+               WHERE opportunity_key=? AND dedupe_key=?
+                 AND event_type IN ('PR_FOLLOWUP_RESERVED',
+                                    'PR_FOLLOWUP_RESERVATION_REPAIRED')
+               GROUP BY event_type""",
+            (candidate["key"], candidate["wakeDigest"]),
+        ).fetchall()
+    assert {row["event_type"]: row["count"] for row in counts} == {
+        "PR_FOLLOWUP_RESERVED": 1,
+        "PR_FOLLOWUP_RESERVATION_REPAIRED": 1,
+    }
+
+
+def test_pr_followup_reserve_serializes_concurrent_retries(monkeypatch, tmp_path):
+    store, _worktree, _head_sha, _pr_url = _published_followup_store(tmp_path)
+    candidate = store.pr_followup_candidates()[0]
+    store.rearm_pr_followup_after_task_drift(
+        candidate["key"], expected_prepared_head_sha="a" * 40, observed_head_sha="b" * 40
+    )
+    candidate = store.pr_followup_candidates()[0]
+    monkeypatch.setattr(MODULE, "_recover_dirty_rebound_worktree", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        MODULE, "_prepare_pr_followup", lambda _candidate: {"preparedHeadSha": "c" * 40}
+    )
+    context_path = tmp_path / "task-context.json"
+    first_write_started = threading.Event()
+    release_first_write = threading.Event()
+    calls = {"write": 0}
+
+    def write(*_args, **_kwargs):
+        calls["write"] += 1
+        if calls["write"] == 1:
+            first_write_started.set()
+            assert release_first_write.wait(5)
+        return context_path
+
+    monkeypatch.setattr(MODULE, "write_task_context", write)
+    args = SimpleNamespace(
+        ledger=tmp_path / "ledger.sqlite3",
+        thread_id=candidate["threadId"],
+        wake_digest=candidate["wakeDigest"],
+    )
+    results = []
+
+    def run():
+        try:
+            results.append(("ok", MODULE.pr_followup_reserve(args)))
+        except Exception as exc:  # noqa: BLE001 - assert the losing caller is stale
+            results.append(("error", str(exc)))
+
+    first = threading.Thread(target=run)
+    second = threading.Thread(target=run)
+    first.start()
+    assert first_write_started.wait(5)
+    second.start()
+    time.sleep(0.05)
+    release_first_write.set()
+    first.join(5)
+    second.join(5)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert [kind for kind, _value in results].count("ok") == 1
+    assert [kind for kind, _value in results].count("error") == 1
+    assert calls["write"] == 1
+    with store.connect() as connection:
+        counts = connection.execute(
+            """SELECT event_type,COUNT(*) AS count FROM events
+               WHERE opportunity_key=? AND dedupe_key=?
+                 AND event_type IN ('PR_FOLLOWUP_RESERVED',
+                                    'PR_FOLLOWUP_RESERVATION_REPAIRED')
+               GROUP BY event_type""",
+            (candidate["key"], candidate["wakeDigest"]),
+        ).fetchall()
+    assert {row["event_type"]: row["count"] for row in counts} == {
+        "PR_FOLLOWUP_RESERVED": 1,
+        "PR_FOLLOWUP_RESERVATION_REPAIRED": 1,
+    }
 
 
 def test_pr_followup_reserve_clears_rebind_gate_after_reprepare(monkeypatch, tmp_path):
@@ -9423,6 +9534,9 @@ def test_ingestion_recovers_seen_complete_pr_followup_parent(tmp_path, monkeypat
         thread_id="thread-1",
         wake_digest=candidate["wakeDigest"],
         prepared_head_sha=previous_head,
+    )
+    store.complete_pr_followup_reservation(
+        thread_id="thread-1", wake_digest=candidate["wakeDigest"]
     )
     with store.connect() as connection:
         payload = json.loads(

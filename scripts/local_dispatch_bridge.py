@@ -6467,7 +6467,7 @@ def _rollback_pr_followup_preparation(candidate: dict[str, Any], *, prepared_hea
     command(["git", "switch", branch], cwd=worktree)
 
 
-def pr_followup_reserve(args: argparse.Namespace) -> dict[str, Any]:
+def _pr_followup_reserve_unlocked(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
     candidate = next(
         (
@@ -6563,6 +6563,29 @@ def pr_followup_reserve(args: argparse.Namespace) -> dict[str, Any]:
         "contextPath": str(context_path),
         "prompt": _pr_followup_prompt(reserved),
     }
+
+
+def pr_followup_reserve(args: argparse.Namespace) -> dict[str, Any]:
+    """Run the full reservation-to-completion handoff under one per-wake lock.
+
+    A RESERVED event without its completion event is intentionally retryable.  The
+    lock prevents two live callers from turning that retryable state into duplicate
+    task turns; a crashed caller releases the OS lock and the next caller can resume.
+    """
+
+    ledger_path = Path(args.ledger).resolve()
+    lock_digest = hashlib.sha256(
+        f"{args.thread_id}\0{args.wake_digest}".encode("utf-8")
+    ).hexdigest()
+    lock_path = ledger_path.with_name(f".{ledger_path.name}.pr-followup-{lock_digest}.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+") as lock:
+        os.fchmod(lock.fileno(), 0o600)
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            return _pr_followup_reserve_unlocked(args)
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
 
 def _pr_followup_prompt(candidate: dict[str, Any]) -> str:

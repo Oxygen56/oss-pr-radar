@@ -2369,6 +2369,9 @@ def test_pr_followup_is_bound_to_existing_task_and_sent_once(tmp_path):
         wake_digest=candidate["wakeDigest"],
         prepared_head_sha="d" * 40,
     )
+    store.complete_pr_followup_reservation(
+        thread_id="thread-1", wake_digest=candidate["wakeDigest"]
+    )
     assert store.pr_followup_candidates() == []
     assert store.unresolved_pr_followups()
     bound = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")[
@@ -2397,6 +2400,9 @@ def test_pr_followup_is_bound_to_existing_task_and_sent_once(tmp_path):
         thread_id="thread-1",
         wake_digest=candidate["wakeDigest"],
         prepared_head_sha="d" * 40,
+    )
+    store.complete_pr_followup_reservation(
+        thread_id="thread-1", wake_digest=candidate["wakeDigest"]
     )
     store.commit_pr_followup(thread_id="thread-1", wake_digest=candidate["wakeDigest"])
     assert store.unresolved_pr_followups() == []

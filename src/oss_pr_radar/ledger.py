@@ -2173,6 +2173,13 @@ class RadarLedger:
                      SELECT r.opportunity_key FROM events r
                      WHERE r.event_type='PR_FOLLOWUP_RESERVED'
                        {event_filter}
+                       AND EXISTS (
+                         SELECT 1 FROM events completed
+                         WHERE completed.opportunity_key=r.opportunity_key
+                           AND completed.event_type='PR_FOLLOWUP_RESERVATION_REPAIRED'
+                           AND completed.dedupe_key=r.dedupe_key
+                           AND completed.id>r.id
+                       )
                        AND NOT EXISTS (
                          SELECT 1 FROM events exhausted
                          JOIN events recovery
@@ -5490,38 +5497,17 @@ class RadarLedger:
                          AND e.event_type='PR_FOLLOWUP_RESULT_INGESTED'
                          AND e.dedupe_key=f.wake_digest
                      )
-                     AND NOT EXISTS (
-                       SELECT 1 FROM events reserved
-                       WHERE reserved.opportunity_key=o.key
-                         AND reserved.event_type='PR_FOLLOWUP_RESERVED'
-                         AND reserved.dedupe_key=f.wake_digest
-                         AND NOT EXISTS (
-                           SELECT 1 FROM events abandoned
-                           WHERE abandoned.opportunity_key=reserved.opportunity_key
-                             AND abandoned.event_type='PR_FOLLOWUP_DELIVERY_ABANDONED'
-                           AND json_extract(abandoned.payload_json,'$.wakeDigest')=
-                               reserved.dedupe_key
-                           AND abandoned.id>reserved.id
-                         )
-                         AND NOT EXISTS (
-                           SELECT 1 FROM events repair
-                           WHERE repair.opportunity_key=reserved.opportunity_key
-                             AND repair.event_type='PR_FOLLOWUP_RESERVATION_REPAIR_REQUIRED'
-                             AND repair.dedupe_key=reserved.dedupe_key
-                             AND repair.id>reserved.id
-                             AND NOT EXISTS (
-                               SELECT 1 FROM events repaired
-                               WHERE repaired.opportunity_key=repair.opportunity_key
-                                 AND repaired.event_type='PR_FOLLOWUP_RESERVATION_REPAIRED'
-                                 AND repaired.dedupe_key=repair.dedupe_key
-                                 AND repaired.id>repair.id
-                             )
-                         )
-                     )
-                     AND NOT EXISTS (
+                       AND NOT EXISTS (
                        SELECT 1 FROM events active
                        WHERE active.opportunity_key=o.key
                          AND active.event_type='PR_FOLLOWUP_RESERVED'
+                         AND EXISTS (
+                           SELECT 1 FROM events completed
+                           WHERE completed.opportunity_key=active.opportunity_key
+                             AND completed.event_type='PR_FOLLOWUP_RESERVATION_REPAIRED'
+                             AND completed.dedupe_key=active.dedupe_key
+                             AND completed.id>active.id
+                         )
                          AND NOT EXISTS (
                            SELECT 1 FROM events rebound
                            WHERE rebound.opportunity_key=active.opportunity_key
@@ -5544,8 +5530,8 @@ class RadarLedger:
                          )
                          AND NOT EXISTS (
                            SELECT 1 FROM events repair
-                           WHERE repair.opportunity_key=active.opportunity_key
-                             AND repair.event_type='PR_FOLLOWUP_RESERVATION_REPAIR_REQUIRED'
+                             WHERE repair.opportunity_key=active.opportunity_key
+                               AND repair.event_type='PR_FOLLOWUP_RESERVATION_REPAIR_REQUIRED'
                              AND repair.dedupe_key=active.dedupe_key
                              AND repair.id>active.id
                              AND NOT EXISTS (
@@ -5554,7 +5540,52 @@ class RadarLedger:
                                  AND repaired.event_type='PR_FOLLOWUP_RESERVATION_REPAIRED'
                                  AND repaired.dedupe_key=repair.dedupe_key
                                  AND repaired.id>repair.id
-                             )
+                               )
+                         )
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events sent
+                       WHERE sent.opportunity_key=o.key
+                         AND sent.event_type='PR_FOLLOWUP_SENT'
+                         AND sent.dedupe_key=f.wake_digest
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events pending
+                       WHERE pending.opportunity_key=o.key
+                         AND pending.event_type='PR_FOLLOWUP_RESERVED'
+                         AND pending.dedupe_key<>f.wake_digest
+                         AND NOT EXISTS (
+                           SELECT 1 FROM events completed
+                           WHERE completed.opportunity_key=pending.opportunity_key
+                             AND completed.event_type='PR_FOLLOWUP_RESERVATION_REPAIRED'
+                             AND completed.dedupe_key=pending.dedupe_key
+                             AND completed.id>pending.id
+                         )
+                         AND NOT EXISTS (
+                           SELECT 1 FROM events finished
+                           WHERE finished.opportunity_key=pending.opportunity_key
+                             AND finished.event_type='PR_FOLLOWUP_RESULT_INGESTED'
+                             AND finished.dedupe_key=pending.dedupe_key
+                         )
+                         AND NOT EXISTS (
+                           SELECT 1 FROM events sent
+                           WHERE sent.opportunity_key=pending.opportunity_key
+                             AND sent.event_type='PR_FOLLOWUP_SENT'
+                             AND sent.dedupe_key=pending.dedupe_key
+                         )
+                         AND NOT EXISTS (
+                           SELECT 1 FROM events abandoned
+                           WHERE abandoned.opportunity_key=pending.opportunity_key
+                             AND abandoned.event_type='PR_FOLLOWUP_DELIVERY_ABANDONED'
+                             AND json_extract(abandoned.payload_json,'$.wakeDigest')=
+                                 pending.dedupe_key
+                             AND abandoned.id>pending.id
+                         )
+                         AND NOT EXISTS (
+                           SELECT 1 FROM events rebound
+                           WHERE rebound.opportunity_key=pending.opportunity_key
+                             AND rebound.event_type='PR_FOLLOWUP_REBIND_REQUIRED'
+                             AND rebound.id>pending.id
                          )
                      )
                    ORDER BY f.checked_at,r.updated_at DESC"""
