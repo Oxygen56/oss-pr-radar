@@ -3147,6 +3147,50 @@ def test_pr_followup_rebind_gate_does_not_bypass_stale_rebind_quarantine(tmp_pat
     assert store.pr_followup_candidates() == []
 
 
+def test_reserve_pr_followup_rechecks_quarantine_after_candidate_read(
+    monkeypatch, tmp_path
+):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    key = _make_pr_followup_candidate(store)
+    candidate = store.pr_followup_candidates()[0]
+
+    from oss_pr_radar.task_quarantine import record
+
+    original_candidates = store.pr_followup_candidates
+    inserted = False
+
+    def racing_candidates():
+        nonlocal inserted
+        rows = original_candidates()
+        if not inserted:
+            inserted = True
+            with store.transaction() as connection:
+                record(
+                    connection,
+                    opportunity_key=key,
+                    reason="LEGACY_RESULT_REQUIRES_MIGRATION",
+                    dedupe_key="legacy-result",
+                    payload={"requiresMigration": True},
+                    created_at=iso_z(datetime.now(UTC)),
+                )
+        return rows
+
+    monkeypatch.setattr(store, "pr_followup_candidates", racing_candidates)
+
+    with pytest.raises(LedgerError, match="blocked by active task quarantine"):
+        store.reserve_pr_followup(
+            thread_id=candidate["threadId"], wake_digest=candidate["wakeDigest"]
+        )
+
+    with store.connect() as connection:
+        reserved = connection.execute(
+            """SELECT COUNT(*) FROM events
+               WHERE opportunity_key=? AND event_type='PR_FOLLOWUP_RESERVED'""",
+            (key,),
+        ).fetchone()[0]
+    assert reserved == 0
+
+
 def test_pr_followup_is_bound_to_existing_task_and_sent_once(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(

@@ -6299,6 +6299,37 @@ class RadarLedger:
             "checkedAt": candidate["checkedAt"],
         }
 
+    @staticmethod
+    def _blocking_pr_followup_quarantine(
+        connection: sqlite3.Connection, *, key: str, wake_digest: str
+    ) -> sqlite3.Row | None:
+        return connection.execute(
+            """SELECT reason,payload_json FROM task_quarantines quarantine
+               WHERE quarantine.opportunity_key=?
+                 AND quarantine.status='ACTIVE'
+                 AND (
+                   quarantine.reason<>'PR_FOLLOWUP_REBIND_REQUIRED'
+                   OR (
+                     COALESCE(
+                       json_extract(quarantine.payload_json,'$.replacementWakeDigest'),
+                       ''
+                     )<>?
+                     AND NOT (
+                       COALESCE(
+                         json_extract(quarantine.payload_json,'$.reservationPending'),
+                         0
+                       )=1
+                       AND COALESCE(
+                         json_extract(quarantine.payload_json,'$.wakeDigest'),
+                         ''
+                       )=?
+                     )
+                   )
+                 )
+               ORDER BY quarantine_id DESC LIMIT 1""",
+            (key, wake_digest, wake_digest),
+        ).fetchone()
+
     def reserve_pr_followup(
         self,
         *,
@@ -6357,6 +6388,13 @@ class RadarLedger:
         elif merge_conflict_files is not None:
             raise LedgerError("PR follow-up conflict files lack a prepared base")
         with self.transaction() as connection:
+            blocker = self._blocking_pr_followup_quarantine(
+                connection, key=str(candidate["key"]), wake_digest=wake_digest
+            )
+            if blocker is not None:
+                raise LedgerError(
+                    "PR follow-up authorization is blocked by active task quarantine"
+                )
             if quarantine_reason is None:
                 require_quarantine_clear(
                     connection,
