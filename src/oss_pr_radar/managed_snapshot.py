@@ -292,6 +292,61 @@ def _safe_quarantine_clear_payload_digest(raw: str | None, *, dedupe_key: str) -
     return _safe_digest(raw)
 
 
+def _snapshot_task_quarantine_row(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "opportunityKey": row["opportunity_key"],
+        "reason": row["reason"],
+        "dedupeFingerprint": _quarantine_dedupe_fingerprint(row["dedupe_key"]),
+        "payload": _safe_quarantine_payload(row["payload_json"], dedupe_key=row["dedupe_key"]),
+        "status": row["status"],
+        "createdAt": row["created_at"],
+        "clearedAt": row["cleared_at"],
+        "clearPayloadDigest": _safe_quarantine_clear_payload_digest(
+            row["clear_payload_json"], dedupe_key=row["dedupe_key"]
+        ),
+    }
+
+
+def _merge_snapshot_task_quarantine_rows(
+    rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    merged: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for row in rows:
+        key = (row["opportunityKey"], row["reason"], row["dedupeFingerprint"])
+        existing = merged.get(key)
+        if existing is None:
+            merged[key] = row
+            continue
+        if existing["status"] == "ACTIVE":
+            continue
+        if row["status"] == "ACTIVE":
+            merged[key] = row
+    return sorted(
+        merged.values(),
+        key=lambda item: (
+            item["opportunityKey"],
+            item["reason"],
+            item["dedupeFingerprint"],
+            item["status"],
+        ),
+    )
+
+
+def _matching_task_quarantines(
+    connection: sqlite3.Connection, row: dict[str, Any]
+) -> list[sqlite3.Row]:
+    matches = []
+    for existing in connection.execute(
+        """SELECT quarantine_id,dedupe_key,status FROM task_quarantines
+           WHERE opportunity_key=? AND reason=?
+           ORDER BY quarantine_id""",
+        (row["opportunityKey"], row["reason"]),
+    ).fetchall():
+        if _quarantine_dedupe_fingerprint(existing["dedupe_key"]) == row["dedupeFingerprint"]:
+            matches.append(existing)
+    return matches
+
+
 def _snapshot_quarantine_event_identity(row: dict[str, Any]) -> tuple[str, str]:
     key = str(row["idempotencyKey"])
     fingerprint = str(row.get("idempotencyFingerprint") or stable_fingerprint(key))
@@ -662,25 +717,14 @@ def _snapshot_rows(path: Path) -> dict[str, list[dict[str, Any]]]:
                 "SELECT * FROM attestation_nonce_consumptions ORDER BY consumption_id"
             ).fetchall()
         ]
-        task_quarantines = [
-            {
-                "opportunityKey": row["opportunity_key"],
-                "reason": row["reason"],
-                "dedupeFingerprint": _quarantine_dedupe_fingerprint(row["dedupe_key"]),
-                "payload": _safe_quarantine_payload(
-                    row["payload_json"], dedupe_key=row["dedupe_key"]
-                ),
-                "status": row["status"],
-                "createdAt": row["created_at"],
-                "clearedAt": row["cleared_at"],
-                "clearPayloadDigest": _safe_quarantine_clear_payload_digest(
-                    row["clear_payload_json"], dedupe_key=row["dedupe_key"]
-                ),
-            }
-            for row in connection.execute(
-                "SELECT * FROM task_quarantines ORDER BY quarantine_id"
-            ).fetchall()
-        ]
+        task_quarantines = _merge_snapshot_task_quarantine_rows(
+            [
+                _snapshot_task_quarantine_row(row)
+                for row in connection.execute(
+                    "SELECT * FROM task_quarantines ORDER BY quarantine_id"
+                ).fetchall()
+            ]
+        )
         reproduction_probes = [
             {
                 "probeKey": row["probe_key"],
@@ -1073,12 +1117,10 @@ def _insert_snapshot(connection: sqlite3.Connection, rows: dict[str, list[dict[s
             if row.get("clearPayloadDigest")
             else None
         )
-        existing = connection.execute(
-            """SELECT status FROM task_quarantines
-               WHERE opportunity_key=? AND reason=? AND dedupe_key=?""",
-            (row["opportunityKey"], row["reason"], dedupe_key),
-        ).fetchone()
-        if existing is None:
+        matches = _matching_task_quarantines(connection, row)
+        active_match = next((match for match in matches if match["status"] == "ACTIVE"), None)
+        cleared_match = next((match for match in matches if match["status"] == "CLEARED"), None)
+        if not matches:
             connection.execute(
                 """INSERT INTO task_quarantines
                    (opportunity_key,reason,dedupe_key,payload_json,status,created_at,cleared_at,clear_payload_json)
@@ -1094,17 +1136,15 @@ def _insert_snapshot(connection: sqlite3.Connection, rows: dict[str, list[dict[s
                     clear_payload,
                 ),
             )
-        elif row["status"] == "ACTIVE" and existing["status"] == "CLEARED":
+        elif row["status"] == "ACTIVE" and active_match is None and cleared_match is not None:
             connection.execute(
                 """UPDATE task_quarantines
                    SET payload_json=?, status='ACTIVE', created_at=?, cleared_at=NULL, clear_payload_json=NULL
-                   WHERE opportunity_key=? AND reason=? AND dedupe_key=? AND status='CLEARED'""",
+                   WHERE quarantine_id=? AND status='CLEARED'""",
                 (
                     payload_json,
                     row["createdAt"],
-                    row["opportunityKey"],
-                    row["reason"],
-                    dedupe_key,
+                    cleared_match["quarantine_id"],
                 ),
             )
     for row in rows["opportunities"]:

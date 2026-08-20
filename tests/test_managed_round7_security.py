@@ -468,6 +468,83 @@ def test_cleared_task_quarantine_snapshot_round_trip_is_canonical(tmp_path):
     assert_quarantine_snapshot_round_trips_without_drift(tmp_path, source, prefix="cleared")
 
 
+def test_task_quarantine_restore_export_over_existing_local_rows_is_idempotent(tmp_path):
+    source, ledger = ledger_at(tmp_path, "quarantine-existing-local-source.sqlite3")
+    active_key = "owner/repo#81"
+    cleared_key = "owner/repo#82"
+    for key, number in ((active_key, 81), (cleared_key, 82)):
+        ledger.upsert_opportunity(
+            opportunity_key=key,
+            owner="owner",
+            repo="repo",
+            issue_number=number,
+            issue_url=f"https://github.com/owner/repo/issues/{number}",
+            state="SYSTEM_PROCESSING",
+            source="test",
+            provenance={},
+        )
+    ledger.record_task_quarantine(
+        opportunity_key=active_key,
+        reason="PR_FOLLOWUP_REBIND_REQUIRED",
+        dedupe_key="/Users/oxygen/private/existing-active",
+        payload={
+            "wakeDigest": "a" * 64,
+            "replacementWakeDigest": "b" * 64,
+            "reservationPending": True,
+            "worktreePath": "/Users/oxygen/private/worktree",
+        },
+        observed_at="2026-08-19T03:30:00Z",
+    )
+    ledger.record_task_quarantine(
+        opportunity_key=cleared_key,
+        reason="LEGACY_RESULT_REQUIRES_MIGRATION",
+        dedupe_key="/Users/oxygen/private/existing-cleared",
+        payload={
+            "wakeDigest": "c" * 64,
+            "artifactPath": "/Users/oxygen/private/artifact.json",
+        },
+        observed_at="2026-08-19T03:31:00Z",
+    )
+    ledger.clear_task_quarantine(
+        cleared_key,
+        reason="LEGACY_RESULT_REQUIRES_MIGRATION",
+        evidence={
+            "revalidated": True,
+            "artifactPath": "/Users/oxygen/private/clear.json",
+        },
+        observed_at="2026-08-19T03:32:00Z",
+    )
+
+    current_snapshot = tmp_path / "existing-local-0.snapshot.gz"
+    export_snapshot(source, current_snapshot)
+    baseline_projection = None
+    baseline_content_digest = None
+    baseline_rows_digest = None
+    baseline_quarantine_event_count = None
+    for index in range(1, 4):
+        import_snapshot(source, current_snapshot)
+        with ManagedLedger(source)._connection() as connection:
+            assert connection.execute("SELECT COUNT(*) FROM task_quarantines").fetchone()[0] == 2
+        next_snapshot = tmp_path / f"existing-local-{index}.snapshot.gz"
+        export_snapshot(source, next_snapshot)
+        snapshot = read_snapshot(next_snapshot)
+        projection = quarantine_snapshot_projection(snapshot)
+        assert len(projection["taskQuarantines"]) == 2
+        event_count = len(projection["quarantineEvents"])
+        assert snapshot["contentDigest"] == _digest(snapshot["rows"])
+        if baseline_projection is None:
+            baseline_projection = projection
+            baseline_content_digest = snapshot["contentDigest"]
+            baseline_rows_digest = _digest(snapshot["rows"])
+            baseline_quarantine_event_count = event_count
+        else:
+            assert projection == baseline_projection
+            assert snapshot["contentDigest"] == baseline_content_digest
+            assert _digest(snapshot["rows"]) == baseline_rows_digest
+            assert event_count == baseline_quarantine_event_count
+        current_snapshot = next_snapshot
+
+
 def test_task_quarantine_snapshot_cleared_rows_do_not_clear_local_active_rows(tmp_path):
     source, ledger = ledger_at(tmp_path, "quarantine-cleared-source.sqlite3")
     key = "owner/repo#88"
