@@ -3148,7 +3148,7 @@ def test_pr_followup_rebind_gate_does_not_bypass_stale_rebind_quarantine(tmp_pat
 
 
 def test_reserve_pr_followup_rechecks_quarantine_after_candidate_read(
-    monkeypatch, tmp_path
+    tmp_path,
 ):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     key = _make_pr_followup_candidate(store)
@@ -3156,32 +3156,73 @@ def test_reserve_pr_followup_rechecks_quarantine_after_candidate_read(
 
     from oss_pr_radar.task_quarantine import record
 
-    original_candidates = store.pr_followup_candidates
-    inserted = False
+    with store.transaction() as connection:
+        record(
+            connection,
+            opportunity_key=key,
+            reason="LEGACY_RESULT_REQUIRES_MIGRATION",
+            dedupe_key="legacy-result",
+            payload={"requiresMigration": True},
+            created_at=iso_z(datetime.now(UTC)),
+        )
 
-    def racing_candidates():
-        nonlocal inserted
-        rows = original_candidates()
-        if not inserted:
-            inserted = True
-            with store.transaction() as connection:
-                record(
-                    connection,
-                    opportunity_key=key,
-                    reason="LEGACY_RESULT_REQUIRES_MIGRATION",
-                    dedupe_key="legacy-result",
-                    payload={"requiresMigration": True},
-                    created_at=iso_z(datetime.now(UTC)),
-                )
-        return rows
-
-    monkeypatch.setattr(store, "pr_followup_candidates", racing_candidates)
-
-    with pytest.raises(LedgerError, match="blocked by active task quarantine"):
+    with pytest.raises(LedgerError, match="stale or invalid"):
         store.reserve_pr_followup(
             thread_id=candidate["threadId"], wake_digest=candidate["wakeDigest"]
         )
 
+    _assert_no_pr_followup_reservation(store, key)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["stage", "permit", "wake", "disabled"],
+)
+def test_reserve_pr_followup_rechecks_candidate_state_after_candidate_read(
+    tmp_path, mutation
+):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    key = _make_pr_followup_candidate(store)
+    candidate = store.pr_followup_candidates()[0]
+    replacement_wake = "c" * 64
+
+    with store.transaction() as connection:
+        if mutation == "stage":
+            connection.execute(
+                "UPDATE opportunities SET stage='AUDIT_NO_GO' WHERE key=?",
+                (key,),
+            )
+        elif mutation == "permit":
+            connection.execute(
+                """UPDATE publication_permits
+                   SET status='BLOCKED',updated_at=?
+                   WHERE request_id='request-intent-1'""",
+                (iso_z(datetime.now(UTC)),),
+            )
+        elif mutation == "wake":
+            connection.execute(
+                """UPDATE pr_followups SET wake_digest=?,updated_at=?
+                   WHERE opportunity_key=?""",
+                (replacement_wake, iso_z(datetime.now(UTC)), key),
+            )
+        elif mutation == "disabled":
+            connection.execute(
+                """UPDATE pr_followups SET followup_required=0,updated_at=?
+                   WHERE opportunity_key=?""",
+                (iso_z(datetime.now(UTC)), key),
+            )
+        else:  # pragma: no cover - defensive for future parametrization edits
+            raise AssertionError(mutation)
+
+    with pytest.raises(LedgerError, match="stale or invalid"):
+        store.reserve_pr_followup(
+            thread_id=candidate["threadId"], wake_digest=candidate["wakeDigest"]
+        )
+
+    _assert_no_pr_followup_reservation(store, key)
+
+
+def _assert_no_pr_followup_reservation(store: RadarLedger, key: str) -> None:
     with store.connect() as connection:
         reserved = connection.execute(
             """SELECT COUNT(*) FROM events

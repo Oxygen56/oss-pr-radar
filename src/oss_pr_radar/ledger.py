@@ -9,7 +9,7 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterable, Iterator
 
 from .action_guard import ledger_action_guard_root, opportunity_action_guard
 from .repo_probe import REPRODUCED_VALIDATED, verify_probe_receipt
@@ -6075,10 +6075,23 @@ class RadarLedger:
                 )
         return keys
 
-    def pr_followup_candidates(self) -> list[dict[str, Any]]:
-        with self.connect() as connection:
-            rows = connection.execute(
-                """SELECT f.*,o.key,o.repo,o.issue_url,o.stage,i.intent_id,
+    @staticmethod
+    def _pr_followup_candidate_rows(
+        connection: sqlite3.Connection,
+        *,
+        thread_id: str | None = None,
+        wake_digest: str | None = None,
+    ) -> list[sqlite3.Row]:
+        filters: list[str] = []
+        params: list[str] = []
+        if thread_id is not None:
+            filters.append("AND i.thread_id=?")
+            params.append(thread_id)
+        if wake_digest is not None:
+            filters.append("AND f.wake_digest=?")
+            params.append(wake_digest)
+        extra_filters = "\n                     ".join(filters)
+        query = f"""SELECT f.*,o.key,o.repo,o.issue_url,o.stage,i.intent_id,
                           i.thread_id,i.worktree_path,
                           r.branch
                    FROM pr_followups f
@@ -6223,8 +6236,14 @@ class RadarLedger:
                              AND rebound.id>pending.id
                          )
                      )
+                     {extra_filters}
                    ORDER BY f.checked_at,r.updated_at DESC"""
-            ).fetchall()
+        return list(connection.execute(query, tuple(params)).fetchall())
+
+    @staticmethod
+    def _materialize_pr_followup_candidates(
+        rows: Iterable[sqlite3.Row],
+    ) -> list[dict[str, Any]]:
         unique: dict[str, dict[str, Any]] = {}
         for row in rows:
             key = str(row["key"])
@@ -6249,6 +6268,11 @@ class RadarLedger:
                 },
             )
         return list(unique.values())
+
+    def pr_followup_candidates(self) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = self._pr_followup_candidate_rows(connection)
+        return self._materialize_pr_followup_candidates(rows)
 
     def pr_followup_rebind_status(self, key: str) -> dict[str, Any] | None:
         """Return the latest task-local rebind signal, if one exists."""
@@ -6299,37 +6323,6 @@ class RadarLedger:
             "checkedAt": candidate["checkedAt"],
         }
 
-    @staticmethod
-    def _blocking_pr_followup_quarantine(
-        connection: sqlite3.Connection, *, key: str, wake_digest: str
-    ) -> sqlite3.Row | None:
-        return connection.execute(
-            """SELECT reason,payload_json FROM task_quarantines quarantine
-               WHERE quarantine.opportunity_key=?
-                 AND quarantine.status='ACTIVE'
-                 AND (
-                   quarantine.reason<>'PR_FOLLOWUP_REBIND_REQUIRED'
-                   OR (
-                     COALESCE(
-                       json_extract(quarantine.payload_json,'$.replacementWakeDigest'),
-                       ''
-                     )<>?
-                     AND NOT (
-                       COALESCE(
-                         json_extract(quarantine.payload_json,'$.reservationPending'),
-                         0
-                       )=1
-                       AND COALESCE(
-                         json_extract(quarantine.payload_json,'$.wakeDigest'),
-                         ''
-                       )=?
-                     )
-                   )
-                 )
-               ORDER BY quarantine_id DESC LIMIT 1""",
-            (key, wake_digest, wake_digest),
-        ).fetchone()
-
     def reserve_pr_followup(
         self,
         *,
@@ -6343,58 +6336,49 @@ class RadarLedger:
         quarantine_reason: str | None = None,
         quarantine_evidence: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        candidate = next(
-            (
-                item
-                for item in self.pr_followup_candidates()
-                if item["threadId"] == thread_id and item["wakeDigest"] == wake_digest
-            ),
-            None,
-        )
-        if candidate is None:
-            raise LedgerError("PR follow-up authorization is stale or invalid")
-        if exclude_intent_id is not None and exclude_intent_id != candidate["intentId"]:
-            raise LedgerError("PR follow-up WIP exclusion does not match the task")
         if prepared_head_sha is not None and not re.fullmatch(r"[0-9a-f]{40}", prepared_head_sha):
             raise LedgerError("PR follow-up prepared head is invalid")
-        snapshot_candidate = candidate
-        if prepared_base_sha is not None:
-            if not re.fullmatch(r"[0-9a-f]{40}", prepared_base_sha):
-                raise LedgerError("PR follow-up prepared base is invalid")
-            evidence = dict(candidate["evidence"])
-            original_base_sha = str(evidence.get("baseSha") or "")
-            accepts_fast_forwarded_base = (
-                evidence.get("mergeConflict") is True
-                or evidence.get("baseIntegrationRequired") is True
-            )
-            if not accepts_fast_forwarded_base:
-                if prepared_base_sha != original_base_sha:
-                    raise LedgerError("PR follow-up prepared base changed unexpectedly")
-            elif prepared_base_sha != original_base_sha:
-                evidence["baseAdvancedFromSha"] = original_base_sha
-                evidence["baseSha"] = prepared_base_sha
-            if merge_conflict_files is not None:
-                normalized = sorted(set(merge_conflict_files))
-                if not normalized or any(
-                    not isinstance(path, str)
-                    or not path
-                    or Path(path).is_absolute()
-                    or ".." in Path(path).parts
-                    for path in normalized
-                ):
-                    raise LedgerError("PR follow-up conflict files are invalid")
-                evidence["mergeConflictFiles"] = normalized
-            snapshot_candidate = candidate | {"evidence": evidence}
-        elif merge_conflict_files is not None:
-            raise LedgerError("PR follow-up conflict files lack a prepared base")
         with self.transaction() as connection:
-            blocker = self._blocking_pr_followup_quarantine(
-                connection, key=str(candidate["key"]), wake_digest=wake_digest
-            )
-            if blocker is not None:
-                raise LedgerError(
-                    "PR follow-up authorization is blocked by active task quarantine"
+            candidates = self._materialize_pr_followup_candidates(
+                self._pr_followup_candidate_rows(
+                    connection, thread_id=thread_id, wake_digest=wake_digest
                 )
+            )
+            candidate = next(iter(candidates), None)
+            if candidate is None:
+                raise LedgerError("PR follow-up authorization is stale or invalid")
+            if exclude_intent_id is not None and exclude_intent_id != candidate["intentId"]:
+                raise LedgerError("PR follow-up WIP exclusion does not match the task")
+            snapshot_candidate = candidate
+            if prepared_base_sha is not None:
+                if not re.fullmatch(r"[0-9a-f]{40}", prepared_base_sha):
+                    raise LedgerError("PR follow-up prepared base is invalid")
+                evidence = dict(candidate["evidence"])
+                original_base_sha = str(evidence.get("baseSha") or "")
+                accepts_fast_forwarded_base = (
+                    evidence.get("mergeConflict") is True
+                    or evidence.get("baseIntegrationRequired") is True
+                )
+                if not accepts_fast_forwarded_base:
+                    if prepared_base_sha != original_base_sha:
+                        raise LedgerError("PR follow-up prepared base changed unexpectedly")
+                elif prepared_base_sha != original_base_sha:
+                    evidence["baseAdvancedFromSha"] = original_base_sha
+                    evidence["baseSha"] = prepared_base_sha
+                if merge_conflict_files is not None:
+                    normalized = sorted(set(merge_conflict_files))
+                    if not normalized or any(
+                        not isinstance(path, str)
+                        or not path
+                        or Path(path).is_absolute()
+                        or ".." in Path(path).parts
+                        for path in normalized
+                    ):
+                        raise LedgerError("PR follow-up conflict files are invalid")
+                    evidence["mergeConflictFiles"] = normalized
+                snapshot_candidate = candidate | {"evidence": evidence}
+            elif merge_conflict_files is not None:
+                raise LedgerError("PR follow-up conflict files lack a prepared base")
             if quarantine_reason is None:
                 require_quarantine_clear(
                     connection,
