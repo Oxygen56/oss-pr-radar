@@ -14,18 +14,12 @@ import pytest
 from conftest import _watcher_missing_baseline_violation
 
 from scripts.host_radar_watcher import (
-    _INOTIFY_DIRECTORY_EVENTS,
-    _INOTIFY_FILE_EVENTS,
     IN_ATTRIB,
-    IN_CREATE,
     IN_IGNORED,
-    IN_ISDIR,
     IN_Q_OVERFLOW,
     IN_UNMOUNT,
     WATCHER_SCRIPT,
-    _inotify_event_failure,
     _inotify_failure,
-    _is_ignored_worktrees_event,
     parse_inotify_events,
 )
 
@@ -208,7 +202,11 @@ def test_missing_root_watcher_detects_ready_after_parent_attrib_change(tmp_path)
         _wait_for_marker(ready, watcher, "ready marker")
         parent.chmod(0o750)
         _wait_for_marker(flag, watcher, "attribute event flag")
-        assert b"path changed after" in flag.read_bytes()
+        assert flag.read_bytes() in {
+            b"missing-root path changed after kqueue ready",
+            b"inotify path event mask=0x00000004",
+            b"inotify path event mask=0x40000004",
+        }
     finally:
         _finish_watcher(watcher)
 
@@ -223,19 +221,10 @@ def test_inotify_event_parser_names_and_rejects_special_events():
     assert _inotify_failure(IN_Q_OVERFLOW) == "inotify queue overflow"
     assert _inotify_failure(IN_UNMOUNT) == "inotify filesystem unmounted"
     assert _inotify_failure(IN_IGNORED) == "inotify watch was ignored"
-    assert IN_Q_OVERFLOW & _INOTIFY_DIRECTORY_EVENTS == 0
-    assert IN_UNMOUNT & _INOTIFY_DIRECTORY_EVENTS == 0
-    assert IN_IGNORED & _INOTIFY_FILE_EVENTS == 0
-    assert _is_ignored_worktrees_event(IN_CREATE | IN_ISDIR, b"worktrees")
-    assert not _is_ignored_worktrees_event(IN_CREATE, b"worktrees")
     name_field = b"worktrees\0\0\0\0\0\0\0"
-    named = struct.pack("=iIII", 7, IN_CREATE | IN_ISDIR, 0, len(name_field)) + name_field
+    named = struct.pack("=iIII", 7, 0, 0, len(name_field)) + name_field
     assert parse_inotify_events(named)[0][-1] == b"worktrees"
-    assert (
-        _inotify_event_failure(7, IN_Q_OVERFLOW | IN_CREATE | IN_ISDIR, b"worktrees", {7}, {7})
-        == "inotify queue overflow"
-    )
-    assert _inotify_event_failure(7, IN_CREATE | IN_ISDIR, b"worktrees", {7}, {7}) is None
+    assert _inotify_failure(IN_Q_OVERFLOW | 0x40000000) == "inotify queue overflow"
     for malformed in (
         struct.pack("=iIII", 1, IN_ATTRIB, 0, 2) + b"a\0",
         struct.pack("=iIII", 1, IN_ATTRIB, 0, 4) + b"abcd",
@@ -247,13 +236,28 @@ def test_inotify_event_parser_names_and_rejects_special_events():
         parse_inotify_events(payload[:-1])
 
 
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux watcher contract")
+def test_linux_existing_root_fails_closed_before_ready(tmp_path):
+    root = tmp_path / "watched"
+    root.mkdir(mode=0o700)
+    watcher, flag, ready = _start_watcher(tmp_path, root, True)
+    _finish_watcher(watcher, expected_codes=(2,))
+    assert flag.read_bytes() == (
+        b"Linux existing-root watcher unavailable: recursive inotify cannot safely "
+        b"cover registration windows"
+    )
+    assert not ready.exists()
+
+
 def test_existing_root_watcher_records_transient_write_after_final_state_is_restored(
     tmp_path,
 ):
-    if not hasattr(os, "O_NOFOLLOW") or (
-        not hasattr(select, "kqueue") and not sys.platform.startswith("linux")
+    if (
+        sys.platform.startswith("linux")
+        or not hasattr(os, "O_NOFOLLOW")
+        or not hasattr(select, "kqueue")
     ):
-        pytest.skip("kernel existing-root watcher is unsupported on this platform")
+        pytest.skip("existing-root kqueue test is macOS-only")
     root = tmp_path / "watched"
     root.mkdir(mode=0o700)
     baseline = _inventory(root)
@@ -286,60 +290,6 @@ def test_existing_root_watcher_records_transient_write_after_final_state_is_rest
         _finish_watcher(watcher, expected_codes=(-15, 2))
 
 
-@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux inotify test")
-def test_linux_existing_root_registration_window_detects_fast_create_delete(tmp_path):
-    root = tmp_path / "watched"
-    root.mkdir(mode=0o700)
-    pause = tmp_path / "root-registered"
-    gate = tmp_path / "continue"
-    watcher, flag, ready = _start_watcher(tmp_path, root, True, pause=pause, gate=gate)
-    try:
-        _wait_for_marker(pause, watcher, "root registration marker")
-        transient = root / "registration-window"
-        transient.mkdir(mode=0o700)
-        transient.rmdir()
-        gate.touch(mode=0o600)
-        _finish_watcher(watcher, expected_codes=(2,))
-        assert flag.read_bytes()
-        assert not ready.exists()
-    finally:
-        if watcher.poll() is None:
-            watcher.terminate()
-            watcher.wait(timeout=2)
-
-
-@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux inotify test")
-@pytest.mark.parametrize("replacement_kind", ("directory", "symlink"))
-def test_linux_existing_root_rejects_same_content_root_replacement(tmp_path, replacement_kind):
-    root = tmp_path / "watched"
-    root.mkdir(mode=0o700)
-    (root / "stable.txt").write_bytes(b"same")
-    (root / "stable.txt").chmod(0o600)
-    replacement = tmp_path / "replacement"
-    replacement.mkdir(mode=0o700)
-    (replacement / "stable.txt").write_bytes(b"same")
-    (replacement / "stable.txt").chmod(0o600)
-    pause = tmp_path / "root-registered"
-    gate = tmp_path / "continue"
-    watcher, flag, ready = _start_watcher(tmp_path, root, True, pause=pause, gate=gate)
-    try:
-        _wait_for_marker(pause, watcher, "root registration marker")
-        old_root = tmp_path / "old-root"
-        root.rename(old_root)
-        if replacement_kind == "directory":
-            replacement.rename(root)
-        else:
-            root.symlink_to(replacement, target_is_directory=True)
-        gate.touch(mode=0o600)
-        _finish_watcher(watcher, expected_codes=(2,))
-        assert flag.read_bytes() == b"existing-root path changed before inotify ready"
-        assert not ready.exists()
-    finally:
-        if watcher.poll() is None:
-            watcher.terminate()
-            watcher.wait(timeout=2)
-
-
 def test_missing_root_named_worktrees_is_not_ignored(tmp_path):
     if not hasattr(select, "kqueue") and not sys.platform.startswith("linux"):
         pytest.skip("kernel missing-root watcher is unsupported on this platform")
@@ -357,29 +307,13 @@ def test_missing_root_named_worktrees_is_not_ignored(tmp_path):
         _finish_watcher(watcher)
 
 
-@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux inotify test")
-def test_linux_existing_root_ignores_worktrees_subtree_events(tmp_path):
-    root = tmp_path / "watched"
-    root.mkdir(mode=0o700)
-    watcher, flag, ready = _start_watcher(tmp_path, root, True)
-    try:
-        _wait_for_marker(ready, watcher, "ready marker")
-        worktrees = root / "worktrees"
-        worktrees.mkdir(mode=0o700)
-        (worktrees / "transient").write_bytes(b"ignored")
-        (worktrees / "transient").unlink()
-        worktrees.rmdir()
-        time.sleep(0.2)
-        assert not flag.exists()
-    finally:
-        _finish_watcher(watcher, expected_codes=(-15,))
-
-
 def test_existing_root_watcher_records_file_modify_and_restore(tmp_path):
-    if not hasattr(os, "O_NOFOLLOW") or (
-        not hasattr(select, "kqueue") and not sys.platform.startswith("linux")
+    if (
+        sys.platform.startswith("linux")
+        or not hasattr(os, "O_NOFOLLOW")
+        or not hasattr(select, "kqueue")
     ):
-        pytest.skip("kernel existing-root watcher is unsupported on this platform")
+        pytest.skip("existing-root kqueue test is macOS-only")
     root = tmp_path / "watched"
     root.mkdir(mode=0o700)
     target = root / "stable.txt"
