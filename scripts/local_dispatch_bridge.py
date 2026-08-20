@@ -19,7 +19,7 @@ import subprocess
 import sys
 import time
 import tomllib
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -56,6 +56,7 @@ from oss_pr_radar.publication import (  # noqa: E402
     broker_publication_request,
     public_branch_is_safe,
     public_text_is_safe,
+    publication_evidence_from_request,
     request_publication,
 )
 from oss_pr_radar.release_binding import (  # noqa: E402
@@ -264,6 +265,19 @@ class ValidationPrefetchError(RuntimeError):
     def __init__(self, failure: dict[str, Any]):
         super().__init__(str(failure.get("summary") or "validation prefetch failed"))
         self.failure = failure
+
+
+class ValidationResultChanged(RuntimeError):
+    """The queued validation result changed before it could be safely read."""
+
+    def __init__(self, *, expected: str, observed: str):
+        super().__init__("validation result changed after it was queued")
+        self.expected = expected
+        self.observed = observed
+
+
+class MissingValidationResult(RuntimeError):
+    """The validated task private directory exists but result.json does not."""
 
 
 TITLE_PREFIXES = {
@@ -1940,19 +1954,16 @@ def _recoverable_published_result(
     if not isinstance(receipt, dict) or not receipt.get("prUrl"):
         return None
 
-    worktree = Path(str(context.get("worktreePath") or "")).resolve()
-    result_path = Path(str(context.get("resultPath") or "")).resolve()
-    expected_path = worktree / TASK_PRIVATE_DIR / "result.json"
+    worktree = _lexical_absolute(Path(str(context.get("worktreePath") or "")))
+    result_path = _lexical_absolute(Path(str(context.get("resultPath") or "")))
+    candidate = {"worktreePath": str(worktree)}
+    expected_path = _task_result_path(candidate)
     if result_path != expected_path:
         raise RuntimeError("shared task context result path is invalid")
-    if not result_path.exists():
+    result_data = _read_task_result_bytes_if_present(candidate)
+    if result_data is None:
         return None
-    if result_path.is_symlink() or not result_path.is_file():
-        raise RuntimeError("published task result is not a regular file")
-    if result_path.stat().st_mode & 0o022:
-        raise RuntimeError("published task result is group or world writable")
-
-    raw = result_path.read_bytes()
+    _result_path, raw = result_data
     try:
         value = json.loads(raw)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -4098,7 +4109,7 @@ def _task_turn_reservation(
             "reservedAt": candidate.get("created_at"),
         }
     if delivery_kind == "validation-followup":
-        return next(
+        candidate = next(
             (
                 item
                 for item in store.unresolved_validation_followups()
@@ -4106,6 +4117,18 @@ def _task_turn_reservation(
             ),
             None,
         )
+        if candidate is None:
+            return None
+        binding_reader = getattr(store, "validation_followup_delivery_binding", None)
+        if callable(binding_reader):
+            binding = binding_reader(
+                thread_id=thread_id,
+                result_digest=delivery_token,
+                reservation_digest=str(candidate["reservationDigest"]),
+            )
+            if binding:
+                candidate = candidate | binding
+        return candidate
     if delivery_kind == "publication-feedback":
         candidate = next(
             (
@@ -4182,6 +4205,8 @@ def _task_turn_start_unlocked(
     prompt: str,
     delivery_kind: str,
     delivery_token: str,
+    validation_binding: dict[str, Any] | None = None,
+    validation_candidate: dict[str, Any] | None = None,
 ) -> None:
     if process.stdin is None:
         raise RuntimeError("app server input is unavailable")
@@ -4190,7 +4215,28 @@ def _task_turn_start_unlocked(
         delivery_kind=delivery_kind,
         thread_id=thread_id,
         delivery_token=delivery_token,
+        **(
+            {
+                "reservation_digest": validation_binding["reservationDigest"],
+                "snapshot_id": validation_binding["snapshotId"],
+                "snapshot_path": validation_binding["snapshotPath"],
+                "snapshot_digest": validation_binding["snapshotDigest"],
+                "worktree_input_path": validation_binding["worktreeInputPath"],
+                "worktree_input_digest": validation_binding["worktreeInputDigest"],
+            }
+            if delivery_kind == "validation-followup" and validation_binding
+            else {}
+        ),
     )
+    if delivery_kind == "validation-followup":
+        if validation_binding is None or validation_candidate is None:
+            raise RuntimeError("validation task-turn worktree input binding is unavailable")
+        _validation_worktree_input_metadata(
+            candidate=validation_candidate,
+            reservation_digest=str(validation_binding["reservationDigest"]),
+            worktree_input_path=str(validation_binding["worktreeInputPath"]),
+            worktree_input_digest=str(validation_binding["worktreeInputDigest"]),
+        )
     _write_turn_start_request(
         process,
         thread_id=thread_id,
@@ -4198,6 +4244,11 @@ def _task_turn_start_unlocked(
         prompt=prompt,
         delivery_kind=delivery_kind,
         delivery_token=delivery_token,
+        validation_reservation_digest=(
+            str(validation_binding["reservationDigest"])
+            if delivery_kind == "validation-followup" and validation_binding
+            else None
+        ),
     )
 
 
@@ -4209,6 +4260,7 @@ def _write_turn_start_request(
     prompt: str,
     delivery_kind: str = "",
     delivery_token: str = "",
+    validation_reservation_digest: str | None = None,
 ) -> None:
     if process.stdin is None:
         raise RuntimeError("app server input is unavailable")
@@ -4221,7 +4273,12 @@ def _write_turn_start_request(
         "summary": "auto",
     }
     if delivery_kind and delivery_token:
-        params["clientUserMessageId"] = f"oss-pr-radar:{delivery_kind}:{delivery_token}"
+        client_message_id = f"oss-pr-radar:{delivery_kind}:{delivery_token}"
+        if delivery_kind == "validation-followup":
+            if not validation_reservation_digest:
+                raise RuntimeError("validation task turn requires its reservation digest")
+            client_message_id += f":{validation_reservation_digest}"
+        params["clientUserMessageId"] = client_message_id
     process.stdin.write(
         (
             json.dumps(
@@ -4248,6 +4305,8 @@ def _guarded_task_turn_start(
     prompt: str,
     delivery_kind: str,
     delivery_token: str,
+    validation_binding: dict[str, Any] | None = None,
+    validation_candidate: dict[str, Any] | None = None,
 ) -> None:
     with opportunity_action_guard(ledger_action_guard_root(store.path), opportunity_key):
         _task_turn_start_unlocked(
@@ -4259,6 +4318,8 @@ def _guarded_task_turn_start(
             prompt=prompt,
             delivery_kind=delivery_kind,
             delivery_token=delivery_token,
+            validation_binding=validation_binding,
+            validation_candidate=validation_candidate,
         )
 
 
@@ -4345,11 +4406,16 @@ def _commit_task_turn_delivery(
     delivery_kind: str,
     thread_id: str,
     delivery_token: str,
+    validation_reservation_digest: str | None = None,
 ) -> None:
     if delivery_kind == "pr-followup":
         store.commit_pr_followup(thread_id=thread_id, wake_digest=delivery_token)
     elif delivery_kind == "validation-followup":
-        store.commit_validation_followup(thread_id=thread_id, result_digest=delivery_token)
+        store.commit_validation_followup(
+            thread_id=thread_id,
+            result_digest=delivery_token,
+            reservation_digest=validation_reservation_digest,
+        )
     elif delivery_kind == "publication-feedback":
         store.commit_publication_feedback(
             thread_id=thread_id,
@@ -4415,7 +4481,55 @@ def _app_server_task_turn_worker(args: argparse.Namespace) -> dict[str, Any]:
     if candidate is None:
         raise RuntimeError("task-turn delivery reservation is unavailable")
     candidate = candidate | {"threadId": args.thread_id}
+    validation_binding: dict[str, Any] | None = None
+    if args.delivery_kind == "validation-followup":
+        binding_reader = getattr(store, "validation_followup_delivery_binding", None)
+        validation_binding = (
+            binding_reader(
+                thread_id=args.thread_id,
+                result_digest=args.delivery_token,
+                reservation_digest=str(candidate["reservationDigest"]),
+            )
+            if callable(binding_reader)
+            else None
+        )
+        if not validation_binding:
+            raise RuntimeError("validation task-turn snapshot binding is unavailable")
+        for option, key in (
+            (args.reservation_digest, "reservationDigest"),
+            (args.snapshot_id, "snapshotId"),
+            (args.snapshot_path, "snapshotPath"),
+            (args.snapshot_digest, "snapshotDigest"),
+            (args.worktree_input_path, "worktreeInputPath"),
+            (args.worktree_input_digest, "worktreeInputDigest"),
+        ):
+            if option != validation_binding.get(key):
+                raise RuntimeError("validation task-turn snapshot binding mismatch")
+        candidate = candidate | validation_binding
+        _validation_snapshot_metadata(
+            candidate=candidate,
+            reservation_digest=str(validation_binding["reservationDigest"]),
+            snapshot_id=str(validation_binding["snapshotId"]),
+            snapshot_path=str(validation_binding["snapshotPath"]),
+            snapshot_digest=str(validation_binding["snapshotDigest"]),
+        )
     cwd, _rollout_path = _validated_task_turn_thread(candidate)
+    if validation_binding is not None:
+        projection = _ensure_validation_worktree_input(
+            candidate=candidate,
+            reservation_digest=str(validation_binding["reservationDigest"]),
+            snapshot_id=str(validation_binding["snapshotId"]),
+            snapshot_path=str(validation_binding["snapshotPath"]),
+            snapshot_digest=str(validation_binding["snapshotDigest"]),
+            worktree_input_path=str(validation_binding["worktreeInputPath"]),
+            worktree_input_digest=str(validation_binding["worktreeInputDigest"]),
+        )
+        if any(
+            projection.get(key) != validation_binding.get(key)
+            for key in ("worktreeInputPath", "worktreeInputDigest", "resultDigest")
+        ):
+            raise RuntimeError("validation task-turn worktree input binding mismatch")
+        candidate = candidate | projection
     prompt = _task_turn_prompt(args.delivery_kind, candidate)
     executable = shutil.which("codex")
     if not executable:
@@ -4497,6 +4611,8 @@ def _app_server_task_turn_worker(args: argparse.Namespace) -> dict[str, Any]:
                 prompt=prompt,
                 delivery_kind=args.delivery_kind,
                 delivery_token=args.delivery_token,
+                validation_binding=validation_binding,
+                validation_candidate=candidate,
             )
 
         buffer, message = _read_app_server_response(
@@ -4516,6 +4632,11 @@ def _app_server_task_turn_worker(args: argparse.Namespace) -> dict[str, Any]:
             "turnId": turn_id,
             "deliveryKind": args.delivery_kind,
             "deliveryToken": args.delivery_token,
+            **(
+                {"reservationDigest": validation_binding["reservationDigest"]}
+                if validation_binding
+                else {}
+            ),
         }
         if args.delivery_kind != "publication-feedback":
             _commit_task_turn_delivery(
@@ -4523,6 +4644,11 @@ def _app_server_task_turn_worker(args: argparse.Namespace) -> dict[str, Any]:
                 delivery_kind=args.delivery_kind,
                 thread_id=args.thread_id,
                 delivery_token=args.delivery_token,
+                validation_reservation_digest=(
+                    str(validation_binding["reservationDigest"])
+                    if validation_binding
+                    else None
+                ),
             )
             _atomic_json(Path(args.receipt), receipt)
 
@@ -4587,6 +4713,12 @@ def _app_server_task_turn_worker(args: argparse.Namespace) -> dict[str, Any]:
                     "turnStarted": bool(turn_id),
                     "turnId": turn_id or None,
                     "error": f"{type(exc).__name__}:{str(exc)[:300]}",
+                    **(
+                        {"reservationDigest": args.reservation_digest}
+                        if args.delivery_kind == "validation-followup"
+                        and getattr(args, "reservation_digest", None)
+                        else {}
+                    ),
                 },
             )
         raise
@@ -4616,6 +4748,12 @@ def task_turn_worker_entry(args: argparse.Namespace) -> dict[str, Any]:
                     "turnStarted": False,
                     "turnId": None,
                     "error": f"{type(exc).__name__}:{str(exc)[:300]}",
+                    **(
+                        {"reservationDigest": args.reservation_digest}
+                        if getattr(args, "delivery_kind", None) == "validation-followup"
+                        and getattr(args, "reservation_digest", None)
+                        else {}
+                    ),
                 },
             )
         raise
@@ -4627,6 +4765,44 @@ def _pid_is_alive(pid: int) -> bool:
     except (OSError, ValueError):
         return False
     return True
+
+
+def _task_turn_delivery_identity(
+    *,
+    delivery_kind: str,
+    thread_id: str,
+    delivery_token: str,
+    validation_reservation_digest: str | None = None,
+) -> dict[str, str]:
+    identity = {
+        "deliveryKind": delivery_kind,
+        "threadId": thread_id,
+        "deliveryToken": delivery_token,
+    }
+    if delivery_kind == "validation-followup":
+        if not validation_reservation_digest or not re.fullmatch(
+            r"[0-9a-f]{64}", validation_reservation_digest
+        ):
+            raise RuntimeError("validation task-turn identity requires its reservation digest")
+        identity["reservationDigest"] = validation_reservation_digest
+    return identity
+
+
+def _task_turn_delivery_file_key(
+    *,
+    delivery_kind: str,
+    thread_id: str,
+    delivery_token: str,
+    validation_reservation_digest: str | None = None,
+) -> str:
+    return sha256_json(
+        _task_turn_delivery_identity(
+            delivery_kind=delivery_kind,
+            thread_id=thread_id,
+            delivery_token=delivery_token,
+            validation_reservation_digest=validation_reservation_digest,
+        )
+    )
 
 
 def active_task_turn_worker(thread_id: str) -> dict[str, Any] | None:
@@ -4658,11 +4834,14 @@ def active_task_turn_worker(thread_id: str) -> dict[str, Any] | None:
             or thread_id not in command_line
         ):
             continue
-        return {
+        worker = {
             "pid": pid,
             "deliveryKind": launch.get("deliveryKind"),
             "startedAt": launch.get("startedAt"),
         }
+        if launch.get("reservationDigest"):
+            worker["reservationDigest"] = launch["reservationDigest"]
+        return worker
     return active_root_task_worker(thread_id)
 
 
@@ -4710,21 +4889,25 @@ def retryable_negative_task_turn_receipt(
     delivery_kind: str,
     thread_id: str,
     delivery_token: str,
+    validation_reservation_digest: str | None = None,
 ) -> dict[str, Any] | None:
     """Return proof that a failed delivery started no target turn."""
 
-    receipt_key = sha256_json(
-        {
-            "deliveryKind": delivery_kind,
-            "threadId": thread_id,
-            "deliveryToken": delivery_token,
-        }
+    receipt_key = _task_turn_delivery_file_key(
+        delivery_kind=delivery_kind,
+        thread_id=thread_id,
+        delivery_token=delivery_token,
+        validation_reservation_digest=validation_reservation_digest,
     )
     receipt_root = STATE / "task_turn_receipts"
     receipt_path = receipt_root / f"{receipt_key}.json"
     if not receipt_path.is_file():
         return None
     receipt = read_json(receipt_path, missing={})
+    if delivery_kind == "validation-followup" and receipt.get(
+        "reservationDigest"
+    ) != validation_reservation_digest:
+        return None
     if receipt.get("ok") or receipt.get("turnStarted"):
         return None
     if active_task_turn_worker(thread_id) is not None:
@@ -4769,20 +4952,24 @@ def _desktop_task_handoff(
 
 
 def _discard_negative_task_turn_receipt(
-    *, delivery_kind: str, thread_id: str, delivery_token: str
+    *,
+    delivery_kind: str,
+    thread_id: str,
+    delivery_token: str,
+    validation_reservation_digest: str | None = None,
 ) -> None:
     """Remove a proved-negative receipt after retiring its ledger reservation."""
 
-    receipt_key = sha256_json(
-        {
-            "deliveryKind": delivery_kind,
-            "threadId": thread_id,
-            "deliveryToken": delivery_token,
-        }
+    receipt_key = _task_turn_delivery_file_key(
+        delivery_kind=delivery_kind,
+        thread_id=thread_id,
+        delivery_token=delivery_token,
+        validation_reservation_digest=validation_reservation_digest,
     )
     receipt_root = STATE / "task_turn_receipts"
     (receipt_root / f"{receipt_key}.json").unlink(missing_ok=True)
     (receipt_root / f"{receipt_key}.launch.json").unlink(missing_ok=True)
+    (receipt_root / f"{receipt_key}.log").unlink(missing_ok=True)
 
 
 def _reserved_task_turn_materialized(
@@ -4857,12 +5044,10 @@ def _rearm_negative_followup_deliveries(store: RadarLedger) -> list[dict[str, An
             continue
         if active_task_turn_worker(thread_id) is not None:
             continue
-        receipt_key = sha256_json(
-            {
-                "deliveryKind": "publication-feedback",
-                "threadId": thread_id,
-                "deliveryToken": token,
-            }
+        receipt_key = _task_turn_delivery_file_key(
+            delivery_kind="publication-feedback",
+            thread_id=thread_id,
+            delivery_token=token,
         )
         receipt_path = STATE / "task_turn_receipts" / f"{receipt_key}.json"
         receipt = read_json(receipt_path, missing={})
@@ -4954,11 +5139,18 @@ def _rearm_negative_followup_deliveries(store: RadarLedger) -> list[dict[str, An
             candidate=item,
             delivery_token=token,
         ):
-            store.commit_validation_followup(thread_id=thread_id, result_digest=token)
+            commit_kwargs: dict[str, Any] = {
+                "thread_id": thread_id,
+                "result_digest": token,
+            }
+            if item.get("reservationDigest"):
+                commit_kwargs["reservation_digest"] = str(item["reservationDigest"])
+            store.commit_validation_followup(**commit_kwargs)
             _discard_negative_task_turn_receipt(
                 delivery_kind="validation-followup",
                 thread_id=thread_id,
                 delivery_token=token,
+                validation_reservation_digest=str(item["reservationDigest"]),
             )
             rearmed.append(
                 {
@@ -4973,6 +5165,7 @@ def _rearm_negative_followup_deliveries(store: RadarLedger) -> list[dict[str, An
             delivery_kind="validation-followup",
             thread_id=thread_id,
             delivery_token=token,
+            validation_reservation_digest=str(item["reservationDigest"]),
         )
         if retry and retry.get("desktopHandoffRequired"):
             continue
@@ -4988,6 +5181,7 @@ def _rearm_negative_followup_deliveries(store: RadarLedger) -> list[dict[str, An
             delivery_kind="validation-followup",
             thread_id=thread_id,
             delivery_token=token,
+            validation_reservation_digest=str(item["reservationDigest"]),
         )
         rearmed.append(
             {
@@ -5140,12 +5334,16 @@ def task_turn_deliver(args: argparse.Namespace) -> dict[str, Any]:
     if candidate is None:
         raise RuntimeError("task-turn delivery reservation is unavailable")
     candidate = candidate | {"threadId": args.thread_id}
-    receipt_key = sha256_json(
-        {
-            "deliveryKind": args.delivery_kind,
-            "threadId": args.thread_id,
-            "deliveryToken": args.delivery_token,
-        }
+    validation_reservation_digest = (
+        str(candidate.get("reservationDigest") or "")
+        if args.delivery_kind == "validation-followup"
+        else None
+    )
+    receipt_key = _task_turn_delivery_file_key(
+        delivery_kind=args.delivery_kind,
+        thread_id=args.thread_id,
+        delivery_token=args.delivery_token,
+        validation_reservation_digest=validation_reservation_digest,
     )
     receipt_root = STATE / "task_turn_receipts"
     receipt = receipt_root / f"{receipt_key}.json"
@@ -5193,6 +5391,11 @@ def task_turn_deliver(args: argparse.Namespace) -> dict[str, Any]:
                     "turnStarted": False,
                     "turnId": None,
                     "error": f"{type(exc).__name__}:{str(exc)[:300]}",
+                    **(
+                        {"reservationDigest": validation_reservation_digest}
+                        if validation_reservation_digest
+                        else {}
+                    ),
                 },
             )
         raise
@@ -5202,6 +5405,11 @@ def task_turn_deliver(args: argparse.Namespace) -> dict[str, Any]:
             delivery_kind=args.delivery_kind,
             thread_id=args.thread_id,
             delivery_token=args.delivery_token,
+            validation_reservation_digest=(
+                validation_reservation_digest
+                if args.delivery_kind == "validation-followup"
+                else None
+            ),
         )
         return {
             "ok": True,
@@ -5213,6 +5421,18 @@ def task_turn_deliver(args: argparse.Namespace) -> dict[str, Any]:
 
     if receipt.exists():
         result = read_json(receipt, missing={})
+        if (
+            validation_reservation_digest
+            and result.get("reservationDigest") != validation_reservation_digest
+        ):
+            return {
+                "ok": False,
+                "pending": True,
+                "requiresReconciliation": True,
+                "threadId": args.thread_id,
+                "deliveryKind": args.delivery_kind,
+                "reason": "VALIDATION_RECEIPT_BINDING_MISMATCH",
+            }
         if result.get("ok"):
             return result
         desktop_result = desktop_handoff_result(result)
@@ -5233,6 +5453,18 @@ def task_turn_deliver(args: argparse.Namespace) -> dict[str, Any]:
 
     if launch.exists():
         launch_state = read_json(launch, missing={})
+        if (
+            validation_reservation_digest
+            and launch_state.get("reservationDigest") != validation_reservation_digest
+        ):
+            return {
+                "ok": False,
+                "pending": True,
+                "requiresReconciliation": True,
+                "threadId": args.thread_id,
+                "deliveryKind": args.delivery_kind,
+                "reason": "VALIDATION_LAUNCH_BINDING_MISMATCH",
+            }
         worker_pid = int(launch_state.get("pid") or 0)
         if worker_pid and _pid_is_alive(worker_pid):
             return {
@@ -5253,32 +5485,167 @@ def task_turn_deliver(args: argparse.Namespace) -> dict[str, Any]:
             "reason": "DELIVERY_WORKER_OUTCOME_UNKNOWN",
         }
 
+    active_worker = active_task_turn_worker(args.thread_id)
+    if active_worker is not None:
+        return {
+            "ok": True,
+            "pending": True,
+            "threadId": args.thread_id,
+            "deliveryKind": args.delivery_kind,
+            "reason": "TASK_TURN_WORKER_ACTIVE",
+            "worker": active_worker,
+        }
+
     opportunity_key = _task_opportunity_key(candidate)
+
+    validation_binding: dict[str, Any] | None = None
+
+    def validation_delivery_deferred(
+        reason: str, exc: ValidationResultChanged | None = None
+    ) -> dict[str, Any]:
+        return {
+            "ok": True,
+            "deferred": True,
+            "threadId": args.thread_id,
+            "deliveryKind": args.delivery_kind,
+            "resultDigest": args.delivery_token,
+            "reason": reason,
+            **(
+                {
+                    "expectedResultDigest": exc.expected,
+                    "observedResultDigest": exc.observed,
+                }
+                if exc is not None
+                else {}
+            ),
+        }
+
     try:
         with opportunity_action_guard(ledger_action_guard_root(store.path), opportunity_key):
             _require_task_action_clear(store, opportunity_key)
+            if args.delivery_kind == "validation-followup":
+                try:
+                    reservation_digest = str(candidate["reservationDigest"])
+                    if candidate.get("snapshotId"):
+                        validation_binding = {
+                            "reservationDigest": reservation_digest,
+                            "snapshotId": str(candidate["snapshotId"]),
+                            "snapshotPath": str(candidate["snapshotPath"]),
+                            "snapshotDigest": str(candidate["snapshotDigest"]),
+                            "worktreeInputPath": str(candidate["worktreeInputPath"]),
+                            "worktreeInputDigest": str(candidate["worktreeInputDigest"]),
+                            "resultDigest": args.delivery_token,
+                        }
+                        _validation_snapshot_metadata(
+                            candidate=candidate,
+                            reservation_digest=reservation_digest,
+                            snapshot_id=validation_binding["snapshotId"],
+                            snapshot_path=validation_binding["snapshotPath"],
+                            snapshot_digest=validation_binding["snapshotDigest"],
+                        )
+                    else:
+                        snapshot = _ensure_validation_snapshot(
+                            candidate, reservation_digest=reservation_digest
+                        )
+                        validation_binding = {
+                            "reservationDigest": reservation_digest,
+                            "snapshotId": snapshot["snapshotId"],
+                            "snapshotPath": snapshot["snapshotPath"],
+                            "snapshotDigest": snapshot["snapshotDigest"],
+                            **_validation_worktree_input_binding(
+                                candidate=candidate,
+                                reservation_digest=reservation_digest,
+                                snapshot_digest=str(snapshot["snapshotDigest"]),
+                            ),
+                            "resultDigest": args.delivery_token,
+                        }
+                    candidate = candidate | validation_binding
+                except ValidationResultChanged as exc:
+                    store.cancel_validation_followup_reservation(
+                        thread_id=args.thread_id,
+                        result_digest=args.delivery_token,
+                        reservation_digest=str(candidate["reservationDigest"]),
+                        reason="VALIDATION_RESULT_CHANGED_BEFORE_SNAPSHOT",
+                    )
+                    _discard_negative_task_turn_receipt(
+                        delivery_kind="validation-followup",
+                        thread_id=args.thread_id,
+                        delivery_token=args.delivery_token,
+                        validation_reservation_digest=str(
+                            candidate["reservationDigest"]
+                        ),
+                    )
+                    return validation_delivery_deferred(
+                        "VALIDATION_RESULT_CHANGED_BEFORE_SNAPSHOT", exc
+                    )
+                except (OSError, RuntimeError, ValueError):
+                    return validation_delivery_deferred(
+                        "VALIDATION_SNAPSHOT_INVALID", None
+                    )
             store.authorize_task_turn_delivery(
                 delivery_kind=args.delivery_kind,
                 thread_id=args.thread_id,
                 delivery_token=args.delivery_token,
+                **(
+                    {
+                        "reservation_digest": validation_binding["reservationDigest"],
+                        "snapshot_id": validation_binding["snapshotId"],
+                        "snapshot_path": validation_binding["snapshotPath"],
+                        "snapshot_digest": validation_binding["snapshotDigest"],
+                        "worktree_input_path": validation_binding["worktreeInputPath"],
+                        "worktree_input_digest": validation_binding["worktreeInputDigest"],
+                    }
+                    if validation_binding
+                    else {}
+                ),
             )
+            if validation_binding is not None:
+                _validation_snapshot_metadata(
+                    candidate=candidate,
+                    reservation_digest=validation_binding["reservationDigest"],
+                    snapshot_id=validation_binding["snapshotId"],
+                    snapshot_path=validation_binding["snapshotPath"],
+                    snapshot_digest=validation_binding["snapshotDigest"],
+                )
             with log.open("ab") as handle:
-                worker = subprocess.Popen(
+                worker_argv = [
+                    sys.executable,
+                    str(Path(__file__).resolve()),
+                    "--ledger",
+                    str(args.ledger),
+                    "task-turn-worker",
+                    "--delivery-kind",
+                    args.delivery_kind,
+                    "--thread-id",
+                    args.thread_id,
+                    "--delivery-token",
+                    args.delivery_token,
+                ]
+                if validation_binding:
+                    worker_argv.extend(
+                        [
+                            "--reservation-digest",
+                            validation_binding["reservationDigest"],
+                            "--snapshot-id",
+                            validation_binding["snapshotId"],
+                            "--snapshot-path",
+                            validation_binding["snapshotPath"],
+                            "--snapshot-digest",
+                            validation_binding["snapshotDigest"],
+                            "--worktree-input-path",
+                            validation_binding["worktreeInputPath"],
+                            "--worktree-input-digest",
+                            validation_binding["worktreeInputDigest"],
+                        ]
+                    )
+                worker_argv.extend(
                     [
-                        sys.executable,
-                        str(Path(__file__).resolve()),
-                        "--ledger",
-                        str(args.ledger),
-                        "task-turn-worker",
-                        "--delivery-kind",
-                        args.delivery_kind,
-                        "--thread-id",
-                        args.thread_id,
-                        "--delivery-token",
-                        args.delivery_token,
                         "--receipt",
                         str(receipt),
-                    ],
+                    ]
+                )
+                worker = subprocess.Popen(
+                    worker_argv,
                     cwd=ROOT,
                     stdin=subprocess.DEVNULL,
                     stdout=handle,
@@ -5294,6 +5661,11 @@ def task_turn_deliver(args: argparse.Namespace) -> dict[str, Any]:
                     "turnStarted": False,
                     "turnId": None,
                     "error": f"{type(exc).__name__}:{str(exc)[:300]}",
+                    **(
+                        {"reservationDigest": validation_reservation_digest}
+                        if validation_reservation_digest
+                        else {}
+                    ),
                 },
             )
         raise
@@ -5304,6 +5676,12 @@ def task_turn_deliver(args: argparse.Namespace) -> dict[str, Any]:
             "startedAt": iso_z(datetime.now(UTC)),
             "threadId": args.thread_id,
             "deliveryKind": args.delivery_kind,
+            "deliveryToken": args.delivery_token,
+            **(
+                {"reservationDigest": validation_reservation_digest}
+                if validation_reservation_digest
+                else {}
+            ),
         },
     )
     deadline = monotonic() + 60
@@ -5897,7 +6275,1149 @@ def orphan_reconcile(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _task_result_path(candidate: dict[str, Any]) -> Path:
-    return Path(candidate["worktreePath"]).resolve() / TASK_PRIVATE_DIR / "result.json"
+    """Return the lexical result path for display/audit only.
+
+    Do not use this helper for authority reads or writes.  Task result content
+    must flow through a validated task private directory descriptor.
+    """
+
+    return _lexical_absolute(Path(str(candidate["worktreePath"]))) / TASK_PRIVATE_DIR / "result.json"
+
+
+_VALIDATION_SNAPSHOT_ID = re.compile(r"^[0-9a-f]{64}$")
+_VALIDATION_SNAPSHOT_RELATIVE_PREFIX = "validation-inputs"
+_VALIDATION_WORKTREE_INPUT_RELATIVE_PREFIX = f"{TASK_PRIVATE_DIR}/validation-inputs"
+
+
+class _DirectoryBinding:
+    __slots__ = ("path", "fd", "label", "required_mode")
+
+    def __init__(
+        self, path: Path, fd: int, label: str, required_mode: int | None = None
+    ) -> None:
+        self.path = path
+        self.fd = fd
+        self.label = label
+        self.required_mode = required_mode
+
+
+def _directory_flags() -> int:
+    return os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+
+
+def _validate_directory_binding(binding: _DirectoryBinding) -> None:
+    try:
+        path_stat = binding.path.lstat()
+    except FileNotFoundError as exc:
+        raise RuntimeError(f"{binding.label} is missing") from exc
+    descriptor_stat = os.fstat(binding.fd)
+    path_mode = stat.S_IMODE(path_stat.st_mode)
+    descriptor_mode = stat.S_IMODE(descriptor_stat.st_mode)
+    if (
+        stat.S_ISLNK(path_stat.st_mode)
+        or not stat.S_ISDIR(path_stat.st_mode)
+        or path_stat.st_uid != os.getuid()
+        or path_mode & 0o022
+        or not stat.S_ISDIR(descriptor_stat.st_mode)
+        or descriptor_stat.st_uid != os.getuid()
+        or descriptor_mode & 0o022
+        or (path_stat.st_dev, path_stat.st_ino)
+        != (descriptor_stat.st_dev, descriptor_stat.st_ino)
+    ):
+        raise RuntimeError(f"{binding.label} is unsafe")
+    if binding.required_mode is not None and (
+        path_mode != binding.required_mode or descriptor_mode != binding.required_mode
+    ):
+        raise RuntimeError(f"{binding.label} is unsafe")
+
+
+def _validate_directory_bindings(bindings: list[_DirectoryBinding]) -> None:
+    for binding in bindings:
+        _validate_directory_binding(binding)
+
+
+def _open_directory_child(
+    *,
+    parent_fd: int,
+    parent_path: Path,
+    name: str,
+    label: str,
+    create: bool = False,
+    required_mode: int | None = None,
+) -> tuple[int, Path]:
+    if name in {"", ".", ".."} or "/" in name:
+        raise RuntimeError(f"{label} name is invalid")
+    if create:
+        try:
+            os.mkdir(name, required_mode or 0o700, dir_fd=parent_fd)
+        except FileExistsError:
+            pass
+    try:
+        source_stat = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    except FileNotFoundError as exc:
+        raise RuntimeError(f"{label} is missing") from exc
+    source_mode = stat.S_IMODE(source_stat.st_mode)
+    if (
+        stat.S_ISLNK(source_stat.st_mode)
+        or not stat.S_ISDIR(source_stat.st_mode)
+        or source_stat.st_uid != os.getuid()
+        or source_mode & 0o022
+        or (required_mode is not None and source_mode != required_mode)
+    ):
+        raise RuntimeError(f"{label} is unsafe")
+    try:
+        fd = os.open(name, _directory_flags(), dir_fd=parent_fd)
+    except OSError as exc:
+        raise RuntimeError(f"{label} could not be opened safely") from exc
+    descriptor_stat = os.fstat(fd)
+    descriptor_mode = stat.S_IMODE(descriptor_stat.st_mode)
+    if (
+        not stat.S_ISDIR(descriptor_stat.st_mode)
+        or descriptor_stat.st_uid != os.getuid()
+        or descriptor_mode & 0o022
+        or (required_mode is not None and descriptor_mode != required_mode)
+        or (source_stat.st_dev, source_stat.st_ino)
+        != (descriptor_stat.st_dev, descriptor_stat.st_ino)
+    ):
+        os.close(fd)
+        raise RuntimeError(f"{label} is unsafe")
+    return fd, parent_path / name
+
+
+def _open_validation_snapshot_state(*, create: bool) -> tuple[Path, int, Path, int]:
+    if STATE.name in {"", ".", ".."} or "/" in STATE.name:
+        raise RuntimeError("validation snapshot state directory name is invalid")
+    runtime_root = _lexical_absolute(ROOT)
+    if _lexical_absolute(STATE.parent) != runtime_root or STATE.name != "state":
+        raise RuntimeError("validation snapshot state directory is not bound to ROOT")
+    root_fd, root_path = open_directory_handle(
+        runtime_root,
+        label="validation snapshot runtime root",
+    )
+    state_fd = -1
+    try:
+        state_fd, state_path = _open_directory_child(
+            parent_fd=root_fd,
+            parent_path=root_path,
+            name=STATE.name,
+            label="validation snapshot state directory",
+            create=create,
+        )
+        return root_path, root_fd, state_path, state_fd
+    except Exception:
+        if state_fd >= 0:
+            os.close(state_fd)
+        os.close(root_fd)
+        raise
+
+
+def _require_validation_snapshot_root_binding(
+    *,
+    runtime_root_path: Path,
+    runtime_root_fd: int,
+    state_path: Path,
+    state_fd: int,
+    root_fd: int,
+) -> None:
+    _validate_directory_bindings(
+        [
+            _DirectoryBinding(
+                runtime_root_path,
+                runtime_root_fd,
+                "validation snapshot runtime root",
+            ),
+            _DirectoryBinding(
+                state_path,
+                state_fd,
+                "validation snapshot state directory",
+            ),
+        ]
+    )
+    try:
+        state_from_root = os.stat(STATE.name, dir_fd=runtime_root_fd, follow_symlinks=False)
+    except FileNotFoundError as exc:
+        raise RuntimeError("validation snapshot state directory is missing") from exc
+    state_descriptor_stat = os.fstat(state_fd)
+    if (
+        stat.S_ISLNK(state_from_root.st_mode)
+        or not stat.S_ISDIR(state_from_root.st_mode)
+        or (state_from_root.st_dev, state_from_root.st_ino)
+        != (state_descriptor_stat.st_dev, state_descriptor_stat.st_ino)
+    ):
+        raise RuntimeError("validation snapshot state directory is unsafe")
+    try:
+        root_stat = os.stat(
+            _VALIDATION_SNAPSHOT_RELATIVE_PREFIX,
+            dir_fd=state_fd,
+            follow_symlinks=False,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError("validation snapshot root is missing") from exc
+    root_descriptor_stat = os.fstat(root_fd)
+    if (
+        stat.S_ISLNK(root_stat.st_mode)
+        or not stat.S_ISDIR(root_stat.st_mode)
+        or root_stat.st_uid != os.getuid()
+        or stat.S_IMODE(root_stat.st_mode) != 0o700
+        or not stat.S_ISDIR(root_descriptor_stat.st_mode)
+        or root_descriptor_stat.st_uid != os.getuid()
+        or stat.S_IMODE(root_descriptor_stat.st_mode) != 0o700
+        or (root_stat.st_dev, root_stat.st_ino)
+        != (root_descriptor_stat.st_dev, root_descriptor_stat.st_ino)
+    ):
+        raise RuntimeError("validation snapshot root is unsafe")
+
+
+@contextmanager
+def _validation_snapshot_root_descriptor(*, create: bool):
+    runtime_root_path, runtime_root_fd, state_path, state_fd = (
+        _open_validation_snapshot_state(create=create)
+    )
+    root_fd = -1
+    try:
+        if create:
+            try:
+                os.mkdir(_VALIDATION_SNAPSHOT_RELATIVE_PREFIX, 0o700, dir_fd=state_fd)
+            except FileExistsError:
+                pass
+        try:
+            root_stat = os.stat(
+                _VALIDATION_SNAPSHOT_RELATIVE_PREFIX,
+                dir_fd=state_fd,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError as exc:
+            raise RuntimeError("validation snapshot root is missing") from exc
+        if (
+            stat.S_ISLNK(root_stat.st_mode)
+            or not stat.S_ISDIR(root_stat.st_mode)
+            or root_stat.st_uid != os.getuid()
+        ):
+            raise RuntimeError("validation snapshot root is unsafe")
+        try:
+            root_fd = os.open(
+                _VALIDATION_SNAPSHOT_RELATIVE_PREFIX,
+                os.O_RDONLY
+                | getattr(os, "O_DIRECTORY", 0)
+                | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=state_fd,
+            )
+        except OSError as exc:
+            raise RuntimeError(
+                "validation snapshot root could not be opened safely"
+            ) from exc
+        descriptor_stat = os.fstat(root_fd)
+        if create and stat.S_IMODE(descriptor_stat.st_mode) != 0o700:
+            os.fchmod(root_fd, 0o700)
+        _require_validation_snapshot_root_binding(
+            runtime_root_path=runtime_root_path,
+            runtime_root_fd=runtime_root_fd,
+            state_path=state_path,
+            state_fd=state_fd,
+            root_fd=root_fd,
+        )
+        try:
+            yield root_fd
+        except BaseException:
+            raise
+        else:
+            _require_validation_snapshot_root_binding(
+                runtime_root_path=runtime_root_path,
+                runtime_root_fd=runtime_root_fd,
+                state_path=state_path,
+                state_fd=state_fd,
+                root_fd=root_fd,
+            )
+    finally:
+        if root_fd >= 0:
+            os.close(root_fd)
+        os.close(state_fd)
+        os.close(runtime_root_fd)
+
+
+def _read_owned_regular_file(
+    path: Path,
+    *,
+    label: str,
+    required_mode: int | None = None,
+    reject_dangerous_writes: bool = False,
+    directory_fd: int | None = None,
+    missing_error: type[RuntimeError] = RuntimeError,
+) -> bytes:
+    """Read one owned regular file through a single no-follow descriptor."""
+
+    try:
+        if directory_fd is None:
+            path_stat = path.lstat()
+        else:
+            if path.is_absolute() or len(path.parts) != 1:
+                raise RuntimeError(f"{label} path is unsafe")
+            path_stat = os.stat(path, dir_fd=directory_fd, follow_symlinks=False)
+    except FileNotFoundError as exc:
+        raise missing_error(f"{label} is missing") from exc
+    if (
+        stat.S_ISLNK(path_stat.st_mode)
+        or not stat.S_ISREG(path_stat.st_mode)
+        or path_stat.st_uid != os.getuid()
+    ):
+        raise RuntimeError(f"{label} permissions are unsafe")
+    path_mode = stat.S_IMODE(path_stat.st_mode)
+    if required_mode is not None and path_mode != required_mode:
+        raise RuntimeError(f"{label} permissions are unsafe")
+    if reject_dangerous_writes and path_mode & 0o022:
+        raise RuntimeError(f"{label} permissions are unsafe")
+    try:
+        descriptor = os.open(
+            path,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=directory_fd,
+        )
+    except OSError as exc:
+        raise RuntimeError(f"{label} could not be opened safely") from exc
+    try:
+        descriptor_stat = os.fstat(descriptor)
+        if (
+            stat.S_ISLNK(descriptor_stat.st_mode)
+            or not stat.S_ISREG(descriptor_stat.st_mode)
+            or descriptor_stat.st_uid != os.getuid()
+        ):
+            raise RuntimeError(f"{label} permissions are unsafe")
+        descriptor_mode = stat.S_IMODE(descriptor_stat.st_mode)
+        if required_mode is not None and descriptor_mode != required_mode:
+            raise RuntimeError(f"{label} permissions are unsafe")
+        if reject_dangerous_writes and descriptor_mode & 0o022:
+            raise RuntimeError(f"{label} permissions are unsafe")
+        if (descriptor_stat.st_dev, descriptor_stat.st_ino) != (
+            path_stat.st_dev,
+            path_stat.st_ino,
+        ):
+            raise RuntimeError(f"{label} changed before it was opened")
+        with os.fdopen(descriptor, "rb") as handle:
+            descriptor = -1
+            return handle.read()
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def _read_validation_snapshot_raw_from_descriptor(
+    *, snapshot_id: str, root_fd: int
+) -> bytes:
+    return _read_owned_regular_file(
+        Path(f"{snapshot_id}.json"),
+        label="validation snapshot",
+        required_mode=0o400,
+        directory_fd=root_fd,
+    )
+
+
+def _read_controlled_validation_result(candidate: dict[str, Any]) -> bytes:
+    with _validation_worktree_private_descriptor(candidate) as private_fd:
+        return _read_owned_regular_file(
+            Path("result.json"),
+            label="validation result",
+            reject_dangerous_writes=True,
+            directory_fd=private_fd,
+            missing_error=MissingValidationResult,
+        )
+
+
+def _controlled_validation_result_exists(candidate: dict[str, Any]) -> bool:
+    with _validation_worktree_private_descriptor(candidate) as private_fd:
+        try:
+            os.stat("result.json", dir_fd=private_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return False
+        return True
+
+
+def _read_authenticated_validation_result(
+    candidate: dict[str, Any],
+) -> tuple[dict[str, Any], bytes]:
+    """Read and authenticate one queued validation result from one safe fd."""
+
+    raw = _read_controlled_validation_result(candidate)
+    expected = str(candidate["resultDigest"])
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValidationResultChanged(
+            expected=expected,
+            observed=hashlib.sha256(raw).hexdigest(),
+        ) from exc
+    if not isinstance(value, dict):
+        raise ValidationResultChanged(
+            expected=expected,
+            observed=hashlib.sha256(raw).hexdigest(),
+        )
+    try:
+        observed = _task_result_digest(value, raw)
+    except RuntimeError as exc:
+        if "receipt result digest does not match result" not in str(exc):
+            raise
+        raise ValidationResultChanged(
+            expected=expected,
+            observed=hashlib.sha256(raw).hexdigest(),
+        ) from exc
+    if observed != expected:
+        raise ValidationResultChanged(expected=expected, observed=observed)
+    return value, raw
+
+
+def _read_authenticated_validation_result_if_present(
+    candidate: dict[str, Any],
+) -> tuple[dict[str, Any], bytes] | None:
+    try:
+        return _read_authenticated_validation_result(candidate)
+    except MissingValidationResult:
+        return None
+
+
+def _validation_snapshot_bytes_from_descriptor(
+    *,
+    candidate: dict[str, Any],
+    reservation_digest: str,
+    snapshot_id: str,
+    snapshot_path: str,
+    snapshot_digest: str,
+    root_fd: int,
+) -> bytes:
+    if not _VALIDATION_SNAPSHOT_ID.fullmatch(snapshot_id):
+        raise RuntimeError("validation snapshot id is invalid")
+    expected_path = f"{_VALIDATION_SNAPSHOT_RELATIVE_PREFIX}/{snapshot_id}.json"
+    if snapshot_path != expected_path:
+        raise RuntimeError("validation snapshot path is invalid")
+    raw = _read_validation_snapshot_raw_from_descriptor(
+        snapshot_id=snapshot_id,
+        root_fd=root_fd,
+    )
+    snapshot_hash = hashlib.sha256(raw).hexdigest()
+    if snapshot_hash != snapshot_digest:
+        raise RuntimeError("validation snapshot digest mismatch")
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("validation snapshot JSON is invalid") from exc
+    if not isinstance(value, dict):
+        raise RuntimeError("validation snapshot JSON is not an object")
+    try:
+        result_digest = _task_result_digest(value, raw)
+    except RuntimeError as exc:
+        raise RuntimeError("validation snapshot result digest is invalid") from exc
+    if result_digest != candidate["resultDigest"]:
+        raise RuntimeError("validation snapshot result digest mismatch")
+    if reservation_digest != snapshot_id:
+        raise RuntimeError("validation snapshot is not bound to the reservation")
+    return raw
+
+
+def _validation_snapshot_bytes(
+    *,
+    candidate: dict[str, Any],
+    reservation_digest: str,
+    snapshot_id: str,
+    snapshot_path: str,
+    snapshot_digest: str,
+) -> bytes:
+    with _validation_snapshot_root_descriptor(create=False) as root_fd:
+        return _validation_snapshot_bytes_from_descriptor(
+            candidate=candidate,
+            reservation_digest=reservation_digest,
+            snapshot_id=snapshot_id,
+            snapshot_path=snapshot_path,
+            snapshot_digest=snapshot_digest,
+            root_fd=root_fd,
+        )
+
+
+def _validation_snapshot_metadata(
+    *,
+    candidate: dict[str, Any],
+    reservation_digest: str,
+    snapshot_id: str,
+    snapshot_path: str,
+    snapshot_digest: str,
+) -> dict[str, Any]:
+    _validation_snapshot_bytes(
+        candidate=candidate,
+        reservation_digest=reservation_digest,
+        snapshot_id=snapshot_id,
+        snapshot_path=snapshot_path,
+        snapshot_digest=snapshot_digest,
+    )
+    return {
+        "snapshotId": snapshot_id,
+        "snapshotPath": snapshot_path,
+        "snapshotDigest": snapshot_digest,
+        "resultDigest": str(candidate["resultDigest"]),
+    }
+
+
+def _ensure_validation_snapshot(
+    candidate: dict[str, Any], *, reservation_digest: str
+) -> dict[str, Any]:
+    if not _VALIDATION_SNAPSHOT_ID.fullmatch(reservation_digest):
+        raise RuntimeError("validation reservation digest is invalid")
+    snapshot_id = reservation_digest
+    snapshot_path = f"{_VALIDATION_SNAPSHOT_RELATIVE_PREFIX}/{snapshot_id}.json"
+    snapshot_name = f"{snapshot_id}.json"
+    with _validation_snapshot_root_descriptor(create=True) as root_fd:
+        try:
+            os.stat(snapshot_name, dir_fd=root_fd, follow_symlinks=False)
+            snapshot_exists = True
+        except FileNotFoundError:
+            snapshot_exists = False
+        if snapshot_exists:
+            existing_digest = str(candidate.get("snapshotDigest") or "")
+            if not existing_digest:
+                existing_digest = hashlib.sha256(
+                    _read_validation_snapshot_raw_from_descriptor(
+                        snapshot_id=snapshot_id,
+                        root_fd=root_fd,
+                    )
+                ).hexdigest()
+            _validation_snapshot_bytes_from_descriptor(
+                candidate=candidate,
+                reservation_digest=reservation_digest,
+                snapshot_id=snapshot_id,
+                snapshot_path=snapshot_path,
+                snapshot_digest=existing_digest,
+                root_fd=root_fd,
+            )
+            snapshot_digest = existing_digest
+        else:
+            _value, raw = _read_authenticated_validation_result(candidate)
+            snapshot_digest = hashlib.sha256(raw).hexdigest()
+            temporary_name = f".validation-input-{os.getpid()}-{time.time_ns()}.tmp"
+            descriptor = -1
+            try:
+                descriptor = os.open(
+                    temporary_name,
+                    os.O_WRONLY
+                    | os.O_CREAT
+                    | os.O_EXCL
+                    | getattr(os, "O_NOFOLLOW", 0),
+                    0o600,
+                    dir_fd=root_fd,
+                )
+                view = memoryview(raw)
+                while view:
+                    view = view[os.write(descriptor, view) :]
+                os.fsync(descriptor)
+                os.fchmod(descriptor, 0o400)
+                os.fsync(descriptor)
+                os.close(descriptor)
+                descriptor = -1
+                try:
+                    os.link(
+                        temporary_name,
+                        snapshot_name,
+                        src_dir_fd=root_fd,
+                        dst_dir_fd=root_fd,
+                        follow_symlinks=False,
+                    )
+                except FileExistsError:
+                    pass
+                os.fsync(root_fd)
+            finally:
+                if descriptor >= 0:
+                    os.close(descriptor)
+                try:
+                    os.unlink(temporary_name, dir_fd=root_fd)
+                except FileNotFoundError:
+                    pass
+            _validation_snapshot_bytes_from_descriptor(
+                candidate=candidate,
+                reservation_digest=reservation_digest,
+                snapshot_id=snapshot_id,
+                snapshot_path=snapshot_path,
+                snapshot_digest=snapshot_digest,
+                root_fd=root_fd,
+            )
+    return {
+        "snapshotId": snapshot_id,
+        "snapshotPath": snapshot_path,
+        "snapshotDigest": snapshot_digest,
+        "resultDigest": str(candidate["resultDigest"]),
+    }
+
+
+class _ValidationWorktreeDirectory:
+    __slots__ = (
+        "worktree",
+        "worktree_fd",
+        "private_dir",
+        "private_fd",
+        "handles",
+        "bindings",
+    )
+
+    def __init__(
+        self,
+        *,
+        worktree: Path,
+        worktree_fd: int,
+        private_dir: Path,
+        private_fd: int,
+        handles: list[int],
+        bindings: list[_DirectoryBinding],
+    ) -> None:
+        self.worktree = worktree
+        self.worktree_fd = worktree_fd
+        self.private_dir = private_dir
+        self.private_fd = private_fd
+        self.handles = handles
+        self.bindings = bindings
+
+
+def _open_managed_validation_worktree_root() -> tuple[Path, int, list[int], list[_DirectoryBinding]]:
+    github_fd, github_path = open_directory_handle(GITHUB_ROOT, label="GitHub root")
+    handles = [github_fd]
+    bindings = [_DirectoryBinding(github_path, github_fd, "GitHub root")]
+    try:
+        private_fd, private_path = _open_directory_child(
+            parent_fd=github_fd,
+            parent_path=github_path,
+            name=TASK_PRIVATE_DIR,
+            label="Radar private root",
+            required_mode=0o700,
+        )
+        handles.append(private_fd)
+        bindings.append(_DirectoryBinding(private_path, private_fd, "Radar private root", 0o700))
+        worktrees_fd, worktrees_path = _open_directory_child(
+            parent_fd=private_fd,
+            parent_path=private_path,
+            name="worktrees",
+            label="managed worktree root",
+        )
+        handles.append(worktrees_fd)
+        bindings.append(_DirectoryBinding(worktrees_path, worktrees_fd, "managed worktree root"))
+        return worktrees_path, worktrees_fd, handles, bindings
+    except Exception:
+        for fd in reversed(handles):
+            os.close(fd)
+        raise
+
+
+def _open_legacy_validation_worktree_root() -> tuple[Path, int, list[int], list[_DirectoryBinding]]:
+    root_fd, root_path = open_directory_handle(WORKTREE_ROOT, label="Codex worktree root")
+    return root_path, root_fd, [root_fd], [
+        _DirectoryBinding(root_path, root_fd, "Codex worktree root")
+    ]
+
+
+def _validation_worktree_trusted_root_openers(
+    _candidate: dict[str, Any],
+) -> tuple[Callable[[], tuple[Path, int, list[int], list[_DirectoryBinding]]], ...]:
+    return (
+        _open_managed_validation_worktree_root,
+        _open_legacy_validation_worktree_root,
+    )
+
+
+def _lexical_absolute(path: Path) -> Path:
+    return Path(os.path.abspath(path))
+
+
+def _relative_worktree_parts(candidate_path: Path, root_path: Path) -> tuple[str, ...] | None:
+    try:
+        relative = _lexical_absolute(candidate_path).relative_to(_lexical_absolute(root_path))
+    except ValueError:
+        return None
+    if not relative.parts:
+        raise RuntimeError("validation worktree cannot be the trusted root")
+    parts = tuple(relative.parts)
+    if any(part in {"", ".", ".."} or "/" in part for part in parts):
+        raise RuntimeError("validation worktree path is unsafe")
+    return parts
+
+
+def _open_validation_worktree_private_dir(
+    candidate: dict[str, Any],
+) -> _ValidationWorktreeDirectory:
+    raw_worktree = str(candidate.get("worktreePath") or "")
+    if not raw_worktree:
+        raise RuntimeError("validation worktree is unavailable")
+    raw_worktree_path = Path(raw_worktree)
+    if not raw_worktree_path.is_absolute():
+        raise RuntimeError("validation worktree path must be absolute")
+    candidate_path = _lexical_absolute(raw_worktree_path)
+    root_errors: list[str] = []
+    for opener in _validation_worktree_trusted_root_openers(candidate):
+        handles: list[int] = []
+        try:
+            root_path, root_fd, handles, bindings = opener()
+        except (OSError, RuntimeError, ValueError) as exc:
+            root_errors.append(str(exc)[:160])
+            continue
+        try:
+            parts = _relative_worktree_parts(candidate_path, root_path)
+            if parts is None:
+                for fd in reversed(handles):
+                    os.close(fd)
+                continue
+            current_fd = root_fd
+            current_path = root_path
+            current_bindings = list(bindings)
+            worktree_fd = -1
+            worktree_path = root_path
+            for index, part in enumerate(parts):
+                label = "validation worktree" if index == len(parts) - 1 else (
+                    "validation worktree parent"
+                )
+                child_fd, child_path = _open_directory_child(
+                    parent_fd=current_fd,
+                    parent_path=current_path,
+                    name=part,
+                    label=label,
+                )
+                handles.append(child_fd)
+                current_bindings.append(_DirectoryBinding(child_path, child_fd, label))
+                current_fd = child_fd
+                current_path = child_path
+                worktree_fd = child_fd
+                worktree_path = child_path
+            private_fd, private_dir = _open_directory_child(
+                parent_fd=worktree_fd,
+                parent_path=worktree_path,
+                name=TASK_PRIVATE_DIR,
+                label="validation worktree private directory",
+            )
+            handles.append(private_fd)
+            current_bindings.append(
+                _DirectoryBinding(
+                    private_dir,
+                    private_fd,
+                    "validation worktree private directory",
+                )
+            )
+            return _ValidationWorktreeDirectory(
+                worktree=worktree_path,
+                worktree_fd=worktree_fd,
+                private_dir=private_dir,
+                private_fd=private_fd,
+                handles=handles,
+                bindings=current_bindings,
+            )
+        except Exception:
+            for fd in reversed(handles):
+                os.close(fd)
+            raise
+    detail = f": {'; '.join(root_errors)}" if root_errors else ""
+    raise RuntimeError(f"validation worktree is outside trusted roots{detail}")
+
+
+def _require_validation_worktree_private_binding(
+    *,
+    bindings: list[_DirectoryBinding],
+    worktree: Path,
+    worktree_fd: int,
+    private_dir: Path,
+    private_fd: int,
+) -> None:
+    _validate_directory_bindings(bindings)
+    try:
+        private_stat = os.stat(
+            TASK_PRIVATE_DIR,
+            dir_fd=worktree_fd,
+            follow_symlinks=False,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError("validation worktree private directory is missing") from exc
+    private_descriptor_stat = os.fstat(private_fd)
+    if (
+        stat.S_ISLNK(private_stat.st_mode)
+        or not stat.S_ISDIR(private_stat.st_mode)
+        or private_stat.st_uid != os.getuid()
+        or not stat.S_ISDIR(private_descriptor_stat.st_mode)
+        or private_descriptor_stat.st_uid != os.getuid()
+        or (private_stat.st_dev, private_stat.st_ino)
+        != (private_descriptor_stat.st_dev, private_descriptor_stat.st_ino)
+    ):
+        raise RuntimeError("validation worktree private directory is unsafe")
+
+
+@contextmanager
+def _task_worktree_private_descriptor(candidate: dict[str, Any]):
+    opened = _open_validation_worktree_private_dir(candidate)
+    try:
+        _require_validation_worktree_private_binding(
+            bindings=opened.bindings,
+            worktree=opened.worktree,
+            worktree_fd=opened.worktree_fd,
+            private_dir=opened.private_dir,
+            private_fd=opened.private_fd,
+        )
+        try:
+            yield opened
+        except BaseException:
+            raise
+        else:
+            _require_validation_worktree_private_binding(
+                bindings=opened.bindings,
+                worktree=opened.worktree,
+                worktree_fd=opened.worktree_fd,
+                private_dir=opened.private_dir,
+                private_fd=opened.private_fd,
+            )
+    finally:
+        for fd in reversed(opened.handles):
+            os.close(fd)
+
+
+@contextmanager
+def _validation_worktree_private_descriptor(candidate: dict[str, Any]):
+    with _task_worktree_private_descriptor(candidate) as opened:
+        yield opened.private_fd
+
+
+def _read_task_private_regular_file(
+    opened: _ValidationWorktreeDirectory,
+    name: str,
+    *,
+    label: str,
+    missing_error: type[RuntimeError] = RuntimeError,
+    reject_dangerous_writes: bool = False,
+) -> bytes:
+    return _read_owned_regular_file(
+        Path(name),
+        label=label,
+        directory_fd=opened.private_fd,
+        missing_error=missing_error,
+        reject_dangerous_writes=reject_dangerous_writes,
+    )
+
+
+def _read_task_result_bytes_from_private(
+    opened: _ValidationWorktreeDirectory,
+) -> bytes:
+    return _read_task_private_regular_file(
+        opened,
+        "result.json",
+        label="task result",
+        missing_error=MissingValidationResult,
+        reject_dangerous_writes=True,
+    )
+
+
+def _read_task_context_bytes_from_private(
+    opened: _ValidationWorktreeDirectory,
+) -> bytes:
+    return _read_task_private_regular_file(
+        opened,
+        "task-context.json",
+        label="task context",
+    )
+
+
+def _write_task_result_json_to_private(
+    opened: _ValidationWorktreeDirectory,
+    value: dict[str, Any],
+) -> bytes:
+    _require_validation_worktree_private_binding(
+        bindings=opened.bindings,
+        worktree=opened.worktree,
+        worktree_fd=opened.worktree_fd,
+        private_dir=opened.private_dir,
+        private_fd=opened.private_fd,
+    )
+    _atomic_private_json(Path("result.json"), value, directory_fd=opened.private_fd)
+    _require_validation_worktree_private_binding(
+        bindings=opened.bindings,
+        worktree=opened.worktree,
+        worktree_fd=opened.worktree_fd,
+        private_dir=opened.private_dir,
+        private_fd=opened.private_fd,
+    )
+    return _read_task_result_bytes_from_private(opened)
+
+
+def _read_task_result_bytes_if_present(
+    candidate: dict[str, Any],
+) -> tuple[Path, bytes] | None:
+    with _task_worktree_private_descriptor(candidate) as opened:
+        try:
+            raw = _read_task_result_bytes_from_private(opened)
+        except MissingValidationResult:
+            return None
+        return opened.private_dir / "result.json", raw
+
+
+def _require_validation_worktree_input_root_binding(
+    *,
+    bindings: list[_DirectoryBinding],
+    worktree: Path,
+    worktree_fd: int,
+    private_dir: Path,
+    private_fd: int,
+    root_fd: int,
+) -> None:
+    _require_validation_worktree_private_binding(
+        bindings=bindings,
+        worktree=worktree,
+        worktree_fd=worktree_fd,
+        private_dir=private_dir,
+        private_fd=private_fd,
+    )
+
+    directory_name = "validation-inputs"
+    try:
+        root_stat = os.stat(directory_name, dir_fd=private_fd, follow_symlinks=False)
+    except FileNotFoundError as exc:
+        raise RuntimeError("validation worktree input directory is missing") from exc
+    root_descriptor_stat = os.fstat(root_fd)
+    if (
+        stat.S_ISLNK(root_stat.st_mode)
+        or not stat.S_ISDIR(root_stat.st_mode)
+        or root_stat.st_uid != os.getuid()
+        or stat.S_IMODE(root_stat.st_mode) != 0o700
+        or not stat.S_ISDIR(root_descriptor_stat.st_mode)
+        or root_descriptor_stat.st_uid != os.getuid()
+        or stat.S_IMODE(root_descriptor_stat.st_mode) != 0o700
+        or (root_stat.st_dev, root_stat.st_ino)
+        != (root_descriptor_stat.st_dev, root_descriptor_stat.st_ino)
+    ):
+        raise RuntimeError("validation worktree input directory is unsafe")
+
+
+@contextmanager
+def _validation_worktree_input_root_descriptor(
+    candidate: dict[str, Any], *, create: bool
+):
+    opened = _open_validation_worktree_private_dir(candidate)
+    root_fd = -1
+    directory_name = "validation-inputs"
+    try:
+        if create:
+            try:
+                os.mkdir(directory_name, 0o700, dir_fd=opened.private_fd)
+            except FileExistsError:
+                pass
+        try:
+            root_fd = os.open(
+                directory_name,
+                os.O_RDONLY
+                | getattr(os, "O_DIRECTORY", 0)
+                | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=opened.private_fd,
+            )
+        except FileNotFoundError as exc:
+            raise RuntimeError("validation worktree input directory is missing") from exc
+        except OSError as exc:
+            raise RuntimeError(
+                "validation worktree input directory could not be opened safely"
+            ) from exc
+        root_binding = _DirectoryBinding(
+            opened.private_dir / directory_name,
+            root_fd,
+            "validation worktree input directory",
+            0o700,
+        )
+        bindings = [*opened.bindings, root_binding]
+        _require_validation_worktree_input_root_binding(
+            bindings=bindings,
+            worktree=opened.worktree,
+            worktree_fd=opened.worktree_fd,
+            private_dir=opened.private_dir,
+            private_fd=opened.private_fd,
+            root_fd=root_fd,
+        )
+        try:
+            yield root_fd
+        except BaseException:
+            raise
+        else:
+            _require_validation_worktree_input_root_binding(
+                bindings=bindings,
+                worktree=opened.worktree,
+                worktree_fd=opened.worktree_fd,
+                private_dir=opened.private_dir,
+                private_fd=opened.private_fd,
+                root_fd=root_fd,
+            )
+    finally:
+        if root_fd >= 0:
+            os.close(root_fd)
+        for fd in reversed(opened.handles):
+            os.close(fd)
+
+
+def _validation_worktree_input_binding(
+    *, candidate: dict[str, Any], reservation_digest: str, snapshot_digest: str
+) -> dict[str, str]:
+    if not _VALIDATION_SNAPSHOT_ID.fullmatch(reservation_digest):
+        raise RuntimeError("validation reservation digest is invalid")
+    if not snapshot_digest:
+        raise RuntimeError("validation snapshot digest is missing")
+    return {
+        "worktreeInputPath": (
+            f"{_VALIDATION_WORKTREE_INPUT_RELATIVE_PREFIX}/{reservation_digest}.json"
+        ),
+        "worktreeInputDigest": snapshot_digest,
+    }
+
+
+def _validation_worktree_input_bytes_from_descriptor(
+    *,
+    candidate: dict[str, Any],
+    reservation_digest: str,
+    worktree_input_digest: str,
+    root_fd: int,
+) -> bytes:
+    raw = _read_owned_regular_file(
+        Path(f"{reservation_digest}.json"),
+        label="validation worktree input",
+        required_mode=0o400,
+        directory_fd=root_fd,
+    )
+    if hashlib.sha256(raw).hexdigest() != worktree_input_digest:
+        raise RuntimeError("validation worktree input digest mismatch")
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("validation worktree input JSON is invalid") from exc
+    if not isinstance(value, dict):
+        raise RuntimeError("validation worktree input JSON is not an object")
+    try:
+        result_digest = _task_result_digest(value, raw)
+    except RuntimeError as exc:
+        raise RuntimeError("validation worktree input result digest is invalid") from exc
+    if result_digest != candidate["resultDigest"]:
+        raise RuntimeError("validation worktree input result digest mismatch")
+    return raw
+
+
+def _validation_worktree_input_bytes(
+    *,
+    candidate: dict[str, Any],
+    reservation_digest: str,
+    worktree_input_path: str,
+    worktree_input_digest: str,
+) -> bytes:
+    if not _VALIDATION_SNAPSHOT_ID.fullmatch(reservation_digest):
+        raise RuntimeError("validation reservation digest is invalid")
+    expected_path = (
+        f"{_VALIDATION_WORKTREE_INPUT_RELATIVE_PREFIX}/{reservation_digest}.json"
+    )
+    if worktree_input_path != expected_path:
+        raise RuntimeError("validation worktree input path is invalid")
+    with _validation_worktree_input_root_descriptor(
+        candidate, create=False
+    ) as root_fd:
+        return _validation_worktree_input_bytes_from_descriptor(
+            candidate=candidate,
+            reservation_digest=reservation_digest,
+            worktree_input_digest=worktree_input_digest,
+            root_fd=root_fd,
+        )
+
+
+def _validation_worktree_input_metadata(
+    *,
+    candidate: dict[str, Any],
+    reservation_digest: str,
+    worktree_input_path: str,
+    worktree_input_digest: str,
+) -> dict[str, str]:
+    _validation_worktree_input_bytes(
+        candidate=candidate,
+        reservation_digest=reservation_digest,
+        worktree_input_path=worktree_input_path,
+        worktree_input_digest=worktree_input_digest,
+    )
+    return {
+        "worktreeInputPath": worktree_input_path,
+        "worktreeInputDigest": worktree_input_digest,
+        "resultDigest": str(candidate["resultDigest"]),
+    }
+
+
+def _ensure_validation_worktree_input(
+    *,
+    candidate: dict[str, Any],
+    reservation_digest: str,
+    snapshot_id: str,
+    snapshot_path: str,
+    snapshot_digest: str,
+    worktree_input_path: str,
+    worktree_input_digest: str,
+) -> dict[str, str]:
+    raw = _validation_snapshot_bytes(
+        candidate=candidate,
+        reservation_digest=reservation_digest,
+        snapshot_id=snapshot_id,
+        snapshot_path=snapshot_path,
+        snapshot_digest=snapshot_digest,
+    )
+    if hashlib.sha256(raw).hexdigest() != worktree_input_digest:
+        raise RuntimeError("validation worktree input binding digest mismatch")
+    expected = _validation_worktree_input_binding(
+        candidate=candidate,
+        reservation_digest=reservation_digest,
+        snapshot_digest=snapshot_digest,
+    )
+    if (
+        worktree_input_path != expected["worktreeInputPath"]
+        or worktree_input_digest != expected["worktreeInputDigest"]
+    ):
+        raise RuntimeError("validation worktree input binding is invalid")
+    destination_name = f"{reservation_digest}.json"
+    with _validation_worktree_input_root_descriptor(candidate, create=True) as root_fd:
+        try:
+            os.stat(destination_name, dir_fd=root_fd, follow_symlinks=False)
+            destination_exists = True
+        except FileNotFoundError:
+            destination_exists = False
+        if not destination_exists:
+            temporary_name = f".validation-input-{os.getpid()}-{time.time_ns()}.tmp"
+            descriptor = -1
+            try:
+                descriptor = os.open(
+                    temporary_name,
+                    os.O_WRONLY
+                    | os.O_CREAT
+                    | os.O_EXCL
+                    | getattr(os, "O_NOFOLLOW", 0),
+                    0o600,
+                    dir_fd=root_fd,
+                )
+                view = memoryview(raw)
+                while view:
+                    view = view[os.write(descriptor, view) :]
+                os.fsync(descriptor)
+                os.fchmod(descriptor, 0o400)
+                os.fsync(descriptor)
+                os.close(descriptor)
+                descriptor = -1
+                try:
+                    os.link(
+                        temporary_name,
+                        destination_name,
+                        src_dir_fd=root_fd,
+                        dst_dir_fd=root_fd,
+                        follow_symlinks=False,
+                    )
+                except FileExistsError:
+                    pass
+                os.fsync(root_fd)
+            finally:
+                if descriptor >= 0:
+                    os.close(descriptor)
+                try:
+                    os.unlink(temporary_name, dir_fd=root_fd)
+                except FileNotFoundError:
+                    pass
+        _validation_worktree_input_bytes_from_descriptor(
+            candidate=candidate,
+            reservation_digest=reservation_digest,
+            worktree_input_digest=worktree_input_digest,
+            root_fd=root_fd,
+        )
+    return {
+        "worktreeInputPath": worktree_input_path,
+        "worktreeInputDigest": worktree_input_digest,
+        "resultDigest": str(candidate["resultDigest"]),
+    }
 
 
 def _local_changed_files(worktree: Path) -> list[str]:
@@ -6003,9 +7523,9 @@ def _finalize_controller_merge(
     candidate: dict[str, Any],
     context: dict[str, Any],
     value: dict[str, Any],
-    result_path: Path,
+    result_access: _ValidationWorktreeDirectory,
 ) -> tuple[dict[str, Any], bytes]:
-    worktree = Path(candidate["worktreePath"]).resolve()
+    worktree = result_access.worktree
     changed_files = _validated_changed_files(value.get("changedFiles"))
     branch = str(value.get("branch") or "").strip()
     commit_message = str(value.get("commitMessage") or "").strip()
@@ -6118,8 +7638,8 @@ def _finalize_controller_merge(
         finalized["publication"] = finalized_publication
     if context.get("targetBase") is not None:
         finalized["targetBase"] = validate_target_base(context["targetBase"])
-    _atomic_json(result_path, finalized)
-    return finalized, result_path.read_bytes()
+    raw = _write_task_result_json_to_private(result_access, finalized)
+    return finalized, raw
 
 
 def _policy_from_context(context: dict[str, Any]) -> dict[str, Any]:
@@ -6290,7 +7810,7 @@ def _finalize_controller_commit(
     candidate: dict[str, Any],
     context: dict[str, Any],
     value: dict[str, Any],
-    result_path: Path,
+    result_access: _ValidationWorktreeDirectory,
     write_if_unchanged: bool = True,
 ) -> tuple[dict[str, Any], bytes]:
     if value.get("handoffMode") == "controller_merge_required":
@@ -6298,10 +7818,10 @@ def _finalize_controller_commit(
             candidate=candidate,
             context=context,
             value=value,
-            result_path=result_path,
+            result_access=result_access,
         )
     if value.get("handoffMode") == "controller_commit_complete":
-        worktree = Path(candidate["worktreePath"]).resolve()
+        worktree = result_access.worktree
         declared_commit_files = _validated_changed_files(
             value.get("controllerCommitChangedFiles") or value.get("changedFiles")
         )
@@ -6376,12 +7896,14 @@ def _finalize_controller_commit(
         if context.get("targetBase") is not None:
             finalized["targetBase"] = validate_target_base(context["targetBase"])
         if write_if_unchanged or finalized != value:
-            _atomic_json(result_path, finalized)
-        return finalized, result_path.read_bytes()
+            raw = _write_task_result_json_to_private(result_access, finalized)
+        else:
+            raw = _read_task_result_bytes_from_private(result_access)
+        return finalized, raw
     if value.get("handoffMode") != "controller_commit_required":
-        return value, result_path.read_bytes()
+        return value, _read_task_result_bytes_from_private(result_access)
 
-    worktree = Path(candidate["worktreePath"]).resolve()
+    worktree = result_access.worktree
     changed_files = _validated_changed_files(value.get("changedFiles"))
     branch = str(value.get("branch") or "").strip()
     commit_message = str(value.get("commitMessage") or "").strip()
@@ -6498,8 +8020,8 @@ def _finalize_controller_commit(
         finalized["publication"] = finalized_publication
     if context.get("targetBase") is not None:
         finalized["targetBase"] = validate_target_base(context["targetBase"])
-    _atomic_json(result_path, finalized)
-    return finalized, result_path.read_bytes()
+    raw = _write_task_result_json_to_private(result_access, finalized)
+    return finalized, raw
 
 
 def _publication_block_reason(context: dict[str, Any], value: dict[str, Any]) -> str | None:
@@ -7750,14 +9272,7 @@ def _validation_prefetch_plan(
     candidate: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     worktree = Path(candidate["worktreePath"]).resolve()
-    result_path = worktree / ".oss-pr-radar" / "result.json"
-    raw = result_path.read_bytes()
-    result = json.loads(raw)
-    if (
-        not isinstance(result, dict)
-        or _task_result_digest(result, raw) != candidate["resultDigest"]
-    ):
-        raise RuntimeError("validation result changed after it was queued")
+    result, _raw = _read_authenticated_validation_result(candidate)
     tests = result.get("tests") if isinstance(result, dict) else None
     if not isinstance(tests, list):
         return [], []
@@ -7922,6 +9437,13 @@ def _validation_prefetch_plan(
     return commands, dependency_failures
 
 
+def _validation_result_digest(candidate: dict[str, Any]) -> str:
+    """Re-read the queued result and fail closed if its authenticated digest moved."""
+
+    _result, _raw = _read_authenticated_validation_result(candidate)
+    return str(candidate["resultDigest"])
+
+
 def _validation_prefetch_commands(candidate: dict[str, Any]) -> list[dict[str, Any]]:
     commands, _dependency_failures = _validation_prefetch_plan(candidate)
     return commands
@@ -7930,9 +9452,19 @@ def _validation_prefetch_commands(candidate: dict[str, Any]) -> list[dict[str, A
 def _validation_policy_reassessment_needed(candidate: dict[str, Any]) -> bool:
     if "relevant_tests_green" not in set(candidate.get("missing") or []):
         return False
-    value = read_json(_task_result_path(candidate), missing={})
-    if not isinstance(value, dict):
-        return False
+    if candidate.get("resultDigest"):
+        authenticated = _read_authenticated_validation_result_if_present(candidate)
+        if authenticated is None:
+            return False
+        value, _raw = authenticated
+    else:
+        try:
+            raw = _read_controlled_validation_result(candidate)
+        except MissingValidationResult:
+            return False
+        value = json.loads(raw)
+        if not isinstance(value, dict):
+            return False
     evidence = value.get("evidence")
     if (
         isinstance(evidence, dict)
@@ -8085,6 +9617,8 @@ def _execute_validation_prefetch(
 
 def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
+    quarantined_reader = getattr(store, "quarantined_validation_followups", lambda: [])
+    quarantined = list(quarantined_reader())
     reconciled_no_progress = store.reconcile_validation_no_progress()
     blocked_reader = getattr(store, "validation_prefetch_blocked", lambda: [])
     prefetch_blocked = {
@@ -8093,15 +9627,17 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
     rearmed_review_feedback: list[dict[str, str]] = []
     blocked_environment: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
+    concurrent_deferred: list[dict[str, Any]] = []
     for blocked in store.validation_no_progress():
         try:
             worktree = Path(blocked["worktreePath"]).resolve()
             dirty_files = _local_changed_files(worktree) if worktree.is_dir() else []
-            value = read_json(_task_result_path(blocked), missing={})
-            review = controller_review_result(ROOT, value) if isinstance(value, dict) else None
+            authenticated = _read_authenticated_validation_result_if_present(blocked)
+            value = authenticated[0] if authenticated is not None else {}
+            review = controller_review_result(ROOT, value)
             verdict = str(review.get("verdict") or "") if review else ""
             current_progress_marker = (
-                _validation_progress_marker(value) if isinstance(value, dict) else None
+                _validation_progress_marker(value)
             )
             recorded_progress_marker = str(blocked.get("progressMarker") or "")
             if dirty_files:
@@ -8113,7 +9649,7 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
             else:
                 prefetch_commands: list[dict[str, Any]] = []
                 dependency_failures: list[dict[str, Any]] = []
-                if _task_result_path(blocked).is_file():
+                if _controlled_validation_result_exists(blocked):
                     prefetch_commands, dependency_failures = _validation_prefetch_plan(blocked)
                 unresolved_dependency_failures = _unresolved_validation_dependency_failures(
                     prefetch_commands, dependency_failures
@@ -8201,6 +9737,16 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
                         ],
                     }
                 )
+        except ValidationResultChanged as exc:
+            concurrent_deferred.append(
+                {
+                    "key": str(blocked.get("key") or ""),
+                    "resultDigest": str(blocked.get("resultDigest") or ""),
+                    "reason": "VALIDATION_RESULT_CHANGED_AFTER_QUEUE",
+                    "expectedResultDigest": exc.expected,
+                    "observedResultDigest": exc.observed,
+                }
+            )
         except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
             errors.append(
                 {
@@ -8241,8 +9787,9 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
             if set(candidate.get("missing") or []) == {
                 "independent_review_passed"
             } and not _local_changed_files(worktree):
-                value = read_json(_task_result_path(candidate), missing={})
-                review = controller_review_result(ROOT, value) if isinstance(value, dict) else None
+                authenticated = _read_authenticated_validation_result_if_present(candidate)
+                value = authenticated[0] if authenticated is not None else {}
+                review = controller_review_result(ROOT, value)
                 if review and review.get("verdict") in {"FAIL", "HOLD"}:
                     candidates.append(
                         candidate
@@ -8298,6 +9845,16 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
                     "prefetchRequired": bool(commands),
                     "prefetchMode": "bridge_managed" if commands else "none",
                     "nextOperation": "validation-followup-reserve",
+                }
+            )
+        except ValidationResultChanged as exc:
+            concurrent_deferred.append(
+                {
+                    "key": str(candidate.get("key") or ""),
+                    "resultDigest": str(candidate.get("resultDigest") or ""),
+                    "reason": "VALIDATION_RESULT_CHANGED_AFTER_QUEUE",
+                    "expectedResultDigest": exc.expected,
+                    "observedResultDigest": exc.observed,
                 }
             )
         except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
@@ -8361,6 +9918,7 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
                 delivery_kind="validation-followup",
                 thread_id=str(item.get("threadId") or ""),
                 delivery_token=str(item.get("resultDigest") or ""),
+                validation_reservation_digest=str(item.get("reservationDigest") or ""),
             )
             if retry:
                 value |= retry
@@ -8389,6 +9947,8 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
         "blockedNoProgress": blocked_no_progress,
         "reconciledNoProgress": reconciled_no_progress,
         "rearmedReviewFeedback": rearmed_review_feedback,
+        "concurrentDeferred": concurrent_deferred,
+        "quarantined": quarantined,
         "errors": errors,
     }
 
@@ -8415,6 +9975,12 @@ def validation_followup_abandon(args: argparse.Namespace) -> dict[str, Any]:
         result_digest=args.result_digest,
         reason=args.reason,
         min_age_minutes=args.min_age_minutes,
+    )
+    _discard_negative_task_turn_receipt(
+        delivery_kind="validation-followup",
+        thread_id=args.thread_id,
+        delivery_token=args.result_digest,
+        validation_reservation_digest=str(candidate["reservationDigest"]),
     )
     return {
         "ok": True,
@@ -8453,11 +10019,22 @@ def _validation_followup_prompt(candidate: dict[str, Any]) -> str:
         if prefetch
         else "无需新增依赖，请直接重新判断并补齐证据。"
     )
+    worktree_input_path = str(candidate.get("worktreeInputPath") or "")
+    input_note = (
+        f"本轮输入只能只读工作区相对路径 `{worktree_input_path}`。"
+        "不要读取当前 `.oss-pr-radar/result.json` 作为本轮输入；"
+        "该 result.json 仅用于完成本轮时原子替换为新输出。\n\n"
+        if worktree_input_path
+        else "系统会在启动本轮前把不可变验证输入放入工作区；"
+        "当前 `.oss-pr-radar/result.json` 仅用于完成本轮时原子替换为新输出，"
+        "不能作为本轮输入。\n\n"
+    )
     return (
         "系统续跑：继续验证同一个修复，你无需操作。不要创建新任务或重新实现。"
         "读取当前任务文件，并只在已绑定的工作区继续。\n\n"
-        f"本轮需要解决：{missing_summary}。{dependency_note}\n\n"
-        "按已加载的受控任务规则更新结果：核心回归必须证明修复前失败、修复后通过；"
+        + input_note
+        + f"本轮需要解决：{missing_summary}。{dependency_note}\n\n"
+        + "按已加载的受控任务规则更新结果：核心回归必须证明修复前失败、修复后通过；"
         "广泛检查、可选依赖或 GPU/模型检查只有在核心检查完整通过时才可明确交给远端 CI。"
         "任何真实失败、缺少生成产物或已知分支问题仍会阻止发布。自动复核结论只能由系统写入。"
         "写结果前必须同步更新准备发布的 PR 描述：验证段落只保留本轮最新事实，"
@@ -8509,7 +10086,20 @@ def validation_followup_reserve(args: argparse.Namespace) -> dict[str, Any]:
     )
     if wip_limited:
         raise RuntimeError("global task WIP limit reached")
-    enriched = candidate | {"prefetchCommands": _validation_prefetch_commands(candidate)}
+    try:
+        prefetch_commands = _validation_prefetch_commands(candidate)
+    except ValidationResultChanged as exc:
+        return {
+            "ok": True,
+            "deferred": True,
+            "key": candidate["key"],
+            "threadId": candidate["threadId"],
+            "resultDigest": candidate["resultDigest"],
+            "reason": "VALIDATION_RESULT_CHANGED_AFTER_QUEUE",
+            "expectedResultDigest": exc.expected,
+            "observedResultDigest": exc.observed,
+        }
+    enriched = candidate | {"prefetchCommands": prefetch_commands}
     try:
         prefetch = _execute_validation_prefetch(enriched, enriched["prefetchCommands"])
     except ValidationPrefetchError as exc:
@@ -8528,23 +10118,72 @@ def validation_followup_reserve(args: argparse.Namespace) -> dict[str, Any]:
             "reason": "DEPENDENCY_PREFETCH_FAILED",
             "dependencyFailures": [exc.failure],
         }
-    context_path = write_task_context(
-        store,
-        issue_url=enriched["issueUrl"],
-        thread_id=enriched["threadId"],
-        cwd=Path(enriched["worktreePath"]),
-    )
-    reserved = store.reserve_validation_followup(
-        thread_id=enriched["threadId"],
-        result_digest=enriched["resultDigest"],
-        max_active=_private_task_limit(),
-        exclude_intent_id=str(enriched.get("intentId") or "") or None,
+    deferred: dict[str, Any] | None = None
+    opportunity_key = str(enriched["key"])
+    with opportunity_action_guard(ledger_action_guard_root(Path(args.ledger)), opportunity_key):
+        try:
+            _validation_result_digest(enriched)
+            context_path = write_task_context(
+                store,
+                issue_url=enriched["issueUrl"],
+                thread_id=enriched["threadId"],
+                cwd=Path(enriched["worktreePath"]),
+            )
+            _validation_result_digest(enriched)
+            reserved = store.reserve_validation_followup(
+                thread_id=enriched["threadId"],
+                result_digest=enriched["resultDigest"],
+                max_active=_private_task_limit(),
+                exclude_intent_id=str(enriched.get("intentId") or "") or None,
+            )
+            try:
+                _validation_result_digest(enriched)
+            except ValidationResultChanged as exc:
+                store.cancel_validation_followup_reservation(
+                    thread_id=enriched["threadId"],
+                    result_digest=enriched["resultDigest"],
+                    reservation_digest=str(reserved["reservationDigest"]),
+                    reason="VALIDATION_RESULT_CHANGED_AFTER_RESERVE",
+                )
+                _discard_negative_task_turn_receipt(
+                    delivery_kind="validation-followup",
+                    thread_id=str(enriched["threadId"]),
+                    delivery_token=str(enriched["resultDigest"]),
+                    validation_reservation_digest=str(reserved["reservationDigest"]),
+                )
+                deferred = {
+                    "ok": True,
+                    "deferred": True,
+                    "key": enriched["key"],
+                    "threadId": enriched["threadId"],
+                    "resultDigest": enriched["resultDigest"],
+                    "reservationDigest": reserved["reservationDigest"],
+                    "reason": "VALIDATION_RESULT_CHANGED_AFTER_QUEUE",
+                    "expectedResultDigest": exc.expected,
+                    "observedResultDigest": exc.observed,
+                }
+        except ValidationResultChanged as exc:
+            deferred = {
+                "ok": True,
+                "deferred": True,
+                "key": enriched["key"],
+                "threadId": enriched["threadId"],
+                "resultDigest": enriched["resultDigest"],
+                "reason": "VALIDATION_RESULT_CHANGED_AFTER_QUEUE",
+                "expectedResultDigest": exc.expected,
+                "observedResultDigest": exc.observed,
+            }
+    if deferred is not None:
+        return deferred
+    reservation_digest = str(
+        reserved.get("reservationDigest") or enriched.get("reservationDigest") or ""
     )
     return {
         "ok": True,
         "key": reserved["key"],
         "threadId": reserved["threadId"],
         "resultDigest": reserved["resultDigest"],
+        "reservationDigest": reservation_digest,
         "contextPath": str(context_path),
         "prefetch": prefetch,
         "prompt": _validation_followup_prompt(enriched),
@@ -8553,7 +10192,9 @@ def validation_followup_reserve(args: argparse.Namespace) -> dict[str, Any]:
 
 def validation_followup_commit(args: argparse.Namespace) -> dict[str, Any]:
     ledger(args.ledger).commit_validation_followup(
-        thread_id=args.thread_id, result_digest=args.result_digest
+        thread_id=args.thread_id,
+        result_digest=args.result_digest,
+        reservation_digest=getattr(args, "reservation_digest", None),
     )
     return {
         "ok": True,
@@ -8601,6 +10242,132 @@ def _task_result_digest(value: dict[str, Any], raw: bytes) -> str:
     return expected
 
 
+def _publication_git_snapshot(worktree: Path) -> dict[str, str]:
+    return {
+        "commitSha": command(["git", "rev-parse", "HEAD"], cwd=worktree),
+        "branch": command(["git", "symbolic-ref", "--short", "HEAD"], cwd=worktree),
+        "status": command(["git", "status", "--porcelain"], cwd=worktree),
+    }
+
+
+def _publication_payload_from_evidence(evidence: dict[str, Any], issue_url: str) -> dict[str, str]:
+    publication = evidence.get("publication")
+    if not isinstance(publication, dict):
+        raise RuntimeError("publication evidence must contain publication metadata")
+    required = ("headOwner", "baseBranch", "title", "bodyFile")
+    if any(
+        not isinstance(publication.get(key), str) or not publication[key].strip()
+        for key in required
+    ):
+        raise RuntimeError("publication metadata is incomplete")
+    body_path = Path(publication["bodyFile"]).expanduser().resolve()
+    try:
+        body = body_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise RuntimeError("PR body file is unavailable") from exc
+    title = publication["title"].strip()
+    if not body.strip():
+        raise RuntimeError("PR body must not be empty")
+    if not public_text_is_safe(title, body):
+        raise RuntimeError("public PR text contains an AI-assistance disclosure")
+    match = ISSUE_URL.match(issue_url)
+    if not match:
+        raise RuntimeError("invalid issue URL")
+    issue_number = match.group(2)
+    if issue_url not in body and not re.search(rf"(?<!\w)#{re.escape(issue_number)}\b", body):
+        raise RuntimeError("PR body must reference the exact issue")
+    return {
+        "headOwner": publication["headOwner"].strip(),
+        "baseBranch": publication["baseBranch"].strip(),
+        "title": title,
+        "bodyPath": str(body_path),
+        "bodyDigest": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+    }
+
+
+def _request_publication_from_task_result(
+    store: RadarLedger,
+    *,
+    candidate: dict[str, Any],
+    result_access: _ValidationWorktreeDirectory,
+    value: dict[str, Any],
+    raw: bytes,
+) -> dict[str, Any]:
+    worktree = result_access.worktree
+    snapshot = _publication_git_snapshot(worktree)
+    if snapshot["status"]:
+        raise RuntimeError("worktree must be clean before publication request")
+    if not public_branch_is_safe(snapshot["branch"]):
+        raise RuntimeError("public branch name exposes an AI tool")
+    evidence_digest = hashlib.sha256(raw).hexdigest()
+    issue_url = str(candidate["issueUrl"])
+    issue_match = ISSUE_URL.match(issue_url)
+    if issue_match is None:
+        raise RuntimeError("invalid issue URL")
+    repo = issue_match.group(1)
+    probe_receipt = value.get("reproductionReceipt") or value.get("probeReceipt")
+    pre_task = value.get("preTaskEvidence") if isinstance(value.get("preTaskEvidence"), dict) else {}
+    code_paths = [
+        str(path)
+        for path in (
+            value.get("codePaths")
+            or pre_task.get("codePathsPlan")
+            or pre_task.get("codePaths")
+            or []
+        )
+        if str(path).strip()
+    ]
+    result_digest = str(value.get("resultDigest") or "")
+    if not result_digest or not verify_probe_receipt(
+        probe_receipt if isinstance(probe_receipt, dict) else {},
+        repo=repo,
+        base_sha=str(value.get("selectedBaseSha") or pre_task.get("baseSha") or ""),
+        code_paths=code_paths,
+        required_level=REPRODUCED_VALIDATED,
+        issue_url=issue_url,
+        task_id=str(value.get("taskId") or value.get("intentId") or candidate["threadId"]),
+        head_sha=str(value.get("headSha") or snapshot["commitSha"]),
+        commit_sha=snapshot["commitSha"],
+        result_digest=result_digest,
+    ):
+        raise RuntimeError("REPRODUCED_VALIDATED probe receipt is required before publication")
+    expected = {
+        "issueUrl": issue_url,
+        "commitSha": snapshot["commitSha"],
+        "branch": snapshot["branch"],
+        "worktreePath": str(worktree),
+    }
+    for key, expected_value in expected.items():
+        if value.get(key) != expected_value:
+            raise RuntimeError(f"publication evidence mismatch: {key}")
+    publication = _publication_payload_from_evidence(value, issue_url)
+    target_base = None
+    if value.get("targetBase") is not None:
+        target_base = validate_target_base(value["targetBase"])
+        if publication["baseBranch"] != target_base["branch"]:
+            raise RuntimeError("publication base does not match the audited target branch")
+    request = store.create_publication_request(
+        issue_url=issue_url,
+        thread_id=str(candidate["threadId"]),
+        commit_sha=snapshot["commitSha"],
+        branch=snapshot["branch"],
+        worktree_path=str(worktree),
+        evidence_digest=evidence_digest,
+        evidence_path=str(result_access.private_dir / "result.json"),
+        evidence_raw_base64=base64.b64encode(raw).decode("ascii"),
+        publication=publication,
+        probe_receipt=probe_receipt if isinstance(probe_receipt, dict) else None,
+        result_digest=result_digest,
+        head_sha=str(value.get("headSha") or snapshot["commitSha"]),
+        selected_base_sha=str(value.get("selectedBaseSha") or pre_task.get("baseSha") or ""),
+        code_paths=code_paths,
+        target_base=target_base,
+        target_base_bound="targetBase" in value,
+    )
+    publication_evidence_from_request(request["request"])
+    return request
+
+
 def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
     managed_adapter = ManagedAdapter(ROOT, args.ledger)
@@ -8615,11 +10382,14 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
     for candidate in store.task_result_candidates():
         managed_candidate = dict(candidate.get("intent") or {})
         managed_candidate.update(candidate)
-        result_path = _task_result_path(candidate)
-        if not result_path.exists():
-            continue
+        stack = ExitStack()
+        candidate_failed = False
         try:
-            raw = result_path.read_bytes()
+            result_access = stack.enter_context(_task_worktree_private_descriptor(candidate))
+            try:
+                raw = _read_task_result_bytes_from_private(result_access)
+            except MissingValidationResult:
+                continue
             value = json.loads(raw)
             if not isinstance(value, dict):
                 raise RuntimeError("task result must be an object")
@@ -8675,8 +10445,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                         }
                     )
                 continue
-            context_path = result_path.parent / "task-context.json"
-            context = json.loads(context_path.read_text(encoding="utf-8"))
+            context = json.loads(_read_task_context_bytes_from_private(result_access))
             if not isinstance(context, dict):
                 raise RuntimeError("task result context must be an object")
             controller_policy = _controller_policy_verification(context)
@@ -8685,7 +10454,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 "key": candidate["key"],
                 "issueUrl": candidate["issueUrl"],
                 "threadId": candidate["threadId"],
-                "worktreePath": str(Path(candidate["worktreePath"]).resolve()),
+                "worktreePath": str(result_access.worktree),
             }
             for key, expected_value in expected.items():
                 if value.get(key) != expected_value:
@@ -8936,7 +10705,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     candidate=candidate,
                     context=context,
                     value=value,
-                    result_path=result_path,
+                    result_access=result_access,
                     write_if_unchanged=False,
                 )
                 digest_seen = store.task_result_digest_seen(
@@ -9025,7 +10794,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     candidate=candidate,
                     context=context,
                     value=value,
-                    result_path=result_path,
+                    result_access=result_access,
                 )
                 quality = value.get("quality")
                 assert isinstance(quality, dict)
@@ -9045,8 +10814,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                         value.pop("independentReview", None)
                     else:
                         value["independentReview"] = controller_review
-                    _atomic_json(result_path, value)
-                    raw = result_path.read_bytes()
+                    raw = _write_task_result_json_to_private(result_access, value)
                 digest = _task_result_digest(value, raw)
                 publication_blocked = _publication_block_reason(context, value)
                 assessment = assess_submit_ready(quality)
@@ -9154,12 +10922,12 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                             evidence=quality,
                             dedupe_key=digest,
                         )
-                    request = request_publication(
+                    request = _request_publication_from_task_result(
                         store,
-                        issue_url=candidate["issueUrl"],
-                        thread_id=candidate["threadId"],
-                        worktree=Path(candidate["worktreePath"]),
-                        evidence_path=result_path,
+                        candidate=candidate,
+                        result_access=result_access,
+                        value=value,
+                        raw=raw,
                     )
                     publication_requests.append(
                         {
@@ -9203,7 +10971,14 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
             else:
                 raise RuntimeError("unsupported task result stage")
         except (OSError, ValueError, RuntimeError) as exc:
+            candidate_failed = True
             errors.append({"key": candidate["key"], "error": str(exc)[:300]})
+        finally:
+            try:
+                stack.close()
+            except (OSError, ValueError, RuntimeError) as exc:
+                if not candidate_failed:
+                    errors.append({"key": candidate["key"], "error": str(exc)[:300]})
     result = {
         "ok": not errors,
         "ingested": ingested,
@@ -9292,6 +11067,11 @@ def _executor(
     return value
 
 
+def _evidence_from_publication_request(request: dict[str, Any]) -> dict[str, Any]:
+    value, _digest = publication_evidence_from_request(request)
+    return value
+
+
 def run_publication_queue(args: argparse.Namespace) -> dict[str, Any]:
     lock_path = Path(args.ledger).with_suffix(".publication.lock")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -9371,8 +11151,7 @@ def _run_publication_queue_unlocked(args: argparse.Namespace) -> dict[str, Any]:
                     action=action,
                     transient_reasons=TRANSIENT_PUBLICATION_AUDIT_REASONS,
                 )
-            evidence_path = Path(str(request.get("evidencePath") or "")).resolve()
-            evidence_value = json.loads(evidence_path.read_text(encoding="utf-8"))
+            evidence_value = _evidence_from_publication_request(request)
             controller_review = (
                 controller_review_result(ROOT, evidence_value)
                 if isinstance(evidence_value, dict)
@@ -9606,11 +11385,11 @@ def enqueue_local_receipts(path: Path = LEDGER_PATH) -> dict[str, Any]:
     queued: list[dict[str, Any]] = []
     rejected: list[dict[str, str]] = []
     for candidate in store.task_result_candidates():
-        result_path = _task_result_path(candidate)
-        if not result_path.is_file() or result_path.is_symlink():
-            continue
         try:
-            raw = result_path.read_bytes()
+            result = _read_task_result_bytes_if_present(candidate)
+            if result is None:
+                continue
+            result_path, raw = result
             value = json.loads(raw)
             if not isinstance(value, dict):
                 raise RuntimeError("task result must be an object")
@@ -10300,6 +12079,8 @@ def refresh_pull_requests(args: argparse.Namespace) -> dict[str, Any]:
 
 def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
+    quarantined_reader = getattr(store, "quarantined_validation_followups", lambda: [])
+    quarantined = list(quarantined_reader())
     unresolved = store.unresolved_recoveries()
     if not THREAD_DB.is_file():
         # A fresh machine may not have a Codex thread database yet.  Recovery
@@ -10327,6 +12108,7 @@ def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
             "queuedDeferred": [],
             "blocked": blocked,
             "unresolved": unresolved_with_recovery,
+            "quarantined": quarantined,
         }
     connection = sqlite3.connect(THREAD_DB)
     connection.row_factory = sqlite3.Row
@@ -10448,12 +12230,11 @@ def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
                 and int(row["updated_at"] or 0)
                 >= int(parse_time(str(candidate["dispatchedAt"])).timestamp())
             ):
-                result_path = _task_result_path(candidate)
                 try:
-                    completed_validation_without_result = result_path.is_file() and hashlib.sha256(
-                        result_path.read_bytes()
+                    completed_validation_without_result = hashlib.sha256(
+                        _read_controlled_validation_result(candidate)
                     ).hexdigest() == str(candidate.get("followupDigest") or "")
-                except OSError:
+                except (OSError, RuntimeError):
                     completed_validation_without_result = False
             immediate_recovery = (
                 _is_immediate_recovery(turn_state) or completed_validation_without_result
@@ -10571,6 +12352,7 @@ def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
         "queuedDeferred": queued_deferred,
         "blocked": blocked,
         "unresolved": unresolved_with_recovery,
+        "quarantined": quarantined,
     }
 
 
@@ -10858,6 +12640,18 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
                 "rearmed": rearmed,
                 "recoveryRetryExhausted": recovery_exhausted,
             }
+        if reserved.get("deferred"):
+            return {
+                "ok": True,
+                "action": "validation_followup_deferred",
+                "key": candidate.get("key"),
+                "threadId": candidate.get("threadId"),
+                "reason": reserved.get("reason") or "validation_result_changed",
+                "deferredFollowups": deferred_followups,
+                "restored": restored_items,
+                "rearmed": rearmed,
+                "recoveryRetryExhausted": recovery_exhausted,
+            }
         delivered = validation_followup_deliver(
             argparse.Namespace(
                 ledger=args.ledger,
@@ -10865,6 +12659,18 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
                 result_digest=candidate["resultDigest"],
             )
         )
+        if delivered.get("deferred"):
+            return {
+                "ok": True,
+                "action": "validation_followup_deferred",
+                "key": candidate.get("key"),
+                "threadId": candidate.get("threadId"),
+                "reason": delivered.get("reason") or "validation_result_changed",
+                "deferredFollowups": deferred_followups,
+                "restored": restored_items,
+                "rearmed": rearmed,
+                "recoveryRetryExhausted": recovery_exhausted,
+            }
         return {
             "ok": bool(delivered.get("ok")),
             "action": "validation_followup_dispatched",
@@ -11212,6 +13018,7 @@ def main() -> int:
     validation_followup_commit_parser = subparsers.add_parser("validation-followup-commit")
     validation_followup_commit_parser.add_argument("--thread-id", required=True)
     validation_followup_commit_parser.add_argument("--result-digest", required=True)
+    validation_followup_commit_parser.add_argument("--reservation-digest")
     validation_followup_abandon_parser = subparsers.add_parser("validation-followup-abandon")
     validation_followup_abandon_parser.add_argument("--thread-id", required=True)
     validation_followup_abandon_parser.add_argument("--result-digest", required=True)
@@ -11271,6 +13078,12 @@ def main() -> int:
     )
     task_turn_worker_parser.add_argument("--thread-id", required=True)
     task_turn_worker_parser.add_argument("--delivery-token", required=True)
+    task_turn_worker_parser.add_argument("--reservation-digest")
+    task_turn_worker_parser.add_argument("--snapshot-id")
+    task_turn_worker_parser.add_argument("--snapshot-path")
+    task_turn_worker_parser.add_argument("--snapshot-digest")
+    task_turn_worker_parser.add_argument("--worktree-input-path")
+    task_turn_worker_parser.add_argument("--worktree-input-digest")
     task_turn_worker_parser.add_argument("--receipt", required=True)
     task_context_parser = subparsers.add_parser("task-context")
     task_context_parser.add_argument("--issue-url", required=True)

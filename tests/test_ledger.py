@@ -1,5 +1,6 @@
 import json
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -104,6 +105,59 @@ def legal_publication_probe(
         json.dumps(unsigned | {"reproductionReceipt": receipt}), encoding="utf-8"
     )
     return worktree, base_sha, head_sha, branch, receipt, result_digest, evidence_path
+
+
+def publication_request_fixture(tmp_path: Path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    worktree, base_sha, head_sha, branch, probe_receipt, result_digest, evidence_path = (
+        legal_publication_probe(tmp_path)
+    )
+    store.enqueue(
+        intent(
+            mode="canary",
+            publicationMode="canary",
+            publicSubmissionAllowed=True,
+            autoSubmitAuthorized=True,
+            authorizationSource="signed_live_revalidation_required",
+            worktree=str(worktree),
+            llmReview={
+                "status": "ok",
+                "decision": "NEW_CLEAN_CANDIDATE",
+                "semanticSignal": "NO_OBJECTION",
+                "confidence": 0.9,
+            },
+        )
+    )
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="project-1",
+        worktree_path=str(worktree),
+    )
+    store.record_stage("a/b#1", "FIX_READY", evidence={field: True for field in QUALITY_FIELDS})
+    args = {
+        "issue_url": "https://github.com/a/b/issues/1",
+        "thread_id": "thread-1",
+        "commit_sha": head_sha,
+        "branch": branch,
+        "worktree_path": str(worktree),
+        "evidence_digest": "evidence-digest",
+        "evidence_path": str(evidence_path),
+        "publication": {
+            "headOwner": "Oxygen56",
+            "baseBranch": "main",
+            "title": "fix: runtime",
+            "bodyPath": str(worktree / ".oss-pr-radar" / "pr-body.md"),
+        },
+        "probe_receipt": probe_receipt,
+        "result_digest": result_digest,
+        "head_sha": head_sha,
+        "selected_base_sha": base_sha,
+        "code_paths": ["runtime.py"],
+    }
+    return store, args
 
 
 def published_task_context(**updates):
@@ -1650,6 +1704,173 @@ def test_validation_deferred_result_is_not_an_empty_thread_recovery(tmp_path):
     assert store.recovery_candidates(min_age_minutes=90) == []
 
 
+def test_active_quarantine_hides_validation_and_recovery_until_cleared(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+    store.record_stage("a/b#1", "VALIDATION_PENDING")
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest="result-digest",
+        missing=["relevant_tests_green"],
+    )
+
+    assert store.validation_followup_candidates()[0]["resultDigest"] == "result-digest"
+    store.reserve_validation_followup(thread_id="thread-1", result_digest="result-digest")
+    store.commit_validation_followup(thread_id="thread-1", result_digest="result-digest")
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE events SET created_at=? WHERE event_type='VALIDATION_FOLLOWUP_SENT'",
+            (iso_z(datetime.now(UTC) - timedelta(hours=3)),),
+        )
+    assert store.stale_validation_followups(min_age_minutes=90)
+    assert store.recovery_candidates(min_age_minutes=0)
+
+    from oss_pr_radar.task_quarantine import record
+
+    with store.connect() as connection:
+        record(
+            connection,
+            opportunity_key="a/b#1",
+            reason="LEGACY_RESULT_REQUIRES_MIGRATION",
+            dedupe_key="legacy-1",
+            payload={"requiresExplicitMigration": True},
+            created_at=iso_z(datetime.now(UTC)),
+        )
+
+    assert store.validation_followup_candidates() == []
+    assert store.stale_validation_followups(min_age_minutes=90) == []
+    assert store.recovery_candidates(min_age_minutes=0) == []
+    assert store.quarantined_validation_followups()[0]["reason"] == (
+        "LEGACY_RESULT_REQUIRES_MIGRATION"
+    )
+
+    with store.connect() as connection:
+        record(
+            connection,
+            opportunity_key="a/b#1",
+            reason="PR_FOLLOWUP_REBIND_REQUIRED",
+            dedupe_key="rebind-1",
+            payload={"requiresRebind": True},
+            created_at=iso_z(datetime.now(UTC)),
+        )
+
+    quarantined = store.quarantined_validation_followups()
+    assert len(quarantined) == 1
+    assert quarantined[0]["reason"] == "PR_FOLLOWUP_REBIND_REQUIRED"
+
+    store.clear_task_quarantine(
+        "a/b#1",
+        reason="PR_FOLLOWUP_REBIND_REQUIRED",
+        evidence={"revalidated": True, "migrationId": "m-1"},
+    )
+    store.clear_task_quarantine(
+        "a/b#1",
+        reason="LEGACY_RESULT_REQUIRES_MIGRATION",
+        evidence={"revalidated": True, "migrationId": "m-1"},
+    )
+    assert store.stale_validation_followups(min_age_minutes=90)
+    assert store.recovery_candidates(min_age_minutes=0)
+
+
+def test_active_quarantine_releases_validation_wip_but_keeps_unresolved_delivery(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+    store.record_stage("a/b#1", "VALIDATION_PENDING")
+    with store.connect() as connection:
+        assert connection.execute(
+            "SELECT status FROM intents WHERE intent_id='intent-1'"
+        ).fetchone()["status"] == "COMPLETED"
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest="result-digest",
+        missing=["relevant_tests_green"],
+    )
+    store.reserve_validation_followup(thread_id="thread-1", result_digest="result-digest")
+    assert store.active_task_count() == 1
+    assert store.unresolved_validation_followups()
+
+    from oss_pr_radar.task_quarantine import record
+
+    with store.connect() as connection:
+        record(
+            connection,
+            opportunity_key="a/b#1",
+            reason="PR_FOLLOWUP_REBIND_REQUIRED",
+            dedupe_key="rebind-1",
+            payload={"requiresRebind": True},
+            created_at=iso_z(datetime.now(UTC)),
+        )
+
+    assert store.active_task_count() == 0
+    assert store.unresolved_validation_followups()
+
+    store.clear_task_quarantine(
+        "a/b#1",
+        reason="PR_FOLLOWUP_REBIND_REQUIRED",
+        evidence={"revalidated": True, "replacement": "r-1"},
+    )
+    assert store.active_task_count() == 1
+    assert store.unresolved_validation_followups()
+
+
+def test_active_quarantine_keeps_a_dispatched_writer_in_wip(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+    assert store.active_task_count() == 1
+
+    from oss_pr_radar.task_quarantine import record
+
+    with store.connect() as connection:
+        record(
+            connection,
+            opportunity_key="a/b#1",
+            reason="LEGACY_RESULT_REQUIRES_MIGRATION",
+            dedupe_key="legacy-1",
+            payload={"requiresExplicitMigration": True},
+            created_at=iso_z(datetime.now(UTC)),
+        )
+
+    assert store.active_task_count() == 1
+
+    with store.connect() as connection:
+        record(
+            connection,
+            opportunity_key="a/b#1",
+            reason="PR_FOLLOWUP_REBIND_REQUIRED",
+            dedupe_key="rebind-1",
+            payload={"requiresRebind": True},
+            created_at=iso_z(datetime.now(UTC)),
+        )
+
+    assert store.active_task_count() == 1
+
+
 def test_interrupted_validation_followup_can_enter_controlled_recovery(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(intent())
@@ -1950,6 +2171,302 @@ def test_validation_followup_unknown_delivery_can_be_safely_abandoned(tmp_path):
     assert reservations["total"] == 2
     assert reservations["distinct_total"] == 2
 
+
+def test_validation_result_change_uses_immediate_cancel_without_relaxing_abandonment(
+    tmp_path,
+):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest="result-digest-1",
+        missing=["relevant_tests_green"],
+    )
+    store.record_stage("a/b#1", "VALIDATION_PENDING")
+    reservation = store.reserve_validation_followup(
+        thread_id="thread-1", result_digest="result-digest-1"
+    )
+
+    with pytest.raises(LedgerError, match="not old enough"):
+        store.abandon_validation_followup_delivery(
+            thread_id="thread-1",
+            result_digest="result-digest-1",
+            reason="TARGET_TURN_NOT_MATERIALIZED",
+            min_age_minutes=0,
+        )
+
+    store.cancel_validation_followup_reservation(
+        thread_id="thread-1",
+        result_digest="result-digest-1",
+        reservation_digest=reservation["reservationDigest"],
+        reason="VALIDATION_RESULT_CHANGED_AFTER_RESERVE",
+    )
+    assert store.unresolved_validation_followups() == []
+    with store.connect() as connection:
+        assert connection.execute(
+            """SELECT 1 FROM events
+               WHERE event_type='VALIDATION_FOLLOWUP_RESERVATION_CANCELLED'"""
+        ).fetchone() is not None
+        assert connection.execute(
+            """SELECT 1 FROM events
+               WHERE event_type='VALIDATION_FOLLOWUP_DELIVERY_ABANDONED'"""
+        ).fetchone() is None
+    with pytest.raises(LedgerError, match="not cancellable"):
+        store.cancel_validation_followup_reservation(
+            thread_id="thread-1",
+            result_digest="result-digest-1",
+            reservation_digest=reservation["reservationDigest"],
+            reason="VALIDATION_RESULT_CHANGED_AFTER_RESERVE",
+        )
+
+
+def test_validation_delivery_binding_is_idempotent_and_blocks_started_or_old_cancel(
+    tmp_path,
+):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest="result-digest-1",
+        missing=["relevant_tests_green"],
+    )
+    store.record_stage("a/b#1", "VALIDATION_PENDING")
+    first = store.reserve_validation_followup(
+        thread_id="thread-1", result_digest="result-digest-1"
+    )
+    binding = store.authorize_task_turn_delivery(
+        delivery_kind="validation-followup",
+        thread_id="thread-1",
+        delivery_token="result-digest-1",
+        reservation_digest=first["reservationDigest"],
+        snapshot_id=first["reservationDigest"],
+        snapshot_path=f"validation-inputs/{first['reservationDigest']}.json",
+        snapshot_digest="snapshot-digest-1",
+        worktree_input_path=(
+            f".oss-pr-radar/validation-inputs/{first['reservationDigest']}.json"
+        ),
+        worktree_input_digest="snapshot-digest-1",
+    )
+    assert store.authorize_task_turn_delivery(
+        delivery_kind="validation-followup",
+        thread_id="thread-1",
+        delivery_token="result-digest-1",
+        reservation_digest=first["reservationDigest"],
+        snapshot_id=first["reservationDigest"],
+        snapshot_path=f"validation-inputs/{first['reservationDigest']}.json",
+        snapshot_digest="snapshot-digest-1",
+        worktree_input_path=(
+            f".oss-pr-radar/validation-inputs/{first['reservationDigest']}.json"
+        ),
+        worktree_input_digest="snapshot-digest-1",
+    ) == binding
+    with store.connect() as connection:
+        assert connection.execute(
+            """SELECT COUNT(*) FROM events
+               WHERE event_type='TASK_TURN_DELIVERY_STARTED'"""
+        ).fetchone()[0] == 1
+    with pytest.raises(LedgerError, match="not cancellable"):
+        store.cancel_validation_followup_reservation(
+            thread_id="thread-1",
+            result_digest="result-digest-1",
+            reservation_digest=first["reservationDigest"],
+            reason="RESULT_CHANGED",
+        )
+
+    store.commit_validation_followup(
+        thread_id="thread-1",
+        result_digest="result-digest-1",
+        reservation_digest=first["reservationDigest"],
+    )
+    assert store.unresolved_validation_followups() == []
+
+
+def test_validation_delivery_retry_binds_a_new_reservation_after_started_abandonment(
+    tmp_path,
+):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest="result-digest-1",
+        missing=["relevant_tests_green"],
+    )
+    store.record_stage("a/b#1", "VALIDATION_PENDING")
+    first = store.reserve_validation_followup(
+        thread_id="thread-1", result_digest="result-digest-1"
+    )
+    first_binding = store.authorize_task_turn_delivery(
+        delivery_kind="validation-followup",
+        thread_id="thread-1",
+        delivery_token="result-digest-1",
+        reservation_digest=first["reservationDigest"],
+        snapshot_id=first["reservationDigest"],
+        snapshot_path=f"validation-inputs/{first['reservationDigest']}.json",
+        snapshot_digest="snapshot-digest-1",
+        worktree_input_path=(
+            f".oss-pr-radar/validation-inputs/{first['reservationDigest']}.json"
+        ),
+        worktree_input_digest="snapshot-digest-1",
+    )
+    with store.connect() as connection:
+        connection.execute(
+            """UPDATE events SET created_at=?
+               WHERE event_type='VALIDATION_FOLLOWUP_RESERVED'
+                 AND dedupe_key=?""",
+            (iso_z(datetime.now(UTC) - timedelta(minutes=2)), first["reservationDigest"]),
+        )
+    store.abandon_validation_followup_delivery(
+        thread_id="thread-1",
+        result_digest="result-digest-1",
+        reason="TARGET_TURN_OUTCOME_UNKNOWN",
+        min_age_minutes=1,
+    )
+
+    second = store.reserve_validation_followup(
+        thread_id="thread-1", result_digest="result-digest-1"
+    )
+    assert second["reservationDigest"] != first["reservationDigest"]
+    second_binding = store.authorize_task_turn_delivery(
+        delivery_kind="validation-followup",
+        thread_id="thread-1",
+        delivery_token="result-digest-1",
+        reservation_digest=second["reservationDigest"],
+        snapshot_id=second["reservationDigest"],
+        snapshot_path=f"validation-inputs/{second['reservationDigest']}.json",
+        snapshot_digest="snapshot-digest-2",
+        worktree_input_path=(
+            f".oss-pr-radar/validation-inputs/{second['reservationDigest']}.json"
+        ),
+        worktree_input_digest="snapshot-digest-2",
+    )
+    assert second_binding["reservationDigest"] == second["reservationDigest"]
+    assert first_binding["reservationDigest"] != second_binding["reservationDigest"]
+    with store.connect() as connection:
+        assert connection.execute(
+            """SELECT COUNT(*) FROM events
+               WHERE event_type='TASK_TURN_DELIVERY_STARTED'"""
+        ).fetchone()[0] == 2
+
+
+def test_validation_delivery_same_reservation_concurrent_start_is_idempotent(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest="result-digest-1",
+        missing=["relevant_tests_green"],
+    )
+    store.record_stage("a/b#1", "VALIDATION_PENDING")
+    reservation = store.reserve_validation_followup(
+        thread_id="thread-1", result_digest="result-digest-1"
+    )
+    kwargs = {
+        "delivery_kind": "validation-followup",
+        "thread_id": "thread-1",
+        "delivery_token": "result-digest-1",
+        "reservation_digest": reservation["reservationDigest"],
+        "snapshot_id": reservation["reservationDigest"],
+        "snapshot_path": f"validation-inputs/{reservation['reservationDigest']}.json",
+        "snapshot_digest": "snapshot-digest-1",
+        "worktree_input_path": (
+            f".oss-pr-radar/validation-inputs/{reservation['reservationDigest']}.json"
+        ),
+        "worktree_input_digest": "snapshot-digest-1",
+    }
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        bindings = list(
+            executor.map(
+                lambda _: store.authorize_task_turn_delivery(**kwargs), range(4)
+            )
+        )
+
+    assert all(binding == bindings[0] for binding in bindings)
+    with store.connect() as connection:
+        assert connection.execute(
+            """SELECT COUNT(*) FROM events
+               WHERE event_type='TASK_TURN_DELIVERY_STARTED'"""
+        ).fetchone()[0] == 1
+
+
+def test_validation_delivery_rejects_worktree_input_path_escape(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest="result-digest-1",
+        missing=["relevant_tests_green"],
+    )
+    store.record_stage("a/b#1", "VALIDATION_PENDING")
+    reservation = store.reserve_validation_followup(
+        thread_id="thread-1", result_digest="result-digest-1"
+    )
+
+    with pytest.raises(
+        LedgerError, match="validation task-turn worktree input binding is invalid"
+    ):
+        store.authorize_task_turn_delivery(
+            delivery_kind="validation-followup",
+            thread_id="thread-1",
+            delivery_token="result-digest-1",
+            reservation_digest=reservation["reservationDigest"],
+            snapshot_id=reservation["reservationDigest"],
+            snapshot_path=(
+                f"validation-inputs/{reservation['reservationDigest']}.json"
+            ),
+            snapshot_digest="snapshot-digest-1",
+            worktree_input_path="../result.json",
+            worktree_input_digest="snapshot-digest-1",
+        )
+    with store.connect() as connection:
+        assert connection.execute(
+            """SELECT COUNT(*) FROM events
+               WHERE event_type='TASK_TURN_DELIVERY_STARTED'"""
+        ).fetchone()[0] == 0
 
 def test_validation_followup_stops_when_a_new_result_has_the_same_gap(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
@@ -2478,6 +2995,47 @@ def test_pr_followup_is_bound_to_existing_task_and_sent_once(tmp_path):
     store.import_pr_followups(state)
     rearmed = store.pr_followup_candidates()[0]
     assert rearmed["wakeDigest"] != previous_wake
+
+
+def test_existing_publication_request_without_snapshot_upgrades_idempotently(tmp_path):
+    store, args = publication_request_fixture(tmp_path)
+
+    legacy = store.create_publication_request(**args)
+    assert legacy["request"]["evidenceRawBase64"] is None
+
+    upgraded = store.create_publication_request(**args, evidence_raw_base64="e30=")
+
+    assert upgraded["request_id"] == legacy["request_id"]
+    assert upgraded["status"] == legacy["status"]
+    assert upgraded["reason"] == legacy["reason"]
+    stored = store.publication_request(legacy["request_id"])
+    assert stored["request"]["evidenceRawBase64"] == "e30="
+
+    returned = store.create_publication_request(
+        **args, evidence_raw_base64="eyJvdGhlciI6dHJ1ZX0="
+    )
+
+    assert returned["request"]["evidenceRawBase64"] == "e30="
+    assert store.publication_request(legacy["request_id"])["request"]["evidenceRawBase64"] == "e30="
+
+
+def test_existing_publication_request_without_snapshot_rejects_binding_drift(tmp_path):
+    store, args = publication_request_fixture(tmp_path)
+    legacy = store.create_publication_request(**args)
+    tampered = dict(legacy["request"])
+    tampered.pop("evidenceRawBase64", None)
+    tampered["branch"] = "fix/other-branch"
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE publication_requests SET request_json=? WHERE request_id=?",
+            (json.dumps(tampered, sort_keys=True), legacy["request_id"]),
+        )
+
+    with pytest.raises(LedgerError, match="snapshot upgrade binding mismatch"):
+        store.create_publication_request(**args, evidence_raw_base64="e30=")
+
+    stored = store.publication_request(legacy["request_id"])
+    assert "evidenceRawBase64" not in stored["request"]
 
 
 def test_post_push_confirmation_recovers_legacy_head_drift_failure(tmp_path):

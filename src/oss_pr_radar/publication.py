@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import json
 import os
@@ -36,6 +38,8 @@ PUBLIC_TOOL_BRANCH_RE = re.compile(
     re.I,
 )
 CONTROL_ROOT = Path(__file__).parents[2]
+MAX_PUBLICATION_EVIDENCE_BYTES = 1024 * 1024
+_MAX_PUBLICATION_EVIDENCE_BASE64_BYTES = ((MAX_PUBLICATION_EVIDENCE_BYTES + 2) // 3) * 4
 
 
 class PublicationError(RuntimeError):
@@ -83,15 +87,134 @@ def _git_snapshot(worktree: Path) -> dict[str, Any]:
     }
 
 
-def _evidence_file(path: Path) -> tuple[dict[str, Any], str]:
-    raw = path.read_bytes()
+def _evidence_field_values(evidence: dict[str, Any]) -> dict[str, Any]:
+    pre_task = evidence.get("preTaskEvidence")
+    pre_task = pre_task if isinstance(pre_task, dict) else {}
+    return {
+        "key": evidence.get("key"),
+        "issueUrl": evidence.get("issueUrl"),
+        "commitSha": evidence.get("commitSha"),
+        "branch": evidence.get("branch"),
+        "worktreePath": evidence.get("worktreePath"),
+        "resultDigest": evidence.get("resultDigest"),
+        "headSha": evidence.get("headSha"),
+        "selectedBaseSha": evidence.get("selectedBaseSha") or pre_task.get("baseSha"),
+        "intentId": evidence.get("intentId") or evidence.get("taskId"),
+        "codePaths": sorted(
+            {
+                str(path)
+                for path in (
+                    evidence.get("codePaths")
+                    or pre_task.get("codePathsPlan")
+                    or pre_task.get("codePaths")
+                    or []
+                )
+                if str(path).strip()
+            }
+        ),
+    }
+
+
+def _bind_publication_evidence_to_request(
+    evidence: dict[str, Any], request: dict[str, Any], *, digest: str
+) -> None:
+    expected_digest = str(request.get("evidenceDigest") or "")
+    if not expected_digest:
+        raise PublicationError("publication evidence request is missing evidenceDigest")
+    if digest != expected_digest:
+        raise PublicationError("publication evidence snapshot digest mismatch")
+    fields = _evidence_field_values(evidence)
+    expected = {
+        "key": request.get("opportunityKey"),
+        "issueUrl": request.get("issueUrl"),
+        "commitSha": request.get("commitSha"),
+        "branch": request.get("branch"),
+        "worktreePath": request.get("worktreePath"),
+        "resultDigest": request.get("resultDigest"),
+        "headSha": request.get("headSha"),
+        "selectedBaseSha": request.get("selectedBaseSha"),
+        "intentId": request.get("intentId"),
+    }
+    for key, expected_value in expected.items():
+        if expected_value is None or expected_value == "":
+            continue
+        if str(fields.get(key) or "") != str(expected_value):
+            raise PublicationError(f"publication evidence request mismatch: {key}")
+    request_paths = request.get("codePaths")
+    if request_paths is not None:
+        expected_paths = sorted({str(path) for path in request_paths if str(path).strip()})
+        if fields["codePaths"] != expected_paths:
+            raise PublicationError("publication evidence request mismatch: codePaths")
+
+
+def publication_evidence_from_raw(
+    raw: bytes,
+    *,
+    request: dict[str, Any] | None = None,
+    require_bound_digest: bool = False,
+    label: str = "publication evidence",
+) -> tuple[dict[str, Any], str]:
+    if len(raw) > MAX_PUBLICATION_EVIDENCE_BYTES:
+        raise PublicationError(f"{label} exceeds the maximum size")
+    digest = hashlib.sha256(raw).hexdigest()
+    if require_bound_digest and (request is None or not request.get("evidenceDigest")):
+        raise PublicationError(f"{label} is missing a bound digest")
     try:
-        value = json.loads(raw)
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise PublicationError(f"{label} is not valid UTF-8") from exc
+    try:
+        value = json.loads(text)
     except json.JSONDecodeError as exc:
-        raise PublicationError("publication evidence is not valid JSON") from exc
+        raise PublicationError(f"{label} is not valid JSON") from exc
     if not isinstance(value, dict):
-        raise PublicationError("publication evidence must be an object")
-    return value, hashlib.sha256(raw).hexdigest()
+        raise PublicationError(f"{label} must be an object")
+    if request is not None:
+        _bind_publication_evidence_to_request(value, request, digest=digest)
+    return value, digest
+
+
+def _evidence_file_with_raw(path: Path) -> tuple[dict[str, Any], str, bytes]:
+    raw = path.read_bytes()
+    value, digest = publication_evidence_from_raw(raw)
+    return value, digest, raw
+
+
+def _evidence_file(path: Path) -> tuple[dict[str, Any], str]:
+    value, digest, _raw = _evidence_file_with_raw(path)
+    return value, digest
+
+
+def publication_evidence_from_request(request: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    raw_base64 = request.get("evidenceRawBase64")
+    if not isinstance(raw_base64, str) or not raw_base64:
+        evidence_path = Path(request["evidencePath"]).expanduser().resolve()
+        worktree_path = request.get("worktreePath")
+        if worktree_path:
+            task_result = (
+                Path(str(worktree_path)).expanduser().resolve() / ".oss-pr-radar" / "result.json"
+            ).resolve()
+            if evidence_path == task_result:
+                raise PublicationError("task-result publication evidence requires a bound snapshot")
+        value, digest, _raw = _evidence_file_with_raw(evidence_path)
+        _bind_publication_evidence_to_request(value, request, digest=digest)
+        return value, digest
+    if len(raw_base64) > _MAX_PUBLICATION_EVIDENCE_BASE64_BYTES:
+        raise PublicationError("publication evidence snapshot exceeds the maximum size")
+    try:
+        raw = base64.b64decode(raw_base64.encode("ascii"), validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise PublicationError("publication evidence snapshot is invalid base64") from exc
+    return publication_evidence_from_raw(
+        raw,
+        request=request,
+        require_bound_digest=True,
+        label="publication evidence snapshot",
+    )
+
+
+def _evidence_from_request(request: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    return publication_evidence_from_request(request)
 
 
 def _publication_payload(evidence: dict[str, Any], issue_url: str) -> dict[str, str]:
@@ -141,7 +264,10 @@ def request_publication(
         raise PublicationError("worktree must be clean before publication request")
     if not public_branch_is_safe(snapshot["branch"]):
         raise PublicationError("public branch name exposes an AI tool")
-    evidence, evidence_digest = _evidence_file(evidence_path)
+    task_result_path = (worktree / ".oss-pr-radar" / "result.json").resolve()
+    if evidence_path == task_result_path:
+        raise PublicationError("task-result publication evidence requires a controller-bound snapshot")
+    evidence, evidence_digest, evidence_raw = _evidence_file_with_raw(evidence_path)
     issue_match = ISSUE_URL.match(issue_url)
     if issue_match is None:
         raise PublicationError("invalid issue URL")
@@ -192,7 +318,7 @@ def request_publication(
             raise PublicationError(str(exc)) from exc
         if publication["baseBranch"] != target_base["branch"]:
             raise PublicationError("publication base does not match the audited target branch")
-    return store.create_publication_request(
+    request = store.create_publication_request(
         issue_url=issue_url,
         thread_id=thread_id,
         commit_sha=snapshot["commitSha"],
@@ -208,7 +334,10 @@ def request_publication(
         code_paths=code_paths,
         target_base=target_base,
         target_base_bound="targetBase" in evidence,
+        evidence_raw_base64=base64.b64encode(evidence_raw).decode("ascii"),
     )
+    publication_evidence_from_request(request["request"])
+    return request
 
 
 def _upstream_remote(worktree: Path, repo: str) -> str:
@@ -356,7 +485,7 @@ def audit_publication_request(
     worktree = Path(request["worktreePath"]).resolve()
     try:
         snapshot = _git_snapshot(worktree)
-        evidence_file, evidence_digest = _evidence_file(Path(request["evidencePath"]))
+        evidence_file, evidence_digest = _evidence_from_request(request)
     except (OSError, PublicationError) as exc:
         return PublicationAudit(
             "BLOCK", "LOCAL_EVIDENCE_UNAVAILABLE", request_id, {"error": str(exc)[:200]}

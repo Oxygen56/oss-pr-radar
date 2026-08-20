@@ -1,3 +1,5 @@
+import base64
+import hashlib
 import json
 import subprocess
 from datetime import UTC, datetime, timedelta
@@ -179,6 +181,7 @@ def prepared_request(tmp_path):
         worktree=worktree,
         evidence_path=evidence_path,
     )
+    assert request["request"]["evidenceRawBase64"]
     return store, request, evidence_path
 
 
@@ -408,6 +411,82 @@ def test_broker_grants_commit_bound_permit(monkeypatch, tmp_path):
         commit_sha=permit["commit_sha"],
         branch=permit["branch"],
     )
+
+
+def test_bound_evidence_snapshot_prevents_evidence_path_reread(monkeypatch, tmp_path):
+    store, request, evidence_path = prepared_request(tmp_path)
+    evidence_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(publication, "_changed_files", lambda *args: ["file.txt"])
+
+    result = broker_publication_request(store, request["request_id"], client=Client())
+
+    assert result["granted"] is True
+    assert result["audit"]["reason"] == "LIVE_PUBLICATION_GATES_PASSED"
+
+
+def test_bound_evidence_snapshot_blocks_request_field_replacement(tmp_path):
+    store, request, _evidence_path = prepared_request(tmp_path)
+    payload = dict(request["request"])
+    payload["resultDigest"] = "replacement-digest"
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE publication_requests SET request_json=? WHERE request_id=?",
+            (json.dumps(payload, sort_keys=True), request["request_id"]),
+        )
+
+    audit = publication.audit_publication_request(
+        store, request["request_id"], client=Client()
+    )
+
+    assert audit.status == "BLOCK"
+    assert audit.reason == "LOCAL_EVIDENCE_UNAVAILABLE"
+    assert "resultDigest" in audit.evidence["error"]
+
+
+@pytest.mark.parametrize(
+    ("raw_base64", "error"),
+    [
+        ("not base64!!", "base64"),
+        (base64.b64encode(b"\xff").decode("ascii"), "UTF-8"),
+        (base64.b64encode(b"[]").decode("ascii"), "object"),
+    ],
+)
+def test_publication_evidence_snapshot_rejects_invalid_encoding(tmp_path, raw_base64, error):
+    _store, request, _evidence_path = prepared_request(tmp_path)
+    payload = dict(request["request"])
+    payload["evidenceRawBase64"] = raw_base64
+
+    with pytest.raises(publication.PublicationError, match=error):
+        publication.publication_evidence_from_request(payload)
+
+
+def test_publication_evidence_snapshot_rejects_oversize_payload(tmp_path):
+    _store, request, _evidence_path = prepared_request(tmp_path)
+    payload = dict(request["request"])
+    raw = b" " * (publication.MAX_PUBLICATION_EVIDENCE_BYTES + 1)
+    payload["evidenceRawBase64"] = base64.b64encode(raw).decode("ascii")
+    payload["evidenceDigest"] = hashlib.sha256(raw).hexdigest()
+
+    with pytest.raises(publication.PublicationError, match="maximum size"):
+        publication.publication_evidence_from_request(payload)
+
+
+def test_legacy_task_result_evidence_requires_snapshot_even_through_symlink(tmp_path):
+    worktree = tmp_path / "worktree"
+    outside = tmp_path / "outside-private"
+    worktree.mkdir()
+    outside.mkdir()
+    (worktree / ".oss-pr-radar").symlink_to(outside, target_is_directory=True)
+    evidence = outside / "result.json"
+    evidence.write_text("{}", encoding="utf-8")
+    request = {
+        "worktreePath": str(worktree),
+        "evidencePath": str(evidence.resolve()),
+        "evidenceDigest": hashlib.sha256(b"{}").hexdigest(),
+    }
+
+    with pytest.raises(publication.PublicationError, match="bound snapshot"):
+        publication.publication_evidence_from_request(request)
 
 
 def test_broker_blocks_legacy_request_without_private_review(monkeypatch, tmp_path):
@@ -885,13 +964,21 @@ def test_merge_update_uses_live_repository_base_not_pr_snapshot(tmp_path, live_b
         assert result["audit"]["reason"] == "EXISTING_PR_BASE_DRIFT"
 
 
-def test_evidence_digest_drift_blocks_publication(monkeypatch, tmp_path):
-    store, request, evidence_path = prepared_request(tmp_path)
-    evidence_path.write_text("{}", encoding="utf-8")
+def test_evidence_snapshot_digest_drift_blocks_publication(monkeypatch, tmp_path):
+    store, request, _evidence_path = prepared_request(tmp_path)
+    payload = dict(request["request"])
+    payload["evidenceRawBase64"] = base64.b64encode(b"{}").decode("ascii")
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE publication_requests SET request_json=? WHERE request_id=?",
+            (json.dumps(payload, sort_keys=True), request["request_id"]),
+        )
     monkeypatch.setattr(publication, "_changed_files", lambda *args: ["file.txt"])
+
     result = broker_publication_request(store, request["request_id"], client=Client())
     assert result["granted"] is False
-    assert result["audit"]["reason"] == "EVIDENCE_DIGEST_DRIFT"
+    assert result["audit"]["reason"] == "LOCAL_EVIDENCE_UNAVAILABLE"
+    assert "digest" in result["audit"]["evidence"]["error"]
 
 
 def test_pr_body_drift_blocks_publication(monkeypatch, tmp_path):

@@ -118,6 +118,17 @@ def _publication_probe_valid_json(raw: str, evidence: dict[str, Any] | None = No
     return _publication_probe_valid(request, evidence) if isinstance(request, dict) else False
 
 
+def _publication_request_without_snapshot(request: dict[str, Any]) -> dict[str, Any]:
+    value = dict(request)
+    value.pop("evidenceRawBase64", None)
+    return value
+
+
+def _publication_snapshot_present(request: dict[str, Any]) -> bool:
+    snapshot = request.get("evidenceRawBase64")
+    return isinstance(snapshot, str) and bool(snapshot)
+
+
 RECOVERABLE_CONTEXT_STAGES = {
     "AUDIT_PASS",
     "VALIDATION_PENDING",
@@ -2179,6 +2190,11 @@ class RadarLedger:
                      SELECT r.opportunity_key FROM events r
                      WHERE r.event_type='PR_FOLLOWUP_RESERVED'
                        {event_filter}
+                       AND NOT EXISTS (
+                         SELECT 1 FROM task_quarantines quarantine
+                         WHERE quarantine.opportunity_key=r.opportunity_key
+                           AND quarantine.status='ACTIVE'
+                       )
                        AND EXISTS (
                          SELECT 1 FROM events completed
                          WHERE completed.opportunity_key=r.opportunity_key
@@ -2219,6 +2235,11 @@ class RadarLedger:
                        AND o.stage='VALIDATION_PENDING'
                        {event_filter}
                        AND NOT EXISTS (
+                         SELECT 1 FROM task_quarantines quarantine
+                         WHERE quarantine.opportunity_key=r.opportunity_key
+                           AND quarantine.status='ACTIVE'
+                       )
+                       AND NOT EXISTS (
                          SELECT 1 FROM events exhausted
                          JOIN events recovery
                            ON recovery.opportunity_key=exhausted.opportunity_key
@@ -2246,6 +2267,14 @@ class RadarLedger:
                                json_extract(r.payload_json,'$.resultDigest')
                            AND json_extract(abandoned.payload_json,'$.reservedAt')=r.created_at
                            AND abandoned.id>r.id
+                       )
+                       AND NOT EXISTS (
+                         SELECT 1 FROM events cancelled
+                         WHERE cancelled.opportunity_key=r.opportunity_key
+                           AND cancelled.event_type='VALIDATION_FOLLOWUP_RESERVATION_CANCELLED'
+                           AND json_extract(cancelled.payload_json,'$.reservationDigest')=
+                               json_extract(r.payload_json,'$.reservationDigest')
+                           AND cancelled.id>r.id
                        )
                    )""",
                 params,
@@ -2281,6 +2310,11 @@ class RadarLedger:
                      AND d.event_type='DISPATCHED' AND d.dedupe_key=i.thread_id
                    WHERE i.status='DISPATCHED' AND i.thread_id IS NOT NULL
                      AND d.created_at<=?
+                     AND NOT EXISTS (
+                       SELECT 1 FROM task_quarantines quarantine
+                       WHERE quarantine.opportunity_key=o.key
+                         AND quarantine.status='ACTIVE'
+                     )
                      AND NOT EXISTS (
                        SELECT 1 FROM events exhausted
                        JOIN events recovery
@@ -2337,6 +2371,11 @@ class RadarLedger:
                      AND s.event_type='PR_FOLLOWUP_SENT'
                    WHERE o.stage IN ('PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED')
                      AND s.created_at<=?
+                     AND NOT EXISTS (
+                       SELECT 1 FROM task_quarantines quarantine
+                       WHERE quarantine.opportunity_key=o.key
+                         AND quarantine.status='ACTIVE'
+                     )
                      AND NOT EXISTS (
                        SELECT 1 FROM events exhausted
                        JOIN events recovery
@@ -2400,6 +2439,11 @@ class RadarLedger:
                      AND s.event_type='VALIDATION_FOLLOWUP_SENT'
                      AND s.dedupe_key=d.dedupe_key
                    WHERE o.stage='VALIDATION_PENDING' AND s.created_at<=?
+                     AND NOT EXISTS (
+                       SELECT 1 FROM task_quarantines quarantine
+                       WHERE quarantine.opportunity_key=o.key
+                         AND quarantine.status='ACTIVE'
+                     )
                      AND NOT EXISTS (
                        SELECT 1 FROM events exhausted
                        JOIN events recovery
@@ -3002,6 +3046,11 @@ class RadarLedger:
                        AND d2.event_type='TASK_RESULT_VALIDATION_DEFERRED'
                    )
                    WHERE o.stage='VALIDATION_PENDING'
+                     AND NOT EXISTS (
+                       SELECT 1 FROM task_quarantines quarantine
+                       WHERE quarantine.opportunity_key=o.key
+                         AND quarantine.status='ACTIVE'
+                     )
                      AND EXISTS (
                        SELECT 1 FROM events exhausted
                        JOIN events recovery
@@ -3049,6 +3098,11 @@ class RadarLedger:
                        AND d2.event_type='TASK_RESULT_VALIDATION_DEFERRED'
                    )
                    WHERE o.stage='VALIDATION_PENDING'
+                     AND NOT EXISTS (
+                       SELECT 1 FROM task_quarantines quarantine
+                       WHERE quarantine.opportunity_key=o.key
+                         AND quarantine.status='ACTIVE'
+                     )
                      AND NOT EXISTS (
                        SELECT 1 FROM events n
                        WHERE n.opportunity_key=o.key
@@ -3160,6 +3214,11 @@ class RadarLedger:
                    WHERE o.stage='VALIDATION_PENDING'
                      AND i.thread_id IS NOT NULL AND i.worktree_path IS NOT NULL
                      AND NOT EXISTS (
+                       SELECT 1 FROM task_quarantines quarantine
+                       WHERE quarantine.opportunity_key=o.key
+                         AND quarantine.status='ACTIVE'
+                     )
+                     AND NOT EXISTS (
                        SELECT 1 FROM events r WHERE r.opportunity_key=o.key
                          AND r.event_type='VALIDATION_FOLLOWUP_RESERVED'
                          AND json_extract(r.payload_json,'$.resultDigest')=
@@ -3172,6 +3231,14 @@ class RadarLedger:
                                  json_extract(r.payload_json,'$.resultDigest')
                              AND json_extract(abandoned.payload_json,'$.reservedAt')=r.created_at
                              AND abandoned.id>r.id
+                         )
+                         AND NOT EXISTS (
+                           SELECT 1 FROM events cancelled
+                           WHERE cancelled.opportunity_key=r.opportunity_key
+                             AND cancelled.event_type='VALIDATION_FOLLOWUP_RESERVATION_CANCELLED'
+                             AND json_extract(cancelled.payload_json,'$.reservationDigest')=
+                                 json_extract(r.payload_json,'$.reservationDigest')
+                             AND cancelled.id>r.id
                          )
                          AND NOT EXISTS (
                            SELECT 1 FROM events rearmed
@@ -3236,6 +3303,19 @@ class RadarLedger:
                      AND i.thread_id=json_extract(d.payload_json,'$.threadId')
                    WHERE o.stage='VALIDATION_PENDING'
                      AND NOT EXISTS (
+                       SELECT 1 FROM task_quarantines quarantine
+                       WHERE quarantine.opportunity_key=o.key
+                         AND quarantine.status='ACTIVE'
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events cancelled
+                       WHERE cancelled.opportunity_key=o.key
+                         AND cancelled.event_type='VALIDATION_FOLLOWUP_RESERVATION_CANCELLED'
+                         AND json_extract(cancelled.payload_json,'$.resultDigest')=
+                             json_extract(d.payload_json,'$.resultDigest')
+                         AND cancelled.id>n.id
+                     )
+                     AND NOT EXISTS (
                        SELECT 1 FROM events rearmed
                        WHERE rearmed.opportunity_key=n.opportunity_key
                          AND rearmed.event_type='VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED'
@@ -3265,6 +3345,47 @@ class RadarLedger:
                 }
             )
         return blocked
+
+    def quarantined_validation_followups(self) -> list[dict[str, Any]]:
+        """Expose validation tasks isolated by an active task quarantine."""
+
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT o.key,o.issue_url,o.title,i.thread_id,i.worktree_path,
+                          d.payload_json,q.reason,q.created_at
+                   FROM opportunities o
+                   JOIN events d ON d.id=(
+                     SELECT MAX(d2.id) FROM events d2
+                     WHERE d2.opportunity_key=o.key
+                       AND d2.event_type='TASK_RESULT_VALIDATION_DEFERRED'
+                   )
+                   JOIN intents i ON i.opportunity_key=o.key
+                     AND i.thread_id=json_extract(d.payload_json,'$.threadId')
+                   JOIN task_quarantines q ON q.opportunity_key=o.key
+                     AND q.status='ACTIVE'
+                     AND q.quarantine_id=(
+                       SELECT MAX(latest.quarantine_id)
+                       FROM task_quarantines latest
+                       WHERE latest.opportunity_key=o.key
+                         AND latest.status='ACTIVE'
+                     )
+                   WHERE o.stage='VALIDATION_PENDING'
+                   ORDER BY q.created_at,o.key"""
+            ).fetchall()
+        return [
+            {
+                "key": row["key"],
+                "issueUrl": row["issue_url"],
+                "title": row["title"],
+                "threadId": row["thread_id"],
+                "worktreePath": row["worktree_path"],
+                "resultDigest": json.loads(row["payload_json"]).get("resultDigest"),
+                "missing": list(json.loads(row["payload_json"]).get("missing") or []),
+                "reason": row["reason"],
+                "quarantinedAt": row["created_at"],
+            }
+            for row in rows
+        ]
 
     def validation_followup_was_sent(self, *, thread_id: str) -> bool:
         """Return whether this task already received a validation continuation."""
@@ -3342,7 +3463,13 @@ class RadarLedger:
             )
         return candidate | {"attempt": attempt, "reservationDigest": reservation_digest}
 
-    def commit_validation_followup(self, *, thread_id: str, result_digest: str) -> None:
+    def commit_validation_followup(
+        self,
+        *,
+        thread_id: str,
+        result_digest: str,
+        reservation_digest: str | None = None,
+    ) -> None:
         now = iso_z(datetime.now(UTC))
         with self.transaction() as connection:
             row = connection.execute(
@@ -3351,6 +3478,7 @@ class RadarLedger:
                    JOIN events r ON r.opportunity_key=o.key
                      AND r.event_type='VALIDATION_FOLLOWUP_RESERVED'
                      AND json_extract(r.payload_json,'$.resultDigest')=?
+                     AND (? IS NULL OR json_extract(r.payload_json,'$.reservationDigest')=?)
                    WHERE i.thread_id=?
                      AND NOT EXISTS (
                        SELECT 1 FROM events s WHERE s.opportunity_key=o.key
@@ -3366,8 +3494,16 @@ class RadarLedger:
                          AND json_extract(abandoned.payload_json,'$.reservedAt')=r.created_at
                          AND abandoned.id>r.id
                      )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events cancelled
+                       WHERE cancelled.opportunity_key=r.opportunity_key
+                         AND cancelled.event_type='VALIDATION_FOLLOWUP_RESERVATION_CANCELLED'
+                         AND json_extract(cancelled.payload_json,'$.reservationDigest')=
+                             json_extract(r.payload_json,'$.reservationDigest')
+                         AND cancelled.id>r.id
+                     )
                    ORDER BY r.id DESC LIMIT 1""",
-                (result_digest, thread_id, result_digest),
+                (result_digest, reservation_digest, reservation_digest, thread_id, result_digest),
             ).fetchone()
             if row is None:
                 sent = connection.execute(
@@ -3377,9 +3513,10 @@ class RadarLedger:
                       AND s.dedupe_key=?
                        WHERE r.event_type='VALIDATION_FOLLOWUP_RESERVED'
                          AND json_extract(r.payload_json,'$.threadId')=?
-                         AND json_extract(r.payload_json,'$.resultDigest')=?
+                     AND json_extract(r.payload_json,'$.resultDigest')=?
+                         AND (? IS NULL OR json_extract(r.payload_json,'$.reservationDigest')=?)
                        LIMIT 1""",
-                    (result_digest, thread_id, result_digest),
+                    (result_digest, thread_id, result_digest, reservation_digest, reservation_digest),
                 ).fetchone()
                 if sent:
                     return
@@ -3398,7 +3535,7 @@ class RadarLedger:
     def unresolved_validation_followups(self) -> list[dict[str, Any]]:
         with self.connect() as connection:
             rows = connection.execute(
-                """SELECT o.key,o.issue_url,i.worktree_path,r.payload_json,r.created_at
+                """SELECT o.key,o.issue_url,i.worktree_path,r.payload_json,r.created_at,r.dedupe_key
                    FROM opportunities o
                    JOIN intents i ON i.intent_id=(
                      SELECT i2.intent_id FROM intents i2
@@ -3420,6 +3557,14 @@ class RadarLedger:
                              json_extract(r.payload_json,'$.resultDigest')
                          AND json_extract(abandoned.payload_json,'$.reservedAt')=r.created_at
                          AND abandoned.id>r.id
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events cancelled
+                       WHERE cancelled.opportunity_key=r.opportunity_key
+                         AND cancelled.event_type='VALIDATION_FOLLOWUP_RESERVATION_CANCELLED'
+                         AND json_extract(cancelled.payload_json,'$.reservationDigest')=
+                             json_extract(r.payload_json,'$.reservationDigest')
+                         AND cancelled.id>r.id
                      ) ORDER BY r.created_at"""
             ).fetchall()
         return [
@@ -3429,6 +3574,8 @@ class RadarLedger:
                 "worktreePath": row["worktree_path"],
                 "threadId": json.loads(row["payload_json"]).get("threadId"),
                 "resultDigest": json.loads(row["payload_json"]).get("resultDigest"),
+                "reservationDigest": json.loads(row["payload_json"]).get("reservationDigest")
+                or row["dedupe_key"],
                 "missing": list(json.loads(row["payload_json"]).get("missing") or []),
                 "reservedAt": row["created_at"],
             }
@@ -3493,6 +3640,83 @@ class RadarLedger:
                 now,
             )
 
+    def cancel_validation_followup_reservation(
+        self,
+        *,
+        thread_id: str,
+        result_digest: str,
+        reservation_digest: str,
+        reason: str,
+    ) -> None:
+        """Immediately invalidate the latest unstarted validation reservation."""
+
+        now = iso_z(datetime.now(UTC))
+        with self.transaction() as connection:
+            row = connection.execute(
+                """SELECT r.id,r.opportunity_key AS key,r.dedupe_key,r.created_at
+                   FROM events r
+                   WHERE r.event_type='VALIDATION_FOLLOWUP_RESERVED'
+                     AND json_extract(r.payload_json,'$.threadId')=?
+                     AND json_extract(r.payload_json,'$.resultDigest')=?
+                     AND json_extract(r.payload_json,'$.reservationDigest')=?
+                     AND r.id=(
+                       SELECT MAX(latest.id) FROM events latest
+                       WHERE latest.opportunity_key=r.opportunity_key
+                         AND latest.event_type='VALIDATION_FOLLOWUP_RESERVED'
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events sent
+                       WHERE sent.opportunity_key=r.opportunity_key
+                         AND sent.event_type='VALIDATION_FOLLOWUP_SENT'
+                         AND sent.dedupe_key=json_extract(r.payload_json,'$.resultDigest')
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events abandoned
+                       WHERE abandoned.opportunity_key=r.opportunity_key
+                         AND abandoned.event_type='VALIDATION_FOLLOWUP_DELIVERY_ABANDONED'
+                         AND json_extract(abandoned.payload_json,'$.resultDigest')=
+                             json_extract(r.payload_json,'$.resultDigest')
+                         AND json_extract(abandoned.payload_json,'$.reservedAt')=r.created_at
+                         AND abandoned.id>r.id
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events cancelled
+                       WHERE cancelled.opportunity_key=r.opportunity_key
+                         AND cancelled.event_type='VALIDATION_FOLLOWUP_RESERVATION_CANCELLED'
+                         AND json_extract(cancelled.payload_json,'$.reservationDigest')=
+                             json_extract(r.payload_json,'$.reservationDigest')
+                         AND cancelled.id>r.id
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events started
+                       WHERE started.opportunity_key=r.opportunity_key
+                         AND started.event_type='TASK_TURN_DELIVERY_STARTED'
+                         AND json_extract(started.payload_json,'$.deliveryKind')='validation-followup'
+                         AND json_extract(started.payload_json,'$.reservationDigest')=
+                             json_extract(r.payload_json,'$.reservationDigest')
+                         AND started.id>r.id
+                     )
+                   ORDER BY r.id DESC LIMIT 1""",
+                (thread_id, result_digest, reservation_digest),
+            ).fetchone()
+            if row is None:
+                raise LedgerError("validation follow-up reservation is not cancellable")
+            self._event(
+                connection,
+                row["key"],
+                "VALIDATION_FOLLOWUP_RESERVATION_CANCELLED",
+                sha256_text(f"cancelled|{reservation_digest}"),
+                {
+                    "threadId": thread_id,
+                    "resultDigest": result_digest,
+                    "reservationDigest": reservation_digest,
+                    "reservedAt": row["created_at"],
+                    "reason": reason,
+                    "minimumAgeMinutes": 0,
+                },
+                now,
+            )
+
     def stale_validation_followups(self, *, min_age_minutes: int = 90) -> list[dict[str, Any]]:
         cutoff = iso_z(
             datetime.now(UTC) - timedelta(minutes=max(30, min(int(min_age_minutes), 24 * 60)))
@@ -3510,6 +3734,11 @@ class RadarLedger:
                      AND s.event_type='VALIDATION_FOLLOWUP_SENT'
                      AND s.dedupe_key=json_extract(d.payload_json,'$.resultDigest')
                    WHERE o.stage='VALIDATION_PENDING' AND s.created_at<=?
+                     AND NOT EXISTS (
+                       SELECT 1 FROM task_quarantines quarantine
+                       WHERE quarantine.opportunity_key=o.key
+                         AND quarantine.status='ACTIVE'
+                     )
                      AND NOT EXISTS (
                        SELECT 1 FROM events exhausted
                        JOIN events recovery
@@ -4057,6 +4286,7 @@ class RadarLedger:
         code_paths: list[str] | None = None,
         target_base: dict[str, str] | None = None,
         target_base_bound: bool = False,
+        evidence_raw_base64: str | None = None,
     ) -> dict[str, Any]:
         now = iso_z(datetime.now(UTC))
         request_identity = [
@@ -4139,6 +4369,7 @@ class RadarLedger:
                 "worktreePath": str(Path(worktree_path).resolve()),
                 "evidenceDigest": evidence_digest,
                 "evidencePath": str(Path(evidence_path).resolve()),
+                "evidenceRawBase64": evidence_raw_base64,
                 "publication": publication,
                 "probeReceipt": probe_receipt,
                 "resultDigest": result_digest,
@@ -4170,6 +4401,35 @@ class RadarLedger:
             ).fetchone()
             if existing:
                 existing_request = json.loads(existing["request_json"])
+                if (
+                    _publication_snapshot_present(request)
+                    and not _publication_snapshot_present(existing_request)
+                ):
+                    if existing["evidence_digest"] != evidence_digest:
+                        raise LedgerError("publication request snapshot upgrade digest mismatch")
+                    if canonical_json(
+                        _publication_request_without_snapshot(existing_request)
+                    ) != canonical_json(_publication_request_without_snapshot(request)):
+                        raise LedgerError("publication request snapshot upgrade binding mismatch")
+                    connection.execute(
+                        """UPDATE publication_requests
+                           SET request_json=?,updated_at=?
+                           WHERE request_id=?""",
+                        (canonical_json(request), now, request_id),
+                    )
+                    self._event(
+                        connection,
+                        row["key"],
+                        "PUBLICATION_REQUEST_SNAPSHOT_UPGRADED",
+                        f"{request_id}:{evidence_digest}",
+                        {"requestId": request_id, "evidenceDigest": evidence_digest},
+                        now,
+                    )
+                    return {
+                        **dict(existing),
+                        "request_json": canonical_json(request),
+                        "request": request,
+                    }
                 if (
                     existing["status"] == "BLOCKED"
                     and existing["reason"] == "SUBMIT_READY_EVIDENCE_INCOMPLETE"
@@ -7297,6 +7557,12 @@ class RadarLedger:
         delivery_kind: str,
         thread_id: str,
         delivery_token: str,
+        reservation_digest: str | None = None,
+        snapshot_id: str | None = None,
+        snapshot_path: str | None = None,
+        snapshot_digest: str | None = None,
+        worktree_input_path: str | None = None,
+        worktree_input_digest: str | None = None,
     ) -> dict[str, Any]:
         """Atomically bind a reserved turn to the current quarantine-free state."""
 
@@ -7322,16 +7588,67 @@ class RadarLedger:
         selector = selectors.get(delivery_kind)
         if selector is None:
             raise LedgerError("unsupported task-turn delivery kind")
-        event_type, predicate = selector
         now = iso_z(datetime.now(UTC))
         idempotency_key = f"task-turn-start:{delivery_kind}:{thread_id}:{delivery_token}"
+        if delivery_kind == "validation-followup":
+            required = (
+                reservation_digest,
+                snapshot_id,
+                snapshot_path,
+                snapshot_digest,
+                worktree_input_path,
+                worktree_input_digest,
+            )
+            if not all(isinstance(value, str) and value for value in required):
+                raise LedgerError("validation task-turn delivery requires its snapshot binding")
+            expected_worktree_input_path = (
+                f".oss-pr-radar/validation-inputs/{reservation_digest}.json"
+            )
+            if (
+                snapshot_id != reservation_digest
+                or worktree_input_path != expected_worktree_input_path
+                or worktree_input_digest != snapshot_digest
+            ):
+                raise LedgerError("validation task-turn worktree input binding is invalid")
+            idempotency_key += f":{reservation_digest}"
         with self.transaction() as connection:
-            row = connection.execute(
-                f"""SELECT opportunity_key,payload_json FROM events
-                    WHERE event_type=? AND {predicate}
-                    ORDER BY id DESC LIMIT 1""",
-                (event_type, thread_id, delivery_token),
-            ).fetchone()
+            if delivery_kind == "validation-followup":
+                row = connection.execute(
+                    """SELECT r.id,r.opportunity_key,r.payload_json
+                       FROM events r
+                       WHERE r.event_type='VALIDATION_FOLLOWUP_RESERVED'
+                         AND json_extract(r.payload_json,'$.threadId')=?
+                         AND json_extract(r.payload_json,'$.resultDigest')=?
+                         AND json_extract(r.payload_json,'$.reservationDigest')=?
+                         AND r.id=(
+                           SELECT MAX(latest.id) FROM events latest
+                           WHERE latest.opportunity_key=r.opportunity_key
+                             AND latest.event_type='VALIDATION_FOLLOWUP_RESERVED'
+                         )
+                         AND NOT EXISTS (
+                           SELECT 1 FROM events sent
+                           WHERE sent.opportunity_key=r.opportunity_key
+                             AND sent.event_type='VALIDATION_FOLLOWUP_SENT'
+                             AND sent.dedupe_key=json_extract(r.payload_json,'$.resultDigest')
+                         )
+                         AND NOT EXISTS (
+                           SELECT 1 FROM events cancelled
+                           WHERE cancelled.opportunity_key=r.opportunity_key
+                             AND cancelled.event_type='VALIDATION_FOLLOWUP_RESERVATION_CANCELLED'
+                             AND json_extract(cancelled.payload_json,'$.reservationDigest')=?
+                             AND cancelled.id>r.id
+                         )
+                       ORDER BY r.id DESC LIMIT 1""",
+                    (thread_id, delivery_token, reservation_digest, reservation_digest),
+                ).fetchone()
+            else:
+                event_type, predicate = selector
+                row = connection.execute(
+                    f"""SELECT opportunity_key,payload_json FROM events
+                        WHERE event_type=? AND {predicate}
+                        ORDER BY id DESC LIMIT 1""",
+                    (event_type, thread_id, delivery_token),
+                ).fetchone()
             if row is None:
                 raise LedgerError("task-turn delivery reservation is unavailable")
             require_quarantine_clear(
@@ -7339,24 +7656,83 @@ class RadarLedger:
                 opportunity_key=str(row["opportunity_key"]),
                 operation="task-turn delivery start",
             )
+            binding = {
+                "deliveryKind": delivery_kind,
+                "threadId": thread_id,
+                "deliveryToken": delivery_token,
+            }
+            if delivery_kind == "validation-followup":
+                binding.update(
+                    {
+                        "reservationDigest": reservation_digest,
+                        "snapshotId": snapshot_id,
+                        "snapshotPath": snapshot_path,
+                        "snapshotDigest": snapshot_digest,
+                        "worktreeInputPath": worktree_input_path,
+                        "worktreeInputDigest": worktree_input_digest,
+                        "resultDigest": delivery_token,
+                    }
+                )
+            existing = connection.execute(
+                """SELECT payload_json FROM events
+                   WHERE event_type='TASK_TURN_DELIVERY_STARTED'
+                     AND dedupe_key=?""",
+                (idempotency_key,),
+            ).fetchone()
+            if existing is not None:
+                payload = json.loads(existing["payload_json"])
+                if any(payload.get(key) != value for key, value in binding.items()):
+                    raise LedgerError("task-turn delivery binding mismatch")
+                return {
+                    "opportunityKey": str(row["opportunity_key"]),
+                    **binding,
+                }
             self._event(
                 connection,
                 str(row["opportunity_key"]),
                 "TASK_TURN_DELIVERY_STARTED",
                 idempotency_key,
-                {
-                    "deliveryKind": delivery_kind,
-                    "threadId": thread_id,
-                    "deliveryToken": delivery_token,
-                },
+                binding,
                 now,
             )
             return {
                 "opportunityKey": str(row["opportunity_key"]),
-                "deliveryKind": delivery_kind,
-                "threadId": thread_id,
-                "deliveryToken": delivery_token,
+                **binding,
             }
+
+    def validation_followup_delivery_binding(
+        self,
+        *,
+        thread_id: str,
+        result_digest: str,
+        reservation_digest: str,
+    ) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                """SELECT payload_json FROM events
+                   WHERE event_type='TASK_TURN_DELIVERY_STARTED'
+                     AND json_extract(payload_json,'$.deliveryKind')='validation-followup'
+                     AND json_extract(payload_json,'$.threadId')=?
+                     AND json_extract(payload_json,'$.resultDigest')=?
+                     AND json_extract(payload_json,'$.reservationDigest')=?
+                   ORDER BY id DESC LIMIT 1""",
+                (thread_id, result_digest, reservation_digest),
+            ).fetchone()
+        if row is None:
+            return None
+        payload = json.loads(row["payload_json"])
+        return {
+            key: payload.get(key)
+            for key in (
+                "reservationDigest",
+                "snapshotId",
+                "snapshotPath",
+                "snapshotDigest",
+                "worktreeInputPath",
+                "worktreeInputDigest",
+                "resultDigest",
+            )
+        }
 
     def _event(
         self,

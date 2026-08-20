@@ -9,10 +9,13 @@ import os
 import re
 import shutil
 import sqlite3
+import stat
 import subprocess
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -42,9 +45,49 @@ def hermetic_bridge_shared_root(monkeypatch, tmp_path):
 
     github_root = tmp_path / "github"
     monkeypatch.setattr(MODULE, "GITHUB_ROOT", github_root)
+    monkeypatch.setattr(MODULE, "WORKTREE_ROOT", tmp_path)
     private_root = github_root / MODULE.TASK_PRIVATE_DIR
     private_root.mkdir(parents=True, exist_ok=True)
     private_root.chmod(0o700)
+
+
+def _finalize_controller_commit_for_test(
+    *,
+    candidate: dict,
+    context: dict,
+    value: dict,
+    result_path: Path | None = None,
+    write_if_unchanged: bool = True,
+):
+    worktree = Path(candidate["worktreePath"]).resolve()
+    trusted_roots = [
+        (MODULE.GITHUB_ROOT / MODULE.TASK_PRIVATE_DIR / "worktrees").resolve(),
+        MODULE.WORKTREE_ROOT.resolve(),
+    ]
+    if not any(
+        root.exists() and (worktree == root or root in worktree.parents) for root in trusted_roots
+    ):
+        MODULE.WORKTREE_ROOT = worktree.parent
+    MODULE._exclude_private_task_dir(worktree)
+    private = worktree / MODULE.TASK_PRIVATE_DIR
+    private.mkdir(mode=0o700, exist_ok=True)
+    private.chmod(0o700)
+    private_result = private / "result.json"
+    if not private_result.exists() or json.loads(
+        private_result.read_text(encoding="utf-8")
+    ) != value:
+        private_result.write_text(json.dumps(value), encoding="utf-8")
+    with MODULE._task_worktree_private_descriptor(candidate) as result_access:
+        finalized, raw = MODULE._finalize_controller_commit(
+            candidate=candidate,
+            context=context,
+            value=value,
+            result_access=result_access,
+            write_if_unchanged=write_if_unchanged,
+        )
+    if result_path is not None and result_path.resolve() != private_result.resolve():
+        result_path.write_text(json.dumps(finalized), encoding="utf-8")
+    return finalized, raw
 
 
 def test_orphan_reconcile_commits_unique_matches_and_abandons_proven_misses(monkeypatch):
@@ -408,6 +451,52 @@ def test_event_drain_terminalizes_validation_prefetch_failure(monkeypatch, tmp_p
     assert result["dependencyFailures"] == [{"failureType": "TIMEOUT"}]
 
 
+def test_event_drain_does_not_deliver_a_deferred_validation_followup(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        MODULE, "restore_reconcile", lambda _args: {"ok": True, "restored": [], "errors": []}
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "pr_followup_list",
+        lambda _args: {"candidates": [], "restoreRequired": [], "unresolved": []},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "validation_followup_list",
+        lambda _args: {
+            "candidates": [
+                {"key": "a/b#1", "threadId": "thread-1", "resultDigest": "old-digest"}
+            ]
+        },
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "validation_followup_reserve",
+        lambda _args: {
+            "ok": True,
+            "deferred": True,
+            "reason": "VALIDATION_RESULT_CHANGED_AFTER_QUEUE",
+        },
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "validation_followup_deliver",
+        lambda _args: pytest.fail("a deferred validation result must not be delivered"),
+    )
+
+    result = MODULE.drain_once(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            project_id="github-project",
+            owner="event-drain",
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["action"] == "validation_followup_deferred"
+    assert result["reason"] == "VALIDATION_RESULT_CHANGED_AFTER_QUEUE"
+
+
 @pytest.fixture(autouse=True)
 def disable_live_thread_watchdog(monkeypatch, tmp_path):
     thread_db = tmp_path / "default-codex-db" / "threads.sqlite3"
@@ -483,6 +572,13 @@ def registered_store(tmp_path: Path, worktree: Path | None = None) -> tuple[Rada
         dedupe_key="test-live-evidence",
     )
     return store, worktree
+
+
+def bind_validation_runtime(monkeypatch, root: Path) -> Path:
+    monkeypatch.setattr(MODULE, "ROOT", root)
+    state = root / "state"
+    monkeypatch.setattr(MODULE, "STATE", state)
+    return state
 
 
 def _write_explicit_controller_review(root: Path, value: dict[str, object]) -> dict[str, object]:
@@ -645,7 +741,7 @@ def test_canonical_prompt_unwraps_delegation():
 def test_terminal_feedback_is_published_only_for_unchanged_issues(monkeypatch, tmp_path):
     store, _worktree = registered_store(tmp_path)
     store.record_stage("a/b#1", "AUDIT_NO_GO", reason="ALREADY_FIXED")
-    state = tmp_path / "state"
+    state = bind_validation_runtime(monkeypatch, tmp_path)
     state.mkdir()
     feedback_path = state / "controller_terminal_feedback.json"
     calls = []
@@ -677,7 +773,7 @@ def test_terminal_feedback_is_published_only_for_unchanged_issues(monkeypatch, t
 def test_terminal_feedback_reloads_and_merges_after_concurrent_publish(monkeypatch, tmp_path):
     store, _worktree = registered_store(tmp_path)
     store.record_stage("a/b#1", "AUDIT_NO_GO", reason="ALREADY_FIXED")
-    state = tmp_path / "state"
+    state = bind_validation_runtime(monkeypatch, tmp_path)
     state.mkdir()
     feedback_path = state / "controller_terminal_feedback.json"
     calls = []
@@ -731,7 +827,7 @@ def test_terminal_feedback_reloads_and_merges_after_concurrent_publish(monkeypat
 def test_terminal_feedback_does_not_republish_unchanged_state(monkeypatch, tmp_path):
     store, _worktree = registered_store(tmp_path)
     store.record_stage("a/b#1", "AUDIT_NO_GO", reason="ALREADY_FIXED")
-    state = tmp_path / "state"
+    state = bind_validation_runtime(monkeypatch, tmp_path)
     state.mkdir()
     feedback_path = state / "controller_terminal_feedback.json"
     feedback_path.write_text(
@@ -773,7 +869,7 @@ def test_terminal_feedback_does_not_republish_unchanged_state(monkeypatch, tmp_p
 def test_terminal_feedback_defers_when_issue_changed_after_dispatch(monkeypatch, tmp_path):
     store, _worktree = registered_store(tmp_path)
     store.record_stage("a/b#1", "AUDIT_NO_GO", reason="ALREADY_FIXED")
-    state = tmp_path / "state"
+    state = bind_validation_runtime(monkeypatch, tmp_path)
     state.mkdir()
 
     class GitHub:
@@ -4661,6 +4757,11 @@ def test_validation_continuation_excludes_its_own_intent_from_wip(monkeypatch, t
     monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
     monkeypatch.setattr(MODULE, "_validation_prefetch_commands", lambda _candidate: [])
     monkeypatch.setattr(
+        MODULE,
+        "_validation_result_digest",
+        lambda _candidate: candidate["resultDigest"],
+    )
+    monkeypatch.setattr(
         MODULE, "_execute_validation_prefetch", lambda _candidate, _commands: {"ok": True}
     )
     monkeypatch.setattr(
@@ -4705,10 +4806,15 @@ def test_recovery_delivery_preserves_validation_followup_prompt():
 
 
 def test_validation_followup_prompt_translates_internal_gaps_for_the_user():
+    reservation_digest = "a" * 64
+    worktree_input_path = (
+        f".oss-pr-radar/validation-inputs/{reservation_digest}.json"
+    )
     prompt = MODULE._validation_followup_prompt(
         {
             "missing": ["relevant_tests_green", "independent_review_passed"],
             "prefetchCommands": [],
+            "worktreeInputPath": worktree_input_path,
         }
     )
 
@@ -4736,7 +4842,11 @@ def test_validation_followup_prompt_translates_internal_gaps_for_the_user():
     assert "写完有效结果后立即给出最终回复并结束本轮" in prompt
     assert "relevant_tests_green" not in prompt
     assert "independent_review_passed" not in prompt
-    assert ".oss-pr-radar" not in prompt
+    assert f"`{worktree_input_path}`" in prompt
+    assert "本轮输入只能只读工作区相对路径" in prompt
+    assert "不要读取当前 `.oss-pr-radar/result.json` 作为本轮输入" in prompt
+    assert "原子替换为新输出" in prompt
+    assert str(MODULE.STATE) not in prompt
 
 
 def test_pr_followup_prompt_ends_before_controller_work_can_continue():
@@ -5499,7 +5609,7 @@ def test_task_turn_delivery_reconciles_a_materialized_turn_without_resending(mon
     store = Store()
     monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
     monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
-    monkeypatch.setattr(MODULE, "STATE", tmp_path / "state")
+    bind_validation_runtime(monkeypatch, tmp_path)
     monkeypatch.setattr(MODULE, "WORKTREE_ROOT", tmp_path)
     monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
     rollout.write_text(
@@ -5664,7 +5774,7 @@ def test_task_turn_delivery_rechecks_quarantine_before_starting_worker(monkeypat
 
     popen_calls = []
     monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
-    monkeypatch.setattr(MODULE, "STATE", tmp_path / "state")
+    bind_validation_runtime(monkeypatch, tmp_path)
     monkeypatch.setattr(MODULE, "WORKTREE_ROOT", tmp_path)
     monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
     monkeypatch.setattr(
@@ -5855,6 +5965,8 @@ def test_task_turn_preflight_failure_writes_a_negative_receipt(monkeypatch, tmp_
             ("thread-1", str(project_root), 1, MODULE.issue_prompt(issue_url), None),
         )
 
+    reservation_digest = "b" * 64
+
     class Store:
         def unresolved_validation_followups(self):
             return [
@@ -5864,6 +5976,7 @@ def test_task_turn_preflight_failure_writes_a_negative_receipt(monkeypatch, tmp_
                     "worktreePath": str(worktree),
                     "threadId": "thread-1",
                     "resultDigest": "a" * 64,
+                    "reservationDigest": reservation_digest,
                     "missing": ["relevant_tests_green"],
                     "reservedAt": iso_z(datetime.now(UTC) - timedelta(minutes=2)),
                 }
@@ -5885,12 +5998,11 @@ def test_task_turn_preflight_failure_writes_a_negative_receipt(monkeypatch, tmp_
             )
         )
 
-    receipt_key = MODULE.sha256_json(
-        {
-            "deliveryKind": "validation-followup",
-            "threadId": "thread-1",
-            "deliveryToken": "a" * 64,
-        }
+    receipt_key = MODULE._task_turn_delivery_file_key(
+        delivery_kind="validation-followup",
+        thread_id="thread-1",
+        delivery_token="a" * 64,
+        validation_reservation_digest=reservation_digest,
     )
     receipt = json.loads(
         (state / "task_turn_receipts" / f"{receipt_key}.json").read_text(encoding="utf-8")
@@ -5900,6 +6012,7 @@ def test_task_turn_preflight_failure_writes_a_negative_receipt(monkeypatch, tmp_
         "turnStarted": False,
         "turnId": None,
         "error": "RuntimeError:task-turn delivery target is missing or archived",
+        "reservationDigest": reservation_digest,
     }
 
 
@@ -5964,12 +6077,12 @@ def test_negative_task_turn_receipt_is_retryable_after_worker_exit(monkeypatch, 
     receipt_root = state / "task_turn_receipts"
     receipt_root.mkdir(parents=True)
     delivery_token = "a" * 64
-    receipt_key = MODULE.sha256_json(
-        {
-            "deliveryKind": "validation-followup",
-            "threadId": "thread-1",
-            "deliveryToken": delivery_token,
-        }
+    reservation_digest = "b" * 64
+    receipt_key = MODULE._task_turn_delivery_file_key(
+        delivery_kind="validation-followup",
+        thread_id="thread-1",
+        delivery_token=delivery_token,
+        validation_reservation_digest=reservation_digest,
     )
     (receipt_root / f"{receipt_key}.json").write_text(
         json.dumps(
@@ -5978,6 +6091,7 @@ def test_negative_task_turn_receipt_is_retryable_after_worker_exit(monkeypatch, 
                 "turnStarted": False,
                 "turnId": None,
                 "error": "RuntimeError:app server could not resume the task",
+                "reservationDigest": reservation_digest,
             }
         ),
         encoding="utf-8",
@@ -5988,6 +6102,7 @@ def test_negative_task_turn_receipt_is_retryable_after_worker_exit(monkeypatch, 
         delivery_kind="validation-followup",
         thread_id="thread-1",
         delivery_token=delivery_token,
+        validation_reservation_digest=reservation_digest,
     )
 
     assert result == {
@@ -7577,7 +7692,7 @@ def test_controller_ingests_followup_fix_as_update_to_exact_existing_pr(tmp_path
         for item in store.task_result_candidates()
         if item["key"] == "a/b#1" and item["threadId"] == "thread-1"
     )
-    value, _raw = MODULE._finalize_controller_commit(
+    value, _raw = _finalize_controller_commit_for_test(
         candidate=candidate_record,
         context=context,
         value=value,
@@ -7648,7 +7763,7 @@ def test_followup_commit_preserves_prepared_base_integration_diff(tmp_path):
     }
     result_path.write_text(json.dumps(value), encoding="utf-8")
 
-    finalized, _raw = MODULE._finalize_controller_commit(
+    finalized, _raw = _finalize_controller_commit_for_test(
         candidate={"worktreePath": str(worktree)},
         context={
             "stage": "PR_OPEN",
@@ -7972,7 +8087,7 @@ def _controller_commit_result(
             if item["key"] == "a/b#1" and item["threadId"] == "thread-1"
         )
         context = json.loads((result_path.parent / "task-context.json").read_text(encoding="utf-8"))
-        result, _raw = MODULE._finalize_controller_commit(
+        result, _raw = _finalize_controller_commit_for_test(
             candidate=candidate_record,
             context=context,
             value=result,
@@ -8234,6 +8349,7 @@ def _legal_queue_publication_fixture(tmp_path: Path, *, request_id: str = "reque
         "selectedBaseSha": base_sha,
         "headSha": head_sha,
         "commitSha": head_sha,
+        "branch": "fix-runtime",
         "codePaths": ["runtime.py"],
         "preTaskEvidence": {
             "defaultBranch": "main",
@@ -8274,6 +8390,8 @@ def _legal_queue_publication_fixture(tmp_path: Path, *, request_id: str = "reque
     value["reproductionReceipt"] = receipt
     value["independentReview"] = _write_explicit_controller_review(tmp_path, value)
     result_path.write_text(json.dumps(value), encoding="utf-8")
+    raw = result_path.read_bytes()
+    evidence_digest = hashlib.sha256(raw).hexdigest()
     return {
         "worktree": worktree,
         "resultPath": result_path,
@@ -8289,6 +8407,8 @@ def _legal_queue_publication_fixture(tmp_path: Path, *, request_id: str = "reque
             "branch": "fix-runtime",
             "worktreePath": str(worktree),
             "evidencePath": str(result_path),
+            "evidenceDigest": evidence_digest,
+            "evidenceRawBase64": base64.b64encode(raw).decode("ascii"),
             "resultDigest": digest,
             "probeRequired": True,
             "probeLevel": "REPRODUCED_VALIDATED",
@@ -8410,7 +8530,7 @@ def test_existing_fix_ready_result_accepts_later_controller_review(monkeypatch, 
     candidate = store.task_result_candidates()[0]
     context = json.loads((result_path.parent / "task-context.json").read_text(encoding="utf-8"))
     value = json.loads(result_path.read_text(encoding="utf-8"))
-    finalized, _raw = MODULE._finalize_controller_commit(
+    finalized, _raw = _finalize_controller_commit_for_test(
         candidate=candidate,
         context=context,
         value=value,
@@ -8574,13 +8694,17 @@ def test_repaired_quality_rearms_same_blocked_publication_request(tmp_path):
         dedupe_key="quality-repaired",
     )
 
-    repaired = MODULE.request_publication(
-        store,
-        issue_url="https://github.com/a/b/issues/1",
-        thread_id="thread-1",
-        worktree=worktree,
-        evidence_path=result_path,
-    )
+    candidate = store.task_result_candidates()[0]
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    raw = result_path.read_bytes()
+    with MODULE._task_worktree_private_descriptor(candidate) as result_access:
+        repaired = MODULE._request_publication_from_task_result(
+            store,
+            candidate=candidate,
+            result_access=result_access,
+            value=value,
+            raw=raw,
+        )
 
     assert repaired["request_id"] == request_id
     assert repaired["status"] == "PENDING"
@@ -8665,7 +8789,7 @@ def test_controller_creates_two_parent_commit_for_conflicted_pr_followup(tmp_pat
         "publication": {"baseBranch": "main"},
     }
     result_path.write_text(json.dumps(value), encoding="utf-8")
-    finalized, _raw = MODULE._finalize_controller_commit(
+    finalized, _raw = _finalize_controller_commit_for_test(
         candidate={"worktreePath": str(worktree)},
         context={
             "prFollowup": {
@@ -8729,7 +8853,7 @@ def test_controller_merge_rejects_incomplete_conflict_file_set(tmp_path):
     result_path.write_text(json.dumps(value), encoding="utf-8")
 
     with pytest.raises(RuntimeError, match="conflict set mismatch"):
-        MODULE._finalize_controller_commit(
+        _finalize_controller_commit_for_test(
             candidate={"worktreePath": str(worktree)},
             context={
                 "prFollowup": {
@@ -8778,7 +8902,7 @@ def test_controller_merge_preserves_child_prepared_resolution(tmp_path):
     result_path = tmp_path / "result.json"
     result_path.write_text(json.dumps(value), encoding="utf-8")
 
-    finalized, _raw = MODULE._finalize_controller_commit(
+    finalized, _raw = _finalize_controller_commit_for_test(
         candidate={"worktreePath": str(worktree)},
         context={
             "prFollowup": {
@@ -8980,8 +9104,1707 @@ def test_controller_defers_blocked_local_fix_with_incomplete_validation(tmp_path
     assert stalled["stale"][0]["threadId"] == "thread-1"
 
 
+def test_validation_followup_reserve_rejects_result_changed_after_reservation(
+    monkeypatch, tmp_path
+):
+    store, _worktree, result_path = _controller_commit_result(
+        tmp_path,
+        missing_quality=("relevant_tests_green",),
+    )
+    MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    candidate = store.validation_followup_candidates()[0]
+    assert MODULE._task_result_path(candidate) == result_path
+    original_reserve = RadarLedger.reserve_validation_followup
+    mutation_started = threading.Event()
+    mutation_finished = threading.Event()
+    attempt_files: list[Path] = []
+    state = bind_validation_runtime(monkeypatch, tmp_path)
+
+    def mutate_result_after_reservation():
+        assert mutation_started.wait(2)
+        value = json.loads(result_path.read_text(encoding="utf-8"))
+        value["tests"] = [
+            {"command": "pytest changed after queue", "exitCode": 0}
+        ]
+        result_path.write_text(json.dumps(value), encoding="utf-8")
+        mutation_finished.set()
+
+    writer = threading.Thread(target=mutate_result_after_reservation)
+
+    def reserve_and_race(instance, **kwargs):
+        reserved = original_reserve(instance, **kwargs)
+        receipt_root = state / "task_turn_receipts"
+        receipt_root.mkdir(parents=True, exist_ok=True)
+        receipt_key = MODULE._task_turn_delivery_file_key(
+            delivery_kind="validation-followup",
+            thread_id=candidate["threadId"],
+            delivery_token=candidate["resultDigest"],
+            validation_reservation_digest=reserved["reservationDigest"],
+        )
+        attempt_files.extend(
+            [
+                receipt_root / f"{receipt_key}.json",
+                receipt_root / f"{receipt_key}.launch.json",
+                receipt_root / f"{receipt_key}.log",
+            ]
+        )
+        attempt_files[0].write_text(
+            json.dumps(
+                {
+                    "ok": False,
+                    "turnStarted": False,
+                    "reservationDigest": reserved["reservationDigest"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        attempt_files[1].write_text(json.dumps({"pid": 0}), encoding="utf-8")
+        attempt_files[2].write_text("cancelled attempt", encoding="utf-8")
+        writer.start()
+        mutation_started.set()
+        assert mutation_finished.wait(2)
+        writer.join(timeout=2)
+        return reserved
+
+    monkeypatch.setattr(RadarLedger, "reserve_validation_followup", reserve_and_race)
+    result = MODULE.validation_followup_reserve(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            thread_id=candidate["threadId"],
+            result_digest=candidate["resultDigest"],
+            prefetch_complete=False,
+        )
+    )
+
+    assert result.get("deferred") is True, result
+    assert result["reason"] == "VALIDATION_RESULT_CHANGED_AFTER_QUEUE"
+    assert store.unresolved_validation_followups() == []
+    assert store.active_task_count() == 0
+    assert attempt_files
+    assert all(not path.exists() for path in attempt_files)
+    with store.connect() as connection:
+        assert connection.execute(
+            "SELECT 1 FROM events WHERE event_type='VALIDATION_FOLLOWUP_SENT'"
+        ).fetchone() is None
+    with pytest.raises(RuntimeError, match="task-turn delivery reservation is unavailable"):
+        MODULE.validation_followup_deliver(
+            SimpleNamespace(
+                ledger=tmp_path / "ledger.sqlite3",
+                thread_id=candidate["threadId"],
+                result_digest=candidate["resultDigest"],
+            )
+        )
+
+
+def test_validation_followup_delivery_rechecks_result_before_starting_worker(
+    monkeypatch, tmp_path
+):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        missing_quality=("relevant_tests_green",),
+    )
+    MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    candidate = store.validation_followup_candidates()[0]
+    reserved = MODULE.validation_followup_reserve(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            thread_id=candidate["threadId"],
+            result_digest=candidate["resultDigest"],
+            prefetch_complete=False,
+        )
+    )
+    assert reserved["ok"] is True
+
+    rollout = tmp_path / "rollout.jsonl"
+    rollout.write_text("", encoding="utf-8")
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "CREATE TABLE threads ("
+            "id TEXT, cwd TEXT, archived INTEGER, first_user_message TEXT, "
+            "rollout_path TEXT, git_origin_url TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?,?,?,?)",
+            (
+                candidate["threadId"],
+                str(worktree),
+                0,
+                MODULE.issue_prompt(candidate["issueUrl"]),
+                str(rollout),
+                "https://github.com/a/b.git",
+            ),
+        )
+
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value["tests"] = [{"command": "pytest changed before delivery", "exitCode": 0}]
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "WORKTREE_ROOT", tmp_path)
+    bind_validation_runtime(monkeypatch, tmp_path)
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    monkeypatch.setattr(
+        MODULE.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: pytest.fail(
+            "a changed validation result must not start a worker"
+        ),
+    )
+
+    result = MODULE.validation_followup_deliver(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            thread_id=candidate["threadId"],
+            result_digest=candidate["resultDigest"],
+        )
+    )
+
+    assert result["deferred"] is True
+    assert result["reason"] == "VALIDATION_RESULT_CHANGED_BEFORE_SNAPSHOT"
+    assert store.unresolved_validation_followups() == []
+    assert store.active_task_count() == 0
+    assert rollout.read_text(encoding="utf-8") == ""
+    assert list((tmp_path / "state" / "task_turn_receipts").glob("*.launch.json")) == []
+
+
+class _FakeTaskTurnStdin:
+    def __init__(self):
+        self.writes: list[bytes] = []
+
+    def write(self, value: bytes) -> None:
+        self.writes.append(value)
+
+    def flush(self) -> None:
+        return None
+
+
+class _FakeTaskTurnProcess:
+    def __init__(self):
+        self.stdin = _FakeTaskTurnStdin()
+        self.stdout = object()
+
+    @staticmethod
+    def poll():
+        return 0
+
+
+class _FakeTaskTurnSelector:
+    def register(self, *_args, **_kwargs) -> None:
+        return None
+
+    def close(self) -> None:
+        return None
+
+
+def _bound_validation_worker_fixture(monkeypatch, tmp_path):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path, missing_quality=("relevant_tests_green",)
+    )
+    MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    candidate = store.validation_followup_candidates()[0]
+    reserved = MODULE.validation_followup_reserve(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            thread_id=candidate["threadId"],
+            result_digest=candidate["resultDigest"],
+            prefetch_complete=False,
+        )
+    )
+    candidate = next(
+        item
+        for item in store.unresolved_validation_followups()
+        if item["reservationDigest"] == reserved["reservationDigest"]
+    )
+    bind_validation_runtime(monkeypatch, tmp_path)
+    thread_db = tmp_path / "validation-threads.sqlite3"
+    rollout = tmp_path / "validation-rollout.jsonl"
+    rollout.write_text("", encoding="utf-8")
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "CREATE TABLE threads ("
+            "id TEXT, cwd TEXT, archived INTEGER, first_user_message TEXT, "
+            "rollout_path TEXT, git_origin_url TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?,?,?,?)",
+            (
+                candidate["threadId"],
+                str(worktree),
+                0,
+                MODULE.issue_prompt(candidate["issueUrl"]),
+                str(rollout),
+                "https://github.com/a/b.git",
+            ),
+        )
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "WORKTREE_ROOT", tmp_path)
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    original_live_bytes = result_path.read_bytes()
+    reservation_digest = str(candidate["reservationDigest"])
+    snapshot = MODULE._ensure_validation_snapshot(
+        candidate, reservation_digest=reservation_digest
+    )
+    binding = {
+        "reservationDigest": reservation_digest,
+        "snapshotId": str(snapshot["snapshotId"]),
+        "snapshotPath": str(snapshot["snapshotPath"]),
+        "snapshotDigest": str(snapshot["snapshotDigest"]),
+        **MODULE._validation_worktree_input_binding(
+            candidate=candidate,
+            reservation_digest=reservation_digest,
+            snapshot_digest=str(snapshot["snapshotDigest"]),
+        ),
+        "resultDigest": str(candidate["resultDigest"]),
+    }
+    store.authorize_task_turn_delivery(
+        delivery_kind="validation-followup",
+        thread_id=str(candidate["threadId"]),
+        delivery_token=str(candidate["resultDigest"]),
+        reservation_digest=reservation_digest,
+        snapshot_id=binding["snapshotId"],
+        snapshot_path=binding["snapshotPath"],
+        snapshot_digest=binding["snapshotDigest"],
+        worktree_input_path=binding["worktreeInputPath"],
+        worktree_input_digest=binding["worktreeInputDigest"],
+    )
+    args = SimpleNamespace(
+        ledger=tmp_path / "ledger.sqlite3",
+        delivery_kind="validation-followup",
+        thread_id=str(candidate["threadId"]),
+        delivery_token=str(candidate["resultDigest"]),
+        reservation_digest=reservation_digest,
+        snapshot_id=binding["snapshotId"],
+        snapshot_path=binding["snapshotPath"],
+        snapshot_digest=binding["snapshotDigest"],
+        worktree_input_path=binding["worktreeInputPath"],
+        worktree_input_digest=binding["worktreeInputDigest"],
+        receipt=str(tmp_path / "task-turn-receipt.json"),
+    )
+    return (
+        store,
+        candidate | binding,
+        worktree,
+        result_path,
+        original_live_bytes,
+        binding,
+        args,
+    )
+
+
+def _task_turn_messages(process: _FakeTaskTurnProcess) -> list[dict[str, object]]:
+    return [
+        json.loads(line)
+        for write in process.stdin.writes
+        for line in write.splitlines()
+        if line
+    ]
+
+
+def test_validation_attempt_scopes_delivery_files_and_client_id_but_not_worker_lock(
+    monkeypatch, tmp_path
+):
+    (
+        store,
+        candidate,
+        worktree,
+        _result_path,
+        _original_live_bytes,
+        first_binding,
+        _args,
+    ) = _bound_validation_worker_fixture(monkeypatch, tmp_path)
+    result_digest = str(candidate["resultDigest"])
+    first_reservation = str(first_binding["reservationDigest"])
+    state = MODULE.STATE
+    receipt_root = state / "task_turn_receipts"
+    receipt_root.mkdir(parents=True, exist_ok=True)
+
+    first_key = MODULE._task_turn_delivery_file_key(
+        delivery_kind="validation-followup",
+        thread_id=str(candidate["threadId"]),
+        delivery_token=result_digest,
+        validation_reservation_digest=first_reservation,
+    )
+    first_paths = [
+        receipt_root / f"{first_key}.json",
+        receipt_root / f"{first_key}.launch.json",
+        receipt_root / f"{first_key}.log",
+    ]
+    first_paths[0].write_text(
+        json.dumps(
+            {
+                "ok": False,
+                "turnStarted": False,
+                "reservationDigest": first_reservation,
+            }
+        ),
+        encoding="utf-8",
+    )
+    first_paths[1].write_text(
+        json.dumps({"pid": 0, "reservationDigest": first_reservation}),
+        encoding="utf-8",
+    )
+    first_paths[2].write_text("attempt one", encoding="utf-8")
+
+    with store.connect() as connection:
+        connection.execute(
+            """UPDATE events SET created_at=?
+               WHERE event_type='VALIDATION_FOLLOWUP_RESERVED'
+                 AND dedupe_key=?""",
+            (
+                iso_z(datetime.now(UTC) - timedelta(minutes=2)),
+                first_reservation,
+            ),
+        )
+    store.abandon_validation_followup_delivery(
+        thread_id=str(candidate["threadId"]),
+        result_digest=result_digest,
+        reason="TARGET_TURN_OUTCOME_UNKNOWN",
+        min_age_minutes=1,
+    )
+    MODULE._discard_negative_task_turn_receipt(
+        delivery_kind="validation-followup",
+        thread_id=str(candidate["threadId"]),
+        delivery_token=result_digest,
+        validation_reservation_digest=first_reservation,
+    )
+    assert all(not path.exists() for path in first_paths)
+
+    second = store.reserve_validation_followup(
+        thread_id=str(candidate["threadId"]), result_digest=result_digest
+    )
+    second_reservation = str(second["reservationDigest"])
+    assert second_reservation != first_reservation
+    second_key = MODULE._task_turn_delivery_file_key(
+        delivery_kind="validation-followup",
+        thread_id=str(candidate["threadId"]),
+        delivery_token=result_digest,
+        validation_reservation_digest=second_reservation,
+    )
+    assert second_key != first_key
+
+    for path, content in zip(
+        first_paths,
+        (
+            json.dumps(
+                {
+                    "ok": False,
+                    "turnStarted": False,
+                    "reservationDigest": first_reservation,
+                }
+            ),
+            json.dumps({"pid": 0, "reservationDigest": first_reservation}),
+            "orphaned attempt one",
+        ),
+        strict=True,
+    ):
+        path.write_text(content, encoding="utf-8")
+    assert (
+        MODULE.retryable_negative_task_turn_receipt(
+            delivery_kind="validation-followup",
+            thread_id=str(candidate["threadId"]),
+            delivery_token=result_digest,
+            validation_reservation_digest=second_reservation,
+        )
+        is None
+    )
+    MODULE._discard_negative_task_turn_receipt(
+        delivery_kind="validation-followup",
+        thread_id=str(candidate["threadId"]),
+        delivery_token=result_digest,
+        validation_reservation_digest=second_reservation,
+    )
+    assert all(path.exists() for path in first_paths)
+
+    active_worker = {
+        "pid": 123,
+        "deliveryKind": "validation-followup",
+        "reservationDigest": first_reservation,
+    }
+    monkeypatch.setattr(
+        MODULE,
+        "active_task_turn_worker",
+        lambda thread_id: active_worker
+        if thread_id == str(candidate["threadId"])
+        else None,
+    )
+    monkeypatch.setattr(
+        MODULE.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: pytest.fail(
+            "a second attempt must not bypass the thread-global worker lock"
+        ),
+    )
+    blocked = MODULE.task_turn_deliver(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            delivery_kind="validation-followup",
+            delivery_token=result_digest,
+            thread_id=str(candidate["threadId"]),
+        )
+    )
+    assert blocked["pending"] is True
+    assert blocked["reason"] == "TASK_TURN_WORKER_ACTIVE"
+    assert blocked["worker"]["reservationDigest"] == first_reservation
+
+    first_process = _FakeTaskTurnProcess()
+    second_process = _FakeTaskTurnProcess()
+    for process, reservation in (
+        (first_process, first_reservation),
+        (second_process, second_reservation),
+    ):
+        MODULE._write_turn_start_request(
+            process,
+            thread_id=str(candidate["threadId"]),
+            cwd=worktree,
+            prompt="continue validation",
+            delivery_kind="validation-followup",
+            delivery_token=result_digest,
+            validation_reservation_digest=reservation,
+        )
+    first_id = _task_turn_messages(first_process)[0]["params"]["clientUserMessageId"]
+    second_id = _task_turn_messages(second_process)[0]["params"]["clientUserMessageId"]
+    assert first_id != second_id
+    assert str(first_id).endswith(first_reservation)
+    assert str(second_id).endswith(second_reservation)
+
+
+def test_validation_worker_projects_snapshot_and_sends_exact_local_input_prompt(
+    monkeypatch, tmp_path
+):
+    (
+        store,
+        candidate,
+        worktree,
+        result_path,
+        original_live_bytes,
+        binding,
+        args,
+    ) = _bound_validation_worker_fixture(monkeypatch, tmp_path)
+    changed = json.loads(result_path.read_text(encoding="utf-8"))
+    changed["tests"] = [{"command": "changed after binding", "exitCode": 0}]
+    result_path.write_text(json.dumps(changed), encoding="utf-8")
+    process = _FakeTaskTurnProcess()
+
+    @contextmanager
+    def action_session(*_args, **_kwargs):
+        yield process
+
+    def read_response(_process, _selector, buffer, *, response_id, **_kwargs):
+        if response_id == 1:
+            return buffer, {"result": {"thread": {"id": candidate["threadId"]}}}
+        return buffer, {"result": {"turn": {"id": "turn-1"}}}
+
+    monkeypatch.setattr(MODULE, "_app_server_action_session", action_session)
+    monkeypatch.setattr(MODULE.selectors, "DefaultSelector", _FakeTaskTurnSelector)
+    monkeypatch.setattr(MODULE, "_read_app_server_response", read_response)
+    monkeypatch.setattr(
+        MODULE,
+        "_wait_for_app_server_terminal_turn",
+        lambda *_args, **_kwargs: {"turnId": "turn-1", "status": "completed"},
+    )
+    monkeypatch.setattr(MODULE.shutil, "which", lambda _name: "/usr/bin/codex")
+
+    result = MODULE._app_server_task_turn_worker(args)
+
+    projection = worktree / binding["worktreeInputPath"]
+    assert projection.read_bytes() == original_live_bytes
+    assert projection.read_bytes() != result_path.read_bytes()
+    assert stat.S_IMODE(projection.stat().st_mode) == 0o400
+    assert stat.S_IMODE(projection.parent.stat().st_mode) == 0o700
+    turns = [
+        item for item in _task_turn_messages(process) if item.get("method") == "turn/start"
+    ]
+    assert len(turns) == 1
+    prompt = turns[0]["params"]["input"][0]["text"]
+    assert f"`{binding['worktreeInputPath']}`" in prompt
+    assert "不要读取当前 `.oss-pr-radar/result.json` 作为本轮输入" in prompt
+    assert str(MODULE.STATE) not in prompt
+    assert result["ok"] is True
+    assert store.unresolved_validation_followups() == []
+
+
+@pytest.mark.parametrize("mutation", ["missing", "tampered", "symlink"])
+def test_validation_worker_rejects_projection_changed_before_turn_start(
+    monkeypatch, tmp_path, mutation
+):
+    (
+        store,
+        candidate,
+        worktree,
+        _result_path,
+        _original_live_bytes,
+        binding,
+        args,
+    ) = _bound_validation_worker_fixture(monkeypatch, tmp_path)
+    process = _FakeTaskTurnProcess()
+    original_prompt = MODULE._task_turn_prompt
+
+    def prompt_then_change(delivery_kind, prompt_candidate):
+        prompt = original_prompt(delivery_kind, prompt_candidate)
+        projection = worktree / binding["worktreeInputPath"]
+        if mutation == "missing":
+            projection.unlink()
+        elif mutation == "tampered":
+            projection.chmod(0o600)
+            projection.write_text('{"resultDigest":"changed"}', encoding="utf-8")
+            projection.chmod(0o400)
+        else:
+            target = tmp_path / "validation-input-target.json"
+            target.write_bytes(projection.read_bytes())
+            projection.unlink()
+            projection.symlink_to(target)
+        return prompt
+
+    @contextmanager
+    def action_session(*_args, **_kwargs):
+        yield process
+
+    def read_response(_process, _selector, buffer, *, response_id, **_kwargs):
+        assert response_id == 1
+        return buffer, {"result": {"thread": {"id": candidate["threadId"]}}}
+
+    monkeypatch.setattr(MODULE, "_task_turn_prompt", prompt_then_change)
+    monkeypatch.setattr(MODULE, "_app_server_action_session", action_session)
+    monkeypatch.setattr(MODULE.selectors, "DefaultSelector", _FakeTaskTurnSelector)
+    monkeypatch.setattr(MODULE, "_read_app_server_response", read_response)
+    monkeypatch.setattr(MODULE.shutil, "which", lambda _name: "/usr/bin/codex")
+
+    with pytest.raises(RuntimeError):
+        MODULE._app_server_task_turn_worker(args)
+
+    assert all(
+        item.get("method") != "turn/start" for item in _task_turn_messages(process)
+    )
+    assert store.unresolved_validation_followups()[0]["reservationDigest"] == binding[
+        "reservationDigest"
+    ]
+
+
+def test_validation_worker_popen_retry_restores_projection_from_state_snapshot(
+    monkeypatch, tmp_path
+):
+    (
+        _store,
+        _candidate,
+        worktree,
+        result_path,
+        original_live_bytes,
+        binding,
+        args,
+    ) = _bound_validation_worker_fixture(monkeypatch, tmp_path)
+
+    @contextmanager
+    def failed_action_session(*_args, **_kwargs):
+        raise RuntimeError("popen failed")
+        yield
+
+    monkeypatch.setattr(MODULE, "_app_server_action_session", failed_action_session)
+    monkeypatch.setattr(MODULE.selectors, "DefaultSelector", _FakeTaskTurnSelector)
+    monkeypatch.setattr(MODULE.shutil, "which", lambda _name: "/usr/bin/codex")
+
+    with pytest.raises(RuntimeError, match="popen failed"):
+        MODULE._app_server_task_turn_worker(args)
+    projection = worktree / binding["worktreeInputPath"]
+    assert projection.read_bytes() == original_live_bytes
+
+    projection.unlink()
+    changed = json.loads(result_path.read_text(encoding="utf-8"))
+    changed["tests"] = [{"command": "changed before retry", "exitCode": 0}]
+    result_path.write_text(json.dumps(changed), encoding="utf-8")
+    monkeypatch.setattr(
+        MODULE,
+        "_task_result_path",
+        lambda _candidate: pytest.fail("snapshot-backed retry must not read live result.json"),
+    )
+
+    with pytest.raises(RuntimeError, match="popen failed"):
+        MODULE._app_server_task_turn_worker(args)
+    assert projection.read_bytes() == original_live_bytes
+    assert stat.S_IMODE(projection.stat().st_mode) == 0o400
+
+
+def test_validation_worktree_input_path_cannot_escape_worktree(monkeypatch, tmp_path):
+    (
+        _store,
+        candidate,
+        _worktree,
+        _result_path,
+        _original_live_bytes,
+        binding,
+        _args,
+    ) = _bound_validation_worker_fixture(monkeypatch, tmp_path)
+
+    with pytest.raises(RuntimeError, match="validation worktree input binding is invalid"):
+        MODULE._ensure_validation_worktree_input(
+            candidate=candidate,
+            reservation_digest=binding["reservationDigest"],
+            snapshot_id=binding["snapshotId"],
+            snapshot_path=binding["snapshotPath"],
+            snapshot_digest=binding["snapshotDigest"],
+            worktree_input_path=".oss-pr-radar/validation-inputs/../../result.json",
+            worktree_input_digest=binding["worktreeInputDigest"],
+        )
+    assert not (tmp_path / "result.json").exists()
+
+
+def _replace_validation_private_dir_after_binding(
+    *,
+    worktree: Path,
+    replacement_private: Path,
+    replacement_kind: str,
+) -> Path:
+    private_dir = worktree / MODULE.TASK_PRIVATE_DIR
+    original_private = worktree / f"{MODULE.TASK_PRIVATE_DIR}.original"
+    private_dir.rename(original_private)
+    if replacement_kind == "symlink":
+        private_dir.symlink_to(replacement_private, target_is_directory=True)
+    else:
+        replacement_private.rename(private_dir)
+    return original_private
+
+
+def _replace_validation_worktree_parent_after_binding(
+    *,
+    parent: Path,
+    replacement_parent: Path,
+    replacement_kind: str,
+) -> Path:
+    original_parent = parent.with_name(f"{parent.name}.original")
+    parent.rename(original_parent)
+    if replacement_kind == "symlink":
+        parent.symlink_to(replacement_parent, target_is_directory=True)
+    else:
+        replacement_parent.rename(parent)
+    return original_parent
+
+
+@pytest.mark.parametrize("replacement_kind", ["symlink", "different-inode"])
+def test_validation_worktree_input_read_fails_if_private_parent_is_replaced(
+    monkeypatch, tmp_path, replacement_kind
+):
+    (
+        _store,
+        candidate,
+        worktree,
+        _result_path,
+        original_live_bytes,
+        binding,
+        _args,
+    ) = _bound_validation_worker_fixture(monkeypatch, tmp_path)
+    MODULE._ensure_validation_worktree_input(
+        candidate=candidate,
+        reservation_digest=binding["reservationDigest"],
+        snapshot_id=binding["snapshotId"],
+        snapshot_path=binding["snapshotPath"],
+        snapshot_digest=binding["snapshotDigest"],
+        worktree_input_path=binding["worktreeInputPath"],
+        worktree_input_digest=binding["worktreeInputDigest"],
+    )
+    replacement_private = tmp_path / f"read-{replacement_kind}-private"
+    replacement_root = replacement_private / "validation-inputs"
+    replacement_root.mkdir(parents=True)
+    replacement_root.chmod(0o700)
+    replacement_file = replacement_root / f"{binding['reservationDigest']}.json"
+    replacement_file.write_bytes(original_live_bytes)
+    replacement_file.chmod(0o400)
+    original_require = MODULE._require_validation_worktree_input_root_binding
+    swapped = False
+
+    def require_then_swap(**kwargs):
+        nonlocal swapped
+        original_require(**kwargs)
+        if not swapped:
+            _replace_validation_private_dir_after_binding(
+                worktree=worktree,
+                replacement_private=replacement_private,
+                replacement_kind=replacement_kind,
+            )
+            swapped = True
+
+    monkeypatch.setattr(
+        MODULE, "_require_validation_worktree_input_root_binding", require_then_swap
+    )
+
+    with pytest.raises(RuntimeError, match="private directory is unsafe"):
+        MODULE._validation_worktree_input_bytes(
+            candidate=candidate,
+            reservation_digest=binding["reservationDigest"],
+            worktree_input_path=binding["worktreeInputPath"],
+            worktree_input_digest=binding["worktreeInputDigest"],
+        )
+    assert swapped is True
+    visible_replacement_file = (
+        worktree
+        / MODULE.TASK_PRIVATE_DIR
+        / "validation-inputs"
+        / replacement_file.name
+        if replacement_kind == "different-inode"
+        else replacement_file
+    )
+    assert visible_replacement_file.read_bytes() == original_live_bytes
+
+
+@pytest.mark.parametrize("replacement_kind", ["symlink", "different-inode"])
+def test_validation_worktree_input_write_fails_if_private_parent_is_replaced(
+    monkeypatch, tmp_path, replacement_kind
+):
+    (
+        _store,
+        candidate,
+        worktree,
+        _result_path,
+        _original_live_bytes,
+        binding,
+        _args,
+    ) = _bound_validation_worker_fixture(monkeypatch, tmp_path)
+    replacement_private = tmp_path / f"write-{replacement_kind}-private"
+    replacement_root = replacement_private / "validation-inputs"
+    replacement_root.mkdir(parents=True)
+    replacement_root.chmod(0o700)
+    original_require = MODULE._require_validation_worktree_input_root_binding
+    swapped = False
+
+    def require_then_swap(**kwargs):
+        nonlocal swapped
+        original_require(**kwargs)
+        if not swapped:
+            _replace_validation_private_dir_after_binding(
+                worktree=worktree,
+                replacement_private=replacement_private,
+                replacement_kind=replacement_kind,
+            )
+            swapped = True
+
+    monkeypatch.setattr(
+        MODULE, "_require_validation_worktree_input_root_binding", require_then_swap
+    )
+
+    with pytest.raises(RuntimeError, match="private directory is unsafe"):
+        MODULE._ensure_validation_worktree_input(
+            candidate=candidate,
+            reservation_digest=binding["reservationDigest"],
+            snapshot_id=binding["snapshotId"],
+            snapshot_path=binding["snapshotPath"],
+            snapshot_digest=binding["snapshotDigest"],
+            worktree_input_path=binding["worktreeInputPath"],
+            worktree_input_digest=binding["worktreeInputDigest"],
+        )
+    assert swapped is True
+    visible_replacement_root = (
+        worktree / MODULE.TASK_PRIVATE_DIR / "validation-inputs"
+        if replacement_kind == "different-inode"
+        else replacement_root
+    )
+    assert list(visible_replacement_root.iterdir()) == []
+
+
+@pytest.mark.parametrize("replacement_kind", ["symlink", "different-inode"])
+def test_validation_worktree_input_write_fails_if_worktree_parent_is_replaced(
+    monkeypatch, tmp_path, replacement_kind
+):
+    parent = tmp_path / "projection-original-parent"
+    worktree = parent / "worktree"
+    result_path = worktree / MODULE.TASK_PRIVATE_DIR / "result.json"
+    result_path.parent.mkdir(parents=True)
+    raw = b'{"tests": [{"command": "focused", "exitCode": 0}]}\n'
+    result_path.write_bytes(raw)
+    candidate = {
+        "worktreePath": str(worktree),
+        "resultDigest": hashlib.sha256(raw).hexdigest(),
+    }
+    bind_validation_runtime(monkeypatch, tmp_path)
+    reservation_digest = "9" * 64
+    snapshot = MODULE._ensure_validation_snapshot(
+        candidate, reservation_digest=reservation_digest
+    )
+    binding = {
+        "reservationDigest": reservation_digest,
+        **snapshot,
+        **MODULE._validation_worktree_input_binding(
+            candidate=candidate,
+            reservation_digest=reservation_digest,
+            snapshot_digest=str(snapshot["snapshotDigest"]),
+        ),
+    }
+    replacement_parent = tmp_path / f"projection-parent-{replacement_kind}"
+    replacement_worktree = replacement_parent / worktree.name
+    replacement_private = replacement_worktree / MODULE.TASK_PRIVATE_DIR
+    replacement_private.mkdir(parents=True)
+    replacement_root = replacement_private / "validation-inputs"
+    replacement_root.mkdir(mode=0o700)
+    original_require = MODULE._require_validation_worktree_input_root_binding
+    swapped = False
+
+    def require_then_swap(**kwargs):
+        nonlocal swapped
+        original_require(**kwargs)
+        if not swapped:
+            _replace_validation_worktree_parent_after_binding(
+                parent=parent,
+                replacement_parent=replacement_parent,
+                replacement_kind=replacement_kind,
+            )
+            swapped = True
+
+    monkeypatch.setattr(
+        MODULE, "_require_validation_worktree_input_root_binding", require_then_swap
+    )
+
+    with pytest.raises(RuntimeError, match="validation worktree parent is unsafe"):
+        MODULE._ensure_validation_worktree_input(
+            candidate=candidate,
+            reservation_digest=binding["reservationDigest"],
+            snapshot_id=binding["snapshotId"],
+            snapshot_path=binding["snapshotPath"],
+            snapshot_digest=binding["snapshotDigest"],
+            worktree_input_path=binding["worktreeInputPath"],
+            worktree_input_digest=binding["worktreeInputDigest"],
+        )
+    assert swapped is True
+    visible_replacement_root = (
+        parent / worktree.name / MODULE.TASK_PRIVATE_DIR / "validation-inputs"
+        if replacement_kind == "different-inode"
+        else replacement_root
+    )
+    assert list(visible_replacement_root.iterdir()) == []
+
+
+def test_validation_snapshot_is_immutable_across_bind_and_popen_retry(monkeypatch, tmp_path):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path, missing_quality=("relevant_tests_green",)
+    )
+    MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    candidate = store.validation_followup_candidates()[0]
+    reserved = MODULE.validation_followup_reserve(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            thread_id=candidate["threadId"],
+            result_digest=candidate["resultDigest"],
+            prefetch_complete=False,
+        )
+    )
+    reservation_digest = reserved["reservationDigest"]
+    original_live_bytes = result_path.read_bytes()
+    rollout = tmp_path / "rollout.jsonl"
+    rollout.write_text("", encoding="utf-8")
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "CREATE TABLE threads ("
+            "id TEXT, cwd TEXT, archived INTEGER, first_user_message TEXT, "
+            "rollout_path TEXT, git_origin_url TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?,?,?,?)",
+            (
+                candidate["threadId"],
+                str(worktree),
+                0,
+                MODULE.issue_prompt(candidate["issueUrl"]),
+                str(rollout),
+                "https://github.com/a/b.git",
+            ),
+        )
+
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "WORKTREE_ROOT", tmp_path)
+    bind_validation_runtime(monkeypatch, tmp_path)
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+
+    def fail_popen(*_args, **_kwargs):
+        raise RuntimeError("popen failed")
+
+    monkeypatch.setattr(MODULE.subprocess, "Popen", fail_popen)
+
+    original_snapshot = MODULE._ensure_validation_snapshot
+    mutate_before_bind = {"done": False}
+
+    def snapshot_then_mutate(candidate_value, *, reservation_digest):
+        snapshot = original_snapshot(candidate_value, reservation_digest=reservation_digest)
+        if not mutate_before_bind["done"]:
+            value = json.loads(result_path.read_text(encoding="utf-8"))
+            value["tests"] = [{"command": "changed after snapshot", "exitCode": 0}]
+            result_path.write_text(json.dumps(value), encoding="utf-8")
+            mutate_before_bind["done"] = True
+        return snapshot
+
+    monkeypatch.setattr(MODULE, "_ensure_validation_snapshot", snapshot_then_mutate)
+    with pytest.raises(RuntimeError, match="popen failed"):
+        MODULE.validation_followup_deliver(
+            SimpleNamespace(
+                ledger=tmp_path / "ledger.sqlite3",
+                thread_id=candidate["threadId"],
+                result_digest=candidate["resultDigest"],
+            )
+        )
+
+    snapshot_path = tmp_path / "state" / "validation-inputs" / f"{reservation_digest}.json"
+    assert snapshot_path.read_bytes() == original_live_bytes
+    assert stat.S_IMODE(snapshot_path.stat().st_mode) == 0o400
+    binding = store.validation_followup_delivery_binding(
+        thread_id=candidate["threadId"],
+        result_digest=candidate["resultDigest"],
+        reservation_digest=reservation_digest,
+    )
+    assert binding is not None
+    assert binding["snapshotPath"] == f"validation-inputs/{reservation_digest}.json"
+    assert binding["worktreeInputPath"] == (
+        f".oss-pr-radar/validation-inputs/{reservation_digest}.json"
+    )
+    assert binding["worktreeInputDigest"] == binding["snapshotDigest"]
+    assert store.unresolved_validation_followups()[0]["reservationDigest"] == reservation_digest
+
+    monkeypatch.setattr(
+        MODULE,
+        "_task_result_path",
+        lambda _candidate: pytest.fail("retry must not read live result.json"),
+    )
+    with pytest.raises(RuntimeError, match="popen failed"):
+        MODULE.validation_followup_deliver(
+            SimpleNamespace(
+                ledger=tmp_path / "ledger.sqlite3",
+                thread_id=candidate["threadId"],
+                result_digest=candidate["resultDigest"],
+            )
+        )
+    assert store.validation_followup_delivery_binding(
+        thread_id=candidate["threadId"],
+        result_digest=candidate["resultDigest"],
+        reservation_digest=reservation_digest,
+    ) == binding
+
+
+def test_validation_snapshot_tamper_does_not_start_or_cancel_bound_turn(monkeypatch, tmp_path):
+    store, worktree, _result_path = _controller_commit_result(
+        tmp_path, missing_quality=("relevant_tests_green",)
+    )
+    MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    candidate = store.validation_followup_candidates()[0]
+    reserved = MODULE.validation_followup_reserve(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            thread_id=candidate["threadId"],
+            result_digest=candidate["resultDigest"],
+            prefetch_complete=False,
+        )
+    )
+    rollout = tmp_path / "rollout.jsonl"
+    rollout.write_text("", encoding="utf-8")
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "CREATE TABLE threads (id TEXT, cwd TEXT, archived INTEGER, "
+            "first_user_message TEXT, rollout_path TEXT, git_origin_url TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?,?,?,?)",
+            (
+                candidate["threadId"],
+                str(worktree),
+                0,
+                MODULE.issue_prompt(candidate["issueUrl"]),
+                str(rollout),
+                "https://github.com/a/b.git",
+            ),
+        )
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "WORKTREE_ROOT", tmp_path)
+    bind_validation_runtime(monkeypatch, tmp_path)
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    monkeypatch.setattr(
+        MODULE.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: pytest.fail("tampered snapshot must not start a worker"),
+    )
+
+    original_authorize = store.authorize_task_turn_delivery
+
+    def authorize_then_tamper(**kwargs):
+        result = original_authorize(**kwargs)
+        snapshot = MODULE.STATE / kwargs["snapshot_path"]
+        snapshot.chmod(0o600)
+        return result
+
+    monkeypatch.setattr(store, "authorize_task_turn_delivery", authorize_then_tamper)
+    with pytest.raises(RuntimeError, match="validation snapshot permissions are unsafe"):
+        MODULE.validation_followup_deliver(
+            SimpleNamespace(
+                ledger=tmp_path / "ledger.sqlite3",
+                thread_id=candidate["threadId"],
+                result_digest=candidate["resultDigest"],
+            )
+        )
+    assert store.unresolved_validation_followups()[0]["reservationDigest"] == reserved[
+        "reservationDigest"
+    ]
+
+
+def test_validation_snapshot_same_reservation_converges_to_one_file(monkeypatch, tmp_path):
+    worktree = tmp_path / "worktree"
+    result_path = worktree / ".oss-pr-radar" / "result.json"
+    result_path.parent.mkdir(parents=True)
+    raw = b'{"tests": [{"command": "focused", "exitCode": 0}]}\n'
+    result_path.write_bytes(raw)
+    candidate = {
+        "worktreePath": str(worktree),
+        "resultDigest": hashlib.sha256(raw).hexdigest(),
+    }
+    bind_validation_runtime(monkeypatch, tmp_path)
+    reservation_digest = "a" * 64
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        bindings = list(
+            executor.map(
+                lambda _index: MODULE._ensure_validation_snapshot(
+                    candidate, reservation_digest=reservation_digest
+                ),
+                range(4),
+            )
+        )
+
+    assert {item["snapshotId"] for item in bindings} == {reservation_digest}
+    assert len(list((tmp_path / "state" / "validation-inputs").glob("*.json"))) == 1
+
+
+def test_validation_snapshot_rejects_missing_path_mode_and_digest(monkeypatch, tmp_path):
+    worktree = tmp_path / "worktree"
+    result_path = worktree / ".oss-pr-radar" / "result.json"
+    result_path.parent.mkdir(parents=True)
+    raw = b'{"tests": [{"command": "focused", "exitCode": 0}]}\n'
+    result_path.write_bytes(raw)
+    candidate = {
+        "worktreePath": str(worktree),
+        "resultDigest": hashlib.sha256(raw).hexdigest(),
+    }
+    bind_validation_runtime(monkeypatch, tmp_path)
+    reservation_digest = "b" * 64
+    binding = MODULE._ensure_validation_snapshot(
+        candidate, reservation_digest=reservation_digest
+    )
+    snapshot = tmp_path / "state" / "validation-inputs" / f"{reservation_digest}.json"
+
+    with pytest.raises(RuntimeError, match="validation snapshot path is invalid"):
+        MODULE._validation_snapshot_metadata(
+            candidate=candidate,
+            reservation_digest=reservation_digest,
+            snapshot_id=reservation_digest,
+            snapshot_path="validation-inputs/../result.json",
+            snapshot_digest=binding["snapshotDigest"],
+        )
+
+    snapshot.unlink()
+    with pytest.raises(RuntimeError, match="validation snapshot is missing"):
+        MODULE._validation_snapshot_metadata(
+            candidate=candidate,
+            reservation_digest=reservation_digest,
+            snapshot_id=reservation_digest,
+            snapshot_path=binding["snapshotPath"],
+            snapshot_digest=binding["snapshotDigest"],
+        )
+
+    MODULE._ensure_validation_snapshot(candidate, reservation_digest=reservation_digest)
+    snapshot.chmod(0o600)
+    with pytest.raises(RuntimeError, match="validation snapshot permissions are unsafe"):
+        MODULE._validation_snapshot_metadata(
+            candidate=candidate,
+            reservation_digest=reservation_digest,
+            snapshot_id=reservation_digest,
+            snapshot_path=binding["snapshotPath"],
+            snapshot_digest=binding["snapshotDigest"],
+        )
+
+    snapshot.chmod(0o400)
+    with pytest.raises(RuntimeError, match="validation snapshot digest mismatch"):
+        MODULE._validation_snapshot_metadata(
+            candidate=candidate,
+            reservation_digest=reservation_digest,
+            snapshot_id=reservation_digest,
+            snapshot_path=binding["snapshotPath"],
+            snapshot_digest="c" * 64,
+        )
+
+
+def test_validation_snapshot_symlink_is_rejected_before_target_read(monkeypatch, tmp_path):
+    worktree = tmp_path / "worktree"
+    result_path = worktree / ".oss-pr-radar" / "result.json"
+    result_path.parent.mkdir(parents=True)
+    raw = b'{"tests": [{"command": "focused", "exitCode": 0}]}\n'
+    result_path.write_bytes(raw)
+    candidate = {
+        "worktreePath": str(worktree),
+        "resultDigest": hashlib.sha256(raw).hexdigest(),
+    }
+    bind_validation_runtime(monkeypatch, tmp_path)
+    reservation_digest = "d" * 64
+    MODULE._ensure_validation_snapshot(candidate, reservation_digest=reservation_digest)
+    snapshot = tmp_path / "state" / "validation-inputs" / f"{reservation_digest}.json"
+    target = tmp_path / "target.json"
+    target.write_bytes(snapshot.read_bytes())
+    snapshot.unlink()
+    snapshot.symlink_to(target)
+    monkeypatch.setattr(
+        Path,
+        "read_bytes",
+        lambda _path: pytest.fail("validation snapshot must not read through a symlink"),
+    )
+
+    with pytest.raises(RuntimeError, match="validation snapshot permissions are unsafe"):
+        MODULE._ensure_validation_snapshot(candidate, reservation_digest=reservation_digest)
+
+
+def test_validation_live_result_chain_never_follows_a_symlink(monkeypatch, tmp_path):
+    worktree = tmp_path / "worktree"
+    private = worktree / ".oss-pr-radar"
+    private.mkdir(parents=True)
+    target = tmp_path / "outside-result.json"
+    raw = b'{"tests": [{"command": "focused", "exitCode": 0}]}\n'
+    target.write_bytes(raw)
+    result_path = private / "result.json"
+    result_path.symlink_to(target)
+    candidate = {
+        "worktreePath": str(worktree),
+        "resultDigest": hashlib.sha256(raw).hexdigest(),
+        "missing": ["relevant_tests_green"],
+    }
+    bind_validation_runtime(monkeypatch, tmp_path)
+
+    operations = (
+        lambda: MODULE._validation_prefetch_plan(candidate),
+        lambda: MODULE._validation_result_digest(candidate),
+        lambda: MODULE._validation_policy_reassessment_needed(candidate),
+        lambda: MODULE._ensure_validation_snapshot(
+            candidate, reservation_digest="e" * 64
+        ),
+    )
+    for operation in operations:
+        with pytest.raises(RuntimeError, match="validation result permissions are unsafe"):
+            operation()
+    assert target.read_bytes() == raw
+    assert list((tmp_path / "state").rglob("*.json")) == []
+
+
+def test_validation_live_result_rejects_dangerous_mode_and_wrong_owner(
+    monkeypatch, tmp_path
+):
+    worktree = tmp_path / "worktree"
+    result_path = worktree / ".oss-pr-radar" / "result.json"
+    result_path.parent.mkdir(parents=True)
+    raw = b'{"tests": [{"command": "focused", "exitCode": 0}]}\n'
+    result_path.write_bytes(raw)
+    candidate = {
+        "worktreePath": str(worktree),
+        "resultDigest": hashlib.sha256(raw).hexdigest(),
+    }
+
+    result_path.chmod(0o666)
+    with pytest.raises(RuntimeError, match="validation result permissions are unsafe"):
+        MODULE._validation_result_digest(candidate)
+
+    result_path.chmod(0o644)
+    original_stat = MODULE.os.stat
+
+    def wrong_owner_stat(path, *args, **kwargs):
+        value = original_stat(path, *args, **kwargs)
+        if path == Path("result.json") and kwargs.get("dir_fd") is not None:
+            fields = list(value)
+            fields[4] = os.getuid() + 1
+            return os.stat_result(fields)
+        return value
+
+    monkeypatch.setattr(MODULE.os, "stat", wrong_owner_stat)
+    with pytest.raises(RuntimeError, match="validation result permissions are unsafe"):
+        MODULE._validation_result_digest(candidate)
+
+
+def test_validation_live_result_detects_inode_swap_between_lstat_and_open(
+    monkeypatch, tmp_path
+):
+    worktree = tmp_path / "worktree"
+    result_path = worktree / ".oss-pr-radar" / "result.json"
+    result_path.parent.mkdir(parents=True)
+    raw = b'{"tests": [{"command": "focused", "exitCode": 0}]}\n'
+    result_path.write_bytes(raw)
+    candidate = {
+        "worktreePath": str(worktree),
+        "resultDigest": hashlib.sha256(raw).hexdigest(),
+    }
+    original_stat = MODULE.os.stat
+    swapped = False
+
+    def swapping_stat(path, *args, **kwargs):
+        nonlocal swapped
+        value = original_stat(path, *args, **kwargs)
+        if (
+            path == Path("result.json")
+            and kwargs.get("dir_fd") is not None
+            and not swapped
+        ):
+            replacement = result_path.with_suffix(".replacement")
+            replacement.write_bytes(raw)
+            replacement.chmod(0o644)
+            os.replace(replacement, result_path)
+            swapped = True
+        return value
+
+    monkeypatch.setattr(MODULE.os, "stat", swapping_stat)
+    with pytest.raises(RuntimeError, match="validation result changed before it was opened"):
+        MODULE._validation_result_digest(candidate)
+    assert swapped is True
+
+
+@pytest.mark.parametrize("replacement_kind", ["symlink", "different-inode"])
+def test_validation_live_result_read_fails_if_private_parent_is_replaced(
+    monkeypatch, tmp_path, replacement_kind
+):
+    worktree = tmp_path / "worktree"
+    private = worktree / MODULE.TASK_PRIVATE_DIR
+    private.mkdir(parents=True)
+    raw = b'{"tests": [{"command": "focused", "exitCode": 0}]}\n'
+    (private / "result.json").write_bytes(raw)
+    candidate = {
+        "worktreePath": str(worktree),
+        "resultDigest": hashlib.sha256(raw).hexdigest(),
+    }
+    replacement_private = tmp_path / f"live-{replacement_kind}-private"
+    replacement_private.mkdir()
+    outside_result = replacement_private / "result.json"
+    outside_result.write_bytes(b'{"outside": true}\n')
+    original_require = MODULE._require_validation_worktree_private_binding
+    swapped = False
+
+    def require_then_swap(**kwargs):
+        nonlocal swapped
+        original_require(**kwargs)
+        if not swapped:
+            _replace_validation_private_dir_after_binding(
+                worktree=worktree,
+                replacement_private=replacement_private,
+                replacement_kind=replacement_kind,
+            )
+            swapped = True
+
+    monkeypatch.setattr(
+        MODULE, "_require_validation_worktree_private_binding", require_then_swap
+    )
+
+    with pytest.raises(RuntimeError, match="private directory is unsafe"):
+        MODULE._validation_result_digest(candidate)
+    assert swapped is True
+    visible_outside_result = (
+        worktree / MODULE.TASK_PRIVATE_DIR / "result.json"
+        if replacement_kind == "different-inode"
+        else outside_result
+    )
+    assert visible_outside_result.read_bytes() == b'{"outside": true}\n'
+
+
+@pytest.mark.parametrize("replacement_kind", ["symlink", "different-inode"])
+def test_validation_live_result_read_fails_if_worktree_parent_is_replaced(
+    monkeypatch, tmp_path, replacement_kind
+):
+    parent = tmp_path / "live-parent"
+    worktree = parent / "worktree"
+    private = worktree / MODULE.TASK_PRIVATE_DIR
+    private.mkdir(parents=True)
+    raw = b'{"tests": [{"command": "focused", "exitCode": 0}]}\n'
+    (private / "result.json").write_bytes(raw)
+    candidate = {
+        "worktreePath": str(worktree),
+        "resultDigest": hashlib.sha256(raw).hexdigest(),
+    }
+    replacement_parent = tmp_path / f"live-parent-{replacement_kind}"
+    replacement_worktree = replacement_parent / worktree.name
+    replacement_private = replacement_worktree / MODULE.TASK_PRIVATE_DIR
+    replacement_private.mkdir(parents=True)
+    outside_result = replacement_private / "result.json"
+    outside_result.write_bytes(b'{"outside": true}\n')
+    original_require = MODULE._require_validation_worktree_private_binding
+    swapped = False
+
+    def require_then_swap(**kwargs):
+        nonlocal swapped
+        original_require(**kwargs)
+        if not swapped:
+            _replace_validation_worktree_parent_after_binding(
+                parent=parent,
+                replacement_parent=replacement_parent,
+                replacement_kind=replacement_kind,
+            )
+            swapped = True
+
+    monkeypatch.setattr(
+        MODULE, "_require_validation_worktree_private_binding", require_then_swap
+    )
+
+    with pytest.raises(RuntimeError, match="validation worktree parent is unsafe"):
+        MODULE._validation_result_digest(candidate)
+    assert swapped is True
+    visible_outside_result = (
+        parent / worktree.name / MODULE.TASK_PRIVATE_DIR / "result.json"
+        if replacement_kind == "different-inode"
+        else outside_result
+    )
+    assert visible_outside_result.read_bytes() == b'{"outside": true}\n'
+
+
+@pytest.mark.parametrize("operation", ["ingest", "enqueue"])
+def test_task_result_candidate_rejects_private_symlink_without_external_read(
+    tmp_path, operation
+):
+    _store, worktree, _result_path = _controller_commit_result(tmp_path)
+    private = worktree / MODULE.TASK_PRIVATE_DIR
+    original_private = worktree / f"{MODULE.TASK_PRIVATE_DIR}.original"
+    outside_private = tmp_path / "outside-private"
+    outside_private.mkdir()
+    outside_result = outside_private / "result.json"
+    outside_result.write_text("{not-json-from-outside", encoding="utf-8")
+    private.rename(original_private)
+    private.symlink_to(outside_private, target_is_directory=True)
+
+    if operation == "ingest":
+        result = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+        rejected = result["errors"]
+    else:
+        result = MODULE.enqueue_local_receipts(tmp_path / "ledger.sqlite3")
+        rejected = result["rejected"]
+
+    assert result["ok"] is False
+    assert rejected and rejected[0]["key"] == "a/b#1"
+    assert "not-json-from-outside" not in rejected[0]["error"]
+    assert outside_result.read_text(encoding="utf-8") == "{not-json-from-outside"
+
+
+@pytest.mark.parametrize("operation", ["ingest", "enqueue"])
+@pytest.mark.parametrize("replacement_kind", ["symlink", "different-inode"])
+def test_task_result_candidate_rejects_private_parent_replaced_after_binding(
+    monkeypatch, tmp_path, replacement_kind, operation
+):
+    _store, worktree, _result_path = _controller_commit_result(tmp_path)
+    replacement_private = tmp_path / f"task-result-{replacement_kind}-private"
+    replacement_private.mkdir()
+    outside_result = replacement_private / "result.json"
+    outside_result.write_text('{"outside": true}\n', encoding="utf-8")
+    original_require = MODULE._require_validation_worktree_private_binding
+    swapped = False
+
+    def require_then_swap(**kwargs):
+        nonlocal swapped
+        original_require(**kwargs)
+        if not swapped:
+            _replace_validation_private_dir_after_binding(
+                worktree=worktree,
+                replacement_private=replacement_private,
+                replacement_kind=replacement_kind,
+            )
+            swapped = True
+
+    monkeypatch.setattr(
+        MODULE, "_require_validation_worktree_private_binding", require_then_swap
+    )
+
+    if operation == "ingest":
+        result = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+        rejected = result["errors"]
+    else:
+        result = MODULE.enqueue_local_receipts(tmp_path / "ledger.sqlite3")
+        rejected = result["rejected"]
+
+    assert swapped is True
+    assert result["ok"] is False
+    assert rejected and rejected[0]["key"] == "a/b#1"
+    visible_outside_result = (
+        worktree / MODULE.TASK_PRIVATE_DIR / "result.json"
+        if replacement_kind == "different-inode"
+        else outside_result
+    )
+    assert visible_outside_result.read_bytes() == b'{"outside": true}\n'
+
+
+@pytest.mark.parametrize("operation", ["ingest", "enqueue"])
+def test_task_result_candidate_skips_missing_result_in_safe_private_dir(
+    tmp_path, operation
+):
+    _store, _worktree, result_path = _controller_commit_result(tmp_path)
+    result_path.unlink()
+
+    if operation == "ingest":
+        result = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+        assert result["ok"] is True
+        assert result["ingested"] == []
+        assert result["errors"] == []
+    else:
+        result = MODULE.enqueue_local_receipts(tmp_path / "ledger.sqlite3")
+        assert result["ok"] is True
+        assert result["queued"] == []
+        assert result["rejected"] == []
+
+
+def test_validation_result_absence_requires_existing_safe_private_dir(tmp_path):
+    worktree = tmp_path / "missing-private" / "worktree"
+    worktree.mkdir(parents=True)
+    candidate = {"worktreePath": str(worktree), "resultDigest": "a" * 64}
+
+    with pytest.raises(RuntimeError, match="validation worktree private directory is missing"):
+        MODULE._read_authenticated_validation_result_if_present(candidate)
+
+    private = worktree / MODULE.TASK_PRIVATE_DIR
+    private.mkdir(mode=0o700)
+    assert MODULE._read_authenticated_validation_result_if_present(candidate) is None
+
+
+def test_validation_worktree_path_must_be_absolute():
+    candidate = {"worktreePath": "relative-worktree", "resultDigest": "a" * 64}
+
+    with pytest.raises(RuntimeError, match="validation worktree path must be absolute"):
+        MODULE._read_authenticated_validation_result_if_present(candidate)
+
+
+def test_validation_worktree_outside_trusted_roots_fails_closed(monkeypatch, tmp_path):
+    trusted = tmp_path / "trusted"
+    trusted.mkdir()
+    outside = tmp_path / "outside" / "worktree"
+    (outside / MODULE.TASK_PRIVATE_DIR).mkdir(parents=True)
+    monkeypatch.setattr(MODULE, "WORKTREE_ROOT", trusted)
+    candidate = {"worktreePath": str(outside), "resultDigest": "a" * 64}
+
+    with pytest.raises(RuntimeError, match="outside trusted roots"):
+        MODULE._read_authenticated_validation_result_if_present(candidate)
+
+
+def _replace_validation_snapshot_parent_after_binding(
+    *, state: Path, replacement: Path, parent: str, replacement_kind: str
+) -> None:
+    if parent == "state":
+        original = state.with_name(f"{state.name}.original")
+        state.rename(original)
+        if replacement_kind == "symlink":
+            state.symlink_to(replacement, target_is_directory=True)
+        else:
+            replacement.rename(state)
+        return
+
+    root = state / "validation-inputs"
+    original = state / "validation-inputs.original"
+    root.rename(original)
+    if replacement_kind == "symlink":
+        root.symlink_to(replacement, target_is_directory=True)
+    else:
+        replacement.rename(root)
+
+
+@pytest.mark.parametrize("parent", ["state", "root"])
+@pytest.mark.parametrize("replacement_kind", ["symlink", "different-inode"])
+def test_validation_snapshot_read_fails_if_parent_is_replaced(
+    monkeypatch, tmp_path, parent, replacement_kind
+):
+    worktree = tmp_path / "worktree"
+    result_path = worktree / MODULE.TASK_PRIVATE_DIR / "result.json"
+    result_path.parent.mkdir(parents=True)
+    raw = b'{"tests": [{"command": "focused", "exitCode": 0}]}\n'
+    result_path.write_bytes(raw)
+    candidate = {
+        "worktreePath": str(worktree),
+        "resultDigest": hashlib.sha256(raw).hexdigest(),
+    }
+    state = bind_validation_runtime(monkeypatch, tmp_path)
+    reservation_digest = "7" * 64
+    binding = MODULE._ensure_validation_snapshot(
+        candidate, reservation_digest=reservation_digest
+    )
+
+    replacement = tmp_path / f"snapshot-read-{parent}-{replacement_kind}"
+    replacement_root = replacement / "validation-inputs" if parent == "state" else replacement
+    replacement_root.mkdir(parents=True)
+    replacement_root.chmod(0o700)
+    outside_snapshot = replacement_root / f"{reservation_digest}.json"
+    outside_snapshot.write_bytes(b'{"outside": true}\n')
+    outside_snapshot.chmod(0o400)
+    original_require = MODULE._require_validation_snapshot_root_binding
+    swapped = False
+
+    def require_then_swap(**kwargs):
+        nonlocal swapped
+        original_require(**kwargs)
+        if not swapped:
+            _replace_validation_snapshot_parent_after_binding(
+                state=state,
+                replacement=replacement,
+                parent=parent,
+                replacement_kind=replacement_kind,
+            )
+            swapped = True
+
+    monkeypatch.setattr(
+        MODULE, "_require_validation_snapshot_root_binding", require_then_swap
+    )
+
+    expected_error = (
+        "validation snapshot state directory is unsafe"
+        if parent == "state"
+        else "validation snapshot root is unsafe"
+    )
+    with pytest.raises(RuntimeError, match=expected_error):
+        MODULE._validation_snapshot_metadata(
+            candidate=candidate,
+            reservation_digest=reservation_digest,
+            snapshot_id=binding["snapshotId"],
+            snapshot_path=binding["snapshotPath"],
+            snapshot_digest=binding["snapshotDigest"],
+        )
+    assert swapped is True
+    visible_outside_snapshot = (
+        state / "validation-inputs" / outside_snapshot.name
+        if replacement_kind == "different-inode"
+        else outside_snapshot
+    )
+    assert visible_outside_snapshot.read_bytes() == b'{"outside": true}\n'
+
+
+@pytest.mark.parametrize("parent", ["state", "root"])
+@pytest.mark.parametrize("replacement_kind", ["symlink", "different-inode"])
+def test_validation_snapshot_write_fails_if_parent_is_replaced(
+    monkeypatch, tmp_path, parent, replacement_kind
+):
+    worktree = tmp_path / "worktree"
+    result_path = worktree / MODULE.TASK_PRIVATE_DIR / "result.json"
+    result_path.parent.mkdir(parents=True)
+    raw = b'{"tests": [{"command": "focused", "exitCode": 0}]}\n'
+    result_path.write_bytes(raw)
+    candidate = {
+        "worktreePath": str(worktree),
+        "resultDigest": hashlib.sha256(raw).hexdigest(),
+    }
+    state = bind_validation_runtime(monkeypatch, tmp_path)
+    state.mkdir()
+    (state / "validation-inputs").mkdir(mode=0o700)
+    replacement = tmp_path / f"snapshot-write-{parent}-{replacement_kind}"
+    replacement_root = replacement / "validation-inputs" if parent == "state" else replacement
+    replacement_root.mkdir(parents=True)
+    replacement_root.chmod(0o700)
+    original_require = MODULE._require_validation_snapshot_root_binding
+    swapped = False
+
+    def require_then_swap(**kwargs):
+        nonlocal swapped
+        original_require(**kwargs)
+        if not swapped:
+            _replace_validation_snapshot_parent_after_binding(
+                state=state,
+                replacement=replacement,
+                parent=parent,
+                replacement_kind=replacement_kind,
+            )
+            swapped = True
+
+    monkeypatch.setattr(
+        MODULE, "_require_validation_snapshot_root_binding", require_then_swap
+    )
+
+    expected_error = (
+        "validation snapshot state directory is unsafe"
+        if parent == "state"
+        else "validation snapshot root is unsafe"
+    )
+    with pytest.raises(RuntimeError, match=expected_error):
+        MODULE._ensure_validation_snapshot(candidate, reservation_digest="8" * 64)
+    assert swapped is True
+    visible_replacement_root = (
+        state / "validation-inputs"
+        if replacement_kind == "different-inode"
+        else replacement_root
+    )
+    assert list(visible_replacement_root.iterdir()) == []
+
+
+def test_validation_snapshot_root_symlink_is_rejected(monkeypatch, tmp_path):
+    worktree = tmp_path / "worktree"
+    result_path = worktree / ".oss-pr-radar" / "result.json"
+    result_path.parent.mkdir(parents=True)
+    raw = b'{"tests": [{"command": "focused", "exitCode": 0}]}\n'
+    result_path.write_bytes(raw)
+    candidate = {
+        "worktreePath": str(worktree),
+        "resultDigest": hashlib.sha256(raw).hexdigest(),
+    }
+    state = bind_validation_runtime(monkeypatch, tmp_path)
+    state.mkdir()
+    outside = tmp_path / "outside-snapshots"
+    outside.mkdir()
+    (state / "validation-inputs").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(RuntimeError, match="validation snapshot root is unsafe"):
+        MODULE._ensure_validation_snapshot(candidate, reservation_digest="f" * 64)
+    assert list(outside.iterdir()) == []
+
+
+def test_validation_snapshot_state_parent_must_match_root(monkeypatch, tmp_path):
+    worktree = tmp_path / "worktree"
+    result_path = worktree / MODULE.TASK_PRIVATE_DIR / "result.json"
+    result_path.parent.mkdir(parents=True)
+    raw = b'{"tests": [{"command": "focused", "exitCode": 0}]}\n'
+    result_path.write_bytes(raw)
+    candidate = {
+        "worktreePath": str(worktree),
+        "resultDigest": hashlib.sha256(raw).hexdigest(),
+    }
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    monkeypatch.setattr(MODULE, "ROOT", runtime)
+    detached_state = tmp_path / "detached-state"
+    monkeypatch.setattr(MODULE, "STATE", detached_state)
+
+    with pytest.raises(RuntimeError, match="not bound to ROOT"):
+        MODULE._ensure_validation_snapshot(candidate, reservation_digest="1" * 64)
+    assert not detached_state.exists()
+
+
+@pytest.mark.parametrize("replacement_kind", ["symlink", "different-inode"])
+def test_validation_snapshot_create_fails_if_runtime_root_is_replaced(
+    monkeypatch, tmp_path, replacement_kind
+):
+    worktree = tmp_path / "worktree"
+    result_path = worktree / MODULE.TASK_PRIVATE_DIR / "result.json"
+    result_path.parent.mkdir(parents=True)
+    raw = b'{"tests": [{"command": "focused", "exitCode": 0}]}\n'
+    result_path.write_bytes(raw)
+    candidate = {
+        "worktreePath": str(worktree),
+        "resultDigest": hashlib.sha256(raw).hexdigest(),
+    }
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    monkeypatch.setattr(MODULE, "ROOT", runtime)
+    monkeypatch.setattr(MODULE, "STATE", runtime / "state")
+    replacement = tmp_path / f"runtime-replacement-{replacement_kind}"
+    replacement.mkdir()
+    original_child = MODULE._open_directory_child
+    swapped = False
+
+    def open_child_then_swap(**kwargs):
+        nonlocal swapped
+        if kwargs.get("label") == "validation snapshot state directory" and not swapped:
+            original_runtime = runtime.with_name("runtime.original")
+            runtime.rename(original_runtime)
+            if replacement_kind == "symlink":
+                runtime.symlink_to(replacement, target_is_directory=True)
+            else:
+                replacement.rename(runtime)
+            swapped = True
+        return original_child(**kwargs)
+
+    monkeypatch.setattr(MODULE, "_open_directory_child", open_child_then_swap)
+
+    with pytest.raises(RuntimeError, match="validation snapshot runtime root is unsafe"):
+        MODULE._ensure_validation_snapshot(candidate, reservation_digest="2" * 64)
+    assert swapped is True
+    visible_replacement_root = runtime if replacement_kind == "different-inode" else replacement
+    assert not (visible_replacement_root / "state").exists()
+
+
 def test_validation_followup_list_reconciles_and_reports_unchanged_gap(tmp_path):
-    store, _worktree = registered_store(tmp_path)
+    store, worktree = registered_store(tmp_path)
+    (worktree / MODULE.TASK_PRIVATE_DIR).mkdir(mode=0o700)
     store.record_validation_deferred(
         "a/b#1",
         thread_id="thread-1",
@@ -9394,6 +11217,8 @@ def test_validation_followup_never_abandons_an_unreceipted_delivery(monkeypatch,
             ("thread-1", int((now - timedelta(hours=3)).timestamp()), None),
         )
 
+    reservation_digest = "b" * 64
+
     class Store:
         def reconcile_validation_no_progress(self):
             return 0
@@ -9407,6 +11232,7 @@ def test_validation_followup_never_abandons_an_unreceipted_delivery(monkeypatch,
                     "key": "a/b#1",
                     "threadId": "thread-1",
                     "resultDigest": "a" * 64,
+                    "reservationDigest": reservation_digest,
                     "missing": ["relevant_tests_green"],
                     "reservedAt": reserved_at,
                 }
@@ -9452,6 +11278,8 @@ def test_validation_followup_exposes_active_writer_as_desktop_handoff(monkeypatc
             ("thread-1", int((now - timedelta(hours=3)).timestamp()), None),
         )
 
+    reservation_digest = "b" * 64
+
     class Store:
         def reconcile_validation_no_progress(self):
             return 0
@@ -9466,6 +11294,7 @@ def test_validation_followup_exposes_active_writer_as_desktop_handoff(monkeypatc
                     "issueUrl": "https://github.com/a/b/issues/1",
                     "threadId": "thread-1",
                     "resultDigest": "a" * 64,
+                    "reservationDigest": reservation_digest,
                     "missing": ["independent_review_passed"],
                     "reservedAt": reserved_at,
                 }
@@ -9480,12 +11309,11 @@ def test_validation_followup_exposes_active_writer_as_desktop_handoff(monkeypatc
     state = tmp_path / "state"
     receipt_root = state / "task_turn_receipts"
     receipt_root.mkdir(parents=True)
-    receipt_key = MODULE.sha256_json(
-        {
-            "deliveryKind": "validation-followup",
-            "threadId": "thread-1",
-            "deliveryToken": "a" * 64,
-        }
+    receipt_key = MODULE._task_turn_delivery_file_key(
+        delivery_kind="validation-followup",
+        thread_id="thread-1",
+        delivery_token="a" * 64,
+        validation_reservation_digest=reservation_digest,
     )
     (receipt_root / f"{receipt_key}.json").write_text(
         json.dumps(
@@ -9497,6 +11325,7 @@ def test_validation_followup_exposes_active_writer_as_desktop_handoff(monkeypatc
                     "RuntimeError:DESKTOP_ACTIVE_WRITER:"
                     "thread thread-1 already has an active writer"
                 ),
+                "reservationDigest": reservation_digest,
             }
         ),
         encoding="utf-8",
@@ -9522,6 +11351,7 @@ def test_validation_followup_exposes_active_writer_as_desktop_handoff(monkeypatc
 def test_negative_validation_receipt_rearms_the_same_result(monkeypatch, tmp_path):
     reserved_at = iso_z(datetime.now(UTC) - timedelta(minutes=2))
     calls = []
+    reservation_digest = "b" * 64
 
     class Store:
         def unresolved_pr_followups(self):
@@ -9533,6 +11363,7 @@ def test_negative_validation_receipt_rearms_the_same_result(monkeypatch, tmp_pat
                     "key": "a/b#1",
                     "threadId": "thread-1",
                     "resultDigest": "a" * 64,
+                    "reservationDigest": reservation_digest,
                     "reservedAt": reserved_at,
                 }
             ]
@@ -9543,20 +11374,28 @@ def test_negative_validation_receipt_rearms_the_same_result(monkeypatch, tmp_pat
     state = tmp_path / "state"
     receipt_root = state / "task_turn_receipts"
     receipt_root.mkdir(parents=True)
-    receipt_key = MODULE.sha256_json(
-        {
-            "deliveryKind": "validation-followup",
-            "threadId": "thread-1",
-            "deliveryToken": "a" * 64,
-        }
+    receipt_key = MODULE._task_turn_delivery_file_key(
+        delivery_kind="validation-followup",
+        thread_id="thread-1",
+        delivery_token="a" * 64,
+        validation_reservation_digest=reservation_digest,
     )
     receipt = receipt_root / f"{receipt_key}.json"
     launch = receipt_root / f"{receipt_key}.launch.json"
+    log = receipt_root / f"{receipt_key}.log"
     receipt.write_text(
-        json.dumps({"ok": False, "turnStarted": False, "error": "resume failed"}),
+        json.dumps(
+            {
+                "ok": False,
+                "turnStarted": False,
+                "error": "resume failed",
+                "reservationDigest": reservation_digest,
+            }
+        ),
         encoding="utf-8",
     )
     launch.write_text(json.dumps({"pid": 0}), encoding="utf-8")
+    log.write_text("old attempt", encoding="utf-8")
     monkeypatch.setattr(MODULE, "STATE", state)
 
     rearmed = MODULE._rearm_negative_followup_deliveries(Store())
@@ -9579,11 +11418,13 @@ def test_negative_validation_receipt_rearms_the_same_result(monkeypatch, tmp_pat
     ]
     assert not receipt.exists()
     assert not launch.exists()
+    assert not log.exists()
 
 
 def test_active_writer_receipt_waits_for_desktop_handoff_instead_of_rearming(monkeypatch, tmp_path):
     reserved_at = iso_z(datetime.now(UTC) - timedelta(minutes=2))
     calls = []
+    reservation_digest = "b" * 64
 
     class Store:
         def unresolved_pr_followups(self):
@@ -9595,6 +11436,7 @@ def test_active_writer_receipt_waits_for_desktop_handoff_instead_of_rearming(mon
                     "key": "a/b#1",
                     "threadId": "thread-1",
                     "resultDigest": "a" * 64,
+                    "reservationDigest": reservation_digest,
                     "reservedAt": reserved_at,
                 }
             ]
@@ -9605,12 +11447,11 @@ def test_active_writer_receipt_waits_for_desktop_handoff_instead_of_rearming(mon
     state = tmp_path / "state"
     receipt_root = state / "task_turn_receipts"
     receipt_root.mkdir(parents=True)
-    receipt_key = MODULE.sha256_json(
-        {
-            "deliveryKind": "validation-followup",
-            "threadId": "thread-1",
-            "deliveryToken": "a" * 64,
-        }
+    receipt_key = MODULE._task_turn_delivery_file_key(
+        delivery_kind="validation-followup",
+        thread_id="thread-1",
+        delivery_token="a" * 64,
+        validation_reservation_digest=reservation_digest,
     )
     receipt = receipt_root / f"{receipt_key}.json"
     receipt.write_text(
@@ -9619,6 +11460,7 @@ def test_active_writer_receipt_waits_for_desktop_handoff_instead_of_rearming(mon
                 "ok": False,
                 "turnStarted": False,
                 "error": "RuntimeError:DESKTOP_ACTIVE_WRITER:active writer",
+                "reservationDigest": reservation_digest,
             }
         ),
         encoding="utf-8",
@@ -9633,6 +11475,7 @@ def test_active_writer_receipt_waits_for_desktop_handoff_instead_of_rearming(mon
 
 def test_materialized_desktop_handoff_is_committed_without_resending(monkeypatch, tmp_path):
     committed = []
+    reservation_digest = "b" * 64
 
     class Store:
         def unresolved_pr_followups(self):
@@ -9644,6 +11487,7 @@ def test_materialized_desktop_handoff_is_committed_without_resending(monkeypatch
                     "key": "a/b#1",
                     "threadId": "thread-1",
                     "resultDigest": "a" * 64,
+                    "reservationDigest": reservation_digest,
                     "reservedAt": "2026-08-17T00:00:00Z",
                 }
             ]
@@ -9656,7 +11500,13 @@ def test_materialized_desktop_handoff_is_committed_without_resending(monkeypatch
 
     reconciled = MODULE._rearm_negative_followup_deliveries(Store())
 
-    assert committed == [{"thread_id": "thread-1", "result_digest": "a" * 64}]
+    assert committed == [
+        {
+            "thread_id": "thread-1",
+            "result_digest": "a" * 64,
+            "reservation_digest": reservation_digest,
+        }
+    ]
     assert reconciled == [
         {
             "kind": "validation-followup",
@@ -9985,7 +11835,7 @@ def test_validation_followup_uses_cumulative_files_for_first_publication(tmp_pat
     assert finalized["controllerCommitChangedFiles"] == ["test_runtime.py"]
     assert finalized["changedFiles"] == ["runtime.py", "test_runtime.py"]
 
-    finalized_after_sync, _raw = MODULE._finalize_controller_commit(
+    finalized_after_sync, _raw = _finalize_controller_commit_for_test(
         candidate={"worktreePath": str(worktree)},
         context=context | {"stage": "PR_OPEN"},
         value=finalized,
@@ -10074,7 +11924,7 @@ def test_validation_followup_normalizes_existing_complete_handoff(tmp_path, monk
     value.pop("controllerCommitChangedFiles", None)
     result_path.write_text(json.dumps(value), encoding="utf-8")
 
-    finalized, _raw = MODULE._finalize_controller_commit(
+    finalized, _raw = _finalize_controller_commit_for_test(
         candidate={"worktreePath": str(worktree)},
         context=context,
         value=value,
@@ -10088,7 +11938,7 @@ def test_validation_followup_normalizes_existing_complete_handoff(tmp_path, monk
         raise AssertionError("an already normalized handoff must not be rewritten")
 
     monkeypatch.setattr(MODULE, "_atomic_json", unexpected_write)
-    repeated, _raw = MODULE._finalize_controller_commit(
+    repeated, _raw = _finalize_controller_commit_for_test(
         candidate={"worktreePath": str(worktree)},
         context=context,
         value=finalized,
@@ -10128,7 +11978,7 @@ def test_validation_followup_allows_a_revision_to_remove_rejected_files(tmp_path
         }
     )
 
-    finalized, _raw = MODULE._finalize_controller_commit(
+    finalized, _raw = _finalize_controller_commit_for_test(
         candidate={"worktreePath": str(worktree)},
         context=context,
         value=value,
@@ -10169,7 +12019,7 @@ def test_validation_followup_recovers_a_committed_cumulative_file_handoff(tmp_pa
     )
     value.pop("controllerCommitChangedFiles", None)
 
-    finalized, _raw = MODULE._finalize_controller_commit(
+    finalized, _raw = _finalize_controller_commit_for_test(
         candidate={"worktreePath": str(worktree)},
         context=context,
         value=value,
@@ -10187,7 +12037,7 @@ def test_controller_accepts_equivalent_rebased_commit_receipt(tmp_path):
         (worktree / ".oss-pr-radar" / "task-context.json").read_text(encoding="utf-8")
     )
     value = json.loads(result_path.read_text(encoding="utf-8"))
-    finalized, _raw = MODULE._finalize_controller_commit(
+    finalized, _raw = _finalize_controller_commit_for_test(
         candidate={"worktreePath": str(worktree)},
         context=context,
         value=value,
@@ -10199,7 +12049,7 @@ def test_controller_accepts_equivalent_rebased_commit_receipt(tmp_path):
     rebased_commit = run_git(worktree, "rev-parse", "HEAD")
     assert rebased_commit != receipt_commit
 
-    normalized, _raw = MODULE._finalize_controller_commit(
+    normalized, _raw = _finalize_controller_commit_for_test(
         candidate={"worktreePath": str(worktree)},
         context=context,
         value=finalized,
@@ -10217,7 +12067,7 @@ def test_controller_rejects_changed_commit_behind_an_old_receipt(tmp_path):
         (worktree / ".oss-pr-radar" / "task-context.json").read_text(encoding="utf-8")
     )
     value = json.loads(result_path.read_text(encoding="utf-8"))
-    finalized, _raw = MODULE._finalize_controller_commit(
+    finalized, _raw = _finalize_controller_commit_for_test(
         candidate={"worktreePath": str(worktree)},
         context=context,
         value=value,
@@ -10229,7 +12079,7 @@ def test_controller_rejects_changed_commit_behind_an_old_receipt(tmp_path):
     run_git(worktree, "commit", "--amend", "-m", "fix: change runtime behavior")
 
     with pytest.raises(RuntimeError, match="controller commit receipt does not match HEAD"):
-        MODULE._finalize_controller_commit(
+        _finalize_controller_commit_for_test(
             candidate={"worktreePath": str(worktree)},
             context=context,
             value=finalized,
@@ -10316,7 +12166,7 @@ def test_ingestion_recovers_seen_complete_pr_followup_parent(tmp_path, monkeypat
         for item in store.task_result_candidates()
         if item["key"] == "a/b#1" and item["threadId"] == "thread-1"
     )
-    result_value, _raw = MODULE._finalize_controller_commit(
+    result_value, _raw = _finalize_controller_commit_for_test(
         candidate=candidate_record,
         context=context,
         value=result_value,
@@ -10446,6 +12296,41 @@ def test_validation_prefetch_plan_is_lockfile_scoped(tmp_path):
                 "--no-fund",
             ],
         },
+    ]
+
+
+def test_validation_followup_changed_result_is_retryable_not_an_error(monkeypatch, tmp_path):
+    store, _worktree, result_path = _controller_commit_result(tmp_path)
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    raw = result_path.read_bytes()
+    expected_digest = MODULE._task_result_digest(value, raw)
+    store.record_stage("a/b#1", "VALIDATION_PENDING")
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest=expected_digest,
+        missing=["relevant_tests_green", "independent_review_passed"],
+    )
+
+    value["evidence"] = {"summary": "controller was still writing the result"}
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    monkeypatch.setattr(MODULE, "controller_review_result", lambda *_args: None)
+
+    listed = MODULE.validation_followup_list(
+        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3")
+    )
+
+    assert listed["ok"] is True, listed
+    assert listed["errors"] == []
+    assert listed["candidates"] == []
+    assert listed["concurrentDeferred"] == [
+        {
+            "key": "a/b#1",
+            "resultDigest": expected_digest,
+            "reason": "VALIDATION_RESULT_CHANGED_AFTER_QUEUE",
+            "expectedResultDigest": expected_digest,
+            "observedResultDigest": hashlib.sha256(result_path.read_bytes()).hexdigest(),
+        }
     ]
 
 
@@ -10952,21 +12837,98 @@ def test_privileged_controller_runs_granted_publication_queue(monkeypatch, tmp_p
     assert all(call[2] == ledger_path for call in calls)
 
 
+def test_publication_queue_requires_bound_snapshot_for_task_result(monkeypatch, tmp_path):
+    fixture = _legal_queue_publication_fixture(tmp_path)
+    live_task_result_request = dict(fixture["request"])
+    live_task_result_request.pop("evidenceRawBase64")
+
+    class Store:
+        request = live_task_result_request
+
+        def publication_work_items(self):
+            return [
+                {
+                    "request_id": "request-1",
+                    "request": self.request,
+                }
+            ]
+
+        def recover_failed_publication_preflight(self, *_args, **_kwargs):
+            return False
+
+        def prepare_ambiguous_publication_effect(self, *_args, **_kwargs):
+            return None
+
+        def prepare_post_push_reconciliation(self, *_args, **_kwargs):
+            return None
+
+    store = Store()
+    controller_calls = []
+    broker_calls = []
+    executor_calls = []
+
+    def controller_review(_root, _value):
+        controller_calls.append(True)
+        return {"verdict": "PASS"}
+
+    def broker(*_args, **_kwargs):
+        broker_calls.append(True)
+        return {"granted": False, "audit": {"reason": "MIGRATED_REQUEST_REVIEWED"}}
+
+    def executor(*_args, **_kwargs):
+        executor_calls.append(True)
+        pytest.fail("task-result request without a snapshot must not publish")
+
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    monkeypatch.setattr(MODULE, "controller_review_result", controller_review)
+    monkeypatch.setattr(MODULE, "broker_publication_request", broker)
+    monkeypatch.setattr(MODULE, "_executor", executor)
+
+    missing_snapshot = MODULE.run_publication_queue(
+        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3")
+    )
+
+    assert missing_snapshot["published"] == []
+    assert missing_snapshot["blocked"] == []
+    assert missing_snapshot["errors"] == [
+        {
+            "requestId": "request-1",
+            "error": "task-result publication evidence requires a bound snapshot",
+        }
+    ]
+    assert controller_calls == []
+    assert broker_calls == []
+    assert executor_calls == []
+
+    store.request = fixture["request"]
+    migrated = MODULE.run_publication_queue(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert migrated["errors"] == []
+    assert migrated["blocked"] == [
+        {"requestId": "request-1", "reason": "MIGRATED_REQUEST_REVIEWED"}
+    ]
+    assert controller_calls == [True]
+    assert broker_calls == [True]
+    assert executor_calls == []
+
+
 def test_publication_queue_blocks_legacy_request_without_private_review(monkeypatch, tmp_path):
     evidence_path = tmp_path / "legacy-result.json"
-    evidence_path.write_text(
-        json.dumps({"quality": {"independent_review_passed": True}}), encoding="utf-8"
-    )
+    raw = json.dumps({"quality": {"independent_review_passed": True}}).encode("utf-8")
+    evidence_path.write_bytes(raw)
     recorded = []
 
     class Store:
         def publication_work_items(self):
             return [
-                {
-                    "request_id": "request-1",
-                    "request": {"evidencePath": str(evidence_path)},
-                }
-            ]
+                    {
+                        "request_id": "request-1",
+                        "request": {
+                            "evidencePath": str(evidence_path),
+                            "evidenceDigest": hashlib.sha256(raw).hexdigest(),
+                        },
+                    }
+                ]
 
         def recover_failed_publication_preflight(self, *_args, **_kwargs):
             return False
@@ -11006,9 +12968,16 @@ def test_publication_cap_blocks_before_push_or_create_pr(monkeypatch, tmp_path):
             auto_created=True,
         )
     evidence_path = tmp_path / "result.json"
-    evidence_path.write_text(
-        json.dumps({"quality": {"independent_review_passed": True}}), encoding="utf-8"
-    )
+    evidence = {
+        "key": "a/b#6",
+        "issueUrl": "https://github.com/a/b/issues/6",
+        "commitSha": "a" * 40,
+        "branch": "fix-6",
+        "worktreePath": str(tmp_path),
+        "quality": {"independent_review_passed": True},
+    }
+    raw = json.dumps(evidence, sort_keys=True).encode("utf-8")
+    evidence_path.write_bytes(raw)
     blocked = []
 
     class Store:
@@ -11022,9 +12991,10 @@ def test_publication_cap_blocks_before_push_or_create_pr(monkeypatch, tmp_path):
                         "issueUrl": "https://github.com/a/b/issues/6",
                         "commitSha": "a" * 40,
                         "branch": "fix-6",
-                        "worktreePath": str(tmp_path),
-                        "evidencePath": str(evidence_path),
-                        "publication": {
+                            "worktreePath": str(tmp_path),
+                            "evidencePath": str(evidence_path),
+                            "evidenceDigest": hashlib.sha256(raw).hexdigest(),
+                            "publication": {
                             "headOwner": "Oxygen56",
                             "baseBranch": "main",
                             "title": "fix: six",
