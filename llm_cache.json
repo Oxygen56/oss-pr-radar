@@ -19527,6 +19527,35 @@
     ],
     "why": "Issue clearly identifies a real performance bug with a concrete root cause and reproduction, but maintainer has not confirmed design direction and the issue is labeled 'needs triage' with a request for minimal reproduction. The proposed fix is actionable but requires maintainer confirmation to avoid conflicting with intended query semantics."
   },
+  "831a78955195a8fd88f5d2c19588100ce19dba210852a703533e4e7fe7567ccd": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "agor_mcp_servers_update auth merge semantics",
+      "session hot-reload on config change",
+      "error message sanitization for OAuth stages"
+    ],
+    "risks": [
+      "Potential API behavior change may require maintainer design approval",
+      "Merge semantics could break existing clients relying on full-replace behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce the blind update clobbering by calling agor_mcp_servers_update with only oauth_scope and asserting other auth fields remain unchanged",
+      "Test that after auth update, active sessions pick up new config without manual reconnect",
+      "Verify error messages no longer expose internal stage identifiers"
+    ],
+    "unknowns": [
+      "No maintainer confirmation on desired patch semantics",
+      "No existing tests or code anchors beyond issue text"
+    ],
+    "why": "The issue describes a concrete, reproducible bug in the MCP server auth-update flow: full-replace semantics without read-back, no session hot-reload, and leaky OAuth errors. It provides ordered repro steps, root cause analysis, and a suggested fix direction. This is a user-visible bug in an agent/inference infrastructure path, with clear actionability."
+  },
   "83864425fd83c6e9cd9ef02a1dbe7154481c38b16980935f89025323fb6e4841": {
     "confidence": 0.8,
     "contradictions": [],
@@ -26352,6 +26381,36 @@
       "Whether PR #7423 already addresses the root cause"
     ],
     "why": "Issue provides a detailed root cause and proposed fix, but the deterministic gate requires HUMAN_REVIEW and there is an existing PR (#7423) with semantic overlap that needs maintainer comparison. Also, potential duplicate issue #7490 and design confirmation are needed."
+  },
+  "b89249c5b8383b597578441c69ec1b4c01e5ccde233186fe5160d95202676f98": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found; comments confirm the root cause and scope."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "docker/entrypoint.sh: add '|| true' to all foreground while-true loops to prevent set -e from killing the subshell",
+      "possibly add regression test under test/integration/"
+    ],
+    "risks": [
+      "Potential behavior change if the loop is intentionally supposed to exit on certain errors; need to confirm maintainer preference.",
+      "The fix may need to be applied to all six loops for consistency, increasing the diff size."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use the provided diagnose-webserver-bug.sh script to reproduce the bug on a container with a slow Infinity cold-start, then apply the fix and verify the main API server restarts automatically.",
+      "Add a shell-based regression test that simulates a non-zero exit from the main server and asserts the loop retries."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a different approach (e.g., using 'wait' pattern instead of '|| true')",
+      "Exact test framework and location for the regression test."
+    ],
+    "why": "Issue provides a clear root cause (set -e in entrypoint.sh kills background subshell on non-zero exit), detailed reproduction steps, and a diagnostic script. The fix is a minimal, well-scoped change to entrypoint.sh loops, with an existing open PR (#18545) that addresses the issue but lacks tests. The contribution is actionable and valuable."
   },
   "b8c191877b9da8140d54a34bbf3e553d72e5c18951b014b3a0ce1907467ca860": {
     "confidence": 0.7,
