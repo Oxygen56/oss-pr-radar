@@ -433,6 +433,27 @@ def test_publication_receipt_replays_finalize_without_second_external_effect(tmp
     receipt = {"prUrl": "https://github.com/owner/repo/pull/9", "headSha": head_sha}
     with pytest.raises(RuntimeError, match="finalize interrupted"):
         adapter.record_publication_receipt(request=request, receipt=receipt)
+    with ManagedLedger(database)._connection() as connection:
+        assert (
+            connection.execute(
+                "SELECT state FROM managed_publication_reservations WHERE reservation_key=?",
+                (reservation["reservationKey"],),
+            ).fetchone()[0]
+            == "ACTIVE"
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM managed_prs WHERE pr_key='owner/repo#9'"
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM managed_lifecycle_events "
+                "WHERE event_type='PUBLICATION_RECEIPT_OBSERVED'"
+            ).fetchone()[0]
+            == 0
+        )
     replay = adapter.record_publication_receipt(request=request, receipt=receipt)
 
     assert replay["ok"] is True

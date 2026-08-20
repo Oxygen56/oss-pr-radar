@@ -751,9 +751,12 @@ class ManagedAdapter:
         *,
         request: dict[str, Any],
         receipt: dict[str, Any],
+        receipt_observation: bool = False,
     ) -> dict[str, Any]:
         reservation_key = str(request.get("reservationKey") or "") or None
         if request.get("publicationKind") != "PR_UPDATE" and reservation_key:
+            # Keep the established fast rejection for malformed/blocked requests;
+            # the atomic ledger method repeats this check under its write lock.
             with self.ledger._connection() as connection:
                 reservation = connection.execute(
                     "SELECT state FROM managed_publication_reservations WHERE reservation_key=?",
@@ -802,36 +805,27 @@ class ManagedAdapter:
             raise PermissionError("publication receipt requires a current-key reproduction receipt")
         if request.get("publicationKind") != "PR_UPDATE" and not reservation_key:
             raise PermissionError("publication reservation is required before PR creation")
-        row = self.ledger.upsert_pr(
+        opportunity_key = f"{_issue_owner}/{_issue_repo}#{_issue_number}"
+        row = self.ledger.record_publication_receipt_atomic(
             pr_key=pr_key,
             owner=owner,
             repo=repo,
             number=int(number_text),
             head_sha=head_sha,
             pr_url=pr_url,
-            state="OPEN",
             auto_created=request.get("publicationKind") != "PR_UPDATE",
-            reservation_key=reservation_key,
             source_kind="MANAGED_PUBLICATION_RECEIPT",
             source="publication",
             provenance={
                 "requestId": request.get("requestId"),
                 "receiptDigest": sha256_json(receipt),
             },
-        )
-        if reservation_key:
-            self.ledger.finalize_publication_reservation(
-                reservation_key=reservation_key,
-                pr_key=pr_key,
-                head_sha=head_sha,
-            )
-        self.ledger.record_event(
-            event_type="PUBLICATION_RECEIPT_OBSERVED",
-            idempotency_key=f"publication:{request.get('requestId') or pr_key}:{head_sha}",
-            pr_key=pr_key,
-            source="publication",
-            provenance={"requestId": request.get("requestId")},
-            payload={"prUrl": pr_url, "headSha": head_sha},
+            reservation_key=reservation_key,
+            opportunity_key=opportunity_key,
+            event_idempotency_key=f"publication:{request.get('requestId') or pr_key}:{head_sha}",
+            event_provenance={"requestId": request.get("requestId")},
+            event_payload={"prUrl": pr_url, "headSha": head_sha},
+            receipt_observation=receipt_observation,
         )
         return {"ok": True, "pr": row}
 

@@ -875,6 +875,31 @@ def _open_shared_context_directory(*, create: bool) -> tuple[int, Path, list[int
         raise
 
 
+def _open_shared_context_quarantine_directory(*, create: bool) -> tuple[int, Path, list[int]]:
+    """Open context-quarantine through the verified GitHub-root descriptor."""
+
+    github_fd, github_path = open_directory_handle(GITHUB_ROOT, label="GitHub root", create=create)
+    handles = [github_fd]
+    try:
+        private_fd, private_path = _open_private_context_child(
+            github_fd, github_path, TASK_PRIVATE_DIR, "Radar private root", create=create
+        )
+        handles.append(private_fd)
+        quarantine_fd, quarantine_path = _open_private_context_child(
+            private_fd,
+            private_path,
+            "context-quarantine",
+            "context quarantine root",
+            create=create,
+        )
+        handles.append(quarantine_fd)
+        return quarantine_fd, quarantine_path, handles
+    except Exception:
+        for fd in reversed(handles):
+            os.close(fd)
+        raise
+
+
 def _open_private_context_child(
     parent_fd: int,
     parent_path: Path,
@@ -891,7 +916,10 @@ def _open_private_context_child(
     except FileNotFoundError:
         if not create:
             raise
-        os.mkdir(name, 0o700, dir_fd=parent_fd)
+        try:
+            os.mkdir(name, 0o700, dir_fd=parent_fd)
+        except FileExistsError:
+            pass
         fd = os.open(name, flags, dir_fd=parent_fd)
     metadata = os.fstat(fd)
     if (
@@ -3177,12 +3205,9 @@ def _ensure_context_quarantine_artifact(
 ) -> dict[str, Any]:
     """Create once, then only verify a quarantine artifact under a file lock."""
 
-    parent_fd, _ = open_directory_handle(
-        artifact_path.parent, label="context quarantine", create=True
-    )
-    if stat.S_IMODE(os.fstat(parent_fd).st_mode) != 0o700:
-        os.close(parent_fd)
-        raise RuntimeError("context quarantine directory is not private")
+    if artifact_path.parent != shared_context_quarantine_root():
+        raise RuntimeError("context quarantine artifact path is outside the private root")
+    parent_fd, _parent_path, handles = _open_shared_context_quarantine_directory(create=True)
     lock_name = ".context-quarantine.lock"
     lock_fd = -1
     try:
@@ -3200,7 +3225,8 @@ def _ensure_context_quarantine_artifact(
                     raise
                 time.sleep(0.001)
     except Exception:
-        os.close(parent_fd)
+        for fd in reversed(handles):
+            os.close(fd)
         raise
     try:
         lock_stat = os.fstat(lock_fd)
@@ -3223,18 +3249,49 @@ def _ensure_context_quarantine_artifact(
                 or stat.S_IMODE(artifact_stat.st_mode) != 0o600
             ):
                 raise RuntimeError("shared context quarantine artifact is not a regular file")
+            artifact_fd = -1
             try:
                 artifact_fd = os.open(
                     artifact_path.name,
                     os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
                     dir_fd=parent_fd,
                 )
-                with os.fdopen(artifact_fd, "r", encoding="utf-8") as handle:
-                    artifact = json.load(handle)
+                first = os.fstat(artifact_fd)
+                if (
+                    not stat.S_ISREG(first.st_mode)
+                    or first.st_uid != os.getuid()
+                    or stat.S_IMODE(first.st_mode) != 0o600
+                ):
+                    raise RuntimeError("shared context quarantine artifact is unsafe")
+                chunks: list[bytes] = []
+                while True:
+                    chunk = os.read(artifact_fd, 1024 * 1024)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                second = os.fstat(artifact_fd)
+                if (
+                    first.st_dev,
+                    first.st_ino,
+                    first.st_size,
+                    first.st_mtime_ns,
+                    first.st_ctime_ns,
+                ) != (
+                    second.st_dev,
+                    second.st_ino,
+                    second.st_size,
+                    second.st_mtime_ns,
+                    second.st_ctime_ns,
+                ):
+                    raise RuntimeError("shared context quarantine artifact changed while reading")
+                artifact = json.loads(b"".join(chunks).decode("utf-8"))
             except (OSError, UnicodeDecodeError, json.JSONDecodeError) as artifact_exc:
                 raise RuntimeError(
                     "shared context quarantine artifact is invalid"
                 ) from artifact_exc
+            finally:
+                if artifact_fd >= 0:
+                    os.close(artifact_fd)
             if not isinstance(artifact, dict):
                 raise RuntimeError("shared context quarantine artifact is invalid")
             if any(
@@ -3281,7 +3338,8 @@ def _ensure_context_quarantine_artifact(
             fcntl.flock(lock_fd, fcntl.LOCK_UN)
         finally:
             os.close(lock_fd)
-            os.close(parent_fd)
+            for fd in reversed(handles):
+                os.close(fd)
 
 
 def _quarantine_shared_context(
@@ -3307,10 +3365,15 @@ def _quarantine_shared_context(
     ).hexdigest()
     if re.fullmatch(r"[A-Z0-9_]+", reason) is None:
         raise RuntimeError("shared context quarantine reason is unsafe")
-    artifact_path = (
-        shared_context_quarantine_root()
-        / f"{key.replace('/', '--').replace('#', '--')}-{reason}-{source_digest}.json"
+    artifact_identity = sha256_json(
+        {
+            "key": key,
+            "reason": reason,
+            "originalPath": str(path),
+            "originalBytesSha256": source_digest,
+        }
     )
+    artifact_path = shared_context_quarantine_root() / f"q-{artifact_identity}.json"
     artifact = _ensure_context_quarantine_artifact(
         artifact_path,
         key=key,
@@ -4213,6 +4276,11 @@ def _app_server_task_turn_worker(args: argparse.Namespace) -> dict[str, Any]:
     executable = shutil.which("codex")
     if not executable:
         raise RuntimeError("codex executable is unavailable")
+    store.authorize_task_turn_delivery(
+        delivery_kind=args.delivery_kind,
+        thread_id=args.thread_id,
+        delivery_token=args.delivery_token,
+    )
     process = subprocess.Popen(
         [
             executable,
@@ -5076,6 +5144,24 @@ def task_turn_deliver(args: argparse.Namespace) -> dict[str, Any]:
             "reason": "DELIVERY_WORKER_OUTCOME_UNKNOWN",
         }
 
+    try:
+        store.authorize_task_turn_delivery(
+            delivery_kind=args.delivery_kind,
+            thread_id=args.thread_id,
+            delivery_token=args.delivery_token,
+        )
+    except Exception as exc:
+        if not receipt.exists():
+            _atomic_json(
+                receipt,
+                {
+                    "ok": False,
+                    "turnStarted": False,
+                    "turnId": None,
+                    "error": f"{type(exc).__name__}:{str(exc)[:300]}",
+                },
+            )
+        raise
     with log.open("ab") as handle:
         worker = subprocess.Popen(
             [
@@ -7315,6 +7401,12 @@ def _pr_followup_reserve_unlocked(args: argparse.Namespace) -> dict[str, Any]:
             merge_conflict_files=prepared.get("mergeConflictFiles"),
             max_active=_private_task_limit(),
             exclude_intent_id=str(candidate.get("intentId") or "") or None,
+            quarantine_reason=(PR_FOLLOWUP_REBIND_REQUIRED if rebind_status is not None else None),
+            quarantine_evidence=(
+                {"revalidated": True, "preparedHeadSha": prepared_head}
+                if rebind_status is not None
+                else None
+            ),
         )
     except Exception:
         _rollback_pr_followup_preparation(candidate, prepared_head_sha=prepared_head)
@@ -7333,11 +7425,7 @@ def _pr_followup_reserve_unlocked(args: argparse.Namespace) -> dict[str, Any]:
         completion(
             thread_id=candidate["threadId"],
             wake_digest=candidate["wakeDigest"],
-            quarantine_reason=(
-                str(rebind_status.get("reason") or PR_FOLLOWUP_REBIND_REQUIRED)
-                if rebind_status is not None
-                else None
-            ),
+            quarantine_reason=(PR_FOLLOWUP_REBIND_REQUIRED if rebind_status is not None else None),
             evidence={
                 "replacementWakeDigest": candidate["wakeDigest"],
                 "preparedHeadSha": prepared_head,
@@ -9121,6 +9209,44 @@ def _run_publication_queue_unlocked(args: argparse.Namespace) -> dict[str, Any]:
         request_id = str(item["request_id"])
         request = item["request"]
         try:
+            external_receipt = item.get("externalPublicationReceipt")
+            if isinstance(external_receipt, dict):
+                issue_url = str(request["issueUrl"])
+                match = ISSUE_URL.match(issue_url)
+                if not match or request.get("publicationKind") == "PR_UPDATE":
+                    raise RuntimeError(
+                        "external publication receipt has an invalid request binding"
+                    )
+                reservation_key = f"publication:{request_id}"
+                reconciled_request = dict(request) | {
+                    "requestId": request_id,
+                    "reservationKey": reservation_key,
+                }
+                managed_adapter.record_publication_receipt(
+                    request=reconciled_request,
+                    receipt=external_receipt,
+                    receipt_observation=True,
+                )
+                head_sha = str(
+                    external_receipt.get("headSha")
+                    or external_receipt.get("remoteSha")
+                    or request.get("commitSha")
+                    or ""
+                )
+                store.mark_managed_publication_reconciled(
+                    request_id,
+                    pr_url=str(external_receipt["prUrl"]),
+                    head_sha=head_sha,
+                )
+                published.append(
+                    {
+                        "requestId": request_id,
+                        "key": request["opportunityKey"],
+                        "prUrl": str(external_receipt["prUrl"]),
+                        "pushReconciled": True,
+                    }
+                )
+                continue
             if not external_side_effect_allowed(request):
                 store.block_publication_request(request_id, "SILENT_EXPLORATION_NOT_PUBLISHABLE")
                 blocked.append(

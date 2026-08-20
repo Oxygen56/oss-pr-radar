@@ -3325,26 +3325,32 @@ class ManagedLedger:
         pr_key: str,
         head_sha: str,
         now: str | None = None,
+        connection: sqlite3.Connection | None = None,
+        receipt_observation: bool = False,
     ) -> dict[str, Any]:
         observed = _utc(now)
-        connection = self._connection()
+        owns_connection = connection is None
+        connection = connection or self._connection()
         try:
-            connection.execute("BEGIN IMMEDIATE")
+            if owns_connection:
+                connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
                 "SELECT * FROM managed_publication_reservations WHERE reservation_key=?",
                 (reservation_key,),
             ).fetchone()
             if row is None:
                 raise ValueError("publication reservation is missing")
-            require_quarantine_clear(
-                connection,
-                opportunity_key=str(row["opportunity_key"] or pr_key),
-                operation="managed publication finalize",
-            )
+            if not receipt_observation:
+                require_quarantine_clear(
+                    connection,
+                    opportunity_key=str(row["opportunity_key"] or pr_key),
+                    operation="managed publication finalize",
+                )
             if pr_key.split("#", 1)[0] != row["repo"]:
                 raise ValueError("publication receipt repository does not match reservation")
             if row["state"] == "FINALIZED":
-                connection.commit()
+                if owns_connection:
+                    connection.commit()
                 return dict(row) | {"created": False}
             if row["state"] not in {"ACTIVE", "RECONCILE_REQUIRED"}:
                 raise PermissionError("publication reservation is not finalizable")
@@ -3358,8 +3364,194 @@ class ManagedLedger:
                 "SELECT * FROM managed_publication_reservations WHERE reservation_key=?",
                 (reservation_key,),
             ).fetchone()
-            connection.commit()
+            if owns_connection:
+                connection.commit()
             return dict(row) | {"created": True}
+        except Exception:
+            if owns_connection and connection.in_transaction:
+                connection.rollback()
+            raise
+        finally:
+            if owns_connection:
+                connection.close()
+
+    def record_publication_receipt_atomic(
+        self,
+        *,
+        pr_key: str,
+        owner: str,
+        repo: str,
+        number: int,
+        head_sha: str,
+        pr_url: str,
+        auto_created: bool,
+        source_kind: str,
+        source: str,
+        provenance: dict[str, Any] | None = None,
+        reservation_key: str | None = None,
+        invitation_event_key: str | None = None,
+        opportunity_key: str | None = None,
+        event_idempotency_key: str,
+        event_provenance: dict[str, Any] | None = None,
+        event_payload: dict[str, Any] | None = None,
+        now: str | None = None,
+        receipt_observation: bool = False,
+    ) -> dict[str, Any]:
+        """Persist a publication receipt and its lifecycle transition atomically.
+
+        This is deliberately one transaction: the quarantine gate is evaluated
+        while holding the same write lock that inserts the PR row, finalizes the
+        reservation, and records the receipt event.
+        """
+
+        expected_key = f"{owner}/{repo}#{number}"
+        if pr_key != expected_key:
+            raise ValueError("PR key must be owner/repo#number")
+        if not re.fullmatch(r"[0-9a-f]{40}", head_sha):
+            raise ValueError("publication receipt head SHA is invalid")
+        observed = _utc(now)
+        connection = self._connection()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            reservation = None
+            gate_key = opportunity_key
+            if reservation_key:
+                reservation = connection.execute(
+                    "SELECT * FROM managed_publication_reservations WHERE reservation_key=?",
+                    (reservation_key,),
+                ).fetchone()
+                if reservation is None or reservation["state"] not in {
+                    "ACTIVE",
+                    "RECONCILE_REQUIRED",
+                    "FINALIZED",
+                }:
+                    raise PermissionError("publication reservation is not active")
+                gate_key = str(reservation["opportunity_key"] or gate_key or "")
+                if reservation["state"] == "FINALIZED":
+                    existing_finalized = connection.execute(
+                        "SELECT * FROM managed_prs WHERE pr_key=?", (pr_key,)
+                    ).fetchone()
+                    if existing_finalized is None:
+                        raise PermissionError("finalized reservation has no recorded PR")
+            if gate_key and not receipt_observation:
+                require_quarantine_clear(
+                    connection,
+                    opportunity_key=gate_key,
+                    operation="managed publication receipt",
+                )
+
+            existing = connection.execute(
+                "SELECT * FROM managed_prs WHERE pr_key=?", (pr_key,)
+            ).fetchone()
+            if existing and existing["origin_kind"] == "EXISTING_OPEN_PR":
+                auto_created = False
+            auto_creation = auto_created and (existing is None or not existing["auto_created"])
+            if auto_creation and not receipt_observation:
+                invitation_allowed = False
+                if invitation_event_key:
+                    invitation = connection.execute(
+                        """SELECT is_maintainer,payload_json
+                           FROM managed_maintainer_events
+                           WHERE event_key=? AND event_type IN ('INVITATION','ASSIGNMENT')""",
+                        (invitation_event_key,),
+                    ).fetchone()
+                    if invitation and invitation["is_maintainer"]:
+                        invitation_payload = json_payload(invitation["payload_json"])
+                        invitation_allowed = (
+                            invitation_payload.get("targetRepo") == f"{owner}/{repo}"
+                        )
+                if not invitation_allowed:
+                    open_count = int(
+                        connection.execute(
+                            """SELECT COUNT(*) FROM managed_prs
+                               WHERE (repo=? OR owner || '/' || repo=?)
+                                 AND state='OPEN' AND auto_created=1 AND maintainer_response=0""",
+                            (f"{owner}/{repo}", f"{owner}/{repo}"),
+                        ).fetchone()[0]
+                    )
+                    active_count = self._active_publication_reservation_count(
+                        connection,
+                        f"{owner}/{repo}",
+                        exclude_key=reservation_key,
+                        now=observed,
+                    )
+                    if open_count + active_count >= OPEN_PR_CAP:
+                        raise PermissionError("repository open unanswered automatic PR cap reached")
+
+            connection.execute(
+                """INSERT INTO managed_prs
+                   (pr_key,owner,repo,number,head_sha,pr_url,state,auto_created,
+                    maintainer_response,source_kind,source,provenance_json,observed_at,metadata_json,
+                    origin_kind,origin_observation_json,origin_head_sha,origin_pr_url,latest_source)
+                   VALUES (?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(pr_key) DO UPDATE SET head_sha=excluded.head_sha,
+                     pr_url=excluded.pr_url,state=excluded.state,
+                     auto_created=CASE WHEN managed_prs.auto_created=1 THEN 1 ELSE excluded.auto_created END,
+                     source_kind=managed_prs.source_kind,source=excluded.source,
+                     provenance_json=excluded.provenance_json,observed_at=excluded.observed_at,
+                     metadata_json=excluded.metadata_json,
+                     origin_kind=managed_prs.origin_kind,
+                     origin_observation_json=managed_prs.origin_observation_json,
+                     origin_head_sha=managed_prs.origin_head_sha,
+                     origin_pr_url=managed_prs.origin_pr_url,
+                     latest_source=excluded.source""",
+                (
+                    pr_key,
+                    owner,
+                    repo,
+                    number,
+                    head_sha,
+                    pr_url,
+                    "OPEN",
+                    int(auto_created),
+                    source_kind,
+                    source,
+                    _json(provenance or {}),
+                    observed,
+                    _json({}),
+                    source_kind,
+                    _json(provenance or {}),
+                    None,
+                    None,
+                    source,
+                ),
+            )
+
+            if reservation_key:
+                self.finalize_publication_reservation(
+                    reservation_key=reservation_key,
+                    pr_key=pr_key,
+                    head_sha=head_sha,
+                    now=observed,
+                    connection=connection,
+                    receipt_observation=receipt_observation,
+                )
+
+            fingerprint = stable_fingerprint(event_idempotency_key)
+            connection.execute(
+                """INSERT OR IGNORE INTO managed_lifecycle_events
+                   (opportunity_key,task_id,pr_key,event_type,state,idempotency_key,source,
+                    idempotency_fingerprint,provenance_json,observed_at,payload_json)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    canonical_opportunity_key(opportunity_key) if opportunity_key else None,
+                    None,
+                    pr_key,
+                    "PUBLICATION_RECEIPT_OBSERVED",
+                    None,
+                    event_idempotency_key,
+                    source,
+                    fingerprint,
+                    _json(event_provenance or {}),
+                    observed,
+                    _json(event_payload or {}),
+                ),
+            )
+            row = connection.execute(
+                "SELECT * FROM managed_prs WHERE pr_key=?", (pr_key,)
+            ).fetchone()
+            connection.commit()
+            return dict(row)
         except Exception:
             if connection.in_transaction:
                 connection.rollback()
@@ -3714,6 +3906,17 @@ class ManagedLedger:
         connection = self._connection()
         try:
             connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT * FROM managed_publication_reservations WHERE reservation_key=?",
+                (reservation_key,),
+            ).fetchone()
+            if row is None:
+                raise ValueError("publication reservation is missing")
+            require_quarantine_clear(
+                connection,
+                opportunity_key=str(row["opportunity_key"] or ""),
+                operation="publication waiting transition",
+            )
             connection.execute(
                 "UPDATE managed_publication_reservations SET state=?,updated_at=? WHERE reservation_key=?",
                 (state, _utc(now), reservation_key),
@@ -3723,8 +3926,6 @@ class ManagedLedger:
                 (reservation_key,),
             ).fetchone()
             connection.commit()
-            if row is None:
-                raise ValueError("publication reservation is missing")
             return dict(row) | ({"reason": reason} if reason else {})
         except Exception:
             if connection.in_transaction:

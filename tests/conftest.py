@@ -68,6 +68,7 @@ def no_host_radar_private_writes(tmp_path_factory):
 import hashlib
 import json
 import os
+import select
 import sys
 import time
 from pathlib import Path
@@ -109,15 +110,90 @@ def write_marker(path, payload):
     finally:
         os.close(fd)
 
+if not hasattr(select, "kqueue"):
+    write_marker(ready, b"unsupported:kqueue")
+    while True:
+        if inventory(root) != baseline:
+            write_marker(flag, b"host radar state changed")
+            raise SystemExit(2)
+        time.sleep(0.05)
+
+if not root.is_dir() or root.is_symlink():
+    write_marker(ready, b"unsupported:missing-or-unsafe-root")
+    raise SystemExit(3)
+
 if inventory(root) != baseline:
     write_marker(flag, b"host radar state changed before ready")
     raise SystemExit(2)
-write_marker(ready, b"ready")
-while True:
+
+kqueue = select.kqueue()
+descriptors = []
+try:
+    paths = [root]
+    for current, dirs, files in os.walk(root, followlinks=False):
+        current_path = Path(current)
+        if current_path != root and current_path.relative_to(root).parts[:1] == ("worktrees",):
+            dirs[:] = []
+            continue
+        dirs[:] = [name for name in dirs if name != "worktrees"]
+        paths.extend(current_path / name for name in dirs + files)
+    events = []
+    for path in paths:
+        try:
+            descriptor = os.open(
+                path,
+                os.O_RDONLY
+                | (getattr(os, "O_DIRECTORY", 0) if path.is_dir() else 0)
+                | getattr(os, "O_NOFOLLOW", 0),
+            )
+        except (FileNotFoundError, NotADirectoryError, OSError) as exc:
+            raise RuntimeError(f"failed to open watched path {path}: {exc}") from exc
+        descriptors.append(descriptor)
+        events.append(
+            select.kevent(
+                descriptor,
+                filter=select.KQ_FILTER_VNODE,
+                flags=select.KQ_EV_ADD | select.KQ_EV_ENABLE | select.KQ_EV_CLEAR,
+                fflags=(
+                    select.KQ_NOTE_WRITE
+                    | select.KQ_NOTE_EXTEND
+                    | select.KQ_NOTE_ATTRIB
+                    | select.KQ_NOTE_DELETE
+                    | select.KQ_NOTE_RENAME
+                    | select.KQ_NOTE_LINK
+                    | select.KQ_NOTE_REVOKE
+                ),
+            )
+        )
+    if events:
+        kqueue.control(events, 0, 0)
+    else:
+        raise RuntimeError("kqueue watcher registered no paths")
+
     if inventory(root) != baseline:
-        write_marker(flag, b"host radar state changed")
+        write_marker(flag, b"host radar state changed before ready")
         raise SystemExit(2)
-    time.sleep(0.05)
+    write_marker(ready, b"kqueue-active")
+
+    while True:
+        events = kqueue.control(None, 1, 0.5)
+        if not events:
+            continue
+        current = inventory(root)
+        write_marker(
+            flag,
+            f"host radar filesystem event; baseline={baseline}; current={current}".encode(
+                "ascii"
+            ),
+        )
+        raise SystemExit(2)
+finally:
+    for descriptor in descriptors:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+    kqueue.close()
 """
     watcher_dir = tmp_path_factory.mktemp("radar-host-watch") / "watch"
     watcher_dir.mkdir(mode=0o700)
@@ -147,6 +223,7 @@ while True:
         stderr=watcher_stderr,
         close_fds=True,
     )
+    watcher_unsupported = False
     try:
         ready_deadline = time.monotonic() + 5
         while not watcher_ready.exists() and time.monotonic() < ready_deadline:
@@ -161,6 +238,10 @@ while True:
             time.sleep(0.05)
         if not watcher_ready.exists():
             raise AssertionError("host watcher did not become ready")
+        ready_value = watcher_ready.read_bytes()
+        if ready_value != b"kqueue-active" and not ready_value.startswith(b"unsupported:"):
+            raise AssertionError(f"host watcher did not activate kqueue: {ready_value!r}")
+        watcher_unsupported = ready_value.startswith(b"unsupported:")
         yield
     finally:
         exit_code = watcher.poll()
@@ -179,7 +260,8 @@ while True:
         assert after == before, (
             f"tests modified the live .oss-pr-radar shared state: before={before} after={after}"
         )
-        assert exit_code in (None, 0), (
+        allowed_exit_codes = (None, 0, -15) if watcher_unsupported else (None, 0)
+        assert exit_code in allowed_exit_codes, (
             f"host watcher exited unexpectedly: code={exit_code}, stderr={diagnostic!r}"
         )
         assert not watcher_flag.exists(), (

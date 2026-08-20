@@ -92,6 +92,37 @@ def test_slow_reconciler_signs_exact_absence_and_releases(tmp_path):
         assert row["signature"]
 
 
+def test_mark_publication_waiting_is_gated_by_active_quarantine(tmp_path):
+    _, ledger = make_ledger(tmp_path, "waiting-gate.sqlite3")
+    ledger.reserve_publication_slot(
+        reservation_key="publication:waiting-gate",
+        request_id="request:waiting-gate",
+        repo="owner/repo",
+        opportunity_key="owner/repo#1",
+        head_ref="feature/round5",
+        head_sha="head-round5",
+        idempotency_key="publication:waiting-gate",
+        lease_seconds=30,
+        now="2026-08-19T00:00:00Z",
+    )
+    with ledger._connection() as connection:
+        from oss_pr_radar.task_quarantine import record
+
+        record(
+            connection,
+            opportunity_key="owner/repo#1",
+            reason="ACTIVE_TASK_QUARANTINE",
+            dedupe_key="waiting-gate",
+            payload={"test": True},
+            created_at="2026-08-19T00:00:00Z",
+        )
+
+    with pytest.raises(PermissionError, match="active task quarantine"):
+        ledger.mark_publication_waiting(
+            reservation_key="publication:waiting-gate", state="WAITING_EXTERNAL"
+        )
+
+
 def test_absence_reconciler_uncertainty_and_false_bindings_fail_closed(tmp_path):
     _, ledger = make_ledger(tmp_path, "uncertain.sqlite3")
     reserve_expired(ledger, reservation_key="publication:uncertain")

@@ -2686,6 +2686,168 @@ def test_legacy_failed_live_recheck_is_recovered_for_retry(tmp_path):
     assert effect is None
 
 
+@pytest.mark.parametrize(
+    "operation", ["recover", "ambiguous", "retry", "post_push", "retry_blocked"]
+)
+def test_publication_recovery_entries_fail_closed_on_active_quarantine(tmp_path, operation):
+    store = RadarLedger(tmp_path / f"{operation}.sqlite3")
+    insert_publication_preflight(store)
+    now = iso_z(datetime.now(UTC) - timedelta(minutes=10))
+    with store.connect() as connection:
+        if operation == "recover":
+            connection.execute(
+                "UPDATE publication_effects SET status='FAILED',result_json=? WHERE effect_id='effect-1'",
+                (
+                    json.dumps(
+                        {"reason": "LIVE_RECHECK_FAILED", "detail": "LIVE_EVIDENCE_INCOMPLETE"}
+                    ),
+                ),
+            )
+        elif operation == "ambiguous":
+            connection.execute(
+                "UPDATE publication_effects SET updated_at=? WHERE effect_id='effect-1'",
+                (now,),
+            )
+        elif operation == "retry":
+            connection.execute(
+                "UPDATE publication_effects SET status='RECONCILE_REQUIRED' WHERE effect_id='effect-1'"
+            )
+        elif operation == "post_push":
+            connection.execute(
+                "UPDATE publication_requests SET request_json=? WHERE request_id='request-1'",
+                (json.dumps({"publicationKind": "PR_CREATE"}),),
+            )
+        else:
+            connection.execute(
+                "UPDATE publication_requests SET status='BLOCKED',reason='RETRY_ME' WHERE request_id='request-1'"
+            )
+        from oss_pr_radar.task_quarantine import record
+
+        record(
+            connection,
+            opportunity_key="a/b#1",
+            reason="ACTIVE_TASK_QUARANTINE",
+            dedupe_key=operation,
+            payload={"test": True},
+            created_at=iso_z(datetime.now(UTC)),
+        )
+
+    if operation == "ambiguous":
+        assert (
+            store.prepare_ambiguous_publication_effect(
+                "request-1", action="push", min_age_minutes=0
+            )
+            is None
+        )
+        assert store.publication_request("request-1")["status"] == "BLOCKED"
+    else:
+        with pytest.raises(PermissionError, match="active task quarantine"):
+            if operation == "recover":
+                store.recover_failed_publication_preflight(
+                    "request-1",
+                    action="push",
+                    transient_reasons={"LIVE_EVIDENCE_INCOMPLETE"},
+                )
+            elif operation == "retry":
+                store.retry_publication_effect_after_noop(
+                    effect_id="effect-1",
+                    permit_id="permit-1",
+                    evidence={"exactHeadPrAbsent": True},
+                )
+            elif operation == "post_push":
+                store.prepare_post_push_reconciliation("request-1")
+            else:
+                store.retry_blocked_publication_request("request-1", expected_reason="RETRY_ME")
+
+    with store.connect() as connection:
+        assert connection.execute(
+            "SELECT status FROM publication_effects WHERE effect_id='effect-1'"
+        ).fetchone()["status"] in {"ATTEMPTED", "FAILED", "RECONCILE_REQUIRED", "BLOCKED"}
+
+
+def test_preflight_resolution_remains_safe_shrink_under_active_quarantine(tmp_path):
+    store = RadarLedger(tmp_path / "resolution.sqlite3")
+    insert_publication_preflight(store)
+    with store.connect() as connection:
+        from oss_pr_radar.task_quarantine import record
+
+        record(
+            connection,
+            opportunity_key="a/b#1",
+            reason="ACTIVE_TASK_QUARANTINE",
+            dedupe_key="resolution",
+            payload={"test": True},
+            created_at=iso_z(datetime.now(UTC)),
+        )
+
+    store.resolve_publication_preflight(
+        "effect-1", disposition="BLOCK", reason="LIVE_EVIDENCE_INCOMPLETE"
+    )
+    assert store.publication_request("request-1")["status"] == "BLOCKED"
+
+
+def test_publication_work_items_keeps_durable_receipt_reconciliation_visible_under_quarantine(
+    tmp_path,
+):
+    store = RadarLedger(tmp_path / "receipt-visible.sqlite3")
+    insert_publication_preflight(store)
+    pr_url = "https://github.com/a/b/pull/1"
+    with store.connect() as connection:
+        now = iso_z(datetime.now(UTC))
+        connection.execute(
+            "UPDATE publication_requests SET status='CONSUMED' WHERE request_id='request-1'"
+        )
+        connection.execute(
+            "UPDATE publication_permits SET status='CONSUMED',pr_url=? WHERE permit_id='permit-1'",
+            (pr_url,),
+        )
+        connection.execute(
+            """INSERT INTO publication_effects
+               (effect_id,permit_id,action,request_digest,status,result_json,created_at,updated_at)
+               VALUES ('create-1','permit-1','create_pr','create-digest','SUCCEEDED',?,?,?)""",
+            (json.dumps({"ok": True, "prUrl": pr_url, "headSha": "b" * 40}), now, now),
+        )
+        from oss_pr_radar.task_quarantine import record
+
+        record(
+            connection,
+            opportunity_key="a/b#1",
+            reason="ACTIVE_TASK_QUARANTINE",
+            dedupe_key="receipt-visible",
+            payload={"test": True},
+            created_at=now,
+        )
+
+    items = store.publication_work_items()
+    assert len(items) == 1
+    assert items[0]["externalPublicationReceipt"]["prUrl"] == pr_url
+
+
+def test_publication_safe_shrink_is_allowed_under_active_quarantine(tmp_path):
+    store = RadarLedger(tmp_path / "safe-shrink.sqlite3")
+    insert_publication_preflight(store)
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE publication_requests SET status='PENDING' WHERE request_id='request-1'"
+        )
+        from oss_pr_radar.task_quarantine import record
+
+        record(
+            connection,
+            opportunity_key="a/b#1",
+            reason="ACTIVE_TASK_QUARANTINE",
+            dedupe_key="safe-shrink",
+            payload={"test": True},
+            created_at=iso_z(datetime.now(UTC)),
+        )
+
+    store.defer_publication_request("request-1", "LIVE_EVIDENCE_INCOMPLETE")
+    assert store.publication_request("request-1")["status"] == "PENDING"
+    assert store.publication_request("request-1")["reason"] == "LIVE_EVIDENCE_INCOMPLETE"
+    store.block_publication_request("request-1", "BLOCKED_FOR_REVIEW")
+    assert store.publication_request("request-1")["status"] == "BLOCKED"
+
+
 def test_publication_feedback_is_reserved_retried_and_sent_once(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(intent())

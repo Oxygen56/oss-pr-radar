@@ -1497,8 +1497,10 @@ def test_shared_context_quarantine_artifact_identity_includes_reason(monkeypatch
     first_path = Path(first["quarantined"][0]["artifactPath"])
     second_path = Path(second["quarantined"][0]["artifactPath"])
     assert first_path != second_path
-    assert "SHARED_CONTEXT_DIGEST_MISMATCH" in first_path.name
-    assert "SHARED_CONTEXT_BOOTSTRAP_PATH_INVALID" in second_path.name
+    assert len(first_path.name) == len("q-" + "0" * 64 + ".json")
+    assert len(second_path.name) == len("q-" + "0" * 64 + ".json")
+    assert json.loads(first_path.read_text())["reason"] == "SHARED_CONTEXT_DIGEST_MISMATCH"
+    assert json.loads(second_path.read_text())["reason"] == "SHARED_CONTEXT_BOOTSTRAP_PATH_INVALID"
     assert first_path.exists()
     assert second_path.exists()
 
@@ -1612,6 +1614,58 @@ def test_shared_context_quarantine_path_hijack_fails_closed(monkeypatch, tmp_pat
     assert list(external.iterdir()) == (
         [external / "lock-target"] if layout == "lock-symlink" else []
     )
+
+
+def test_shared_context_quarantine_rejects_ancestor_private_root_symlink(monkeypatch, tmp_path):
+    project_root = tmp_path / "github"
+    external = tmp_path / "external"
+    project_root.mkdir(exist_ok=True)
+    external.mkdir(exist_ok=True)
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    shutil.rmtree(project_root / MODULE.TASK_PRIVATE_DIR)
+    (project_root / MODULE.TASK_PRIVATE_DIR).symlink_to(external, target_is_directory=True)
+
+    with pytest.raises((OSError, RuntimeError), match="symlink|private|directory"):
+        MODULE._open_shared_context_quarantine_directory(create=True)
+
+    assert list(external.iterdir()) == []
+
+
+def test_shared_context_quarantine_rejects_ancestor_replacement_after_safe_open(
+    monkeypatch, tmp_path
+):
+    project_root = tmp_path / "github"
+    project_root.mkdir(exist_ok=True)
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    private_root = project_root / MODULE.TASK_PRIVATE_DIR
+    private_root.mkdir(mode=0o700, exist_ok=True)
+    private_root.chmod(0o700)
+    quarantine = private_root / "context-quarantine"
+    quarantine.mkdir(mode=0o700)
+    quarantine.chmod(0o700)
+    external = tmp_path / "external"
+    external.mkdir(mode=0o700)
+
+    _fd, _path, handles = MODULE._open_shared_context_quarantine_directory(create=False)
+    try:
+        private_root.rename(tmp_path / "private-original")
+        private_root.symlink_to(external, target_is_directory=True)
+        with pytest.raises((OSError, RuntimeError), match="symlink|private|directory"):
+            MODULE._ensure_context_quarantine_artifact(
+                MODULE.shared_context_quarantine_root() / ("q-" + "a" * 64 + ".json"),
+                key="a/b#1",
+                issue_url="https://github.com/a/b/issues/1",
+                reason="SHARED_CONTEXT_INVALID",
+                source_path=tmp_path / "context.json",
+                raw=b"{}",
+                source_digest="a" * 64,
+                source_mode=0o600,
+                error="test",
+            )
+    finally:
+        for handle in reversed(handles):
+            os.close(handle)
+    assert list(external.iterdir()) == []
 
 
 def test_shared_context_quarantine_concurrent_observation_has_one_artifact(monkeypatch, tmp_path):
@@ -5446,6 +5500,7 @@ def test_task_turn_delivery_reconciles_a_materialized_turn_without_resending(mon
     monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
     monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
     monkeypatch.setattr(MODULE, "STATE", tmp_path / "state")
+    monkeypatch.setattr(MODULE, "WORKTREE_ROOT", tmp_path)
     monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
     rollout.write_text(
         json.dumps(
@@ -5547,6 +5602,100 @@ def test_task_turn_delivery_never_restarts_a_live_worker(monkeypatch, tmp_path):
 
     assert result["pending"] is True
     assert result["workerPid"] == os.getpid()
+
+
+def test_task_turn_delivery_rechecks_quarantine_before_starting_worker(monkeypatch, tmp_path):
+    store, worktree, _head_sha, _pr_url = _published_followup_store(tmp_path)
+    candidate = store.pr_followup_candidates()[0]
+    store.reserve_pr_followup(
+        thread_id=candidate["threadId"],
+        wake_digest=candidate["wakeDigest"],
+    )
+    rollout = tmp_path / "rollout.jsonl"
+    rollout.write_text("", encoding="utf-8")
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "CREATE TABLE threads (id TEXT, cwd TEXT, archived INTEGER, "
+            "first_user_message TEXT, rollout_path TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?,?,?)",
+            (
+                candidate["threadId"],
+                str(worktree),
+                0,
+                MODULE.issue_prompt(candidate["issueUrl"]),
+                str(rollout),
+            ),
+        )
+
+    original_authorize = store.authorize_task_turn_delivery
+    raced = {"count": 0}
+
+    def authorize_after_race(**kwargs):
+        raced["count"] += 1
+        if raced["count"] == 1:
+            store.record_shared_context_quarantine(
+                key=candidate["key"],
+                reason="SHARED_CONTEXT_INVALID",
+                dedupe_key="race-quarantine",
+                payload={"source": "delivery-race"},
+                created_at=iso_z(datetime.now(UTC)),
+            )
+        return original_authorize(**kwargs)
+
+    popen_calls = []
+    monkeypatch.setattr(store, "authorize_task_turn_delivery", authorize_after_race)
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "STATE", tmp_path / "state")
+    monkeypatch.setattr(MODULE, "WORKTREE_ROOT", tmp_path)
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    monkeypatch.setattr(
+        MODULE.subprocess,
+        "Popen",
+        lambda *args, **kwargs: (
+            popen_calls.append((args, kwargs))
+            or pytest.fail("quarantine race must reject before starting a worker")
+        ),
+    )
+
+    with pytest.raises(PermissionError, match="blocked by active task quarantine"):
+        MODULE.task_turn_deliver(
+            SimpleNamespace(
+                ledger=tmp_path / "ledger.sqlite3",
+                delivery_kind="pr-followup",
+                delivery_token=candidate["wakeDigest"],
+                thread_id=candidate["threadId"],
+            )
+        )
+
+    assert raced["count"] == 1
+    assert popen_calls == []
+    receipt_key = MODULE.sha256_json(
+        {
+            "deliveryKind": "pr-followup",
+            "threadId": candidate["threadId"],
+            "deliveryToken": candidate["wakeDigest"],
+        }
+    )
+    receipt = json.loads(
+        (tmp_path / "state" / "task_turn_receipts" / f"{receipt_key}.json").read_text()
+    )
+    assert receipt["ok"] is False
+    assert receipt["turnStarted"] is False
+
+    store.clear_task_quarantine(
+        candidate["key"],
+        reason="SHARED_CONTEXT_INVALID",
+        evidence={"revalidated": True},
+    )
+    authorized = store.authorize_task_turn_delivery(
+        delivery_kind="pr-followup",
+        thread_id=candidate["threadId"],
+        delivery_token=candidate["wakeDigest"],
+    )
+    assert authorized["deliveryToken"] == candidate["wakeDigest"]
 
 
 def test_task_turn_preflight_failure_writes_a_negative_receipt(monkeypatch, tmp_path):
@@ -10778,14 +10927,21 @@ def test_publication_cap_blocks_before_push_or_create_pr(monkeypatch, tmp_path):
 
 def test_publication_finalize_failure_reconciles_without_second_create_pr(monkeypatch, tmp_path):
     ledger_path = tmp_path / "ledger.sqlite3"
-    ManagedLedger(ledger_path, ensure_schema=True)
+    managed = ManagedLedger(ledger_path, ensure_schema=True)
     fixture = _legal_queue_publication_fixture(tmp_path, request_id="request-reconcile-queue")
     request = fixture["request"]
     calls = []
 
     class Store:
+        def __init__(self):
+            self.external_receipt = None
+            self.reconciled = False
+
         def publication_work_items(self):
-            return [{"request_id": "request-reconcile-queue", "request": request}]
+            item = {"request_id": "request-reconcile-queue", "request": request}
+            if self.external_receipt is not None and not self.reconciled:
+                item["externalPublicationReceipt"] = self.external_receipt
+            return [item]
 
         def recover_failed_publication_preflight(self, *_args, **_kwargs):
             return False
@@ -10796,7 +10952,14 @@ def test_publication_finalize_failure_reconciles_without_second_create_pr(monkey
         def prepare_post_push_reconciliation(self, *_args, **_kwargs):
             return None
 
-    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+        def mark_managed_publication_reconciled(self, request_id, *, pr_url, head_sha):
+            assert request_id == "request-reconcile-queue"
+            assert pr_url == self.external_receipt["prUrl"]
+            assert head_sha == request["commitSha"]
+            self.reconciled = True
+
+    store = Store()
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
     monkeypatch.setattr(MODULE, "controller_review_result", lambda *_args: {"verdict": "PASS"})
     monkeypatch.setattr(MODULE, "ensure_fork_remote", lambda *_args: "radar-fork")
     monkeypatch.setattr(
@@ -10809,11 +10972,13 @@ def test_publication_finalize_failure_reconciles_without_second_create_pr(monkey
         calls.append(operation)
         if operation == "push":
             return {"ok": True}
-        return {
+        result = {
             "ok": True,
             "prUrl": "https://github.com/a/b/pull/1",
             "headSha": request["commitSha"],
         }
+        store.external_receipt = dict(result)
+        return result
 
     monkeypatch.setattr(MODULE, "_executor", executor)
     original_finalize = ManagedLedger.finalize_publication_reservation
@@ -10827,6 +10992,34 @@ def test_publication_finalize_failure_reconciles_without_second_create_pr(monkey
 
     monkeypatch.setattr(ManagedLedger, "finalize_publication_reservation", fail_finalize_once)
     first = MODULE.run_publication_queue(SimpleNamespace(ledger=ledger_path))
+    with managed._connection() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM managed_prs").fetchone()[0] == 0
+        from oss_pr_radar.task_quarantine import record
+
+        record(
+            connection,
+            opportunity_key="a/b#1",
+            reason="ACTIVE_TASK_QUARANTINE",
+            dedupe_key="receipt-after-external-effect",
+            payload={"test": True},
+            created_at="2026-08-20T00:00:00Z",
+        )
+    # The reconciliation is internal accounting for an already successful
+    # create_pr effect.  It must remain completable even when the repository
+    # cap is full; no second executor action is allowed.
+    for number in range(2, 7):
+        managed.upsert_pr(
+            pr_key=f"a/b#{number}",
+            owner="a",
+            repo="b",
+            number=number,
+            head_sha="c" * 40,
+            pr_url=f"https://github.com/a/b/pull/{number}",
+            state="OPEN",
+            auto_created=False,
+        )
+    with managed._connection() as connection:
+        connection.execute("UPDATE managed_prs SET auto_created=1 WHERE owner='a' AND repo='b'")
     second = MODULE.run_publication_queue(SimpleNamespace(ledger=ledger_path))
 
     assert first["published"] == []

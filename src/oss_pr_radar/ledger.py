@@ -2585,6 +2585,11 @@ class RadarLedger:
             raise LedgerError("recovery authorization is stale or invalid")
         now = iso_z(datetime.now(UTC))
         with self.transaction() as connection:
+            require_quarantine_clear(
+                connection,
+                opportunity_key=str(candidate["key"]),
+                operation="recovery delivery reservation",
+            )
             existing = connection.execute(
                 """SELECT 1 FROM events reserved WHERE opportunity_key=?
                    AND event_type='THREAD_RECOVERY_RESERVED'
@@ -2646,6 +2651,19 @@ class RadarLedger:
                 (thread_id, nonce),
             ).fetchone()
             if row is None:
+                sent = connection.execute(
+                    """SELECT 1 FROM events r JOIN events sent
+                       ON sent.opportunity_key=r.opportunity_key
+                      AND sent.event_type='THREAD_RECOVERY_SENT'
+                      AND sent.dedupe_key=r.dedupe_key
+                       WHERE r.event_type='THREAD_RECOVERY_RESERVED'
+                         AND json_extract(r.payload_json,'$.threadId')=?
+                         AND json_extract(r.payload_json,'$.recoveryNonce')=?
+                       LIMIT 1""",
+                    (thread_id, nonce),
+                ).fetchone()
+                if sent:
+                    return
                 raise LedgerError("recovery reservation not found")
             payload = json.loads(row["payload_json"])
             if payload.get("recoveryNonce") != nonce:
@@ -3278,6 +3296,11 @@ class RadarLedger:
             raise LedgerError("validation follow-up WIP exclusion does not match the task")
         now = iso_z(datetime.now(UTC))
         with self.transaction() as connection:
+            require_quarantine_clear(
+                connection,
+                opportunity_key=str(candidate["key"]),
+                operation="validation follow-up reservation",
+            )
             if max_active is not None and self._active_task_count(
                 connection,
                 now=now,
@@ -3342,6 +3365,19 @@ class RadarLedger:
                 (result_digest, thread_id, result_digest),
             ).fetchone()
             if row is None:
+                sent = connection.execute(
+                    """SELECT 1 FROM events r JOIN events s
+                       ON s.opportunity_key=r.opportunity_key
+                      AND s.event_type='VALIDATION_FOLLOWUP_SENT'
+                      AND s.dedupe_key=?
+                       WHERE r.event_type='VALIDATION_FOLLOWUP_RESERVED'
+                         AND json_extract(r.payload_json,'$.threadId')=?
+                         AND json_extract(r.payload_json,'$.resultDigest')=?
+                       LIMIT 1""",
+                    (result_digest, thread_id, result_digest),
+                ).fetchone()
+                if sent:
+                    return
                 raise LedgerError(
                     "validation follow-up reservation is missing or already committed"
                 )
@@ -4209,28 +4245,88 @@ class RadarLedger:
 
         with self.connect() as connection:
             rows = connection.execute(
-                """SELECT r.* FROM publication_requests r
-                   WHERE NOT EXISTS (
-                     SELECT 1 FROM task_quarantines quarantine
-                     WHERE quarantine.opportunity_key=r.opportunity_key
-                       AND quarantine.status='ACTIVE'
-                   )
-                   AND (r.status IN ('PENDING','GRANTED') OR (
-                     r.status='BLOCKED'
-                     AND EXISTS (
-                       SELECT 1 FROM publication_permits p
-                       JOIN publication_effects push ON push.permit_id=p.permit_id
-                       JOIN publication_effects confirm ON confirm.permit_id=p.permit_id
-                       WHERE p.request_id=r.request_id
-                         AND push.action='push' AND push.status='SUCCEEDED'
-                         AND confirm.action='create_pr' AND confirm.status='FAILED'
-                         AND confirm.result_json LIKE '%\"reason\":\"LIVE_RECHECK_FAILED\"%'
-                         AND confirm.result_json LIKE '%\"detail\":\"EXISTING_PR_HEAD_DRIFT\"%'
+                """SELECT r.*,
+                          (SELECT e.result_json FROM publication_effects e
+                           JOIN publication_permits permit
+                             ON permit.permit_id=e.permit_id
+                            AND permit.request_id=r.request_id
+                           WHERE e.action='create_pr'
+                             AND e.status='SUCCEEDED'
+                           ORDER BY e.updated_at DESC LIMIT 1) AS external_receipt_json
+                   FROM publication_requests r
+                   WHERE (
+                     NOT EXISTS (
+                       SELECT 1 FROM task_quarantines quarantine
+                       WHERE quarantine.opportunity_key=r.opportunity_key
+                         AND quarantine.status='ACTIVE'
                      )
-                   ))
+                     AND (r.status IN ('PENDING','GRANTED') OR (
+                       r.status='BLOCKED'
+                       AND EXISTS (
+                         SELECT 1 FROM publication_permits p
+                         JOIN publication_effects push ON push.permit_id=p.permit_id
+                         JOIN publication_effects confirm ON confirm.permit_id=p.permit_id
+                         WHERE p.request_id=r.request_id
+                           AND push.action='push' AND push.status='SUCCEEDED'
+                           AND confirm.action='create_pr' AND confirm.status='FAILED'
+                           AND confirm.result_json LIKE '%\"reason\":\"LIVE_RECHECK_FAILED\"%'
+                           AND confirm.result_json LIKE '%\"detail\":\"EXISTING_PR_HEAD_DRIFT\"%'
+                       )
+                     ))
+                   ) OR (
+                     r.status='CONSUMED'
+                     AND EXISTS (
+                       SELECT 1 FROM publication_effects effect
+                       JOIN publication_permits permit
+                         ON permit.permit_id=effect.permit_id
+                        AND permit.request_id=r.request_id
+                       WHERE effect.action='create_pr'
+                         AND effect.status='SUCCEEDED'
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events reconciled
+                       WHERE reconciled.opportunity_key=r.opportunity_key
+                         AND reconciled.event_type='MANAGED_PUBLICATION_RECONCILED'
+                         AND reconciled.dedupe_key='managed-publication-reconciled:' || r.request_id
+                     )
+                   )
                    ORDER BY r.created_at"""
             ).fetchall()
-        return [dict(row) | {"request": json.loads(row["request_json"])} for row in rows]
+        items = []
+        for row in rows:
+            item = dict(row) | {"request": json.loads(row["request_json"])}
+            raw_receipt = item.pop("external_receipt_json", None)
+            if raw_receipt:
+                try:
+                    receipt = json.loads(raw_receipt)
+                except json.JSONDecodeError:
+                    receipt = None
+                if isinstance(receipt, dict) and receipt.get("prUrl"):
+                    item["externalPublicationReceipt"] = receipt
+            items.append(item)
+        return items
+
+    def mark_managed_publication_reconciled(
+        self, request_id: str, *, pr_url: str, head_sha: str
+    ) -> None:
+        """Record that a durable external PR receipt was attached to managed state."""
+
+        now = iso_z(datetime.now(UTC))
+        with self.transaction() as connection:
+            row = connection.execute(
+                "SELECT opportunity_key FROM publication_requests WHERE request_id=?",
+                (request_id,),
+            ).fetchone()
+            if row is None:
+                raise LedgerError("publication request is missing")
+            self._event(
+                connection,
+                row["opportunity_key"],
+                "MANAGED_PUBLICATION_RECONCILED",
+                f"managed-publication-reconciled:{request_id}",
+                {"requestId": request_id, "prUrl": pr_url, "headSha": head_sha},
+                now,
+            )
 
     def active_task_quarantine(self, key: str) -> dict[str, Any] | None:
         """Return the latest uncleared task-local quarantine, if any."""
@@ -4361,6 +4457,12 @@ class RadarLedger:
     def defer_publication_request(self, request_id: str, reason: str) -> None:
         now = iso_z(datetime.now(UTC))
         with self.transaction() as connection:
+            row = connection.execute(
+                "SELECT opportunity_key FROM publication_requests WHERE request_id=?",
+                (request_id,),
+            ).fetchone()
+            if row is None:
+                raise LedgerError("publication request not found")
             connection.execute(
                 """UPDATE publication_requests SET status='PENDING',reason=?,updated_at=?
                    WHERE request_id=? AND status='PENDING'""",
@@ -4390,14 +4492,17 @@ class RadarLedger:
                 {"requestId": request_id, "reason": reason},
                 now,
             )
-            self._rearm_followup_for_publication_drift(
-                connection,
-                request_id=request_id,
-                key=row["opportunity_key"],
-                request_json=row["request_json"],
-                reason=reason,
-                now=now,
-            )
+            # Blocking is a safe contraction.  Do not let its optional PR
+            # update rearm reactivate work while the task is quarantined.
+            if active_quarantine(connection, opportunity_key=str(row["opportunity_key"])) is None:
+                self._rearm_followup_for_publication_drift(
+                    connection,
+                    request_id=request_id,
+                    key=row["opportunity_key"],
+                    request_json=row["request_json"],
+                    reason=reason,
+                    now=now,
+                )
 
     def rearm_pr_followup_after_publication_drift(self, request_id: str, *, reason: str) -> None:
         if reason not in PR_UPDATE_REARM_REASONS:
@@ -4411,6 +4516,11 @@ class RadarLedger:
             ).fetchone()
             if row is None:
                 raise LedgerError("publication request not found")
+            require_quarantine_clear(
+                connection,
+                opportunity_key=str(row["opportunity_key"]),
+                operation="publication follow-up rearm",
+            )
             connection.execute(
                 """UPDATE publication_requests SET status='BLOCKED',reason=?,updated_at=?
                    WHERE request_id=?""",
@@ -4603,6 +4713,11 @@ class RadarLedger:
                 raise LedgerError("publication request is not blocked")
             if row["reason"] != expected_reason:
                 raise LedgerError("publication block reason changed")
+            require_quarantine_clear(
+                connection,
+                opportunity_key=str(row["opportunity_key"]),
+                operation="publication request retry",
+            )
             connection.execute(
                 """UPDATE publication_requests SET status='PENDING',reason=NULL,updated_at=?
                    WHERE request_id=?""",
@@ -5018,6 +5133,11 @@ class RadarLedger:
             ).fetchone()
             if row is None:
                 return False
+            require_quarantine_clear(
+                connection,
+                opportunity_key=str(row["opportunity_key"]),
+                operation="publication preflight recovery",
+            )
             try:
                 failure = json.loads(row["result_json"])
             except json.JSONDecodeError:
@@ -5081,9 +5201,11 @@ class RadarLedger:
             if row is None:
                 return None
             request_row = connection.execute(
-                "SELECT request_json FROM publication_requests WHERE request_id=?",
+                "SELECT opportunity_key,request_json FROM publication_requests WHERE request_id=?",
                 (request_id,),
             ).fetchone()
+            if request_row is None:
+                return None
             if request_row is None or not _publication_probe_valid_json(
                 request_row["request_json"]
             ):
@@ -5104,6 +5226,11 @@ class RadarLedger:
                     ("BLOCKED_REPRODUCTION_REQUIRED", now, request_id),
                 )
                 return None
+            require_quarantine_clear(
+                connection,
+                opportunity_key=str(request_row["opportunity_key"]),
+                operation="ambiguous publication effect recovery",
+            )
             age = current - parse_time(row["effect_updated_at"])
             if row["effect_status"] == "ATTEMPTED" and age < timedelta(
                 minutes=max(1, min_age_minutes)
@@ -5179,9 +5306,16 @@ class RadarLedger:
             if effect is None or permit is None or effect["permit_id"] != permit_id:
                 raise LedgerError("publication retry binding mismatch")
             request_row = connection.execute(
-                "SELECT request_json FROM publication_requests WHERE request_id=?",
+                "SELECT opportunity_key,request_json FROM publication_requests WHERE request_id=?",
                 (permit["request_id"],),
             ).fetchone()
+            if request_row is None:
+                raise LedgerError("publication request is missing")
+            require_quarantine_clear(
+                connection,
+                opportunity_key=str(request_row["opportunity_key"]),
+                operation="publication effect retry",
+            )
             if request_row is None or not _publication_probe_valid_json(
                 request_row["request_json"], evidence
             ):
@@ -5269,6 +5403,11 @@ class RadarLedger:
             ).fetchone()
             if request_row is None or request_row["status"] == "CONSUMED":
                 return None
+            require_quarantine_clear(
+                connection,
+                opportunity_key=str(request_row["opportunity_key"]),
+                operation="post-push publication reconciliation",
+            )
             try:
                 request = json.loads(request_row["request_json"])
             except json.JSONDecodeError:
@@ -5780,6 +5919,8 @@ class RadarLedger:
         merge_conflict_files: list[str] | None = None,
         max_active: int | None = None,
         exclude_intent_id: str | None = None,
+        quarantine_reason: str | None = None,
+        quarantine_evidence: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         candidate = next(
             (
@@ -5826,6 +5967,32 @@ class RadarLedger:
         elif merge_conflict_files is not None:
             raise LedgerError("PR follow-up conflict files lack a prepared base")
         with self.transaction() as connection:
+            if quarantine_reason is None:
+                require_quarantine_clear(
+                    connection,
+                    opportunity_key=str(candidate["key"]),
+                    operation="PR follow-up reservation",
+                )
+            else:
+                if quarantine_reason != "PR_FOLLOWUP_REBIND_REQUIRED":
+                    raise LedgerError("PR follow-up quarantine revalidation reason is invalid")
+                if active_quarantine(connection, opportunity_key=str(candidate["key"])) is None:
+                    raise LedgerError("PR follow-up quarantine is not active for revalidation")
+            existing = connection.execute(
+                """SELECT 1 FROM events reserved
+                   WHERE reserved.opportunity_key=?
+                     AND reserved.event_type='PR_FOLLOWUP_RESERVED'
+                     AND reserved.dedupe_key=?
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events finished
+                       WHERE finished.opportunity_key=reserved.opportunity_key
+                         AND finished.event_type='PR_FOLLOWUP_RESULT_INGESTED'
+                         AND finished.dedupe_key=reserved.dedupe_key
+                     )""",
+                (candidate["key"], wake_digest),
+            ).fetchone()
+            if existing:
+                return snapshot_candidate
             if max_active is not None and self._active_task_count(
                 connection,
                 now=iso_z(datetime.now(UTC)),
@@ -5880,6 +6047,19 @@ class RadarLedger:
             ).fetchone()
             if row is None:
                 raise LedgerError("PR follow-up reservation is unavailable for repair")
+            record_quarantine(
+                connection,
+                opportunity_key=str(row["opportunity_key"]),
+                reason="PR_FOLLOWUP_REBIND_REQUIRED",
+                dedupe_key=sha256_text(f"{row['opportunity_key']}|{wake_digest}|{reason}"),
+                payload={
+                    "threadId": thread_id,
+                    "wakeDigest": wake_digest,
+                    "reason": reason,
+                    "reservationPending": True,
+                },
+                created_at=now,
+            )
             self._event(
                 connection,
                 row["opportunity_key"],
@@ -5924,6 +6104,8 @@ class RadarLedger:
             if preparation is None:
                 raise LedgerError("PR follow-up preparation is not bound")
             if quarantine_reason:
+                if quarantine_reason != "PR_FOLLOWUP_REBIND_REQUIRED":
+                    raise LedgerError("PR follow-up quarantine clear reason is invalid")
                 cleared = clear_quarantine(
                     connection,
                     opportunity_key=key,
@@ -6259,6 +6441,19 @@ class RadarLedger:
                 (thread_id, wake_digest),
             ).fetchone()
             if row is None:
+                sent = connection.execute(
+                    """SELECT 1 FROM events r JOIN events s
+                       ON s.opportunity_key=r.opportunity_key
+                      AND s.event_type='PR_FOLLOWUP_SENT'
+                      AND s.dedupe_key=r.dedupe_key
+                       WHERE r.event_type='PR_FOLLOWUP_RESERVED'
+                         AND json_extract(r.payload_json,'$.threadId')=?
+                         AND r.dedupe_key=?
+                       LIMIT 1""",
+                    (thread_id, wake_digest),
+                ).fetchone()
+                if sent:
+                    return
                 raise LedgerError("PR follow-up reservation is missing or already committed")
             self._event(
                 connection,
@@ -6765,6 +6960,19 @@ class RadarLedger:
                 (thread_id, reservation_nonce),
             ).fetchone()
             if row is None:
+                sent = connection.execute(
+                    """SELECT 1 FROM events reserved JOIN events sent
+                       ON sent.opportunity_key=reserved.opportunity_key
+                      AND sent.event_type='THREAD_PUBLICATION_STATUS_SENT'
+                      AND sent.dedupe_key=json_extract(reserved.payload_json,'$.prUrl')
+                       WHERE reserved.event_type='THREAD_PUBLICATION_STATUS_RESERVED'
+                         AND json_extract(reserved.payload_json,'$.threadId')=?
+                         AND reserved.dedupe_key=?
+                       LIMIT 1""",
+                    (thread_id, reservation_nonce),
+                ).fetchone()
+                if sent:
+                    return
                 raise LedgerError("publication feedback reservation is unavailable")
             self._event(
                 connection,
@@ -7017,6 +7225,73 @@ class RadarLedger:
                 {"threadId": candidate["threadId"], "cleanupNonce": nonce},
                 now,
             )
+
+    def authorize_task_turn_delivery(
+        self,
+        *,
+        delivery_kind: str,
+        thread_id: str,
+        delivery_token: str,
+    ) -> dict[str, Any]:
+        """Atomically bind a reserved turn to the current quarantine-free state."""
+
+        selectors = {
+            "pr-followup": (
+                "PR_FOLLOWUP_RESERVED",
+                "json_extract(payload_json,'$.threadId')=? AND dedupe_key=?",
+            ),
+            "validation-followup": (
+                "VALIDATION_FOLLOWUP_RESERVED",
+                "json_extract(payload_json,'$.threadId')=? "
+                "AND json_extract(payload_json,'$.resultDigest')=?",
+            ),
+            "recovery": (
+                "THREAD_RECOVERY_RESERVED",
+                "json_extract(payload_json,'$.threadId')=? AND dedupe_key=?",
+            ),
+            "publication-feedback": (
+                "THREAD_PUBLICATION_STATUS_RESERVED",
+                "json_extract(payload_json,'$.threadId')=? AND dedupe_key=?",
+            ),
+        }
+        selector = selectors.get(delivery_kind)
+        if selector is None:
+            raise LedgerError("unsupported task-turn delivery kind")
+        event_type, predicate = selector
+        now = iso_z(datetime.now(UTC))
+        idempotency_key = f"task-turn-start:{delivery_kind}:{thread_id}:{delivery_token}"
+        with self.transaction() as connection:
+            row = connection.execute(
+                f"""SELECT opportunity_key,payload_json FROM events
+                    WHERE event_type=? AND {predicate}
+                    ORDER BY id DESC LIMIT 1""",
+                (event_type, thread_id, delivery_token),
+            ).fetchone()
+            if row is None:
+                raise LedgerError("task-turn delivery reservation is unavailable")
+            require_quarantine_clear(
+                connection,
+                opportunity_key=str(row["opportunity_key"]),
+                operation="task-turn delivery start",
+            )
+            self._event(
+                connection,
+                str(row["opportunity_key"]),
+                "TASK_TURN_DELIVERY_STARTED",
+                idempotency_key,
+                {
+                    "deliveryKind": delivery_kind,
+                    "threadId": thread_id,
+                    "deliveryToken": delivery_token,
+                },
+                now,
+            )
+            return {
+                "opportunityKey": str(row["opportunity_key"]),
+                "deliveryKind": delivery_kind,
+                "threadId": thread_id,
+                "deliveryToken": delivery_token,
+            }
 
     def _event(
         self,
