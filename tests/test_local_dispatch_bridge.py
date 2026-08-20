@@ -73,9 +73,10 @@ def _finalize_controller_commit_for_test(
     private.mkdir(mode=0o700, exist_ok=True)
     private.chmod(0o700)
     private_result = private / "result.json"
-    if not private_result.exists() or json.loads(
-        private_result.read_text(encoding="utf-8")
-    ) != value:
+    if (
+        not private_result.exists()
+        or json.loads(private_result.read_text(encoding="utf-8")) != value
+    ):
         private_result.write_text(json.dumps(value), encoding="utf-8")
     with MODULE._task_worktree_private_descriptor(candidate) as result_access:
         finalized, raw = MODULE._finalize_controller_commit(
@@ -464,9 +465,7 @@ def test_event_drain_does_not_deliver_a_deferred_validation_followup(monkeypatch
         MODULE,
         "validation_followup_list",
         lambda _args: {
-            "candidates": [
-                {"key": "a/b#1", "threadId": "thread-1", "resultDigest": "old-digest"}
-            ]
+            "candidates": [{"key": "a/b#1", "threadId": "thread-1", "resultDigest": "old-digest"}]
         },
     )
     monkeypatch.setattr(
@@ -4877,9 +4876,7 @@ def test_recovery_delivery_preserves_validation_followup_prompt():
 
 def test_validation_followup_prompt_translates_internal_gaps_for_the_user():
     reservation_digest = "a" * 64
-    worktree_input_path = (
-        f".oss-pr-radar/validation-inputs/{reservation_digest}.json"
-    )
+    worktree_input_path = f".oss-pr-radar/validation-inputs/{reservation_digest}.json"
     prompt = MODULE._validation_followup_prompt(
         {
             "missing": ["relevant_tests_green", "independent_review_passed"],
@@ -9193,9 +9190,7 @@ def test_validation_followup_reserve_rejects_result_changed_after_reservation(
     def mutate_result_after_reservation():
         assert mutation_started.wait(2)
         value = json.loads(result_path.read_text(encoding="utf-8"))
-        value["tests"] = [
-            {"command": "pytest changed after queue", "exitCode": 0}
-        ]
+        value["tests"] = [{"command": "pytest changed after queue", "exitCode": 0}]
         result_path.write_text(json.dumps(value), encoding="utf-8")
         mutation_finished.set()
 
@@ -9253,9 +9248,12 @@ def test_validation_followup_reserve_rejects_result_changed_after_reservation(
     assert attempt_files
     assert all(not path.exists() for path in attempt_files)
     with store.connect() as connection:
-        assert connection.execute(
-            "SELECT 1 FROM events WHERE event_type='VALIDATION_FOLLOWUP_SENT'"
-        ).fetchone() is None
+        assert (
+            connection.execute(
+                "SELECT 1 FROM events WHERE event_type='VALIDATION_FOLLOWUP_SENT'"
+            ).fetchone()
+            is None
+        )
     with pytest.raises(RuntimeError, match="task-turn delivery reservation is unavailable"):
         MODULE.validation_followup_deliver(
             SimpleNamespace(
@@ -9266,9 +9264,7 @@ def test_validation_followup_reserve_rejects_result_changed_after_reservation(
         )
 
 
-def test_validation_followup_delivery_rechecks_result_before_starting_worker(
-    monkeypatch, tmp_path
-):
+def test_validation_followup_delivery_rechecks_result_before_starting_worker(monkeypatch, tmp_path):
     store, worktree, result_path = _controller_commit_result(
         tmp_path,
         missing_quality=("relevant_tests_green",),
@@ -9412,9 +9408,7 @@ def _bound_validation_worker_fixture(monkeypatch, tmp_path):
     monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
     original_live_bytes = result_path.read_bytes()
     reservation_digest = str(candidate["reservationDigest"])
-    snapshot = MODULE._ensure_validation_snapshot(
-        candidate, reservation_digest=reservation_digest
-    )
+    snapshot = MODULE._ensure_validation_snapshot(candidate, reservation_digest=reservation_digest)
     binding = {
         "reservationDigest": reservation_digest,
         "snapshotId": str(snapshot["snapshotId"]),
@@ -9464,10 +9458,7 @@ def _bound_validation_worker_fixture(monkeypatch, tmp_path):
 
 def _task_turn_messages(process: _FakeTaskTurnProcess) -> list[dict[str, object]]:
     return [
-        json.loads(line)
-        for write in process.stdin.writes
-        for line in write.splitlines()
-        if line
+        json.loads(line) for write in process.stdin.writes for line in write.splitlines() if line
     ]
 
 
@@ -9594,9 +9585,7 @@ def test_validation_attempt_scopes_delivery_files_and_client_id_but_not_worker_l
     monkeypatch.setattr(
         MODULE,
         "active_task_turn_worker",
-        lambda thread_id: active_worker
-        if thread_id == str(candidate["threadId"])
-        else None,
+        lambda thread_id: active_worker if thread_id == str(candidate["threadId"]) else None,
     )
     monkeypatch.setattr(
         MODULE.subprocess,
@@ -9682,9 +9671,7 @@ def test_validation_worker_projects_snapshot_and_sends_exact_local_input_prompt(
     assert projection.read_bytes() != result_path.read_bytes()
     assert stat.S_IMODE(projection.stat().st_mode) == 0o400
     assert stat.S_IMODE(projection.parent.stat().st_mode) == 0o700
-    turns = [
-        item for item in _task_turn_messages(process) if item.get("method") == "turn/start"
-    ]
+    turns = [item for item in _task_turn_messages(process) if item.get("method") == "turn/start"]
     assert len(turns) == 1
     prompt = turns[0]["params"]["input"][0]["text"]
     assert f"`{binding['worktreeInputPath']}`" in prompt
@@ -9743,12 +9730,11 @@ def test_validation_worker_rejects_projection_changed_before_turn_start(
     with pytest.raises(RuntimeError):
         MODULE._app_server_task_turn_worker(args)
 
-    assert all(
-        item.get("method") != "turn/start" for item in _task_turn_messages(process)
+    assert all(item.get("method") != "turn/start" for item in _task_turn_messages(process))
+    assert (
+        store.unresolved_validation_followups()[0]["reservationDigest"]
+        == binding["reservationDigest"]
     )
-    assert store.unresolved_validation_followups()[0]["reservationDigest"] == binding[
-        "reservationDigest"
-    ]
 
 
 def test_validation_worker_popen_retry_restores_projection_from_state_snapshot(
@@ -9905,10 +9891,7 @@ def test_validation_worktree_input_read_fails_if_private_parent_is_replaced(
         )
     assert swapped is True
     visible_replacement_file = (
-        worktree
-        / MODULE.TASK_PRIVATE_DIR
-        / "validation-inputs"
-        / replacement_file.name
+        worktree / MODULE.TASK_PRIVATE_DIR / "validation-inputs" / replacement_file.name
         if replacement_kind == "different-inode"
         else replacement_file
     )
@@ -9985,9 +9968,7 @@ def test_validation_worktree_input_write_fails_if_worktree_parent_is_replaced(
     }
     bind_validation_runtime(monkeypatch, tmp_path)
     reservation_digest = "9" * 64
-    snapshot = MODULE._ensure_validation_snapshot(
-        candidate, reservation_digest=reservation_digest
-    )
+    snapshot = MODULE._ensure_validation_snapshot(candidate, reservation_digest=reservation_digest)
     binding = {
         "reservationDigest": reservation_digest,
         **snapshot,
@@ -10138,11 +10119,14 @@ def test_validation_snapshot_is_immutable_across_bind_and_popen_retry(monkeypatc
                 result_digest=candidate["resultDigest"],
             )
         )
-    assert store.validation_followup_delivery_binding(
-        thread_id=candidate["threadId"],
-        result_digest=candidate["resultDigest"],
-        reservation_digest=reservation_digest,
-    ) == binding
+    assert (
+        store.validation_followup_delivery_binding(
+            thread_id=candidate["threadId"],
+            result_digest=candidate["resultDigest"],
+            reservation_digest=reservation_digest,
+        )
+        == binding
+    )
 
 
 def test_validation_snapshot_tamper_does_not_start_or_cancel_bound_turn(monkeypatch, tmp_path):
@@ -10205,9 +10189,10 @@ def test_validation_snapshot_tamper_does_not_start_or_cancel_bound_turn(monkeypa
                 result_digest=candidate["resultDigest"],
             )
         )
-    assert store.unresolved_validation_followups()[0]["reservationDigest"] == reserved[
-        "reservationDigest"
-    ]
+    assert (
+        store.unresolved_validation_followups()[0]["reservationDigest"]
+        == reserved["reservationDigest"]
+    )
 
 
 def test_validation_snapshot_same_reservation_converges_to_one_file(monkeypatch, tmp_path):
@@ -10249,9 +10234,7 @@ def test_validation_snapshot_rejects_missing_path_mode_and_digest(monkeypatch, t
     }
     bind_validation_runtime(monkeypatch, tmp_path)
     reservation_digest = "b" * 64
-    binding = MODULE._ensure_validation_snapshot(
-        candidate, reservation_digest=reservation_digest
-    )
+    binding = MODULE._ensure_validation_snapshot(candidate, reservation_digest=reservation_digest)
     snapshot = tmp_path / "state" / "validation-inputs" / f"{reservation_digest}.json"
 
     with pytest.raises(RuntimeError, match="validation snapshot path is invalid"):
@@ -10343,9 +10326,7 @@ def test_validation_live_result_chain_never_follows_a_symlink(monkeypatch, tmp_p
         lambda: MODULE._validation_prefetch_plan(candidate),
         lambda: MODULE._validation_result_digest(candidate),
         lambda: MODULE._validation_policy_reassessment_needed(candidate),
-        lambda: MODULE._ensure_validation_snapshot(
-            candidate, reservation_digest="e" * 64
-        ),
+        lambda: MODULE._ensure_validation_snapshot(candidate, reservation_digest="e" * 64),
     )
     for operation in operations:
         with pytest.raises(RuntimeError, match="validation result permissions are unsafe"):
@@ -10354,9 +10335,7 @@ def test_validation_live_result_chain_never_follows_a_symlink(monkeypatch, tmp_p
     assert list((tmp_path / "state").rglob("*.json")) == []
 
 
-def test_validation_live_result_rejects_dangerous_mode_and_wrong_owner(
-    monkeypatch, tmp_path
-):
+def test_validation_live_result_rejects_dangerous_mode_and_wrong_owner(monkeypatch, tmp_path):
     worktree = tmp_path / "worktree"
     result_path = worktree / ".oss-pr-radar" / "result.json"
     result_path.parent.mkdir(parents=True)
@@ -10387,9 +10366,7 @@ def test_validation_live_result_rejects_dangerous_mode_and_wrong_owner(
         MODULE._validation_result_digest(candidate)
 
 
-def test_validation_live_result_detects_inode_swap_between_lstat_and_open(
-    monkeypatch, tmp_path
-):
+def test_validation_live_result_detects_inode_swap_between_lstat_and_open(monkeypatch, tmp_path):
     worktree = tmp_path / "worktree"
     result_path = worktree / ".oss-pr-radar" / "result.json"
     result_path.parent.mkdir(parents=True)
@@ -10405,11 +10382,7 @@ def test_validation_live_result_detects_inode_swap_between_lstat_and_open(
     def swapping_stat(path, *args, **kwargs):
         nonlocal swapped
         value = original_stat(path, *args, **kwargs)
-        if (
-            path == Path("result.json")
-            and kwargs.get("dir_fd") is not None
-            and not swapped
-        ):
+        if path == Path("result.json") and kwargs.get("dir_fd") is not None and not swapped:
             replacement = result_path.with_suffix(".replacement")
             replacement.write_bytes(raw)
             replacement.chmod(0o644)
@@ -10454,9 +10427,7 @@ def test_validation_live_result_read_fails_if_private_parent_is_replaced(
             )
             swapped = True
 
-    monkeypatch.setattr(
-        MODULE, "_require_validation_worktree_private_binding", require_then_swap
-    )
+    monkeypatch.setattr(MODULE, "_require_validation_worktree_private_binding", require_then_swap)
 
     with pytest.raises(RuntimeError, match="private directory is unsafe"):
         MODULE._validation_result_digest(candidate)
@@ -10503,9 +10474,7 @@ def test_validation_live_result_read_fails_if_worktree_parent_is_replaced(
             )
             swapped = True
 
-    monkeypatch.setattr(
-        MODULE, "_require_validation_worktree_private_binding", require_then_swap
-    )
+    monkeypatch.setattr(MODULE, "_require_validation_worktree_private_binding", require_then_swap)
 
     with pytest.raises(RuntimeError, match="validation worktree parent is unsafe"):
         MODULE._validation_result_digest(candidate)
@@ -10519,9 +10488,7 @@ def test_validation_live_result_read_fails_if_worktree_parent_is_replaced(
 
 
 @pytest.mark.parametrize("operation", ["ingest", "enqueue"])
-def test_task_result_candidate_rejects_private_symlink_without_external_read(
-    tmp_path, operation
-):
+def test_task_result_candidate_rejects_private_symlink_without_external_read(tmp_path, operation):
     _store, worktree, _result_path = _controller_commit_result(tmp_path)
     private = worktree / MODULE.TASK_PRIVATE_DIR
     original_private = worktree / f"{MODULE.TASK_PRIVATE_DIR}.original"
@@ -10569,9 +10536,7 @@ def test_task_result_candidate_rejects_private_parent_replaced_after_binding(
             )
             swapped = True
 
-    monkeypatch.setattr(
-        MODULE, "_require_validation_worktree_private_binding", require_then_swap
-    )
+    monkeypatch.setattr(MODULE, "_require_validation_worktree_private_binding", require_then_swap)
 
     if operation == "ingest":
         result = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
@@ -10592,9 +10557,7 @@ def test_task_result_candidate_rejects_private_parent_replaced_after_binding(
 
 
 @pytest.mark.parametrize("operation", ["ingest", "enqueue"])
-def test_task_result_candidate_skips_missing_result_in_safe_private_dir(
-    tmp_path, operation
-):
+def test_task_result_candidate_skips_missing_result_in_safe_private_dir(tmp_path, operation):
     _store, _worktree, result_path = _controller_commit_result(tmp_path)
     result_path.unlink()
 
@@ -10744,9 +10707,7 @@ def test_validation_snapshot_read_fails_if_parent_is_replaced(
     }
     state = bind_validation_runtime(monkeypatch, tmp_path)
     reservation_digest = "7" * 64
-    binding = MODULE._ensure_validation_snapshot(
-        candidate, reservation_digest=reservation_digest
-    )
+    binding = MODULE._ensure_validation_snapshot(candidate, reservation_digest=reservation_digest)
 
     replacement = tmp_path / f"snapshot-read-{parent}-{replacement_kind}"
     replacement_root = replacement / "validation-inputs" if parent == "state" else replacement
@@ -10770,9 +10731,7 @@ def test_validation_snapshot_read_fails_if_parent_is_replaced(
             )
             swapped = True
 
-    monkeypatch.setattr(
-        MODULE, "_require_validation_snapshot_root_binding", require_then_swap
-    )
+    monkeypatch.setattr(MODULE, "_require_validation_snapshot_root_binding", require_then_swap)
 
     expected_error = (
         "validation snapshot state directory is unsafe"
@@ -10832,9 +10791,7 @@ def test_validation_snapshot_write_fails_if_parent_is_replaced(
             )
             swapped = True
 
-    monkeypatch.setattr(
-        MODULE, "_require_validation_snapshot_root_binding", require_then_swap
-    )
+    monkeypatch.setattr(MODULE, "_require_validation_snapshot_root_binding", require_then_swap)
 
     expected_error = (
         "validation snapshot state directory is unsafe"
@@ -10845,9 +10802,7 @@ def test_validation_snapshot_write_fails_if_parent_is_replaced(
         MODULE._ensure_validation_snapshot(candidate, reservation_digest="8" * 64)
     assert swapped is True
     visible_replacement_root = (
-        state / "validation-inputs"
-        if replacement_kind == "different-inode"
-        else replacement_root
+        state / "validation-inputs" if replacement_kind == "different-inode" else replacement_root
     )
     assert list(visible_replacement_root.iterdir()) == []
 
@@ -12451,9 +12406,7 @@ def test_validation_followup_changed_result_is_retryable_not_an_error(monkeypatc
     result_path.write_text(json.dumps(value), encoding="utf-8")
     monkeypatch.setattr(MODULE, "controller_review_result", lambda *_args: None)
 
-    listed = MODULE.validation_followup_list(
-        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3")
-    )
+    listed = MODULE.validation_followup_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
 
     assert listed["ok"] is True, listed
     assert listed["errors"] == []
@@ -13056,14 +13009,14 @@ def test_publication_queue_blocks_legacy_request_without_private_review(monkeypa
     class Store:
         def publication_work_items(self):
             return [
-                    {
-                        "request_id": "request-1",
-                        "request": {
-                            "evidencePath": str(evidence_path),
-                            "evidenceDigest": hashlib.sha256(raw).hexdigest(),
-                        },
-                    }
-                ]
+                {
+                    "request_id": "request-1",
+                    "request": {
+                        "evidencePath": str(evidence_path),
+                        "evidenceDigest": hashlib.sha256(raw).hexdigest(),
+                    },
+                }
+            ]
 
         def recover_failed_publication_preflight(self, *_args, **_kwargs):
             return False
@@ -13126,10 +13079,10 @@ def test_publication_cap_blocks_before_push_or_create_pr(monkeypatch, tmp_path):
                         "issueUrl": "https://github.com/a/b/issues/6",
                         "commitSha": "a" * 40,
                         "branch": "fix-6",
-                            "worktreePath": str(tmp_path),
-                            "evidencePath": str(evidence_path),
-                            "evidenceDigest": hashlib.sha256(raw).hexdigest(),
-                            "publication": {
+                        "worktreePath": str(tmp_path),
+                        "evidencePath": str(evidence_path),
+                        "evidenceDigest": hashlib.sha256(raw).hexdigest(),
+                        "publication": {
                             "headOwner": "Oxygen56",
                             "baseBranch": "main",
                             "title": "fix: six",

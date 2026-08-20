@@ -434,9 +434,7 @@ def test_bound_evidence_snapshot_blocks_request_field_replacement(tmp_path):
             (json.dumps(payload, sort_keys=True), request["request_id"]),
         )
 
-    audit = publication.audit_publication_request(
-        store, request["request_id"], client=Client()
-    )
+    audit = publication.audit_publication_request(store, request["request_id"], client=Client())
 
     assert audit.status == "BLOCK"
     assert audit.reason == "LOCAL_EVIDENCE_UNAVAILABLE"

@@ -266,7 +266,9 @@ def request_publication(
         raise PublicationError("public branch name exposes an AI tool")
     task_result_path = (worktree / ".oss-pr-radar" / "result.json").resolve()
     if evidence_path == task_result_path:
-        raise PublicationError("task-result publication evidence requires a controller-bound snapshot")
+        raise PublicationError(
+            "task-result publication evidence requires a controller-bound snapshot"
+        )
     evidence, evidence_digest, evidence_raw = _evidence_file_with_raw(evidence_path)
     issue_match = ISSUE_URL.match(issue_url)
     if issue_match is None:

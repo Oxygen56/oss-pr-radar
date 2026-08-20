@@ -3516,7 +3516,13 @@ class RadarLedger:
                      AND json_extract(r.payload_json,'$.resultDigest')=?
                          AND (? IS NULL OR json_extract(r.payload_json,'$.reservationDigest')=?)
                        LIMIT 1""",
-                    (result_digest, thread_id, result_digest, reservation_digest, reservation_digest),
+                    (
+                        result_digest,
+                        thread_id,
+                        result_digest,
+                        reservation_digest,
+                        reservation_digest,
+                    ),
                 ).fetchone()
                 if sent:
                     return
@@ -4455,9 +4461,8 @@ class RadarLedger:
             ).fetchone()
             if existing:
                 existing_request = json.loads(existing["request_json"])
-                if (
-                    _publication_snapshot_present(request)
-                    and not _publication_snapshot_present(existing_request)
+                if _publication_snapshot_present(request) and not _publication_snapshot_present(
+                    existing_request
                 ):
                     if existing["evidence_digest"] != evidence_digest:
                         raise LedgerError("publication request snapshot upgrade digest mismatch")

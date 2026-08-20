@@ -1794,9 +1794,12 @@ def test_active_quarantine_releases_validation_wip_but_keeps_unresolved_delivery
     )
     store.record_stage("a/b#1", "VALIDATION_PENDING")
     with store.connect() as connection:
-        assert connection.execute(
-            "SELECT status FROM intents WHERE intent_id='intent-1'"
-        ).fetchone()["status"] == "COMPLETED"
+        assert (
+            connection.execute("SELECT status FROM intents WHERE intent_id='intent-1'").fetchone()[
+                "status"
+            ]
+            == "COMPLETED"
+        )
     store.record_validation_deferred(
         "a/b#1",
         thread_id="thread-1",
@@ -2212,14 +2215,20 @@ def test_validation_result_change_uses_immediate_cancel_without_relaxing_abandon
     )
     assert store.unresolved_validation_followups() == []
     with store.connect() as connection:
-        assert connection.execute(
-            """SELECT 1 FROM events
+        assert (
+            connection.execute(
+                """SELECT 1 FROM events
                WHERE event_type='VALIDATION_FOLLOWUP_RESERVATION_CANCELLED'"""
-        ).fetchone() is not None
-        assert connection.execute(
-            """SELECT 1 FROM events
+            ).fetchone()
+            is not None
+        )
+        assert (
+            connection.execute(
+                """SELECT 1 FROM events
                WHERE event_type='VALIDATION_FOLLOWUP_DELIVERY_ABANDONED'"""
-        ).fetchone() is None
+            ).fetchone()
+            is None
+        )
     with pytest.raises(LedgerError, match="not cancellable"):
         store.cancel_validation_followup_reservation(
             thread_id="thread-1",
@@ -2249,9 +2258,7 @@ def test_validation_delivery_binding_is_idempotent_and_blocks_started_or_old_can
         missing=["relevant_tests_green"],
     )
     store.record_stage("a/b#1", "VALIDATION_PENDING")
-    first = store.reserve_validation_followup(
-        thread_id="thread-1", result_digest="result-digest-1"
-    )
+    first = store.reserve_validation_followup(thread_id="thread-1", result_digest="result-digest-1")
     binding = store.authorize_task_turn_delivery(
         delivery_kind="validation-followup",
         thread_id="thread-1",
@@ -2260,29 +2267,33 @@ def test_validation_delivery_binding_is_idempotent_and_blocks_started_or_old_can
         snapshot_id=first["reservationDigest"],
         snapshot_path=f"validation-inputs/{first['reservationDigest']}.json",
         snapshot_digest="snapshot-digest-1",
-        worktree_input_path=(
-            f".oss-pr-radar/validation-inputs/{first['reservationDigest']}.json"
-        ),
+        worktree_input_path=(f".oss-pr-radar/validation-inputs/{first['reservationDigest']}.json"),
         worktree_input_digest="snapshot-digest-1",
     )
-    assert store.authorize_task_turn_delivery(
-        delivery_kind="validation-followup",
-        thread_id="thread-1",
-        delivery_token="result-digest-1",
-        reservation_digest=first["reservationDigest"],
-        snapshot_id=first["reservationDigest"],
-        snapshot_path=f"validation-inputs/{first['reservationDigest']}.json",
-        snapshot_digest="snapshot-digest-1",
-        worktree_input_path=(
-            f".oss-pr-radar/validation-inputs/{first['reservationDigest']}.json"
-        ),
-        worktree_input_digest="snapshot-digest-1",
-    ) == binding
+    assert (
+        store.authorize_task_turn_delivery(
+            delivery_kind="validation-followup",
+            thread_id="thread-1",
+            delivery_token="result-digest-1",
+            reservation_digest=first["reservationDigest"],
+            snapshot_id=first["reservationDigest"],
+            snapshot_path=f"validation-inputs/{first['reservationDigest']}.json",
+            snapshot_digest="snapshot-digest-1",
+            worktree_input_path=(
+                f".oss-pr-radar/validation-inputs/{first['reservationDigest']}.json"
+            ),
+            worktree_input_digest="snapshot-digest-1",
+        )
+        == binding
+    )
     with store.connect() as connection:
-        assert connection.execute(
-            """SELECT COUNT(*) FROM events
+        assert (
+            connection.execute(
+                """SELECT COUNT(*) FROM events
                WHERE event_type='TASK_TURN_DELIVERY_STARTED'"""
-        ).fetchone()[0] == 1
+            ).fetchone()[0]
+            == 1
+        )
     with pytest.raises(LedgerError, match="not cancellable"):
         store.cancel_validation_followup_reservation(
             thread_id="thread-1",
@@ -2319,9 +2330,7 @@ def test_validation_delivery_retry_binds_a_new_reservation_after_started_abandon
         missing=["relevant_tests_green"],
     )
     store.record_stage("a/b#1", "VALIDATION_PENDING")
-    first = store.reserve_validation_followup(
-        thread_id="thread-1", result_digest="result-digest-1"
-    )
+    first = store.reserve_validation_followup(thread_id="thread-1", result_digest="result-digest-1")
     first_binding = store.authorize_task_turn_delivery(
         delivery_kind="validation-followup",
         thread_id="thread-1",
@@ -2330,9 +2339,7 @@ def test_validation_delivery_retry_binds_a_new_reservation_after_started_abandon
         snapshot_id=first["reservationDigest"],
         snapshot_path=f"validation-inputs/{first['reservationDigest']}.json",
         snapshot_digest="snapshot-digest-1",
-        worktree_input_path=(
-            f".oss-pr-radar/validation-inputs/{first['reservationDigest']}.json"
-        ),
+        worktree_input_path=(f".oss-pr-radar/validation-inputs/{first['reservationDigest']}.json"),
         worktree_input_digest="snapshot-digest-1",
     )
     with store.connect() as connection:
@@ -2361,18 +2368,19 @@ def test_validation_delivery_retry_binds_a_new_reservation_after_started_abandon
         snapshot_id=second["reservationDigest"],
         snapshot_path=f"validation-inputs/{second['reservationDigest']}.json",
         snapshot_digest="snapshot-digest-2",
-        worktree_input_path=(
-            f".oss-pr-radar/validation-inputs/{second['reservationDigest']}.json"
-        ),
+        worktree_input_path=(f".oss-pr-radar/validation-inputs/{second['reservationDigest']}.json"),
         worktree_input_digest="snapshot-digest-2",
     )
     assert second_binding["reservationDigest"] == second["reservationDigest"]
     assert first_binding["reservationDigest"] != second_binding["reservationDigest"]
     with store.connect() as connection:
-        assert connection.execute(
-            """SELECT COUNT(*) FROM events
+        assert (
+            connection.execute(
+                """SELECT COUNT(*) FROM events
                WHERE event_type='TASK_TURN_DELIVERY_STARTED'"""
-        ).fetchone()[0] == 2
+            ).fetchone()[0]
+            == 2
+        )
 
 
 def test_validation_delivery_same_reservation_concurrent_start_is_idempotent(tmp_path):
@@ -2411,17 +2419,18 @@ def test_validation_delivery_same_reservation_concurrent_start_is_idempotent(tmp
     }
     with ThreadPoolExecutor(max_workers=4) as executor:
         bindings = list(
-            executor.map(
-                lambda _: store.authorize_task_turn_delivery(**kwargs), range(4)
-            )
+            executor.map(lambda _: store.authorize_task_turn_delivery(**kwargs), range(4))
         )
 
     assert all(binding == bindings[0] for binding in bindings)
     with store.connect() as connection:
-        assert connection.execute(
-            """SELECT COUNT(*) FROM events
+        assert (
+            connection.execute(
+                """SELECT COUNT(*) FROM events
                WHERE event_type='TASK_TURN_DELIVERY_STARTED'"""
-        ).fetchone()[0] == 1
+            ).fetchone()[0]
+            == 1
+        )
 
 
 def test_validation_delivery_rejects_worktree_input_path_escape(tmp_path):
@@ -2446,27 +2455,27 @@ def test_validation_delivery_rejects_worktree_input_path_escape(tmp_path):
         thread_id="thread-1", result_digest="result-digest-1"
     )
 
-    with pytest.raises(
-        LedgerError, match="validation task-turn worktree input binding is invalid"
-    ):
+    with pytest.raises(LedgerError, match="validation task-turn worktree input binding is invalid"):
         store.authorize_task_turn_delivery(
             delivery_kind="validation-followup",
             thread_id="thread-1",
             delivery_token="result-digest-1",
             reservation_digest=reservation["reservationDigest"],
             snapshot_id=reservation["reservationDigest"],
-            snapshot_path=(
-                f"validation-inputs/{reservation['reservationDigest']}.json"
-            ),
+            snapshot_path=(f"validation-inputs/{reservation['reservationDigest']}.json"),
             snapshot_digest="snapshot-digest-1",
             worktree_input_path="../result.json",
             worktree_input_digest="snapshot-digest-1",
         )
     with store.connect() as connection:
-        assert connection.execute(
-            """SELECT COUNT(*) FROM events
+        assert (
+            connection.execute(
+                """SELECT COUNT(*) FROM events
                WHERE event_type='TASK_TURN_DELIVERY_STARTED'"""
-        ).fetchone()[0] == 0
+            ).fetchone()[0]
+            == 0
+        )
+
 
 def test_validation_followup_stops_when_a_new_result_has_the_same_gap(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
@@ -3111,9 +3120,7 @@ def test_existing_publication_request_without_snapshot_upgrades_idempotently(tmp
     stored = store.publication_request(legacy["request_id"])
     assert stored["request"]["evidenceRawBase64"] == "e30="
 
-    returned = store.create_publication_request(
-        **args, evidence_raw_base64="eyJvdGhlciI6dHJ1ZX0="
-    )
+    returned = store.create_publication_request(**args, evidence_raw_base64="eyJvdGhlciI6dHJ1ZX0=")
 
     assert returned["request"]["evidenceRawBase64"] == "e30="
     assert store.publication_request(legacy["request_id"])["request"]["evidenceRawBase64"] == "e30="

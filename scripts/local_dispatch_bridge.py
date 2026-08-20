@@ -4684,9 +4684,7 @@ def _app_server_task_turn_worker(args: argparse.Namespace) -> dict[str, Any]:
                 thread_id=args.thread_id,
                 delivery_token=args.delivery_token,
                 validation_reservation_digest=(
-                    str(validation_binding["reservationDigest"])
-                    if validation_binding
-                    else None
+                    str(validation_binding["reservationDigest"]) if validation_binding else None
                 ),
             )
             _atomic_json(Path(args.receipt), receipt)
@@ -4943,9 +4941,10 @@ def retryable_negative_task_turn_receipt(
     if not receipt_path.is_file():
         return None
     receipt = read_json(receipt_path, missing={})
-    if delivery_kind == "validation-followup" and receipt.get(
-        "reservationDigest"
-    ) != validation_reservation_digest:
+    if (
+        delivery_kind == "validation-followup"
+        and receipt.get("reservationDigest") != validation_reservation_digest
+    ):
         return None
     if receipt.get("ok") or receipt.get("turnStarted"):
         return None
@@ -5610,17 +5609,13 @@ def task_turn_deliver(args: argparse.Namespace) -> dict[str, Any]:
                         delivery_kind="validation-followup",
                         thread_id=args.thread_id,
                         delivery_token=args.delivery_token,
-                        validation_reservation_digest=str(
-                            candidate["reservationDigest"]
-                        ),
+                        validation_reservation_digest=str(candidate["reservationDigest"]),
                     )
                     return validation_delivery_deferred(
                         "VALIDATION_RESULT_CHANGED_BEFORE_SNAPSHOT", exc
                     )
                 except (OSError, RuntimeError, ValueError):
-                    return validation_delivery_deferred(
-                        "VALIDATION_SNAPSHOT_INVALID", None
-                    )
+                    return validation_delivery_deferred("VALIDATION_SNAPSHOT_INVALID", None)
             store.authorize_task_turn_delivery(
                 delivery_kind=args.delivery_kind,
                 thread_id=args.thread_id,
@@ -6320,7 +6315,9 @@ def _task_result_path(candidate: dict[str, Any]) -> Path:
     must flow through a validated task private directory descriptor.
     """
 
-    return _lexical_absolute(Path(str(candidate["worktreePath"]))) / TASK_PRIVATE_DIR / "result.json"
+    return (
+        _lexical_absolute(Path(str(candidate["worktreePath"]))) / TASK_PRIVATE_DIR / "result.json"
+    )
 
 
 _VALIDATION_SNAPSHOT_ID = re.compile(r"^[0-9a-f]{64}$")
@@ -6331,9 +6328,7 @@ _VALIDATION_WORKTREE_INPUT_RELATIVE_PREFIX = f"{TASK_PRIVATE_DIR}/validation-inp
 class _DirectoryBinding:
     __slots__ = ("path", "fd", "label", "required_mode")
 
-    def __init__(
-        self, path: Path, fd: int, label: str, required_mode: int | None = None
-    ) -> None:
+    def __init__(self, path: Path, fd: int, label: str, required_mode: int | None = None) -> None:
         self.path = path
         self.fd = fd
         self.label = label
@@ -6360,8 +6355,7 @@ def _validate_directory_binding(binding: _DirectoryBinding) -> None:
         or not stat.S_ISDIR(descriptor_stat.st_mode)
         or descriptor_stat.st_uid != os.getuid()
         or descriptor_mode & 0o022
-        or (path_stat.st_dev, path_stat.st_ino)
-        != (descriptor_stat.st_dev, descriptor_stat.st_ino)
+        or (path_stat.st_dev, path_stat.st_ino) != (descriptor_stat.st_dev, descriptor_stat.st_ino)
     ):
         raise RuntimeError(f"{binding.label} is unsafe")
     if binding.required_mode is not None and (
@@ -6509,8 +6503,8 @@ def _require_validation_snapshot_root_binding(
 
 @contextmanager
 def _validation_snapshot_root_descriptor(*, create: bool):
-    runtime_root_path, runtime_root_fd, state_path, state_fd = (
-        _open_validation_snapshot_state(create=create)
+    runtime_root_path, runtime_root_fd, state_path, state_fd = _open_validation_snapshot_state(
+        create=create
     )
     root_fd = -1
     try:
@@ -6536,15 +6530,11 @@ def _validation_snapshot_root_descriptor(*, create: bool):
         try:
             root_fd = os.open(
                 _VALIDATION_SNAPSHOT_RELATIVE_PREFIX,
-                os.O_RDONLY
-                | getattr(os, "O_DIRECTORY", 0)
-                | getattr(os, "O_NOFOLLOW", 0),
+                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
                 dir_fd=state_fd,
             )
         except OSError as exc:
-            raise RuntimeError(
-                "validation snapshot root could not be opened safely"
-            ) from exc
+            raise RuntimeError("validation snapshot root could not be opened safely") from exc
         descriptor_stat = os.fstat(root_fd)
         if create and stat.S_IMODE(descriptor_stat.st_mode) != 0o700:
             os.fchmod(root_fd, 0o700)
@@ -6639,9 +6629,7 @@ def _read_owned_regular_file(
             os.close(descriptor)
 
 
-def _read_validation_snapshot_raw_from_descriptor(
-    *, snapshot_id: str, root_fd: int
-) -> bytes:
+def _read_validation_snapshot_raw_from_descriptor(*, snapshot_id: str, root_fd: int) -> bytes:
     return _read_owned_regular_file(
         Path(f"{snapshot_id}.json"),
         label="validation snapshot",
@@ -6832,10 +6820,7 @@ def _ensure_validation_snapshot(
             try:
                 descriptor = os.open(
                     temporary_name,
-                    os.O_WRONLY
-                    | os.O_CREAT
-                    | os.O_EXCL
-                    | getattr(os, "O_NOFOLLOW", 0),
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
                     0o600,
                     dir_fd=root_fd,
                 )
@@ -6909,7 +6894,9 @@ class _ValidationWorktreeDirectory:
         self.bindings = bindings
 
 
-def _open_managed_validation_worktree_root() -> tuple[Path, int, list[int], list[_DirectoryBinding]]:
+def _open_managed_validation_worktree_root() -> tuple[
+    Path, int, list[int], list[_DirectoryBinding]
+]:
     github_fd, github_path = open_directory_handle(GITHUB_ROOT, label="GitHub root")
     handles = [github_fd]
     bindings = [_DirectoryBinding(github_path, github_fd, "GitHub root")]
@@ -6940,9 +6927,12 @@ def _open_managed_validation_worktree_root() -> tuple[Path, int, list[int], list
 
 def _open_legacy_validation_worktree_root() -> tuple[Path, int, list[int], list[_DirectoryBinding]]:
     root_fd, root_path = open_directory_handle(WORKTREE_ROOT, label="Codex worktree root")
-    return root_path, root_fd, [root_fd], [
-        _DirectoryBinding(root_path, root_fd, "Codex worktree root")
-    ]
+    return (
+        root_path,
+        root_fd,
+        [root_fd],
+        [_DirectoryBinding(root_path, root_fd, "Codex worktree root")],
+    )
 
 
 def _validation_worktree_trusted_root_openers(
@@ -7001,8 +6991,10 @@ def _open_validation_worktree_private_dir(
             worktree_fd = -1
             worktree_path = root_path
             for index, part in enumerate(parts):
-                label = "validation worktree" if index == len(parts) - 1 else (
-                    "validation worktree parent"
+                label = (
+                    "validation worktree"
+                    if index == len(parts) - 1
+                    else ("validation worktree parent")
                 )
                 child_fd, child_path = _open_directory_child(
                     parent_fd=current_fd,
@@ -7220,9 +7212,7 @@ def _require_validation_worktree_input_root_binding(
 
 
 @contextmanager
-def _validation_worktree_input_root_descriptor(
-    candidate: dict[str, Any], *, create: bool
-):
+def _validation_worktree_input_root_descriptor(candidate: dict[str, Any], *, create: bool):
     opened = _open_validation_worktree_private_dir(candidate)
     root_fd = -1
     directory_name = "validation-inputs"
@@ -7235,9 +7225,7 @@ def _validation_worktree_input_root_descriptor(
         try:
             root_fd = os.open(
                 directory_name,
-                os.O_RDONLY
-                | getattr(os, "O_DIRECTORY", 0)
-                | getattr(os, "O_NOFOLLOW", 0),
+                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
                 dir_fd=opened.private_fd,
             )
         except FileNotFoundError as exc:
@@ -7335,14 +7323,10 @@ def _validation_worktree_input_bytes(
 ) -> bytes:
     if not _VALIDATION_SNAPSHOT_ID.fullmatch(reservation_digest):
         raise RuntimeError("validation reservation digest is invalid")
-    expected_path = (
-        f"{_VALIDATION_WORKTREE_INPUT_RELATIVE_PREFIX}/{reservation_digest}.json"
-    )
+    expected_path = f"{_VALIDATION_WORKTREE_INPUT_RELATIVE_PREFIX}/{reservation_digest}.json"
     if worktree_input_path != expected_path:
         raise RuntimeError("validation worktree input path is invalid")
-    with _validation_worktree_input_root_descriptor(
-        candidate, create=False
-    ) as root_fd:
+    with _validation_worktree_input_root_descriptor(candidate, create=False) as root_fd:
         return _validation_worktree_input_bytes_from_descriptor(
             candidate=candidate,
             reservation_digest=reservation_digest,
@@ -7413,10 +7397,7 @@ def _ensure_validation_worktree_input(
             try:
                 descriptor = os.open(
                     temporary_name,
-                    os.O_WRONLY
-                    | os.O_CREAT
-                    | os.O_EXCL
-                    | getattr(os, "O_NOFOLLOW", 0),
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
                     0o600,
                     dir_fd=root_fd,
                 )
@@ -9675,9 +9656,7 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
             value = authenticated[0] if authenticated is not None else {}
             review = controller_review_result(ROOT, value)
             verdict = str(review.get("verdict") or "") if review else ""
-            current_progress_marker = (
-                _validation_progress_marker(value)
-            )
+            current_progress_marker = _validation_progress_marker(value)
             recorded_progress_marker = str(blocked.get("progressMarker") or "")
             if dirty_files:
                 reason = "WORKTREE_PROGRESS_PENDING_RESULT"
@@ -10345,7 +10324,9 @@ def _request_publication_from_task_result(
         raise RuntimeError("invalid issue URL")
     repo = issue_match.group(1)
     probe_receipt = value.get("reproductionReceipt") or value.get("probeReceipt")
-    pre_task = value.get("preTaskEvidence") if isinstance(value.get("preTaskEvidence"), dict) else {}
+    pre_task = (
+        value.get("preTaskEvidence") if isinstance(value.get("preTaskEvidence"), dict) else {}
+    )
     code_paths = [
         str(path)
         for path in (
