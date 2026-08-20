@@ -67,6 +67,7 @@ import json
 import os
 import select
 import sys
+import time
 from pathlib import Path
 
 root = Path(sys.argv[1])
@@ -75,17 +76,25 @@ flag = Path(sys.argv[3])
 ready = Path(sys.argv[4])
 
 def inventory(path):
-    entries = []
-    for current, dirs, files in os.walk(path, followlinks=False):
-        current_path = Path(current)
-        dirs[:] = [name for name in dirs if name != "worktrees"]
-        for name in dirs + files:
-            item = current_path / name
-            relative = item.relative_to(path)
-            stat_result = item.lstat()
-            entries.append((str(relative), stat_result.st_mode & 0o777))
-    entries.sort()
-    return hashlib.sha256(json.dumps(entries, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    for _attempt in range(100):
+        entries = []
+        try:
+            for current, dirs, files in os.walk(path, followlinks=False):
+                current_path = Path(current)
+                dirs[:] = [name for name in dirs if name != "worktrees"]
+                for name in dirs + files:
+                    item = current_path / name
+                    relative = item.relative_to(path)
+                    stat_result = item.lstat()
+                    entries.append((str(relative), stat_result.st_mode & 0o777))
+        except FileNotFoundError:
+            time.sleep(0.001)
+            continue
+        entries.sort()
+        return hashlib.sha256(
+            json.dumps(entries, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+    raise RuntimeError("directory remained unstable while taking inventory")
 
 def write(path, value):
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -102,7 +111,13 @@ try:
         fd,
         filter=select.KQ_FILTER_VNODE,
         flags=select.KQ_EV_ADD | select.KQ_EV_ENABLE | select.KQ_EV_CLEAR,
-        fflags=select.KQ_NOTE_WRITE | select.KQ_NOTE_EXTEND | select.KQ_NOTE_DELETE,
+        fflags=(
+            select.KQ_NOTE_WRITE
+            | select.KQ_NOTE_EXTEND
+            | select.KQ_NOTE_DELETE
+            | select.KQ_NOTE_RENAME
+            | select.KQ_NOTE_LINK
+        ),
     )], 0, 0)
     if inventory(root) != baseline:
         raise SystemExit("baseline changed before ready")
@@ -133,16 +148,58 @@ finally:
                 raise AssertionError(f"watcher exited before ready: {watcher.returncode}")
             time.sleep(0.01)
         assert ready.read_bytes() == b"kqueue-active"
+
+        def stderr_after_exit():
+            if watcher.stderr is None:
+                return ""
+            if watcher.poll() is None:
+                return "watcher still running"
+            return watcher.stderr.read().decode("utf-8", "replace")[-4000:]
+
+        directory_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         transient = root / "transient.json"
-        transient.write_text("temporary", encoding="utf-8")
-        transient.unlink()
+        staged = root / "staged.json"
+        try:
+            fd = os.open(
+                transient,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                0o600,
+            )
+            try:
+                os.write(fd, b"temporary")
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+            os.fsync(directory_fd)
+            os.rename(transient, staged)
+            os.fsync(directory_fd)
+            os.rename(staged, transient)
+            os.fsync(directory_fd)
+            os.unlink(transient)
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
         deadline = time.monotonic() + 5
         while not flag.exists() and time.monotonic() < deadline:
+            if watcher.poll() is not None:
+                raise AssertionError(
+                    f"watcher exited before flag: code={watcher.returncode}; "
+                    f"stderr={stderr_after_exit()!r}"
+                )
             time.sleep(0.01)
-        assert flag.is_file()
+        if not flag.is_file():
+            raise AssertionError(
+                f"watcher did not record event: code={watcher.poll()}; "
+                f"stderr={stderr_after_exit()!r}"
+            )
         assert flag.read_text(encoding="utf-8").startswith(f"baseline={baseline};")
         assert _inventory(root) == baseline
     finally:
         if watcher.poll() is None:
             watcher.terminate()
-        watcher.wait(timeout=2)
+        _, stderr = watcher.communicate(timeout=2)
+        if watcher.returncode not in (0, -15, 2):
+            raise AssertionError(
+                f"watcher exited unexpectedly: code={watcher.returncode}; "
+                f"stderr={stderr.decode('utf-8', 'replace')[-4000:]!r}"
+            )
