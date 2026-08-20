@@ -6971,6 +6971,30 @@
     ],
     "why": "Issue provides a deterministic public reproducer (specific WAV file) and clear evidence of a permanent engine hang caused by the zero-embedding fallback in voxtral_realtime.py. The bug is user-visible, high-impact, and actionable with a concrete test path."
   },
+  "338d104db177d247db7497098d725b155b0c3f5295fd20aec23ef2c6daffab09": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Scheduler.get_new_batch_prefill()",
+      "PrefillAdder budget handling"
+    ],
+    "risks": [
+      "Potential behavior change in scheduling order; need to ensure no regression in normal chunked prefill scenarios."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that sets chunked_req to consume all remaining chunk budget, places a waiting request, and asserts that the waiting request is not processed (no cache matching or load-back) when rem_chunk_tokens <= 0."
+    ],
+    "unknowns": [
+      "Exact code location and maintainer preference for fix; existing PR #35645 may already address this but lacks tests."
+    ],
+    "why": "Issue provides a clear, deterministic reproduction at the scheduler level, identifies the exact control-flow flaw (missing budget check after resuming chunked request), and references existing helper `budget_state()`. This is a concrete, actionable bug in the scheduler's prefill path."
+  },
   "3392dfc1bbbdd3642ff4e13ffb75cddd5b7bea57d71b19776ca1c0a81e973991": {
     "confidence": 0.85,
     "contradictions": [],
@@ -23903,6 +23927,37 @@
     ],
     "why": "Issue identifies a reproducible, hardware-specific kernel defect in the wgpu-msl backend causing exponentially growing LoRA gradients on M1 Max. Root cause is narrowed to an autotune-selected kernel with a suspected data race, evidenced by nondeterministic behavior and Heisenbug. This is a concrete algorithm/kernel bug with a clear validation path via controlled experiments and numerical regression."
   },
+  "a52cfbaf8f3043ae04e856c14ff4a298aeaad0c3ec8d1fe7ed9d7513db50cfdf": {
+    "confidence": 0.85,
+    "contradictions": [
+      "One comment notes the issue does not occur with VS Code Copilot, suggesting client-side differences, but this does not contradict the missing finish_reason in the raw stream"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Zen gateway SSE streaming finalization for muse models",
+      "Ensure final chunk with finish_reason and [DONE] terminator are emitted",
+      "Possibly synthesize finish_reason from transport if upstream lacks it"
+    ],
+    "risks": [
+      "Potential behavior change for other models if fix is applied broadly",
+      "Need to handle cases where upstream cannot provide finish_reason without breaking compatibility"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a regression test that sends a streaming request to the Zen gateway with a muse model and asserts the stream ends with a chunk containing non-null finish_reason followed by data: [DONE]",
+      "Run existing gateway streaming tests to ensure no regressions"
+    ],
+    "unknowns": [
+      "Exact code path in the gateway responsible for stream finalization",
+      "Whether the fix should be model-specific or general for all Zen gateway streams"
+    ],
+    "why": "Issue provides a clear, reproducible streaming protocol violation with expected vs actual behavior, multiple independent confirmations, and specific evidence of missing finish_reason and [DONE] terminator. The root cause is localized to the gateway's SSE stream finalization for muse models, making it actionable for a targeted fix."
+  },
   "a548b9ad454f3bec0917ec7fcb87124bbe88f452d48f1bfeeeb26e3429b39709": {
     "confidence": 0.8,
     "contradictions": [],
@@ -28922,6 +28977,35 @@
     ],
     "why": "The issue is a user-facing bug caused by a version mismatch between Dify API and plugin-daemon, where the Pydantic enum in the API does not recognize 'structured-output'. The root cause is clear (missing enum value in the API's ModelFeature), but the fix requires updating the enum and ensuring compatibility with the daemon version. The repository has a policy requiring AI disclosure, which conflicts with automated public actions, and the deterministic gate is ALLOW_PRIVATE_WORK, not a full green light. No maintainer confirmation or design approval exists, and the fix may involve cross-component version alignment."
   },
+  "c7afd07aed4751fedbef611c3776ce5c613398142633af751526c2636024990f": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/memory/src/processors/observational-memory/retry.ts",
+      "packages/memory/src/processors/observational-memory/observation-strategies/sync.ts",
+      "packages/memory/src/processors/observational-memory/processor.ts",
+      "ObservationalMemoryOptions configuration"
+    ],
+    "risks": [
+      "Changing default behavior from abort to skip could mask real errors; need to ensure logging and hooks are sufficient.",
+      "Exposing retry configuration may require API design decisions that need maintainer input."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that simulates a synchronous observation failure and asserts the turn continues (fail-open) when configured, and that retry delays are configurable and shorter.",
+      "Add an integration test with a mock observer that fails on a text/html attachment to reproduce the reported trigger."
+    ],
+    "unknowns": [
+      "Maintainer design preferences for the failure policy and retry configuration API."
+    ],
+    "why": "The issue identifies a concrete, high-impact failure mode in the agent runtime: synchronous observation failures cause multi-minute blocking and turn aborts, with no configuration or degradation path. The root cause is clearly located in specific code files (retry.ts, sync.ts, processor.ts) and the proposal is actionable. A production user confirms the problem and provides a minimal fail-open patch, strengthening the evidence."
+  },
   "c7c1358212b35db2acdd661439794bb0cb407f4bd7c8aea16a8b55e59fa08ec9": {
     "confidence": 0.7,
     "contradictions": [
@@ -32389,6 +32473,30 @@
       "Maintainer design preference for handling memory in experiments"
     ],
     "why": "Issue reports a clear bug with root cause pointers and a minimal reproduction, but the deterministic gate requires HUMAN_REVIEW and maintainer confirmation is needed before implementation."
+  },
+  "de71ee919febf465cb66a589a47ebd97e197733d87801cb2fa69d832e8686510": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "src/utils/plugin-launch-url.ts",
+      "src/routes/launch.tsx"
+    ],
+    "risks": [
+      "Potential compatibility issues with existing ASCII payloads if encoding changes are not handled carefully."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add unit tests for buildPluginLaunchPath with Unicode parameters, and integration test for /launch route decoding UTF-8 base64 payloads."
+    ],
+    "unknowns": [
+      "No maintainer confirmation or design preference; but issue is actionable without it."
+    ],
+    "why": "Issue provides a clear root cause (btoa/atob on UTF-8 strings), a concrete reproduction with expected/actual pair, and acceptance criteria. It is a user-visible bug in a critical path with a minimal fix scope."
   },
   "de8e3be8d2caa575f3a6d3f30599b4f95edbaa20f33c469d091227c43423de33": {
     "confidence": 0.6,
