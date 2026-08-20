@@ -1359,25 +1359,26 @@ class ManagedLedger:
                 payload=payload or {},
                 created_at=observed_at,
             )
-            fingerprint = stable_fingerprint(event_idempotency_key)
-            connection.execute(
-                """INSERT OR IGNORE INTO managed_lifecycle_events
-                   (opportunity_key,task_id,event_type,state,idempotency_key,
-                    idempotency_fingerprint,source,provenance_json,observed_at,payload_json)
-                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
-                (
-                    opportunity_key,
-                    task_id,
-                    reason,
-                    state,
-                    event_idempotency_key,
-                    fingerprint,
-                    source,
-                    _json(provenance or {}),
-                    observed_at,
-                    _json(payload or {}),
-                ),
-            )
+            if quarantine["created"]:
+                fingerprint = stable_fingerprint(event_idempotency_key)
+                connection.execute(
+                    """INSERT OR IGNORE INTO managed_lifecycle_events
+                       (opportunity_key,task_id,event_type,state,idempotency_key,
+                        idempotency_fingerprint,source,provenance_json,observed_at,payload_json)
+                       VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        opportunity_key,
+                        task_id,
+                        reason,
+                        state,
+                        event_idempotency_key,
+                        fingerprint,
+                        source,
+                        _json(provenance or {}),
+                        observed_at,
+                        _json(payload or {}),
+                    ),
+                )
             connection.commit()
             return quarantine
         except Exception:

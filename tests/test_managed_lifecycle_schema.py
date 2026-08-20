@@ -115,6 +115,25 @@ def test_task_quarantine_backfill_is_idempotent_across_managed_reopens(tmp_path)
     migrate_schema(database)
     with sqlite3.connect(database) as connection:
         assert connection.execute("SELECT COUNT(*) FROM task_quarantines").fetchone()[0] == 1
+        before_events = connection.execute(
+            "SELECT COUNT(*) FROM managed_lifecycle_events "
+            "WHERE event_type='LEGACY_RESULT_REQUIRES_MIGRATION'"
+        ).fetchone()[0]
+
+    managed.record_task_quarantine(
+        opportunity_key="owner/repo#1",
+        reason="LEGACY_RESULT_REQUIRES_MIGRATION",
+        dedupe_key="legacy-quarantine-1",
+        payload={"reason": "LEGACY_RESULT_REQUIRES_MIGRATION", "legacy": True},
+    )
+    with sqlite3.connect(database) as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM managed_lifecycle_events "
+                "WHERE event_type='LEGACY_RESULT_REQUIRES_MIGRATION'"
+            ).fetchone()[0]
+            == before_events
+        )
 
     managed.record_task_quarantine(
         opportunity_key="owner/repo#2",
