@@ -6009,7 +6009,20 @@ def _recover_dirty_rebound_worktree(
     safe_key = re.sub(r"[^A-Za-z0-9._-]+", "-", str(candidate["key"])).strip("-._")
     destination = quarantine_root / f"{safe_key}-{time.time_ns()}" / worktree.name
     destination.parent.mkdir(parents=True, exist_ok=False)
-    command(["git", "worktree", "move", str(worktree), str(destination)], cwd=source, timeout=180)
+    try:
+        command(
+            ["git", "worktree", "move", str(worktree), str(destination)],
+            cwd=source,
+            timeout=180,
+        )
+    except Exception:
+        # A failed Git move must leave both the user's checkout and no stale
+        # quarantine staging directory behind for the next retry.
+        try:
+            destination.parent.rmdir()
+        except OSError:
+            pass
+        raise
     recreated = prepare_managed_worktree(
         source,
         intent_id=str(candidate["intentId"]),
@@ -6287,8 +6300,9 @@ def pr_followup_reserve(args: argparse.Namespace) -> dict[str, Any]:
             raise RuntimeError("ledger cannot clear a completed task quarantine")
         clear_quarantine(
             candidate["key"],
-            reason="PR_FOLLOWUP_REBOUND_AND_REPREPARED",
+            reason=str(rebind_status.get("reason") or PR_FOLLOWUP_REBIND_REQUIRED),
             evidence={
+                "revalidated": True,
                 "replacementWakeDigest": candidate["wakeDigest"],
                 "preparedHeadSha": prepared_head,
                 "quarantinePath": recovery["quarantinePath"],
@@ -7438,15 +7452,13 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     legacy_compatible_result=legacy_compatible_result,
                 )
                 if not rebind_valid:
-                    event = managed_adapter.ledger.record_event(
-                        event_type=PR_FOLLOWUP_REBIND_REQUIRED,
-                        idempotency_key=(
-                            f"task-rebind-validation-blocked:{candidate['key']}:{initial_digest}"
-                        ),
+                    event = managed_adapter.ledger.record_task_quarantine(
                         opportunity_key=candidate["key"],
                         task_id=str(candidate.get("intentId") or candidate["threadId"]),
                         state="VALIDATION_PENDING",
                         source="result-ingestion",
+                        reason=PR_FOLLOWUP_REBIND_REQUIRED,
+                        dedupe_key=f"task-rebind-validation-blocked:{candidate['key']}:{initial_digest}",
                         provenance={
                             "contextDigest": context.get("contextDigest"),
                             "resultContextDigest": value.get("contextDigest"),
@@ -7501,15 +7513,13 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 ),
             )
             if legacy_state is not None:
-                event = managed_adapter.ledger.record_event(
-                    event_type=LEGACY_RESULT_REQUIRES_MIGRATION,
-                    idempotency_key=(
-                        f"legacy-result-requires-migration:{candidate['key']}:{initial_digest}"
-                    ),
+                event = managed_adapter.ledger.record_task_quarantine(
                     opportunity_key=candidate["key"],
                     task_id=str(candidate.get("intentId") or candidate["threadId"]),
                     state="VALIDATION_PENDING",
                     source="result-ingestion",
+                    reason=LEGACY_RESULT_REQUIRES_MIGRATION,
+                    dedupe_key=f"legacy-result-requires-migration:{candidate['key']}:{initial_digest}",
                     provenance={
                         "contextDigest": context.get("contextDigest"),
                         "resultContextDigest": value.get("contextDigest"),

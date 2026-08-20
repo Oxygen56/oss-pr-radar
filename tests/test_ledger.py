@@ -2858,20 +2858,24 @@ def test_task_quarantine_blocks_pending_publication_until_cleared(tmp_path):
                 now,
             ),
         )
-        store._event(
+        from oss_pr_radar.task_quarantine import record
+
+        record(
             connection,
-            "a/b#1",
-            "LEGACY_RESULT_REQUIRES_MIGRATION",
-            "legacy-1",
-            {"requiresExplicitMigration": True},
-            now,
+            opportunity_key="a/b#1",
+            reason="LEGACY_RESULT_REQUIRES_MIGRATION",
+            dedupe_key="legacy-1",
+            payload={"requiresExplicitMigration": True},
+            created_at=now,
         )
 
     assert store.active_task_quarantine("a/b#1") is not None
     assert store.publication_work_items() == []
 
     store.clear_task_quarantine(
-        "a/b#1", reason="explicit-migration", evidence={"migrationId": "m-1"}
+        "a/b#1",
+        reason="LEGACY_RESULT_REQUIRES_MIGRATION",
+        evidence={"revalidated": True, "migrationId": "m-1"},
     )
     assert store.active_task_quarantine("a/b#1") is None
     assert [item["request_id"] for item in store.publication_work_items()] == ["request-1"]

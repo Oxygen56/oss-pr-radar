@@ -26,6 +26,11 @@ from .managed_security import (
     verify_current,
     verify_current_or_previous,
 )
+from .task_quarantine import active as active_quarantine
+from .task_quarantine import backfill_from_managed_events
+from .task_quarantine import clear as clear_quarantine
+from .task_quarantine import payload as quarantine_payload
+from .task_quarantine import record as record_quarantine
 from .util import canonical_json, iso_z
 
 MANAGED_SCHEMA_VERSION = 7
@@ -551,6 +556,20 @@ CREATE TABLE IF NOT EXISTS managed_lifecycle_events (
     observed_at TEXT NOT NULL,
     payload_json TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS task_quarantines (
+    quarantine_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    opportunity_key TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    dedupe_key TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('ACTIVE','CLEARED')),
+    created_at TEXT NOT NULL,
+    cleared_at TEXT,
+    clear_payload_json TEXT,
+    UNIQUE(opportunity_key, reason, dedupe_key)
+);
+CREATE INDEX IF NOT EXISTS task_quarantines_active_key
+    ON task_quarantines(opportunity_key, status, quarantine_id);
 CREATE TABLE IF NOT EXISTS managed_maintainer_events (
     event_key TEXT PRIMARY KEY,
     pr_key TEXT NOT NULL,
@@ -764,6 +783,7 @@ def migrate_schema(
             raise ValueError("managed schema v6 requires migrate_v6_to_v7")
         connection.executescript(SCHEMA_SQL)
         connection.execute("BEGIN IMMEDIATE")
+        backfill_from_managed_events(connection)
         result_columns = {
             str(row[1])
             for row in connection.execute("PRAGMA table_info(managed_results)").fetchall()
@@ -1222,7 +1242,7 @@ def legacy_content_snapshot(path: Path) -> dict[str, Any]:
             for row in connection.execute(
                 """SELECT name FROM sqlite_master WHERE type='table'
                    AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'managed_%'
-                   AND name != 'attestation_nonce_consumptions'
+                   AND name NOT IN ('attestation_nonce_consumptions','task_quarantines')
                    ORDER BY name"""
             ).fetchall()
         ]
@@ -1303,6 +1323,129 @@ class ManagedLedger:
             ).fetchone()
             connection.commit()
             return dict(row) | {"created": True}
+        except Exception:
+            if connection.in_transaction:
+                connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+    def record_task_quarantine(
+        self,
+        *,
+        opportunity_key: str,
+        reason: str,
+        dedupe_key: str,
+        task_id: str | None = None,
+        state: str = "VALIDATION_PENDING",
+        source: str = "managed",
+        provenance: dict[str, Any] | None = None,
+        payload: dict[str, Any] | None = None,
+        observed_at: str | None = None,
+    ) -> dict[str, Any]:
+        """Record the publication-blocking fact and its managed audit atomically."""
+
+        opportunity_key = canonical_opportunity_key(opportunity_key)
+        observed_at = _utc(observed_at)
+        event_idempotency_key = f"task-quarantine:{reason}:{dedupe_key}"
+        connection = self._connection()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            quarantine = record_quarantine(
+                connection,
+                opportunity_key=opportunity_key,
+                reason=reason,
+                dedupe_key=dedupe_key,
+                payload=payload or {},
+                created_at=observed_at,
+            )
+            fingerprint = stable_fingerprint(event_idempotency_key)
+            connection.execute(
+                """INSERT OR IGNORE INTO managed_lifecycle_events
+                   (opportunity_key,task_id,event_type,state,idempotency_key,
+                    idempotency_fingerprint,source,provenance_json,observed_at,payload_json)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    opportunity_key,
+                    task_id,
+                    reason,
+                    state,
+                    event_idempotency_key,
+                    fingerprint,
+                    source,
+                    _json(provenance or {}),
+                    observed_at,
+                    _json(payload or {}),
+                ),
+            )
+            connection.commit()
+            return quarantine
+        except Exception:
+            if connection.in_transaction:
+                connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+    def active_task_quarantine(self, opportunity_key: str) -> dict[str, Any] | None:
+        connection = self._connection()
+        try:
+            row = active_quarantine(connection, opportunity_key=opportunity_key)
+            if row is None:
+                return None
+            return {
+                "reason": row["reason"],
+                "payload": quarantine_payload(row),
+                "createdAt": row["created_at"],
+            }
+        finally:
+            connection.close()
+
+    def clear_task_quarantine(
+        self,
+        opportunity_key: str,
+        *,
+        reason: str,
+        evidence: dict[str, Any],
+        observed_at: str | None = None,
+    ) -> dict[str, Any]:
+        """Clear the same authoritative row and append its managed audit atomically."""
+
+        observed_at = _utc(observed_at)
+        event_idempotency_key = (
+            f"task-quarantine-cleared:{opportunity_key}:{reason}:{canonical_json(evidence)}"
+        )
+        connection = self._connection()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            cleared = clear_quarantine(
+                connection,
+                opportunity_key=canonical_opportunity_key(opportunity_key),
+                reason=reason,
+                evidence=evidence,
+                cleared_at=observed_at,
+            )
+            if cleared:
+                fingerprint = stable_fingerprint(event_idempotency_key)
+                connection.execute(
+                    """INSERT OR IGNORE INTO managed_lifecycle_events
+                       (opportunity_key,event_type,state,idempotency_key,
+                        idempotency_fingerprint,source,provenance_json,observed_at,payload_json)
+                       VALUES (?,?,?,?,?,?,?,?,?)""",
+                    (
+                        canonical_opportunity_key(opportunity_key),
+                        "TASK_QUARANTINE_CLEARED",
+                        "READY",
+                        event_idempotency_key,
+                        fingerprint,
+                        "managed",
+                        _json({"reason": reason}),
+                        observed_at,
+                        _json({"reason": reason, **evidence}),
+                    ),
+                )
+            connection.commit()
+            return {"cleared": cleared}
         except Exception:
             if connection.in_transaction:
                 connection.rollback()

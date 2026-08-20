@@ -12,6 +12,12 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from .repo_probe import REPRODUCED_VALIDATED, verify_probe_receipt
+from .task_quarantine import active as active_quarantine
+from .task_quarantine import backfill_from_radar_events
+from .task_quarantine import clear as clear_quarantine
+from .task_quarantine import ensure_schema as ensure_quarantine_schema
+from .task_quarantine import payload as quarantine_payload
+from .task_quarantine import record as record_quarantine
 from .util import canonical_json, iso_z, parse_time, sha256_json, sha256_text
 
 STAGES = (
@@ -227,6 +233,20 @@ class RadarLedger:
                     UNIQUE(opportunity_key, event_type, dedupe_key),
                     FOREIGN KEY(opportunity_key) REFERENCES opportunities(key)
                 );
+                CREATE TABLE IF NOT EXISTS task_quarantines (
+                    quarantine_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    opportunity_key TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    dedupe_key TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK(status IN ('ACTIVE','CLEARED')),
+                    created_at TEXT NOT NULL,
+                    cleared_at TEXT,
+                    clear_payload_json TEXT,
+                    UNIQUE(opportunity_key, reason, dedupe_key)
+                );
+                CREATE INDEX IF NOT EXISTS task_quarantines_active_key
+                    ON task_quarantines(opportunity_key, status, quarantine_id);
                 CREATE TABLE IF NOT EXISTS outcomes (
                     opportunity_key TEXT PRIMARY KEY,
                     selected_at TEXT,
@@ -295,6 +315,7 @@ class RadarLedger:
                 );
                 """
             )
+            backfill_from_radar_events(connection)
             columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(intents)")}
             if "title_time" not in columns:
                 connection.execute("ALTER TABLE intents ADD COLUMN title_time TEXT")
@@ -4173,18 +4194,9 @@ class RadarLedger:
             rows = connection.execute(
                 """SELECT r.* FROM publication_requests r
                    WHERE NOT EXISTS (
-                     SELECT 1 FROM events quarantine
+                     SELECT 1 FROM task_quarantines quarantine
                      WHERE quarantine.opportunity_key=r.opportunity_key
-                       AND quarantine.event_type IN (
-                         'LEGACY_RESULT_REQUIRES_MIGRATION',
-                         'PR_FOLLOWUP_REBIND_REQUIRED'
-                       )
-                       AND NOT EXISTS (
-                         SELECT 1 FROM events cleared
-                         WHERE cleared.opportunity_key=quarantine.opportunity_key
-                           AND cleared.event_type='TASK_QUARANTINE_CLEARED'
-                           AND cleared.id>quarantine.id
-                       )
+                       AND quarantine.status='ACTIVE'
                    )
                    AND (r.status IN ('PENDING','GRANTED') OR (
                      r.status='BLOCKED'
@@ -4207,31 +4219,13 @@ class RadarLedger:
         """Return the latest uncleared task-local quarantine, if any."""
 
         with self.connect() as connection:
-            row = connection.execute(
-                """SELECT event_type,payload_json,created_at
-                   FROM events quarantine
-                   WHERE quarantine.opportunity_key=?
-                     AND quarantine.event_type IN (
-                       'LEGACY_RESULT_REQUIRES_MIGRATION',
-                       'PR_FOLLOWUP_REBIND_REQUIRED'
-                     )
-                     AND NOT EXISTS (
-                       SELECT 1 FROM events cleared
-                       WHERE cleared.opportunity_key=quarantine.opportunity_key
-                         AND cleared.event_type='TASK_QUARANTINE_CLEARED'
-                         AND cleared.id>quarantine.id
-                     )
-                   ORDER BY quarantine.id DESC LIMIT 1""",
-                (key,),
-            ).fetchone()
+            ensure_quarantine_schema(connection)
+            row = active_quarantine(connection, opportunity_key=key)
         if row is None:
             return None
-        payload = json.loads(row["payload_json"])
-        if not isinstance(payload, dict):
-            raise LedgerError("task quarantine payload is invalid")
         return {
-            "reason": str(row["event_type"]),
-            "payload": payload,
+            "reason": str(row["reason"]),
+            "payload": quarantine_payload(row),
             "createdAt": row["created_at"],
         }
 
@@ -4242,6 +4236,25 @@ class RadarLedger:
             raise LedgerError("task quarantine clear evidence is incomplete")
         now = iso_z(datetime.now(UTC))
         with self.transaction() as connection:
+            cleared = clear_quarantine(
+                connection,
+                opportunity_key=key,
+                reason=reason,
+                evidence=evidence,
+                cleared_at=now,
+            )
+            if cleared == 0:
+                return
+            # A quarantine blocks existing requests before the result is
+            # ingested.  Revalidation deliberately reopens them as PENDING;
+            # any prior GRANTED authorization must be reacquired.
+            connection.execute(
+                """UPDATE publication_requests
+                   SET status='PENDING',reason='TASK_QUARANTINE_CLEARED',updated_at=?
+                   WHERE opportunity_key=? AND status='BLOCKED'
+                     AND reason='BLOCKED_REPRODUCTION_REQUIRED'""",
+                (now, key),
+            )
             self._event(
                 connection,
                 key,
@@ -4387,6 +4400,14 @@ class RadarLedger:
                 "observedHeadSha": observed_head_sha,
                 "reason": reason,
             }
+            record_quarantine(
+                connection,
+                opportunity_key=key,
+                reason=reason,
+                dedupe_key=sha256_text(canonical_json(payload)),
+                payload=payload,
+                created_at=now,
+            )
             connection.execute(
                 """UPDATE pr_followups SET wake_digest=?,updated_at=?
                    WHERE opportunity_key=? AND wake_digest=? AND followup_required=1""",
@@ -5524,6 +5545,19 @@ class RadarLedger:
         """Return the latest task-local rebind signal, if one exists."""
 
         with self.connect() as connection:
+            ensure_quarantine_schema(connection)
+            quarantine = connection.execute(
+                """SELECT * FROM task_quarantines
+                   WHERE opportunity_key=? AND reason='PR_FOLLOWUP_REBIND_REQUIRED'
+                   ORDER BY quarantine_id DESC LIMIT 1""",
+                (key,),
+            ).fetchone()
+            if quarantine is not None:
+                if quarantine["status"] == "ACTIVE":
+                    return quarantine_payload(dict(quarantine)) | {
+                        "createdAt": quarantine["created_at"]
+                    }
+                return None
             row = connection.execute(
                 """SELECT payload_json,created_at FROM events
                    WHERE opportunity_key=? AND event_type='PR_FOLLOWUP_REBIND_REQUIRED'

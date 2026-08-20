@@ -1,0 +1,165 @@
+"""Shared, transactional task-quarantine state.
+
+Task quarantine is a publication safety fact, not merely an audit event.  Both
+ledger implementations use this table so readers cannot accidentally consult
+different event streams.
+"""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+from typing import Any
+
+from .util import canonical_json
+
+QUARANTINE_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS task_quarantines (
+    quarantine_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    opportunity_key TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    dedupe_key TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('ACTIVE','CLEARED')),
+    created_at TEXT NOT NULL,
+    cleared_at TEXT,
+    clear_payload_json TEXT,
+    UNIQUE(opportunity_key, reason, dedupe_key)
+);
+CREATE INDEX IF NOT EXISTS task_quarantines_active_key
+    ON task_quarantines(opportunity_key, status, quarantine_id);
+"""
+
+
+def ensure_schema(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        """CREATE TABLE IF NOT EXISTS task_quarantines (
+            quarantine_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            opportunity_key TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            dedupe_key TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('ACTIVE','CLEARED')),
+            created_at TEXT NOT NULL,
+            cleared_at TEXT,
+            clear_payload_json TEXT,
+            UNIQUE(opportunity_key, reason, dedupe_key)
+        )"""
+    )
+    connection.execute(
+        """CREATE INDEX IF NOT EXISTS task_quarantines_active_key
+           ON task_quarantines(opportunity_key, status, quarantine_id)"""
+    )
+
+
+def backfill_from_radar_events(connection: sqlite3.Connection) -> None:
+    """Import legacy Radar event-only quarantines without reopening cleared rows."""
+
+    ensure_schema(connection)
+    connection.execute(
+        """INSERT OR IGNORE INTO task_quarantines
+           (opportunity_key,reason,dedupe_key,payload_json,status,created_at)
+           SELECT q.opportunity_key,q.event_type,q.dedupe_key,q.payload_json,'ACTIVE',q.created_at
+           FROM events q
+           WHERE q.event_type IN ('LEGACY_RESULT_REQUIRES_MIGRATION',
+                                  'PR_FOLLOWUP_REBIND_REQUIRED')
+             AND NOT EXISTS (
+               SELECT 1 FROM events c
+               WHERE c.opportunity_key=q.opportunity_key
+                 AND c.event_type='TASK_QUARANTINE_CLEARED'
+                 AND c.id>q.id
+             )"""
+    )
+
+
+def backfill_from_managed_events(connection: sqlite3.Connection) -> None:
+    """Import managed lifecycle quarantines into the shared publication gate."""
+
+    ensure_schema(connection)
+    connection.execute(
+        """INSERT OR IGNORE INTO task_quarantines
+           (opportunity_key,reason,dedupe_key,payload_json,status,created_at)
+           SELECT q.opportunity_key,q.event_type,q.idempotency_key,q.payload_json,'ACTIVE',q.observed_at
+           FROM managed_lifecycle_events q
+           WHERE q.event_type IN ('LEGACY_RESULT_REQUIRES_MIGRATION',
+                                  'PR_FOLLOWUP_REBIND_REQUIRED')
+             AND NOT EXISTS (
+               SELECT 1 FROM managed_lifecycle_events c
+               WHERE c.opportunity_key=q.opportunity_key
+                 AND c.event_type='TASK_QUARANTINE_CLEARED'
+                 AND c.event_id>q.event_id
+             )"""
+    )
+
+
+def record(
+    connection: sqlite3.Connection,
+    *,
+    opportunity_key: str,
+    reason: str,
+    dedupe_key: str,
+    payload: dict[str, Any],
+    created_at: str,
+) -> dict[str, Any]:
+    if not opportunity_key or not reason or not dedupe_key or not isinstance(payload, dict):
+        raise ValueError("task quarantine fields are invalid")
+    ensure_schema(connection)
+    cursor = connection.execute(
+        """INSERT OR IGNORE INTO task_quarantines
+           (opportunity_key,reason,dedupe_key,payload_json,status,created_at)
+           VALUES (?,?,?,?, 'ACTIVE', ?)""",
+        (opportunity_key, reason, dedupe_key, canonical_json(payload), created_at),
+    )
+    row = connection.execute(
+        """SELECT * FROM task_quarantines
+           WHERE opportunity_key=? AND reason=? AND dedupe_key=?""",
+        (opportunity_key, reason, dedupe_key),
+    ).fetchone()
+    if row is None:
+        raise RuntimeError("task quarantine was not persisted")
+    return dict(row) | {"created": cursor.rowcount == 1}
+
+
+def active(
+    connection: sqlite3.Connection, *, opportunity_key: str, reason: str | None = None
+) -> dict[str, Any] | None:
+    ensure_schema(connection)
+    clauses = ["opportunity_key=?", "status='ACTIVE'"]
+    params: list[Any] = [opportunity_key]
+    if reason is not None:
+        clauses.append("reason=?")
+        params.append(reason)
+    row = connection.execute(
+        f"""SELECT * FROM task_quarantines WHERE {" AND ".join(clauses)}
+            ORDER BY quarantine_id DESC LIMIT 1""",
+        params,
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def clear(
+    connection: sqlite3.Connection,
+    *,
+    opportunity_key: str,
+    reason: str,
+    evidence: dict[str, Any],
+    cleared_at: str,
+) -> int:
+    if not reason or not isinstance(evidence, dict) or evidence.get("revalidated") is not True:
+        raise ValueError("task quarantine clear requires revalidated evidence")
+    ensure_schema(connection)
+    payload = canonical_json(evidence)
+    cursor = connection.execute(
+        """UPDATE task_quarantines
+           SET status='CLEARED', cleared_at=?, clear_payload_json=?
+           WHERE opportunity_key=? AND reason=? AND status='ACTIVE'""",
+        (cleared_at, payload, opportunity_key, reason),
+    )
+    return int(cursor.rowcount)
+
+
+def payload(row: dict[str, Any]) -> dict[str, Any]:
+    value = json.loads(str(row["payload_json"]))
+    if not isinstance(value, dict):
+        raise ValueError("task quarantine payload is invalid")
+    return value

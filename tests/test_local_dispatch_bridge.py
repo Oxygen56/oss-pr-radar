@@ -1256,6 +1256,28 @@ def test_ingestion_quarantines_legacy_implementation_result_without_side_effect(
         MODULE.shared_context_path(context["issueUrl"]),
         context,
     )
+    now = iso_z(datetime.now(UTC))
+    with store.transaction() as connection:
+        for request_id, status in (("pending-1", "PENDING"), ("granted-1", "GRANTED")):
+            connection.execute(
+                """INSERT INTO publication_requests
+                   (request_id,opportunity_key,thread_id,commit_sha,branch,worktree_path,
+                    evidence_digest,status,request_json,created_at,updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    request_id,
+                    "a/b#1",
+                    "thread-1",
+                    "a" * 40,
+                    "fix/runtime",
+                    str(worktree),
+                    "evidence",
+                    status,
+                    json.dumps({"opportunityKey": "a/b#1"}),
+                    now,
+                    now,
+                ),
+            )
     original = result_path.read_bytes()
 
     result = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
@@ -1264,6 +1286,18 @@ def test_ingestion_quarantines_legacy_implementation_result_without_side_effect(
     assert result["errors"] == []
     assert result["publicationRequests"] == []
     assert result["quarantined"][0]["reason"] == MODULE.LEGACY_RESULT_REQUIRES_MIGRATION
+    assert store.publication_work_items() == []
+    assert (
+        store.active_task_quarantine("a/b#1")["reason"] == MODULE.LEGACY_RESULT_REQUIRES_MIGRATION
+    )
+    with sqlite3.connect(tmp_path / "ledger.sqlite3") as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM task_quarantines WHERE opportunity_key=? AND status='ACTIVE'",
+                ("a/b#1",),
+            ).fetchone()[0]
+            == 1
+        )
     assert result_path.read_bytes() == original
     from oss_pr_radar.managed_lifecycle import ManagedLedger
 
@@ -1280,6 +1314,23 @@ def test_ingestion_quarantines_legacy_implementation_result_without_side_effect(
     assert repeated["ok"] is True, repeated.get("errors")
     assert repeated.get("quarantined", []) == []
     assert len(repeated["quarantinedAlreadyRecorded"]) == 1
+
+    with pytest.raises(ValueError):
+        store.clear_task_quarantine(
+            "a/b#1",
+            reason=MODULE.LEGACY_RESULT_REQUIRES_MIGRATION,
+            evidence={"migrationId": "not-revalidated"},
+        )
+    store.clear_task_quarantine(
+        "a/b#1",
+        reason=MODULE.LEGACY_RESULT_REQUIRES_MIGRATION,
+        evidence={"revalidated": True, "migrationId": "m-1"},
+    )
+    assert store.active_task_quarantine("a/b#1") is None
+    assert {item["request_id"] for item in store.publication_work_items()} == {
+        "pending-1",
+        "granted-1",
+    }
 
 
 def test_shared_context_recovery_accepts_target_bound_context_without_errors(monkeypatch, tmp_path):
@@ -3168,6 +3219,52 @@ def test_dirty_rebound_worktree_is_preserved_and_recreated_clean(monkeypatch, tm
     assert (quarantined / "tracked.txt").read_text(encoding="utf-8") == "user change\n"
     assert (quarantined / "user-note.txt").read_text(encoding="utf-8") == "keep me\n"
     assert run_git(expected, "status", "--porcelain") == ""
+
+
+def test_dirty_rebound_worktree_move_failure_keeps_user_checkout_recoverable(monkeypatch, tmp_path):
+    project_root = tmp_path / "github"
+    source = tmp_path / "source"
+    source.mkdir()
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    run_git(source, "init")
+    run_git(source, "config", "user.name", "Radar Test")
+    run_git(source, "config", "user.email", "radar@example.invalid")
+    (source / "tracked.txt").write_text("base\n", encoding="utf-8")
+    run_git(source, "add", "tracked.txt")
+    run_git(source, "commit", "-m", "baseline")
+    head = run_git(source, "rev-parse", "HEAD")
+    run_git(source, "remote", "add", "origin", "https://github.com/a/b.git")
+    run_git(source, "update-ref", "refs/remotes/origin/main", head)
+    run_git(source, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+    expected = MODULE.managed_worktree_path("intent-1", "a/b")
+    expected.parent.mkdir(parents=True, exist_ok=True)
+    run_git(source, "worktree", "add", "--detach", str(expected), head)
+    (expected / "tracked.txt").write_text("user change\n", encoding="utf-8")
+    (expected / "user-note.txt").write_text("keep me\n", encoding="utf-8")
+    original_command = MODULE.command
+
+    def fail_move(args, **kwargs):
+        if list(args[:3]) == ["git", "worktree", "move"]:
+            raise RuntimeError("injected worktree move failure")
+        return original_command(args, **kwargs)
+
+    monkeypatch.setattr(MODULE, "command", fail_move)
+    with pytest.raises(RuntimeError, match="injected worktree move failure"):
+        MODULE._recover_dirty_rebound_worktree(
+            {
+                "key": "a/b#1",
+                "repo": "a/b",
+                "intentId": "intent-1",
+                "worktreePath": str(expected),
+            },
+            {"replacementWakeDigest": "w" * 64},
+        )
+
+    assert expected.exists()
+    assert (expected / "tracked.txt").read_text(encoding="utf-8") == "user change\n"
+    assert (expected / "user-note.txt").read_text(encoding="utf-8") == "keep me\n"
+    quarantine_root = MODULE.managed_worktree_root() / ".rebind-quarantine"
+    assert not quarantine_root.exists() or not any(quarantine_root.iterdir())
 
 
 def test_pr_followup_reserve_clears_rebind_gate_after_reprepare(monkeypatch, tmp_path):
