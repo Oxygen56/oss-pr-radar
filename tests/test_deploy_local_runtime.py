@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from oss_pr_radar import release_binding as release_binding_module
 from oss_pr_radar import runtime as runtime_module
 from oss_pr_radar.managed_lifecycle import ManagedLedger
 from oss_pr_radar.release_binding import active_release
@@ -361,6 +362,45 @@ def test_activation_holds_state_directory_fd_when_state_is_replaced(tmp_path, mo
     assert (target / MODULE.RELEASE_POINTER).resolve().name == second["releaseId"]
 
 
+def test_activation_rejects_health_symlink_at_fd_open_without_external_read(tmp_path, monkeypatch):
+    source, target = make_repositories(tmp_path)
+    first = MODULE.deploy(source, target)
+    (source / "scripts" / "runner.py").write_text("VERSION = 3\n", encoding="utf-8")
+    git(source, "add", "scripts/runner.py")
+    git(
+        source,
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "-m",
+        "source-v3",
+    )
+    second = MODULE.deploy(source, target)
+    health = target / "state" / "runtime-health.json"
+    outside = tmp_path / "outside-health.json"
+    outside.write_bytes(b"external-health")
+    before = outside.read_bytes()
+    original_open = runtime_module.os.open
+    swapped = False
+
+    def racing_open(path, flags, mode=0o777, *, dir_fd=None, **kwargs):
+        nonlocal swapped
+        if path == runtime_module.RUNTIME_STATE and dir_fd is not None and not swapped:
+            swapped = True
+            health.unlink()
+            health.symlink_to(outside)
+        return original_open(path, flags, mode, dir_fd=dir_fd, **kwargs)
+
+    monkeypatch.setattr(runtime_module.os, "open", racing_open)
+    with pytest.raises(OSError):
+        MODULE.activate_release(target, first["releaseId"])
+
+    assert outside.read_bytes() == before
+    assert (target / MODULE.RELEASE_POINTER).resolve().name == second["releaseId"]
+
+
 def test_activation_normalizes_macos_var_alias(tmp_path):
     private_var = Path("/private/var")
     public_var = Path("/var")
@@ -374,6 +414,40 @@ def test_activation_normalizes_macos_var_alias(tmp_path):
     MODULE.activate_release(alias_target, result["releaseId"])
 
     assert (target / MODULE.RELEASE_POINTER).resolve().name == result["releaseId"]
+
+
+def test_runtime_root_replacement_during_fd_identity_resolution_has_no_external_write(
+    tmp_path, monkeypatch
+):
+    if not hasattr(release_binding_module.fcntl, "F_GETPATH"):
+        pytest.skip("descriptor path identity test requires macOS F_GETPATH")
+    runtime_root = tmp_path / "runtime"
+    runtime_root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    marker = outside / "marker"
+    marker.write_bytes(b"keep")
+    original_fcntl = release_binding_module.fcntl.fcntl
+    swapped = False
+
+    def racing_fcntl(descriptor, command, argument):
+        nonlocal swapped
+        if command == release_binding_module.fcntl.F_GETPATH and not swapped:
+            swapped = True
+            real_root = runtime_root.with_name("runtime-real")
+            runtime_root.rename(real_root)
+            runtime_root.symlink_to(outside, target_is_directory=True)
+        return original_fcntl(descriptor, command, argument)
+
+    monkeypatch.setattr(release_binding_module.fcntl, "fcntl", racing_fcntl)
+    with pytest.raises(RuntimeError, match="runtime root changed during validation"):
+        release_binding_module.validate_runtime_layout(
+            runtime_root, create_releases=True, create_state=True
+        )
+
+    assert marker.read_bytes() == b"keep"
+    assert not (outside / "state").exists()
+    assert not (outside / "releases").exists()
 
 
 def test_deploy_ignores_runtime_artifacts_and_preserves_private_exclude(tmp_path):

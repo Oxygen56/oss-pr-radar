@@ -231,6 +231,33 @@ def _strict_runtime_state(path: Path, *, directory_fd: int | None = None) -> dic
     return value
 
 
+def _read_private_state_at(name: str, directory_fd: int) -> tuple[bytes, int] | None:
+    """Read one state file through a stable directory fd without following links."""
+
+    try:
+        descriptor = os.open(
+            name,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=directory_fd,
+        )
+    except FileNotFoundError:
+        return None
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != os.getuid()
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+        ):
+            raise RuntimeError("runtime health state is unsafe")
+        with os.fdopen(descriptor, "rb") as handle:
+            descriptor = -1
+            return handle.read(), stat.S_IMODE(metadata.st_mode)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
 def _deployment_identity(manifest: dict[str, Any]) -> dict[str, Any]:
     release_id = manifest.get("releaseId")
     policy_digest = manifest.get("policyDigest")
@@ -412,24 +439,9 @@ def activate_release_pointer(root: Path, release: Path, manifest: dict[str, Any]
             old_target = _pointer_target(pointer, directory_fd=root_fd)
             if old_target is not None:
                 old_target = str(_validated_release_target(root, old_target))
-            try:
-                state_metadata = os.lstat(state_path)
-            except FileNotFoundError:
-                state_metadata = None
-            if state_metadata is not None:
-                validate_runtime_file(state_path, label="runtime health")
-            old_state_payload = (
-                os.open(state_path.name, os.O_RDONLY, getattr(os, "O_NOFOLLOW", 0), dir_fd=state_fd)
-                if state_metadata is not None
-                else None
-            )
-            if old_state_payload is not None:
-                try:
-                    old_state_payload = os.fdopen(old_state_payload, "rb").read()
-                except Exception:
-                    os.close(old_state_payload)
-                    raise
-            old_state_mode = state_metadata.st_mode & 0o777 if state_metadata is not None else None
+            old_state = _read_private_state_at(state_path.name, state_fd)
+            old_state_payload = old_state[0] if old_state is not None else None
+            old_state_mode = old_state[1] if old_state is not None else None
             journal = {
                 "schema": "oss-pr-radar.release-activation.v1",
                 "oldTarget": old_target,

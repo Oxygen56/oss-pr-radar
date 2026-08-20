@@ -7,6 +7,7 @@ path.
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
@@ -28,6 +29,27 @@ def _absolute(path: Path) -> Path:
     """Return a lexical absolute path without following symlinks."""
 
     return Path(path).absolute()
+
+
+def _path_from_directory_fd(descriptor: int, *, label: str) -> Path:
+    """Resolve a directory path from its opened identity, never its source name."""
+
+    if hasattr(fcntl, "F_GETPATH"):
+        buffer = bytearray(1024)
+        try:
+            result = fcntl.fcntl(descriptor, fcntl.F_GETPATH, buffer)
+        except OSError as exc:
+            raise RuntimeError(f"{label} identity cannot be resolved") from exc
+        raw = result if isinstance(result, bytes) else bytes(buffer)
+    else:
+        try:
+            raw = os.readlink(f"/proc/self/fd/{descriptor}").encode()
+        except OSError as exc:
+            raise RuntimeError(f"{label} identity cannot be resolved") from exc
+    raw = raw.split(b"\0", 1)[0]
+    if not raw:
+        raise RuntimeError(f"{label} identity is empty")
+    return Path(os.fsdecode(raw))
 
 
 def open_directory_handle(
@@ -66,7 +88,20 @@ def open_directory_handle(
             opened = os.fstat(descriptor)
             if stat.S_IMODE(opened.st_mode) != required_mode:
                 raise RuntimeError(f"{label} mode could not be secured")
-        return descriptor, Path(os.path.realpath(str(path)))
+        canonical = _path_from_directory_fd(descriptor, label=label)
+        try:
+            rebound = os.stat(canonical, follow_symlinks=False)
+            current = os.lstat(path)
+        except OSError as exc:
+            raise RuntimeError(f"{label} changed during validation") from exc
+        if (
+            stat.S_ISLNK(current.st_mode)
+            or not stat.S_ISDIR(current.st_mode)
+            or (rebound.st_dev, rebound.st_ino) != (opened.st_dev, opened.st_ino)
+            or (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino)
+        ):
+            raise RuntimeError(f"{label} changed during validation")
+        return descriptor, canonical
     except Exception:
         os.close(descriptor)
         raise
