@@ -348,8 +348,16 @@ def check(
 ) -> dict[str, Any]:
     """Check a release-bound runtime without performing any external action."""
 
-    runtime_root = runtime_root.resolve()
-    binding = bind_runtime(runtime_root)
+    runtime_root = runtime_root.absolute()
+    try:
+        binding = bind_runtime(runtime_root)
+    except (OSError, RuntimeError, ValueError) as exc:
+        return {
+            "ok": False,
+            "runtimeReleasePolicyIdentityMatch": False,
+            "releaseActivationJournalClear": False,
+            "error": str(exc),
+        }
     home = home or Path.home()
     specs = worker_specs(binding.code_root, home=home, runtime_root=runtime_root)
     contracts = build_contracts(runtime_root, home=home)

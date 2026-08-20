@@ -21,6 +21,7 @@ from oss_pr_radar.release_binding import (  # noqa: E402
     PRESERVED_ROOTS,
     RELEASE_POINTER,
     RELEASES,
+    validate_runtime_layout,
     verify_release,
 )
 from oss_pr_radar.runtime import activate_release_pointer  # noqa: E402
@@ -141,6 +142,11 @@ def _ensure_runtime_ignored(target: Path) -> Path:
 
 
 def _file_entry(source: Path, relative: Path) -> dict[str, object]:
+    current = source
+    for component in relative.parts:
+        current = current / component
+        if current.is_symlink():
+            raise RuntimeError(f"tracked path component is a symlink: {relative}")
     path = source / relative
     if path.is_symlink() or not path.is_file():
         raise RuntimeError(f"tracked runtime path is not a regular file: {relative}")
@@ -174,8 +180,10 @@ def build_manifest(source: Path, files: set[Path], commit: str) -> dict[str, obj
 def activate_release(target: Path, release_id: str) -> dict[str, object]:
     """Verify and activate an existing immutable release for rollback."""
 
-    target = target.resolve()
-    release = target / RELEASES / release_id
+    target, releases, _state = validate_runtime_layout(target, create_state=True)
+    release = releases / release_id
+    if release.parent != releases:
+        raise RuntimeError("release path escapes the runtime releases directory")
     manifest = verify_release(release)
     if manifest.get("releaseId") != release_id:
         raise RuntimeError("release directory does not match its manifest")
@@ -184,22 +192,25 @@ def activate_release(target: Path, release_id: str) -> dict[str, object]:
 
 
 def create_release(source: Path, target: Path) -> dict[str, object]:
-    source = source.resolve()
-    target = target.resolve()
+    source = source.absolute()
+    target = target.absolute()
     if source == target or source in target.parents or target in source.parents:
         raise RuntimeError("source and target repositories must be independent")
     if not (source / ".git").exists() or not (target / ".git").exists():
         raise RuntimeError("source and target must both be Git repositories")
 
     commit = require_clean_source(source)
+    target, releases, _state = validate_runtime_layout(
+        target, create_releases=True, create_state=True
+    )
     files = tracked_files(source)
     manifest = build_manifest(source, files, commit)
-    release = target / RELEASES / str(manifest["releaseId"])
+    release = releases / str(manifest["releaseId"])
     reused = release.exists()
     if reused:
         verify_release(release)
     _ensure_runtime_ignored(target)
-    release.parent.mkdir(parents=True, exist_ok=True)
+    validate_runtime_layout(target, create_releases=False, create_state=True)
     if not reused:
         temporary = release.parent / f".{release.name}.{os.getpid()}.tmp"
         shutil.rmtree(temporary, ignore_errors=True)

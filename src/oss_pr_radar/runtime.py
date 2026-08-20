@@ -15,6 +15,7 @@ import json
 import os
 import shutil
 import sqlite3
+import stat
 import subprocess
 import tempfile
 import time
@@ -23,6 +24,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Iterator
+
+from .release_binding import validate_runtime_file, validate_runtime_layout
 
 RUNTIME_STATE = "runtime-health.json"
 QUEUE_STATE = "queue-import-state.json"
@@ -70,7 +73,27 @@ def _fsync_directory(path: Path) -> None:
 
 
 def _atomic_write_bytes(path: Path, payload: bytes, *, mode: int) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    parent = path.absolute().parent
+    try:
+        parent_metadata = os.lstat(parent)
+    except OSError as exc:
+        raise RuntimeError("runtime state parent is unavailable") from exc
+    if stat.S_ISLNK(parent_metadata.st_mode) or not stat.S_ISDIR(parent_metadata.st_mode):
+        raise RuntimeError("runtime state parent must be a real directory")
+    if parent_metadata.st_uid != os.getuid() or stat.S_IMODE(parent_metadata.st_mode) & 0o022:
+        raise RuntimeError("runtime state parent has unsafe ownership or permissions")
+    path = path.absolute()
+    try:
+        metadata = os.lstat(path)
+    except FileNotFoundError:
+        metadata = None
+    except OSError as exc:
+        raise RuntimeError("runtime state file is unavailable") from exc
+    if metadata is not None:
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+            raise RuntimeError("runtime state file must be a regular file")
+        if metadata.st_uid != os.getuid():
+            raise RuntimeError("runtime state file has the wrong owner")
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
     )
@@ -88,7 +111,32 @@ def _atomic_write_bytes(path: Path, payload: bytes, *, mode: int) -> None:
 
 
 def _atomic_pointer_write(pointer: Path, target: Path) -> None:
-    pointer.parent.mkdir(parents=True, exist_ok=True)
+    pointer = pointer.absolute()
+    target = target.absolute()
+    try:
+        parent_metadata = os.lstat(pointer.parent)
+        target_metadata = os.lstat(target)
+    except OSError as exc:
+        raise RuntimeError("release pointer path is unavailable") from exc
+    if (
+        stat.S_ISLNK(parent_metadata.st_mode)
+        or not stat.S_ISDIR(parent_metadata.st_mode)
+        or parent_metadata.st_uid != os.getuid()
+        or stat.S_IMODE(parent_metadata.st_mode) & 0o022
+        or stat.S_ISLNK(target_metadata.st_mode)
+        or not stat.S_ISDIR(target_metadata.st_mode)
+        or (
+            pointer.name == RELEASE_POINTER
+            and target.parent != (pointer.parent / "releases").absolute()
+        )
+    ):
+        raise RuntimeError("release pointer path is unsafe")
+    try:
+        pointer_metadata = os.lstat(pointer)
+    except FileNotFoundError:
+        pointer_metadata = None
+    if pointer_metadata is not None and not stat.S_ISLNK(pointer_metadata.st_mode):
+        raise RuntimeError("release pointer must be a symlink")
     temporary = pointer.parent / f".{pointer.name}.{os.getpid()}.{time.time_ns()}.tmp"
     temporary.unlink(missing_ok=True)
     try:
@@ -113,20 +161,24 @@ def read_json(path: Path, default: object) -> object:
 
 
 def runtime_state_path(root: Path) -> Path:
-    return root / "state" / RUNTIME_STATE
+    root, _releases, state = validate_runtime_layout(root, create_state=True)
+    return state / RUNTIME_STATE
 
 
 def runtime_state_lock_path(root: Path) -> Path:
-    return root / "state" / "runtime-health.lock"
+    root, _releases, state = validate_runtime_layout(root, create_state=True)
+    return state / "runtime-health.lock"
 
 
 def release_activation_journal_path(root: Path) -> Path:
-    return root / "state" / RELEASE_ACTIVATION_JOURNAL
+    root, _releases, state = validate_runtime_layout(root, create_state=True)
+    return state / RELEASE_ACTIVATION_JOURNAL
 
 
 def _strict_runtime_state(path: Path) -> dict[str, Any]:
-    if not path.exists():
+    if not path.absolute().exists():
         return {}
+    validate_runtime_file(path, label="runtime state")
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -152,9 +204,26 @@ def _deployment_identity(manifest: dict[str, Any]) -> dict[str, Any]:
 
 
 def _pointer_target(pointer: Path) -> str | None:
-    if not pointer.is_symlink():
+    try:
+        metadata = os.lstat(pointer)
+    except FileNotFoundError:
         return None
+    if not stat.S_ISLNK(metadata.st_mode):
+        raise RuntimeError("release pointer must be a symlink")
     return str(pointer.resolve())
+
+
+def _validated_release_target(root: Path, value: str | Path) -> Path:
+    """Validate a journal/pointer target without following an external path."""
+
+    root, releases, _state = validate_runtime_layout(root, create_state=True)
+    target = Path(value).absolute()
+    if target.parent != releases:
+        raise RuntimeError("release activation target escapes runtime releases")
+    metadata = os.lstat(target)
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+        raise RuntimeError("release activation target must be a real directory")
+    return target
 
 
 def _restore_runtime_state(path: Path, payload: bytes | None, mode: int | None) -> None:
@@ -175,11 +244,15 @@ def _recover_release_activation_unlocked(root: Path) -> str | None:
     new_target = str(journal.get("newTarget") or "")
     old_target = journal.get("oldTarget")
     new_identity = journal.get("newDeployment")
+    new_target_path = _validated_release_target(root, new_target)
+    old_target_path = (
+        _validated_release_target(root, str(old_target)) if old_target is not None else None
+    )
     current_state = _strict_runtime_state(state_path)
     current_deployment = current_state.get("deployment")
     current_target = _pointer_target(pointer)
     committed = (
-        current_target == new_target
+        current_target == str(new_target_path)
         and isinstance(current_deployment, dict)
         and all(current_deployment.get(key) == value for key, value in new_identity.items())
     )
@@ -189,7 +262,7 @@ def _recover_release_activation_unlocked(root: Path) -> str | None:
         return "committed"
 
     if old_target:
-        _atomic_pointer_write(pointer, Path(str(old_target)))
+        _atomic_pointer_write(pointer, old_target_path)
     else:
         pointer.unlink(missing_ok=True)
         _fsync_directory(pointer.parent)
@@ -204,7 +277,8 @@ def _recover_release_activation_unlocked(root: Path) -> str | None:
 def recover_release_activation(root: Path) -> str | None:
     """Finish or roll back an interrupted release/health transaction."""
 
-    root = root.resolve()
+    root = root.absolute()
+    validate_runtime_layout(root, create_state=True)
     with exclusive_lock(runtime_state_lock_path(root), blocking=True):
         return _recover_release_activation_unlocked(root)
 
@@ -218,17 +292,37 @@ def activate_release_pointer(root: Path, release: Path, manifest: dict[str, Any]
     activation call repairs it.
     """
 
-    root = root.resolve()
-    release = release.resolve()
+    root = root.absolute()
+    root, releases, _state = validate_runtime_layout(root, create_state=True)
+    release = release.absolute()
+    if release.parent != releases:
+        raise RuntimeError("release activation escapes the runtime releases directory")
+    release_metadata = os.lstat(release)
+    if stat.S_ISLNK(release_metadata.st_mode) or not stat.S_ISDIR(release_metadata.st_mode):
+        raise RuntimeError("release activation target must be a real directory")
     pointer = root / RELEASE_POINTER
     state_path = runtime_state_path(root)
     journal_path = release_activation_journal_path(root)
     identity = _deployment_identity(manifest)
     with exclusive_lock(runtime_state_lock_path(root), blocking=True):
+        validate_runtime_layout(root, create_state=True)
+        if release.parent != releases:
+            raise RuntimeError("release activation escapes the runtime releases directory")
+        release_metadata = os.lstat(release)
+        if stat.S_ISLNK(release_metadata.st_mode) or not stat.S_ISDIR(release_metadata.st_mode):
+            raise RuntimeError("release activation target changed")
         _recover_release_activation_unlocked(root)
         old_target = _pointer_target(pointer)
-        old_state_payload = state_path.read_bytes() if state_path.exists() else None
-        old_state_mode = state_path.stat().st_mode & 0o777 if state_path.exists() else None
+        if old_target is not None:
+            old_target = str(_validated_release_target(root, old_target))
+        try:
+            state_metadata = os.lstat(state_path)
+        except FileNotFoundError:
+            state_metadata = None
+        if state_metadata is not None:
+            validate_runtime_file(state_path, label="runtime health")
+        old_state_payload = state_path.read_bytes() if state_metadata is not None else None
+        old_state_mode = state_metadata.st_mode & 0o777 if state_metadata is not None else None
         journal = {
             "schema": "oss-pr-radar.release-activation.v1",
             "oldTarget": old_target,
@@ -243,6 +337,9 @@ def activate_release_pointer(root: Path, release: Path, manifest: dict[str, Any]
         _atomic_write(journal_path, journal)
         try:
             _atomic_pointer_write(pointer, release)
+            validate_runtime_layout(root, create_state=True)
+            if _pointer_target(pointer) != str(release):
+                raise RuntimeError("release pointer changed during activation")
             journal["phase"] = "pointer-active"
             _atomic_write(journal_path, journal)
             state = _strict_runtime_state(state_path)
@@ -252,6 +349,7 @@ def activate_release_pointer(root: Path, release: Path, manifest: dict[str, Any]
             state["schemaVersion"] = RUNTIME_SCHEMA
             state["deployment"] = deployment
             _atomic_write(state_path, state)
+            validate_runtime_file(state_path, label="runtime health")
             journal["phase"] = "health-active"
             _atomic_write(journal_path, journal)
             journal_path.unlink(missing_ok=True)
@@ -281,8 +379,36 @@ def operation_log_path(root: Path) -> Path:
 def exclusive_lock(path: Path, *, blocking: bool = False) -> Iterator[None]:
     """Acquire a process lock, optionally waiting for a state writer."""
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a+", encoding="utf-8") as handle:
+    path = path.absolute()
+    try:
+        parent_metadata = os.lstat(path.parent)
+    except FileNotFoundError:
+        path.parent.mkdir(parents=True, mode=0o700)
+        parent_metadata = os.lstat(path.parent)
+    except OSError as exc:
+        raise RuntimeError("runtime lock parent is unavailable") from exc
+    if (
+        stat.S_ISLNK(parent_metadata.st_mode)
+        or not stat.S_ISDIR(parent_metadata.st_mode)
+        or parent_metadata.st_uid != os.getuid()
+        or stat.S_IMODE(parent_metadata.st_mode) & 0o022
+    ):
+        raise RuntimeError("runtime lock parent has unsafe ownership or permissions")
+    try:
+        metadata = os.lstat(path)
+    except FileNotFoundError:
+        metadata = None
+    if metadata is not None and (
+        stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode)
+    ):
+        raise RuntimeError("runtime lock must be a regular file")
+    descriptor = os.open(
+        path,
+        os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    os.fchmod(descriptor, 0o600)
+    with os.fdopen(descriptor, "a+", encoding="utf-8") as handle:
         try:
             operation = fcntl.LOCK_EX if blocking else fcntl.LOCK_EX | fcntl.LOCK_NB
             fcntl.flock(handle.fileno(), operation)

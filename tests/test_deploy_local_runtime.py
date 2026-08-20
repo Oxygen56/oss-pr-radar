@@ -12,6 +12,7 @@ import pytest
 
 from oss_pr_radar import runtime as runtime_module
 from oss_pr_radar.managed_lifecycle import ManagedLedger
+from oss_pr_radar.release_binding import active_release
 from oss_pr_radar.stage7_cutover import prepare, restore_git_preservation
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "deploy_local_runtime.py"
@@ -88,6 +89,7 @@ def test_deploy_records_release_identity_without_overwriting_worker_health(tmp_p
         ),
         encoding="utf-8",
     )
+    state.chmod(0o600)
 
     result = MODULE.deploy(source, target)
 
@@ -196,6 +198,111 @@ def test_release_activation_waits_for_runtime_lock(tmp_path):
         assert not finished.is_set()
     thread.join(timeout=5)
     assert finished.is_set()
+
+
+def test_deploy_rejects_symlinked_releases_root_without_writing_outside(tmp_path):
+    source, target = make_repositories(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    marker = outside / "marker"
+    marker.write_bytes(b"keep")
+    (target / "releases").symlink_to(outside, target_is_directory=True)
+    before = marker.read_bytes()
+
+    with pytest.raises(RuntimeError, match="runtime releases"):
+        MODULE.deploy(source, target)
+
+    assert marker.read_bytes() == before
+    assert not (target / "current-release").exists()
+    assert not (target / "state").exists()
+
+
+def test_activate_rejects_symlinked_release_directory_and_preserves_state(tmp_path):
+    source, target = make_repositories(tmp_path)
+    first = MODULE.deploy(source, target)
+    outside = tmp_path / "outside-release"
+    outside.mkdir()
+    marker = outside / "marker"
+    marker.write_bytes(b"keep")
+    release = target / MODULE.RELEASES / first["releaseId"]
+    release.rename(release.with_name("release-real"))
+    release.symlink_to(outside, target_is_directory=True)
+    pointer_before = (target / MODULE.RELEASE_POINTER).resolve()
+    health_before = (target / "state" / "runtime-health.json").read_bytes()
+
+    with pytest.raises(RuntimeError, match="release"):
+        MODULE.activate_release(target, first["releaseId"])
+
+    assert (target / MODULE.RELEASE_POINTER).resolve() == pointer_before
+    assert (target / "state" / "runtime-health.json").read_bytes() == health_before
+    assert marker.read_bytes() == b"keep"
+
+
+def test_deploy_rejects_symlinked_state_without_external_write(tmp_path):
+    source, target = make_repositories(tmp_path)
+    outside = tmp_path / "outside-state"
+    outside.mkdir()
+    marker = outside / "runtime-health.json"
+    marker.write_bytes(b"keep")
+    (target / "state").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(RuntimeError, match="runtime state"):
+        MODULE.deploy(source, target)
+
+    assert marker.read_bytes() == b"keep"
+    assert not (target / MODULE.RELEASES).exists()
+    assert not (target / MODULE.RELEASE_POINTER).exists()
+
+
+def test_active_release_rejects_external_current_release_pointer(tmp_path):
+    source, target = make_repositories(tmp_path)
+    MODULE.deploy(source, target)
+    outside = tmp_path / "outside-release"
+    outside.mkdir()
+    pointer = target / MODULE.RELEASE_POINTER
+    pointer.unlink()
+    pointer.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(RuntimeError, match="escapes"):
+        active_release(target)
+
+
+def test_release_activation_rechecks_target_before_pointer_replace(tmp_path, monkeypatch):
+    source, target = make_repositories(tmp_path)
+    first = MODULE.deploy(source, target)
+    (source / "scripts" / "runner.py").write_text("VERSION = 3\n", encoding="utf-8")
+    git(source, "add", "scripts/runner.py")
+    git(
+        source,
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "-m",
+        "source-v3",
+    )
+    second = MODULE.deploy(source, target)
+    MODULE.activate_release(target, first["releaseId"])
+    second_path = target / MODULE.RELEASES / second["releaseId"]
+    outside = tmp_path / "outside-release"
+    outside.mkdir()
+    original = runtime_module._atomic_pointer_write
+    swapped = False
+
+    def replace_release(pointer, release):
+        nonlocal swapped
+        if pointer.name == MODULE.RELEASE_POINTER and not swapped:
+            swapped = True
+            second_path.rename(second_path.with_name("release-raced"))
+            second_path.symlink_to(outside, target_is_directory=True)
+        return original(pointer, release)
+
+    monkeypatch.setattr(runtime_module, "_atomic_pointer_write", replace_release)
+    with pytest.raises(RuntimeError, match="unsafe|changed|real directory"):
+        MODULE.activate_release(target, second["releaseId"])
+
+    assert (target / MODULE.RELEASE_POINTER).resolve().name == first["releaseId"]
 
 
 def test_deploy_ignores_runtime_artifacts_and_preserves_private_exclude(tmp_path):
