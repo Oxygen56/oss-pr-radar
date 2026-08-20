@@ -11384,6 +11384,30 @@
     ],
     "why": "The issue is a detailed, evidence-rich bug report about a silent device-side wedge in the sparse-decode MLA kernel, with a clear request for maintainer guidance on the correct owner and diagnostic path. However, the root cause is not established, the report explicitly asks for guidance rather than proposing a patch, and the deterministic gate is HUMAN_REVIEW. The open PR and related issue lookups failed, so duplicate work cannot be excluded. Actionability is limited by the need for maintainer input and the lack of a reliable reproducer."
   },
+  "4dcbfd248d1320c249e1314b6bdaf14f0635a730e011252574e18378bc311a1b": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "deepspeed/runtime/zero/stage_1_and_2.py"
+    ],
+    "risks": [
+      "Potential behavior change for edge cases; need to ensure zero-sized params are handled consistently across stages."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run provided repro.py with ZeRO stage 1 and 2 on single GPU; assert no KeyError and correct loss/step."
+    ],
+    "unknowns": [
+      "Exact fix approach not yet confirmed; maintainer request for fuzzing report pending."
+    ],
+    "why": "Issue provides a minimal reproducer, exact traceback, root-cause analysis, and a proposed fix (skip zero-sized params in reduction). It is a concrete distributed-training bug with clear validation path."
+  },
   "4e50b5e9d3c0dd3d53f61c47d17d93ea8c1140ecf144a30e44d225803210ebe3": {
     "confidence": 0.8,
     "contradictions": [],
@@ -22210,6 +22234,31 @@
       "PR #20690's merge status and whether it fully resolves the issue"
     ],
     "why": "Issue provides a precise root cause (shape mismatch in requestContext user slot) and a verified workaround, but a PR (#20690) already exists and is closed, with maintainer triage ongoing. The deterministic gate requires HUMAN_REVIEW, and the PR's completeness and maintainer scope decisions (e.g., handling two other quiet readers) are unresolved."
+  },
+  "9506866a686728a5b7f1cc814f069c369f312e7c52c8457bb684a0bddf54e530": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Observational Memory input filtering to exclude Working Memory state signals",
+      "WorkingMemoryStateProcessor or observer history construction"
+    ],
+    "risks": [
+      "Potential impact on legitimate observations if filtering is too broad; need to preserve provenance for other state signals."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Seed resource-scoped Working Memory, run an ordinary task in a second thread, capture observer input, assert absence of state signal and no managed Working Memory update."
+    ],
+    "unknowns": [
+      "Maintainer design preference on how to exclude or mark state signals; whether a fix should be in the observer input construction or in the extractor."
+    ],
+    "why": "The issue describes a concrete self-feedback loop in Observational Memory where the Working Memory state signal is included in observer input, leading to silent memory overwrites. It provides a clear reproduction, expected vs actual behavior, and a suggested fix with regression test steps. This is a user-visible bug in a critical agent memory path, making it a valuable and actionable contribution."
   },
   "950767d16a33ddc2d3c32a7d0d73be82e292eeed1696fa487b78cda1a3e8ff39": {
     "confidence": 0.7,
@@ -34469,6 +34518,36 @@
       "Whether existing PR #33449 can be improved or should be superseded"
     ],
     "why": "Issue provides a clear root cause and reproduction, but the deterministic gate requires HUMAN_REVIEW and the related issue audit timed out. An existing PR (#33449) directly addresses the issue but has failing CI, so maintainer guidance is needed before starting a competing PR."
+  },
+  "e677b5be8da1f47b463b677c4bee5ef3979d55c51ea5386cc84e402184cc639e": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue claims tool is broken, but comment suggests model emits invalid tool call"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Investigate tool call parsing and fallback behavior in edit_existing_file",
+      "Add validation for empty arguments and error handling to prevent crashes"
+    ],
+    "risks": [
+      "Potential duplicate issue #13137",
+      "May be a model/provider issue rather than code defect"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Create a unit test simulating an empty tool call arguments to verify graceful handling",
+      "Reproduce with a non-LM Studio model to isolate provider-specific issue"
+    ],
+    "unknowns": [
+      "Exact root cause and whether it is reproducible with a standard model",
+      "Maintainer interest and design preferences"
+    ],
+    "why": "Issue reports a crash and unusable edit_existing_file tool, but lacks a minimal reproduction and root cause is unclear. A comment suggests the local model emits invalid tool calls, not necessarily a code bug. No maintainer confirmation or design direction."
   },
   "e67f1bd33ff7f2e65c747ae891152f507d9ee0f01f440c2a81b61162d9cfcc01": {
     "confidence": 0.8,
