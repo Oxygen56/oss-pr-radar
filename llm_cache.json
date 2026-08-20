@@ -9102,6 +9102,31 @@
     ],
     "why": "Issue reports a concrete bug in MLX model packaging causing leaked control tokens and ignored response_format, with clear reproduction and controls. However, root cause is not identified, and a collaborator comment references another issue (#16563) without explanation, suggesting maintainer awareness or potential duplicate. The deterministic gate is HUMAN_REVIEW, so we must wait for maintainer direction."
   },
+  "41163f4663a4d6cc73fdecf87d5d1ade446d01b06fa04d934adc25439a13a1f2": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "server/runner.py serialization settings",
+      "server/request_state.py validation",
+      "client/session.py error handling"
+    ],
+    "risks": [
+      "Changing serialization settings may affect other non-finite float handling; need to ensure backward compatibility."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a test returning float('inf') from a tool and assert the client receives a clear error or the value survives; run existing server/client test suites."
+    ],
+    "unknowns": [
+      "Maintainer preference on whether to reject non-finite floats at return or allow them through serialization."
+    ],
+    "why": "Issue provides a precise root cause (Pydantic JSON mode serializes non-finite floats to null, failing client validation) with a minimal reproducer and clear expected behavior. It is actionable and technically valuable for the agent_ai_infra track."
+  },
   "4117ad056d3fac0da06f26f9a77522786340251d5aff44dff2e0e715c904fbf9": {
     "confidence": 0.7,
     "contradictions": [],
@@ -15547,6 +15572,36 @@
     "wait_reason": null,
     "why": "The issue is a configuration/API refactor moving knobs between dataclasses, not an LLM algorithm change. It lacks a concrete training objective, model mechanism, or numerical method. The validation path is config parsing and e2e training, not a reference-vs-implementation test or numerical regression."
   },
+  "6911062c3bcd53eda91f41364edf30544ef5a9b712dd9a1fcb2e0577ef37bca6": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue body suggests fix in #2358, but comment says #2374 covers it; both PRs exist with different approaches."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "ReMeMiddleware._build_app",
+      "tests/reme_middleware_test.py"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #2374; need to coordinate or differentiate.",
+      "Changing configuration behavior might affect other ReMeMiddleware users; ensure backward compatibility."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided minimal reproduction against reme-ai 0.4.1.7 to confirm the KeyError before fix and successful search/write-back after fix.",
+      "Run tests/reme_middleware_test.py to ensure all 34 tests pass."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the minimal fix (#2358) or the self-contained config (#2374).",
+      "Exact status of #2374 CI failures and whether they are resolved."
+    ],
+    "why": "Issue provides a clear root cause, a concrete reproduction, and a suggested fix. Existing PR #2374 claims to fix it with tests and end-to-end verification, but the issue remains open and the PR has CI failures. This is a valuable, actionable bug fix opportunity with clear validation path."
+  },
   "691703cc5c84e6847ce39e5141c5f2c225fc880257a055205aa9872a616b1a8f": {
     "confidence": 0.8,
     "contradictions": [
@@ -16701,6 +16756,34 @@
       "Whether maintainers have already started a fix or prefer a specific approach"
     ],
     "why": "The issue reports a server-side forwarding bug with strong reproduction evidence, but the root cause is not identified in the codebase and the fix path is unclear. The bot flags a possible duplicate (#41300), and there is no maintainer confirmation or design direction. The track is agent_ai_infra, not llm_algorithm, so algorithm evidence is not required, but the lack of a concrete code-level root cause and the duplicate flag make immediate action risky."
+  },
+  "6f58968e3d5dc65932cbcaf1b9f498d4883b257669c580c3f43971d86866f8d3": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The issue states the bug is not addressed by any existing PR, but the open_pr_assessment lists PR #11434 which introduced the behavior and is merged; however, that PR is the cause, not a fix. No contradiction in the fix direction."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "rag/nlp/__init__.py: naive_merge and naive_merge_with_images custom-delimiter branch to merge segments via merge_paragraphs instead of direct append",
+      "test/unit_test/rag/test_naive_merge.py: add regression test for custom delimiter with chunk_token_num cap"
+    ],
+    "risks": [
+      "Changing the custom-delimiter branch may break existing users who rely on the current behavior of ignoring chunk_token_num; the existing test test_custom_delimiter_ignores_chunk_size will need to be updated, which could be a breaking change"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test in test/unit_test/rag/test_naive_merge.py that runs a multi-paragraph text through naive_merge with a custom delimiter and asserts max(num_tokens(chunk)) <= chunk_token_num * 1.1",
+      "Run the existing test suite for rag/nlp to ensure no regressions, especially the test_custom_delimiter_ignores_chunk_size test which may need updating"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer Option A (minimal merge) or Option B (recursive splitter) for the long term; the issue suggests Option A as lower risk, but maintainer preference is not confirmed"
+    ],
+    "why": "Issue provides a precise root cause (has_custom branch bypasses chunk_token_num), a reproducible example with expected vs actual output, and a clear minimal fix (Option A). Maintainer comment confirms the diagnosis and suggests a concrete implementation path. The bug is user-visible and severe (429k chunks vs 1.4k), and the fix is well-scoped."
   },
   "7057df55bbf9160940e8f467b3f36babb514c682390f79fe14e6fdde100d2afa": {
     "confidence": 0.7,
@@ -33068,6 +33151,37 @@
       "Related issue audit failed; duplicate may exist"
     ],
     "why": "The issue reports a reproducible nondeterminism in logprobs under VLLM_BATCH_INVARIANT=1 with concurrent workloads, but the root cause is unknown and the deterministic gate requires HUMAN_REVIEW. The evidence is strong for a bug but lacks a concrete algorithm mechanism or code path, and open PR/related issue lookups failed, so duplicate work cannot be excluded."
+  },
+  "e0861c5b27761b892882ede09390de0757f62ab1cb2f71832eca828edcece9b3": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found; all comments align on the root cause and need for a guard."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "api/core/agent/fc_agent_runner.py",
+      "api/core/agent/errors.py",
+      "agent configuration schema for opt-in flag"
+    ],
+    "risks": [
+      "Behavior change may break existing agents that intentionally return plain text without tool calls; must be opt-in via configuration flag.",
+      "Retry logic could duplicate side effects for destructive tools; need careful design to avoid blind retries."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a unit test that mocks a model response with no tool calls but non-empty prompt_messages_tools and asserts a typed error or retry is triggered.",
+      "Add integration test with a mock tool that is never called, verifying the runner does not return a fabricated final answer."
+    ],
+    "unknowns": [
+      "Maintainer design preference on retry vs error and scope (per-tool vs per-agent) is not confirmed.",
+      "No public reproduction script is provided, but the code path is clear and testable."
+    ],
+    "why": "The issue precisely identifies a gap in the FC agent runner where a terminal answer with zero tool calls is accepted when tools were offered, and the code path is confirmed by maintainer bot with exact line references. The proposed fix (detect empty tool_responses and function_call_state False with non-empty prompt_messages_tools, then error or retry) is actionable and testable."
   },
   "e1434717d760518bad9804ecb7735aa8c452c17b29278f88b4b41f2f6a3ba16e": {
     "confidence": 0.8,
