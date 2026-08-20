@@ -120,13 +120,70 @@ def write_marker(path, payload):
         os.close(fd)
 
 if not hasattr(select, "kqueue"):
-    if not baseline_exists:
-        write_marker(ready, b"unsupported:missing-root")
+    if sys.platform.startswith("linux") and not baseline_exists:
+        import ctypes
+
+        parent = root.parent
         while True:
-            if root.exists():
-                write_marker(flag, b"host radar root appeared after missing baseline")
+            try:
+                parent_stat = parent.lstat()
+            except FileNotFoundError:
+                if parent == parent.parent:
+                    write_marker(flag, b"no existing parent is available for missing root")
+                    raise SystemExit(2)
+                parent = parent.parent
+                continue
+            if stat.S_ISLNK(parent_stat.st_mode) or not stat.S_ISDIR(parent_stat.st_mode):
+                write_marker(flag, b"missing root parent is unsafe")
                 raise SystemExit(2)
-            time.sleep(0.05)
+            break
+
+        parent_fd = os.open(
+            parent,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
+        )
+        try:
+            parent_fd_stat = os.fstat(parent_fd)
+            if (
+                not stat.S_ISDIR(parent_fd_stat.st_mode)
+                or parent_fd_stat.st_uid != os.getuid()
+                or parent_fd_stat.st_mode & 0o022
+            ):
+                write_marker(flag, b"missing root parent failed private directory checks")
+                raise SystemExit(2)
+            libc = ctypes.CDLL(None, use_errno=True)
+            libc.inotify_init1.argtypes = [ctypes.c_int]
+            libc.inotify_init1.restype = ctypes.c_int
+            libc.inotify_add_watch.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_uint32]
+            libc.inotify_add_watch.restype = ctypes.c_int
+            notify_fd = libc.inotify_init1(getattr(os, "O_CLOEXEC", 0))
+            if notify_fd < 0:
+                raise OSError(ctypes.get_errno(), "inotify_init1 failed")
+            try:
+                watch_mask = 0x00000100 | 0x00000200 | 0x00000040 | 0x00000080
+                watch_descriptor = libc.inotify_add_watch(
+                    notify_fd,
+                    os.fsencode(f"/proc/self/fd/{parent_fd}"),
+                    watch_mask,
+                )
+                if watch_descriptor < 0:
+                    raise OSError(ctypes.get_errno(), "inotify_add_watch failed")
+                if root.exists():
+                    write_marker(flag, b"host radar root appeared before missing-root ready")
+                    raise SystemExit(2)
+                write_marker(ready, b"inotify-missing-root-active")
+                while True:
+                    if os.read(notify_fd, 65536):
+                        write_marker(flag, b"host radar root changed after missing-root ready")
+                        raise SystemExit(2)
+            finally:
+                os.close(notify_fd)
+        finally:
+            os.close(parent_fd)
+
+    if not baseline_exists:
+        write_marker(flag, b"missing-root kernel event watcher is unsupported on this platform")
+        raise SystemExit(2)
     write_marker(ready, b"unsupported:kqueue")
     while True:
         if inventory(root) != baseline:
@@ -308,9 +365,12 @@ finally:
                 watcher_stderr.flush()
                 watcher_stderr.seek(0)
                 diagnostic = watcher_stderr.read()[-4000:].decode("utf-8", "replace")
+                flag_diagnostic = (
+                    watcher_flag.read_bytes()[-4000:] if watcher_flag.exists() else b""
+                )
                 raise AssertionError(
                     f"host watcher exited before ready: code={watcher.returncode}, "
-                    f"stderr={diagnostic!r}"
+                    f"stderr={diagnostic!r}, flag={flag_diagnostic!r}"
                 )
             time.sleep(0.05)
         if not watcher_ready.exists():

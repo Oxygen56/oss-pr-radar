@@ -49,19 +49,10 @@ def test_missing_baseline_detects_empty_directory(tmp_path):
     assert not _watcher_missing_baseline_violation(root, True)
 
 
-def test_kqueue_missing_root_detects_fast_create_delete(tmp_path):
-    if not hasattr(select, "kqueue"):
-        pytest.skip("kqueue transient-event proof is unsupported on this platform")
-    parent = tmp_path / "parent"
-    parent.mkdir(mode=0o700)
-    root = parent / "missing"
-    flag = tmp_path / "flag"
-    ready = tmp_path / "ready"
-    watcher = subprocess.Popen(
-        [
-            sys.executable,
-            "-c",
-            r"""
+def test_missing_root_watcher_detects_fast_create_delete(tmp_path):
+    if hasattr(select, "kqueue"):
+        expected_ready = b"kqueue-missing-root-active"
+        watcher_code = r"""
 import os
 import select
 import sys
@@ -107,7 +98,70 @@ try:
 finally:
     os.close(fd)
     kq.close()
-""",
+"""
+    elif sys.platform.startswith("linux"):
+        expected_ready = b"inotify-missing-root-active"
+        watcher_code = r"""
+import ctypes
+import os
+import sys
+from pathlib import Path
+
+parent = Path(sys.argv[1])
+root = Path(sys.argv[2])
+flag = Path(sys.argv[3])
+ready = Path(sys.argv[4])
+
+def write(path, value):
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        os.write(fd, value)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+libc = ctypes.CDLL(None, use_errno=True)
+libc.inotify_init1.argtypes = [ctypes.c_int]
+libc.inotify_init1.restype = ctypes.c_int
+libc.inotify_add_watch.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_uint32]
+libc.inotify_add_watch.restype = ctypes.c_int
+parent_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+notify_fd = libc.inotify_init1(os.O_CLOEXEC)
+if notify_fd < 0:
+    raise OSError(ctypes.get_errno(), "inotify_init1 failed")
+try:
+    watch_mask = 0x00000100 | 0x00000200 | 0x00000040 | 0x00000080
+    watch_descriptor = libc.inotify_add_watch(
+        notify_fd,
+        os.fsencode(f"/proc/self/fd/{parent_fd}"),
+        watch_mask,
+    )
+    if watch_descriptor < 0:
+        raise OSError(ctypes.get_errno(), "inotify_add_watch failed")
+    if root.exists():
+        write(flag, b"root existed before missing-root ready")
+        raise SystemExit(2)
+    write(ready, b"inotify-missing-root-active")
+    while True:
+        if os.read(notify_fd, 65536):
+            write(flag, b"missing root changed")
+            raise SystemExit(2)
+finally:
+    os.close(notify_fd)
+    os.close(parent_fd)
+"""
+    else:
+        pytest.skip("missing-root kernel event proof is unsupported on this platform")
+    parent = tmp_path / "parent"
+    parent.mkdir(mode=0o700)
+    root = parent / "missing"
+    flag = tmp_path / "flag"
+    ready = tmp_path / "ready"
+    watcher = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            watcher_code,
             str(parent),
             str(root),
             str(flag),
@@ -128,7 +182,7 @@ finally:
                     f"stderr={stderr!r}"
                 )
             time.sleep(0.01)
-        assert ready.read_bytes() == b"kqueue-missing-root-active"
+        assert ready.read_bytes() == expected_ready
 
         parent_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         try:
