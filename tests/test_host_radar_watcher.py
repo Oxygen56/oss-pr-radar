@@ -49,6 +49,148 @@ def test_missing_baseline_detects_empty_directory(tmp_path):
     assert not _watcher_missing_baseline_violation(root, True)
 
 
+_SECURE_CHAIN_PROBE = r"""
+import os
+import stat
+import sys
+import time
+from pathlib import Path
+
+path = Path(sys.argv[1])
+flag = Path(sys.argv[2])
+opened = Path(sys.argv[3])
+gate = Path(sys.argv[4])
+
+def mark(target, value):
+    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        os.write(fd, value)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+def open_chain(target):
+    if not target.is_absolute() or target.parts[0] != os.sep:
+        raise RuntimeError("path is not absolute")
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    descriptors = [os.open(os.sep, flags)]
+    try:
+        for component in target.parts[1:]:
+            if component in ("", ".", ".."):
+                raise RuntimeError("unsafe path component")
+            descriptor = os.open(component, flags, dir_fd=descriptors[-1])
+            if not stat.S_ISDIR(os.fstat(descriptor).st_mode):
+                raise RuntimeError("path component is not a directory")
+            descriptors.append(descriptor)
+        return descriptors
+    except BaseException:
+        for descriptor in descriptors:
+            os.close(descriptor)
+        raise
+
+try:
+    descriptors = open_chain(path)
+except BaseException as exc:
+    mark(flag, f"rejected:{type(exc).__name__}".encode())
+    raise SystemExit(2)
+
+try:
+    mark(opened, b"opened")
+    while not gate.exists():
+        time.sleep(0.001)
+    try:
+        fresh = open_chain(path)
+    except BaseException:
+        mark(flag, b"identity-mismatch")
+        raise SystemExit(2)
+    try:
+        if len(fresh) != len(descriptors) or any(
+            os.fstat(current).st_dev != os.fstat(original).st_dev
+            or os.fstat(current).st_ino != os.fstat(original).st_ino
+            for current, original in zip(fresh, descriptors)
+        ):
+            mark(flag, b"identity-mismatch")
+            raise SystemExit(2)
+    finally:
+        for descriptor in fresh:
+            os.close(descriptor)
+finally:
+    for descriptor in descriptors:
+        os.close(descriptor)
+"""
+
+
+def _run_secure_chain_probe(path, flag, opened, gate):
+    return subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            _SECURE_CHAIN_PROBE,
+            str(path),
+            str(flag),
+            str(opened),
+            str(gate),
+        ],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        close_fds=True,
+    )
+
+
+def test_missing_root_watcher_rejects_ancestor_symlink(tmp_path):
+    if not hasattr(os, "O_NOFOLLOW"):
+        pytest.skip("secure directory traversal is unsupported on this platform")
+    real = tmp_path / "real"
+    real.mkdir(mode=0o700)
+    parent = real / "parent"
+    parent.mkdir(mode=0o700)
+    alias = tmp_path / "alias"
+    alias.symlink_to(real, target_is_directory=True)
+    flag = tmp_path / "flag"
+    opened = tmp_path / "opened"
+    gate = tmp_path / "gate"
+    watcher = _run_secure_chain_probe(alias / "parent", flag, opened, gate)
+    _, stderr = watcher.communicate(timeout=5)
+    assert watcher.returncode == 2, stderr.decode("utf-8", "replace")
+    assert flag.read_bytes().startswith(b"rejected:")
+    assert not opened.exists()
+
+
+def test_missing_root_watcher_rechecks_ancestor_identity_after_open(tmp_path):
+    if not hasattr(os, "O_NOFOLLOW"):
+        pytest.skip("secure directory traversal is unsupported on this platform")
+    anchor = tmp_path / "anchor"
+    anchor.mkdir(mode=0o700)
+    parent = anchor / "parent"
+    parent.mkdir(mode=0o700)
+    external = tmp_path / "external"
+    external.mkdir(mode=0o700)
+    path = anchor / "parent"
+    flag = tmp_path / "flag"
+    opened = tmp_path / "opened"
+    gate = tmp_path / "gate"
+    watcher = _run_secure_chain_probe(path, flag, opened, gate)
+    try:
+        deadline = time.monotonic() + 5
+        while not opened.exists() and time.monotonic() < deadline:
+            if watcher.poll() is not None:
+                stderr = watcher.communicate()[1].decode("utf-8", "replace")
+                raise AssertionError(f"probe exited before open: {stderr!r}")
+            time.sleep(0.01)
+        assert opened.is_file()
+        anchor.rename(tmp_path / "anchor-old")
+        anchor.symlink_to(external, target_is_directory=True)
+        gate.touch(mode=0o600)
+        _, stderr = watcher.communicate(timeout=5)
+        assert watcher.returncode == 2, stderr.decode("utf-8", "replace")
+        assert flag.read_bytes() == b"identity-mismatch"
+    finally:
+        if watcher.poll() is None:
+            watcher.terminate()
+            watcher.wait(timeout=2)
+
+
 def test_missing_root_watcher_detects_fast_create_delete(tmp_path):
     if hasattr(select, "kqueue"):
         expected_ready = b"kqueue-missing-root-active"

@@ -119,38 +119,107 @@ def write_marker(path, payload):
     finally:
         os.close(fd)
 
-if not hasattr(select, "kqueue"):
-    if sys.platform.startswith("linux") and not baseline_exists:
-        import ctypes
+def fail_closed(message):
+    write_marker(flag, message.encode("utf-8"))
+    raise SystemExit(2)
 
-        parent = root.parent
-        while True:
+
+def open_existing_directory_chain(path):
+    if not path.is_absolute() or path.parts[0] != os.sep:
+        fail_closed("missing-root path must be absolute")
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptors = [os.open(os.sep, flags)]
+    try:
+        for component in path.parts[1:]:
+            if component in ("", ".", ".."):
+                fail_closed("missing-root path contains an unsafe component")
             try:
-                parent_stat = parent.lstat()
+                descriptor = os.open(component, flags, dir_fd=descriptors[-1])
             except FileNotFoundError:
-                if parent == parent.parent:
-                    write_marker(flag, b"no existing parent is available for missing root")
-                    raise SystemExit(2)
-                parent = parent.parent
-                continue
-            if stat.S_ISLNK(parent_stat.st_mode) or not stat.S_ISDIR(parent_stat.st_mode):
-                write_marker(flag, b"missing root parent is unsafe")
-                raise SystemExit(2)
-            break
+                final_stat = os.fstat(descriptors[-1])
+                if final_stat.st_uid != os.getuid() or final_stat.st_mode & 0o022:
+                    fail_closed("missing-root parent failed private directory checks")
+                return descriptors, component
+            descriptor_stat = os.fstat(descriptor)
+            if not stat.S_ISDIR(descriptor_stat.st_mode):
+                fail_closed("missing-root path component is not a directory")
+            descriptors.append(descriptor)
+        final_stat = os.fstat(descriptors[-1])
+        if final_stat.st_uid != os.getuid() or final_stat.st_mode & 0o022:
+            fail_closed("missing-root parent failed private directory checks")
+        return descriptors, None
+    except BaseException:
+        for descriptor in descriptors:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        raise
 
-        parent_fd = os.open(
-            parent,
-            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
+
+def chain_matches(path, expected_descriptors, expected_missing):
+    try:
+        current_descriptors, current_missing = open_existing_directory_chain(path)
+    except (OSError, SystemExit):
+        return False
+    try:
+        return current_missing == expected_missing and len(current_descriptors) == len(expected_descriptors) and all(
+            os.fstat(current).st_dev == os.fstat(expected).st_dev
+            and os.fstat(current).st_ino == os.fstat(expected).st_ino
+            for current, expected in zip(current_descriptors, expected_descriptors)
         )
-        try:
-            parent_fd_stat = os.fstat(parent_fd)
-            if (
-                not stat.S_ISDIR(parent_fd_stat.st_mode)
-                or parent_fd_stat.st_uid != os.getuid()
-                or parent_fd_stat.st_mode & 0o022
-            ):
-                write_marker(flag, b"missing root parent failed private directory checks")
-                raise SystemExit(2)
+    finally:
+        for descriptor in current_descriptors:
+            os.close(descriptor)
+
+
+def target_is_missing(parent_descriptor, name):
+    try:
+        os.stat(name, dir_fd=parent_descriptor, follow_symlinks=False)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return False
+
+
+if not baseline_exists:
+    chain_descriptors, missing_component = open_existing_directory_chain(root)
+    if missing_component is None:
+        fail_closed("missing-root target already exists")
+    parent_descriptor = chain_descriptors[-1]
+    try:
+        if hasattr(select, "kqueue"):
+            kqueue = select.kqueue()
+            try:
+                events = [
+                    select.kevent(
+                        descriptor,
+                        filter=select.KQ_FILTER_VNODE,
+                        flags=select.KQ_EV_ADD | select.KQ_EV_ENABLE | select.KQ_EV_CLEAR,
+                        fflags=(
+                            select.KQ_NOTE_DELETE
+                            | select.KQ_NOTE_RENAME
+                            | select.KQ_NOTE_REVOKE
+                            | (select.KQ_NOTE_WRITE if descriptor == parent_descriptor else 0)
+                        ),
+                    )
+                    for descriptor in chain_descriptors
+                ]
+                kqueue.control(events, 0, 0)
+                if not chain_matches(root, chain_descriptors, missing_component) or not target_is_missing(
+                    parent_descriptor, missing_component
+                ):
+                    fail_closed("missing-root path changed before kqueue ready")
+                write_marker(ready, b"kqueue-missing-root-active")
+                while True:
+                    if kqueue.control(None, 1, 0.5):
+                        fail_closed("missing-root path changed after kqueue ready")
+            finally:
+                kqueue.close()
+        elif sys.platform.startswith("linux"):
+            import ctypes
+
             libc = ctypes.CDLL(None, use_errno=True)
             libc.inotify_init1.argtypes = [ctypes.c_int]
             libc.inotify_init1.restype = ctypes.c_int
@@ -160,97 +229,40 @@ if not hasattr(select, "kqueue"):
             if notify_fd < 0:
                 raise OSError(ctypes.get_errno(), "inotify_init1 failed")
             try:
-                watch_mask = 0x00000100 | 0x00000200 | 0x00000040 | 0x00000080
-                watch_descriptor = libc.inotify_add_watch(
-                    notify_fd,
-                    os.fsencode(f"/proc/self/fd/{parent_fd}"),
-                    watch_mask,
-                )
-                if watch_descriptor < 0:
-                    raise OSError(ctypes.get_errno(), "inotify_add_watch failed")
-                if root.exists():
-                    write_marker(flag, b"host radar root appeared before missing-root ready")
-                    raise SystemExit(2)
+                self_events = 0x00000400 | 0x00000800 | 0x00008000 | 0x00000004
+                parent_events = self_events | 0x00000100 | 0x00000200 | 0x00000040 | 0x00000080
+                for descriptor in chain_descriptors:
+                    watch_mask = parent_events if descriptor == parent_descriptor else self_events
+                    watch_descriptor = libc.inotify_add_watch(
+                        notify_fd,
+                        os.fsencode(f"/proc/self/fd/{descriptor}"),
+                        watch_mask,
+                    )
+                    if watch_descriptor < 0:
+                        raise OSError(ctypes.get_errno(), "inotify_add_watch failed")
+                if not chain_matches(root, chain_descriptors, missing_component) or not target_is_missing(
+                    parent_descriptor, missing_component
+                ):
+                    fail_closed("missing-root path changed before inotify ready")
                 write_marker(ready, b"inotify-missing-root-active")
                 while True:
                     if os.read(notify_fd, 65536):
-                        write_marker(flag, b"host radar root changed after missing-root ready")
-                        raise SystemExit(2)
+                        fail_closed("missing-root path changed after inotify ready")
             finally:
                 os.close(notify_fd)
-        finally:
-            os.close(parent_fd)
+        else:
+            fail_closed("missing-root kernel event watcher is unsupported on this platform")
+    finally:
+        for descriptor in chain_descriptors:
+            os.close(descriptor)
 
-    if not baseline_exists:
-        write_marker(flag, b"missing-root kernel event watcher is unsupported on this platform")
-        raise SystemExit(2)
+if not hasattr(select, "kqueue"):
     write_marker(ready, b"unsupported:kqueue")
     while True:
         if inventory(root) != baseline:
             write_marker(flag, b"host radar state changed")
             raise SystemExit(2)
         time.sleep(0.05)
-
-if not baseline_exists:
-    parent = root.parent
-    while True:
-        try:
-            parent_stat = parent.lstat()
-        except FileNotFoundError:
-            if parent == parent.parent:
-                write_marker(flag, b"no existing parent is available for missing root")
-                raise SystemExit(2)
-            parent = parent.parent
-            continue
-        if stat.S_ISLNK(parent_stat.st_mode) or not stat.S_ISDIR(parent_stat.st_mode):
-            write_marker(flag, b"missing root parent is unsafe")
-            raise SystemExit(2)
-        break
-
-    kqueue = select.kqueue()
-    parent_fd = os.open(
-        parent,
-        os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
-    )
-    try:
-        parent_fd_stat = os.fstat(parent_fd)
-        if (
-            not stat.S_ISDIR(parent_fd_stat.st_mode)
-            or parent_fd_stat.st_uid != os.getuid()
-            or parent_fd_stat.st_mode & 0o022
-        ):
-            write_marker(flag, b"missing root parent failed private directory checks")
-            raise SystemExit(2)
-        kqueue.control(
-            [
-                select.kevent(
-                    parent_fd,
-                    filter=select.KQ_FILTER_VNODE,
-                    flags=select.KQ_EV_ADD | select.KQ_EV_ENABLE | select.KQ_EV_CLEAR,
-                    fflags=(
-                        select.KQ_NOTE_WRITE
-                        | select.KQ_NOTE_EXTEND
-                        | select.KQ_NOTE_DELETE
-                        | select.KQ_NOTE_RENAME
-                        | select.KQ_NOTE_LINK
-                    ),
-                )
-            ],
-            0,
-            0,
-        )
-        if root.exists():
-            write_marker(flag, b"host radar root appeared before missing-root ready")
-            raise SystemExit(2)
-        write_marker(ready, b"kqueue-missing-root-active")
-        while True:
-            events = kqueue.control(None, 1, 0.5)
-            if events or root.exists():
-                write_marker(flag, b"host radar root changed after missing-root ready")
-                raise SystemExit(2)
-    finally:
-        os.close(parent_fd)
-        kqueue.close()
 
 if root.is_symlink() or not root.is_dir():
     write_marker(flag, b"host radar root is unsafe before ready")
