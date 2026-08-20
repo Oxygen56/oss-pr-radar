@@ -64,6 +64,12 @@ def backfill_from_radar_events(connection: sqlite3.Connection) -> None:
            WHERE q.event_type IN ('LEGACY_RESULT_REQUIRES_MIGRATION',
                                   'PR_FOLLOWUP_REBIND_REQUIRED')
              AND NOT EXISTS (
+               SELECT 1 FROM task_quarantines t
+               WHERE t.opportunity_key=q.opportunity_key
+                 AND t.reason=q.event_type
+                 AND t.payload_json=q.payload_json
+             )
+             AND NOT EXISTS (
                SELECT 1 FROM events c
                WHERE c.opportunity_key=q.opportunity_key
                  AND c.event_type='TASK_QUARANTINE_CLEARED'
@@ -83,6 +89,13 @@ def backfill_from_managed_events(connection: sqlite3.Connection) -> None:
            FROM managed_lifecycle_events q
            WHERE q.event_type IN ('LEGACY_RESULT_REQUIRES_MIGRATION',
                                   'PR_FOLLOWUP_REBIND_REQUIRED')
+             AND q.idempotency_key NOT LIKE 'task-quarantine:%'
+             AND NOT EXISTS (
+               SELECT 1 FROM task_quarantines t
+               WHERE t.opportunity_key=q.opportunity_key
+                 AND t.reason=q.event_type
+                 AND t.payload_json=q.payload_json
+             )
              AND NOT EXISTS (
                SELECT 1 FROM managed_lifecycle_events c
                WHERE c.opportunity_key=q.opportunity_key

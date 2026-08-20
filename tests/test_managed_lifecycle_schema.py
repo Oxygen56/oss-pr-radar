@@ -98,3 +98,31 @@ def test_append_only_event_idempotency_and_legacy_publication_effects_survive(tm
             assert "append-only" in str(exc)
         else:
             raise AssertionError("append-only event deletion was allowed")
+
+
+def test_task_quarantine_backfill_is_idempotent_across_managed_reopens(tmp_path):
+    database = tmp_path / "ledger.sqlite3"
+    RadarLedger(database)
+    managed = ManagedLedger(database, ensure_schema=True)
+    managed.record_event(
+        event_type="LEGACY_RESULT_REQUIRES_MIGRATION",
+        idempotency_key="legacy-quarantine-1",
+        opportunity_key="owner/repo#1",
+        source="legacy-test",
+        payload={"reason": "LEGACY_RESULT_REQUIRES_MIGRATION", "legacy": True},
+    )
+
+    migrate_schema(database)
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM task_quarantines").fetchone()[0] == 1
+
+    managed.record_task_quarantine(
+        opportunity_key="owner/repo#2",
+        reason="LEGACY_RESULT_REQUIRES_MIGRATION",
+        dedupe_key="new-quarantine-2",
+        payload={"reason": "LEGACY_RESULT_REQUIRES_MIGRATION", "new": True},
+    )
+    migrate_schema(database)
+    migrate_schema(database)
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM task_quarantines").fetchone()[0] == 2
