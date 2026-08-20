@@ -3137,7 +3137,7 @@ class RadarLedger:
         now = iso_z(datetime.now(UTC))
         with self.transaction() as connection:
             row = connection.execute(
-                """SELECT n.id
+                """SELECT n.id,n.payload_json
                    FROM opportunities o
                    JOIN events d ON d.id=(
                      SELECT MAX(d2.id) FROM events d2
@@ -3180,6 +3180,8 @@ class RadarLedger:
                     )
                 if previous_fingerprint == evidence_fingerprint:
                     return False
+            no_progress = json.loads(row["payload_json"])
+            thread_id = str(no_progress.get("threadId") or "")
             dedupe_key = sha256_text(f"{row['id']}|{evidence_fingerprint}")
             self._event(
                 connection,
@@ -3187,6 +3189,7 @@ class RadarLedger:
                 "VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED",
                 dedupe_key,
                 {
+                    "threadId": thread_id,
                     "resultDigest": result_digest,
                     "reviewMarker": review_marker,
                     "reason": reason,
@@ -7129,7 +7132,95 @@ class RadarLedger:
                    LIMIT 1""",
                 (thread_id, key),
             ).fetchone()
-        return row is not None
+            if row is None:
+                return False
+            unresolved_validation = connection.execute(
+                """SELECT 1
+                   FROM events marker
+                   WHERE marker.opportunity_key=?
+                     AND marker.event_type IN (
+                       'VALIDATION_FOLLOWUP_RESERVED',
+                       'VALIDATION_FOLLOWUP_SENT'
+                     )
+                     AND json_extract(marker.payload_json,'$.threadId')=?
+                     AND json_extract(marker.payload_json,'$.resultDigest') IS NOT NULL
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events sent
+                       WHERE sent.opportunity_key=marker.opportunity_key
+                         AND sent.event_type='VALIDATION_FOLLOWUP_SENT'
+                         AND sent.dedupe_key=
+                             json_extract(marker.payload_json,'$.resultDigest')
+                         AND json_extract(sent.payload_json,'$.threadId')=
+                             json_extract(marker.payload_json,'$.threadId')
+                         AND sent.id>=CASE
+                           WHEN marker.event_type='VALIDATION_FOLLOWUP_SENT'
+                           THEN marker.id ELSE marker.id+1 END
+                         AND EXISTS (
+                           SELECT 1 FROM events result
+                           WHERE result.opportunity_key=sent.opportunity_key
+                             AND result.event_type='TASK_RESULT_INGESTED'
+                             AND result.id>sent.id
+                         )
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events cancelled
+                       WHERE cancelled.opportunity_key=marker.opportunity_key
+                         AND cancelled.event_type=
+                             'VALIDATION_FOLLOWUP_RESERVATION_CANCELLED'
+                         AND json_extract(cancelled.payload_json,'$.reservationDigest')=
+                             json_extract(marker.payload_json,'$.reservationDigest')
+                         AND cancelled.id>marker.id
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events abandoned
+                       WHERE abandoned.opportunity_key=marker.opportunity_key
+                         AND abandoned.event_type='VALIDATION_FOLLOWUP_DELIVERY_ABANDONED'
+                         AND json_extract(abandoned.payload_json,'$.resultDigest')=
+                             json_extract(marker.payload_json,'$.resultDigest')
+                         AND json_extract(abandoned.payload_json,'$.threadId')=
+                             json_extract(marker.payload_json,'$.threadId')
+                         AND (
+                           marker.event_type='VALIDATION_FOLLOWUP_SENT'
+                           OR json_extract(abandoned.payload_json,'$.reservedAt')=
+                              marker.created_at
+                         )
+                         AND abandoned.id>marker.id
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events no_progress
+                       WHERE no_progress.opportunity_key=marker.opportunity_key
+                         AND no_progress.event_type='VALIDATION_FOLLOWUP_NO_PROGRESS'
+                         AND no_progress.dedupe_key=
+                             json_extract(marker.payload_json,'$.resultDigest')
+                         AND json_extract(no_progress.payload_json,'$.threadId')=
+                             json_extract(marker.payload_json,'$.threadId')
+                         AND no_progress.id>marker.id
+                         AND NOT EXISTS (
+                           SELECT 1 FROM events rearmed
+                           WHERE rearmed.opportunity_key=no_progress.opportunity_key
+                             AND rearmed.event_type=
+                                 'VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED'
+                             AND json_extract(rearmed.payload_json,'$.resultDigest')=
+                                 json_extract(marker.payload_json,'$.resultDigest')
+                             AND json_extract(rearmed.payload_json,'$.threadId')=
+                                 json_extract(marker.payload_json,'$.threadId')
+                             AND rearmed.id>no_progress.id
+                         )
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events rearmed
+                       WHERE rearmed.opportunity_key=marker.opportunity_key
+                         AND rearmed.event_type='VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED'
+                         AND json_extract(rearmed.payload_json,'$.resultDigest')=
+                             json_extract(marker.payload_json,'$.resultDigest')
+                         AND json_extract(rearmed.payload_json,'$.threadId')=
+                             json_extract(marker.payload_json,'$.threadId')
+                         AND rearmed.id>marker.id
+                     )
+                   LIMIT 1""",
+                (key, thread_id),
+            ).fetchone()
+        return unresolved_validation is None
 
     def record_followup_result(
         self, key: str, *, wake_digest: str, result_digest: str, stage: str

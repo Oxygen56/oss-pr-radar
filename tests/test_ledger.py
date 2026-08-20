@@ -3,6 +3,7 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -466,6 +467,304 @@ def test_published_terminal_missing_worktree_gate_requires_followup_result(tmp_p
     )
 
     assert store.published_task_result_is_terminal(
+        "a/b#1",
+        thread_id="thread-recovered",
+    )
+
+
+def _published_terminal_with_validation_followup(
+    tmp_path: Path,
+    *,
+    result_digest: str = "validation-result",
+    thread_id: str = "thread-recovered",
+) -> tuple[RadarLedger, dict[str, Any]]:
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.restore_task_context(
+        published_task_context(
+            threadId=thread_id,
+            worktreePath=f"/tmp/{thread_id}-worktree",
+            resultPath=f"/tmp/{thread_id}-worktree/.oss-pr-radar/result.json",
+        )
+    )
+    store.record_task_result_ingested("a/b#1", digest="published-result", stage="CI_GREEN")
+    assert store.published_task_result_is_terminal("a/b#1", thread_id=thread_id)
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id=thread_id,
+        result_digest=result_digest,
+        missing=["independent_review_passed"],
+    )
+    store.record_stage(
+        "a/b#1",
+        "VALIDATION_PENDING",
+        evidence={"resultDigest": result_digest},
+        dedupe_key=f"validation:{result_digest}",
+    )
+    reservation = store.reserve_validation_followup(
+        thread_id=thread_id,
+        result_digest=result_digest,
+    )
+    store.record_stage(
+        "a/b#1",
+        "CI_GREEN",
+        evidence={"prUrl": "https://github.com/a/b/pull/9"},
+        dedupe_key=f"ci-green:{result_digest}",
+    )
+    return store, reservation
+
+
+def _insert_validation_event(
+    store: RadarLedger,
+    *,
+    event_type: str,
+    dedupe_key: str,
+    payload: dict[str, Any],
+) -> None:
+    with store.connect() as connection:
+        store._event(
+            connection,
+            "a/b#1",
+            event_type,
+            dedupe_key,
+            payload,
+            iso_z(datetime.now(UTC)),
+        )
+
+
+def test_published_terminal_missing_worktree_gate_blocks_unfinished_validation_reservation(
+    tmp_path,
+):
+    store, _reservation = _published_terminal_with_validation_followup(tmp_path)
+
+    assert not store.published_task_result_is_terminal(
+        "a/b#1",
+        thread_id="thread-recovered",
+    )
+
+
+def test_published_terminal_missing_worktree_gate_blocks_unfinished_validation_sent(
+    tmp_path,
+):
+    store, _reservation = _published_terminal_with_validation_followup(tmp_path)
+    store.commit_validation_followup(
+        thread_id="thread-recovered",
+        result_digest="validation-result",
+    )
+
+    assert not store.published_task_result_is_terminal(
+        "a/b#1",
+        thread_id="thread-recovered",
+    )
+
+
+def test_published_terminal_missing_worktree_gate_allows_cancelled_validation_reservation(
+    tmp_path,
+):
+    store, reservation = _published_terminal_with_validation_followup(tmp_path)
+
+    store.cancel_validation_followup_reservation(
+        thread_id="thread-recovered",
+        result_digest="validation-result",
+        reservation_digest=reservation["reservationDigest"],
+        reason="VALIDATION_RESULT_CHANGED_AFTER_RESERVE",
+    )
+
+    assert store.published_task_result_is_terminal(
+        "a/b#1",
+        thread_id="thread-recovered",
+    )
+
+
+def test_published_terminal_missing_worktree_gate_allows_abandoned_validation_reservation(
+    tmp_path,
+):
+    store, _reservation = _published_terminal_with_validation_followup(tmp_path)
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE events SET created_at=? WHERE event_type='VALIDATION_FOLLOWUP_RESERVED'",
+            (iso_z(datetime.now(UTC) - timedelta(hours=2)),),
+        )
+
+    store.abandon_validation_followup_delivery(
+        thread_id="thread-recovered",
+        result_digest="validation-result",
+        reason="TARGET_TURN_NOT_MATERIALIZED",
+        min_age_minutes=90,
+    )
+
+    assert store.published_task_result_is_terminal(
+        "a/b#1",
+        thread_id="thread-recovered",
+    )
+
+
+def test_published_terminal_missing_worktree_gate_allows_ingested_validation_result(
+    tmp_path,
+):
+    store, _reservation = _published_terminal_with_validation_followup(tmp_path)
+    store.commit_validation_followup(
+        thread_id="thread-recovered",
+        result_digest="validation-result",
+    )
+
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="post-validation-result",
+        stage="CI_GREEN",
+    )
+
+    assert store.published_task_result_is_terminal(
+        "a/b#1",
+        thread_id="thread-recovered",
+    )
+
+
+def test_published_terminal_missing_worktree_gate_allows_no_progress_validation_result(
+    tmp_path,
+):
+    store, _reservation = _published_terminal_with_validation_followup(tmp_path)
+    store.record_stage(
+        "a/b#1",
+        "VALIDATION_PENDING",
+        evidence={"resultDigest": "validation-result"},
+        dedupe_key="validation:recovery",
+    )
+    store.commit_validation_followup(
+        thread_id="thread-recovered",
+        result_digest="validation-result",
+    )
+    recovery = store.recovery_candidates(min_age_minutes=0)[0]
+    store.reserve_recovery(thread_id="thread-recovered", nonce=recovery["recoveryNonce"])
+    store.commit_recovery(thread_id="thread-recovered", nonce=recovery["recoveryNonce"])
+    store.exhaust_recovery(thread_id="thread-recovered", nonce=recovery["recoveryNonce"])
+    store.record_stage(
+        "a/b#1",
+        "CI_GREEN",
+        evidence={"prUrl": "https://github.com/a/b/pull/9"},
+        dedupe_key="ci-green:no-progress",
+    )
+
+    assert store.published_task_result_is_terminal(
+        "a/b#1",
+        thread_id="thread-recovered",
+    )
+
+
+def test_published_terminal_missing_worktree_gate_keeps_rearmed_validation_scoped(
+    tmp_path,
+):
+    store, _reservation = _published_terminal_with_validation_followup(tmp_path)
+    _insert_validation_event(
+        store,
+        event_type="VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED",
+        dedupe_key="review-1",
+        payload={
+            "threadId": "thread-recovered",
+            "resultDigest": "other-validation-result",
+            "reviewMarker": "other",
+            "reason": "DEPENDENCY_PREFETCH_AVAILABLE",
+        },
+    )
+
+    assert not store.published_task_result_is_terminal(
+        "a/b#1",
+        thread_id="thread-recovered",
+    )
+
+    _insert_validation_event(
+        store,
+        event_type="VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED",
+        dedupe_key="review-2",
+        payload={
+            "threadId": "thread-recovered",
+            "resultDigest": "validation-result",
+            "reviewMarker": "dependency-prefetch",
+            "reason": "DEPENDENCY_PREFETCH_AVAILABLE",
+        },
+    )
+
+    assert store.published_task_result_is_terminal(
+        "a/b#1",
+        thread_id="thread-recovered",
+    )
+
+
+def test_published_terminal_missing_worktree_gate_scopes_validation_by_thread(
+    tmp_path,
+):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.restore_task_context(published_task_context())
+    store.record_task_result_ingested("a/b#1", digest="published-result", stage="CI_GREEN")
+    _insert_validation_event(
+        store,
+        event_type="VALIDATION_FOLLOWUP_RESERVED",
+        dedupe_key="other-reservation",
+        payload={
+            "threadId": "other-thread",
+            "resultDigest": "validation-result",
+            "missing": ["independent_review_passed"],
+            "reservationDigest": "other-reservation",
+        },
+    )
+
+    assert store.published_task_result_is_terminal(
+        "a/b#1",
+        thread_id="thread-recovered",
+    )
+
+
+def test_published_terminal_missing_worktree_gate_does_not_use_wrong_thread_closure(
+    tmp_path,
+):
+    store, _reservation = _published_terminal_with_validation_followup(tmp_path)
+    _insert_validation_event(
+        store,
+        event_type="VALIDATION_FOLLOWUP_NO_PROGRESS",
+        dedupe_key="validation-result",
+        payload={
+            "threadId": "other-thread",
+            "resultDigest": "validation-result",
+            "previousResultDigest": "validation-result",
+            "missing": ["independent_review_passed"],
+            "reason": "UNCHANGED_VALIDATION_GAP",
+        },
+    )
+    _insert_validation_event(
+        store,
+        event_type="VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED",
+        dedupe_key="other-thread-review",
+        payload={
+            "threadId": "other-thread",
+            "resultDigest": "validation-result",
+            "reviewMarker": "dependency-prefetch",
+            "reason": "DEPENDENCY_PREFETCH_AVAILABLE",
+        },
+    )
+
+    assert not store.published_task_result_is_terminal(
+        "a/b#1",
+        thread_id="thread-recovered",
+    )
+
+
+def test_published_terminal_missing_worktree_gate_does_not_use_wrong_digest_closure(
+    tmp_path,
+):
+    store, _reservation = _published_terminal_with_validation_followup(tmp_path)
+    _insert_validation_event(
+        store,
+        event_type="VALIDATION_FOLLOWUP_NO_PROGRESS",
+        dedupe_key="other-validation-result",
+        payload={
+            "threadId": "thread-recovered",
+            "resultDigest": "other-validation-result",
+            "previousResultDigest": "other-validation-result",
+            "missing": ["independent_review_passed"],
+            "reason": "UNCHANGED_VALIDATION_GAP",
+        },
+    )
+
+    assert not store.published_task_result_is_terminal(
         "a/b#1",
         thread_id="thread-recovered",
     )

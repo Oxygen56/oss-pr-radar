@@ -6979,6 +6979,41 @@ def test_ingestion_skips_published_terminal_missing_worktree_after_result_ingest
         ]
 
 
+def test_ingestion_reports_published_missing_worktree_with_unfinished_validation_followup(
+    tmp_path,
+):
+    store, worktree, _head_sha, _pr_url = _published_followup_store(tmp_path)
+    store.record_task_result_ingested("a/b#1", digest="published-result", stage="CI_GREEN")
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest="validation-result",
+        missing=["independent_review_passed"],
+    )
+    store.record_stage(
+        "a/b#1",
+        "VALIDATION_PENDING",
+        evidence={"resultDigest": "validation-result"},
+        dedupe_key="validation:unfinished",
+    )
+    store.reserve_validation_followup(thread_id="thread-1", result_digest="validation-result")
+    store.record_stage(
+        "a/b#1",
+        "CI_GREEN",
+        evidence={"prUrl": "https://github.com/a/b/pull/9"},
+        dedupe_key="ci-green:unfinished-validation",
+    )
+    shutil.rmtree(worktree)
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert result["ok"] is False
+    assert result["ingested"] == []
+    assert result.get("ignored", []) == []
+    assert result["errors"][0]["key"] == "a/b#1"
+    assert "worktree is missing" in result["errors"][0]["error"]
+
+
 def test_ingestion_reports_unpublished_missing_worktree(tmp_path):
     _store, worktree, _result_path = _controller_commit_result(tmp_path)
     shutil.rmtree(worktree)
