@@ -17,7 +17,6 @@ import shutil
 import sqlite3
 import stat
 import subprocess
-import tempfile
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -25,7 +24,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Iterator
 
-from .release_binding import validate_runtime_file, validate_runtime_layout
+from .release_binding import open_directory_handle, validate_runtime_file, validate_runtime_layout
 
 RUNTIME_STATE = "runtime-health.json"
 QUEUE_STATE = "queue-import-state.json"
@@ -56,11 +55,12 @@ def utc_now() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
-def _atomic_write(path: Path, value: object) -> None:
+def _atomic_write(path: Path, value: object, *, directory_fd: int | None = None) -> None:
     _atomic_write_bytes(
         path,
         (json.dumps(value, ensure_ascii=True, sort_keys=True, indent=2) + "\n").encode("utf-8"),
         mode=0o600,
+        directory_fd=directory_fd,
     )
 
 
@@ -72,79 +72,94 @@ def _fsync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
-def _atomic_write_bytes(path: Path, payload: bytes, *, mode: int) -> None:
-    parent = path.absolute().parent
+def _unlink_at(name: str, directory_fd: int) -> None:
     try:
-        parent_metadata = os.lstat(parent)
-    except OSError as exc:
-        raise RuntimeError("runtime state parent is unavailable") from exc
-    if stat.S_ISLNK(parent_metadata.st_mode) or not stat.S_ISDIR(parent_metadata.st_mode):
-        raise RuntimeError("runtime state parent must be a real directory")
-    if parent_metadata.st_uid != os.getuid() or stat.S_IMODE(parent_metadata.st_mode) & 0o022:
-        raise RuntimeError("runtime state parent has unsafe ownership or permissions")
-    path = path.absolute()
-    try:
-        metadata = os.lstat(path)
+        os.unlink(name, dir_fd=directory_fd)
     except FileNotFoundError:
-        metadata = None
-    except OSError as exc:
-        raise RuntimeError("runtime state file is unavailable") from exc
-    if metadata is not None:
-        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
-            raise RuntimeError("runtime state file must be a regular file")
-        if metadata.st_uid != os.getuid():
-            raise RuntimeError("runtime state file has the wrong owner")
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
-    )
-    temporary = Path(temporary_name)
+        pass
+
+
+def _atomic_write_bytes(
+    path: Path, payload: bytes, *, mode: int, directory_fd: int | None = None
+) -> None:
+    path = path.absolute()
+    owns_directory = directory_fd is None
+    if owns_directory:
+        directory_fd, _ = open_directory_handle(
+            path.parent, label="runtime state parent", required_mode=0o700
+        )
+    assert directory_fd is not None
+    temporary_name = f".{path.name}.{os.getpid()}.{time.time_ns()}.tmp"
+    descriptor = -1
     try:
+        try:
+            metadata = os.stat(path.name, dir_fd=directory_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            metadata = None
+        if metadata is not None and (
+            stat.S_ISLNK(metadata.st_mode)
+            or not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != os.getuid()
+        ):
+            raise RuntimeError("runtime state file is unsafe")
+        descriptor = os.open(
+            temporary_name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            mode,
+            dir_fd=directory_fd,
+        )
         os.fchmod(descriptor, mode)
         with os.fdopen(descriptor, "wb") as handle:
+            descriptor = -1
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temporary, path)
-        _fsync_directory(path.parent)
+        os.replace(temporary_name, path.name, src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
+        os.fsync(directory_fd)
     finally:
-        temporary.unlink(missing_ok=True)
+        if descriptor >= 0:
+            os.close(descriptor)
+        try:
+            os.unlink(temporary_name, dir_fd=directory_fd)
+        except FileNotFoundError:
+            pass
+        if owns_directory:
+            os.close(directory_fd)
 
 
-def _atomic_pointer_write(pointer: Path, target: Path) -> None:
+def _atomic_pointer_write(pointer: Path, target: Path, *, directory_fd: int | None = None) -> None:
     pointer = pointer.absolute()
-    target = target.absolute()
-    try:
-        parent_metadata = os.lstat(pointer.parent)
-        target_metadata = os.lstat(target)
-    except OSError as exc:
-        raise RuntimeError("release pointer path is unavailable") from exc
+    target = Path(os.path.realpath(str(target)))
+    owns_directory = directory_fd is None
+    if owns_directory:
+        directory_fd, _ = open_directory_handle(pointer.parent, label="release pointer parent")
+    assert directory_fd is not None
+    target_metadata = os.lstat(target)
+    if stat.S_ISLNK(target_metadata.st_mode) or not stat.S_ISDIR(target_metadata.st_mode):
+        raise RuntimeError("release pointer target is unsafe")
     if (
-        stat.S_ISLNK(parent_metadata.st_mode)
-        or not stat.S_ISDIR(parent_metadata.st_mode)
-        or parent_metadata.st_uid != os.getuid()
-        or stat.S_IMODE(parent_metadata.st_mode) & 0o022
-        or stat.S_ISLNK(target_metadata.st_mode)
-        or not stat.S_ISDIR(target_metadata.st_mode)
-        or (
-            pointer.name == RELEASE_POINTER
-            and target.parent != (pointer.parent / "releases").absolute()
-        )
+        pointer.name == RELEASE_POINTER
+        and target.parent != (pointer.parent / "releases").absolute()
     ):
-        raise RuntimeError("release pointer path is unsafe")
+        raise RuntimeError("release pointer target escapes releases")
     try:
-        pointer_metadata = os.lstat(pointer)
+        pointer_metadata = os.stat(pointer.name, dir_fd=directory_fd, follow_symlinks=False)
     except FileNotFoundError:
         pointer_metadata = None
     if pointer_metadata is not None and not stat.S_ISLNK(pointer_metadata.st_mode):
         raise RuntimeError("release pointer must be a symlink")
-    temporary = pointer.parent / f".{pointer.name}.{os.getpid()}.{time.time_ns()}.tmp"
-    temporary.unlink(missing_ok=True)
+    temporary_name = f".{pointer.name}.{os.getpid()}.{time.time_ns()}.tmp"
     try:
-        temporary.symlink_to(target)
-        os.replace(temporary, pointer)
-        _fsync_directory(pointer.parent)
+        os.symlink(str(target), temporary_name, dir_fd=directory_fd)
+        os.replace(temporary_name, pointer.name, src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
+        os.fsync(directory_fd)
     finally:
-        temporary.unlink(missing_ok=True)
+        try:
+            os.unlink(temporary_name, dir_fd=directory_fd)
+        except FileNotFoundError:
+            pass
+        if owns_directory:
+            os.close(directory_fd)
 
 
 def write_json(path: Path, value: object) -> None:
@@ -175,7 +190,35 @@ def release_activation_journal_path(root: Path) -> Path:
     return state / RELEASE_ACTIVATION_JOURNAL
 
 
-def _strict_runtime_state(path: Path) -> dict[str, Any]:
+def _strict_runtime_state(path: Path, *, directory_fd: int | None = None) -> dict[str, Any]:
+    if directory_fd is not None:
+        try:
+            descriptor = os.open(
+                path.name,
+                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=directory_fd,
+            )
+        except FileNotFoundError:
+            return {}
+        try:
+            metadata = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_uid != os.getuid()
+                or stat.S_IMODE(metadata.st_mode) != 0o600
+            ):
+                raise RuntimeError("runtime state is unsafe")
+            with os.fdopen(descriptor, "r", encoding="utf-8") as handle:
+                descriptor = -1
+                value = json.load(handle)
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError("runtime health state is unreadable") from exc
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+        if not isinstance(value, dict):
+            raise RuntimeError("runtime health state is not an object")
+        return value
     if not path.absolute().exists():
         return {}
     validate_runtime_file(path, label="runtime state")
@@ -203,7 +246,19 @@ def _deployment_identity(manifest: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _pointer_target(pointer: Path) -> str | None:
+def _pointer_target(pointer: Path, *, directory_fd: int | None = None) -> str | None:
+    if directory_fd is not None:
+        try:
+            metadata = os.stat(pointer.name, dir_fd=directory_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return None
+        if not stat.S_ISLNK(metadata.st_mode):
+            raise RuntimeError("release pointer must be a symlink")
+        raw_target = os.readlink(pointer.name, dir_fd=directory_fd)
+        target = Path(raw_target)
+        if not target.is_absolute():
+            target = pointer.parent / target
+        return str(Path(os.path.realpath(str(target))))
     try:
         metadata = os.lstat(pointer)
     except FileNotFoundError:
@@ -217,7 +272,7 @@ def _validated_release_target(root: Path, value: str | Path) -> Path:
     """Validate a journal/pointer target without following an external path."""
 
     root, releases, _state = validate_runtime_layout(root, create_state=True)
-    target = Path(value).absolute()
+    target = Path(os.path.realpath(str(value)))
     if target.parent != releases:
         raise RuntimeError("release activation target escapes runtime releases")
     metadata = os.lstat(target)
@@ -226,19 +281,32 @@ def _validated_release_target(root: Path, value: str | Path) -> Path:
     return target
 
 
-def _restore_runtime_state(path: Path, payload: bytes | None, mode: int | None) -> None:
+def _restore_runtime_state(
+    path: Path, payload: bytes | None, mode: int | None, *, directory_fd: int | None = None
+) -> None:
     if payload is None:
-        path.unlink(missing_ok=True)
-        _fsync_directory(path.parent)
+        if directory_fd is not None:
+            _unlink_at(path.name, directory_fd)
+            os.fsync(directory_fd)
+        else:
+            path.unlink(missing_ok=True)
+            _fsync_directory(path.parent)
         return
-    _atomic_write_bytes(path, payload, mode=mode or 0o600)
+    _atomic_write_bytes(path, payload, mode=mode or 0o600, directory_fd=directory_fd)
 
 
-def _recover_release_activation_unlocked(root: Path) -> str | None:
+def _recover_release_activation_unlocked(
+    root: Path, *, state_directory_fd: int | None = None, root_directory_fd: int | None = None
+) -> str | None:
     journal_path = release_activation_journal_path(root)
-    if not journal_path.exists():
+    if state_directory_fd is not None:
+        try:
+            os.stat(journal_path.name, dir_fd=state_directory_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return None
+    elif not journal_path.exists():
         return None
-    journal = _strict_runtime_state(journal_path)
+    journal = _strict_runtime_state(journal_path, directory_fd=state_directory_fd)
     pointer = root / RELEASE_POINTER
     state_path = runtime_state_path(root)
     new_target = str(journal.get("newTarget") or "")
@@ -248,29 +316,43 @@ def _recover_release_activation_unlocked(root: Path) -> str | None:
     old_target_path = (
         _validated_release_target(root, str(old_target)) if old_target is not None else None
     )
-    current_state = _strict_runtime_state(state_path)
+    current_state = _strict_runtime_state(state_path, directory_fd=state_directory_fd)
     current_deployment = current_state.get("deployment")
-    current_target = _pointer_target(pointer)
+    current_target = _pointer_target(pointer, directory_fd=root_directory_fd)
     committed = (
         current_target == str(new_target_path)
         and isinstance(current_deployment, dict)
         and all(current_deployment.get(key) == value for key, value in new_identity.items())
     )
     if committed:
-        journal_path.unlink(missing_ok=True)
-        _fsync_directory(journal_path.parent)
+        if state_directory_fd is not None:
+            _unlink_at(journal_path.name, state_directory_fd)
+            os.fsync(state_directory_fd)
+        else:
+            journal_path.unlink(missing_ok=True)
+            _fsync_directory(journal_path.parent)
         return "committed"
 
     if old_target:
-        _atomic_pointer_write(pointer, old_target_path)
+        _atomic_pointer_write(pointer, old_target_path, directory_fd=root_directory_fd)
     else:
-        pointer.unlink(missing_ok=True)
-        _fsync_directory(pointer.parent)
+        if root_directory_fd is not None:
+            _unlink_at(pointer.name, root_directory_fd)
+            os.fsync(root_directory_fd)
+        else:
+            pointer.unlink(missing_ok=True)
+            _fsync_directory(pointer.parent)
     encoded = journal.get("oldStateBytes")
     old_payload = base64.b64decode(encoded) if isinstance(encoded, str) else None
-    _restore_runtime_state(state_path, old_payload, journal.get("oldStateMode"))
-    journal_path.unlink(missing_ok=True)
-    _fsync_directory(journal_path.parent)
+    _restore_runtime_state(
+        state_path, old_payload, journal.get("oldStateMode"), directory_fd=state_directory_fd
+    )
+    if state_directory_fd is not None:
+        _unlink_at(journal_path.name, state_directory_fd)
+        os.fsync(state_directory_fd)
+    else:
+        journal_path.unlink(missing_ok=True)
+        _fsync_directory(journal_path.parent)
     return "rolled_back"
 
 
@@ -279,8 +361,16 @@ def recover_release_activation(root: Path) -> str | None:
 
     root = root.absolute()
     validate_runtime_layout(root, create_state=True)
-    with exclusive_lock(runtime_state_lock_path(root), blocking=True):
-        return _recover_release_activation_unlocked(root)
+    root_fd, _ = open_directory_handle(root, label="runtime root")
+    state_fd, _ = open_directory_handle(root / "state", label="runtime state", required_mode=0o700)
+    try:
+        with exclusive_lock(runtime_state_lock_path(root), blocking=True, directory_fd=state_fd):
+            return _recover_release_activation_unlocked(
+                root, state_directory_fd=state_fd, root_directory_fd=root_fd
+            )
+    finally:
+        os.close(state_fd)
+        os.close(root_fd)
 
 
 def activate_release_pointer(root: Path, release: Path, manifest: dict[str, Any]) -> dict[str, Any]:
@@ -294,7 +384,7 @@ def activate_release_pointer(root: Path, release: Path, manifest: dict[str, Any]
 
     root = root.absolute()
     root, releases, _state = validate_runtime_layout(root, create_state=True)
-    release = release.absolute()
+    release = Path(os.path.realpath(str(release)))
     if release.parent != releases:
         raise RuntimeError("release activation escapes the runtime releases directory")
     release_metadata = os.lstat(release)
@@ -304,67 +394,89 @@ def activate_release_pointer(root: Path, release: Path, manifest: dict[str, Any]
     state_path = runtime_state_path(root)
     journal_path = release_activation_journal_path(root)
     identity = _deployment_identity(manifest)
-    with exclusive_lock(runtime_state_lock_path(root), blocking=True):
-        validate_runtime_layout(root, create_state=True)
-        if release.parent != releases:
-            raise RuntimeError("release activation escapes the runtime releases directory")
-        release_metadata = os.lstat(release)
-        if stat.S_ISLNK(release_metadata.st_mode) or not stat.S_ISDIR(release_metadata.st_mode):
-            raise RuntimeError("release activation target changed")
-        _recover_release_activation_unlocked(root)
-        old_target = _pointer_target(pointer)
-        if old_target is not None:
-            old_target = str(_validated_release_target(root, old_target))
-        try:
-            state_metadata = os.lstat(state_path)
-        except FileNotFoundError:
-            state_metadata = None
-        if state_metadata is not None:
-            validate_runtime_file(state_path, label="runtime health")
-        old_state_payload = state_path.read_bytes() if state_metadata is not None else None
-        old_state_mode = state_metadata.st_mode & 0o777 if state_metadata is not None else None
-        journal = {
-            "schema": "oss-pr-radar.release-activation.v1",
-            "oldTarget": old_target,
-            "newTarget": str(release),
-            "oldStateBytes": base64.b64encode(old_state_payload).decode("ascii")
-            if old_state_payload is not None
-            else None,
-            "oldStateMode": old_state_mode,
-            "newDeployment": identity,
-            "phase": "prepared",
-        }
-        _atomic_write(journal_path, journal)
-        try:
-            _atomic_pointer_write(pointer, release)
+    root_fd, _ = open_directory_handle(root, label="runtime root")
+    state_fd, _ = open_directory_handle(root / "state", label="runtime state", required_mode=0o700)
+    try:
+        with exclusive_lock(
+            state_path.parent / "runtime-health.lock", blocking=True, directory_fd=state_fd
+        ):
             validate_runtime_layout(root, create_state=True)
-            if _pointer_target(pointer) != str(release):
-                raise RuntimeError("release pointer changed during activation")
-            journal["phase"] = "pointer-active"
-            _atomic_write(journal_path, journal)
-            state = _strict_runtime_state(state_path)
-            deployment = state.get("deployment")
-            deployment = dict(deployment) if isinstance(deployment, dict) else {}
-            deployment.update(identity)
-            state["schemaVersion"] = RUNTIME_SCHEMA
-            state["deployment"] = deployment
-            _atomic_write(state_path, state)
-            validate_runtime_file(state_path, label="runtime health")
-            journal["phase"] = "health-active"
-            _atomic_write(journal_path, journal)
-            journal_path.unlink(missing_ok=True)
-            _fsync_directory(journal_path.parent)
-        except Exception:
-            if old_target:
-                _atomic_pointer_write(pointer, Path(old_target))
-            else:
-                pointer.unlink(missing_ok=True)
-                _fsync_directory(pointer.parent)
-            _restore_runtime_state(state_path, old_state_payload, old_state_mode)
-            journal_path.unlink(missing_ok=True)
-            _fsync_directory(journal_path.parent)
-            raise
-    return identity
+            if release.parent != releases:
+                raise RuntimeError("release activation escapes the runtime releases directory")
+            release_metadata = os.lstat(release)
+            if stat.S_ISLNK(release_metadata.st_mode) or not stat.S_ISDIR(release_metadata.st_mode):
+                raise RuntimeError("release activation target changed")
+            _recover_release_activation_unlocked(
+                root, state_directory_fd=state_fd, root_directory_fd=root_fd
+            )
+            old_target = _pointer_target(pointer, directory_fd=root_fd)
+            if old_target is not None:
+                old_target = str(_validated_release_target(root, old_target))
+            try:
+                state_metadata = os.lstat(state_path)
+            except FileNotFoundError:
+                state_metadata = None
+            if state_metadata is not None:
+                validate_runtime_file(state_path, label="runtime health")
+            old_state_payload = (
+                os.open(state_path.name, os.O_RDONLY, getattr(os, "O_NOFOLLOW", 0), dir_fd=state_fd)
+                if state_metadata is not None
+                else None
+            )
+            if old_state_payload is not None:
+                try:
+                    old_state_payload = os.fdopen(old_state_payload, "rb").read()
+                except Exception:
+                    os.close(old_state_payload)
+                    raise
+            old_state_mode = state_metadata.st_mode & 0o777 if state_metadata is not None else None
+            journal = {
+                "schema": "oss-pr-radar.release-activation.v1",
+                "oldTarget": old_target,
+                "newTarget": str(release),
+                "oldStateBytes": base64.b64encode(old_state_payload).decode("ascii")
+                if old_state_payload is not None
+                else None,
+                "oldStateMode": old_state_mode,
+                "newDeployment": identity,
+                "phase": "prepared",
+            }
+            _atomic_write(journal_path, journal, directory_fd=state_fd)
+            try:
+                _atomic_pointer_write(pointer, release, directory_fd=root_fd)
+                validate_runtime_layout(root, create_state=True)
+                if _pointer_target(pointer, directory_fd=root_fd) != str(release):
+                    raise RuntimeError("release pointer changed during activation")
+                journal["phase"] = "pointer-active"
+                _atomic_write(journal_path, journal, directory_fd=state_fd)
+                state = _strict_runtime_state(state_path, directory_fd=state_fd)
+                deployment = state.get("deployment")
+                deployment = dict(deployment) if isinstance(deployment, dict) else {}
+                deployment.update(identity)
+                state["schemaVersion"] = RUNTIME_SCHEMA
+                state["deployment"] = deployment
+                _atomic_write(state_path, state, directory_fd=state_fd)
+                validate_runtime_file(state_path, label="runtime health")
+                journal["phase"] = "health-active"
+                _atomic_write(journal_path, journal, directory_fd=state_fd)
+                _unlink_at(journal_path.name, state_fd)
+                os.fsync(state_fd)
+            except Exception:
+                if old_target:
+                    _atomic_pointer_write(pointer, Path(old_target), directory_fd=root_fd)
+                else:
+                    _unlink_at(pointer.name, root_fd)
+                    os.fsync(root_fd)
+                _restore_runtime_state(
+                    state_path, old_state_payload, old_state_mode, directory_fd=state_fd
+                )
+                _unlink_at(journal_path.name, state_fd)
+                os.fsync(state_fd)
+                raise
+        return identity
+    finally:
+        os.close(state_fd)
+        os.close(root_fd)
 
 
 def queue_state_path(root: Path) -> Path:
@@ -376,48 +488,60 @@ def operation_log_path(root: Path) -> Path:
 
 
 @contextmanager
-def exclusive_lock(path: Path, *, blocking: bool = False) -> Iterator[None]:
+def exclusive_lock(
+    path: Path, *, blocking: bool = False, directory_fd: int | None = None
+) -> Iterator[None]:
     """Acquire a process lock, optionally waiting for a state writer."""
 
     path = path.absolute()
+    owns_directory = directory_fd is None
+    if owns_directory:
+        directory_fd, _ = open_directory_handle(
+            path.parent, label="runtime lock parent", create=True, required_mode=0o700
+        )
+    assert directory_fd is not None
     try:
-        parent_metadata = os.lstat(path.parent)
-    except FileNotFoundError:
-        path.parent.mkdir(parents=True, mode=0o700)
-        parent_metadata = os.lstat(path.parent)
-    except OSError as exc:
-        raise RuntimeError("runtime lock parent is unavailable") from exc
-    if (
-        stat.S_ISLNK(parent_metadata.st_mode)
-        or not stat.S_ISDIR(parent_metadata.st_mode)
-        or parent_metadata.st_uid != os.getuid()
-        or stat.S_IMODE(parent_metadata.st_mode) & 0o022
-    ):
-        raise RuntimeError("runtime lock parent has unsafe ownership or permissions")
-    try:
-        metadata = os.lstat(path)
-    except FileNotFoundError:
-        metadata = None
-    if metadata is not None and (
-        stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode)
-    ):
-        raise RuntimeError("runtime lock must be a regular file")
-    descriptor = os.open(
-        path,
-        os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
-        0o600,
-    )
+        try:
+            metadata = os.stat(path.name, dir_fd=directory_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            metadata = None
+        if metadata is not None and (
+            stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode)
+        ):
+            raise RuntimeError("runtime lock must be a regular file")
+        descriptor = -1
+        for attempt in range(20):
+            try:
+                descriptor = os.open(
+                    path.name,
+                    os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
+                    0o600,
+                    dir_fd=directory_fd,
+                )
+                break
+            except FileNotFoundError:
+                if attempt == 19:
+                    raise
+                time.sleep(0.001)
+    except Exception:
+        if owns_directory:
+            os.close(directory_fd)
+        raise
     os.fchmod(descriptor, 0o600)
-    with os.fdopen(descriptor, "a+", encoding="utf-8") as handle:
-        try:
-            operation = fcntl.LOCK_EX if blocking else fcntl.LOCK_EX | fcntl.LOCK_NB
-            fcntl.flock(handle.fileno(), operation)
-        except BlockingIOError as exc:
-            raise RuntimeLockBusy(str(path)) from exc
-        try:
-            yield
-        finally:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    try:
+        with os.fdopen(descriptor, "a+", encoding="utf-8") as handle:
+            try:
+                operation = fcntl.LOCK_EX if blocking else fcntl.LOCK_EX | fcntl.LOCK_NB
+                fcntl.flock(handle.fileno(), operation)
+            except BlockingIOError as exc:
+                raise RuntimeLockBusy(str(path)) from exc
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    finally:
+        if owns_directory:
+            os.close(directory_fd)
 
 
 def append_operation(root: Path, record: dict[str, Any]) -> None:
@@ -646,42 +770,50 @@ def record_cycle(
     **extra: Any,
 ) -> dict[str, Any]:
     path = runtime_state_path(root)
-    with exclusive_lock(runtime_state_lock_path(root), blocking=True):
-        current = read_json(path, {})
-        state = dict(current) if isinstance(current, dict) else {}
-        workers = state.get("workers") if isinstance(state.get("workers"), dict) else {}
-        worker_state = dict(workers.get(worker) or {})
-        failures = int(worker_state.get(failure_field) or 0)
-        finished_at = utc_now()
-        worker_state.update(
-            {
-                "lastStartedAt": datetime.fromtimestamp(started_at, UTC)
-                .isoformat()
-                .replace("+00:00", "Z"),
-                "lastFinishedAt": finished_at,
-                exit_field: exit_code,
-                failure_field: 0 if ok else failures + 1,
-                "consecutiveSuccesses": int(worker_state.get("consecutiveSuccesses") or 0) + 1
-                if ok
-                else 0,
-                "lastErrorCode": None if ok else error_code,
-            }
-        )
-        if ok:
-            worker_state[success_field] = finished_at
-        worker_state.update(extra)
-        workers[worker] = worker_state
-        state["schemaVersion"] = RUNTIME_SCHEMA
-        state["workers"] = workers
-        deployment = state.get("deployment") if isinstance(state.get("deployment"), dict) else {}
-        if release_version is not None:
-            deployment["releaseVersion"] = release_version
-        if policy_digest is not None:
-            deployment["policyDigest"] = policy_digest
-        state["deployment"] = deployment
-        aggregate = evaluate_health(state)
-        state["aggregate"] = aggregate
-        _atomic_write(path, state)
+    state_fd, _ = open_directory_handle(path.parent, label="runtime state", required_mode=0o700)
+    try:
+        with exclusive_lock(
+            path.parent / "runtime-health.lock", blocking=True, directory_fd=state_fd
+        ):
+            current = _strict_runtime_state(path, directory_fd=state_fd)
+            state = dict(current) if isinstance(current, dict) else {}
+            workers = state.get("workers") if isinstance(state.get("workers"), dict) else {}
+            worker_state = dict(workers.get(worker) or {})
+            failures = int(worker_state.get(failure_field) or 0)
+            finished_at = utc_now()
+            worker_state.update(
+                {
+                    "lastStartedAt": datetime.fromtimestamp(started_at, UTC)
+                    .isoformat()
+                    .replace("+00:00", "Z"),
+                    "lastFinishedAt": finished_at,
+                    exit_field: exit_code,
+                    failure_field: 0 if ok else failures + 1,
+                    "consecutiveSuccesses": int(worker_state.get("consecutiveSuccesses") or 0) + 1
+                    if ok
+                    else 0,
+                    "lastErrorCode": None if ok else error_code,
+                }
+            )
+            if ok:
+                worker_state[success_field] = finished_at
+            worker_state.update(extra)
+            workers[worker] = worker_state
+            state["schemaVersion"] = RUNTIME_SCHEMA
+            state["workers"] = workers
+            deployment = (
+                state.get("deployment") if isinstance(state.get("deployment"), dict) else {}
+            )
+            if release_version is not None:
+                deployment["releaseVersion"] = release_version
+            if policy_digest is not None:
+                deployment["policyDigest"] = policy_digest
+            state["deployment"] = deployment
+            aggregate = evaluate_health(state)
+            state["aggregate"] = aggregate
+            _atomic_write(path, state, directory_fd=state_fd)
+    finally:
+        os.close(state_fd)
     append_operation(
         root,
         {
@@ -706,24 +838,30 @@ def update_worker_observation(
     """Atomically merge supervisor observations into one worker's state."""
 
     path = runtime_state_path(root)
-    with exclusive_lock(runtime_state_lock_path(root), blocking=True):
-        current = read_json(path, {})
-        state = dict(current) if isinstance(current, dict) else {}
-        workers = state.get("workers") if isinstance(state.get("workers"), dict) else {}
-        worker_state = dict(workers.get(worker) or {})
-        worker_state.update(updates)
-        workers[worker] = worker_state
-        state["schemaVersion"] = RUNTIME_SCHEMA
-        state["workers"] = workers
-        current_deployment = (
-            dict(state.get("deployment")) if isinstance(state.get("deployment"), dict) else {}
-        )
-        if deployment:
-            current_deployment.update(deployment)
-        state["deployment"] = current_deployment
-        state["aggregate"] = evaluate_health(state)
-        _atomic_write(path, state)
-        return state
+    state_fd, _ = open_directory_handle(path.parent, label="runtime state", required_mode=0o700)
+    try:
+        with exclusive_lock(
+            path.parent / "runtime-health.lock", blocking=True, directory_fd=state_fd
+        ):
+            current = _strict_runtime_state(path, directory_fd=state_fd)
+            state = dict(current) if isinstance(current, dict) else {}
+            workers = state.get("workers") if isinstance(state.get("workers"), dict) else {}
+            worker_state = dict(workers.get(worker) or {})
+            worker_state.update(updates)
+            workers[worker] = worker_state
+            state["schemaVersion"] = RUNTIME_SCHEMA
+            state["workers"] = workers
+            current_deployment = (
+                dict(state.get("deployment")) if isinstance(state.get("deployment"), dict) else {}
+            )
+            if deployment:
+                current_deployment.update(deployment)
+            state["deployment"] = current_deployment
+            state["aggregate"] = evaluate_health(state)
+            _atomic_write(path, state, directory_fd=state_fd)
+            return state
+    finally:
+        os.close(state_fd)
 
 
 def digest_policy(value: object) -> str:

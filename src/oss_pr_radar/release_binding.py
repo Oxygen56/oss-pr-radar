@@ -30,7 +30,11 @@ def _absolute(path: Path) -> Path:
     return Path(path).absolute()
 
 
-def _safe_directory(path: Path, *, label: str, create: bool = False) -> Path:
+def open_directory_handle(
+    path: Path, *, label: str, create: bool = False, required_mode: int | None = None
+) -> tuple[int, Path]:
+    """Open a validated directory and return its fd plus canonical path."""
+
     path = _absolute(path)
     try:
         metadata = os.lstat(path)
@@ -46,11 +50,36 @@ def _safe_directory(path: Path, *, label: str, create: bool = False) -> Path:
         raise RuntimeError(f"{label} is unavailable") from exc
     if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
         raise RuntimeError(f"{label} must be a real directory")
-    if metadata.st_uid != os.getuid():
-        raise RuntimeError(f"{label} has the wrong owner")
-    if stat.S_IMODE(metadata.st_mode) & 0o022:
-        raise RuntimeError(f"{label} has unsafe permissions")
-    return path
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise RuntimeError(f"{label} cannot be opened safely") from exc
+    try:
+        opened = os.fstat(descriptor)
+        if not stat.S_ISDIR(opened.st_mode) or opened.st_uid != os.getuid():
+            raise RuntimeError(f"{label} has unsafe ownership")
+        if stat.S_IMODE(opened.st_mode) & 0o022:
+            raise RuntimeError(f"{label} has unsafe permissions")
+        if required_mode is not None and stat.S_IMODE(opened.st_mode) != required_mode:
+            os.fchmod(descriptor, required_mode)
+            opened = os.fstat(descriptor)
+            if stat.S_IMODE(opened.st_mode) != required_mode:
+                raise RuntimeError(f"{label} mode could not be secured")
+        return descriptor, Path(os.path.realpath(str(path)))
+    except Exception:
+        os.close(descriptor)
+        raise
+
+
+def _safe_directory(
+    path: Path, *, label: str, create: bool = False, required_mode: int | None = None
+) -> Path:
+    descriptor, canonical = open_directory_handle(
+        path, label=label, create=create, required_mode=required_mode
+    )
+    os.close(descriptor)
+    return canonical
 
 
 def validate_runtime_layout(
@@ -73,7 +102,12 @@ def validate_runtime_layout(
         releases_missing = True
         releases = releases_path
     else:
-        releases = _safe_directory(releases_path, label="runtime releases", create=create_releases)
+        releases = _safe_directory(
+            releases_path,
+            label="runtime releases",
+            create=create_releases,
+            required_mode=0o700,
+        )
     state_missing = False
     try:
         os.lstat(state_path)
@@ -81,19 +115,25 @@ def validate_runtime_layout(
         state_missing = True
         state = state_path
     else:
-        state = _safe_directory(state_path, label="runtime state", create=create_state)
+        state = _safe_directory(
+            state_path, label="runtime state", create=create_state, required_mode=0o700
+        )
     # Validate all pre-existing components before creating either missing one,
     # so a rejected sibling symlink leaves no deployment-owned side effect.
     if releases_missing:
         if not create_releases:
             releases = releases_path
         else:
-            releases = _safe_directory(releases_path, label="runtime releases", create=True)
+            releases = _safe_directory(
+                releases_path, label="runtime releases", create=True, required_mode=0o700
+            )
     if state_missing:
         if not create_state:
             state = state_path
         else:
-            state = _safe_directory(state_path, label="runtime state", create=True)
+            state = _safe_directory(
+                state_path, label="runtime state", create=True, required_mode=0o700
+            )
     return root, releases, state
 
 
@@ -101,7 +141,7 @@ def validate_runtime_file(path: Path, *, label: str, mode: int = 0o600) -> Path:
     """Validate a private runtime file without following a symlink."""
 
     path = _absolute(path)
-    _safe_directory(path.parent, label=f"{label} parent")
+    _safe_directory(path.parent, label=f"{label} parent", required_mode=0o700)
     try:
         metadata = os.lstat(path)
     except FileNotFoundError:
@@ -119,9 +159,9 @@ def validate_runtime_file(path: Path, *, label: str, mode: int = 0o600) -> Path:
 
 def _validate_release_path(release: Path, *, label: str = "release") -> Path:
     release = _absolute(release)
-    _safe_directory(release.parent, label=f"{label} parent")
-    _safe_directory(release, label=label)
-    return release
+    parent = _safe_directory(release.parent, label=f"{label} parent", required_mode=0o700)
+    _safe_directory(release, label=label, required_mode=0o700)
+    return parent / release.name
 
 
 def _validate_release_relative_components(release: Path, relative: Path) -> None:

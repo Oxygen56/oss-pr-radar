@@ -104,6 +104,22 @@ def test_deploy_records_release_identity_without_overwriting_worker_health(tmp_p
     }
 
 
+def test_deploy_secures_existing_runtime_directories_and_private_files(tmp_path):
+    source, target = make_repositories(tmp_path)
+    (target / "releases").mkdir()
+    (target / "state").mkdir()
+    (target / "releases").chmod(0o755)
+    (target / "state").chmod(0o755)
+
+    result = MODULE.deploy(source, target)
+
+    assert (target / "releases").stat().st_mode & 0o777 == 0o700
+    assert (target / "state").stat().st_mode & 0o777 == 0o700
+    assert (target / "state" / "runtime-health.json").stat().st_mode & 0o777 == 0o600
+    assert (target / "state" / "runtime-health.lock").stat().st_mode & 0o777 == 0o600
+    assert MODULE.verify_release(Path(result["releasePath"]))["releaseId"] == result["releaseId"]
+
+
 def test_release_activation_write_failure_restores_pointer_and_health(tmp_path, monkeypatch):
     source, target = make_repositories(tmp_path)
     first = MODULE.deploy(source, target)
@@ -124,10 +140,10 @@ def test_release_activation_write_failure_restores_pointer_and_health(tmp_path, 
     before_state = state_path.read_bytes()
     original = runtime_module._atomic_write
 
-    def fail_health(path, value):
+    def fail_health(path, value, **kwargs):
         if path == state_path:
             raise OSError("injected health write failure")
-        return original(path, value)
+        return original(path, value, **kwargs)
 
     monkeypatch.setattr(runtime_module, "_atomic_write", fail_health)
     with pytest.raises(OSError, match="injected health write failure"):
@@ -290,19 +306,74 @@ def test_release_activation_rechecks_target_before_pointer_replace(tmp_path, mon
     original = runtime_module._atomic_pointer_write
     swapped = False
 
-    def replace_release(pointer, release):
+    def replace_release(pointer, release, **kwargs):
         nonlocal swapped
         if pointer.name == MODULE.RELEASE_POINTER and not swapped:
             swapped = True
             second_path.rename(second_path.with_name("release-raced"))
             second_path.symlink_to(outside, target_is_directory=True)
-        return original(pointer, release)
+            return original(pointer, release, **kwargs)
 
     monkeypatch.setattr(runtime_module, "_atomic_pointer_write", replace_release)
-    with pytest.raises(RuntimeError, match="unsafe|changed|real directory"):
+    with pytest.raises(RuntimeError, match="unsafe|changed|real directory|escapes releases"):
         MODULE.activate_release(target, second["releaseId"])
 
     assert (target / MODULE.RELEASE_POINTER).resolve().name == first["releaseId"]
+
+
+def test_activation_holds_state_directory_fd_when_state_is_replaced(tmp_path, monkeypatch):
+    source, target = make_repositories(tmp_path)
+    first = MODULE.deploy(source, target)
+    (source / "scripts" / "runner.py").write_text("VERSION = 3\n", encoding="utf-8")
+    git(source, "add", "scripts/runner.py")
+    git(
+        source,
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "-m",
+        "source-v3",
+    )
+    second = MODULE.deploy(source, target)
+    state = target / "state"
+    outside = tmp_path / "outside-state"
+    outside.mkdir()
+    marker = outside / runtime_module.RELEASE_ACTIVATION_JOURNAL
+    marker.write_bytes(b"keep")
+    original = runtime_module._atomic_write_bytes
+    swapped = False
+
+    def replace_state(path, payload, *, mode, **kwargs):
+        nonlocal swapped
+        if path.name == runtime_module.RELEASE_ACTIVATION_JOURNAL and not swapped:
+            swapped = True
+            state.rename(target / "state-raced")
+            state.symlink_to(outside, target_is_directory=True)
+        return original(path, payload, mode=mode, **kwargs)
+
+    monkeypatch.setattr(runtime_module, "_atomic_write_bytes", replace_state)
+    with pytest.raises(RuntimeError, match="runtime state|release"):
+        MODULE.activate_release(target, first["releaseId"])
+
+    assert marker.read_bytes() == b"keep"
+    assert (target / MODULE.RELEASE_POINTER).resolve().name == second["releaseId"]
+
+
+def test_activation_normalizes_macos_var_alias(tmp_path):
+    private_var = Path("/private/var")
+    public_var = Path("/var")
+    if not private_var.is_dir() or public_var.resolve() != private_var:
+        pytest.skip("macOS /var alias is unavailable")
+    source, target = make_repositories(tmp_path)
+    result = MODULE.deploy(source, target)
+    relative = target.relative_to(private_var)
+    alias_target = public_var / relative
+
+    MODULE.activate_release(alias_target, result["releaseId"])
+
+    assert (target / MODULE.RELEASE_POINTER).resolve().name == result["releaseId"]
 
 
 def test_deploy_ignores_runtime_artifacts_and_preserves_private_exclude(tmp_path):
