@@ -202,6 +202,36 @@ def assert_quarantine_snapshot_round_trips_without_drift(
             ).fetchone()[0] == len(baseline["quarantineEvents"])
 
 
+def insert_task_quarantine_row(
+    database: Path,
+    *,
+    opportunity_key: str,
+    reason: str,
+    dedupe_key: str,
+    payload: dict,
+    status: str = "ACTIVE",
+    created_at: str = "2026-08-19T04:00:00Z",
+    cleared_at: str | None = None,
+    clear_payload: dict | None = None,
+) -> None:
+    with ManagedLedger(database)._connection() as connection:
+        connection.execute(
+            """INSERT INTO task_quarantines
+               (opportunity_key,reason,dedupe_key,payload_json,status,created_at,cleared_at,clear_payload_json)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            (
+                opportunity_key,
+                reason,
+                dedupe_key,
+                canonical_json(payload),
+                status,
+                created_at,
+                cleared_at,
+                canonical_json(clear_payload) if clear_payload is not None else None,
+            ),
+        )
+
+
 @pytest.mark.parametrize(
     "collection", ["prs", "results", "absenceAttestations", "attestationNonceConsumptions"]
 )
@@ -545,6 +575,186 @@ def test_task_quarantine_restore_export_over_existing_local_rows_is_idempotent(t
         current_snapshot = next_snapshot
 
 
+def test_task_quarantine_export_rejects_conflicting_active_duplicate_identity(tmp_path):
+    database, _ = ledger_at(tmp_path, "quarantine-export-active-conflict.sqlite3")
+    key = "owner/repo#83"
+    reason = "PR_FOLLOWUP_REBIND_REQUIRED"
+    dedupe = "/Users/oxygen/private/export-active-conflict"
+    fingerprint = stable_fingerprint(dedupe)
+    insert_task_quarantine_row(
+        database,
+        opportunity_key=key,
+        reason=reason,
+        dedupe_key=dedupe,
+        payload={"wakeDigest": "a" * 64, "reservationPending": True},
+        created_at="2026-08-19T04:00:00Z",
+    )
+    insert_task_quarantine_row(
+        database,
+        opportunity_key=key,
+        reason=reason,
+        dedupe_key=f"snapshot:{fingerprint}",
+        payload={"wakeDigest": "b" * 64, "reservationPending": True},
+        created_at="2026-08-19T04:01:00Z",
+    )
+
+    with pytest.raises(ValueError, match="conflicting active task quarantine"):
+        export_snapshot(database, tmp_path / "active-conflict.snapshot.gz")
+
+
+def test_task_quarantine_export_rejects_conflicting_cleared_duplicate_identity(tmp_path):
+    database, _ = ledger_at(tmp_path, "quarantine-export-cleared-conflict.sqlite3")
+    key = "owner/repo#84"
+    reason = "LEGACY_RESULT_REQUIRES_MIGRATION"
+    dedupe = "/Users/oxygen/private/export-cleared-conflict"
+    fingerprint = stable_fingerprint(dedupe)
+    insert_task_quarantine_row(
+        database,
+        opportunity_key=key,
+        reason=reason,
+        dedupe_key=dedupe,
+        payload={"payloadDigest": "a" * 64},
+        status="CLEARED",
+        created_at="2026-08-19T04:00:00Z",
+        cleared_at="2026-08-19T04:02:00Z",
+        clear_payload={"clearPayloadDigest": "b" * 64},
+    )
+    insert_task_quarantine_row(
+        database,
+        opportunity_key=key,
+        reason=reason,
+        dedupe_key=f"snapshot:{fingerprint}",
+        payload={"payloadDigest": "a" * 64},
+        status="CLEARED",
+        created_at="2026-08-19T04:00:00Z",
+        cleared_at="2026-08-19T04:03:00Z",
+        clear_payload={"clearPayloadDigest": "c" * 64},
+    )
+
+    with pytest.raises(ValueError, match="conflicting cleared task quarantine"):
+        export_snapshot(database, tmp_path / "cleared-conflict.snapshot.gz")
+
+
+def test_task_quarantine_import_rejects_conflicting_active_local_row(tmp_path):
+    source, ledger = ledger_at(tmp_path, "quarantine-import-active-source.sqlite3")
+    key = "owner/repo#85"
+    reason = "PR_FOLLOWUP_REBIND_REQUIRED"
+    dedupe = "/Users/oxygen/private/import-active-conflict"
+    fingerprint = stable_fingerprint(dedupe)
+    ledger.record_task_quarantine(
+        opportunity_key=key,
+        reason=reason,
+        dedupe_key=dedupe,
+        payload={"wakeDigest": "a" * 64, "reservationPending": True},
+        observed_at="2026-08-19T04:00:00Z",
+    )
+    snapshot_path = tmp_path / "import-active-conflict.snapshot.gz"
+    export_snapshot(source, snapshot_path)
+    target, _ = ledger_at(tmp_path, "quarantine-import-active-target.sqlite3")
+    insert_task_quarantine_row(
+        target,
+        opportunity_key=key,
+        reason=reason,
+        dedupe_key=f"snapshot:{fingerprint}",
+        payload={"wakeDigest": "b" * 64, "reservationPending": True},
+        created_at="2026-08-19T04:00:00Z",
+    )
+
+    with pytest.raises(ValueError, match="conflicts with local active"):
+        import_snapshot(target, snapshot_path)
+
+
+def test_task_quarantine_import_rejects_conflicting_cleared_local_row(tmp_path):
+    source, ledger = ledger_at(tmp_path, "quarantine-import-cleared-source.sqlite3")
+    key = "owner/repo#86"
+    reason = "LEGACY_RESULT_REQUIRES_MIGRATION"
+    dedupe = "/Users/oxygen/private/import-cleared-conflict"
+    fingerprint = stable_fingerprint(dedupe)
+    ledger.record_task_quarantine(
+        opportunity_key=key,
+        reason=reason,
+        dedupe_key=dedupe,
+        payload={"wakeDigest": "c" * 64},
+        observed_at="2026-08-19T04:10:00Z",
+    )
+    ledger.clear_task_quarantine(
+        key,
+        reason=reason,
+        evidence={"revalidated": True, "review": "source"},
+        observed_at="2026-08-19T04:11:00Z",
+    )
+    snapshot_path = tmp_path / "import-cleared-conflict.snapshot.gz"
+    export_snapshot(source, snapshot_path)
+    target, _ = ledger_at(tmp_path, "quarantine-import-cleared-target.sqlite3")
+    insert_task_quarantine_row(
+        target,
+        opportunity_key=key,
+        reason=reason,
+        dedupe_key=f"snapshot:{fingerprint}",
+        payload={"payloadDigest": "d" * 64},
+        status="CLEARED",
+        created_at="2026-08-19T04:10:00Z",
+        cleared_at="2026-08-19T04:12:00Z",
+        clear_payload={"clearPayloadDigest": "e" * 64},
+    )
+
+    with pytest.raises(ValueError, match="conflicts with local cleared"):
+        import_snapshot(target, snapshot_path)
+
+
+def test_task_quarantine_export_uses_active_payload_and_keeps_distinct_identities(
+    tmp_path,
+):
+    database, ledger = ledger_at(tmp_path, "quarantine-active-payload-source.sqlite3")
+    key = "owner/repo#87"
+    reason = "PR_FOLLOWUP_REBIND_REQUIRED"
+    dedupe = "/Users/oxygen/private/active-payload"
+    fingerprint = stable_fingerprint(dedupe)
+    insert_task_quarantine_row(
+        database,
+        opportunity_key=key,
+        reason=reason,
+        dedupe_key=dedupe,
+        payload={"payloadDigest": "a" * 64},
+        status="CLEARED",
+        created_at="2026-08-19T04:20:00Z",
+        cleared_at="2026-08-19T04:21:00Z",
+        clear_payload={"clearPayloadDigest": "b" * 64},
+    )
+    insert_task_quarantine_row(
+        database,
+        opportunity_key=key,
+        reason=reason,
+        dedupe_key="/Users/oxygen/private/distinct-active-payload",
+        payload={"wakeDigest": "1" * 64, "reservationPending": True},
+        created_at="2026-08-19T04:22:00Z",
+    )
+    active_payload = {"wakeDigest": "f" * 64, "reservationPending": True}
+    insert_task_quarantine_row(
+        database,
+        opportunity_key=key,
+        reason=reason,
+        dedupe_key=f"snapshot:{fingerprint}",
+        payload=active_payload,
+        created_at="2026-08-19T04:23:00Z",
+    )
+
+    active = ledger.active_task_quarantine(key)
+    snapshot_path = tmp_path / "active-payload.snapshot.gz"
+    export_snapshot(database, snapshot_path)
+    rows = read_snapshot(snapshot_path)["rows"]["taskQuarantines"]
+
+    assert len(rows) == 2
+    active_row = next(row for row in rows if row["dedupeFingerprint"] == fingerprint)
+    assert active["payload"] == active_payload
+    assert active_row["payload"]["wakeDigest"] == active["payload"]["wakeDigest"]
+    assert active_row["payload"]["reservationPending"] is True
+    assert {row["dedupeFingerprint"] for row in rows} == {
+        fingerprint,
+        stable_fingerprint("/Users/oxygen/private/distinct-active-payload"),
+    }
+
+
 def test_task_quarantine_snapshot_cleared_rows_do_not_clear_local_active_rows(tmp_path):
     source, ledger = ledger_at(tmp_path, "quarantine-cleared-source.sqlite3")
     key = "owner/repo#88"
@@ -661,7 +871,9 @@ def test_task_quarantine_snapshot_active_row_reisolates_local_cleared_row(tmp_pa
     assert row["clear_payload_json"] is None
 
 
-def test_task_quarantine_snapshot_keeps_cleared_when_both_sides_cleared(tmp_path):
+def test_task_quarantine_snapshot_rejects_conflicting_cleared_when_both_sides_cleared(
+    tmp_path,
+):
     source, ledger = ledger_at(tmp_path, "quarantine-both-cleared-source.sqlite3")
     key = "owner/repo#90"
     ledger.upsert_opportunity(
@@ -710,17 +922,8 @@ def test_task_quarantine_snapshot_keeps_cleared_when_both_sides_cleared(tmp_path
             ),
         )
 
-    import_snapshot(target, snapshot_path)
-    with ManagedLedger(target)._connection() as connection:
-        row = connection.execute(
-            "SELECT status,payload_json,cleared_at,clear_payload_json FROM task_quarantines "
-            "WHERE opportunity_key=? AND reason=? AND dedupe_key=?",
-            (key, "LEGACY_RESULT_REQUIRES_MIGRATION", f"snapshot:{fingerprint}"),
-        ).fetchone()
-    assert row["status"] == "CLEARED"
-    assert json.loads(row["payload_json"])["wakeDigest"] == "d" * 64
-    assert row["cleared_at"] == "2026-08-19T03:05:00Z"
-    assert json.loads(row["clear_payload_json"])["clearPayloadDigest"] == "e" * 64
+    with pytest.raises(ValueError, match="conflicts with local cleared"):
+        import_snapshot(target, snapshot_path)
 
 
 def test_importing_legacy_v7_snapshot_upgrades_only_exact_old_shape(tmp_path):

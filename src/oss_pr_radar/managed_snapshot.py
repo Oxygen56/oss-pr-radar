@@ -310,19 +310,24 @@ def _snapshot_task_quarantine_row(row: sqlite3.Row) -> dict[str, Any]:
 def _merge_snapshot_task_quarantine_rows(
     rows: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    merged: dict[tuple[str, str, str], dict[str, Any]] = {}
+    grouped: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
     for row in rows:
         key = (row["opportunityKey"], row["reason"], row["dedupeFingerprint"])
-        existing = merged.get(key)
-        if existing is None:
-            merged[key] = row
-            continue
-        if existing["status"] == "ACTIVE":
-            continue
-        if row["status"] == "ACTIVE":
-            merged[key] = row
+        grouped.setdefault(key, []).append(row)
+    merged: list[dict[str, Any]] = []
+    for key, group in grouped.items():
+        active_rows = [row for row in group if row["status"] == "ACTIVE"]
+        cleared_rows = [row for row in group if row["status"] == "CLEARED"]
+        for label, candidates in (("active", active_rows), ("cleared", cleared_rows)):
+            if candidates and any(candidate != candidates[0] for candidate in candidates[1:]):
+                opportunity_key, reason, _fingerprint = key
+                raise ValueError(
+                    f"managed snapshot conflicting {label} task quarantine rows: "
+                    f"{opportunity_key} {reason}"
+                )
+        merged.append(active_rows[0] if active_rows else cleared_rows[0])
     return sorted(
-        merged.values(),
+        merged,
         key=lambda item: (
             item["opportunityKey"],
             item["reason"],
@@ -337,7 +342,7 @@ def _matching_task_quarantines(
 ) -> list[sqlite3.Row]:
     matches = []
     for existing in connection.execute(
-        """SELECT quarantine_id,dedupe_key,status FROM task_quarantines
+        """SELECT * FROM task_quarantines
            WHERE opportunity_key=? AND reason=?
            ORDER BY quarantine_id""",
         (row["opportunityKey"], row["reason"]),
@@ -345,6 +350,28 @@ def _matching_task_quarantines(
         if _quarantine_dedupe_fingerprint(existing["dedupe_key"]) == row["dedupeFingerprint"]:
             matches.append(existing)
     return matches
+
+
+def _assert_snapshot_task_quarantine_import_compatible(
+    row: dict[str, Any], matches: list[sqlite3.Row]
+) -> None:
+    if not matches:
+        return
+    snapshot_matches = [_snapshot_task_quarantine_row(match) for match in matches]
+    active_rows = [match for match in snapshot_matches if match["status"] == "ACTIVE"]
+    cleared_rows = [match for match in snapshot_matches if match["status"] == "CLEARED"]
+    for label, candidates in (("active", active_rows), ("cleared", cleared_rows)):
+        if candidates and any(candidate != candidates[0] for candidate in candidates[1:]):
+            raise ValueError(f"managed snapshot conflicts with local {label} task quarantine")
+    if row["status"] == "ACTIVE" and active_rows and any(match != row for match in active_rows):
+        raise ValueError("managed snapshot conflicts with local active task quarantine")
+    if (
+        row["status"] == "CLEARED"
+        and not active_rows
+        and cleared_rows
+        and any(match != row for match in cleared_rows)
+    ):
+        raise ValueError("managed snapshot conflicts with local cleared task quarantine")
 
 
 def _snapshot_quarantine_event_identity(row: dict[str, Any]) -> tuple[str, str]:
@@ -1118,6 +1145,7 @@ def _insert_snapshot(connection: sqlite3.Connection, rows: dict[str, list[dict[s
             else None
         )
         matches = _matching_task_quarantines(connection, row)
+        _assert_snapshot_task_quarantine_import_compatible(row, matches)
         active_match = next((match for match in matches if match["status"] == "ACTIVE"), None)
         cleared_match = next((match for match in matches if match["status"] == "CLEARED"), None)
         if not matches:
