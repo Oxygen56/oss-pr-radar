@@ -3144,7 +3144,8 @@ def test_pr_followup_list_reports_rebind_for_dirty_worktree(monkeypatch, tmp_pat
     (dirty / "tracked.txt").write_text("base\n", encoding="utf-8")
     recovered = MODULE.pr_followup_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
 
-    assert [item["key"] for item in recovered["candidates"]] == ["a/b#1"]
+    assert recovered["candidates"] == []
+    assert [item["key"] for item in recovered["reprepareRequired"]] == ["a/b#1"]
     assert recovered["quarantined"] == []
 
 
@@ -3264,7 +3265,71 @@ def test_dirty_rebound_worktree_move_failure_keeps_user_checkout_recoverable(mon
     assert (expected / "tracked.txt").read_text(encoding="utf-8") == "user change\n"
     assert (expected / "user-note.txt").read_text(encoding="utf-8") == "keep me\n"
     quarantine_root = MODULE.managed_worktree_root() / ".rebind-quarantine"
-    assert not quarantine_root.exists() or not any(quarantine_root.iterdir())
+    assert not quarantine_root.exists() or {item.name for item in quarantine_root.iterdir()} <= {
+        ".lock"
+    }
+
+
+def test_dirty_rebound_recreate_failure_persists_quarantine_for_retry(monkeypatch, tmp_path):
+    project_root = tmp_path / "github"
+    source = tmp_path / "source"
+    source.mkdir()
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    monkeypatch.setattr(MODULE, "source_repo", lambda _repo: source)
+    run_git(source, "init")
+    run_git(source, "config", "user.name", "Radar Test")
+    run_git(source, "config", "user.email", "radar@example.invalid")
+    (source / "tracked.txt").write_text("base\n", encoding="utf-8")
+    run_git(source, "add", "tracked.txt")
+    run_git(source, "commit", "-m", "baseline")
+    head = run_git(source, "rev-parse", "HEAD")
+    run_git(source, "remote", "add", "origin", "https://github.com/a/b.git")
+    run_git(source, "update-ref", "refs/remotes/origin/main", head)
+    run_git(source, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+    expected = MODULE.managed_worktree_path("intent-1", "a/b")
+    expected.parent.mkdir(parents=True, exist_ok=True)
+    run_git(source, "worktree", "add", "--detach", str(expected), head)
+    (expected / "tracked.txt").write_text("user change\n", encoding="utf-8")
+    (expected / "user-note.txt").write_text("keep me\n", encoding="utf-8")
+
+    bound: dict[str, str] = {}
+
+    class Store:
+        def bind_task_quarantine_artifact(self, _key, *, reason, artifact):
+            assert reason == MODULE.PR_FOLLOWUP_REBIND_REQUIRED
+            bound.update(artifact)
+
+    original_prepare = MODULE.prepare_managed_worktree
+    attempts = 0
+
+    def fail_once(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("injected recreate failure")
+        return original_prepare(*args, **kwargs)
+
+    monkeypatch.setattr(MODULE, "prepare_managed_worktree", fail_once)
+    candidate = {
+        "key": "a/b#1",
+        "repo": "a/b",
+        "intentId": "intent-1",
+        "worktreePath": str(expected),
+    }
+    status = {"reason": MODULE.PR_FOLLOWUP_REBIND_REQUIRED, "replacementWakeDigest": "w" * 64}
+
+    with pytest.raises(RuntimeError, match="injected recreate failure"):
+        MODULE._recover_dirty_rebound_worktree(candidate, status, store=Store())
+    assert not expected.exists()
+    assert Path(bound["quarantinePath"]).is_dir()
+    assert (Path(bound["quarantinePath"]) / "user-note.txt").read_text() == "keep me\n"
+
+    retry_status = status | {"quarantinePath": bound["quarantinePath"]}
+    recovery = MODULE._recover_dirty_rebound_worktree(candidate, retry_status, store=Store())
+    assert recovery["quarantinePath"] == bound["quarantinePath"]
+    assert expected.is_dir()
+    assert run_git(expected, "status", "--porcelain") == ""
+    assert (Path(bound["quarantinePath"]) / "tracked.txt").read_text() == "user change\n"
 
 
 def test_pr_followup_reserve_clears_rebind_gate_after_reprepare(monkeypatch, tmp_path):
@@ -3275,11 +3340,28 @@ def test_pr_followup_reserve_clears_rebind_gate_after_reprepare(monkeypatch, tmp
     )
     candidate = store.pr_followup_candidates()[0]
     assert candidate["wakeDigest"] == rebound["replacementWakeDigest"]
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "CREATE TABLE threads (id TEXT, updated_at INTEGER, archived INTEGER, rollout_path TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?,?)",
+            (
+                candidate["threadId"],
+                int((datetime.now(UTC) - timedelta(hours=2)).timestamp()),
+                0,
+                None,
+            ),
+        )
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    listed = MODULE.pr_followup_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    assert [item["key"] for item in listed["reprepareRequired"]] == [candidate["key"]]
     recovery_calls = []
     monkeypatch.setattr(
         MODULE,
         "_recover_dirty_rebound_worktree",
-        lambda _candidate, status: (
+        lambda _candidate, status, **_kwargs: (
             recovery_calls.append(status) or {"quarantinePath": str(tmp_path / "quarantine")}
         ),
     )

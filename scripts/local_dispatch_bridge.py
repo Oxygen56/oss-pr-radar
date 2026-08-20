@@ -5784,6 +5784,43 @@ def pr_followup_list(args: argparse.Namespace) -> dict[str, Any]:
         rebind_status = (
             rebind_status_getter(candidate["key"]) if callable(rebind_status_getter) else None
         )
+        if rebind_status is not None:
+            rebind_value = candidate | {
+                "reason": PR_FOLLOWUP_REBIND_REQUIRED,
+                "rebind": rebind_status,
+                "reprepareRequired": True,
+            }
+            worktree_value = str(candidate.get("worktreePath") or "")
+            if not worktree_value or not Path(worktree_value).resolve().is_dir():
+                reprepare_required.append(rebind_value | {"reason": PR_FOLLOWUP_REBIND_REQUIRED})
+                continue
+            worktree = Path(worktree_value).resolve()
+            status = subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=worktree,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if status.returncode != 0:
+                blocked.append(candidate | {"reason": "worktree_status_unavailable"})
+                continue
+            dirty_paths = [line[3:] for line in status.stdout.splitlines() if line]
+            reprepare_required.append(
+                rebind_value
+                | (
+                    {"dirtyPathCount": len(dirty_paths), "dirtyPaths": dirty_paths[:10]}
+                    if dirty_paths
+                    else {}
+                )
+            )
+            if dirty_paths:
+                quarantined.append(
+                    rebind_value
+                    | {"dirtyPathCount": len(dirty_paths), "dirtyPaths": dirty_paths[:10]}
+                )
+            continue
         worktree_value = str(candidate.get("worktreePath") or "")
         if worktree_value:
             worktree = Path(worktree_value).resolve()
@@ -5975,7 +6012,10 @@ def _managed_worktree_source(worktree: Path, repo: str) -> Path:
 
 
 def _recover_dirty_rebound_worktree(
-    candidate: dict[str, Any], rebind_status: dict[str, Any]
+    candidate: dict[str, Any],
+    rebind_status: dict[str, Any],
+    *,
+    store: RadarLedger | None = None,
 ) -> dict[str, Any] | None:
     """Preserve a dirty stale worktree, then recreate its managed path cleanly.
 
@@ -5985,12 +6025,60 @@ def _recover_dirty_rebound_worktree(
     succeeds and the repository identity has been verified.
     """
 
+    lock_root = managed_worktree_root() / ".rebind-quarantine"
+    lock_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(lock_root, 0o700)
+    lock_path = lock_root / ".lock"
+    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        os.chmod(lock_path, 0o600)
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        return _recover_dirty_rebound_worktree_locked(candidate, rebind_status, store=store)
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
+
+
+def _recover_dirty_rebound_worktree_locked(
+    candidate: dict[str, Any],
+    rebind_status: dict[str, Any],
+    *,
+    store: RadarLedger | None,
+) -> dict[str, Any] | None:
     worktree = Path(str(candidate.get("worktreePath") or "")).resolve()
     expected = managed_worktree_path(
         str(candidate.get("intentId") or ""), str(candidate.get("repo") or "")
     )
-    if worktree != expected or not _is_managed_worktree(worktree) or not worktree.is_dir():
+    if worktree != expected or not _is_managed_worktree(worktree):
         raise RuntimeError("dirty PR follow-up workspace is not controller-managed")
+    stored_quarantine = str(rebind_status.get("quarantinePath") or "")
+    if not worktree.is_dir():
+        if not stored_quarantine:
+            raise RuntimeError("rebind quarantine path is missing for a moved workspace")
+        quarantine_raw = Path(stored_quarantine)
+        if quarantine_raw.is_symlink():
+            raise RuntimeError("rebind quarantine path cannot be a symlink")
+        quarantine = quarantine_raw.resolve()
+        quarantine_root = managed_worktree_root() / ".rebind-quarantine"
+        if not _is_within(quarantine, quarantine_root) or not quarantine.is_dir():
+            raise RuntimeError("rebind quarantine path is not controller-managed")
+        if quarantine.stat().st_mode & 0o077:
+            raise RuntimeError("rebind quarantine directory is not private")
+        source = source_repo(str(candidate["repo"]))
+        recreated = prepare_managed_worktree(
+            source,
+            intent_id=str(candidate["intentId"]),
+            repo=str(candidate["repo"]),
+        )
+        if recreated != expected or not recreated.is_dir():
+            raise RuntimeError("recreated PR follow-up workspace path mismatch")
+        return {
+            "oldWorktreePath": str(worktree),
+            "quarantinePath": str(quarantine),
+            "newWorktreePath": str(recreated),
+            "rebind": dict(rebind_status),
+            "statusDigest": str(rebind_status.get("statusDigest") or ""),
+        }
     status = subprocess.run(
         ["git", "status", "--porcelain=v1", "--untracked-files=all"],
         cwd=worktree,
@@ -6008,13 +6096,15 @@ def _recover_dirty_rebound_worktree(
     quarantine_root.mkdir(parents=True, exist_ok=True)
     safe_key = re.sub(r"[^A-Za-z0-9._-]+", "-", str(candidate["key"])).strip("-._")
     destination = quarantine_root / f"{safe_key}-{time.time_ns()}" / worktree.name
-    destination.parent.mkdir(parents=True, exist_ok=False)
+    destination.parent.mkdir(parents=True, exist_ok=False, mode=0o700)
+    os.chmod(destination.parent, 0o700)
     try:
         command(
             ["git", "worktree", "move", str(worktree), str(destination)],
             cwd=source,
             timeout=180,
         )
+        os.chmod(destination, 0o700)
     except Exception:
         # A failed Git move must leave both the user's checkout and no stale
         # quarantine staging directory behind for the next retry.
@@ -6023,6 +6113,17 @@ def _recover_dirty_rebound_worktree(
         except OSError:
             pass
         raise
+    recovery = {
+        "quarantinePath": str(destination),
+        "oldWorktreePath": str(worktree),
+        "statusDigest": hashlib.sha256(status.stdout.encode("utf-8")).hexdigest(),
+    }
+    if store is not None:
+        store.bind_task_quarantine_artifact(
+            candidate["key"],
+            reason=str(rebind_status.get("reason") or PR_FOLLOWUP_REBIND_REQUIRED),
+            artifact=recovery,
+        )
     recreated = prepare_managed_worktree(
         source,
         intent_id=str(candidate["intentId"]),
@@ -6035,7 +6136,7 @@ def _recover_dirty_rebound_worktree(
         "quarantinePath": str(destination),
         "newWorktreePath": str(recreated),
         "rebind": dict(rebind_status),
-        "statusDigest": hashlib.sha256(status.stdout.encode("utf-8")).hexdigest(),
+        "statusDigest": recovery["statusDigest"],
     }
 
 
@@ -6254,7 +6355,7 @@ def pr_followup_reserve(args: argparse.Namespace) -> dict[str, Any]:
     rebind_status = store.pr_followup_rebind_status(candidate["key"])
     recovery = None
     if rebind_status is not None:
-        recovery = _recover_dirty_rebound_worktree(candidate, rebind_status)
+        recovery = _recover_dirty_rebound_worktree(candidate, rebind_status, store=store)
     try:
         prepared = _prepare_pr_followup(candidate)
     except PrFollowupSnapshotChanged as exc:

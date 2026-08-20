@@ -13,7 +13,8 @@ from typing import Any, Iterator
 
 from .repo_probe import REPRODUCED_VALIDATED, verify_probe_receipt
 from .task_quarantine import active as active_quarantine
-from .task_quarantine import backfill_from_radar_events
+from .task_quarantine import attach_artifact as attach_quarantine_artifact
+from .task_quarantine import backfill_from_managed_events, backfill_from_radar_events
 from .task_quarantine import clear as clear_quarantine
 from .task_quarantine import ensure_schema as ensure_quarantine_schema
 from .task_quarantine import payload as quarantine_payload
@@ -316,6 +317,7 @@ class RadarLedger:
                 """
             )
             backfill_from_radar_events(connection)
+            backfill_from_managed_events(connection)
             columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(intents)")}
             if "title_time" not in columns:
                 connection.execute("ALTER TABLE intents ADD COLUMN title_time TEXT")
@@ -4264,6 +4266,19 @@ class RadarLedger:
                 now,
             )
 
+    def bind_task_quarantine_artifact(
+        self, key: str, *, reason: str, artifact: dict[str, Any]
+    ) -> None:
+        """Persist a recovery directory binding in the shared quarantine row."""
+
+        with self.transaction() as connection:
+            attach_quarantine_artifact(
+                connection,
+                opportunity_key=key,
+                reason=reason,
+                artifact=artifact,
+            )
+
     def defer_publication_request(self, request_id: str, reason: str) -> None:
         now = iso_z(datetime.now(UTC))
         with self.transaction() as connection:
@@ -5546,6 +5561,7 @@ class RadarLedger:
 
         with self.connect() as connection:
             ensure_quarantine_schema(connection)
+            backfill_from_managed_events(connection)
             quarantine = connection.execute(
                 """SELECT * FROM task_quarantines
                    WHERE opportunity_key=? AND reason='PR_FOLLOWUP_REBIND_REQUIRED'

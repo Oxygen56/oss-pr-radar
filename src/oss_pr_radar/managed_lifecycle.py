@@ -27,6 +27,7 @@ from .managed_security import (
     verify_current_or_previous,
 )
 from .task_quarantine import active as active_quarantine
+from .task_quarantine import attach_artifact as attach_quarantine_artifact
 from .task_quarantine import backfill_from_managed_events
 from .task_quarantine import clear as clear_quarantine
 from .task_quarantine import payload as quarantine_payload
@@ -1447,6 +1448,28 @@ class ManagedLedger:
                 )
             connection.commit()
             return {"cleared": cleared}
+        except Exception:
+            if connection.in_transaction:
+                connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+    def bind_task_quarantine_artifact(
+        self, opportunity_key: str, *, reason: str, artifact: dict[str, Any]
+    ) -> None:
+        """Persist a recovery directory binding in the shared quarantine row."""
+
+        connection = self._connection()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            attach_quarantine_artifact(
+                connection,
+                opportunity_key=canonical_opportunity_key(opportunity_key),
+                reason=reason,
+                artifact=artifact,
+            )
+            connection.commit()
         except Exception:
             if connection.in_transaction:
                 connection.rollback()

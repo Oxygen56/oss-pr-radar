@@ -82,6 +82,13 @@ def backfill_from_managed_events(connection: sqlite3.Connection) -> None:
     """Import managed lifecycle quarantines into the shared publication gate."""
 
     ensure_schema(connection)
+    if (
+        connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='managed_lifecycle_events'"
+        ).fetchone()
+        is None
+    ):
+        return
     connection.execute(
         """INSERT OR IGNORE INTO task_quarantines
            (opportunity_key,reason,dedupe_key,payload_json,status,created_at)
@@ -169,6 +176,44 @@ def clear(
         (cleared_at, payload, opportunity_key, reason),
     )
     return int(cursor.rowcount)
+
+
+def attach_artifact(
+    connection: sqlite3.Connection,
+    *,
+    opportunity_key: str,
+    reason: str,
+    artifact: dict[str, Any],
+) -> dict[str, Any]:
+    """Bind recovery evidence to an active quarantine without changing its key."""
+
+    if not isinstance(artifact, dict) or not artifact:
+        raise ValueError("task quarantine artifact is invalid")
+    ensure_schema(connection)
+    row = connection.execute(
+        """SELECT * FROM task_quarantines
+           WHERE opportunity_key=? AND reason=? AND status='ACTIVE'
+           ORDER BY quarantine_id DESC LIMIT 1""",
+        (opportunity_key, reason),
+    ).fetchone()
+    if row is None:
+        raise ValueError("active task quarantine is missing")
+    current = payload(dict(row))
+    for key, value in artifact.items():
+        if key in current and current[key] != value:
+            raise ValueError("task quarantine artifact binding changed")
+    merged = current | artifact
+    connection.execute(
+        """UPDATE task_quarantines SET payload_json=? WHERE quarantine_id=?""",
+        (canonical_json(merged), row["quarantine_id"]),
+    )
+    updated = connection.execute(
+        "SELECT * FROM task_quarantines WHERE quarantine_id=?",
+        (row["quarantine_id"],),
+    ).fetchone()
+    if updated is None:
+        raise RuntimeError("task quarantine artifact was not persisted")
+    return dict(updated)
 
 
 def payload(row: dict[str, Any]) -> dict[str, Any]:
