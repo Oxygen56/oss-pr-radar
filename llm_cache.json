@@ -372,6 +372,35 @@
     ],
     "why": "Issue provides a clear root cause and a verified fix for a user-visible UTF-8 corruption bug in the SGLang streaming detokenizer. However, multiple open PRs (e.g., #10344, #12562, #12820) overlap semantically with the same code path, and the deterministic gate requires HUMAN_REVIEW. The issue itself is a bug report with a proposed fix, not a PR, and the maintainer has not confirmed assignment or design preference. Given the overlapping PRs and the need to compare implementation boundaries, a new clean candidate cannot be confidently started without maintainer input."
   },
+  "0411cc9a0821d12686733547647e890d8a9d71d332709b250f7489e4fd59d19d": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found in supplied evidence."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "rag/nlp/__init__.py: naive_merge and naive_merge_with_images custom-delimiter branch",
+      "test/unit_test/rag/test_naive_merge.py: add regression test for custom delimiter with chunk_token_num cap"
+    ],
+    "risks": [
+      "Changing the custom-delimiter branch may break existing tests that expect chunk size to be ignored (e.g., test_custom_delimiter_ignores_chunk_size).",
+      "Potential behavior change for users who intentionally rely on custom delimiters to produce small chunks."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproduction script to confirm 429,006 chunks before fix and ~1,400 after.",
+      "Add unit test in test_naive_merge.py that runs naive_merge with a custom delimiter and asserts max token count <= chunk_token_num * 1.1."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer Option A (merge) or Option B (recursive splitter) or complete removal of custom delimiters as suggested by skbs-eng."
+    ],
+    "why": "Issue provides a precise root cause (has_custom branch bypasses chunk_token_num, bare chars leak into split pattern), a reproducible script with expected vs actual output, and a clear minimal fix (Option A: merge segments via merge_paragraphs). The open PR #18556 already implements this with tests, but the issue itself is actionable and the bug is user-visible with high impact."
+  },
   "0427f9c5a4099ecc2b92bc99698c4480df23dd2d9d6e5bd6e88c410bf77c49cc": {
     "confidence": 0.85,
     "contradictions": [],
@@ -6269,6 +6298,32 @@
     ],
     "wait_reason": null,
     "why": "Issue provides a concrete multi-root workspace bug with clear root cause in workspace path collapsing, reproducible steps, and code anchors. No competing PR or issue found. The fix is actionable and testable."
+  },
+  "2c588421fc04bc2e5d00db1ab51186bdf0c79b1b956db9ce8ace15c61f50faf1": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "model_executor/models/utils.py: get_draft_quant_config() to call configure_quant_config() with draft model class",
+      "Possibly add regression test for draft quant config mapping"
+    ],
+    "risks": [
+      "Potential side effects on non-quantized draft models if configure_quant_config is called unconditionally; need to ensure it's guarded by quant_config is not None",
+      "May affect other draft model architectures that rely on default empty mapping"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use the provided repro snippet to assert packed_modules_mapping is populated and find_matched_target returns the correct scheme for gate_up_proj",
+      "Add a unit test that constructs a draft model config with compressed-tensors FP8 and verifies fused projections are quantized"
+    ],
+    "unknowns": [
+      "Exact draft model class and config used in the repro; maintainer preference on fix approach"
+    ],
+    "why": "The issue identifies a concrete bug in vLLM's speculative decoding path where draft model quantization configs miss packed_modules_mapping, causing fused projections to be built unquantized and leading to AttributeError. The root cause is clearly traced to get_draft_quant_config() not calling configure_quant_config(), with a proposed fix and a minimal repro. This is a valuable, actionable bug fix with clear validation path."
   },
   "2c6749c8b80808b5593515aff5296f3e0168b4c59e41516b07026c671ad1f302": {
     "confidence": 0.85,
@@ -29424,6 +29479,30 @@
       "Maintainer preference on approach"
     ],
     "why": "Issue identifies a clear transformers-API drift causing Qwen3-VL text encoder failure in ImageEncodingStage, with a concrete repro and suggested fix. However, the deterministic gate is HUMAN_REVIEW and existing PR #33569 has semantic overlap on Qwen3-VL paths, requiring maintainer comparison before creating a new task."
+  },
+  "c93bfbd5eea47c38a6d8432ed2b5c3a66b3ed49cd31368a304a2626e6f7e0fe0": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "api/controllers/mcp/mcp.py: replace sessionmaker().begin() with plain Session and explicit commit"
+    ],
+    "risks": [
+      "Potential behavior change in transaction handling; need to ensure explicit commit covers all success paths and rollback on exceptions"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test that calls tools/call on a published MCP server and asserts successful response without closed transaction error"
+    ],
+    "unknowns": [
+      "Exact maintainer preference for fix pattern; whether existing PR #40013 will be updated with tests"
+    ],
+    "why": "Issue provides a clear, reproducible bug with exact traceback and root cause analysis, confirmed by maintainer bot. The fix is a minimal, well-understood change in a critical MCP path, with existing PRs showing the pattern but lacking tests."
   },
   "c998e2e23395bea890e86932adcd2a03fd4beacc85b9c67017a830139e667254": {
     "confidence": 0.8,
