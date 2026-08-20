@@ -3101,9 +3101,7 @@ def test_pr_followup_rebind_gate_does_not_bypass_other_quarantine(tmp_path):
         expected_prepared_head_sha="c" * 40,
         observed_head_sha="d" * 40,
     )
-    assert store.pr_followup_candidates()[0]["wakeDigest"] == rebound[
-        "replacementWakeDigest"
-    ]
+    assert store.pr_followup_candidates()[0]["wakeDigest"] == rebound["replacementWakeDigest"]
 
     from oss_pr_radar.task_quarantine import record
 
@@ -3128,9 +3126,7 @@ def test_pr_followup_rebind_gate_does_not_bypass_stale_rebind_quarantine(tmp_pat
         expected_prepared_head_sha="c" * 40,
         observed_head_sha="d" * 40,
     )
-    assert store.pr_followup_candidates()[0]["wakeDigest"] == rebound[
-        "replacementWakeDigest"
-    ]
+    assert store.pr_followup_candidates()[0]["wakeDigest"] == rebound["replacementWakeDigest"]
 
     from oss_pr_radar.task_quarantine import record
 
@@ -3178,9 +3174,7 @@ def test_reserve_pr_followup_rechecks_quarantine_after_candidate_read(
     "mutation",
     ["stage", "permit", "wake", "disabled"],
 )
-def test_reserve_pr_followup_rechecks_candidate_state_after_candidate_read(
-    tmp_path, mutation
-):
+def test_reserve_pr_followup_rechecks_candidate_state_after_candidate_read(tmp_path, mutation):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     key = _make_pr_followup_candidate(store)
     candidate = store.pr_followup_candidates()[0]
