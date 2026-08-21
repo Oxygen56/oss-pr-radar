@@ -659,6 +659,47 @@ def test_thread_bind_failure_is_recorded_for_reconciliation(tmp_path, monkeypatc
     assert "managed bind interrupted" in event["payload_json"]
 
 
+def test_thread_bind_forwards_complete_opportunity_evidence_and_worktree(tmp_path, monkeypatch):
+    database = tmp_path / "radar.sqlite3"
+    store = RadarLedger(database)
+    queued = intent(base_sha="selected-base")
+    store.enqueue(queued)
+    assert store.claim(queued["intentId"], "controller", lease_minutes=15)
+    started = BRIDGE.creation_start(
+        SimpleNamespace(ledger=database, intent_id=queued["intentId"], owner="controller")
+    )
+    store.bind_creation_client(
+        queued["intentId"],
+        owner="controller",
+        creation_token=started["creationToken"],
+        client_thread_id="thread-created",
+    )
+    captured = {}
+
+    def capture_bind(_adapter, *, intent, thread_id, worktree_path):
+        captured.update(
+            intent=intent,
+            thread_id=thread_id,
+            worktree_path=worktree_path,
+        )
+        return {}
+
+    monkeypatch.setattr(
+        "oss_pr_radar.managed_adapter.ManagedAdapter.bind_task_after_thread", capture_bind
+    )
+    BRIDGE._managed_bind_legacy_intent(
+        store,
+        database,
+        queued["intentId"],
+        worktree_path="/tmp/owner--repo--7",
+    )
+
+    assert captured["thread_id"] == "thread-created"
+    assert captured["worktree_path"] == "/tmp/owner--repo--7"
+    assert captured["intent"]["selectedBaseSha"] == "selected-base"
+    assert captured["intent"]["preTaskEvidence"]["codePathsPlan"] == ["src/runtime.py"]
+
+
 def test_semantic_contradiction_fails_closed_before_dispatch(tmp_path, monkeypatch):
     from oss_pr_radar.llm import DeepSeekEvaluator
 

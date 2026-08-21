@@ -3820,7 +3820,13 @@ def write_task_context(
     return path
 
 
-def _managed_bind_legacy_intent(store: RadarLedger, path: Path, intent_id: str) -> None:
+def _managed_bind_legacy_intent(
+    store: RadarLedger,
+    path: Path,
+    intent_id: str,
+    *,
+    worktree_path: str | None = None,
+) -> None:
     with store.connect() as connection:
         row = connection.execute("SELECT * FROM intents WHERE intent_id=?", (intent_id,)).fetchone()
     if row is None:
@@ -3831,19 +3837,20 @@ def _managed_bind_legacy_intent(store: RadarLedger, path: Path, intent_id: str) 
     if not thread_id:
         raise RuntimeError("managed task binding requires the actual Codex thread id")
     adapter = ManagedAdapter(ROOT, path)
-    managed_intent = {
+    payload = json.loads(intent["payload_json"])
+    managed_intent = payload | {
         "intentId": intent_id,
         "key": issue_key,
         "issuedAt": intent.get("issued_at"),
-        "preTaskEvidenceDigest": json.loads(intent["payload_json"]).get("preTaskEvidenceDigest"),
-        "probeLevel": json.loads(intent["payload_json"]).get("probeLevel", "UNVERIFIED"),
-        "taskStage": json.loads(intent["payload_json"]).get("taskStage", "REPRODUCTION_REQUIRED"),
+        "preTaskEvidenceDigest": payload.get("preTaskEvidenceDigest"),
+        "probeLevel": payload.get("probeLevel", "UNVERIFIED"),
+        "taskStage": payload.get("taskStage", "REPRODUCTION_REQUIRED"),
     }
     try:
         adapter.bind_task_after_thread(
             intent=managed_intent,
             thread_id=thread_id,
-            worktree_path=intent.get("worktree_path"),
+            worktree_path=worktree_path or intent.get("worktree_path"),
         )
     except Exception as exc:
         adapter.ledger.record_event(
@@ -4144,7 +4151,12 @@ def _app_server_request_worker(args: argparse.Namespace) -> dict[str, Any]:
                 creation_token=args.creation_token,
                 client_thread_id=thread_id,
             )
-            _managed_bind_legacy_intent(store, args.ledger, args.intent_id)
+            _managed_bind_legacy_intent(
+                store,
+                args.ledger,
+                args.intent_id,
+                worktree_path=args.worktree,
+            )
             _require_task_action_clear(store, opportunity_key)
             _write_turn_start_request(
                 process,
