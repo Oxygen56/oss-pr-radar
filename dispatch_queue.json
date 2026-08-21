@@ -1,9 +1,144 @@
 {
   "contractDigest": "a4a72ff173c07ee40bcbb7f0de7aeb3d217b1ef7700aa04f9015806c191b44d9",
   "decisionContractDigest": "22524fef22264e03e24fd139de5a9e4c82a85bebf162081c87ca6ec13aeafa8f",
-  "generatedAt": "2026-08-21T08:03:48.086690Z",
-  "intentCount": 1,
+  "generatedAt": "2026-08-21T09:04:28.592544Z",
+  "intentCount": 3,
   "intents": [
+    {
+      "actionabilityEvidence": {
+        "code_anchors": [
+          "bubus/service.py",
+          "bubus/models.py",
+          "browser_use/agent/service.py",
+          "asyncio/tasks.py",
+          "browser_use/observability.py",
+          "browser_use/utils.py",
+          "service.py",
+          "models.py"
+        ],
+        "design_confirmation": false,
+        "help_wanted": false,
+        "maintainer_active_investigation": false,
+        "maintainer_approved": false,
+        "maintainer_revalidation_requested": false,
+        "needs_confirmation": false,
+        "probe_ready": true,
+        "public_repro_signals": 2,
+        "reproduction_evidence": [
+          "traceback_frame",
+          "ordered_steps"
+        ],
+        "root_cause_signal": true,
+        "usage_confirmation": false
+      },
+      "algorithmEvidence": null,
+      "authorizationSource": "signed_live_revalidation_required",
+      "autoSpawn": true,
+      "autoSubmitAuthorized": true,
+      "category": "NEW_CLEAN_CANDIDATE",
+      "contractDigest": "a4a72ff173c07ee40bcbb7f0de7aeb3d217b1ef7700aa04f9015806c191b44d9",
+      "decisionContractDigest": "22524fef22264e03e24fd139de5a9e4c82a85bebf162081c87ca6ec13aeafa8f",
+      "decisionDigest": "9bd8c777b4fa8c876df6dbaf1272be89a2dcc96f545658a146b4ccee6b019152",
+      "defaultBranch": "main",
+      "evidenceDigest": "cb5eedde35f668a9226c987a955e7532a14be141c77b9c635b2bf5da1a818019",
+      "expiresAt": "2026-08-21T11:04:28.592544Z",
+      "intentId": "08ef1708e7b6aa61e18e72f1436d8508126e053db07eed84718664846066aafc",
+      "issueNumber": 5509,
+      "issueUpdatedAt": "2026-08-21T09:02:25Z",
+      "issueUrl": "https://github.com/browser-use/browser-use/issues/5509",
+      "issuedAt": "2026-08-21T09:04:28.592544Z",
+      "key": "browser-use/browser-use#5509",
+      "llmReview": {
+        "confidence": 0.85,
+        "decision": "NEW_CLEAN_CANDIDATE",
+        "model": "deepseek-v4-flash",
+        "semanticSignal": "NO_OBJECTION",
+        "status": "ok",
+        "waitReason": null
+      },
+      "maturity": "mature",
+      "mode": "canary",
+      "nonce": "0206a3d11cc434011ad2dfbb2d3f7880",
+      "notify": true,
+      "policyDigest": "617e1fe911584f8d484b7510de30a7bb720eaccf3ca9d0b8eb31bd4f66ca30f7",
+      "preTaskEvidence": {
+        "aiDisclosureConflict": false,
+        "assigneeDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "assignmentRequired": false,
+        "baseLookupStatus": "ok",
+        "baseSha": "85ddbfedf609166b2d2c76c3d80506649fee82a9",
+        "codePathsPlan": [
+          "bubus/service.py",
+          "bubus/models.py",
+          "browser_use/agent/service.py",
+          "asyncio/tasks.py",
+          "browser_use/observability.py",
+          "browser_use/utils.py",
+          "service.py",
+          "models.py"
+        ],
+        "defaultBranch": "main",
+        "designDigest": "014c0ea27901d742664d033c73aba507178bb901e8ce7a485534e7669fe19240",
+        "duplicate": {
+          "prs": [],
+          "status": "none",
+          "summary": "未发现相关 open PR"
+        },
+        "duplicateDigest": "28a3bb38f5cdb345d3caf4fb83167265745af501b1cb9362fcce3ffee2995fc8",
+        "duplicateStatus": "none",
+        "issue": {
+          "assignees": [],
+          "state": "open"
+        },
+        "issueDigest": "7008cc5e94211fc96d56b4a5de8b6d6ddbe103b52bf0420a38df3037aa00e6df",
+        "matureRepository": true,
+        "policy": {
+          "status": "normal"
+        },
+        "probeRequired": true,
+        "reproductionPathPlan": true,
+        "schema": "pre_task_evidence_v1",
+        "validationPathPlan": true
+      },
+      "preTaskEvidenceDigest": "5c55abd634d213b6c80556f1e0d9b9ed767dfb754fc2a624282baf45c93831f7",
+      "preTaskGate": {
+        "allowed": true,
+        "baseSha": "85ddbfedf609166b2d2c76c3d80506649fee82a9",
+        "classification": null,
+        "evidenceDigest": "5c55abd634d213b6c80556f1e0d9b9ed767dfb754fc2a624282baf45c93831f7",
+        "expected": {
+          "assigneeDigest": "",
+          "baseSha": "",
+          "designDigest": "",
+          "duplicateDigest": "",
+          "issueDigest": ""
+        },
+        "reason": "PRE_TASK_EVIDENCE_PASSED",
+        "reasons": [],
+        "schema": "pre_task_evidence_v1"
+      },
+      "probeLevel": "PENDING",
+      "probeProfile": null,
+      "probeRequired": true,
+      "promptDigest": "02c8e3be1849ea0a194b01b39ab1b43debdb4d692754a7966563c84bee7f926f",
+      "publicSubmissionAllowed": true,
+      "publicationMode": "canary",
+      "repo": "browser-use/browser-use",
+      "runId": "scan-20260821T090202Z-88488af0a781",
+      "scanGate": "ALLOW_TO_WORK",
+      "scannerVersion": "oss_pr_radar_v50_material_contradictions",
+      "score": 12,
+      "selectedBaseSha": "85ddbfedf609166b2d2c76c3d80506649fee82a9",
+      "signature": "49a216716ac406295433da75e9b94d53f11e2446dbfdca3f9c41adc04bfed1c3",
+      "snapshotId": "f56a0956d29d9d2ff736ee63a007dfe29edbeb01d3ab549503d7d906804d96c1",
+      "sourceSha": "dbb24832e456635b0a09559f690578ecd39f2e2a",
+      "status": "PENDING",
+      "submissionPolicy": "normal",
+      "taskStage": "PREFLIGHT",
+      "title": "bubus library EventBus capacity error — Cross-Loop Bug (service.py)",
+      "track": "agent_ai_infra",
+      "version": "dispatch_intent_v7"
+    },
     {
       "actionabilityEvidence": {
         "code_anchors": [
@@ -37,7 +172,7 @@
       "decisionDigest": "b3be09cd8beb4454564f436cafd88cbcd10b5449510cdd7d9f9840d18d69a25e",
       "defaultBranch": "main",
       "evidenceDigest": "31da1e655dfe196bd74589967e24c5f23b6d4612f87e66904924a9a779fccfe7",
-      "expiresAt": "2026-08-21T10:03:48.086690Z",
+      "expiresAt": "2026-08-21T11:04:28.592544Z",
       "intentId": "b7164ed7768efc4481f8cce626575900b661a60b1baa6b60a24cafc9f59f7ac2",
       "issueNumber": 6919,
       "issueUpdatedAt": "2026-08-21T04:22:37Z",
@@ -203,14 +338,14 @@
       "promptDigest": "375df9cfacabb5c1d0056994388e6dc15f790cf7ea6303c50f9f4c5a934da7b5",
       "publicSubmissionAllowed": true,
       "publicationMode": "canary",
-      "renewedAt": "2026-08-21T08:03:48.086690Z",
+      "renewedAt": "2026-08-21T09:04:28.592544Z",
       "repo": "livekit/agents",
       "runId": "scan-20260821T045036Z-29029bcb8c08",
       "scanGate": "ALLOW_TO_WORK",
       "scannerVersion": "oss_pr_radar_v50_material_contradictions",
       "score": 11,
       "selectedBaseSha": "53c77a6b3cf0ef88512b2ab4917bfdd1dd6186b0",
-      "signature": "38956f782b15f1c11989142dc8944655e4edf068b2b0fb2dce4483dcff21f9eb",
+      "signature": "90458d950ccaf0510c887c77642be39076a31cb2fdd6746cee2a31f11516b1be",
       "snapshotId": "d203a75c1b40fcd0e7587fa41e06c3b02f36f271ada04c39c574ffe07a9ac2a9",
       "sourceSha": "dbb24832e456635b0a09559f690578ecd39f2e2a",
       "status": "PENDING",
@@ -219,13 +354,257 @@
       "title": "Audio routing freeze mid-call (1.6.9)",
       "track": "agent_ai_infra",
       "version": "dispatch_intent_v7"
+    },
+    {
+      "actionabilityEvidence": {
+        "code_anchors": [
+          "packages/mcp/src/tool/mcp-client.ts",
+          "packages/mcp/src/tool/types.ts",
+          "examples/ai-functions/src/reproduction/issue-19240-mcp-tools-pagination.ts",
+          "mcp-client.ts",
+          "issue-19240-mcp-tools-pagination.ts",
+          "`nextCursor`",
+          "`types.ts`",
+          "`PaginatedResultSchema`"
+        ],
+        "design_confirmation": false,
+        "help_wanted": false,
+        "maintainer_active_investigation": false,
+        "maintainer_approved": false,
+        "maintainer_revalidation_requested": false,
+        "needs_confirmation": false,
+        "probe_ready": true,
+        "public_repro_signals": 2,
+        "reproduction_evidence": [
+          "expected_actual_pair",
+          "ordered_steps"
+        ],
+        "root_cause_signal": false,
+        "usage_confirmation": false
+      },
+      "algorithmEvidence": null,
+      "authorizationSource": "signed_live_revalidation_required",
+      "autoSpawn": true,
+      "autoSubmitAuthorized": true,
+      "category": "PR_COMPETITION_OPPORTUNITY",
+      "contractDigest": "a4a72ff173c07ee40bcbb7f0de7aeb3d217b1ef7700aa04f9015806c191b44d9",
+      "decisionContractDigest": "22524fef22264e03e24fd139de5a9e4c82a85bebf162081c87ca6ec13aeafa8f",
+      "decisionDigest": "f1828028012c24924ede91814a3dddc60324224dfdfd5231224b229afaf26ad2",
+      "defaultBranch": "main",
+      "evidenceDigest": "abde5c88a74fdb8fd7eef9656dbfe8c56c673224d38805381d754169be143ed7",
+      "expiresAt": "2026-08-21T11:04:28.592544Z",
+      "intentId": "e4b644972850c1387437940c3ef8378137e235021a5fae29af52832bceb3e73b",
+      "issueNumber": 19240,
+      "issueUpdatedAt": "2026-08-21T08:51:50Z",
+      "issueUrl": "https://github.com/vercel/ai/issues/19240",
+      "issuedAt": "2026-08-21T09:04:28.592544Z",
+      "key": "vercel/ai#19240",
+      "llmReview": {
+        "confidence": 0.85,
+        "decision": "NEW_CLEAN_CANDIDATE",
+        "model": "deepseek-v4-flash",
+        "semanticSignal": "NO_OBJECTION",
+        "status": "ok",
+        "waitReason": null
+      },
+      "maturity": "mature",
+      "mode": "canary",
+      "nonce": "cd467765aef7095c5ec9093e4722deb1",
+      "notify": true,
+      "policyDigest": "8cf4eee9c385051bdeac1f79faeedd59056875ce58854db3a9ecc149c585ca82",
+      "preTaskEvidence": {
+        "aiDisclosureConflict": false,
+        "assigneeDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "assignmentRequired": false,
+        "baseLookupStatus": "ok",
+        "baseSha": "5941bd6a4fc6fdc086d1dc8a3e1f083e6eeecad2",
+        "codePathsPlan": [
+          "packages/mcp/src/tool/mcp-client.ts",
+          "packages/mcp/src/tool/types.ts",
+          "examples/ai-functions/src/reproduction/issue-19240-mcp-tools-pagination.ts",
+          "mcp-client.ts",
+          "issue-19240-mcp-tools-pagination.ts",
+          "`nextCursor`",
+          "`types.ts`",
+          "`PaginatedResultSchema`"
+        ],
+        "defaultBranch": "main",
+        "designDigest": "014c0ea27901d742664d033c73aba507178bb901e8ce7a485534e7669fe19240",
+        "duplicate": {
+          "best_score": 19,
+          "best_url": "https://github.com/vercel/ai/pull/19242",
+          "components": {
+            "ciIsDiagnosticOnly": true,
+            "independentEvidence": {
+              "codeChange": true,
+              "keyPathCoverage": true,
+              "maintainerRecognition": false,
+              "tests": false
+            },
+            "rootCauseCoverage": false
+          },
+          "gaps": [
+            "仍是 draft",
+            "缺少根因覆盖证据",
+            "缺少测试文件"
+          ],
+          "prs": [
+            {
+              "additions": 157,
+              "age_days": 0,
+              "author_association": "CONTRIBUTOR",
+              "changed_files": 2,
+              "ci_competition_weight": 0,
+              "deletions": 0,
+              "gaps": [
+                "缺少测试文件",
+                "仍是 draft"
+              ],
+              "ignored_nontechnical_failed_checks": [],
+              "is_draft": true,
+              "issue_body_link": false,
+              "issue_body_link_relation": "",
+              "maintainer_owned": false,
+              "material_competition_gaps": [
+                "缺少回归测试",
+                "仍是 draft"
+              ],
+              "number": 19242,
+              "overlapping_paths": [
+                "examples/ai-functions/src/reproduction/issue-19240-mcp-tools-pagination.ts"
+              ],
+              "references_issue": true,
+              "root_cause_coverage": false,
+              "rule_closed": false,
+              "score": 19,
+              "semantic_distinctive_overlap": [
+                "mcpclient_tools",
+                "tools_list"
+              ],
+              "semantic_overlap": true,
+              "semantic_overlap_count": 12,
+              "state": "OPEN",
+              "strengths": [
+                "明确关联 issue",
+                "CI/check 信息不足，不作为竞争依据",
+                "近期仍活跃",
+                "标题/正文与 issue 关键词匹配"
+              ],
+              "technical_complete": false,
+              "technical_failed_checks": [],
+              "test_files": 0,
+              "title": "reproduction: MCPClient.tools only fetches the first page of tools/list.",
+              "url": "https://github.com/vercel/ai/pull/19242"
+            },
+            {
+              "additions": 241,
+              "age_days": 0,
+              "author_association": "CONTRIBUTOR",
+              "changed_files": 2,
+              "ci_competition_weight": 0,
+              "deletions": 0,
+              "gaps": [
+                "未明确 closing/reference 目标 issue",
+                "缺少测试文件",
+                "仍是 draft"
+              ],
+              "ignored_nontechnical_failed_checks": [],
+              "is_draft": true,
+              "issue_body_link": false,
+              "issue_body_link_relation": "",
+              "maintainer_owned": false,
+              "material_competition_gaps": [
+                "缺少回归测试",
+                "仍是 draft"
+              ],
+              "number": 19207,
+              "overlapping_paths": [],
+              "references_issue": false,
+              "root_cause_coverage": false,
+              "rule_closed": false,
+              "score": -24,
+              "semantic_distinctive_overlap": [
+                "tools_list"
+              ],
+              "semantic_overlap": false,
+              "semantic_overlap_count": 3,
+              "state": "OPEN",
+              "strengths": [
+                "CI/check 信息不足，不作为竞争依据",
+                "近期仍活跃",
+                "标题/正文与 issue 关键词匹配"
+              ],
+              "technical_complete": false,
+              "technical_failed_checks": [],
+              "test_files": 0,
+              "title": "reproduction: @ai-sdk/mcp SSE transport swallows non-2xx HTTP responses. tools",
+              "url": "https://github.com/vercel/ai/pull/19207"
+            }
+          ],
+          "status": "weak_pr_competition_possible",
+          "summary": "已有直接关联但证据不完整的 PR #19242：缺少测试文件; 仍是 draft；只有能补足根因、测试或关键路径覆盖时才值得竞争"
+        },
+        "duplicateDigest": "90ef6e20b1ccd606111195f2de30f8aae3056fdacf1f347d6ada43f5c1fcf567",
+        "duplicateStatus": "weak_pr_competition_possible",
+        "issue": {
+          "assignees": [],
+          "state": "open"
+        },
+        "issueDigest": "65f29b63d6a5173ec310a9528764358ca13a975e196485f855cbdc39234d8da9",
+        "matureRepository": true,
+        "policy": {
+          "status": "normal"
+        },
+        "probeRequired": true,
+        "reproductionPathPlan": true,
+        "schema": "pre_task_evidence_v1",
+        "validationPathPlan": true
+      },
+      "preTaskEvidenceDigest": "5e1b0a15d0bc40567b17d8e6ad8818ea4b4ba908fa1116b4ff0b3fe4b4f6bb11",
+      "preTaskGate": {
+        "allowed": true,
+        "baseSha": "5941bd6a4fc6fdc086d1dc8a3e1f083e6eeecad2",
+        "classification": null,
+        "evidenceDigest": "5e1b0a15d0bc40567b17d8e6ad8818ea4b4ba908fa1116b4ff0b3fe4b4f6bb11",
+        "expected": {
+          "assigneeDigest": "",
+          "baseSha": "",
+          "designDigest": "",
+          "duplicateDigest": "",
+          "issueDigest": ""
+        },
+        "reason": "PRE_TASK_EVIDENCE_PASSED",
+        "reasons": [],
+        "schema": "pre_task_evidence_v1"
+      },
+      "probeLevel": "PENDING",
+      "probeProfile": null,
+      "probeRequired": true,
+      "promptDigest": "5d8383fa6c15eb5e4807302a88873265a3e29723a6a2fdda2e191f5469826eae",
+      "publicSubmissionAllowed": true,
+      "publicationMode": "canary",
+      "repo": "vercel/ai",
+      "runId": "scan-20260821T090202Z-88488af0a781",
+      "scanGate": "ALLOW_TO_WORK",
+      "scannerVersion": "oss_pr_radar_v50_material_contradictions",
+      "score": 11,
+      "selectedBaseSha": "5941bd6a4fc6fdc086d1dc8a3e1f083e6eeecad2",
+      "signature": "d7d41709af44a5ddbebbab570c3ba13c2fbe7260dc66d2ccfef9de6cceef620c",
+      "snapshotId": "f56a0956d29d9d2ff736ee63a007dfe29edbeb01d3ab549503d7d906804d96c1",
+      "sourceSha": "dbb24832e456635b0a09559f690578ecd39f2e2a",
+      "status": "PENDING",
+      "submissionPolicy": "normal",
+      "taskStage": "PREFLIGHT",
+      "title": "`MCPClient.tools()` only fetches the first page of `tools/list`. The `nextCursor` continuation token is ignored.",
+      "track": "agent_ai_infra",
+      "version": "dispatch_intent_v7"
     }
   ],
   "mode": "canary",
-  "newIntentCount": 0,
-  "runId": "scan-20260821T080135Z-5813977c15ee",
+  "newIntentCount": 2,
+  "runId": "scan-20260821T090202Z-88488af0a781",
   "scannerVersion": "oss_pr_radar_v50_material_contradictions",
-  "signature": "bc8618ab01badd5da690b949a16b33e6c53f4bc7a5474e4a8e1f5b793de1d146",
+  "signature": "0a91bbb82bc298c43c0eb619d39f8b208e878bcfb158b6d47c46bf985703bb3b",
   "sourceSha": "dbb24832e456635b0a09559f690578ecd39f2e2a",
   "version": "dispatch_intents_v7"
 }
