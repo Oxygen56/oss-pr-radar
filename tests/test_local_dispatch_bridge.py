@@ -9557,6 +9557,35 @@ def test_repaired_quality_rearms_same_blocked_publication_request(tmp_path):
     assert store.publication_request(request_id)["reason"] is None
 
 
+def test_completed_controller_review_rearms_same_blocked_publication_request(tmp_path):
+    store, _worktree, result_path = _controller_commit_result(tmp_path)
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    request_id = first["publicationRequests"][0]["requestId"]
+    with store.connect() as connection:
+        connection.execute(
+            """UPDATE publication_requests
+               SET status='BLOCKED',reason='CONTROLLER_INDEPENDENT_REVIEW_REQUIRED'
+               WHERE request_id=?""",
+            (request_id,),
+        )
+
+    candidate = store.task_result_candidates()[0]
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    raw = result_path.read_bytes()
+    with MODULE._task_worktree_private_descriptor(candidate) as result_access:
+        repaired = MODULE._request_publication_from_task_result(
+            store,
+            candidate=candidate,
+            result_access=result_access,
+            value=value,
+            raw=raw,
+        )
+
+    assert repaired["request_id"] == request_id
+    assert repaired["status"] == "PENDING"
+    assert store.publication_request(request_id)["reason"] is None
+
+
 def test_existing_policy_block_with_refreshed_context_stays_idempotent(tmp_path):
     store, _worktree, result_path = _controller_commit_result(
         tmp_path,

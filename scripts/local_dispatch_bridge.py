@@ -10684,6 +10684,18 @@ def _request_publication_from_task_result(
         target_base_bound="targetBase" in value,
     )
     publication_evidence_from_request(request["request"])
+    if (
+        request.get("status") == "BLOCKED"
+        and request.get("reason") == "CONTROLLER_INDEPENDENT_REVIEW_REQUIRED"
+        and request.get("evidence_digest") == evidence_digest
+    ):
+        review = controller_review_result(ROOT, value)
+        if review and review.get("verdict") == "PASS":
+            retried = store.retry_blocked_publication_request(
+                str(request.get("request_id") or request.get("requestId")),
+                expected_reason="CONTROLLER_INDEPENDENT_REVIEW_REQUIRED",
+            )
+            request = {**request, **retried, "request": request["request"]}
     return request
 
 
