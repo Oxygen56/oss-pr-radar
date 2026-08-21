@@ -42,7 +42,7 @@ from oss_pr_radar.dispatch import (  # noqa: E402
     verify_queue,
 )
 from oss_pr_radar.evidence import collect_evidence  # noqa: E402
-from oss_pr_radar.github_client import GitHubClient  # noqa: E402
+from oss_pr_radar.github_client import GitHubClient, is_transient_github_error  # noqa: E402
 from oss_pr_radar.independent_review import (  # noqa: E402
     controller_review_result,
     review_once,
@@ -2473,21 +2473,7 @@ def publish_terminal_feedback(args: argparse.Namespace) -> dict[str, Any]:
             published.append({"key": key, "stage": row["stage"]})
         except (KeyError, OSError, RuntimeError, ValueError) as exc:
             message = str(exc)[:240]
-            normalized = message.casefold()
-            transient_http = re.search(r"\bhttp\s+(?:408|429|5\d\d)\b", normalized)
-            transient_network = any(
-                marker in normalized
-                for marker in (
-                    "timed out",
-                    "timeout",
-                    "temporarily unavailable",
-                    "connection reset",
-                    "connection refused",
-                    "tls handshake timeout",
-                    "unexpected eof",
-                )
-            )
-            if transient_http or transient_network:
+            if is_transient_github_error(exc):
                 deferred.append({"key": key, "reason": "github_temporarily_unavailable"})
                 warnings.append({"key": key, "warning": message})
             else:
@@ -2784,7 +2770,9 @@ def _resolve_repo_code_paths(
             resolved.add(path)
             continue
         if "/" in path:
-            suffix_matches = {candidate for candidate in tree_paths if candidate.endswith(f"/{path}")}
+            suffix_matches = {
+                candidate for candidate in tree_paths if candidate.endswith(f"/{path}")
+            }
             if len(suffix_matches) == 1:
                 resolved.update(suffix_matches)
             continue
@@ -2798,7 +2786,21 @@ def _resolve_repo_code_paths(
             resolved.update(basename_matches)
             continue
         if not path.casefold().endswith(
-            (".py", ".pyi", ".js", ".jsx", ".ts", ".tsx", ".go", ".rs", ".java", ".cc", ".cpp", ".c", ".h")
+            (
+                ".py",
+                ".pyi",
+                ".js",
+                ".jsx",
+                ".ts",
+                ".tsx",
+                ".go",
+                ".rs",
+                ".java",
+                ".cc",
+                ".cpp",
+                ".c",
+                ".h",
+            )
         ):
             code_search_terms.append(path.rsplit(".", 1)[-1])
 
@@ -10515,9 +10517,7 @@ def _bind_final_reproduction_receipt(
         issue_url=issue_url,
         task_id=task_id,
         thread_id=(
-            str(candidate["threadId"])
-            if current_receipt.get("threadFingerprint")
-            else None
+            str(candidate["threadId"]) if current_receipt.get("threadFingerprint") else None
         ),
         head_sha=commit_sha,
         commit_sha=commit_sha,
@@ -10536,9 +10536,7 @@ def _bind_final_reproduction_receipt(
                 issue_url=issue_url,
                 task_id=task_id,
                 thread_id=(
-                    str(candidate["threadId"])
-                    if current_receipt.get("threadFingerprint")
-                    else None
+                    str(candidate["threadId"]) if current_receipt.get("threadFingerprint") else None
                 ),
                 head_sha=str(current_receipt.get("headSha") or ""),
                 commit_sha=str(current_receipt.get("commitSha") or ""),
@@ -11038,9 +11036,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                             value.get("codePaths")
                             or context.get("codePaths")
                             or managed_candidate.get("codePaths")
-                            or (managed_candidate.get("preTaskEvidence") or {}).get(
-                                "codePathsPlan"
-                            )
+                            or (managed_candidate.get("preTaskEvidence") or {}).get("codePathsPlan")
                             or []
                         )
                         if str(path).strip()

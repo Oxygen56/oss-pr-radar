@@ -1568,6 +1568,26 @@ def test_terminal_feedback_treats_transient_github_failure_as_deferred(monkeypat
     assert result["warnings"] == [{"key": "a/b#1", "warning": "gh: Gateway Time-out (HTTP 504)"}]
 
 
+def test_terminal_feedback_treats_plain_github_eof_as_deferred(monkeypatch, tmp_path):
+    store, _worktree = registered_store(tmp_path)
+    store.record_stage("a/b#1", "AUDIT_NO_GO", reason="ALREADY_FIXED")
+    state = tmp_path / "state"
+    state.mkdir()
+
+    class GitHub:
+        def issue(self, _repo, _number):
+            raise RuntimeError('Get "https://api.github.com/repos/a/b/issues/1": EOF')
+
+    monkeypatch.setattr(MODULE, "STATE", state)
+    monkeypatch.setattr(MODULE, "GitHubClient", GitHub)
+
+    result = MODULE.publish_terminal_feedback(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert result["ok"] is True
+    assert result["errors"] == []
+    assert result["deferred"] == [{"key": "a/b#1", "reason": "github_temporarily_unavailable"}]
+
+
 def test_terminal_feedback_keeps_nontransient_github_failure_fatal(monkeypatch, tmp_path):
     store, _worktree = registered_store(tmp_path)
     store.record_stage("a/b#1", "AUDIT_NO_GO", reason="ALREADY_FIXED")

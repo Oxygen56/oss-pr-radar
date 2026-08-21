@@ -1,4 +1,39 @@
-from oss_pr_radar.github_client import GitHubClient
+from oss_pr_radar.github_client import GitHubClient, GitHubError
+
+
+def test_api_retries_plain_eof_and_then_succeeds():
+    calls = []
+    delays = []
+
+    def runner(_args, _timeout):
+        calls.append(True)
+        if len(calls) == 1:
+            raise GitHubError('Get "https://api.github.com/repos/a/b/issues/1": EOF')
+        return '{"number":1}'
+
+    client = GitHubClient(runner=runner, retry_delays=(0.01,), sleeper=delays.append)
+
+    assert client.issue("a/b", 1)["number"] == 1
+    assert len(calls) == 2
+    assert delays == [0.01]
+
+
+def test_api_does_not_retry_nontransient_permission_failure():
+    calls = []
+
+    def runner(_args, _timeout):
+        calls.append(True)
+        raise GitHubError("Resource not accessible by integration (HTTP 403)")
+
+    client = GitHubClient(runner=runner, sleeper=lambda _delay: None)
+
+    try:
+        client.issue("a/b", 1)
+    except GitHubError:
+        pass
+    else:
+        raise AssertionError("expected GitHubError")
+    assert len(calls) == 1
 
 
 def test_related_prs_keep_cross_repository_timeline_identity(monkeypatch):

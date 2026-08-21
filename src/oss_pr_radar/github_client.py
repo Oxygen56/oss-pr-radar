@@ -6,6 +6,7 @@ import base64
 import json
 import re
 import subprocess
+import time
 from dataclasses import dataclass
 from typing import Any, Callable
 from urllib.parse import quote
@@ -16,6 +17,30 @@ class GitHubError(RuntimeError):
 
 
 Runner = Callable[[list[str], int], str]
+Sleeper = Callable[[float], None]
+
+
+def is_transient_github_error(error: BaseException | str) -> bool:
+    """Return whether a read failed for a retryable transport/server reason."""
+
+    message = str(error).strip().casefold()
+    if isinstance(error, subprocess.TimeoutExpired):
+        return True
+    if re.search(r"\bhttp\s+(?:408|429|5\d\d)\b", message):
+        return True
+    if re.search(r"(?:^|[\s:\"])(?:unexpected\s+)?eof\s*$", message):
+        return True
+    return any(
+        marker in message
+        for marker in (
+            "timed out",
+            "timeout",
+            "temporarily unavailable",
+            "connection reset",
+            "connection refused",
+            "tls handshake timeout",
+        )
+    )
 
 
 def _default_runner(args: list[str], timeout: int) -> str:
@@ -36,6 +61,8 @@ def _default_runner(args: list[str], timeout: int) -> str:
 class GitHubClient:
     runner: Runner = _default_runner
     timeout: int = 45
+    retry_delays: tuple[float, ...] = (0.25, 1.0)
+    sleeper: Sleeper = time.sleep
 
     def api(
         self,
@@ -52,7 +79,14 @@ class GitHubClient:
             args.extend(["-H", f"Accept: {accept}"])
         for key, value in (params or {}).items():
             args.extend(["-f", f"{key}={value}"])
-        raw = self.runner(args, self.timeout)
+        for attempt in range(len(self.retry_delays) + 1):
+            try:
+                raw = self.runner(args, self.timeout)
+                break
+            except (GitHubError, subprocess.TimeoutExpired) as exc:
+                if attempt >= len(self.retry_delays) or not is_transient_github_error(exc):
+                    raise
+                self.sleeper(self.retry_delays[attempt])
         try:
             data = json.loads(raw)
         except json.JSONDecodeError as exc:
