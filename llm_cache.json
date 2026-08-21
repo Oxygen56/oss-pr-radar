@@ -18208,6 +18208,40 @@
     "wait_reason": null,
     "why": "Issue reports a clear user-visible bug in message indexing: enabled but count stays 0 despite working embedding and vector DB. Provides ordered repro steps and expected/actual pair. No competing PR or related issue found. Root cause not identified but code path is in backend service/API, actionable for investigation and fix."
   },
+  "75911c7df90f8c543c0aed20317a6e9bd6146ec870d413f0b55cbf5ada6005c1": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The issue states no existing PR covers this exact bug, but the open_pr_assessment identifies PRs with semantic overlap; this is not a direct contradiction but requires manual review"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify MooncakeStoreConnector save path to reject boundaries with NULL_BLOCK_ID for recurrent-state groups",
+      "Add validity check in ChunkedTokenDatabase.prepare_values() or worker.py save path",
+      "Ensure token ranges, keys, group indices, addresses, and sizes remain aligned"
+    ],
+    "risks": [
+      "The fix may affect performance by skipping valid boundaries if the validity check is too conservative",
+      "Potential misalignment in key/address arrays if the filtering logic is not carefully implemented",
+      "The issue mentions existing PRs with semantic overlap; need to ensure the fix does not duplicate or conflict with those"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproduction script with state-spaces/mamba-130m-hf and verify that the consumer output matches the cold baseline after the fix",
+      "Add a regression test that simulates a NULL_BLOCK_ID boundary and asserts no key is published",
+      "Run the cross-model validation across GDN, Mamba1, Mamba2, and ShortConv models to ensure no regression"
+    ],
+    "unknowns": [
+      "Whether the existing PRs (e.g., #50021) already fix this exact issue, which would make the contribution redundant",
+      "The exact maintainer preference for the fix implementation (e.g., filtering in data.py vs worker.py)"
+    ],
+    "why": "The issue provides a detailed root cause: MooncakeStoreConnector publishes external prefix-cache keys for recurrent-state boundaries that resolve to NULL_BLOCK_ID, causing silent output corruption. It includes reproducible commands, cross-model evidence, and a concrete fix direction. The track is llm_algorithm and the issue involves a distributed-training invariant (KV cache correctness) with a clear validation path via deterministic output comparison."
+  },
   "75a64662e62c6630f640c7ce029076eaac2480d39b08a2879087f65d7060b1f7": {
     "confidence": 0.7,
     "contradictions": [],
