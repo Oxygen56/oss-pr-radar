@@ -1126,11 +1126,11 @@ def test_verified_reproduction_alias_advances_to_implementation(tmp_path):
             {
                 "defaultBranch": "main",
                 "selectedBaseSha": base_sha,
-                "codePaths": ["runtime.py"],
+                "codePaths": ["`runtime_symbol`"],
                 "preTaskEvidence": {
                     "defaultBranch": "main",
                     "baseSha": base_sha,
-                    "codePathsPlan": ["runtime.py"],
+                    "codePathsPlan": ["`runtime_symbol`"],
                 },
                 "probeRequired": True,
                 "probeLevel": "PATHS_VERIFIED",

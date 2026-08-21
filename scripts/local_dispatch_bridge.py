@@ -11077,6 +11077,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     raw = _write_task_result_json_to_private(result_access, normalized)
                     value = normalized
                     initial_digest = result_digest
+                    managed_candidate["codePaths"] = code_paths
                     managed_adapter.transition_to_implementation(
                         candidate=managed_candidate,
                         receipt=receipt,
