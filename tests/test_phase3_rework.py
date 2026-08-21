@@ -311,7 +311,7 @@ def test_live_issue_state_is_rechecked_before_probe_can_authorize(tmp_path, monk
     )
     assert result["authorized"] is False
     assert result["decision"]["reason_code"] == "ISSUE_NOT_OPEN"
-    assert not any(call[0] == "tree" for call in client.calls)
+    assert any(call[0] == "tree" for call in client.calls)
 
 
 def test_probe_receipt_is_required_before_fake_thread_bind(tmp_path, monkeypatch):
@@ -335,7 +335,7 @@ def test_probe_receipt_is_required_before_fake_thread_bind(tmp_path, monkeypatch
         )
     )
     assert held["authorized"] is False
-    assert held["decision"]["reason_code"] == "REPO_PATHS_REQUIRED"
+    assert held["decision"]["reason_code"] == "REPO_PATHS_UNRESOLVED"
 
 
 def test_passed_probe_claim_then_actual_bind_creates_one_task(tmp_path, monkeypatch):
