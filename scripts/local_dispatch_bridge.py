@@ -2915,7 +2915,11 @@ def _audit_intent(intent: dict[str, Any]) -> tuple[Any, Any]:
             and confidence >= 0.7
         )
         if not paths_verified:
-            verdict = replace(verdict, status="HOLD", reason_code="REPO_PATHS_REQUIRED")
+            verdict = replace(
+                verdict,
+                status="HOLD" if code_paths else "BLOCK",
+                reason_code="REPO_PATHS_REQUIRED" if code_paths else "REPO_PATHS_UNRESOLVED",
+            )
         elif not reproduced and not visible_reproduction_task:
             verdict = replace(
                 verdict,
