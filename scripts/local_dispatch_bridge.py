@@ -10525,7 +10525,31 @@ def _bind_final_reproduction_receipt(
     ):
         rebound = current_receipt
     else:
-        source_receipt = context.get("reproductionReceipt") or context.get("probeReceipt")
+        current_receipt_reusable = bool(
+            isinstance(current_receipt, dict)
+            and verify_probe_receipt(
+                current_receipt,
+                repo=issue_match.group(1),
+                base_sha=selected_base,
+                code_paths=code_paths,
+                required_level=REPRODUCED_VALIDATED,
+                issue_url=issue_url,
+                task_id=task_id,
+                thread_id=(
+                    str(candidate["threadId"])
+                    if current_receipt.get("threadFingerprint")
+                    else None
+                ),
+                head_sha=str(current_receipt.get("headSha") or ""),
+                commit_sha=str(current_receipt.get("commitSha") or ""),
+                result_digest=str(current_receipt.get("resultDigest") or ""),
+            )
+        )
+        source_receipt = (
+            current_receipt
+            if current_receipt_reusable
+            else context.get("reproductionReceipt") or context.get("probeReceipt")
+        )
         if not isinstance(source_receipt, dict):
             raise RuntimeError("REPRODUCED_VALIDATED probe receipt is required")
         rebound = rebind_probe_receipt(

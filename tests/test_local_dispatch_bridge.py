@@ -9334,6 +9334,39 @@ def test_child_cannot_self_attest_independent_review(monkeypatch, tmp_path):
     assert listed["controllerReviewPending"][0]["reason"] == "CONTROLLER_REVIEW_PENDING"
 
 
+def test_final_receipt_rebind_uses_current_valid_receipt_when_context_source_is_unavailable(
+    tmp_path,
+):
+    store, _worktree, result_path = _controller_commit_result(
+        tmp_path,
+        missing_quality=("independent_review_passed",),
+    )
+    candidate = store.task_result_candidates()[0]
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    original_digest = value["resultDigest"]
+    value["quality"]["independent_review_passed"] = True
+    value["independentReview"] = {
+        "schemaVersion": "independent-review-v1",
+        "verdict": "PASS",
+        "summary": "The exact committed diff has no blocking finding.",
+    }
+    context = json.loads((result_path.parent / "task-context.json").read_text(encoding="utf-8"))
+    context.pop("reproductionReceipt", None)
+    context.pop("probeReceipt", None)
+
+    with MODULE._task_worktree_private_descriptor(candidate) as result_access:
+        finalized, _raw = MODULE._bind_final_reproduction_receipt(
+            candidate=candidate,
+            context=context,
+            value=value,
+            result_access=result_access,
+        )
+
+    assert finalized["resultDigest"] != original_digest
+    assert finalized["reproductionReceipt"]["resultDigest"] == finalized["resultDigest"]
+    assert finalized["reproductionReceipt"]["derivedFromReceiptDigest"]
+
+
 def test_failed_controller_review_remains_an_actionable_followup(monkeypatch, tmp_path):
     _store, _worktree, result_path = _controller_commit_result(tmp_path, authenticated=False)
     value = json.loads(result_path.read_text(encoding="utf-8"))
