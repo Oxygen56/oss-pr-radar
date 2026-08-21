@@ -8879,6 +8879,34 @@
     ],
     "why": "Issue describes a clear bug with high impact and a concrete reproduction, but the deterministic gate requires HUMAN_REVIEW and existing PRs (#18876, #18878) are closed without confirmed merge. Maintainer has acknowledged the issue and labeled it for triage, so assignment/design confirmation is needed before starting new work."
   },
+  "3b6f3fcd078862849bc726469e8afaff7ceb9b64873d83104ff622c675e26f47": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "litellm/main.py embedding/transcription/speech litellm_params construction",
+      "litellm/rerank_api/main.py rerank_litellm_params construction",
+      "litellm/router_strategy/budget_limiter.py error handling"
+    ],
+    "risks": [
+      "Potential behavior change if other code relies on custom_llm_provider being absent from litellm_params for these endpoints.",
+      "Need to ensure the fix is applied consistently across all affected endpoints."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that enables provider_budget_config and calls /v1/embeddings and /v1/rerank, asserting no ValueError and that provider spend increments.",
+      "Run existing budget limiter and embedding/rerank unit tests."
+    ],
+    "unknowns": [
+      "Exact maintainer preference for fix implementation (e.g., whether to also handle transcription/speech in same PR)."
+    ],
+    "why": "Issue provides a clear root cause: embedding/rerank/transcription/speech paths omit custom_llm_provider from litellm_params, causing RouterBudgetLimiting to raise before incrementing spend. The suggested fix is concrete and minimal, with a reproducible test path."
+  },
   "3b879a9fb4e34b78b143b7c62bff05c6890436acd6c991037ec4ba69a78a8944": {
     "confidence": 0.85,
     "contradictions": [],
@@ -30581,6 +30609,35 @@
     ],
     "why": "The issue provides a detailed root cause and a minimal deterministic repro for a real bug in the DSPy sandbox, but the supplied gate decision is HUMAN_REVIEW and there are open PRs with semantic overlap (e.g., #9295) that may already address the root cause. The track is llm_algorithm, yet the core fix is in the interpreter's JSON-RPC handling, not an algorithm mechanism; the evaluation_method evidence is weak. Actionability is high, but competition and maintainer review are needed."
   },
+  "c7739c1b2ec4b855316c3c5ca8266698cd6c42875334aa3bcb7d55cbbe3bdd53": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "API configuration to expose body timeout setting",
+      "HTTP client timeout handling in provider integration"
+    ],
+    "risks": [
+      "Changing timeout defaults may affect other providers",
+      "Configuration UI changes may require additional work"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with LM Studio using provided steps and verify timeout occurs",
+      "Add unit test for configurable timeout parameter",
+      "Integration test with mock server that delays response beyond timeout"
+    ],
+    "unknowns": [
+      "Exact location of timeout configuration in codebase",
+      "Maintainer preference for configuration approach"
+    ],
+    "why": "Issue provides clear reproduction steps, environment details, and server logs showing client disconnect due to non-configurable HTTP body timeout. Root cause is identified as missing configuration for body timeout in Cline's API settings. This is actionable for implementing a configurable timeout or adjusting default behavior."
+  },
   "c78819723a9dfbb6c078d3c7378a50b3076acf74cd2788dd611a9b00e81cccde": {
     "confidence": 0.7,
     "contradictions": [
@@ -38776,6 +38833,35 @@
       "Whether loss is in generic ACP lifecycle or WeChat adapter"
     ],
     "why": "The issue is a real user-facing bug with clear repro evidence, but the deterministic gate requires HUMAN_REVIEW and the maintainer bot explicitly states a product decision is needed on cross-channel delivery policy. Existing PRs are closed/unmerged and do not settle the design. A new PR would be premature without maintainer direction."
+  },
+  "f6b058257224855c43374e3e8f41cf39c0371487340d1129088360d614e4f8de": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "Custom-auth OAuth2 token exchange logic for TikTok",
+      "Possibly provider-specific parameter mapping (client_key vs client_id) and response parsing"
+    ],
+    "risks": [
+      "Potential maintainer preference for a different fix approach (e.g., generic OAuth2 flexibility vs TikTok-specific handling).",
+      "Need to ensure no broader API behavior changes."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a failing test using the provided curl commands and a mock TikTok token endpoint that returns an error object when client_id is sent, then verify the fix sends client_key and parses access_token correctly.",
+      "Run existing unit tests for the auth exchange module and static checks."
+    ],
+    "unknowns": [
+      "Exact code location of the token exchange logic in the repository (not specified in evidence).",
+      "Whether maintainers have a preferred design for handling non-standard OAuth2 providers."
+    ],
+    "why": "The issue provides a clear, reproducible bug with a concrete root cause hypothesis (TikTok requires client_key instead of client_id and returns access_token at top level) and a minimal reproduction path. The expected fix is well-scoped: adjust the custom-auth OAuth2 token exchange for TikTok. No competing PR covers the code path; the only related PR is a docs-only draft. The evidence supports actionable implementation work."
   },
   "f6c785e08652dcd35892eece21e39b575ad88511db6cb8a902e38f46a5d69171": {
     "confidence": 0.8,
