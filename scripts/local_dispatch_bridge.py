@@ -2776,6 +2776,7 @@ def _resolve_repo_code_paths(
         return normalized
 
     resolved: set[str] = set()
+    code_search_terms: list[str] = []
     for path in normalized:
         if path in tree_paths:
             resolved.add(path)
@@ -2786,12 +2787,41 @@ def _resolve_repo_code_paths(
                 resolved.update(suffix_matches)
             continue
         if "." not in path:
+            code_search_terms.append(path)
             continue
         basename_matches = {
             candidate for candidate in tree_paths if candidate.rsplit("/", 1)[-1] == path
         }
         if len(basename_matches) == 1:
             resolved.update(basename_matches)
+            continue
+        if not path.casefold().endswith(
+            (".py", ".pyi", ".js", ".jsx", ".ts", ".tsx", ".go", ".rs", ".java", ".cc", ".cpp", ".c", ".h")
+        ):
+            code_search_terms.append(path.rsplit(".", 1)[-1])
+
+    for term in dict.fromkeys(code_search_terms):
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{3,}", term):
+            continue
+        try:
+            search = client.api(
+                "search/code",
+                params={"q": f"{term} repo:{repo}", "per_page": 20},
+            )
+        except Exception:
+            continue
+        items = search.get("items") if isinstance(search, dict) else search
+        matches = {
+            str(item.get("path") or "")
+            for item in (items or [])
+            if isinstance(item, dict) and str(item.get("path") or "") in tree_paths
+        }
+        source_matches = sorted(
+            path
+            for path in matches
+            if path.startswith(("src/", "lib/", "packages/", "python/", "vllm/", "sglang/"))
+        )
+        resolved.update((source_matches or sorted(matches))[:5])
     return sorted(resolved)
 
 

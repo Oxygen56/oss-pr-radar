@@ -758,6 +758,33 @@ def test_root_task_create_passes_runtime_root_to_worker(monkeypatch, tmp_path):
     assert result["threadId"] == "thread-1"
 
 
+def test_resolve_repo_code_paths_uses_symbol_search_for_method_anchors():
+    class Client:
+        @staticmethod
+        def repository_tree(_repo, _ref):
+            return [
+                {"type": "blob", "path": "src/agentscope/model/_base.py"},
+                {"type": "blob", "path": "tests/model_count_tokens_test.py"},
+            ]
+
+        @staticmethod
+        def api(_endpoint, *, params):
+            assert params["q"] == "count_tokens repo:agentscope-ai/agentscope"
+            return {
+                "items": [
+                    {"path": "tests/model_count_tokens_test.py"},
+                    {"path": "src/agentscope/model/_base.py"},
+                ]
+            }
+
+    assert MODULE._resolve_repo_code_paths(
+        Client(),
+        repo="agentscope-ai/agentscope",
+        ref="abc123",
+        code_paths=["ChatModelBase.count_tokens"],
+    ) == ["src/agentscope/model/_base.py"]
+
+
 def test_event_drain_lock_suppresses_overlapping_trigger(tmp_path):
     ledger_path = tmp_path / "ledger.sqlite3"
     lock_path = ledger_path.with_suffix(".drain.lock")
