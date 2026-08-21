@@ -259,7 +259,15 @@ def _bootstrap(runtime: Path, legacy: Path, tmp_path: Path) -> None:
     auth = sign_current(unsigned, context="stage7-stop-evidence-v1")
     evidence = tmp_path / "stopped.json"
     evidence.write_text(json.dumps({**unsigned, **auth}), encoding="utf-8")
-    bootstrap(runtime, legacy, quiesce_token="writer-stopped", service_stopped_evidence=evidence)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(cutover_module, "launchctl_print", lambda _label: "service not found")
+        patch.setattr(cutover_module, "collect_snapshot", lambda _runtime: {})
+        bootstrap(
+            runtime,
+            legacy,
+            quiesce_token="writer-stopped",
+            service_stopped_evidence=evidence,
+        )
 
 
 def _signed_staging_fixture(tmp_path: Path) -> tuple[Path, Path, list[dict[str, object]], Path]:
