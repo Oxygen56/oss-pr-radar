@@ -17760,6 +17760,31 @@
     ],
     "why": "The issue describes a clear user-facing bug on CPU with conflicting validation logic, but the supplied gate requires HUMAN_REVIEW and the open PR #51855 has semantic overlap with the same code path, needing maintainer comparison before new work. The root cause is partially clear but requires design confirmation on how to handle MLA detection and mamba cache mode on CPU."
   },
+  "71a9affc789accf80cf9f8862bbaca186c6d2e6abaeb8801be8edd3d53f1d6ea": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Loop detection logic in core runtime",
+      "Provider-specific reasoning stream normalization"
+    ],
+    "risks": [
+      "Potential maintainer preference for alternative fix; risk of altering API behavior if normalization changes event routing."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a failing test using the reported reproduction with deepseek-v4-flash and skipLoopDetection=false, then run targeted unit tests for repetition detection."
+    ],
+    "unknowns": [
+      "Exact provider stream format and chunking details not fully specified, but root cause hypothesis is sufficient for initial investigation."
+    ],
+    "why": "Issue provides a clear user-visible bug with a concrete root-cause hypothesis (provider-specific reasoning stream not routed into repetition detectors) and a suggested fix. Code anchors and validation path are supplied, making the work actionable."
+  },
   "720dafaa2fe122d41285b9e71ac03cafc7d7259e9d3dedd42a481bc0bf35dbd3": {
     "confidence": 0.7,
     "contradictions": [],
@@ -32270,6 +32295,31 @@
       "Whether PR #6811 will be updated with tests"
     ],
     "why": "Issue clearly identifies a root cause: importlib.metadata.version('mem0ai') fails without installed distribution, breaking source-tree imports and pytest. Existing PR #6811 directly addresses this but lacks regression tests, leaving room for a materially better PR with tests and robust fallback."
+  },
+  "d39487f7ced9c16237fc4fd045f94cd674def980788266d3e59c6d23acd7c121": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "Server.call_tool() error handling",
+      "_make_error_result method"
+    ],
+    "risks": [
+      "Potential API change may affect existing clients expecting only a message string; maintainer preference may differ on exact data structure."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that calls a tool with invalid arguments and asserts the returned CallToolResult contains structured data with validator, schema_path, and json_path fields."
+    ],
+    "unknowns": [
+      "Exact maintainer preference on data field naming and structure; whether to include schema_path/json_path as lists or strings."
+    ],
+    "why": "The issue clearly identifies a root cause: Server.call_tool() discards structured jsonschema.ValidationError fields, leaving only a free-text message. The suggested fix is concrete and actionable: forward e.validator, e.schema_path, and e.json_path into a structured data field. The validation path is clear: add a test that triggers a validation error and asserts the structured fields are present in the CallToolResult. No contradictory evidence or missing facts block actionability."
   },
   "d3fd2440a660b5cc7a01e8fe71ce0ff3611d6c4ac5c79f5c9022015680329bb4": {
     "confidence": 0.6,
