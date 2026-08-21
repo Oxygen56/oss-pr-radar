@@ -35191,6 +35191,31 @@
     ],
     "why": "Issue provides a clear root cause and a minimal repro for a deterministic compile failure in FA4 SM100 split-KV kernels, with a suggested fix (bump nvidia-cutlass-dsl pin and/or defensive initialization). However, the deterministic gate is HUMAN_REVIEW, and there is an existing PR (#41834) with semantic overlap that needs maintainer comparison. Also, the issue is a bug report, not a code contribution; actionability depends on maintainer assignment or confirmation."
   },
+  "e3b00cd8945f0522f62672ae4aa95e71d162b695c16f7885b25d40dcffba8155": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "config write path containment logic",
+      "dashboard update handler for Dreamer tasks"
+    ],
+    "risks": [
+      "Potential behavior change in config write semantics; need to ensure no regression for existing project-level configs."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a test that reproduces the failure by setting up a project without a project-level config and attempting to update a Dreamer task; verify the write either creates a project override or is allowed to write to user config."
+    ],
+    "unknowns": [
+      "Exact location of the containment check in the codebase; maintainer preference on whether to create project override or allow user-config write."
+    ],
+    "why": "Issue provides a clear user-facing bug with a concrete hypothesis: when no project-level config exists, the effective config path resolves to the user-level file, and the dashboard's containment check rejects writes. The evidence includes reproduction steps, expected/actual behavior, and code anchor 'inherited', making the root cause actionable."
+  },
   "e3dff57dcd72583c143ba263ea1dfda078cefc91af24743330bcee81d7027c04": {
     "confidence": 0.8,
     "contradictions": [],
