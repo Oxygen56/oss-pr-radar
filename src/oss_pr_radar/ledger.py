@@ -1164,6 +1164,73 @@ class RadarLedger:
                 superseded.append(intent_id)
         return superseded
 
+    def supersede_intents_for_scanner_revision(
+        self,
+        *,
+        scanner_version: str,
+        decision_contract_digest: str,
+        contract_digest: str,
+        queue_digest: str,
+    ) -> list[str]:
+        """Retire only unstarted local work tied to a verified obsolete scanner tuple."""
+
+        if not all((scanner_version, decision_contract_digest, contract_digest, queue_digest)):
+            raise LedgerError("stale scanner supersede evidence is incomplete")
+        now = iso_z(datetime.now(UTC))
+        superseded: list[str] = []
+        with self.transaction() as connection:
+            rows = connection.execute(
+                """SELECT intent_id,opportunity_key,payload_json FROM intents
+                   WHERE status IN ('PENDING','LEASED')"""
+            ).fetchall()
+            for row in rows:
+                try:
+                    payload = json.loads(row["payload_json"])
+                except (TypeError, json.JSONDecodeError):
+                    continue
+                if (
+                    payload.get("scannerVersion") != scanner_version
+                    or payload.get("decisionContractDigest") != decision_contract_digest
+                    or payload.get("contractDigest") != contract_digest
+                ):
+                    continue
+                intent_id = str(row["intent_id"])
+                key = str(row["opportunity_key"])
+                connection.execute(
+                    """UPDATE intents SET status='SUPERSEDED',lease_owner=NULL,
+                       lease_until=NULL,updated_at=? WHERE intent_id=?
+                       AND status IN ('PENDING','LEASED')""",
+                    (now, intent_id),
+                )
+                connection.execute(
+                    """UPDATE opportunities SET stage='AUDIT_PASS',terminal_reason=NULL,
+                       updated_at=?
+                       WHERE key=? AND stage='LEASED'
+                         AND NOT EXISTS (
+                           SELECT 1 FROM intents
+                           WHERE opportunity_key=? AND intent_id<>?
+                             AND status IN ('PENDING','LEASED','CREATING','DISPATCHED','COMPLETED')
+                         )""",
+                    (now, key, key, intent_id),
+                )
+                self._event(
+                    connection,
+                    key,
+                    "INTENT_SUPERSEDED",
+                    f"stale-scanner:{scanner_version}:{queue_digest}:{intent_id}",
+                    {
+                        "intentId": intent_id,
+                        "reason": "stale_scanner_decision_revision",
+                        "scannerVersion": scanner_version,
+                        "decisionContractDigest": decision_contract_digest,
+                        "contractDigest": contract_digest,
+                        "queueDigest": queue_digest,
+                    },
+                    now,
+                )
+                superseded.append(intent_id)
+        return superseded
+
     def supersede_missing_workspace(
         self,
         *,

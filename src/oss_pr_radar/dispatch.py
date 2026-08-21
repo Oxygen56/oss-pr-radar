@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import re
 import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -15,6 +16,20 @@ from .util import canonical_json, iso_z, parse_time, sha256_json, sha256_text
 
 QUEUE_VERSION = "dispatch_intents_v7"
 INTENT_VERSION = "dispatch_intent_v7"
+SUPERSEDED_SCANNER_DECISION_REVISIONS = frozenset(
+    {
+        "oss_pr_radar_v47_semantic_evidence_only",
+    }
+)
+SUPERSEDED_SCANNER_DECISION_CONTRACTS = {
+    "oss_pr_radar_v47_semantic_evidence_only": {
+        "intentVersion": INTENT_VERSION,
+        "decisionContractDigest": (
+            "7a5c2cdcb524e11b2262e10a121fa4be6f3fea3b1685992fce268defd9a51e87"
+        ),
+        "contractDigest": "a4a72ff173c07ee40bcbb7f0de7aeb3d217b1ef7700aa04f9015806c191b44d9",
+    },
+}
 LEGACY_QUEUE_CONTRACTS = {
     "dispatch_intents_v4": {
         "intentVersion": "dispatch_intent_v4",
@@ -42,6 +57,7 @@ LEGACY_QUEUE_CONTRACTS = {
     },
 }
 SKILL = "[$gh-issue-pr](/Users/oxygen/.codex/skills/gh-issue-pr/SKILL.md)"
+ISSUE_URL_RE = re.compile(r"^https://github\.com/([^/]+/[^/]+)/issues/(\d+)$")
 MAX_INTENT_AGE_DAYS = 14
 NON_REVOKING_REJECTION_REASONS = {
     "seen_recently",
@@ -347,3 +363,68 @@ def verify_queue(
             raise SignatureError("silent exploration intent cannot be dispatched")
         verified.append(item)
     return verified
+
+
+def superseded_scanner_revision_queue(
+    queue: dict[str, Any], signer: DispatchSigner
+) -> dict[str, Any] | None:
+    """Authenticate one known-obsolete current-format queue without executing it."""
+
+    if str(queue.get("version") or "") != QUEUE_VERSION:
+        return None
+    scanner_version = str(queue.get("scannerVersion") or "")
+    if scanner_version == SCANNER_DECISION_REVISION:
+        return None
+    expected = SUPERSEDED_SCANNER_DECISION_CONTRACTS.get(scanner_version)
+    if expected is None:
+        raise SignatureError("stale scanner decision revision")
+    if queue.get("contractDigest") != expected["contractDigest"]:
+        raise SignatureError("stale dispatch contract")
+    if queue.get("decisionContractDigest") != expected["decisionContractDigest"]:
+        raise SignatureError("stale dispatch decision revision")
+    signer.verify(queue)
+    intents = queue.get("intents")
+    if not isinstance(intents, list):
+        raise SignatureError("invalid dispatch intents")
+    if queue.get("intentCount") != len(intents):
+        raise SignatureError("dispatch intent count mismatch")
+    intent_count = 0
+    for item in intents:
+        if not isinstance(item, dict):
+            raise SignatureError("invalid dispatch intent")
+        signer.verify(item)
+        if item.get("version") != expected["intentVersion"]:
+            raise SignatureError("unsupported dispatch intent")
+        if item.get("scannerVersion") != scanner_version:
+            raise SignatureError("stale intent scanner revision")
+        if item.get("contractDigest") != expected["contractDigest"]:
+            raise SignatureError("stale intent contract")
+        if item.get("decisionContractDigest") != expected["decisionContractDigest"]:
+            raise SignatureError("stale intent decision revision")
+        issue_url = str(item.get("issueUrl") or "")
+        match = ISSUE_URL_RE.fullmatch(issue_url)
+        if match is None:
+            raise SignatureError("dispatch intent issue identity is invalid")
+        repo, number = match.groups()
+        if item.get("repo") != repo or str(item.get("issueNumber")) != number:
+            raise SignatureError("dispatch intent issue identity is invalid")
+        if item.get("key") != f"{repo}#{number}":
+            raise SignatureError("dispatch intent issue identity is invalid")
+        try:
+            parse_time(str(item["issueUpdatedAt"]))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise SignatureError("dispatch intent issue update watermark is invalid") from exc
+        if item.get("promptDigest") != sha256_text(canonical_prompt(issue_url)):
+            raise SignatureError("prompt digest mismatch")
+        if not external_side_effect_allowed(item):
+            raise SignatureError("silent exploration intent cannot be dispatched")
+        intent_count += 1
+    return {
+        "status": "superseded_scanner_revision",
+        "queueDigest": sha256_json(queue),
+        "scannerVersion": scanner_version,
+        "decisionContractDigest": expected["decisionContractDigest"],
+        "contractDigest": expected["contractDigest"],
+        "currentScannerVersion": SCANNER_DECISION_REVISION,
+        "intentCount": intent_count,
+    }

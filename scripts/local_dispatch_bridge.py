@@ -34,7 +34,13 @@ from oss_pr_radar.action_guard import (  # noqa: E402
     opportunity_action_guard,
 )
 from oss_pr_radar.decision import authorize  # noqa: E402
-from oss_pr_radar.dispatch import DispatchSigner, canonical_prompt, verify_queue  # noqa: E402
+from oss_pr_radar.dispatch import (  # noqa: E402
+    DispatchSigner,
+    SignatureError,
+    canonical_prompt,
+    superseded_scanner_revision_queue,
+    verify_queue,
+)
 from oss_pr_radar.evidence import collect_evidence  # noqa: E402
 from oss_pr_radar.github_client import GitHubClient  # noqa: E402
 from oss_pr_radar.independent_review import (  # noqa: E402
@@ -1559,6 +1565,54 @@ def fetch_cloud_pr_followup() -> dict[str, Any]:
     return value
 
 
+def _record_superseded_dispatch_queue(
+    queue: dict[str, Any],
+    stale: dict[str, Any],
+    path: Path = LEDGER_PATH,
+    *,
+    import_scope: str,
+) -> dict[str, Any]:
+    superseded = ledger(path).supersede_intents_for_scanner_revision(
+        scanner_version=str(stale["scannerVersion"]),
+        decision_contract_digest=str(stale["decisionContractDigest"]),
+        contract_digest=str(stale["contractDigest"]),
+        queue_digest=str(stale["queueDigest"]),
+    )
+    event = ManagedAdapter(ROOT, path).ledger.record_event(
+        event_type="DISPATCH_QUEUE_REJECTED",
+        idempotency_key=f"dispatch-queue:stale-scanner:{stale['queueDigest']}",
+        state="SUPERSEDED",
+        source="dispatch",
+        provenance={"queueDigest": stale["queueDigest"]},
+        observed_at=iso_z(datetime.now(UTC)),
+        payload=stale,
+    )
+    return {
+        "ok": True,
+        "mode": queue.get("mode"),
+        "verified": 0,
+        "inserted": 0,
+        "superseded": len(superseded),
+        "staleTerminalRejected": 0,
+        "staleQueueRejected": 1,
+        "staleQueue": stale,
+        "staleLocalIntentsSuperseded": superseded,
+        "auditEventCreated": bool(event.get("created")),
+        "importScope": import_scope,
+    }
+
+
+def _classify_superseded_dispatch_queue(
+    queue: dict[str, Any], signer: DispatchSigner, error: SignatureError
+) -> dict[str, Any]:
+    if str(error) != "stale scanner decision revision":
+        raise error
+    stale = superseded_scanner_revision_queue(queue, signer)
+    if stale is None:
+        raise error
+    return stale
+
+
 def ledger(path: Path = LEDGER_PATH) -> RadarLedger:
     return RadarLedger(path)
 
@@ -2217,8 +2271,19 @@ def run_reproduction_probes(args: argparse.Namespace) -> dict[str, Any]:
 
 def sync_queue(path: Path = LEDGER_PATH) -> dict[str, Any]:
     queue = fetch_cloud_queue()
-    intents = verify_queue(queue, DispatchSigner(signing_key()))
-    ManagedAdapter(ROOT, path).record_dispatch_queue(queue)
+    signer = DispatchSigner(signing_key())
+    stale_queue: dict[str, Any] | None = None
+    stale_event: dict[str, Any] | None = None
+    try:
+        intents = verify_queue(queue, signer)
+    except SignatureError as exc:
+        stale_queue = _classify_superseded_dispatch_queue(queue, signer, exc)
+        stale_event = _record_superseded_dispatch_queue(
+            queue, stale_queue, path, import_scope="superseded_signed_queue_only"
+        )
+        intents = []
+    else:
+        ManagedAdapter(ROOT, path).record_dispatch_queue(queue)
     store = ledger(path)
     context_recovery = recover_shared_task_contexts(store)
     if context_recovery["errors"]:
@@ -2261,10 +2326,14 @@ def sync_queue(path: Path = LEDGER_PATH) -> dict[str, Any]:
                 }
             )
     stale_terminal = store.reconcile_terminal_intents()
-    superseded = store.reconcile_pending(
-        {str(item["intentId"]) for item in safe_intents if item.get("intentId")}
-    )
-    inserted = sum(store.enqueue(item) for item in safe_intents)
+    if stale_queue is None:
+        superseded = store.reconcile_pending(
+            {str(item["intentId"]) for item in safe_intents if item.get("intentId")}
+        )
+        inserted = sum(store.enqueue(item) for item in safe_intents)
+    else:
+        superseded = list(stale_event.get("staleLocalIntentsSuperseded") or [])
+        inserted = 0
     followup_import: dict[str, Any]
     try:
         followup = fetch_cloud_pr_followup()
@@ -2303,6 +2372,10 @@ def sync_queue(path: Path = LEDGER_PATH) -> dict[str, Any]:
         "inserted": inserted,
         "superseded": len(superseded),
         "staleTerminalRejected": len(stale_terminal),
+        "staleQueueRejected": 1 if stale_queue is not None else 0,
+        "staleQueue": stale_queue,
+        "staleLocalIntentsSuperseded": superseded,
+        "auditEventCreated": bool(stale_event and stale_event.get("auditEventCreated")),
         "missingWorkspacesSuperseded": workspace_superseded,
         "taskContextRecovery": context_recovery,
         "quarantined": context_recovery.get("quarantined", []),
@@ -2319,7 +2392,14 @@ def import_signed_queue(path: Path = LEDGER_PATH) -> dict[str, Any]:
     """
 
     queue = fetch_cloud_queue()
-    intents = verify_queue(queue, DispatchSigner(signing_key()))
+    signer = DispatchSigner(signing_key())
+    try:
+        intents = verify_queue(queue, signer)
+    except SignatureError as exc:
+        stale = _classify_superseded_dispatch_queue(queue, signer, exc)
+        return _record_superseded_dispatch_queue(
+            queue, stale, path, import_scope="superseded_signed_queue_only"
+        )
     ManagedAdapter(ROOT, path).record_dispatch_queue(queue)
     store = ledger(path)
     stale_terminal = store.reconcile_terminal_intents()

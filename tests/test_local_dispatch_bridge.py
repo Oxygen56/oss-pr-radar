@@ -22,12 +22,23 @@ from types import SimpleNamespace
 
 import pytest
 
+from oss_pr_radar.contracts import contract_digest
+from oss_pr_radar.dispatch import (
+    INTENT_VERSION,
+    QUEUE_VERSION,
+    SUPERSEDED_SCANNER_DECISION_CONTRACTS,
+    SUPERSEDED_SCANNER_DECISION_REVISIONS,
+)
+from oss_pr_radar.dispatch import (
+    canonical_prompt as dispatch_canonical_prompt,
+)
 from oss_pr_radar.independent_review import REVIEW_SCHEMA, _receipt_path, _source_digest
 from oss_pr_radar.ledger import LedgerError, RadarLedger
 from oss_pr_radar.local_publication import slow_advance_once
 from oss_pr_radar.managed_lifecycle import ManagedLedger
 from oss_pr_radar.metrics import QUALITY_FIELDS
-from oss_pr_radar.util import iso_z, parse_time, sha256_json
+from oss_pr_radar.policy import SCANNER_DECISION_REVISION, decision_contract_digest
+from oss_pr_radar.util import iso_z, parse_time, sha256_json, sha256_text
 
 pytestmark = pytest.mark.usefixtures("current_signing_key")
 
@@ -49,6 +60,368 @@ def hermetic_bridge_shared_root(monkeypatch, tmp_path):
     private_root = github_root / MODULE.TASK_PRIVATE_DIR
     private_root.mkdir(parents=True, exist_ok=True)
     private_root.chmod(0o700)
+
+
+def _signed_dispatch_queue(
+    *,
+    scanner_version: str = SCANNER_DECISION_REVISION,
+    intent_id: str = "intent-1",
+    key: str = "owner/repo#1",
+    include_intent: bool = True,
+    queue_overrides: dict | None = None,
+    intent_overrides: dict | None = None,
+) -> dict:
+    signer = MODULE.DispatchSigner(os.environ["RADAR_DISPATCH_HMAC_KEY"])
+    owner_repo, number_text = key.split("#", 1)
+    number = int(number_text)
+    issue_url = f"https://github.com/{owner_repo}/issues/{number}"
+    stale_contract = SUPERSEDED_SCANNER_DECISION_CONTRACTS.get(scanner_version)
+    decision_digest = (
+        stale_contract["decisionContractDigest"] if stale_contract else decision_contract_digest()
+    )
+    dispatch_contract = stale_contract["contractDigest"] if stale_contract else contract_digest()
+    intents = []
+    if include_intent:
+        intent = {
+            "version": INTENT_VERSION,
+            "intentId": intent_id,
+            "key": key,
+            "repo": owner_repo,
+            "issueNumber": number,
+            "issueUrl": issue_url,
+            "title": "Useful bug",
+            "issuedAt": "2026-08-21T00:00:00Z",
+            "expiresAt": "2026-08-28T00:00:00Z",
+            "issueUpdatedAt": "2026-08-21T00:00:00Z",
+            "policyDigest": "policy-digest",
+            "scannerVersion": scanner_version,
+            "decisionContractDigest": decision_digest,
+            "contractDigest": dispatch_contract,
+            "decisionDigest": f"decision-{intent_id}",
+            "promptDigest": sha256_text(dispatch_canonical_prompt(issue_url)),
+            "autoSpawn": True,
+            "notify": True,
+            "preTaskGate": {"allowed": True},
+            "preTaskEvidence": {"schema": "pre_task_evidence_v1"},
+        }
+        if intent_overrides:
+            intent.update(intent_overrides)
+        intents.append(signer.seal(intent))
+    queue = {
+        "version": QUEUE_VERSION,
+        "mode": "shadow",
+        "issuedAt": "2026-08-21T00:00:00Z",
+        "scannerVersion": scanner_version,
+        "decisionContractDigest": decision_digest,
+        "contractDigest": dispatch_contract,
+        "intentCount": len(intents),
+        "intents": intents,
+    }
+    if queue_overrides:
+        queue.update(queue_overrides)
+    return signer.seal(queue)
+
+
+def _superseded_scanner_revision() -> str:
+    return next(iter(SUPERSEDED_SCANNER_DECISION_REVISIONS))
+
+
+def _enqueue_signed_intent(
+    store: RadarLedger,
+    *,
+    scanner_version: str,
+    intent_id: str,
+    key: str,
+) -> dict:
+    intent = _signed_dispatch_queue(
+        scanner_version=scanner_version,
+        intent_id=intent_id,
+        key=key,
+    )["intents"][0]
+    assert store.enqueue(intent) is True
+    return intent
+
+
+def _intent_statuses(path: Path) -> dict[str, str]:
+    with sqlite3.connect(path) as connection:
+        return {
+            str(row[0]): str(row[1])
+            for row in connection.execute("SELECT intent_id,status FROM intents")
+        }
+
+
+def _managed_event_count(path: Path, event_type: str) -> int:
+    if not path.exists():
+        return 0
+    with sqlite3.connect(path) as connection:
+        table = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='managed_lifecycle_events'"
+        ).fetchone()
+        if table is None:
+            return 0
+        return int(
+            connection.execute(
+                "SELECT COUNT(*) FROM managed_lifecycle_events WHERE event_type=?",
+                (event_type,),
+            ).fetchone()[0]
+        )
+
+
+def test_import_signed_queue_retires_known_superseded_queue_and_unstarted_local_intents(
+    monkeypatch, tmp_path
+):
+    db = tmp_path / "ledger.sqlite3"
+    stale_revision = _superseded_scanner_revision()
+    store = RadarLedger(db)
+    _enqueue_signed_intent(
+        store,
+        scanner_version=stale_revision,
+        intent_id="old-pending",
+        key="old/repo#1",
+    )
+    _enqueue_signed_intent(
+        store,
+        scanner_version=stale_revision,
+        intent_id="old-leased",
+        key="old/repo#2",
+    )
+    assert store.claim("old-leased", "tester") is not None
+    _enqueue_signed_intent(
+        store,
+        scanner_version=SCANNER_DECISION_REVISION,
+        intent_id="current-pending",
+        key="new/repo#1",
+    )
+    _enqueue_signed_intent(
+        store,
+        scanner_version=stale_revision,
+        intent_id="old-creating",
+        key="old/repo#3",
+    )
+    assert store.claim("old-creating", "tester") is not None
+    store.reserve_creation("old-creating", owner="tester")
+    _enqueue_signed_intent(
+        store,
+        scanner_version=stale_revision,
+        intent_id="old-dispatched",
+        key="old/repo#4",
+    )
+    assert store.claim("old-dispatched", "tester") is not None
+    store.commit_dispatch(
+        "old-dispatched",
+        owner="tester",
+        thread_id="thread-old-dispatched",
+        project_id="github",
+        worktree_path=str(tmp_path / "old-dispatched"),
+    )
+    _enqueue_signed_intent(
+        store,
+        scanner_version=stale_revision,
+        intent_id="old-completed",
+        key="old/repo#5",
+    )
+    store.record_stage("old/repo#5", "FIX_READY", evidence={"result": "done"})
+    remote = _signed_dispatch_queue(scanner_version=stale_revision, include_intent=False)
+    monkeypatch.setattr(MODULE, "fetch_cloud_queue", lambda: remote)
+
+    result = MODULE.import_signed_queue(db)
+
+    assert result["ok"] is True
+    assert result["staleQueueRejected"] == 1
+    assert result["verified"] == 0
+    assert result["inserted"] == 0
+    assert set(result["staleLocalIntentsSuperseded"]) == {"old-pending", "old-leased"}
+    assert result["superseded"] == 2
+    assert _intent_statuses(db) == {
+        "old-pending": "SUPERSEDED",
+        "old-leased": "SUPERSEDED",
+        "current-pending": "PENDING",
+        "old-creating": "CREATING",
+        "old-dispatched": "DISPATCHED",
+        "old-completed": "COMPLETED",
+    }
+    assert _managed_event_count(db, "DISPATCH_QUEUE_REJECTED") == 1
+
+    again = MODULE.import_signed_queue(db)
+
+    assert again["ok"] is True
+    assert again["staleQueueRejected"] == 1
+    assert again["auditEventCreated"] is False
+    assert again["staleLocalIntentsSuperseded"] == []
+    assert _managed_event_count(db, "DISPATCH_QUEUE_REJECTED") == 1
+
+
+def test_sync_queue_superseded_revision_runs_independent_maintenance(monkeypatch, tmp_path):
+    db = tmp_path / "ledger.sqlite3"
+    store = RadarLedger(db)
+    _enqueue_signed_intent(
+        store,
+        scanner_version=SCANNER_DECISION_REVISION,
+        intent_id="current-pending",
+        key="new/repo#1",
+    )
+    stale_revision = _superseded_scanner_revision()
+    remote = _signed_dispatch_queue(scanner_version=stale_revision, include_intent=False)
+    monkeypatch.setattr(MODULE, "fetch_cloud_queue", lambda: remote)
+    recovery_calls = []
+
+    def recover(store_arg):
+        recovery_calls.append(store_arg.path)
+        return {
+            "verified": 1,
+            "restored": [],
+            "resultReceiptsRestored": 0,
+            "unavailable": [],
+            "quarantined": [],
+            "errors": [],
+        }
+
+    monkeypatch.setattr(MODULE, "recover_shared_task_contexts", recover)
+    monkeypatch.setattr(
+        MODULE,
+        "fetch_cloud_pr_followup",
+        lambda: {
+            "version": "pr_followup_v3",
+            "generatedAt": iso_z(datetime.now(UTC)),
+            "items": [],
+        },
+    )
+
+    result = MODULE.sync_queue(db)
+
+    assert result["ok"] is True
+    assert result["staleQueueRejected"] == 1
+    assert result["verified"] == 0
+    assert result["inserted"] == 0
+    assert result["superseded"] == 0
+    assert recovery_calls == [db]
+    assert result["taskContextRecovery"]["verified"] == 1
+    assert result["prFollowup"]["status"] == "imported"
+    assert _intent_statuses(db) == {"current-pending": "PENDING"}
+
+
+def test_import_signed_queue_imports_current_revision(monkeypatch, tmp_path):
+    db = tmp_path / "ledger.sqlite3"
+    queue = _signed_dispatch_queue(
+        scanner_version=SCANNER_DECISION_REVISION,
+        intent_id="current-intent",
+        key="current/repo#1",
+    )
+    monkeypatch.setattr(MODULE, "fetch_cloud_queue", lambda: queue)
+
+    result = MODULE.import_signed_queue(db)
+
+    assert result["ok"] is True
+    assert result["verified"] == 1
+    assert result["inserted"] == 1
+    assert result.get("staleQueueRejected", 0) == 0
+    assert _intent_statuses(db) == {"current-intent": "PENDING"}
+
+
+@pytest.mark.parametrize(
+    ("queue_factory", "message"),
+    [
+        (
+            lambda stale: (
+                _signed_dispatch_queue(
+                    scanner_version=stale,
+                    include_intent=False,
+                    queue_overrides={"mode": "active"},
+                )
+                | {"mode": "tampered"}
+            ),
+            "dispatch signature mismatch",
+        ),
+        (
+            lambda stale: _signed_dispatch_queue(
+                scanner_version=stale,
+                include_intent=False,
+                queue_overrides={"decisionContractDigest": "bad-decision"},
+            ),
+            "stale dispatch decision revision",
+        ),
+        (
+            lambda stale: _signed_dispatch_queue(
+                scanner_version=stale,
+                include_intent=False,
+                queue_overrides={"contractDigest": "bad-contract"},
+            ),
+            "stale dispatch contract",
+        ),
+        (
+            lambda _stale: _signed_dispatch_queue(
+                scanner_version="oss_pr_radar_v99_future",
+                include_intent=False,
+            ),
+            "stale scanner decision revision",
+        ),
+        (
+            lambda stale: _signed_dispatch_queue(
+                scanner_version=stale,
+                include_intent=True,
+                intent_overrides={"scannerVersion": SCANNER_DECISION_REVISION},
+            ),
+            "stale intent scanner revision",
+        ),
+        (
+            lambda stale: _signed_dispatch_queue(
+                scanner_version=stale,
+                include_intent=True,
+                intent_overrides={"decisionContractDigest": "bad-intent-decision"},
+            ),
+            "stale intent decision revision",
+        ),
+        (
+            lambda stale: _signed_dispatch_queue(
+                scanner_version=stale,
+                include_intent=True,
+                intent_overrides={"contractDigest": "bad-intent-contract"},
+            ),
+            "stale intent contract",
+        ),
+        (
+            lambda stale: _signed_dispatch_queue(
+                scanner_version=stale,
+                include_intent=True,
+                intent_overrides={"promptDigest": "bad-prompt"},
+            ),
+            "prompt digest mismatch",
+        ),
+        (
+            lambda stale: _signed_dispatch_queue(
+                scanner_version=stale,
+                include_intent=True,
+                intent_overrides={"maturity": "exploration"},
+            ),
+            "silent exploration intent cannot be dispatched",
+        ),
+        (
+            lambda stale: _signed_dispatch_queue(
+                scanner_version=stale,
+                include_intent=True,
+                intent_overrides={"key": "owner/repo#999"},
+            ),
+            "dispatch intent issue identity is invalid",
+        ),
+        (
+            lambda stale: _signed_dispatch_queue(
+                scanner_version=stale,
+                include_intent=True,
+                queue_overrides={"intentCount": 2},
+            ),
+            "dispatch intent count mismatch",
+        ),
+    ],
+)
+def test_superseded_queue_fail_closed_without_writes(monkeypatch, tmp_path, queue_factory, message):
+    db = tmp_path / "ledger.sqlite3"
+    queue = queue_factory(_superseded_scanner_revision())
+    monkeypatch.setattr(MODULE, "fetch_cloud_queue", lambda: queue)
+
+    with pytest.raises(MODULE.SignatureError, match=re.escape(message)):
+        MODULE.import_signed_queue(db)
+
+    assert not db.exists() or _managed_event_count(db, "DISPATCH_QUEUE_REJECTED") == 0
 
 
 def _finalize_controller_commit_for_test(
