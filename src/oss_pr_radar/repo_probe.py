@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import io
 import os
+import re
 import resource
 import secrets
 import shutil
@@ -420,6 +421,86 @@ def verify_probe_receipt(
             signature=str(receipt.get("signature")),
         )
     )
+
+
+def rebind_probe_receipt(
+    receipt: dict[str, Any],
+    *,
+    repo: str,
+    base_sha: str,
+    code_paths: list[str],
+    issue_url: str,
+    task_id: str,
+    thread_id: str,
+    head_sha: str,
+    commit_sha: str,
+    result_digest: str,
+) -> dict[str, Any]:
+    """Bind authenticated reproduction evidence to its final implementation result."""
+
+    if not verify_probe_receipt(
+        receipt,
+        repo=repo,
+        base_sha=base_sha,
+        code_paths=code_paths,
+        required_level=REPRODUCED_VALIDATED,
+        issue_url=issue_url,
+        task_id=task_id,
+        thread_id=thread_id if receipt.get("threadFingerprint") else None,
+        head_sha=str(receipt.get("headSha") or ""),
+        commit_sha=str(receipt.get("commitSha") or ""),
+        result_digest=str(receipt.get("resultDigest") or ""),
+    ):
+        raise ProbeUnavailable("REPRODUCTION_RECEIPT_INVALID")
+    if not all(re.fullmatch(r"[0-9a-f]{40}", value) for value in (head_sha, commit_sha)):
+        raise ProbeUnavailable("IMPLEMENTATION_COMMIT_INVALID")
+    if not re.fullmatch(r"[0-9a-f]{64}", result_digest):
+        raise ProbeUnavailable("IMPLEMENTATION_RESULT_DIGEST_INVALID")
+
+    source_digest = str(receipt["receiptDigest"])
+    now = datetime.now(UTC)
+    payload = {
+        key: value
+        for key, value in receipt.items()
+        if key not in {"keyId", "signature", "receiptDigest"}
+    }
+    payload.update(
+        {
+            "headSha": head_sha,
+            "commitSha": commit_sha,
+            "resultDigest": result_digest,
+            "threadFingerprint": thread_fingerprint(thread_id),
+            "derivedFromReceiptDigest": source_digest,
+            "bindingPurpose": "implementation-result-v1",
+            "observedAt": iso_z(now),
+            "expiresAt": iso_z(now + timedelta(hours=1)),
+            "policyDigest": sha256_json(
+                {
+                    "schema": PROBE_SCHEMA,
+                    "purpose": "implementation-result-v1",
+                    "sourceReceiptDigest": source_digest,
+                    "resultDigest": result_digest,
+                }
+            ),
+        }
+    )
+    payload["receiptDigest"] = sha256_json(payload)
+    rebound = _signed_receipt(payload)
+    if not verify_probe_receipt(
+        rebound,
+        repo=repo,
+        base_sha=base_sha,
+        code_paths=code_paths,
+        required_level=REPRODUCED_VALIDATED,
+        issue_url=issue_url,
+        task_id=task_id,
+        thread_id=thread_id,
+        head_sha=head_sha,
+        commit_sha=commit_sha,
+        result_digest=result_digest,
+    ):
+        raise ProbeUnavailable("REPRODUCTION_RECEIPT_REBIND_FAILED")
+    return rebound
 
 
 def run_repo_probe(

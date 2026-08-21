@@ -75,6 +75,7 @@ from oss_pr_radar.repo_probe import (  # noqa: E402
     PATHS_VERIFIED,
     REPRODUCED_VALIDATED,
     attest_task_reproduction_result,
+    rebind_probe_receipt,
     run_repo_probe,
     verify_probe_receipt,
 )
@@ -10437,6 +10438,116 @@ def _task_result_digest(value: dict[str, Any], raw: bytes) -> str:
     return expected
 
 
+def _unsigned_final_task_result_digest(value: dict[str, Any]) -> str:
+    """Hash a controller-finalized result before attaching its probe receipt."""
+
+    if value.get("handoffMode") != "controller_commit_complete":
+        raise RuntimeError("task result must be controller-finalized before receipt binding")
+    unsigned = dict(value)
+    unsigned.pop("reproductionReceipt", None)
+    unsigned.pop("probeReceipt", None)
+    unsigned.pop("resultDigest", None)
+    unsigned.pop("independentReview", None)
+    unsigned.pop("contextDigest", None)
+    controller_policy = unsigned.pop("controllerPolicyVerification", None)
+    if controller_policy is not None:
+        quality = unsigned.get("quality")
+        if isinstance(quality, dict):
+            quality = dict(quality)
+            quality["policy_verified"] = True
+            unsigned["quality"] = quality
+    return sha256_json(unsigned)
+
+
+def _bind_final_reproduction_receipt(
+    *,
+    candidate: dict[str, Any],
+    context: dict[str, Any],
+    value: dict[str, Any],
+    result_access: _ValidationWorktreeDirectory,
+) -> tuple[dict[str, Any], bytes]:
+    """Inherit verified reproduction evidence into a controller-finalized fix."""
+
+    issue_url = str(candidate["issueUrl"])
+    issue_match = ISSUE_URL.match(issue_url)
+    if issue_match is None:
+        raise RuntimeError("invalid issue URL")
+    commit_sha = str(value.get("commitSha") or "")
+    selected_base = str(
+        value.get("selectedBaseSha")
+        or context.get("selectedBaseSha")
+        or candidate.get("selectedBaseSha")
+        or (candidate.get("preTaskEvidence") or {}).get("baseSha")
+        or ""
+    )
+    code_paths = [
+        str(path)
+        for path in (
+            value.get("codePaths")
+            or context.get("codePaths")
+            or candidate.get("codePaths")
+            or (candidate.get("preTaskEvidence") or {}).get("codePathsPlan")
+            or []
+        )
+        if str(path).strip()
+    ]
+    task_id = str(
+        value.get("taskId")
+        or value.get("intentId")
+        or candidate.get("intentId")
+        or candidate["threadId"]
+    )
+    normalized = dict(value)
+    normalized.update(
+        {
+            "headSha": commit_sha,
+            "selectedBaseSha": selected_base,
+            "taskId": task_id,
+            "codePaths": code_paths,
+        }
+    )
+    result_digest = _unsigned_final_task_result_digest(normalized)
+    current_receipt = normalized.get("reproductionReceipt") or normalized.get("probeReceipt")
+    if isinstance(current_receipt, dict) and verify_probe_receipt(
+        current_receipt,
+        repo=issue_match.group(1),
+        base_sha=selected_base,
+        code_paths=code_paths,
+        required_level=REPRODUCED_VALIDATED,
+        issue_url=issue_url,
+        task_id=task_id,
+        thread_id=(
+            str(candidate["threadId"])
+            if current_receipt.get("threadFingerprint")
+            else None
+        ),
+        head_sha=commit_sha,
+        commit_sha=commit_sha,
+        result_digest=result_digest,
+    ):
+        rebound = current_receipt
+    else:
+        source_receipt = context.get("reproductionReceipt") or context.get("probeReceipt")
+        if not isinstance(source_receipt, dict):
+            raise RuntimeError("REPRODUCED_VALIDATED probe receipt is required")
+        rebound = rebind_probe_receipt(
+            source_receipt,
+            repo=issue_match.group(1),
+            base_sha=selected_base,
+            code_paths=code_paths,
+            issue_url=issue_url,
+            task_id=task_id,
+            thread_id=str(candidate["threadId"]),
+            head_sha=commit_sha,
+            commit_sha=commit_sha,
+            result_digest=result_digest,
+        )
+    normalized["resultDigest"] = result_digest
+    normalized["reproductionReceipt"] = rebound
+    normalized.pop("probeReceipt", None)
+    return normalized, _write_task_result_json_to_private(result_access, normalized)
+
+
 def _reproduction_result_digest(value: dict[str, Any]) -> str:
     """Return the stable digest that a controller attestation will bind."""
 
@@ -11123,6 +11234,14 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     else:
                         value["independentReview"] = controller_review
                     raw = _write_task_result_json_to_private(result_access, value)
+                value, raw = _bind_final_reproduction_receipt(
+                    candidate=candidate,
+                    context=context,
+                    value=value,
+                    result_access=result_access,
+                )
+                quality = value.get("quality")
+                assert isinstance(quality, dict)
                 digest = _task_result_digest(value, raw)
                 publication_blocked = _publication_block_reason(context, value)
                 assessment = assess_submit_ready(quality)

@@ -9321,6 +9321,9 @@ def test_child_cannot_self_attest_independent_review(monkeypatch, tmp_path):
     ]
     finalized = json.loads(result_path.read_text(encoding="utf-8"))
     assert finalized["quality"]["independent_review_passed"] is False
+    assert finalized["reproductionReceipt"]["bindingPurpose"] == "implementation-result-v1"
+    assert finalized["reproductionReceipt"]["commitSha"] == finalized["commitSha"]
+    assert finalized["reproductionReceipt"]["resultDigest"] == finalized["resultDigest"]
     assert store.publication_work_items() == []
 
     listed = MODULE.validation_followup_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
@@ -9471,9 +9474,10 @@ def test_controller_policy_snapshot_recovers_an_existing_blocked_fix(monkeypatch
     recovered = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
 
     assert first["validationDeferred"][0]["missing"] == ["policy_verified"]
+    assert "publicationBlockedReason" in blocked["ingested"][0], blocked
     assert blocked["ingested"][0]["publicationBlockedReason"] == (
         "REPOSITORY_POLICY_EVIDENCE_REQUIRED"
-    )
+    ), blocked
     assert len(recovered["publicationRequests"]) == 1
     assert recovered["ingested"] == [{"key": "a/b#1", "stage": "FIX_READY"}]
     assert json.loads(result_path.read_text(encoding="utf-8"))["quality"]["policy_verified"] is True
