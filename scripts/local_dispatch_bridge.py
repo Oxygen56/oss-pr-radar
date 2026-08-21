@@ -13005,6 +13005,7 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
         created = root_task_create(
             argparse.Namespace(
                 ledger=args.ledger,
+                runtime_root=args.runtime_root,
                 intent_id=intent["intentId"],
                 creation_token=creation["creationToken"],
                 project_id=args.project_id,

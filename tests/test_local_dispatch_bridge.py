@@ -701,7 +701,7 @@ def test_event_drain_creates_exactly_one_new_issue_task(monkeypatch, tmp_path):
         MODULE,
         "root_task_create",
         lambda args: (
-            calls.append(("create", args.creation_token))
+            calls.append(("create", args.creation_token, args.runtime_root))
             or {"threadId": "thread-1", "turnId": "turn-1"}
         ),
     )
@@ -717,7 +717,11 @@ def test_event_drain_creates_exactly_one_new_issue_task(monkeypatch, tmp_path):
 
     assert result["action"] == "issue_task_dispatched"
     assert result["threadId"] == "thread-1"
-    assert calls == [("claim", "intent-1"), ("creation", "intent-1"), ("create", "token-1")]
+    assert calls == [
+        ("claim", "intent-1"),
+        ("creation", "intent-1"),
+        ("create", "token-1", tmp_path),
+    ]
 
 
 def test_root_task_create_passes_runtime_root_to_worker(monkeypatch, tmp_path):
