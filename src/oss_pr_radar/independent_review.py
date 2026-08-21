@@ -79,10 +79,17 @@ def _safe_changed_files(value: Any) -> list[str]:
 def _source_digest(value: dict[str, Any]) -> str:
     normalized = dict(value)
     normalized.pop("independentReview", None)
+    normalized.pop("reproductionReceipt", None)
+    normalized.pop("probeReceipt", None)
+    normalized.pop("resultDigest", None)
+    normalized.pop("contextDigest", None)
+    controller_policy = normalized.pop("controllerPolicyVerification", None)
     quality = normalized.get("quality")
     if isinstance(quality, dict):
         normalized_quality = dict(quality)
         normalized_quality["independent_review_passed"] = False
+        if controller_policy is not None:
+            normalized_quality["policy_verified"] = True
         normalized["quality"] = normalized_quality
     return sha256_json(normalized)
 

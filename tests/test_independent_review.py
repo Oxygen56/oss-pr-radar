@@ -105,6 +105,42 @@ def test_review_once_binds_pass_to_exact_commit(tmp_path, monkeypatch):
     assert seen["cwd"] == worktree
 
 
+def test_review_receipt_survives_controller_result_receipt_rebinding(tmp_path, monkeypatch):
+    control, _worktree, result_path, candidate, _base, head = prepared_task(tmp_path)
+
+    class FakeLedger:
+        def task_result_candidates(self):
+            return [candidate]
+
+    monkeypatch.setattr(module, "RadarLedger", lambda _path: FakeLedger())
+    module.review_once(
+        control,
+        control / "ledger.sqlite3",
+        reviewer=lambda *_args: {
+            "verdict": "PASS",
+            "summary": "The exact committed diff has no blocking finding.",
+            "findings": [],
+            "evidence": ["The implementation and regression test are narrowly scoped."],
+        },
+    )
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    review = module.controller_review_result(control, value)
+    assert review is not None
+
+    value["quality"]["independent_review_passed"] = True
+    value["independentReview"] = review
+    value["resultDigest"] = "a" * 64
+    value["contextDigest"] = "b" * 64
+    value["controllerPolicyVerification"] = {"verifiedAt": "2026-08-21T00:00:00Z"}
+    value["reproductionReceipt"] = {
+        "commitSha": head,
+        "resultDigest": "a" * 64,
+        "receiptDigest": "c" * 64,
+    }
+
+    assert module.controller_review_passed(control, value) is True
+
+
 def test_review_once_does_not_repeat_unchanged_hold(tmp_path, monkeypatch):
     control, _worktree, _result_path, candidate, _base, _head = prepared_task(tmp_path)
 
