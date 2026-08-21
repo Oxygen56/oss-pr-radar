@@ -10666,6 +10666,35 @@
     ],
     "why": "The issue is a real user-facing bug with a clear repro and fresh evidence, but the deterministic gate requires HUMAN_REVIEW and the maintainer bot explicitly states a product decision is needed on cross-channel delivery policy. Existing PRs are closed/unmerged and do not settle the design. A new PR would be premature without maintainer direction."
   },
+  "489b383d861e30d75eda0013b8108b7356339e3901cd950f9bb4af7ccb7e2246": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Update media CLI contract or DSH runtime to use Start-Process with redirects on Windows",
+      "Add Windows-specific invocation handling in the DeepSeek Harness carrier"
+    ],
+    "risks": [
+      "Potential behavior change in the media CLI contract that could affect other platforms or runtimes",
+      "Need to ensure the fix does not break existing POSIX invocation paths"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a failing test that reproduces the empty stdout when invoking the media CLI via PowerShell on Windows",
+      "Run the existing Windows-specific tests around DeepSeek Harness and media wait to ensure no regression"
+    ],
+    "unknowns": [
+      "Whether the issue is limited to media generate or also affects media wait, as maintainer asked; this affects the scope of the fix but does not block actionability."
+    ],
+    "why": "Issue provides a clear Windows-specific bug with reproduction steps, a working workaround, and maintainer confirmation that the gap is real and actionable. The root cause is likely PowerShell stdout capture failure when invoking the Electron/Node runtime directly, and the fix path is concrete."
+  },
   "4961b0a13b56d79c4df2e927f409e444e51418867a185f336ac491791c91a41f": {
     "confidence": 0.7,
     "contradictions": [],
