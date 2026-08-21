@@ -8357,6 +8357,30 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "The issue is a valid bug report for @mastra/mcp@1.16.0, but the maintainer bot states the feature shipped in @mastra/mcp@1.17.0 via merged PRs #20929 and #20931. The issue is effectively resolved and the candidate work is already implemented."
   },
+  "3857222b303ad5233a983c3c6aa81f02db719229ab9b3483df34fb383bf9c94a": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "src/smolagents/remote_executors.py: modify ModalExecutor._wait_for_server to increment retry counter and sleep on non-200 responses, matching DockerExecutor behavior"
+    ],
+    "risks": [
+      "Changing retry behavior may affect startup timing; ensure the fix does not introduce excessive delays or alter the intended retry budget."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that mocks requests.get to return a non-200 status (e.g., 503) and verifies the loop retries with backoff and eventually raises RuntimeError after exceeding retry limit."
+    ],
+    "unknowns": [
+      "No maintainer confirmation on preferred implementation, but the suggested fix is straightforward and aligns with sibling executor."
+    ],
+    "why": "The issue provides a precise root cause: in ModalExecutor._wait_for_server, the retry counter and sleep are only inside the except branch, so a non-200 response causes an unbounded busy loop. A concrete reproduction harness and a suggested fix are included, making the contribution actionable."
+  },
   "3869a689a4ac88ee3cd663699f334b613175e4cd5375bedf7806eca3732ff12e": {
     "confidence": 0.85,
     "contradictions": [],
@@ -33394,6 +33418,38 @@
       "Whether maintainers have a preferred implementation approach or if the closed PR will be revived."
     ],
     "why": "Issue provides a precise root cause across three code paths, a concrete reproduction, and a suggested fix. The candidate is actionable despite an existing closed PR lacking tests and root-cause coverage."
+  },
+  "d8d2647227fade45f8c65bdead241573f70446a0404754bf9fa266ac06a01b9d": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The open PR assessment lists PR #48792 as semantically overlapping, but its title and content are about a kernel (ReplaySSM) unrelated to the reasoning parser; this appears to be a false positive."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/parser/qwen3.py",
+      "vllm/parser/engine/parser_engine.py",
+      "vllm/parser/abstract_parser.py",
+      "vllm/entrypoints/openai/chat_completion/serving.py"
+    ],
+    "risks": [
+      "Potential overlap with existing PRs (e.g., #50964) that may partially address the issue; need to compare implementation boundaries.",
+      "The fix may require careful handling of prompt token IDs in non-streaming path to avoid regressions."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use the provided minimal Jinja template and curl command to reproduce the bug on a small Qwen3 model, then verify the fix yields content='4' and reasoning=null for both streaming and non-streaming requests."
+    ],
+    "unknowns": [
+      "Whether the suggested fix has been implemented in any existing PR; the issue does not reference a specific PR, and the open PR assessment is inconclusive."
+    ],
+    "why": "The issue provides a detailed root cause analysis with code-level trace, a minimal reproduction template, and a concrete fix suggestion. The problem is a genuine LLM parser algorithm bug affecting reasoning/content separation, with a clear validation path via a two-line Jinja template and curl command. The track is llm_algorithm and the issue qualifies as it involves a model mechanism (reasoning parser state machine) and evaluation methodology (reference vs implementation)."
   },
   "d8e4cee836982fbd787012f3120cb1f3937d5561b3efd4f253a3507f414c868c": {
     "confidence": 0.85,
