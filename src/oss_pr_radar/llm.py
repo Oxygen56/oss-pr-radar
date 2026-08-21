@@ -18,7 +18,7 @@ from .contracts import contract_digest
 from .opportunity import normalize_semantic_signal
 from .util import sha256_text
 
-CACHE_SCHEMA = "deepseek_semantic_review_v7_evidence_only"
+CACHE_SCHEMA = "deepseek_semantic_review_v8_supplied_evidence_ids"
 NO_CODE_ACTION_RE = re.compile(
     r"\b(?:no new code changes? (?:(?:is|are) )?expected|"
     r"no code changes? (?:(?:is|are) )?(?:needed|required|expected)|"
@@ -169,19 +169,12 @@ class DeepSeekEvaluator:
 
             normalized = self._normalize(review)
             evidence_ids = normalized.get("evidence_ids") or []
-            known_evidence = {
-                "issue_data.issue_body",
-                "issue_data.comments",
-                "issue_data.timeline",
-                "candidate.actionability_evidence",
-                "candidate.open_pr_assessment",
-                "candidate.related_issue_assessment",
-                "candidate.preTaskEvidence",
-                "repository.policy",
-            }
-            if normalized["semanticSignal"] == "NO_OBJECTION" and (
-                not evidence_ids
-                or not all(evidence_id in known_evidence for evidence_id in evidence_ids)
+            supplied_evidence = self._payload_evidence_ids(payload)
+            invalid_evidence = [
+                evidence_id for evidence_id in evidence_ids if evidence_id not in supplied_evidence
+            ]
+            if invalid_evidence or (
+                normalized["semanticSignal"] == "NO_OBJECTION" and not evidence_ids
             ):
                 normalized["semanticSignal"] = "RETRY"
             if normalized.get("contradictions") or normalized.get("invalidEnum"):
@@ -228,35 +221,67 @@ class DeepSeekEvaluator:
         return accepted
 
     def _payload(self, candidate: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+        structured_candidate_fields = {
+            "actionability_evidence",
+            "algorithm_evidence",
+            "open_pr_assessment",
+            "related_issue_assessment",
+            "preTaskEvidence",
+        }
+        candidate_payload: dict[str, Any] = {}
+        for key in (
+            "repo",
+            "num",
+            "title",
+            "url",
+            "track",
+            "score",
+            "category",
+            "gate_decision",
+            "labels",
+            "why",
+            "expected_changes",
+            "test_path",
+            "risk",
+            "submission_policy",
+            "actionability_evidence",
+            "algorithm_evidence",
+            "open_pr_assessment",
+            "related_issue_assessment",
+            "preTaskEvidence",
+        ):
+            if key not in candidate:
+                continue
+            value = candidate.get(key)
+            if key in structured_candidate_fields:
+                candidate_payload[key] = {
+                    "evidence_id": f"candidate.{key}",
+                    "value": value,
+                }
+            else:
+                candidate_payload[key] = value
         return {
-            "candidate": {
-                key: candidate.get(key)
-                for key in (
-                    "repo",
-                    "num",
-                    "title",
-                    "url",
-                    "track",
-                    "score",
-                    "category",
-                    "gate_decision",
-                    "labels",
-                    "why",
-                    "expected_changes",
-                    "test_path",
-                    "risk",
-                    "submission_policy",
-                    "actionability_evidence",
-                    "algorithm_evidence",
-                    "open_pr_assessment",
-                    "related_issue_assessment",
-                )
-            },
+            "candidate": candidate_payload,
             "issue_data": {
                 key: {"evidence_id": f"issue_data.{key}", "value": value}
                 for key, value in context.items()
             },
         }
+
+    @staticmethod
+    def _payload_evidence_ids(value: Any) -> set[str]:
+        evidence_ids: set[str] = set()
+        if isinstance(value, dict):
+            evidence_id = value.get("evidence_id")
+            if isinstance(evidence_id, str) and evidence_id.strip() and "value" in value:
+                evidence_ids.add(evidence_id)
+                return evidence_ids
+            for item in value.values():
+                evidence_ids.update(DeepSeekEvaluator._payload_evidence_ids(item))
+        elif isinstance(value, list):
+            for item in value:
+                evidence_ids.update(DeepSeekEvaluator._payload_evidence_ids(item))
+        return evidence_ids
 
     def _request(self, payload: dict[str, Any]) -> dict[str, Any]:
         last_error: Exception | None = None
