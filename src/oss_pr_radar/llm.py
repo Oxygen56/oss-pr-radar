@@ -18,13 +18,26 @@ from .contracts import contract_digest
 from .opportunity import normalize_semantic_signal
 from .util import sha256_text
 
-SEMANTIC_EVIDENCE_BINDING_CONTRACT = "deepseek_semantic_review_v8_supplied_evidence_ids"
+SEMANTIC_EVIDENCE_BINDING_CONTRACT = "deepseek_semantic_review_v9_material_contradictions"
 CACHE_SCHEMA = SEMANTIC_EVIDENCE_BINDING_CONTRACT
 NO_CODE_ACTION_RE = re.compile(
     r"\b(?:no new code changes? (?:(?:is|are) )?expected|"
     r"no code changes? (?:(?:is|are) )?(?:needed|required|expected)|"
     r"(?:candidate|issue) is no longer actionable|"
     r"(?:a )?(?:new|additional) pr (?:would be|is) redundant)\b",
+    re.I,
+)
+NO_MATERIAL_CONTRADICTION_RE = re.compile(
+    r"\b(?:no|without)\s+(?:(?:direct|material|actual|meaningful)\s+)?"
+    r"(?:contradictions?|conflicts?)\b|"
+    r"\b(?:does?|did|do)\s+not\s+(?:directly\s+)?(?:contradict|conflict\s+with)\b|"
+    r"\bnot\s+(?:(?:a|an)\s+)?(?:(?:direct|material|actual|meaningful)\s+)?"
+    r"(?:contradiction|contradictory|conflict)\b",
+    re.I,
+)
+MATERIAL_CONTRADICTION_TERM_RE = re.compile(
+    r"\b(?:contradict(?:ion|ions|ory|s|ed|ing)?|conflict(?:s|ed|ing)?|"
+    r"inconsisten(?:t|cy|cies)|mismatch(?:es|ed)?|disagree(?:s|d|ment)?)\b",
     re.I,
 )
 
@@ -378,7 +391,9 @@ class DeepSeekEvaluator:
         raw_decision = str(review.get("decision") or "").upper()
         raw_wait_reason = str(review.get("wait_reason") or "").upper()
         unknowns = DeepSeekEvaluator._strings(review.get("unknowns"))
-        contradictions = DeepSeekEvaluator._strings(review.get("contradictions"))
+        contradictions = DeepSeekEvaluator._material_contradictions(
+            DeepSeekEvaluator._strings(review.get("contradictions"))
+        )
         expected_changes = DeepSeekEvaluator._strings(review.get("expected_changes"))
         test_plan = DeepSeekEvaluator._strings(review.get("test_plan"))
         try:
@@ -465,6 +480,18 @@ class DeepSeekEvaluator:
         if not isinstance(value, list):
             return []
         return [str(item)[:500] for item in value[:8] if str(item).strip()]
+
+    @staticmethod
+    def _material_contradictions(contradictions: list[str]) -> list[str]:
+        material: list[str] = []
+        for contradiction in contradictions:
+            without_negation = NO_MATERIAL_CONTRADICTION_RE.sub("", contradiction)
+            if without_negation == contradiction:
+                material.append(contradiction)
+                continue
+            if MATERIAL_CONTRADICTION_TERM_RE.search(without_negation):
+                material.append(contradiction)
+        return material
 
     @staticmethod
     def _routine_implementation_unknowns_only(unknowns: list[str]) -> bool:

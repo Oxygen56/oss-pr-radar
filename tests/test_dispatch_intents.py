@@ -311,10 +311,10 @@ def test_stale_scanner_report_cannot_build_dispatch_queue():
         MODULE.build(stale, signing_key=KEY, now=NOW)
 
 
-def test_current_scanner_revision_and_decision_contract_bind_payload_evidence():
-    assert SCANNER_DECISION_REVISION == "oss_pr_radar_v49_payload_bound_evidence_ids"
+def test_current_scanner_revision_and_decision_contract_filter_non_contradictions():
+    assert SCANNER_DECISION_REVISION == "oss_pr_radar_v50_material_contradictions"
     assert decision_contract_digest() != (
-        "15ac0145dc317b96bbc4b7d4d5d0ef171644a06e26e7c2f43a263977fe5a8919"
+        "63d9b5419e4b58f072055513e60148abadfd4bfc9e8ae799e791a761ff3f56a4"
     )
 
 

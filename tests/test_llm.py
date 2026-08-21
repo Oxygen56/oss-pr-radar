@@ -603,6 +603,69 @@ def test_routine_fix_choice_does_not_force_semantic_retry(tmp_path, monkeypatch)
     assert result[0]["auto_spawn"] is True
 
 
+def test_explicit_non_contradiction_does_not_block_actionable_candidate(tmp_path, monkeypatch):
+    instance = evaluator(tmp_path)
+    monkeypatch.setattr(
+        instance,
+        "_request",
+        lambda payload: {
+            "semanticSignal": "NO_OBJECTION",
+            "score": 9,
+            "confidence": 0.9,
+            "root_cause_clarity": "high",
+            "why": "The persistence path and regression test are concrete.",
+            "expected_changes": ["Persist max_end_user_budget_id"],
+            "test_plan": ["Add a persistence regression test"],
+            "evidence_ids": ["issue_data.issue_body"],
+            "contradictions": [
+                "Open PR #25387 is closed and lacks tests, but the issue remains open; "
+                "no direct contradiction."
+            ],
+        },
+    )
+
+    result = instance.evaluate_candidates([candidate()])
+
+    assert result[0]["llm_review"]["semanticSignal"] == "NO_OBJECTION"
+    assert result[0]["llm_review"]["contradictions"] == []
+    assert result[0]["gate_decision"] == "ALLOW_TO_WORK"
+    assert result[0]["auto_spawn"] is True
+
+
+@pytest.mark.parametrize(
+    "contradiction",
+    [
+        "Existing PR #4518 already fixes the same root cause.",
+        "No tests exist, contradicting the supplied claim that coverage is complete.",
+        "No direct contradiction in metadata, but the existing PR conflicts with the "
+        "proposed root cause.",
+    ],
+)
+def test_material_contradiction_still_requires_retry(tmp_path, monkeypatch, contradiction):
+    instance = evaluator(tmp_path)
+    monkeypatch.setattr(
+        instance,
+        "_request",
+        lambda payload: {
+            "semanticSignal": "NO_OBJECTION",
+            "score": 9,
+            "confidence": 0.9,
+            "root_cause_clarity": "high",
+            "expected_changes": ["Implement the scoped fix"],
+            "test_plan": ["Add a regression test"],
+            "evidence_ids": ["issue_data.issue_body"],
+            "contradictions": [contradiction],
+        },
+    )
+
+    result = instance.evaluate_candidates([candidate()])
+
+    assert result[0]["llm_review"]["semanticSignal"] == "RETRY"
+    assert result[0]["llm_review"]["contradictions"] == [contradiction]
+    assert result[0]["gate_decision"] == "RETRY_REQUIRED"
+    assert result[0]["auto_spawn"] is False
+
+
 def test_assignment_wait_reason_cannot_be_recovered_as_routine(tmp_path, monkeypatch):
     instance = evaluator(tmp_path)
     monkeypatch.setattr(
