@@ -42,6 +42,12 @@ def test_paginated_gh_flattens_every_page(monkeypatch):
     assert captured["timeout"] == 41
 
 
+def test_probe_code_paths_excludes_symbol_only_anchors():
+    assert scanner.probe_code_paths(
+        ["`OD_NODE_BIN`", "`taskId`", "`pwsh`", "apps/daemon/src/server.ts"]
+    ) == ["apps/daemon/src/server.ts"]
+
+
 def test_semantic_review_retry_replaces_pre_llm_candidate_outcome():
     outcome = candidate_issue_outcome(
         {

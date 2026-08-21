@@ -11035,7 +11035,8 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     code_paths = [
                         str(path)
                         for path in (
-                            context.get("codePaths")
+                            value.get("codePaths")
+                            or context.get("codePaths")
                             or managed_candidate.get("codePaths")
                             or (managed_candidate.get("preTaskEvidence") or {}).get(
                                 "codePathsPlan"

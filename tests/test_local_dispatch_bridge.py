@@ -1162,7 +1162,7 @@ def test_verified_reproduction_alias_advances_to_implementation(tmp_path):
         state="REPRODUCTION_REQUIRED",
         provenance={
             "selectedBaseSha": base_sha,
-            "codePaths": ["runtime.py"],
+            "codePaths": ["`runtime_symbol`"],
         },
     )
     context_path = MODULE.write_task_context(
@@ -1185,6 +1185,7 @@ def test_verified_reproduction_alias_advances_to_implementation(tmp_path):
                 "stage": "AUDIT_NO_GO",
                 "reason": "AUTOMATION_REPRODUCTION_RECEIPT_REQUIRED",
                 "reproductionVerified": True,
+                "codePaths": ["runtime.py"],
                 "evidence": {
                     "summary": "The pinned runtime path reproduces the reported boundary."
                 },

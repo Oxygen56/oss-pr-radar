@@ -909,6 +909,16 @@ def issue_code_anchors(text: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(anchor[:160] for anchor in anchors))
 
 
+def probe_code_paths(anchors: Iterable[str]) -> list[str]:
+    """Keep repository paths separate from symbols used only for qualification."""
+
+    return [
+        anchor
+        for anchor in anchors
+        if ISSUE_CODE_PATH_RE.fullmatch(anchor) or ISSUE_CODE_FILE_RE.fullmatch(anchor)
+    ]
+
+
 RELATED_FAILURE_SIGNATURE_RE = re.compile(
     r"\b(?:nvcc|cicc|ptxas|clang|gcc|segmentation\s+fault|bus\s+error|"
     r"illegal\s+memory\s+access|core\s+dumped|signal\s+\d+)\b|"
@@ -4262,7 +4272,7 @@ class Radar:
                 in {"needs_assignment", "ai_disclosure_and_assignment"},
                 "aiDisclosureConflict": policy
                 in {"ai_disclosure_conflict", "ai_disclosure_and_assignment"},
-                "codePathsPlan": actionability.get("code_anchors") or [],
+                "codePathsPlan": probe_code_paths(actionability.get("code_anchors") or []),
                 "reproductionPathPlan": bool(actionability.get("probe_ready")),
                 "validationPathPlan": bool(scored.get("test_path")),
                 "probeRequired": True,
