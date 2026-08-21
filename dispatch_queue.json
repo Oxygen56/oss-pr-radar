@@ -1,204 +1,9 @@
 {
   "contractDigest": "a4a72ff173c07ee40bcbb7f0de7aeb3d217b1ef7700aa04f9015806c191b44d9",
   "decisionContractDigest": "22524fef22264e03e24fd139de5a9e4c82a85bebf162081c87ca6ec13aeafa8f",
-  "generatedAt": "2026-08-21T05:54:26.608384Z",
-  "intentCount": 2,
+  "generatedAt": "2026-08-21T07:13:39.385866Z",
+  "intentCount": 1,
   "intents": [
-    {
-      "actionabilityEvidence": {
-        "code_anchors": [
-          "agentscope/agent/_react_agent.py",
-          "agentscope/model/_openai_model.py",
-          "_react_agent.py",
-          "_openai_model.py",
-          "reproduce.py",
-          "`context_length_exceeded`",
-          "`BadRequestError`",
-          "`ChatModelBase.count_tokens`"
-        ],
-        "design_confirmation": false,
-        "help_wanted": false,
-        "maintainer_active_investigation": false,
-        "maintainer_approved": false,
-        "maintainer_revalidation_requested": false,
-        "needs_confirmation": false,
-        "probe_ready": true,
-        "public_repro_signals": 2,
-        "reproduction_evidence": [
-          "traceback_frame",
-          "ordered_steps"
-        ],
-        "root_cause_signal": true,
-        "usage_confirmation": false
-      },
-      "algorithmEvidence": {
-        "code_path_signal": true,
-        "curated_repo": false,
-        "depth": "medium",
-        "experiment_signal": true,
-        "formula_signal": true,
-        "matched_terms": [
-          "overflow"
-        ],
-        "mechanism_count": 1,
-        "mechanisms": [
-          "numerics_quantization"
-        ],
-        "operational_only": false,
-        "qualified": true,
-        "score": 7
-      },
-      "authorizationSource": "signed_live_revalidation_required",
-      "autoSpawn": true,
-      "autoSubmitAuthorized": true,
-      "category": "NEW_CLEAN_CANDIDATE",
-      "contractDigest": "a4a72ff173c07ee40bcbb7f0de7aeb3d217b1ef7700aa04f9015806c191b44d9",
-      "decisionContractDigest": "22524fef22264e03e24fd139de5a9e4c82a85bebf162081c87ca6ec13aeafa8f",
-      "decisionDigest": "f9cab19f8cf1defb0616ef5e87410abd981953d0ad8c758428dd9886dbb46f83",
-      "defaultBranch": "main",
-      "evidenceDigest": "b35e7f1e58a290ea543a71ac65cfbbc737e747e6b2c9359b5e3b1e44c96ee436",
-      "expiresAt": "2026-08-21T07:54:26.608384Z",
-      "intentId": "6131b539dc1af40e21a376bf67a00a10e3c9ea5217849e402aff2f34946db75c",
-      "issueNumber": 2385,
-      "issueUpdatedAt": "2026-08-21T04:40:52Z",
-      "issueUrl": "https://github.com/agentscope-ai/agentscope/issues/2385",
-      "issuedAt": "2026-08-21T04:53:26.125446Z",
-      "key": "agentscope-ai/agentscope#2385",
-      "llmReview": {
-        "confidence": 0.85,
-        "decision": "NEW_CLEAN_CANDIDATE",
-        "model": "deepseek-v4-flash",
-        "semanticSignal": "NO_OBJECTION",
-        "status": "ok",
-        "waitReason": null
-      },
-      "maturity": "mature",
-      "mode": "canary",
-      "nonce": "b1972ab4149ff73fbaad91e3440e3eba",
-      "notify": true,
-      "policyDigest": "0a76e35cabd75b5f4b7e6b21bc9287003090631a3676517ae21c40a584e9e219",
-      "preTaskEvidence": {
-        "aiDisclosureConflict": false,
-        "assigneeDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "assignmentRequired": false,
-        "baseLookupStatus": "ok",
-        "baseSha": "13749ff66329806eb1ce834940a5e616b2ec3bad",
-        "codePathsPlan": [
-          "agentscope/agent/_react_agent.py",
-          "agentscope/model/_openai_model.py",
-          "_react_agent.py",
-          "_openai_model.py",
-          "reproduce.py",
-          "`context_length_exceeded`",
-          "`BadRequestError`",
-          "`ChatModelBase.count_tokens`"
-        ],
-        "defaultBranch": "main",
-        "designDigest": "014c0ea27901d742664d033c73aba507178bb901e8ce7a485534e7669fe19240",
-        "duplicate": {
-          "prs": [
-            {
-              "additions": 1,
-              "age_days": 0,
-              "author_association": "NONE",
-              "changed_files": 1,
-              "ci_competition_weight": 0,
-              "deletions": 1,
-              "gaps": [
-                "未明确 closing/reference 目标 issue",
-                "缺少测试文件"
-              ],
-              "ignored_nontechnical_failed_checks": [],
-              "is_draft": false,
-              "issue_body_link": false,
-              "issue_body_link_relation": "",
-              "maintainer_owned": false,
-              "material_competition_gaps": [
-                "缺少回归测试"
-              ],
-              "number": 2252,
-              "overlapping_paths": [],
-              "references_issue": false,
-              "root_cause_coverage": false,
-              "rule_closed": false,
-              "score": -2,
-              "semantic_distinctive_overlap": [
-                "count_tokens"
-              ],
-              "semantic_overlap": false,
-              "semantic_overlap_count": 4,
-              "state": "CLOSED",
-              "strengths": [
-                "已有成功 CI/check",
-                "近期仍活跃",
-                "标题/正文与 issue 关键词匹配"
-              ],
-              "technical_complete": false,
-              "technical_failed_checks": [],
-              "test_files": 0,
-              "title": "fix(agent): correct range boundary in _split_tool_result_for_compression",
-              "url": "https://github.com/agentscope-ai/agentscope/pull/2252"
-            }
-          ],
-          "status": "none",
-          "summary": "未发现相关 open PR；仅发现未直接关联 issue 的历史 PR"
-        },
-        "duplicateDigest": "01a084662f774b48941b3257538cf0162c01832ac6e02777e99932b27e75f0d6",
-        "duplicateStatus": "none",
-        "issue": {
-          "assignees": [],
-          "state": "open"
-        },
-        "issueDigest": "086378876e5d10622d46d295330d2ee6ecc54329cf556a9a2a5c3e2429ae73fc",
-        "matureRepository": true,
-        "policy": {
-          "status": "normal"
-        },
-        "probeRequired": true,
-        "reproductionPathPlan": true,
-        "schema": "pre_task_evidence_v1",
-        "validationPathPlan": true
-      },
-      "preTaskEvidenceDigest": "907fff058ecae147618c2be2b436cbc84bf79ab3592faac571a58a322f1b3032",
-      "preTaskGate": {
-        "allowed": true,
-        "baseSha": "13749ff66329806eb1ce834940a5e616b2ec3bad",
-        "classification": null,
-        "evidenceDigest": "907fff058ecae147618c2be2b436cbc84bf79ab3592faac571a58a322f1b3032",
-        "expected": {
-          "assigneeDigest": "",
-          "baseSha": "",
-          "designDigest": "",
-          "duplicateDigest": "",
-          "issueDigest": ""
-        },
-        "reason": "PRE_TASK_EVIDENCE_PASSED",
-        "reasons": [],
-        "schema": "pre_task_evidence_v1"
-      },
-      "probeLevel": "PENDING",
-      "probeProfile": null,
-      "probeRequired": true,
-      "promptDigest": "b4b17253732de3e2a3d07746471e76a0c05a680ad372831e6b372e47716a433b",
-      "publicSubmissionAllowed": true,
-      "publicationMode": "canary",
-      "renewedAt": "2026-08-21T05:54:26.608384Z",
-      "repo": "agentscope-ai/agentscope",
-      "runId": "scan-20260821T045036Z-29029bcb8c08",
-      "scanGate": "ALLOW_TO_WORK",
-      "scannerVersion": "oss_pr_radar_v50_material_contradictions",
-      "score": 13,
-      "selectedBaseSha": "13749ff66329806eb1ce834940a5e616b2ec3bad",
-      "signature": "4d68c18f72509acbd60e8da10dd29af733426cc2232ce39dbef578c03d5c2135",
-      "snapshotId": "d203a75c1b40fcd0e7587fa41e06c3b02f36f271ada04c39c574ffe07a9ac2a9",
-      "sourceSha": "dbb24832e456635b0a09559f690578ecd39f2e2a",
-      "status": "PENDING",
-      "submissionPolicy": "normal",
-      "taskStage": "PREFLIGHT",
-      "title": "[Bug]: Context compaction fails and crashes with 400 error due to token underestimation in count_tokens",
-      "track": "llm_algorithm",
-      "version": "dispatch_intent_v7"
-    },
     {
       "actionabilityEvidence": {
         "code_anchors": [
@@ -232,7 +37,7 @@
       "decisionDigest": "b3be09cd8beb4454564f436cafd88cbcd10b5449510cdd7d9f9840d18d69a25e",
       "defaultBranch": "main",
       "evidenceDigest": "31da1e655dfe196bd74589967e24c5f23b6d4612f87e66904924a9a779fccfe7",
-      "expiresAt": "2026-08-21T07:54:26.608384Z",
+      "expiresAt": "2026-08-21T09:13:39.385866Z",
       "intentId": "b7164ed7768efc4481f8cce626575900b661a60b1baa6b60a24cafc9f59f7ac2",
       "issueNumber": 6919,
       "issueUpdatedAt": "2026-08-21T04:22:37Z",
@@ -398,14 +203,14 @@
       "promptDigest": "375df9cfacabb5c1d0056994388e6dc15f790cf7ea6303c50f9f4c5a934da7b5",
       "publicSubmissionAllowed": true,
       "publicationMode": "canary",
-      "renewedAt": "2026-08-21T05:54:26.608384Z",
+      "renewedAt": "2026-08-21T07:13:39.385866Z",
       "repo": "livekit/agents",
       "runId": "scan-20260821T045036Z-29029bcb8c08",
       "scanGate": "ALLOW_TO_WORK",
       "scannerVersion": "oss_pr_radar_v50_material_contradictions",
       "score": 11,
       "selectedBaseSha": "53c77a6b3cf0ef88512b2ab4917bfdd1dd6186b0",
-      "signature": "7576c71fb2f58258c19ab9f6943ceba5510a1f5bedc7a734350eb0ca295d0d4b",
+      "signature": "b88b0771f67addf6e812c3b9193e6858ee39404086b802647fd47f14e1f76709",
       "snapshotId": "d203a75c1b40fcd0e7587fa41e06c3b02f36f271ada04c39c574ffe07a9ac2a9",
       "sourceSha": "dbb24832e456635b0a09559f690578ecd39f2e2a",
       "status": "PENDING",
@@ -418,9 +223,9 @@
   ],
   "mode": "canary",
   "newIntentCount": 0,
-  "runId": "scan-20260821T055135Z-b55d9b931739",
+  "runId": "scan-20260821T071136Z-1dec7c3d7963",
   "scannerVersion": "oss_pr_radar_v50_material_contradictions",
-  "signature": "687892b686117659ff4aa73311b9a1774b996825664be84f42807514cf50783f",
+  "signature": "7b79a18e71c0993476384a13ed7e1a0eef9b2e0a4db1e026637bd9cead00591e",
   "sourceSha": "dbb24832e456635b0a09559f690578ecd39f2e2a",
   "version": "dispatch_intents_v7"
 }
