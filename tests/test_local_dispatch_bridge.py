@@ -3499,10 +3499,10 @@ def test_private_task_dispatch_is_not_limited_by_publication_canary(monkeypatch,
     assert json.loads(audit["payload_json"])["liveAudit"]["evidence"]["digest"] == ("evidence-2")
 
 
-def test_private_task_dispatch_defaults_to_one_active_task(monkeypatch, tmp_path):
+def test_private_task_dispatch_defaults_to_five_active_tasks(monkeypatch, tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     now = datetime.now(UTC)
-    for number in (1, 2):
+    for number in range(1, 7):
         store.enqueue(
             {
                 "intentId": f"intent-{number}",
@@ -3522,14 +3522,15 @@ def test_private_task_dispatch_defaults_to_one_active_task(monkeypatch, tmp_path
                 "expiresAt": iso_z(now + timedelta(hours=1)),
             }
         )
-    store.claim("intent-1", "controller")
-    store.commit_dispatch(
-        "intent-1",
-        owner="controller",
-        thread_id="thread-1",
-        project_id="github",
-        worktree_path="/tmp/worktree-1",
-    )
+    for number in range(1, 6):
+        store.claim(f"intent-{number}", "controller")
+        store.commit_dispatch(
+            f"intent-{number}",
+            owner="controller",
+            thread_id=f"thread-{number}",
+            project_id="github",
+            worktree_path=f"/tmp/worktree-{number}",
+        )
     monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
     monkeypatch.setattr(
         MODULE,
@@ -3541,7 +3542,7 @@ def test_private_task_dispatch_defaults_to_one_active_task(monkeypatch, tmp_path
     result = MODULE.claim_intent(
         SimpleNamespace(
             ledger=tmp_path / "ledger.sqlite3",
-            intent_id="intent-2",
+            intent_id="intent-6",
             owner="controller",
             lease_minutes=15,
             prepare=False,
@@ -4299,6 +4300,7 @@ def test_pr_followup_list_defers_ready_candidates_at_global_wip_limit(monkeypatc
 
     monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
     monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+    monkeypatch.setenv("RADAR_MAX_ACTIVE_TASKS", "1")
 
     result = MODULE.pr_followup_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
 
@@ -9534,6 +9536,7 @@ def test_validation_followup_list_defers_ready_candidates_at_global_wip_limit(
     assert first["validationDeferred"][0]["missing"] == ["policy_verified"]
     monkeypatch.setattr(store, "active_task_count", lambda **_kwargs: 1)
     monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    monkeypatch.setenv("RADAR_MAX_ACTIVE_TASKS", "1")
 
     listed = MODULE.validation_followup_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
 

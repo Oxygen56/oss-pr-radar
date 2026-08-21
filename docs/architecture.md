@@ -168,10 +168,11 @@ reject source pull requests, are hard-blocked before dispatch.
 
 Actionable opportunities remain in the watchlist and signed queue until local
 dispatch. Private Codex task concurrency is independent of publication rollout
-mode. The default is one durable task across issue dispatch, existing-PR
-follow-up, and validation continuation because starting another project-root
-app-server turn can interrupt the first task; `RADAR_MAX_ACTIVE_TASKS=0` may be
-set explicitly only on a host that proves concurrent root turns are isolated.
+mode. The default is five durable tasks across issue dispatch, existing-PR
+follow-up, and validation continuation. The host must prove that concurrent
+project-root turns are isolated before raising this limit; this deployment was
+validated with independent concurrent turns in the same Codex project.
+`RADAR_MAX_ACTIVE_TASKS=0` disables the bound explicitly.
 This is a safety limit on active Codex implementation turns, not a discovery
 limit: scanning, evidence collection, queueing, PR refresh, notifications, and
 publication reconciliation continue independently. When a task releases the

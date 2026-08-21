@@ -2990,7 +2990,7 @@ def _audit_payload(
 
 
 def _private_task_limit() -> int | None:
-    raw = os.environ.get("RADAR_MAX_ACTIVE_TASKS", "1").strip()
+    raw = os.environ.get("RADAR_MAX_ACTIVE_TASKS", "5").strip()
     try:
         value = int(raw)
     except ValueError as exc:
