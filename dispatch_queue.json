@@ -1,285 +1,9 @@
 {
   "contractDigest": "a4a72ff173c07ee40bcbb7f0de7aeb3d217b1ef7700aa04f9015806c191b44d9",
   "decisionContractDigest": "22524fef22264e03e24fd139de5a9e4c82a85bebf162081c87ca6ec13aeafa8f",
-  "generatedAt": "2026-08-21T02:45:40.186087Z",
-  "intentCount": 7,
+  "generatedAt": "2026-08-21T03:05:31.191037Z",
+  "intentCount": 6,
   "intents": [
-    {
-      "actionabilityEvidence": {
-        "code_anchors": [
-          "litellm/sandbox/sandbox_tools.py",
-          "litellm/proxy/utils.py",
-          "litellm/proxy/hooks/responses_id_security.py",
-          "litellm/litellm_core_utils/llm_response_utils/convert_dict_to_response.py",
-          "litellm/router.py",
-          "mock_provider.py",
-          "sandbox_tools.py",
-          "responses_id_security.py"
-        ],
-        "design_confirmation": false,
-        "help_wanted": false,
-        "maintainer_active_investigation": false,
-        "maintainer_approved": false,
-        "maintainer_revalidation_requested": false,
-        "needs_confirmation": false,
-        "probe_ready": true,
-        "public_repro_signals": 2,
-        "reproduction_evidence": [
-          "traceback_frame",
-          "executable_command"
-        ],
-        "root_cause_signal": false,
-        "usage_confirmation": false
-      },
-      "algorithmEvidence": null,
-      "authorizationSource": "signed_live_revalidation_required",
-      "autoSpawn": true,
-      "autoSubmitAuthorized": true,
-      "category": "PR_COMPETITION_OPPORTUNITY",
-      "contractDigest": "a4a72ff173c07ee40bcbb7f0de7aeb3d217b1ef7700aa04f9015806c191b44d9",
-      "decisionContractDigest": "22524fef22264e03e24fd139de5a9e4c82a85bebf162081c87ca6ec13aeafa8f",
-      "decisionDigest": "2979e4d6e802ba9267e7e846e4431228f9940b2e22de404d640030f15b29f454",
-      "defaultBranch": "litellm_internal_staging",
-      "evidenceDigest": "1648589f82b863900083654001817905ce229f2ff06588e09f9d98c8bd4c7336",
-      "expiresAt": "2026-08-21T04:45:40.186087Z",
-      "intentId": "45a658ec85ab71bf29d352ccd21bcb98cac44015ff5aac4d7f14f460396ddda4",
-      "issueNumber": 37652,
-      "issueUpdatedAt": "2026-08-20T17:42:43Z",
-      "issueUrl": "https://github.com/BerriAI/litellm/issues/37652",
-      "issuedAt": "2026-08-21T02:45:40.186087Z",
-      "key": "BerriAI/litellm#37652",
-      "llmReview": {
-        "confidence": 0.85,
-        "decision": "NEW_CLEAN_CANDIDATE",
-        "model": "deepseek-v4-flash",
-        "semanticSignal": "NO_OBJECTION",
-        "status": "ok",
-        "waitReason": null
-      },
-      "maturity": "mature",
-      "mode": "canary",
-      "nonce": "2bf33da7db2375bb466216a0a158877a",
-      "notify": true,
-      "policyDigest": "db87e16600ea735caa901926382b4860d57965f4f4176f028e26107f0fd6d1f5",
-      "preTaskEvidence": {
-        "aiDisclosureConflict": false,
-        "assigneeDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "assignmentRequired": false,
-        "baseLookupStatus": "ok",
-        "baseSha": "a112ba5f63dd9db389862b5ea46e12866a681ced",
-        "codePathsPlan": [
-          "litellm/sandbox/sandbox_tools.py",
-          "litellm/proxy/utils.py",
-          "litellm/proxy/hooks/responses_id_security.py",
-          "litellm/litellm_core_utils/llm_response_utils/convert_dict_to_response.py",
-          "litellm/router.py",
-          "mock_provider.py",
-          "sandbox_tools.py",
-          "responses_id_security.py"
-        ],
-        "defaultBranch": "litellm_internal_staging",
-        "designDigest": "014c0ea27901d742664d033c73aba507178bb901e8ce7a485534e7669fe19240",
-        "duplicate": {
-          "best_score": 51,
-          "best_url": "https://github.com/BerriAI/litellm/pull/37657",
-          "components": {
-            "ciIsDiagnosticOnly": true,
-            "independentEvidence": {
-              "codeChange": true,
-              "keyPathCoverage": false,
-              "maintainerRecognition": false,
-              "tests": true
-            },
-            "rootCauseCoverage": false
-          },
-          "gaps": [
-            "仍是 draft",
-            "缺少根因覆盖证据"
-          ],
-          "prs": [
-            {
-              "additions": 125,
-              "age_days": 0,
-              "author_association": "CONTRIBUTOR",
-              "changed_files": 2,
-              "ci_competition_weight": 0,
-              "deletions": 8,
-              "gaps": [
-                "仍是 draft"
-              ],
-              "ignored_nontechnical_failed_checks": [],
-              "is_draft": true,
-              "issue_body_link": false,
-              "issue_body_link_relation": "",
-              "maintainer_owned": false,
-              "material_competition_gaps": [
-                "仍是 draft"
-              ],
-              "number": 37657,
-              "overlapping_paths": [],
-              "references_issue": true,
-              "root_cause_coverage": false,
-              "rule_closed": false,
-              "score": 51,
-              "semantic_distinctive_overlap": [
-                "code_interpreter_interception"
-              ],
-              "semantic_overlap": false,
-              "semantic_overlap_count": 11,
-              "state": "OPEN",
-              "strengths": [
-                "明确关联 issue",
-                "包含测试文件 1 个",
-                "CI 失败待归因，不作为竞争依据",
-                "近期仍活跃"
-              ],
-              "technical_complete": true,
-              "technical_failed_checks": [
-                "lint"
-              ],
-              "test_files": 1,
-              "title": "fix(agentic loop): return a real stream when code-interpreter interception converts the request",
-              "url": "https://github.com/BerriAI/litellm/pull/37657"
-            },
-            {
-              "additions": 574,
-              "age_days": 18,
-              "author_association": "CONTRIBUTOR",
-              "changed_files": 9,
-              "ci_competition_weight": 0,
-              "deletions": 43,
-              "gaps": [
-                "未明确 closing/reference 目标 issue",
-                "超过 14 天未更新"
-              ],
-              "ignored_nontechnical_failed_checks": [],
-              "is_draft": false,
-              "issue_body_link": false,
-              "issue_body_link_relation": "",
-              "maintainer_owned": false,
-              "material_competition_gaps": [],
-              "number": 35571,
-              "overlapping_paths": [],
-              "references_issue": false,
-              "root_cause_coverage": false,
-              "rule_closed": false,
-              "score": 20,
-              "semantic_distinctive_overlap": [
-                "code_interpreter_interception"
-              ],
-              "semantic_overlap": false,
-              "semantic_overlap_count": 9,
-              "state": "OPEN",
-              "strengths": [
-                "包含测试文件 2 个",
-                "已有成功 CI/check",
-                "标题/正文与 issue 关键词匹配"
-              ],
-              "technical_complete": false,
-              "technical_failed_checks": [],
-              "test_files": 2,
-              "title": "fix(proxy): activate interception callbacks enabled via DB config",
-              "url": "https://github.com/BerriAI/litellm/pull/35571"
-            },
-            {
-              "additions": 690,
-              "age_days": 17,
-              "author_association": "NONE",
-              "changed_files": 7,
-              "ci_competition_weight": 0,
-              "deletions": 13,
-              "gaps": [
-                "未明确 closing/reference 目标 issue",
-                "超过 14 天未更新"
-              ],
-              "ignored_nontechnical_failed_checks": [],
-              "is_draft": false,
-              "issue_body_link": false,
-              "issue_body_link_relation": "",
-              "maintainer_owned": false,
-              "material_competition_gaps": [],
-              "number": 33085,
-              "overlapping_paths": [],
-              "references_issue": false,
-              "root_cause_coverage": false,
-              "rule_closed": false,
-              "score": 20,
-              "semantic_distinctive_overlap": [
-                "code_interpreter_interception"
-              ],
-              "semantic_overlap": false,
-              "semantic_overlap_count": 7,
-              "state": "OPEN",
-              "strengths": [
-                "包含测试文件 1 个",
-                "已有成功 CI/check",
-                "标题/正文与 issue 关键词匹配"
-              ],
-              "technical_complete": false,
-              "technical_failed_checks": [],
-              "test_files": 1,
-              "title": "feat(websearch_interception): responses API support via the shared agentic mechanism",
-              "url": "https://github.com/BerriAI/litellm/pull/33085"
-            }
-          ],
-          "status": "weak_pr_competition_possible",
-          "summary": "已有直接关联但证据不完整的 PR #37657：仍是 draft；只有能补足根因、测试或关键路径覆盖时才值得竞争"
-        },
-        "duplicateDigest": "1b0641cb922114d952714901534ee2895b481296c7c50a40c078a63bd9e9abd1",
-        "duplicateStatus": "weak_pr_competition_possible",
-        "issue": {
-          "assignees": [],
-          "state": "open"
-        },
-        "issueDigest": "79847629336168e78e1b4990232ee8a4552dd51de799c382f3ac7a658a101313",
-        "matureRepository": true,
-        "policy": {
-          "status": "legal_confirmation"
-        },
-        "probeRequired": true,
-        "reproductionPathPlan": true,
-        "schema": "pre_task_evidence_v1",
-        "validationPathPlan": true
-      },
-      "preTaskEvidenceDigest": "7a74d2d85bdd4b3c09df60f66ee55c45d7d3951b1f3cf1999f3df379d9335eaa",
-      "preTaskGate": {
-        "allowed": true,
-        "baseSha": "a112ba5f63dd9db389862b5ea46e12866a681ced",
-        "classification": null,
-        "evidenceDigest": "7a74d2d85bdd4b3c09df60f66ee55c45d7d3951b1f3cf1999f3df379d9335eaa",
-        "expected": {
-          "assigneeDigest": "",
-          "baseSha": "",
-          "designDigest": "",
-          "duplicateDigest": "",
-          "issueDigest": ""
-        },
-        "reason": "PRE_TASK_EVIDENCE_PASSED",
-        "reasons": [],
-        "schema": "pre_task_evidence_v1"
-      },
-      "probeLevel": "PENDING",
-      "probeProfile": null,
-      "probeRequired": true,
-      "promptDigest": "fb84c0f1487fcadc8f5df8ed8a1669e65ae6ea9077f12fbeb9e197cfba24e612",
-      "publicSubmissionAllowed": true,
-      "publicationMode": "canary",
-      "repo": "BerriAI/litellm",
-      "runId": "scan-20260821T024018Z-0fa063b0749e",
-      "scanGate": "ALLOW_TO_WORK",
-      "scannerVersion": "oss_pr_radar_v50_material_contradictions",
-      "score": 11,
-      "selectedBaseSha": "a112ba5f63dd9db389862b5ea46e12866a681ced",
-      "signature": "3d1b238c172a983f46a822aa3bfffabc52ff5f541b27990c94b8baa58826fd12",
-      "snapshotId": "dafda99462bd4a12169119bdfa9ab2141391b537aba0152a568e4b53fdcf6af3",
-      "sourceSha": "d84fa3150c81b9b04b7d5e5050cef5e176ebd25b",
-      "status": "PENDING",
-      "submissionPolicy": "legal_confirmation",
-      "taskStage": "PREFLIGHT",
-      "title": "[Bug]: `code_interpreter_interception` + `stream: true` crashes with `TypeError: ... got ModelResponseStream`, and can leave the response cache with a malformed entry",
-      "track": "agent_ai_infra",
-      "version": "dispatch_intent_v7"
-    },
     {
       "actionabilityEvidence": {
         "code_anchors": [
@@ -314,7 +38,7 @@
       "decisionDigest": "28f08ca6cfde20033a2d43fce857f966f5589e8ab6db7f11f4e0ab422183bfa0",
       "defaultBranch": "main",
       "evidenceDigest": "e61803dd57ba350c28104941657b9c4ccc54eea677144721a18096df43be1ee4",
-      "expiresAt": "2026-08-21T04:45:40.186087Z",
+      "expiresAt": "2026-08-21T05:05:31.191037Z",
       "intentId": "14d456fdbda7c519613f4efc076a24e4019ccbae81c3641f91d3256aa918561e",
       "issueNumber": 13602,
       "issueUpdatedAt": "2026-08-20T18:11:30Z",
@@ -490,14 +214,14 @@
       "promptDigest": "26f0c799becaf8d64cbb053180c81e1ce77c3873991d3d1464f4d380e4fb8a77",
       "publicSubmissionAllowed": true,
       "publicationMode": "canary",
-      "renewedAt": "2026-08-21T02:45:40.186087Z",
+      "renewedAt": "2026-08-21T03:05:31.191037Z",
       "repo": "ai-dynamo/dynamo",
       "runId": "scan-20260821T022827Z-9f2cb73d11a0",
       "scanGate": "ALLOW_TO_WORK",
       "scannerVersion": "oss_pr_radar_v50_material_contradictions",
       "score": 11,
       "selectedBaseSha": "d023c6af5465bc08f663fed366c89bb56398365c",
-      "signature": "0a5b4083772f9e29f2eb25c42b1e5f9bc85597cc11e1d5214c55d3ff5a6ecae3",
+      "signature": "12db3cc78a48e23c78ec63efbaf51156315c7f72c69b39e8bd05190fa9549bd0",
       "snapshotId": "1a9346a3078c4d34f0f9597e245b79efdac705fc4a4b367eb86f5e8ca3691e03",
       "sourceSha": "d84fa3150c81b9b04b7d5e5050cef5e176ebd25b",
       "status": "PENDING",
@@ -543,7 +267,7 @@
       "decisionDigest": "66bc379cc84d83ff0e11f5b5de23b0e40475743c9e706082abd29b9facc6a4f2",
       "defaultBranch": "main",
       "evidenceDigest": "ba15c8a3c425328fdcf735dda141c37e1ebf07b6d7e158453fe55712d96ffcf2",
-      "expiresAt": "2026-08-21T04:45:40.186087Z",
+      "expiresAt": "2026-08-21T05:05:31.191037Z",
       "intentId": "1a0c2ec8d1d3f530400e232f0040f3f55f7bbbb59212d320958f1868e5c7af2e",
       "issueNumber": 13437,
       "issueUpdatedAt": "2026-08-20T22:04:52Z",
@@ -763,13 +487,14 @@
       "promptDigest": "1ebcec8b65e32c1713c3131e5a0a3b4432f6380871b994db5e14885032f1acd7",
       "publicSubmissionAllowed": true,
       "publicationMode": "canary",
+      "renewedAt": "2026-08-21T03:05:31.191037Z",
       "repo": "cline/cline",
       "runId": "scan-20260821T024018Z-0fa063b0749e",
       "scanGate": "ALLOW_TO_WORK",
       "scannerVersion": "oss_pr_radar_v50_material_contradictions",
       "score": 11,
       "selectedBaseSha": "bd218aa7bbc734a312485d8143b209d8eb5e7745",
-      "signature": "d1eab16b7ae6d0b7aebedd763afa5d3f50e18007656c3a4172179bde7ae407ba",
+      "signature": "0a1acf6d5b789a9606e68faaf027b463a36a234f0f806f2296816539d139e731",
       "snapshotId": "dafda99462bd4a12169119bdfa9ab2141391b537aba0152a568e4b53fdcf6af3",
       "sourceSha": "d84fa3150c81b9b04b7d5e5050cef5e176ebd25b",
       "status": "PENDING",
@@ -844,12 +569,12 @@
       "decisionDigest": "35cc0bcbdfef205892cd9275dca30653abea6c4ed2c572b7aa373bdcd6add333",
       "defaultBranch": "master",
       "evidenceDigest": "a0decdadeb574e962248ee5228a451d2b063ae10716ee078271a46a8ccd916e5",
-      "expiresAt": "2026-08-21T04:45:40.186087Z",
-      "intentId": "92f674289d2f0d59e9d712134df8f035267489bfba232e5d97c79fcb02927a3b",
+      "expiresAt": "2026-08-21T05:05:31.191037Z",
+      "intentId": "e0125a56549db7cf3681257a141b5d19d9394ddaf5d50afd789c028daf5209a2",
       "issueNumber": 8279,
       "issueUpdatedAt": "2026-08-20T23:23:50Z",
       "issueUrl": "https://github.com/deepspeedai/DeepSpeed/issues/8279",
-      "issuedAt": "2026-08-21T02:45:40.186087Z",
+      "issuedAt": "2026-08-21T03:05:31.191037Z",
       "key": "deepspeedai/DeepSpeed#8279",
       "llmReview": {
         "confidence": 0.85,
@@ -861,7 +586,7 @@
       },
       "maturity": "mature",
       "mode": "canary",
-      "nonce": "bfa5ae47efb0fd11d83bab044613a992",
+      "nonce": "8ad416e36ed83906c487f3a9a2f32805",
       "notify": true,
       "policyDigest": "28ed27c6d370860b99c1144d9ca0acadd324d65f0330041e26761a70adb82cda",
       "preTaskEvidence": {
@@ -1029,14 +754,14 @@
       "publicSubmissionAllowed": true,
       "publicationMode": "canary",
       "repo": "deepspeedai/DeepSpeed",
-      "runId": "scan-20260821T024018Z-0fa063b0749e",
+      "runId": "scan-20260821T030226Z-a4ce3e563a12",
       "scanGate": "ALLOW_TO_WORK",
       "scannerVersion": "oss_pr_radar_v50_material_contradictions",
       "score": 11,
       "selectedBaseSha": "24a41afaff79d656fdbeecb1f6f992ac1af38178",
-      "signature": "b528f2f3eb9261a8828c7c4a119dd4586d050214e60e795dc796d5da07cc82a8",
-      "snapshotId": "dafda99462bd4a12169119bdfa9ab2141391b537aba0152a568e4b53fdcf6af3",
-      "sourceSha": "d84fa3150c81b9b04b7d5e5050cef5e176ebd25b",
+      "signature": "6c24909ed416e8644120e41831d9b54b5790a04985781d3abd11a683527004ec",
+      "snapshotId": "96d65bab6da7c19b5ebf37fdfd307cc7ca3e34cbe6f1f86eb6a98a8b814d2b1e",
+      "sourceSha": "bdd288c70d13a5f7db7d8379a02442b1d5d795b1",
       "status": "PENDING",
       "submissionPolicy": "legal_confirmation",
       "taskStage": "PREFLIGHT",
@@ -1076,7 +801,7 @@
       "decisionDigest": "bb48aa6df375c6bf7f742fee058485d8989852260adbf747e191ffb63a9ae44a",
       "defaultBranch": "main",
       "evidenceDigest": "16eeeb26b0eccf04b528733cd33064831c0a2b888ecee16d1422fdd0d7e12baf",
-      "expiresAt": "2026-08-21T04:45:40.186087Z",
+      "expiresAt": "2026-08-21T05:05:31.191037Z",
       "intentId": "c0d842edb1776df2d1040a98867adb6a0f7f973ca69d3433eb3f6074ac0e780d",
       "issueNumber": 6919,
       "issueUpdatedAt": "2026-08-20T21:55:59Z",
@@ -1241,305 +966,20 @@
       "promptDigest": "375df9cfacabb5c1d0056994388e6dc15f790cf7ea6303c50f9f4c5a934da7b5",
       "publicSubmissionAllowed": true,
       "publicationMode": "canary",
+      "renewedAt": "2026-08-21T03:05:31.191037Z",
       "repo": "livekit/agents",
       "runId": "scan-20260821T024018Z-0fa063b0749e",
       "scanGate": "ALLOW_TO_WORK",
       "scannerVersion": "oss_pr_radar_v50_material_contradictions",
       "score": 11,
       "selectedBaseSha": "53c77a6b3cf0ef88512b2ab4917bfdd1dd6186b0",
-      "signature": "1655e9714e03cde57095bc9c95d1a7e2f101cfae409cc6d41966bb16bd81f5f8",
+      "signature": "e833f175175ff88f5792df04a3dd4bc17f22a8535a7060a2b7d1ad6694f3db23",
       "snapshotId": "dafda99462bd4a12169119bdfa9ab2141391b537aba0152a568e4b53fdcf6af3",
       "sourceSha": "d84fa3150c81b9b04b7d5e5050cef5e176ebd25b",
       "status": "PENDING",
       "submissionPolicy": "legal_confirmation",
       "taskStage": "PREFLIGHT",
       "title": "Audio routing freeze mid-call (1.6.9)",
-      "track": "agent_ai_infra",
-      "version": "dispatch_intent_v7"
-    },
-    {
-      "actionabilityEvidence": {
-        "code_anchors": [
-          "Scheduler scans",
-          "`rem_chunk_tokens`",
-          "scheduler still",
-          "`batch_is_full`",
-          "`chunked_req`",
-          "scheduler level:",
-          "`Scheduler.chunked_req`",
-          "`chunked_prefill_size`"
-        ],
-        "design_confirmation": false,
-        "help_wanted": false,
-        "maintainer_active_investigation": false,
-        "maintainer_approved": false,
-        "maintainer_revalidation_requested": false,
-        "needs_confirmation": false,
-        "probe_ready": true,
-        "public_repro_signals": 2,
-        "reproduction_evidence": [
-          "expected_actual_pair",
-          "ordered_steps"
-        ],
-        "root_cause_signal": false,
-        "usage_confirmation": false
-      },
-      "algorithmEvidence": null,
-      "authorizationSource": "signed_live_revalidation_required",
-      "autoSpawn": true,
-      "autoSubmitAuthorized": true,
-      "category": "PR_COMPETITION_OPPORTUNITY",
-      "contractDigest": "a4a72ff173c07ee40bcbb7f0de7aeb3d217b1ef7700aa04f9015806c191b44d9",
-      "decisionContractDigest": "22524fef22264e03e24fd139de5a9e4c82a85bebf162081c87ca6ec13aeafa8f",
-      "decisionDigest": "fe4b10c883241112701cf09f33424e9e804860e973d13afd86fdfc079c081c77",
-      "defaultBranch": "main",
-      "evidenceDigest": "3b1b7fac5c286688ddb09f5b37fee0c1944ff737d41c87503cd252d5d19c52b9",
-      "expiresAt": "2026-08-21T04:45:40.186087Z",
-      "intentId": "a53c3cfea15cdcd721ad42b90eb1ee5aed8fae22b969004582d0e24f7e30d5e5",
-      "issueNumber": 35642,
-      "issueUpdatedAt": "2026-08-20T05:13:36Z",
-      "issueUrl": "https://github.com/sgl-project/sglang/issues/35642",
-      "issuedAt": "2026-08-21T02:45:40.186087Z",
-      "key": "sgl-project/sglang#35642",
-      "llmReview": {
-        "confidence": 0.85,
-        "decision": "NEW_CLEAN_CANDIDATE",
-        "model": "deepseek-v4-flash",
-        "semanticSignal": "NO_OBJECTION",
-        "status": "ok",
-        "waitReason": null
-      },
-      "maturity": "mature",
-      "mode": "canary",
-      "nonce": "13dc6f42fabff92ac45a8e4099130d18",
-      "notify": true,
-      "policyDigest": "f8da4891e986aef7819f561c8ae9f2860558d899c97af457bd9fc3e1ac307ef1",
-      "preTaskEvidence": {
-        "aiDisclosureConflict": false,
-        "assigneeDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "assignmentRequired": false,
-        "baseLookupStatus": "ok",
-        "baseSha": "e0cf75d9bda78fa46bdc5ff7436c5a76290663d1",
-        "codePathsPlan": [
-          "Scheduler scans",
-          "`rem_chunk_tokens`",
-          "scheduler still",
-          "`batch_is_full`",
-          "`chunked_req`",
-          "scheduler level:",
-          "`Scheduler.chunked_req`",
-          "`chunked_prefill_size`"
-        ],
-        "defaultBranch": "main",
-        "designDigest": "014c0ea27901d742664d033c73aba507178bb901e8ce7a485534e7669fe19240",
-        "duplicate": {
-          "best_score": 21,
-          "best_url": "https://github.com/sgl-project/sglang/pull/35645",
-          "components": {
-            "ciIsDiagnosticOnly": true,
-            "independentEvidence": {
-              "codeChange": true,
-              "keyPathCoverage": false,
-              "maintainerRecognition": false,
-              "tests": false
-            },
-            "rootCauseCoverage": false
-          },
-          "gaps": [
-            "缺少根因覆盖证据",
-            "缺少测试文件"
-          ],
-          "prs": [
-            {
-              "additions": 24,
-              "age_days": 0,
-              "author_association": "NONE",
-              "changed_files": 1,
-              "ci_competition_weight": 0,
-              "deletions": 2,
-              "gaps": [
-                "缺少测试文件"
-              ],
-              "ignored_nontechnical_failed_checks": [],
-              "is_draft": false,
-              "issue_body_link": false,
-              "issue_body_link_relation": "",
-              "maintainer_owned": false,
-              "material_competition_gaps": [
-                "缺少回归测试"
-              ],
-              "number": 35645,
-              "overlapping_paths": [],
-              "references_issue": true,
-              "root_cause_coverage": false,
-              "rule_closed": false,
-              "score": 21,
-              "semantic_distinctive_overlap": [
-                "scheduler"
-              ],
-              "semantic_overlap": false,
-              "semantic_overlap_count": 8,
-              "state": "OPEN",
-              "strengths": [
-                "明确关联 issue",
-                "CI 失败待归因，不作为竞争依据",
-                "近期仍活跃",
-                "标题/正文与 issue 关键词匹配"
-              ],
-              "technical_complete": false,
-              "technical_failed_checks": [
-                "call-gate / pr-gate",
-                "call-gate / pr-gate",
-                "pr-gate / pr-gate"
-              ],
-              "test_files": 0,
-              "title": "[Scheduler] Stop waiting-queue scan after chunk budget exhaustion",
-              "url": "https://github.com/sgl-project/sglang/pull/35645"
-            },
-            {
-              "additions": 930,
-              "age_days": 0,
-              "author_association": "CONTRIBUTOR",
-              "changed_files": 10,
-              "ci_competition_weight": 0,
-              "deletions": 354,
-              "gaps": [
-                "未明确 closing/reference 目标 issue",
-                "改动面偏大"
-              ],
-              "ignored_nontechnical_failed_checks": [],
-              "is_draft": false,
-              "issue_body_link": false,
-              "issue_body_link_relation": "",
-              "maintainer_owned": false,
-              "material_competition_gaps": [],
-              "number": 27010,
-              "overlapping_paths": [],
-              "references_issue": false,
-              "root_cause_coverage": false,
-              "rule_closed": false,
-              "score": 14,
-              "semantic_distinctive_overlap": [
-                "scheduler"
-              ],
-              "semantic_overlap": false,
-              "semantic_overlap_count": 4,
-              "state": "OPEN",
-              "strengths": [
-                "包含测试文件 3 个",
-                "CI 失败待归因，不作为竞争依据",
-                "近期仍活跃",
-                "标题/正文与 issue 关键词匹配"
-              ],
-              "technical_complete": false,
-              "technical_failed_checks": [
-                "pr-test-finish"
-              ],
-              "test_files": 3,
-              "title": "[HiCache] Fix PP inconsistency with HiCache L3 (#22607)",
-              "url": "https://github.com/sgl-project/sglang/pull/27010"
-            },
-            {
-              "additions": 1442,
-              "age_days": 0,
-              "author_association": "COLLABORATOR",
-              "changed_files": 10,
-              "ci_competition_weight": 0,
-              "deletions": 36,
-              "gaps": [
-                "未明确 closing/reference 目标 issue",
-                "改动面偏大"
-              ],
-              "ignored_nontechnical_failed_checks": [],
-              "is_draft": false,
-              "issue_body_link": false,
-              "issue_body_link_relation": "",
-              "maintainer_owned": true,
-              "material_competition_gaps": [],
-              "number": 34608,
-              "overlapping_paths": [],
-              "references_issue": false,
-              "root_cause_coverage": false,
-              "rule_closed": false,
-              "score": 32,
-              "semantic_distinctive_overlap": [
-                "scheduler"
-              ],
-              "semantic_overlap": false,
-              "semantic_overlap_count": 4,
-              "state": "OPEN",
-              "strengths": [
-                "包含测试文件 4 个",
-                "CI 失败待归因，不作为竞争依据",
-                "由仓库维护者或协作者提交",
-                "近期仍活跃"
-              ],
-              "technical_complete": false,
-              "technical_failed_checks": [
-                "call-gate / pr-gate",
-                "call-gate / pr-gate",
-                "build-test (xeon-gnr, base-b-test-cpu)"
-              ],
-              "test_files": 4,
-              "title": "Publish per-scheduler load on a dedicated socket for load-aware routers",
-              "url": "https://github.com/sgl-project/sglang/pull/34608"
-            }
-          ],
-          "status": "weak_pr_competition_possible",
-          "summary": "已有直接关联但证据不完整的 PR #35645：缺少测试文件；只有能补足根因、测试或关键路径覆盖时才值得竞争"
-        },
-        "duplicateDigest": "ed3e764043efed9d989b4da04222968c490cc215b7ade6ea1e5731fc7129a65a",
-        "duplicateStatus": "weak_pr_competition_possible",
-        "issue": {
-          "assignees": [],
-          "state": "open"
-        },
-        "issueDigest": "7c364fb39bbde1b9397f9bcdc2d33335461d0aa6cb701e79d344a7900f6c0a87",
-        "matureRepository": true,
-        "policy": {
-          "status": "normal"
-        },
-        "probeRequired": true,
-        "reproductionPathPlan": true,
-        "schema": "pre_task_evidence_v1",
-        "validationPathPlan": true
-      },
-      "preTaskEvidenceDigest": "c40c82158ef0c7895bff536a8bc3ac96a60a02f6f997591a95ebd8ebfd925e14",
-      "preTaskGate": {
-        "allowed": true,
-        "baseSha": "e0cf75d9bda78fa46bdc5ff7436c5a76290663d1",
-        "classification": null,
-        "evidenceDigest": "c40c82158ef0c7895bff536a8bc3ac96a60a02f6f997591a95ebd8ebfd925e14",
-        "expected": {
-          "assigneeDigest": "",
-          "baseSha": "",
-          "designDigest": "",
-          "duplicateDigest": "",
-          "issueDigest": ""
-        },
-        "reason": "PRE_TASK_EVIDENCE_PASSED",
-        "reasons": [],
-        "schema": "pre_task_evidence_v1"
-      },
-      "probeLevel": "PENDING",
-      "probeProfile": null,
-      "probeRequired": true,
-      "promptDigest": "ffb6cb4611af9cafcae37ef81ced5d520a5e9c44f0ee55bdbb5677d69122a9f5",
-      "publicSubmissionAllowed": true,
-      "publicationMode": "canary",
-      "repo": "sgl-project/sglang",
-      "runId": "scan-20260821T024018Z-0fa063b0749e",
-      "scanGate": "ALLOW_TO_WORK",
-      "scannerVersion": "oss_pr_radar_v50_material_contradictions",
-      "score": 11,
-      "selectedBaseSha": "e0cf75d9bda78fa46bdc5ff7436c5a76290663d1",
-      "signature": "4f0b475c8e1c8857b2104b8f2433e292f4ab0ada4a332f9e5094e83d2d862673",
-      "snapshotId": "dafda99462bd4a12169119bdfa9ab2141391b537aba0152a568e4b53fdcf6af3",
-      "sourceSha": "d84fa3150c81b9b04b7d5e5050cef5e176ebd25b",
-      "status": "PENDING",
-      "submissionPolicy": "normal",
-      "taskStage": "PREFLIGHT",
-      "title": "[Bug] Scheduler scans waiting queue after resumed chunk exhausts chunk budget",
       "track": "agent_ai_infra",
       "version": "dispatch_intent_v7"
     },
@@ -1574,7 +1014,7 @@
       "decisionDigest": "c78dc76f878c6cec3be72430ea5f18a5c9267a2491c2dd0b9d4741946844d233",
       "defaultBranch": "main",
       "evidenceDigest": "7d05c964de90412c1c70be743cbbbe67d67ae98281d07b6895fe0783dc3662ea",
-      "expiresAt": "2026-08-21T04:45:40.186087Z",
+      "expiresAt": "2026-08-21T05:05:31.191037Z",
       "intentId": "8f139ab72c7d76467c9c3983ee9d646057060d97b1f4d6c8ebacb7e6c1e82bc5",
       "issueNumber": 35723,
       "issueUpdatedAt": "2026-08-20T15:28:22Z",
@@ -1782,13 +1222,14 @@
       "promptDigest": "be8c8bef1114b9918aa063415dd77145e2c8a2f40744fa533fc6b9d04a4ae4d1",
       "publicSubmissionAllowed": true,
       "publicationMode": "canary",
+      "renewedAt": "2026-08-21T03:05:31.191037Z",
       "repo": "sgl-project/sglang",
       "runId": "scan-20260821T024018Z-0fa063b0749e",
       "scanGate": "ALLOW_TO_WORK",
       "scannerVersion": "oss_pr_radar_v50_material_contradictions",
       "score": 11,
       "selectedBaseSha": "e0cf75d9bda78fa46bdc5ff7436c5a76290663d1",
-      "signature": "7543682047e8470237d4c5044032ea76c36b339e3b0f04a45eb81e9e481019a7",
+      "signature": "d9b488fcc76d1c5dcf3e06f49bb2542596fb899867f9ce74b2bf9ccda9c3cb3a",
       "snapshotId": "dafda99462bd4a12169119bdfa9ab2141391b537aba0152a568e4b53fdcf6af3",
       "sourceSha": "d84fa3150c81b9b04b7d5e5050cef5e176ebd25b",
       "status": "PENDING",
@@ -1797,13 +1238,269 @@
       "title": "[Bug] 0.5.17: generation degenerates into token loops on Qwen3.5-arch model (works on 0.5.6.dev, with/without DFLASH)",
       "track": "agent_ai_infra",
       "version": "dispatch_intent_v7"
+    },
+    {
+      "actionabilityEvidence": {
+        "code_anchors": [
+          "qwen3_dflash.py"
+        ],
+        "design_confirmation": false,
+        "help_wanted": false,
+        "maintainer_active_investigation": false,
+        "maintainer_approved": false,
+        "maintainer_revalidation_requested": false,
+        "needs_confirmation": false,
+        "probe_ready": true,
+        "public_repro_signals": 0,
+        "reproduction_evidence": [],
+        "root_cause_signal": true,
+        "usage_confirmation": false
+      },
+      "algorithmEvidence": null,
+      "authorizationSource": "signed_live_revalidation_required",
+      "autoSpawn": true,
+      "autoSubmitAuthorized": false,
+      "category": "LOCAL_FIX_ONLY",
+      "contractDigest": "a4a72ff173c07ee40bcbb7f0de7aeb3d217b1ef7700aa04f9015806c191b44d9",
+      "decisionContractDigest": "22524fef22264e03e24fd139de5a9e4c82a85bebf162081c87ca6ec13aeafa8f",
+      "decisionDigest": "cd337f70d901c78a6bbaffca7e4c0f123aa7903ed9013d5244b7308023569210",
+      "defaultBranch": "main",
+      "evidenceDigest": "5fdf78af05915e82f89f5cc3aa9ce0669aa1c50fd4a85b6480b8ec2de1e2a56d",
+      "expiresAt": "2026-08-21T05:05:31.191037Z",
+      "intentId": "566be893cfd36039aa112f6b8b26b3e47eeb07682a85a814b4656651641113bf",
+      "issueNumber": 53063,
+      "issueUpdatedAt": "2026-08-20T06:50:35Z",
+      "issueUrl": "https://github.com/vllm-project/vllm/issues/53063",
+      "issuedAt": "2026-08-21T03:05:31.191037Z",
+      "key": "vllm-project/vllm#53063",
+      "llmReview": {
+        "confidence": 0.85,
+        "decision": "NEW_CLEAN_CANDIDATE",
+        "model": "deepseek-v4-flash",
+        "semanticSignal": "NO_OBJECTION",
+        "status": "ok",
+        "waitReason": null
+      },
+      "maturity": "mature",
+      "mode": "canary",
+      "nonce": "0487dd495cadfad8da0d9951a904a214",
+      "notify": true,
+      "policyDigest": "5c3ff74806b2f2e496e1ea0d76a1de5e30e38b4fce821d788a3836e42bb834f3",
+      "preTaskEvidence": {
+        "aiDisclosureConflict": true,
+        "assigneeDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "assignmentRequired": false,
+        "baseLookupStatus": "ok",
+        "baseSha": "2adf4b9e2a915bd30876ab0c5dba2243f54fe5b7",
+        "codePathsPlan": [
+          "qwen3_dflash.py"
+        ],
+        "defaultBranch": "main",
+        "designDigest": "014c0ea27901d742664d033c73aba507178bb901e8ce7a485534e7669fe19240",
+        "duplicate": {
+          "best_score": 8,
+          "best_url": "https://github.com/vllm-project/vllm/pull/49323",
+          "keywordOverlapOnly": true,
+          "prs": [
+            {
+              "additions": 107,
+              "age_days": 52,
+              "author_association": "NONE",
+              "changed_files": 3,
+              "ci_competition_weight": 0,
+              "deletions": 32,
+              "gaps": [
+                "未明确 closing/reference 目标 issue",
+                "缺少测试文件",
+                "已有 changes requested",
+                "超过 30 天未更新"
+              ],
+              "ignored_nontechnical_failed_checks": [],
+              "is_draft": false,
+              "issue_body_link": false,
+              "issue_body_link_relation": "",
+              "maintainer_owned": false,
+              "material_competition_gaps": [
+                "缺少回归测试",
+                "超过 30 天未更新"
+              ],
+              "number": 31886,
+              "overlapping_paths": [],
+              "references_issue": false,
+              "root_cause_coverage": false,
+              "rule_closed": false,
+              "score": -42,
+              "semantic_distinctive_overlap": [
+                "is_neox_style"
+              ],
+              "semantic_overlap": false,
+              "semantic_overlap_count": 5,
+              "state": "OPEN",
+              "strengths": [
+                "已有成功 CI/check",
+                "标题/正文与 issue 关键词匹配"
+              ],
+              "technical_complete": false,
+              "technical_failed_checks": [],
+              "test_files": 0,
+              "title": "[Feature][Bugfix] Support draft model tp any of speculative decode",
+              "url": "https://github.com/vllm-project/vllm/pull/31886"
+            },
+            {
+              "additions": 326,
+              "age_days": 23,
+              "author_association": "NONE",
+              "changed_files": 2,
+              "ci_competition_weight": 0,
+              "deletions": 48,
+              "gaps": [
+                "未明确 closing/reference 目标 issue",
+                "超过 14 天未更新"
+              ],
+              "ignored_nontechnical_failed_checks": [],
+              "is_draft": false,
+              "issue_body_link": false,
+              "issue_body_link_relation": "",
+              "maintainer_owned": false,
+              "material_competition_gaps": [],
+              "number": 49323,
+              "overlapping_paths": [],
+              "references_issue": false,
+              "root_cause_coverage": false,
+              "rule_closed": false,
+              "score": 8,
+              "semantic_distinctive_overlap": [
+                "is_neox_style"
+              ],
+              "semantic_overlap": false,
+              "semantic_overlap_count": 4,
+              "state": "OPEN",
+              "strengths": [
+                "包含测试文件 1 个",
+                "CI 失败待归因，不作为竞争依据",
+                "标题/正文与 issue 关键词匹配"
+              ],
+              "technical_complete": false,
+              "technical_failed_checks": [
+                "pre-run-check"
+              ],
+              "test_files": 1,
+              "title": "[Bugfix][Kernel] Fixes issue #49290: MRotaryEmbedding Triton kernel hardcodes Neox pairing for GPT-J style models",
+              "url": "https://github.com/vllm-project/vllm/pull/49323"
+            },
+            {
+              "additions": 26,
+              "age_days": 23,
+              "author_association": "NONE",
+              "changed_files": 1,
+              "ci_competition_weight": 0,
+              "deletions": 9,
+              "gaps": [
+                "未明确 closing/reference 目标 issue",
+                "缺少测试文件",
+                "仍是 draft",
+                "超过 14 天未更新"
+              ],
+              "ignored_nontechnical_failed_checks": [],
+              "is_draft": true,
+              "issue_body_link": false,
+              "issue_body_link_relation": "",
+              "maintainer_owned": false,
+              "material_competition_gaps": [
+                "缺少回归测试",
+                "仍是 draft"
+              ],
+              "number": 42765,
+              "overlapping_paths": [],
+              "references_issue": false,
+              "root_cause_coverage": false,
+              "rule_closed": false,
+              "score": -42,
+              "semantic_distinctive_overlap": [
+                "is_neox_style"
+              ],
+              "semantic_overlap": false,
+              "semantic_overlap_count": 3,
+              "state": "OPEN",
+              "strengths": [
+                "CI 失败待归因，不作为竞争依据",
+                "标题/正文与 issue 关键词匹配"
+              ],
+              "technical_complete": false,
+              "technical_failed_checks": [
+                "pre-run-check",
+                "pre-run-check",
+                "unnamed"
+              ],
+              "test_files": 0,
+              "title": "[Bugfix] _triton_mrope_forward: support GPT-J-style rotation (#42016)",
+              "url": "https://github.com/vllm-project/vllm/pull/42765"
+            }
+          ],
+          "status": "none",
+          "summary": "仅发现未直接关联、无代码路径或强机制重合的 PR #49323；保留为搜索上下文，不阻止实现"
+        },
+        "duplicateDigest": "201afd758d3ce64ebcfc837338f8eaf5b7d2feebcc7ff09eed6b5e4e7f0cde89",
+        "duplicateStatus": "none",
+        "issue": {
+          "assignees": [],
+          "state": "open"
+        },
+        "issueDigest": "a9fc9327402baaa46d6cdcf190574360eec2f66937d92e0e756e9aae5e34186c",
+        "matureRepository": true,
+        "policy": {
+          "status": "ai_disclosure_conflict"
+        },
+        "probeRequired": true,
+        "reproductionPathPlan": true,
+        "schema": "pre_task_evidence_v1",
+        "validationPathPlan": true
+      },
+      "preTaskEvidenceDigest": "9fa27c4896363b9223b871a05fd1faffc1dcceacc6cefcc352e37db32bba4647",
+      "preTaskGate": {
+        "allowed": true,
+        "baseSha": "2adf4b9e2a915bd30876ab0c5dba2243f54fe5b7",
+        "classification": null,
+        "evidenceDigest": "9fa27c4896363b9223b871a05fd1faffc1dcceacc6cefcc352e37db32bba4647",
+        "expected": {
+          "assigneeDigest": "",
+          "baseSha": "",
+          "designDigest": "",
+          "duplicateDigest": "",
+          "issueDigest": ""
+        },
+        "reason": "PRE_TASK_EVIDENCE_PASSED",
+        "reasons": [],
+        "schema": "pre_task_evidence_v1"
+      },
+      "probeLevel": "PENDING",
+      "probeProfile": null,
+      "probeRequired": true,
+      "promptDigest": "87b0617a74340756281abb263dda3243ec867165b7a7ae51d89874e2590506b8",
+      "publicSubmissionAllowed": false,
+      "publicationMode": "canary",
+      "repo": "vllm-project/vllm",
+      "runId": "scan-20260821T030226Z-a4ce3e563a12",
+      "scanGate": "ALLOW_PRIVATE_WORK",
+      "scannerVersion": "oss_pr_radar_v50_material_contradictions",
+      "score": 11,
+      "selectedBaseSha": "2adf4b9e2a915bd30876ab0c5dba2243f54fe5b7",
+      "signature": "ef7e99b3cdd6648beb7c493e787def46a25e476d35d080bf86a74f01a1d22412",
+      "snapshotId": "96d65bab6da7c19b5ebf37fdfd307cc7ca3e34cbe6f1f86eb6a98a8b814d2b1e",
+      "sourceSha": "bdd288c70d13a5f7db7d8379a02442b1d5d795b1",
+      "status": "PENDING",
+      "submissionPolicy": "ai_disclosure_conflict",
+      "taskStage": "PREFLIGHT",
+      "title": "DFlash draft model does not inherit the target's RoPE layout (is_neox_style)",
+      "track": "agent_ai_infra",
+      "version": "dispatch_intent_v7"
     }
   ],
   "mode": "canary",
-  "newIntentCount": 6,
-  "runId": "scan-20260821T024018Z-0fa063b0749e",
+  "newIntentCount": 2,
+  "runId": "scan-20260821T030226Z-a4ce3e563a12",
   "scannerVersion": "oss_pr_radar_v50_material_contradictions",
-  "signature": "6a3683e9be5429faab53cf862f8a73dad912104368a4334b7ac382c102b3ba12",
-  "sourceSha": "d84fa3150c81b9b04b7d5e5050cef5e176ebd25b",
+  "signature": "84cc3cf881808cf3d7a8ad9e0c148dd04684ea53f976be2168cd6672db2aee54",
+  "sourceSha": "bdd288c70d13a5f7db7d8379a02442b1d5d795b1",
   "version": "dispatch_intents_v7"
 }
