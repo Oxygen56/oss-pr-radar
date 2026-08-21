@@ -709,6 +709,7 @@ def test_event_drain_creates_exactly_one_new_issue_task(monkeypatch, tmp_path):
     result = MODULE.drain_once(
         SimpleNamespace(
             ledger=tmp_path / "ledger.sqlite3",
+            runtime_root=tmp_path,
             project_id="github-project",
             owner="event-drain",
         )
@@ -717,6 +718,44 @@ def test_event_drain_creates_exactly_one_new_issue_task(monkeypatch, tmp_path):
     assert result["action"] == "issue_task_dispatched"
     assert result["threadId"] == "thread-1"
     assert calls == [("claim", "intent-1"), ("creation", "intent-1"), ("create", "token-1")]
+
+
+def test_root_task_create_passes_runtime_root_to_worker(monkeypatch, tmp_path):
+    runtime_root = tmp_path / "runtime"
+    runtime_root.mkdir()
+    monkeypatch.setattr(MODULE, "STATE", tmp_path)
+    captured = {}
+
+    class FakeWorker:
+        pid = 123
+
+    def fake_popen(argv, **_kwargs):
+        captured["argv"] = argv
+        receipt = Path(argv[argv.index("--receipt") + 1])
+        receipt.write_text(
+            json.dumps({"ok": True, "threadId": "thread-1", "turnId": "turn-1"}),
+            encoding="utf-8",
+        )
+        return FakeWorker()
+
+    monkeypatch.setattr(MODULE.subprocess, "Popen", fake_popen)
+
+    result = MODULE.root_task_create(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            runtime_root=runtime_root,
+            intent_id="intent-1",
+            creation_token="token-1",
+            project_id="github-project",
+            source_repo="/tmp/source",
+            worktree="/tmp/worktree",
+            title_time="08-21 11:35",
+        )
+    )
+
+    argv = captured["argv"]
+    assert argv[argv.index("--runtime-root") + 1] == str(runtime_root)
+    assert result["threadId"] == "thread-1"
 
 
 def test_event_drain_lock_suppresses_overlapping_trigger(tmp_path):

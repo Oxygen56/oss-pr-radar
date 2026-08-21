@@ -4213,6 +4213,8 @@ def root_task_create(args: argparse.Namespace) -> dict[str, Any]:
                 str(Path(__file__).resolve()),
                 "--ledger",
                 str(args.ledger),
+                "--runtime-root",
+                str(args.runtime_root),
                 "root-task-worker",
                 "--intent-id",
                 args.intent_id,
@@ -12927,6 +12929,7 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
         claim = claim_intent(
             argparse.Namespace(
                 ledger=args.ledger,
+                runtime_root=args.runtime_root,
                 intent_id=intent["intentId"],
                 owner=owner,
                 lease_minutes=30,
