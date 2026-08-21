@@ -2020,6 +2020,39 @@
     ],
     "why": "The issue identifies a concrete memory leak in the VLM data pipeline where raw image bytes are retained after PIL decoding, causing excessive host memory usage. The root cause is clearly pinpointed in RLHFDataset._build_messages() and the data flow through AgentLoop and trainer dispatch. The issue provides detailed reproduction steps, memory measurements, and a controlled comparison, making it actionable. The fix involves modifying data handling and field selection, which is a valid code change in an LLM algorithm repository."
   },
+  "0faf4ca7c6e804935aece2a5de8ca8de47bfe01257087f3e3a9cc219f292c01f": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #2761 claims technical completeness but root_cause_coverage is false; issue body states root cause clearly."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Feishu adapter image handling in internal/im/feishu/adapter.go",
+      "feishuMarkdownImageRe regex or resource:// handling logic",
+      "Add regression test for resource:// image degradation"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #2761; maintainer may prefer that implementation.",
+      "Changing image handling could affect other IM adapters or card rendering behavior."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a failing test that simulates a resource:// image in Feishu card markdown without APP_EXTERNAL_URL, asserting the card update does not fail with 200570 and the image is degraded to a text link.",
+      "Run targeted Go tests for the Feishu adapter package and static checks (go vet, lint)."
+    ],
+    "unknowns": [
+      "Whether maintainer has a design preference for handling resource:// images (e.g., upload vs. degrade).",
+      "Whether PR #2761 fully resolves the issue or has gaps not captured in the assessment."
+    ],
+    "why": "Issue provides a clear root cause (feishuMarkdownImageRe only matches http(s)://, skipping resource:// handles) and a concrete reproduction path with expected/actual behavior and logs. An open PR #2761 directly addresses the issue with a test file and passing CI, but lacks explicit root-cause coverage evidence; the issue remains actionable for a competing fix that adds a failing test and covers the resource:// path."
+  },
   "0fbc35e10bc347dface165a133e3df627a734ec5e12272d71dbac197adda1781": {
     "confidence": 0.85,
     "contradictions": [],
