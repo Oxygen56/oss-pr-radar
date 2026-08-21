@@ -125,6 +125,45 @@ def _signed_dispatch_queue(
     return signer.seal(queue)
 
 
+def test_resolve_repo_code_paths_expands_unique_basenames_and_drops_identifiers():
+    class Client:
+        def repository_tree(self, repo, ref):
+            assert repo == "vllm-project/vllm"
+            assert ref == "base-sha"
+            return [
+                {
+                    "type": "blob",
+                    "path": "vllm/v1/spec_decode/draft_model/qwen3_dflash.py",
+                },
+                {"type": "blob", "path": "tests/test_other.py"},
+                {"type": "tree", "path": "vllm/v1"},
+            ]
+
+    assert MODULE._resolve_repo_code_paths(
+        Client(),
+        repo="vllm-project/vllm",
+        ref="base-sha",
+        code_paths=["`qwen3_dflash.py`", "Qwen3_5ForConditionalGeneration"],
+    ) == ["vllm/v1/spec_decode/draft_model/qwen3_dflash.py"]
+
+
+def test_resolve_repo_code_paths_keeps_unique_suffixes_only():
+    class Client:
+        def repository_tree(self, _repo, _ref):
+            return [
+                {"type": "blob", "path": "src/providers/openai/client.py"},
+                {"type": "blob", "path": "src/providers/anthropic/client.py"},
+                {"type": "blob", "path": "tests/unit/client.py"},
+            ]
+
+    assert MODULE._resolve_repo_code_paths(
+        Client(),
+        repo="owner/repo",
+        ref="base-sha",
+        code_paths=["providers/openai/client.py", "client.py"],
+    ) == ["src/providers/openai/client.py"]
+
+
 def _superseded_scanner_revision() -> str:
     return V47_SUPERSEDED_REVISION
 

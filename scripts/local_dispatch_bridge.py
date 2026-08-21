@@ -2755,6 +2755,46 @@ def _hardware_inventory() -> set[str]:
     }
 
 
+def _resolve_repo_code_paths(
+    client: GitHubClient,
+    *,
+    repo: str,
+    ref: str,
+    code_paths: list[str],
+) -> list[str]:
+    normalized = [str(path).strip().strip("`").lstrip("./") for path in code_paths]
+    normalized = [path for path in normalized if path]
+    if not normalized:
+        return []
+    try:
+        tree_paths = {
+            str(item.get("path") or "")
+            for item in client.repository_tree(repo, ref)
+            if item.get("type") == "blob" and str(item.get("path") or "")
+        }
+    except Exception:
+        return normalized
+
+    resolved: set[str] = set()
+    for path in normalized:
+        if path in tree_paths:
+            resolved.add(path)
+            continue
+        if "/" in path:
+            suffix_matches = {candidate for candidate in tree_paths if candidate.endswith(f"/{path}")}
+            if len(suffix_matches) == 1:
+                resolved.update(suffix_matches)
+            continue
+        if "." not in path:
+            continue
+        basename_matches = {
+            candidate for candidate in tree_paths if candidate.rsplit("/", 1)[-1] == path
+        }
+        if len(basename_matches) == 1:
+            resolved.update(basename_matches)
+    return sorted(resolved)
+
+
 def _audit_intent(intent: dict[str, Any]) -> tuple[Any, Any]:
     match = ISSUE_URL.match(str(intent.get("issueUrl") or ""))
     if not match:
@@ -2793,6 +2833,13 @@ def _audit_intent(intent: dict[str, Any]) -> tuple[Any, Any]:
         for path in (pre_task.get("codePathsPlan") or pre_task.get("codePaths") or [])
         if str(path).strip()
     ]
+    if base_status == "OK":
+        code_paths = _resolve_repo_code_paths(
+            client,
+            repo=repo,
+            ref=selected_base,
+            code_paths=code_paths,
+        )
     preliminary_verdict = authorize(_candidate(intent), evidence)
     if base_status == "OK" and preliminary_verdict.status != "ALLOW":
         evidence = replace(
