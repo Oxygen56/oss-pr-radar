@@ -19396,6 +19396,37 @@
     "wait_reason": "ASSIGNMENT",
     "why": "Issue clearly describes a bug with a minimal repro and explicit contract question, but the repository requires assignment and the issue author requests maintainer confirmation before work. Existing PR #8584 is closed and weak, so a new PR could be viable after assignment."
   },
+  "7feb6f2391f66148daab39f0e52c63a4228243d5bf8b48c494fee9ce19148d75": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #31324 is titled elevenlabs but overlaps on response_format and transformation paths, requiring manual comparison."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "litellm/llms/zai/chat/transformation.py",
+      "litellm/llms/openai/openai.py"
+    ],
+    "risks": [
+      "Potential conflict with existing PR #31324 that touches similar transformation paths; need to compare implementation boundaries.",
+      "Changing json_mode handling in openai.py may affect other providers."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add unit test for ZAI map_openai_params with response_format, verifying tool-call translation and json_mode handling.",
+      "Run reproduction script from issue to confirm schema-valid output."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a different fix approach or have design constraints.",
+      "Exact impact of json_mode pop on other OpenAI-compatible providers."
+    ],
+    "why": "Issue provides a precise root cause (missing response_format in ZAI allowlist), a validated fix path (reuse _add_response_format_to_tools), and a concrete reproduction script. The proposed change is actionable and testable."
+  },
   "7ff3d7edf6c856f5baf89c00f67bff7318cbdf790bdc79300a0ccb4b60f2ded0": {
     "confidence": 0.7,
     "contradictions": [],
@@ -32403,6 +32434,35 @@
       "Maintainer preference on error classification approach"
     ],
     "why": "Issue describes a real bug in server/discover fallback for non-JSON-RPC 400 bodies, but root cause is not precisely identified (author admits no debugger trace). Open PR #1791 likely addresses this but does not reference the issue, and PR lookup was incomplete due to rate limit. Maintainer design preference is unconfirmed."
+  },
+  "d8c74eb806d90314d922a59b64ae503e6da0227eadac585acc24572e30b9e21b": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Open PR #25387 is closed and lacks tests, but issue remains open; no direct contradiction."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "litellm/proxy/auth/auth_checks.py",
+      "litellm/proxy/utils.py",
+      "litellm/proxy/hooks/reset_budget_job.py"
+    ],
+    "risks": [
+      "Potential behavior change in upsert logic affecting existing end users; need to ensure backfill does not overwrite explicit budget assignments."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that configures max_end_user_budget_id, auto-creates an end user, asserts budget_id is persisted in LiteLLM_EndUserTable, and verifies the reset job resets spend."
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred implementation approach or if the closed PR will be revived."
+    ],
+    "why": "Issue provides a precise root cause across three code paths, a concrete reproduction, and a suggested fix. The candidate is actionable despite an existing closed PR lacking tests and root-cause coverage."
   },
   "d90931ce4843cfecd8a001954c60a99fdce15220b3581596f86a4ce0f7c06f5a": {
     "confidence": 0.8,
