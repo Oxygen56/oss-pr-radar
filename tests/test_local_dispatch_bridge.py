@@ -3556,6 +3556,10 @@ def test_private_task_dispatch_defaults_to_one_active_task(monkeypatch, tmp_path
 
 
 def test_independent_review_runs_while_issue_task_lifecycle_is_active(monkeypatch, tmp_path):
+    monkeypatch.setattr(MODULE, "ROOT", tmp_path)
+    schema_path = tmp_path / "schemas" / "independent_review.schema.json"
+    schema_path.parent.mkdir(parents=True)
+    schema_path.write_text("{}\n", encoding="utf-8")
     monkeypatch.setattr(
         MODULE,
         "review_once",
@@ -3565,6 +3569,21 @@ def test_independent_review_runs_while_issue_task_lifecycle_is_active(monkeypatc
     result = MODULE.independent_review_run(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
 
     assert result == {"ok": True, "updated": ["a/b#1"]}
+
+
+def test_independent_review_missing_schema_is_nonfatal(monkeypatch, tmp_path):
+    monkeypatch.setattr(MODULE, "ROOT", tmp_path)
+
+    result = MODULE.independent_review_run(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert result == {
+        "ok": True,
+        "unavailable": True,
+        "reason": "independent_review_schema_unavailable",
+        "updated": [],
+        "skipped": [],
+        "errors": [],
+    }
 
 
 def test_new_issue_priority_includes_pending_independent_review(monkeypatch, tmp_path):

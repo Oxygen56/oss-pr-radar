@@ -3019,6 +3019,16 @@ def _global_task_wip(
 def independent_review_run(args: argparse.Namespace) -> dict[str, Any]:
     """Run one serialized review independently of task lifecycle bookkeeping."""
 
+    schema_path = ROOT / "schemas" / "independent_review.schema.json"
+    if not schema_path.is_file():
+        return {
+            "ok": True,
+            "unavailable": True,
+            "reason": "independent_review_schema_unavailable",
+            "updated": [],
+            "skipped": [],
+            "errors": [],
+        }
     return review_once(ROOT, args.ledger)
 
 
