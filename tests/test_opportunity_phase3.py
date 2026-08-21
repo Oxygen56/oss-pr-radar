@@ -98,6 +98,34 @@ def test_policy_duplicate_and_code_surface_fail_closed():
     assert disclosure["allowed"] is False
     assert disclosure["classification"] == "blocked_pre_task"
 
+    private_disclosure = pre_task_gate(
+        candidate(
+            category="LOCAL_FIX_ONLY",
+            gate_decision="ALLOW_PRIVATE_WORK",
+            auto_spawn=True,
+            public_submission_allowed=False,
+        ),
+        evidence(aiDisclosureConflict=True, policy={"status": "ai_disclosure_conflict"}),
+    )
+    assert private_disclosure["allowed"] is True
+    assert private_disclosure["classification"] is None
+
+    private_disclosure_assignment = pre_task_gate(
+        candidate(
+            category="LOCAL_FIX_ONLY",
+            gate_decision="ALLOW_PRIVATE_WORK",
+            auto_spawn=True,
+            public_submission_allowed=False,
+        ),
+        evidence(
+            aiDisclosureConflict=True,
+            assignmentRequired=True,
+            policy={"status": "ai_disclosure_and_assignment"},
+        ),
+    )
+    assert private_disclosure_assignment["allowed"] is False
+    assert "assignment_required" in private_disclosure_assignment["reasons"]
+
     docs = pre_task_gate(candidate(), evidence(codePaths=[], docsOnly=True))
     assert docs["classification"] == "task_no_go"
     assert "no_code_surface" in docs["reasons"]

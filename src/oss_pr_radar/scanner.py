@@ -3189,9 +3189,19 @@ class Radar:
             strengths.append("改动文件与 issue 代码路径重合")
 
         technical_complete = bool(references_issue and test_files and changed_files > 0)
+        documented_root_cause = bool(
+            re.search(r"(?im)^##+\s+(?:why|root cause|problem|motivation)\b", body)
+            and re.search(
+                r"(?im)^##+\s+(?:how to test|test plan|verification|validation)\b",
+                body,
+            )
+        )
         root_cause_coverage = bool(
             detail.get("rootCauseCoverage") is True
-            or (technical_complete and (semantic_overlap or issue_body_link))
+            or (
+                technical_complete
+                and (semantic_overlap or issue_body_link or documented_root_cause)
+            )
         )
         material_competition_gaps = []
         if not test_files:

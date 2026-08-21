@@ -138,6 +138,12 @@ def pre_task_gate(
         reasons.append("stale_or_bot_refresh")
     if issue.get("assignees") or evidence.get("assignees"):
         reasons.append("issue_assigned")
+    private_disclosure_work = bool(
+        candidate.get("gate_decision") == "ALLOW_PRIVATE_WORK"
+        and candidate.get("auto_spawn") is True
+        and candidate.get("public_submission_allowed") is False
+        and policy.get("status") in {"ai_disclosure_conflict", "ai_disclosure_and_assignment"}
+    )
     if (
         policy.get("status")
         in {
@@ -148,7 +154,7 @@ def pre_task_gate(
             "ai_disclosure_and_assignment",
         }
         or evidence.get("aiDisclosureConflict") is True
-    ):
+    ) and not private_disclosure_work:
         reasons.append("policy_or_disclosure_uncertain")
     if policy.get("assignment_required") or evidence.get("assignmentRequired") is True:
         if evidence.get("maintainerApproval") is not True and not evidence.get(

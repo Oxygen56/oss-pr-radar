@@ -397,6 +397,50 @@ def test_technical_ci_failure_alone_does_not_make_complete_pr_competitive(monkey
     assert result["prs"][0]["ci_competition_weight"] == 0
 
 
+def test_direct_pr_with_documented_root_cause_and_validation_is_strong(monkeypatch, tmp_path):
+    instance = radar(tmp_path)
+    monkeypatch.setattr(instance, "open_pr_hits", lambda *args: [{"number": 11}])
+    monkeypatch.setattr(
+        instance,
+        "pr_detail",
+        lambda *args: {
+            "number": 11,
+            "title": "fix(providers): follow pagination cursor",
+            "url": "https://github.com/a/b/pull/11",
+            "body": (
+                "## Why\nThe provider hook drops next_page_id, so entries past the first "
+                "page never reach the picker. The service contract was verified against "
+                "a paginated response.\n\n## How to Test\nThe regression test fails before "
+                "the change and passes after the cursor walk is added.\n\nFixes #7"
+            ),
+            "state": "OPEN",
+            "isDraft": False,
+            "updatedAt": "2026-08-20T12:00:00Z",
+            "files": [
+                {"path": "src/hooks/use-providers.ts"},
+                {"path": "tests/use-providers.test.ts"},
+            ],
+            "additions": 90,
+            "deletions": 8,
+            "changedFiles": 2,
+            "statusCheckRollup": [{"name": "unit", "conclusion": "SUCCESS"}],
+            "reviewDecision": "REVIEW_REQUIRED",
+            "comments": [],
+            "closingIssuesReferences": [{"number": 7}],
+        },
+    )
+
+    result = instance.assess_open_prs(
+        "a/b",
+        7,
+        "Provider picker omits entries after page one",
+        "The cloud provider API paginates results.",
+    )
+
+    assert result["status"] == "covered_strong"
+    assert result["prs"][0]["root_cause_coverage"] is True
+
+
 def test_stack_trace_basename_and_semantics_block_unlinked_covering_pr(monkeypatch, tmp_path):
     instance = radar(tmp_path)
     monkeypatch.setattr(instance, "open_pr_hits", lambda *args: [{"number": 1439}])

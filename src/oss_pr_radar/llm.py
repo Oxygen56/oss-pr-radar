@@ -72,6 +72,16 @@ vote. Cite supplied evidence IDs rather than inventing facts. Low confidence or
 materially blocking unknowns must result in RETRY. CI failure and future merge
 likelihood are not proof of contribution value.
 
+Normal implementation uncertainty is not a blocker: choosing between two reasonable
+fixes, a maintainer possibly preferring another implementation, normal PR review, CI
+still needing to run, or the absence of maintainer pre-approval must not by themselves
+produce RETRY. When the supplied evidence already establishes a root cause and a
+concrete validation path, use NO_OBJECTION unless a missing fact actually determines
+whether code work is actionable. Examples of materially blocking unknowns are missing
+reproduction or root-cause evidence, unresolved duplicate/merged-fix coverage,
+repository assignment or disclosure requirements, unavailable required hardware, or
+contradictory evidence.
+
 For track=llm_algorithm, require a concrete training objective, model mechanism,
 distributed-training invariant, quantization/numerical method, kernel algorithm, or
 evaluation methodology. The issue must support a reference-vs-implementation test,
@@ -338,18 +348,13 @@ class DeepSeekEvaluator:
 
     @staticmethod
     def _normalize(review: dict[str, Any]) -> dict[str, Any]:
-        allowed = {
-            "NEW_CLEAN_CANDIDATE",
-            "PR_COMPETITION_OPPORTUNITY",
-            "WAIT_MAINTAINER",
-            "REJECT",
-        }
+        semantic = normalize_semantic_signal(review)
         raw_decision = str(review.get("decision") or "").upper()
-        decision = raw_decision or "WAIT_MAINTAINER"
-        invalid_enum = False
-        if decision not in allowed:
-            decision = "WAIT_MAINTAINER"
-            invalid_enum = bool(raw_decision)
+        raw_wait_reason = str(review.get("wait_reason") or "").upper()
+        unknowns = DeepSeekEvaluator._strings(review.get("unknowns"))
+        contradictions = DeepSeekEvaluator._strings(review.get("contradictions"))
+        expected_changes = DeepSeekEvaluator._strings(review.get("expected_changes"))
+        test_plan = DeepSeekEvaluator._strings(review.get("test_plan"))
         try:
             score = max(0, min(10, int(review.get("score", 0))))
         except (TypeError, ValueError):
@@ -358,6 +363,42 @@ class DeepSeekEvaluator:
             confidence = max(0.0, min(1.0, float(review.get("confidence", 0))))
         except (TypeError, ValueError):
             confidence = 0.0
+        root_cause_clarity = str(review.get("root_cause_clarity") or "unknown")[:32]
+        routine_unknowns_recovered = bool(
+            semantic["semanticSignal"] == "RETRY"
+            and score >= 6
+            and confidence >= 0.65
+            and root_cause_clarity.casefold() == "high"
+            and expected_changes
+            and test_plan
+            and not contradictions
+            and raw_decision in {"", "WAIT_MAINTAINER"}
+            and raw_wait_reason in {"", "OTHER"}
+            and DeepSeekEvaluator._routine_implementation_unknowns_only(unknowns)
+        )
+        if routine_unknowns_recovered:
+            # The model is an evidence reviewer, not an authorization gate. Do
+            # not let ordinary implementation choices masquerade as missing
+            # actionability evidence; deterministic policy gates still run.
+            semantic["semanticSignal"] = "NO_OBJECTION"
+        allowed = {
+            "NEW_CLEAN_CANDIDATE",
+            "PR_COMPETITION_OPPORTUNITY",
+            "WAIT_MAINTAINER",
+            "REJECT",
+        }
+        # The evidence-only prompt does not ask the model for an authorization
+        # decision. Derive compatibility metadata from its semantic signal
+        # instead of inventing a WAIT_MAINTAINER vote when the field is absent.
+        decision = ("NEW_CLEAN_CANDIDATE" if routine_unknowns_recovered else raw_decision) or {
+            "NO_OBJECTION": "NEW_CLEAN_CANDIDATE",
+            "FILTER": "REJECT",
+            "RETRY": "WAIT_MAINTAINER",
+        }[semantic["semanticSignal"]]
+        invalid_enum = False
+        if decision not in allowed:
+            decision = "WAIT_MAINTAINER"
+            invalid_enum = bool(raw_decision)
         allowed_wait_reasons = {
             "DISCLOSURE_ONLY",
             "ASSIGNMENT",
@@ -366,7 +407,6 @@ class DeepSeekEvaluator:
             "DUPLICATE_REVIEW",
             "OTHER",
         }
-        raw_wait_reason = str(review.get("wait_reason") or "").upper()
         wait_reason = raw_wait_reason
         if raw_wait_reason and raw_wait_reason not in allowed_wait_reasons:
             invalid_enum = True
@@ -379,18 +419,19 @@ class DeepSeekEvaluator:
             "wait_reason": wait_reason,
             "score": score,
             "confidence": confidence,
-            "root_cause_clarity": str(review.get("root_cause_clarity") or "unknown")[:32],
+            "root_cause_clarity": root_cause_clarity,
             "why": str(review.get("why") or "")[:1000],
-            "expected_changes": DeepSeekEvaluator._strings(review.get("expected_changes")),
-            "test_plan": DeepSeekEvaluator._strings(review.get("test_plan")),
+            "expected_changes": expected_changes,
+            "test_plan": test_plan,
             "risks": DeepSeekEvaluator._strings(review.get("risks")),
             "evidence_ids": DeepSeekEvaluator._strings(
                 review.get("evidence_ids") or review.get("evidence")
             ),
-            "contradictions": DeepSeekEvaluator._strings(review.get("contradictions")),
-            "unknowns": DeepSeekEvaluator._strings(review.get("unknowns")),
+            "contradictions": contradictions,
+            "unknowns": unknowns,
+            "routineUnknownsRecovered": routine_unknowns_recovered,
             "invalidEnum": invalid_enum,
-            **normalize_semantic_signal(review),
+            **semantic,
         }
 
     @staticmethod
@@ -398,6 +439,38 @@ class DeepSeekEvaluator:
         if not isinstance(value, list):
             return []
         return [str(item)[:500] for item in value[:8] if str(item).strip()]
+
+    @staticmethod
+    def _routine_implementation_unknowns_only(unknowns: list[str]) -> bool:
+        if not unknowns:
+            return False
+        blocking = re.compile(
+            r"\b(?:duplicate|existing\s+(?:pr|pull request)|already\s+fix\w*|covered\s+by|"
+            r"reproduc\w*|missing\s+evidence|root\s+cause\s+(?:is\s+)?(?:unknown|unclear)|"
+            r"assign\w*|required\s+approval|disclos\w*|policy|expected\s+behavio[u]?r|"
+            r"hardware|environment|version|scope)\b",
+            re.I,
+        )
+        routine = re.compile(
+            r"(?:the\s+)?(?:exact|specific|preferred)\s+(?:fix|implementation)\s+"
+            r"(?:choice|approach)(?:\s*\([^)]{1,100}\))?\s+"
+            r"(?:(?:is|remains)\s+)?(?:not\s+yet\s+decided|undecided|open|still\s+open)|"
+            r"(?:the\s+)?maintainer\s+(?:may|might|could)\s+prefer\s+"
+            r"(?:a\s+)?(?:different|another|specific)?\s*"
+            r"(?:fix|implementation|approach|wording)|"
+            r"(?:maintainer\s+)?approval\s+is\s+conditional\s+on\s+(?:pr\s+)?review|"
+            r"(?:normal\s+)?(?:pr\s+)?review\s+(?:is\s+)?(?:pending|required)",
+            re.I,
+        )
+        clauses = [
+            clause.strip().rstrip(".")
+            for item in unknowns
+            for clause in item.split(";")
+            if clause.strip().rstrip(".")
+        ]
+        return bool(clauses) and all(
+            routine.fullmatch(clause) and not blocking.search(clause) for clause in clauses
+        )
 
     @staticmethod
     def _no_code_action(review: dict[str, Any]) -> bool:

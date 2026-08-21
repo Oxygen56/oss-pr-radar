@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from oss_pr_radar.llm import DeepSeekEvaluator, DeepSeekRequestError
+from oss_pr_radar.opportunity import pre_task_gate
 
 
 def candidate(**overrides):
@@ -307,3 +308,181 @@ def test_non_blocking_unknown_does_not_downgrade_clean_candidate(tmp_path, monke
 
     assert result[0]["gate_decision"] == "ALLOW_TO_WORK"
     assert result[0]["auto_spawn"] is True
+
+
+def test_evidence_only_response_does_not_invent_maintainer_wait(tmp_path, monkeypatch):
+    instance = evaluator(tmp_path)
+    monkeypatch.setattr(
+        instance,
+        "_request",
+        lambda payload: {
+            "semanticSignal": "NO_OBJECTION",
+            "score": 8,
+            "confidence": 0.85,
+            "evidence_ids": ["issue_data.issue_body"],
+            "unknowns": ["The exact root cause still needs implementation work"],
+        },
+    )
+
+    result = instance.evaluate_candidates([candidate()])
+
+    assert result[0]["llm_review"]["decision"] == "NEW_CLEAN_CANDIDATE"
+    assert result[0]["llm_review"]["semanticSignal"] == "NO_OBJECTION"
+    assert result[0]["gate_decision"] == "ALLOW_TO_WORK"
+    assert result[0]["auto_spawn"] is True
+    second_pass = pre_task_gate(
+        result[0],
+        {
+            "issue": {"state": "open", "assignees": []},
+            "baseSha": "base-a",
+            "policy": {"status": "normal"},
+            "codePaths": ["src/runtime.py"],
+            "reproductionPath": True,
+            "validationPath": True,
+            "matureRepository": True,
+            "duplicate": {"status": "none"},
+        },
+    )
+    assert second_pass["allowed"] is True
+    assert second_pass["reasons"] == []
+
+
+def test_routine_fix_choice_does_not_force_semantic_retry(tmp_path, monkeypatch):
+    instance = evaluator(tmp_path)
+    monkeypatch.setattr(
+        instance,
+        "_request",
+        lambda payload: {
+            "decision": "WAIT_MAINTAINER",
+            "wait_reason": "OTHER",
+            "semanticSignal": "RETRY",
+            "score": 8,
+            "confidence": 0.85,
+            "root_cause_clarity": "high",
+            "why": "The failure and code path are reproduced.",
+            "expected_changes": ["Skip zero-sized parameters in the reduction path"],
+            "test_plan": ["Add a regression test for the supplied reproducer"],
+            "evidence_ids": ["issue_data.issue_body"],
+            "contradictions": [],
+            "unknowns": [
+                "The exact fix approach is not yet decided; maintainer approval is "
+                "conditional on PR review."
+            ],
+        },
+    )
+
+    result = instance.evaluate_candidates([candidate()])
+
+    assert result[0]["llm_review"]["semanticSignal"] == "NO_OBJECTION"
+    assert result[0]["llm_review"]["routineUnknownsRecovered"] is True
+    assert result[0]["gate_decision"] == "ALLOW_TO_WORK"
+    assert result[0]["auto_spawn"] is True
+
+
+def test_assignment_wait_reason_cannot_be_recovered_as_routine(tmp_path, monkeypatch):
+    instance = evaluator(tmp_path)
+    monkeypatch.setattr(
+        instance,
+        "_request",
+        lambda payload: {
+            "decision": "WAIT_MAINTAINER",
+            "wait_reason": "ASSIGNMENT",
+            "semanticSignal": "RETRY",
+            "score": 8,
+            "confidence": 0.85,
+            "root_cause_clarity": "high",
+            "expected_changes": ["Implement the scoped fix"],
+            "test_plan": ["Add the regression test"],
+            "evidence_ids": ["repository.policy"],
+            "contradictions": [],
+            "unknowns": ["The exact implementation approach is not yet decided"],
+        },
+    )
+
+    result = instance.evaluate_candidates([candidate()])
+
+    assert result[0]["llm_review"]["semanticSignal"] == "RETRY"
+    assert result[0]["llm_review"]["routineUnknownsRecovered"] is False
+    assert result[0]["gate_decision"] == "RETRY_REQUIRED"
+    assert result[0]["auto_spawn"] is False
+
+
+def test_duplicate_coverage_unknown_still_requires_retry(tmp_path, monkeypatch):
+    instance = evaluator(tmp_path)
+    monkeypatch.setattr(
+        instance,
+        "_request",
+        lambda payload: {
+            "semanticSignal": "RETRY",
+            "score": 8,
+            "confidence": 0.85,
+            "root_cause_clarity": "high",
+            "expected_changes": ["Adjust kernel selection"],
+            "test_plan": ["Compare eager and graph outputs"],
+            "evidence_ids": ["issue_data.issue_body"],
+            "contradictions": [],
+            "unknowns": ["Whether existing PR #4518 already fixes this root cause"],
+        },
+    )
+
+    result = instance.evaluate_candidates([candidate()])
+
+    assert result[0]["llm_review"]["semanticSignal"] == "RETRY"
+    assert result[0]["llm_review"]["routineUnknownsRecovered"] is False
+    assert result[0]["gate_decision"] == "RETRY_REQUIRED"
+    assert result[0]["auto_spawn"] is False
+
+
+def test_routine_phrase_cannot_hide_missing_reproduction(tmp_path, monkeypatch):
+    instance = evaluator(tmp_path)
+    monkeypatch.setattr(
+        instance,
+        "_request",
+        lambda payload: {
+            "semanticSignal": "RETRY",
+            "score": 8,
+            "confidence": 0.85,
+            "root_cause_clarity": "high",
+            "expected_changes": ["Implement the scoped fix"],
+            "test_plan": ["Add the regression test"],
+            "evidence_ids": ["issue_data.issue_body"],
+            "contradictions": [],
+            "unknowns": [
+                "The exact fix approach is not yet decided; reproduction evidence is missing"
+            ],
+        },
+    )
+
+    result = instance.evaluate_candidates([candidate()])
+
+    assert result[0]["llm_review"]["semanticSignal"] == "RETRY"
+    assert result[0]["llm_review"]["routineUnknownsRecovered"] is False
+    assert result[0]["auto_spawn"] is False
+
+
+def test_routine_phrase_cannot_hide_possible_pr_coverage(tmp_path, monkeypatch):
+    instance = evaluator(tmp_path)
+    monkeypatch.setattr(
+        instance,
+        "_request",
+        lambda payload: {
+            "semanticSignal": "RETRY",
+            "score": 8,
+            "confidence": 0.85,
+            "root_cause_clarity": "high",
+            "expected_changes": ["Implement the scoped fix"],
+            "test_plan": ["Add the regression test"],
+            "evidence_ids": ["candidate.open_pr_assessment"],
+            "contradictions": [],
+            "unknowns": [
+                "The exact implementation approach is not yet decided; "
+                "PR #4518 may cover this root cause."
+            ],
+        },
+    )
+
+    result = instance.evaluate_candidates([candidate()])
+
+    assert result[0]["llm_review"]["semanticSignal"] == "RETRY"
+    assert result[0]["llm_review"]["routineUnknownsRecovered"] is False
+    assert result[0]["auto_spawn"] is False
