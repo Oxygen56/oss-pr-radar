@@ -18,7 +18,8 @@ from .contracts import contract_digest
 from .opportunity import normalize_semantic_signal
 from .util import sha256_text
 
-CACHE_SCHEMA = "deepseek_semantic_review_v8_supplied_evidence_ids"
+SEMANTIC_EVIDENCE_BINDING_CONTRACT = "deepseek_semantic_review_v8_supplied_evidence_ids"
+CACHE_SCHEMA = SEMANTIC_EVIDENCE_BINDING_CONTRACT
 NO_CODE_ACTION_RE = re.compile(
     r"\b(?:no new code changes? (?:(?:is|are) )?expected|"
     r"no code changes? (?:(?:is|are) )?(?:needed|required|expected)|"

@@ -19,6 +19,7 @@ INTENT_VERSION = "dispatch_intent_v7"
 SUPERSEDED_SCANNER_DECISION_REVISIONS = frozenset(
     {
         "oss_pr_radar_v47_semantic_evidence_only",
+        "oss_pr_radar_v48_semantic_evidence_only",
     }
 )
 SUPERSEDED_SCANNER_DECISION_CONTRACTS = {
@@ -26,6 +27,13 @@ SUPERSEDED_SCANNER_DECISION_CONTRACTS = {
         "intentVersion": INTENT_VERSION,
         "decisionContractDigest": (
             "7a5c2cdcb524e11b2262e10a121fa4be6f3fea3b1685992fce268defd9a51e87"
+        ),
+        "contractDigest": "a4a72ff173c07ee40bcbb7f0de7aeb3d217b1ef7700aa04f9015806c191b44d9",
+    },
+    "oss_pr_radar_v48_semantic_evidence_only": {
+        "intentVersion": INTENT_VERSION,
+        "decisionContractDigest": (
+            "15ac0145dc317b96bbc4b7d4d5d0ef171644a06e26e7c2f43a263977fe5a8919"
         ),
         "contractDigest": "a4a72ff173c07ee40bcbb7f0de7aeb3d217b1ef7700aa04f9015806c191b44d9",
     },

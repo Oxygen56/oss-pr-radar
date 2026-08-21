@@ -9,10 +9,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .llm import SEMANTIC_EVIDENCE_BINDING_CONTRACT
+
 POLICY_VERSION = "submit_ready_quality_v1"
-SCANNER_DECISION_REVISION = "oss_pr_radar_v48_semantic_evidence_only"
+SCANNER_DECISION_REVISION = "oss_pr_radar_v49_payload_bound_evidence_ids"
 DISPATCH_DECISION_REVISION = "signed_intent_v9_transactional_creation"
-DECISION_CONTRACT_SCHEMA = 7
+DECISION_CONTRACT_SCHEMA = 8
 DECISION_CONTRACT_MANIFEST = {
     "schema": DECISION_CONTRACT_SCHEMA,
     "policyVersion": POLICY_VERSION,
@@ -22,6 +24,9 @@ DECISION_CONTRACT_MANIFEST = {
     "northStar": "rolling_submit_ready_rate",
     "externalMergeCountIsKpi": False,
     "semanticReviewMode": "evidence_only_no_authorization_vote",
+    "semanticEvidenceBindingContract": SEMANTIC_EVIDENCE_BINDING_CONTRACT,
+    "semanticEvidenceIdSource": "actual_payload_wrappers_only",
+    "phantomSemanticEvidenceIdsFailClosed": True,
     "tracks": ["agent_ai_infra", "llm_algorithm"],
     "calibration": {
         "requiredMature": 50,

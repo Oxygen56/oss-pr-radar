@@ -8,9 +8,12 @@ import pytest
 
 from oss_pr_radar.dispatch import (
     LEGACY_QUEUE_CONTRACTS,
+    QUEUE_VERSION,
+    SUPERSEDED_SCANNER_DECISION_CONTRACTS,
     DispatchSigner,
     SignatureError,
     canonical_prompt,
+    superseded_scanner_revision_queue,
     verify_queue,
 )
 from oss_pr_radar.policy import SCANNER_DECISION_REVISION, decision_contract_digest
@@ -308,6 +311,13 @@ def test_stale_scanner_report_cannot_build_dispatch_queue():
         MODULE.build(stale, signing_key=KEY, now=NOW)
 
 
+def test_current_scanner_revision_and_decision_contract_bind_payload_evidence():
+    assert SCANNER_DECISION_REVISION == "oss_pr_radar_v49_payload_bound_evidence_ids"
+    assert decision_contract_digest() != (
+        "15ac0145dc317b96bbc4b7d4d5d0ef171644a06e26e7c2f43a263977fe5a8919"
+    )
+
+
 def test_observed_rejection_revokes_existing_intent():
     existing = MODULE.build(report(candidate()), signing_key=KEY, now=NOW)
     result = MODULE.build(
@@ -405,6 +415,49 @@ def test_current_intent_requires_policy_watermark():
 
     with pytest.raises(SignatureError, match="policy watermark"):
         verify_queue(queue, signer, now=NOW)
+
+
+def test_signed_v48_current_format_queue_is_only_superseded_not_dispatchable():
+    signer = DispatchSigner(KEY)
+    legacy = SUPERSEDED_SCANNER_DECISION_CONTRACTS["oss_pr_radar_v48_semantic_evidence_only"]
+    issue_url = "https://github.com/example/project/issues/42"
+    intent = signer.seal(
+        {
+            "version": legacy["intentVersion"],
+            "intentId": "legacy-intent-v48",
+            "key": "example/project#42",
+            "repo": "example/project",
+            "issueNumber": 42,
+            "issueUrl": issue_url,
+            "issueUpdatedAt": "2026-08-04T00:00:00Z",
+            "policyDigest": "policy-digest",
+            "scannerVersion": "oss_pr_radar_v48_semantic_evidence_only",
+            "decisionContractDigest": legacy["decisionContractDigest"],
+            "contractDigest": legacy["contractDigest"],
+            "promptDigest": sha256_text(canonical_prompt(issue_url)),
+            "issuedAt": iso_z(NOW),
+            "expiresAt": iso_z(NOW + timedelta(hours=2)),
+            "status": "PENDING",
+        }
+    )
+    queue = signer.seal(
+        {
+            "version": QUEUE_VERSION,
+            "scannerVersion": "oss_pr_radar_v48_semantic_evidence_only",
+            "decisionContractDigest": legacy["decisionContractDigest"],
+            "contractDigest": legacy["contractDigest"],
+            "intentCount": 1,
+            "intents": [intent],
+        }
+    )
+
+    with pytest.raises(SignatureError, match="stale scanner decision revision"):
+        verify_queue(queue, signer, now=NOW)
+    stale = superseded_scanner_revision_queue(queue, signer)
+    assert stale is not None
+    assert stale["status"] == "superseded_scanner_revision"
+    assert stale["scannerVersion"] == "oss_pr_radar_v48_semantic_evidence_only"
+    assert stale["intentCount"] == 1
 
 
 def test_signed_v4_queue_remains_readable_during_v7_deployment():

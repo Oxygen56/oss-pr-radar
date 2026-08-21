@@ -27,7 +27,6 @@ from oss_pr_radar.dispatch import (
     INTENT_VERSION,
     QUEUE_VERSION,
     SUPERSEDED_SCANNER_DECISION_CONTRACTS,
-    SUPERSEDED_SCANNER_DECISION_REVISIONS,
 )
 from oss_pr_radar.dispatch import (
     canonical_prompt as dispatch_canonical_prompt,
@@ -48,6 +47,9 @@ SPEC = importlib.util.spec_from_file_location("local_dispatch_bridge", SCRIPT)
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC and SPEC.loader
 SPEC.loader.exec_module(MODULE)
+
+V47_SUPERSEDED_REVISION = "oss_pr_radar_v47_semantic_evidence_only"
+V48_SUPERSEDED_REVISION = "oss_pr_radar_v48_semantic_evidence_only"
 
 
 @pytest.fixture(autouse=True)
@@ -123,7 +125,7 @@ def _signed_dispatch_queue(
 
 
 def _superseded_scanner_revision() -> str:
-    return next(iter(SUPERSEDED_SCANNER_DECISION_REVISIONS))
+    return V47_SUPERSEDED_REVISION
 
 
 def _enqueue_signed_intent(
@@ -248,6 +250,35 @@ def test_import_signed_queue_retires_known_superseded_queue_and_unstarted_local_
     assert again["staleQueueRejected"] == 1
     assert again["auditEventCreated"] is False
     assert again["staleLocalIntentsSuperseded"] == []
+    assert _managed_event_count(db, "DISPATCH_QUEUE_REJECTED") == 1
+
+
+def test_import_signed_queue_retires_v48_exact_tuple_without_importing(monkeypatch, tmp_path):
+    db = tmp_path / "ledger.sqlite3"
+    store = RadarLedger(db)
+    _enqueue_signed_intent(
+        store,
+        scanner_version=V48_SUPERSEDED_REVISION,
+        intent_id="v48-pending",
+        key="old/repo#48",
+    )
+    remote = _signed_dispatch_queue(
+        scanner_version=V48_SUPERSEDED_REVISION,
+        intent_id="remote-v48",
+        key="remote/repo#48",
+    )
+    monkeypatch.setattr(MODULE, "fetch_cloud_queue", lambda: remote)
+
+    result = MODULE.import_signed_queue(db)
+
+    assert result["ok"] is True
+    assert result["staleQueueRejected"] == 1
+    assert result["verified"] == 0
+    assert result["inserted"] == 0
+    assert result["staleQueue"]["scannerVersion"] == V48_SUPERSEDED_REVISION
+    assert result["staleQueue"]["intentCount"] == 1
+    assert result["staleLocalIntentsSuperseded"] == ["v48-pending"]
+    assert _intent_statuses(db) == {"v48-pending": "SUPERSEDED"}
     assert _managed_event_count(db, "DISPATCH_QUEUE_REJECTED") == 1
 
 
@@ -413,9 +444,18 @@ def test_import_signed_queue_imports_current_revision(monkeypatch, tmp_path):
         ),
     ],
 )
-def test_superseded_queue_fail_closed_without_writes(monkeypatch, tmp_path, queue_factory, message):
+@pytest.mark.parametrize(
+    "stale_revision",
+    [
+        V47_SUPERSEDED_REVISION,
+        V48_SUPERSEDED_REVISION,
+    ],
+)
+def test_superseded_queue_fail_closed_without_writes(
+    monkeypatch, tmp_path, queue_factory, message, stale_revision
+):
     db = tmp_path / "ledger.sqlite3"
-    queue = queue_factory(_superseded_scanner_revision())
+    queue = queue_factory(stale_revision)
     monkeypatch.setattr(MODULE, "fetch_cloud_queue", lambda: queue)
 
     with pytest.raises(MODULE.SignatureError, match=re.escape(message)):

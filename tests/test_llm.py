@@ -1,11 +1,24 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 
 import pytest
 
-from oss_pr_radar.llm import DeepSeekEvaluator, DeepSeekRequestError
+from oss_pr_radar.contracts import contract_digest
+from oss_pr_radar.llm import (
+    CACHE_SCHEMA,
+    SEMANTIC_EVIDENCE_BINDING_CONTRACT,
+    SYSTEM_PROMPT,
+    DeepSeekEvaluator,
+    DeepSeekRequestError,
+)
 from oss_pr_radar.opportunity import pre_task_gate
+from oss_pr_radar.policy import (
+    SEMANTIC_EVIDENCE_BINDING_CONTRACT as POLICY_EVIDENCE_BINDING_CONTRACT,
+)
+from oss_pr_radar.util import sha256_text
 
 
 def candidate(**overrides):
@@ -279,6 +292,11 @@ def test_missing_key_never_auto_spawns(tmp_path):
     assert result[0]["llm_review"]["status"] == "not_configured"
 
 
+def test_llm_cache_schema_is_policy_evidence_binding_contract():
+    assert CACHE_SCHEMA == SEMANTIC_EVIDENCE_BINDING_CONTRACT
+    assert POLICY_EVIDENCE_BINDING_CONTRACT == SEMANTIC_EVIDENCE_BINDING_CONTRACT
+
+
 def test_invalid_json_is_retried(tmp_path, monkeypatch):
     instance = evaluator(tmp_path)
     calls = []
@@ -384,6 +402,66 @@ def test_recent_comments_are_accepted_as_supplied_evidence(tmp_path, monkeypatch
         ]
     )
 
+    assert result[0]["llm_review"]["semanticSignal"] == "NO_OBJECTION"
+    assert result[0]["gate_decision"] == "ALLOW_TO_WORK"
+    assert result[0]["auto_spawn"] is True
+
+
+def test_old_cache_schema_does_not_mask_payload_bound_recent_comments(tmp_path, monkeypatch):
+    instance = evaluator(tmp_path)
+    value = candidate(
+        _llm_context={
+            "issue_body": "Streaming tool calls lose arguments.",
+            "recent_comments": [{"body": "The repro points at the merge path."}],
+        }
+    )
+    context = value["_llm_context"]
+    payload_candidate = dict(value)
+    payload_candidate.pop("_llm_context")
+    payload = instance._payload(payload_candidate, context)
+    old_basis = {
+        "schema": "deepseek_semantic_review_v7_evidence_only",
+        "model": instance.model,
+        "baseUrl": instance.base_url.rstrip("/"),
+        "systemPromptDigest": sha256_text(SYSTEM_PROMPT),
+        "contractDigest": contract_digest(),
+        "payload": payload,
+    }
+    old_digest = hashlib.sha256(
+        json.dumps(old_basis, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    instance.cache_path.write_text(
+        json.dumps(
+            {
+                old_digest: {
+                    "semanticSignal": "FILTER",
+                    "score": 1,
+                    "confidence": 0.9,
+                    "evidence_ids": ["issue_data.issue_body"],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    requests: list[dict] = []
+
+    def request(payload_arg):
+        requests.append(payload_arg)
+        return {
+            "semanticSignal": "NO_OBJECTION",
+            "score": 8,
+            "confidence": 0.85,
+            "root_cause_clarity": "high",
+            "expected_changes": ["Handle the streaming edge case"],
+            "test_plan": ["Add a regression test from the recent comment"],
+            "evidence_ids": ["issue_data.issue_body", "issue_data.recent_comments"],
+        }
+
+    monkeypatch.setattr(instance, "_request", request)
+
+    result = instance.evaluate_candidates([value])
+
+    assert requests == [payload]
     assert result[0]["llm_review"]["semanticSignal"] == "NO_OBJECTION"
     assert result[0]["gate_decision"] == "ALLOW_TO_WORK"
     assert result[0]["auto_spawn"] is True
