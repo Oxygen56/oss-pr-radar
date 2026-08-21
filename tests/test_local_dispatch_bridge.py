@@ -1199,6 +1199,11 @@ def test_verified_reproduction_alias_advances_to_implementation(tmp_path):
         ),
         encoding="utf-8",
     )
+    store.record_stage(
+        "a/b#1",
+        "AUDIT_NO_GO",
+        reason="AUTOMATION_REPRODUCTION_RECEIPT_REQUIRED",
+    )
 
     result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
 
@@ -1217,6 +1222,15 @@ def test_verified_reproduction_alias_advances_to_implementation(tmp_path):
     assert payload["taskStage"] == "IMPLEMENTATION_READY"
     assert payload["probeLevel"] == "REPRODUCED_VALIDATED"
     assert managed.read_task("intent-1")["state"] == "IMPLEMENTATION_READY"
+    with store.connect() as connection:
+        opportunity = connection.execute(
+            "SELECT stage,terminal_reason FROM opportunities WHERE key='a/b#1'"
+        ).fetchone()
+        intent = connection.execute(
+            "SELECT status,title_synced_state FROM intents WHERE intent_id='intent-1'"
+        ).fetchone()
+    assert tuple(opportunity) == ("DISPATCHED", None)
+    assert tuple(intent) == ("DISPATCHED", None)
 
 
 def bind_validation_runtime(monkeypatch, root: Path) -> Path:

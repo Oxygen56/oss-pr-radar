@@ -10940,6 +10940,13 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                         receipt=receipt,
                         result_digest=result_digest,
                     )
+                    store.restore_verified_reproduction(
+                        candidate["key"],
+                        intent_id=str(candidate.get("intentId") or ""),
+                        thread_id=str(candidate["threadId"]),
+                        expected_reason="AUTOMATION_REPRODUCTION_RECEIPT_REQUIRED",
+                        receipt_digest=str(receipt.get("receiptDigest") or result_digest),
+                    )
                     managed_candidate["taskStage"] = "IMPLEMENTATION_READY"
                     managed_candidate["probeLevel"] = REPRODUCED_VALIDATED
                     store.update_intent_probe_metadata(

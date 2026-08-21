@@ -2129,6 +2129,67 @@ class RadarLedger:
                 now,
             )
 
+    def restore_verified_reproduction(
+        self,
+        key: str,
+        *,
+        intent_id: str,
+        thread_id: str,
+        expected_reason: str,
+        receipt_digest: str,
+    ) -> bool:
+        """Restore a dispatched task after a verified reproduction was misclassified."""
+
+        now = iso_z(datetime.now(UTC))
+        with self.transaction() as connection:
+            opportunity = connection.execute(
+                "SELECT stage,terminal_reason FROM opportunities WHERE key=?", (key,)
+            ).fetchone()
+            if opportunity is None:
+                raise LedgerError("opportunity not found")
+            if opportunity["stage"] != "AUDIT_NO_GO":
+                return False
+            if opportunity["terminal_reason"] != expected_reason:
+                raise LedgerError("verified reproduction restoration is stale")
+            intent = connection.execute(
+                """SELECT status,thread_id FROM intents
+                   WHERE intent_id=? AND opportunity_key=?""",
+                (intent_id, key),
+            ).fetchone()
+            if intent is None or intent["thread_id"] != thread_id:
+                raise LedgerError("verified reproduction task binding changed")
+            if intent["status"] != "REJECTED":
+                raise LedgerError("verified reproduction task is not terminal")
+            connection.execute(
+                """UPDATE opportunities SET stage='DISPATCHED',terminal_reason=NULL,updated_at=?
+                   WHERE key=?""",
+                (now, key),
+            )
+            connection.execute(
+                """UPDATE intents SET status='DISPATCHED',title_synced_state=NULL,updated_at=?
+                   WHERE intent_id=?""",
+                (now, intent_id),
+            )
+            connection.execute(
+                """UPDATE outcomes SET failure_class=NULL,updated_at=?
+                   WHERE opportunity_key=?""",
+                (now, key),
+            )
+            self._event(
+                connection,
+                key,
+                "REPRODUCTION_TERMINAL_REVERSED",
+                receipt_digest,
+                {
+                    "intentId": intent_id,
+                    "threadId": thread_id,
+                    "previousReason": expected_reason,
+                    "receiptDigest": receipt_digest,
+                },
+                now,
+            )
+            return True
+
     def pending(self) -> list[dict[str, Any]]:
         now_dt = datetime.now(UTC)
         now = iso_z(now_dt)
@@ -4332,6 +4393,11 @@ class RadarLedger:
                      )
                      AND (
                        i.status='DISPATCHED'
+                       OR (
+                         i.status='REJECTED'
+                         AND o.stage='AUDIT_NO_GO'
+                         AND o.terminal_reason='AUTOMATION_REPRODUCTION_RECEIPT_REQUIRED'
+                       )
                        OR o.stage IN ('PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED')
                        OR (
                          o.stage IN ('VALIDATION_PENDING','FIX_READY')
@@ -4361,6 +4427,11 @@ class RadarLedger:
                      )
                      AND (
                        i.status='DISPATCHED'
+                       OR (
+                         i.status='REJECTED'
+                         AND o.stage='AUDIT_NO_GO'
+                         AND o.terminal_reason='AUTOMATION_REPRODUCTION_RECEIPT_REQUIRED'
+                       )
                        OR (
                          o.stage IN ('VALIDATION_PENDING','FIX_READY')
                          AND NOT EXISTS (
