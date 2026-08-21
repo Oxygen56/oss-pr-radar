@@ -4231,6 +4231,152 @@ class RadarLedger:
             for row in rows
         ]
 
+    def implementation_followup_candidates(self) -> list[dict[str, Any]]:
+        """Return reproduced tasks that still need their implementation turn."""
+
+        candidates: list[dict[str, Any]] = []
+        with self.connect() as connection:
+            for task in self.task_context_candidates():
+                intent = task.get("intent") or {}
+                if (
+                    task.get("intentStatus") != "DISPATCHED"
+                    or intent.get("taskStage") != "IMPLEMENTATION_READY"
+                    or intent.get("probeLevel") != "REPRODUCED_VALIDATED"
+                    or not intent.get("probeReceiptDigest")
+                ):
+                    continue
+                reproduction = connection.execute(
+                    """SELECT dedupe_key,payload_json,created_at FROM events
+                       WHERE opportunity_key=?
+                         AND event_type='TASK_RESULT_INGESTED'
+                         AND json_extract(payload_json,'$.stage')='IMPLEMENTATION_READY'
+                       ORDER BY id DESC LIMIT 1""",
+                    (task["key"],),
+                ).fetchone()
+                if reproduction is None:
+                    continue
+                result_digest = str(reproduction["dedupe_key"] or "")
+                if not result_digest:
+                    continue
+                sent = connection.execute(
+                    """SELECT 1 FROM events
+                       WHERE opportunity_key=?
+                         AND event_type='IMPLEMENTATION_FOLLOWUP_SENT'
+                         AND dedupe_key=?""",
+                    (task["key"], result_digest),
+                ).fetchone()
+                reserved = connection.execute(
+                    """SELECT 1 FROM events
+                       WHERE opportunity_key=?
+                         AND event_type='IMPLEMENTATION_FOLLOWUP_RESERVED'
+                         AND dedupe_key=?""",
+                    (task["key"], result_digest),
+                ).fetchone()
+                if sent is None and reserved is None:
+                    candidates.append(
+                        task
+                        | {
+                            "resultDigest": result_digest,
+                            "reproducedAt": reproduction["created_at"],
+                        }
+                    )
+        return candidates
+
+    def reserve_implementation_followup(
+        self, *, thread_id: str, result_digest: str
+    ) -> dict[str, Any]:
+        candidate = next(
+            (
+                item
+                for item in self.implementation_followup_candidates()
+                if item.get("threadId") == thread_id
+                and item.get("resultDigest") == result_digest
+            ),
+            None,
+        )
+        if candidate is None:
+            raise LedgerError("implementation follow-up authorization is stale or invalid")
+        now = iso_z(datetime.now(UTC))
+        payload = {
+            "threadId": thread_id,
+            "resultDigest": result_digest,
+            "issueUrl": candidate["issueUrl"],
+            "worktreePath": candidate["worktreePath"],
+        }
+        with self.transaction() as connection:
+            require_quarantine_clear(
+                connection,
+                opportunity_key=str(candidate["key"]),
+                operation="implementation follow-up reservation",
+            )
+            self._event(
+                connection,
+                str(candidate["key"]),
+                "IMPLEMENTATION_FOLLOWUP_RESERVED",
+                result_digest,
+                payload,
+                now,
+            )
+        return candidate | payload | {"reservedAt": now}
+
+    def unresolved_implementation_followups(self) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT r.opportunity_key,r.dedupe_key,r.payload_json,r.created_at,
+                          o.issue_url,i.intent_id,i.thread_id,i.worktree_path
+                   FROM events r
+                   JOIN opportunities o ON o.key=r.opportunity_key
+                   JOIN intents i ON i.opportunity_key=r.opportunity_key
+                   WHERE r.event_type='IMPLEMENTATION_FOLLOWUP_RESERVED'
+                     AND i.status='DISPATCHED'
+                     AND i.thread_id=json_extract(r.payload_json,'$.threadId')
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events sent
+                       WHERE sent.opportunity_key=r.opportunity_key
+                         AND sent.event_type='IMPLEMENTATION_FOLLOWUP_SENT'
+                         AND sent.dedupe_key=r.dedupe_key
+                     )
+                   ORDER BY r.id"""
+            ).fetchall()
+        return [
+            {
+                "key": row["opportunity_key"],
+                "issueUrl": row["issue_url"],
+                "intentId": row["intent_id"],
+                "threadId": row["thread_id"],
+                "worktreePath": row["worktree_path"],
+                "resultDigest": row["dedupe_key"],
+                "reservedAt": row["created_at"],
+                "reservation": json.loads(row["payload_json"]),
+            }
+            for row in rows
+        ]
+
+    def commit_implementation_followup(
+        self, *, thread_id: str, result_digest: str
+    ) -> None:
+        candidate = next(
+            (
+                item
+                for item in self.unresolved_implementation_followups()
+                if item.get("threadId") == thread_id
+                and item.get("resultDigest") == result_digest
+            ),
+            None,
+        )
+        if candidate is None:
+            raise LedgerError("implementation follow-up reservation is unavailable")
+        now = iso_z(datetime.now(UTC))
+        with self.transaction() as connection:
+            self._event(
+                connection,
+                str(candidate["key"]),
+                "IMPLEMENTATION_FOLLOWUP_SENT",
+                result_digest,
+                {"threadId": thread_id, "resultDigest": result_digest},
+                now,
+            )
+
     def record_audit_snapshot(
         self,
         key: str,
@@ -8008,6 +8154,10 @@ class RadarLedger:
         """Atomically bind a reserved turn to the current quarantine-free state."""
 
         selectors = {
+            "implementation-followup": (
+                "IMPLEMENTATION_FOLLOWUP_RESERVED",
+                "json_extract(payload_json,'$.threadId')=? AND dedupe_key=?",
+            ),
             "pr-followup": (
                 "PR_FOLLOWUP_RESERVED",
                 "json_extract(payload_json,'$.threadId')=? AND dedupe_key=?",

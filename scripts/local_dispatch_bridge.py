@@ -4309,6 +4309,16 @@ def _task_turn_reservation(
     thread_id: str,
     delivery_token: str,
 ) -> dict[str, Any] | None:
+    if delivery_kind == "implementation-followup":
+        return next(
+            (
+                item
+                for item in store.unresolved_implementation_followups()
+                if item.get("threadId") == thread_id
+                and item.get("resultDigest") == delivery_token
+            ),
+            None,
+        )
     if delivery_kind == "pr-followup":
         candidate = next(
             (
@@ -4541,6 +4551,19 @@ def _guarded_task_turn_start(
 
 
 def _task_turn_prompt(delivery_kind: str, candidate: dict[str, Any]) -> str:
+    if delivery_kind == "implementation-followup":
+        issue_url = str(candidate.get("issueUrl") or "")
+        if not ISSUE_URL.fullmatch(issue_url):
+            raise RuntimeError("task-turn delivery has an invalid issue URL")
+        return (
+            f"{issue_prompt(issue_url)}\n\n"
+            "系统续跑：同一问题已经可靠复现并获得实现授权。读取当前任务上下文，"
+            "保留现有工作树和复现证据，直接完成最小根因修复、回归测试、独立复核和"
+            " Workspace Result Protocol 结构化交接；不要重新创建任务，不要把成功复现"
+            "写成无价值结论，也不要执行 GitHub 公开操作。"
+            + END_RESULT_TURN_PROMPT
+            + PLAIN_LANGUAGE_STATUS_PROMPT
+        )
     if delivery_kind == "validation-followup":
         return _validation_followup_prompt(candidate)
     if delivery_kind == "publication-feedback":
@@ -4625,7 +4648,11 @@ def _commit_task_turn_delivery(
     delivery_token: str,
     validation_reservation_digest: str | None = None,
 ) -> None:
-    if delivery_kind == "pr-followup":
+    if delivery_kind == "implementation-followup":
+        store.commit_implementation_followup(
+            thread_id=thread_id, result_digest=delivery_token
+        )
+    elif delivery_kind == "pr-followup":
         store.commit_pr_followup(thread_id=thread_id, wake_digest=delivery_token)
     elif delivery_kind == "validation-followup":
         store.commit_validation_followup(
@@ -5924,6 +5951,19 @@ def task_turn_deliver(args: argparse.Namespace) -> dict[str, Any]:
         "deliveryKind": args.delivery_kind,
         "workerPid": worker.pid,
     }
+
+
+def implementation_followup_deliver(args: argparse.Namespace) -> dict[str, Any]:
+    args.delivery_kind = "implementation-followup"
+    args.delivery_token = args.result_digest
+    return task_turn_deliver(args)
+
+
+def implementation_followup_reserve(args: argparse.Namespace) -> dict[str, Any]:
+    return ledger(args.ledger).reserve_implementation_followup(
+        thread_id=args.thread_id,
+        result_digest=args.result_digest,
+    )
 
 
 def pr_followup_deliver(args: argparse.Namespace) -> dict[str, Any]:
@@ -13001,6 +13041,58 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
             "recoveryRetryExhausted": recovery_exhausted,
         }
 
+    implementation_unresolved = store.unresolved_implementation_followups()
+    if implementation_unresolved:
+        candidate = implementation_unresolved[0]
+        delivered = implementation_followup_deliver(
+            argparse.Namespace(
+                ledger=args.ledger,
+                thread_id=candidate["threadId"],
+                result_digest=candidate["resultDigest"],
+            )
+        )
+        return {
+            "ok": bool(delivered.get("ok")),
+            "action": "implementation_followup_dispatched",
+            "key": candidate.get("key"),
+            "threadId": candidate.get("threadId"),
+            "delivery": delivered,
+            "restored": restored_items,
+            "rearmed": rearmed,
+            "recoveryRetryExhausted": recovery_exhausted,
+        }
+
+    implementation_candidates = store.implementation_followup_candidates()
+    if implementation_candidates:
+        candidate = implementation_candidates[0]
+        restore_failure = restore_target(candidate)
+        if restore_failure:
+            return restore_failure
+        reserved = implementation_followup_reserve(
+            argparse.Namespace(
+                ledger=args.ledger,
+                thread_id=candidate["threadId"],
+                result_digest=candidate["resultDigest"],
+            )
+        )
+        delivered = implementation_followup_deliver(
+            argparse.Namespace(
+                ledger=args.ledger,
+                thread_id=candidate["threadId"],
+                result_digest=reserved["resultDigest"],
+            )
+        )
+        return {
+            "ok": bool(delivered.get("ok")),
+            "action": "implementation_followup_dispatched",
+            "key": candidate.get("key"),
+            "threadId": candidate.get("threadId"),
+            "delivery": delivered,
+            "restored": restored_items,
+            "rearmed": rearmed,
+            "recoveryRetryExhausted": recovery_exhausted,
+        }
+
     pr_state = pr_followup_list(argparse.Namespace(ledger=args.ledger))
     deferred_followups: list[dict[str, Any]] = []
     restored_followup_threads: set[str] = set()
@@ -13442,6 +13534,16 @@ def main() -> int:
     publication_feedback_commit_parser = subparsers.add_parser("publication-feedback-commit")
     publication_feedback_commit_parser.add_argument("--thread-id", required=True)
     publication_feedback_commit_parser.add_argument("--reservation-nonce", required=True)
+    implementation_followup_reserve_parser = subparsers.add_parser(
+        "implementation-followup-reserve"
+    )
+    implementation_followup_reserve_parser.add_argument("--thread-id", required=True)
+    implementation_followup_reserve_parser.add_argument("--result-digest", required=True)
+    implementation_followup_deliver_parser = subparsers.add_parser(
+        "implementation-followup-deliver"
+    )
+    implementation_followup_deliver_parser.add_argument("--thread-id", required=True)
+    implementation_followup_deliver_parser.add_argument("--result-digest", required=True)
     pr_followup_list_parser = subparsers.add_parser("pr-followup-list")
     pr_followup_list_parser.add_argument(
         "--min-age-minutes",
@@ -13531,6 +13633,7 @@ def main() -> int:
         "--delivery-kind",
         required=True,
         choices=(
+            "implementation-followup",
             "pr-followup",
             "validation-followup",
             "publication-feedback",
@@ -13658,6 +13761,10 @@ def main() -> int:
         result = sync_task_contexts(args)
     elif args.operation == "reproduction-probe":
         result = run_reproduction_probes(args)
+    elif args.operation == "implementation-followup-reserve":
+        result = implementation_followup_reserve(args)
+    elif args.operation == "implementation-followup-deliver":
+        result = implementation_followup_deliver(args)
     elif args.operation == "publication-feedback-list":
         result = publication_feedback_list(args)
     elif args.operation == "publication-feedback-reserve":

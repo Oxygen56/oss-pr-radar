@@ -1233,6 +1233,28 @@ def test_verified_reproduction_alias_advances_to_implementation(tmp_path):
     assert tuple(opportunity) == ("DISPATCHED", None)
     assert tuple(intent) == ("DISPATCHED", None)
 
+    implementation = store.implementation_followup_candidates()
+    assert len(implementation) == 1
+    assert implementation[0]["threadId"] == "thread-1"
+    result_digest = implementation[0]["resultDigest"]
+    reserved = store.reserve_implementation_followup(
+        thread_id="thread-1", result_digest=result_digest
+    )
+    prompt = MODULE._task_turn_prompt("implementation-followup", reserved)
+    assert dispatch_canonical_prompt("https://github.com/a/b/issues/1") in prompt
+    assert "直接完成最小根因修复" in prompt
+    authorization = store.authorize_task_turn_delivery(
+        delivery_kind="implementation-followup",
+        thread_id="thread-1",
+        delivery_token=result_digest,
+    )
+    assert authorization["opportunityKey"] == "a/b#1"
+    store.commit_implementation_followup(
+        thread_id="thread-1", result_digest=result_digest
+    )
+    assert store.implementation_followup_candidates() == []
+    assert store.unresolved_implementation_followups() == []
+
 
 def bind_validation_runtime(monkeypatch, root: Path) -> Path:
     monkeypatch.setattr(MODULE, "ROOT", root)
