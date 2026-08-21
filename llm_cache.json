@@ -218,6 +218,34 @@
     ],
     "why": "Issue describes a live-process-only 400 with byte-faithful replays succeeding, pointing to stateful request mutation or encoding artifact. Existing PR #18024 by a maintainer directly addresses unmasking and persisting the failing request, with semantic overlap. The issue itself proposes deploying that PR as the next step, so the path forward depends on maintainer review of #18024 and its CI failures. No independent clean candidate is actionable without comparing to that PR."
   },
+  "027b709dabae8dc27af16068c805a85dec7f981ada26ebb76ca8b76197f6ce8c": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/memory/src/processors/observational-memory/retry.ts",
+      "observation-strategies/sync.ts",
+      "processors/observational-memory/processor.ts",
+      "ObservationalMemoryOptions"
+    ],
+    "risks": [
+      "Changing default behavior may affect existing users; need to ensure backward compatibility or opt-in configuration."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that simulates sync observation failure and verifies the turn continues when onSyncFailure is set to 'skip' or 'continue'.",
+      "Add a test that verifies retry configuration is honored and reduces wait time."
+    ],
+    "unknowns": [
+      "Maintainer design preference for the exact configuration shape and default behavior."
+    ],
+    "why": "Issue provides a clear root cause: hard-coded retry config and sync observation failure aborting the turn, with a concrete production trigger and a minimal fail-open patch. The proposal is actionable and testable."
+  },
   "02b69f4251cbeba77af8e3c25bcb13812ed3c35a701c35bd3ba9a18cfef74e39": {
     "confidence": 0.8,
     "contradictions": [
@@ -4021,6 +4049,32 @@
     ],
     "why": "Issue reports a real bug with detailed reproduction and ruled-out factors, but open PR and related issue lookups timed out, so duplicate work cannot be excluded. The repository requires AI disclosure, which conflicts with automated public action. Maintainer approval is absent and design confirmation is needed for the suspected areas."
   },
+  "1f8029cc647702c498d928067940d9b5a00da28a21200acaa802fcedda108176": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "Observational Memory history filtering to exclude working memory state signals",
+      "WorkingMemoryStateProcessor or observer input construction"
+    ],
+    "risks": [
+      "Potential impact on legitimate observations if filtering is too broad",
+      "Need to ensure system-context path still delivers working memory correctly"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Seed resource-scoped working memory, run a task in a new thread, capture observer input, assert absence of state signal and no working memory update"
+    ],
+    "unknowns": [
+      "Maintainer design preference for fix implementation"
+    ],
+    "why": "The issue provides a clear root cause: the working memory state signal is included in observer history, causing a self-feedback loop. It includes a concrete reproduction path and a suggested fix with regression test steps. The evidence is sufficient to make the fix actionable."
+  },
   "1fac82adf1890890e51a3dccb2b3b2dd325f3cadcfd38aba573ee3f5f40809a8": {
     "confidence": 0.9,
     "contradictions": [],
@@ -4316,6 +4370,40 @@
       "Whether PR #1571 will be updated or superseded"
     ],
     "why": "Issue provides detailed reproduction and root-cause analysis, but maintainer guidance is pending on scope and upstream dependency fix; existing PR #1571 is draft and incomplete, leaving competition opportunity but requiring design confirmation."
+  },
+  "21275bcf58076f914b4eea9babbd33887d011ed09e093685315e119a63b8e379": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims tool is broken, but comment suggests model emits invalid tool calls",
+      "Potential duplicate issue #13137 with overlapping behavior"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.related_issue_assessment",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "edit_existing_file tool handling",
+      "maxTokens configuration"
+    ],
+    "risks": [
+      "Duplicate work with existing PRs",
+      "Misdiagnosis if root cause is model behavior"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a minimal example using a non-local model to isolate the issue",
+      "Add regression test for edit_existing_file with large files and tool call parsing"
+    ],
+    "unknowns": [
+      "Exact root cause of crash",
+      "Whether issue is reproducible with a reliable model",
+      "Whether existing PRs fully address the problem"
+    ],
+    "why": "The issue reports a crash and unusable edit_existing_file tool, but lacks a minimal reproduction and clear root cause. A comment suggests the problem may be invalid tool calls from the local model, not a code defect. Potential duplicate issue #13137 exists, and open PRs may partially address the problem. Evidence is insufficient to confirm actionability."
   },
   "21496647c773b13d6bb60fe8d8e5b309f7da0197175f637887b2320f1d3abe4e": {
     "confidence": 0.6,
@@ -6690,6 +6778,29 @@
       "No explicit maintainer confirmation on the proposed design, but the issue is well-scoped and follows an existing fix pattern"
     ],
     "why": "Issue identifies a concrete atomicity bug in RemoteSandboxService read paths that commit the shared request session, with a clear root cause and a scoped fix pattern already proven for get_sandbox. The proposed change is actionable and testable with a real-session regression test."
+  },
+  "2f9578e4a7bc5e1b22c5a9e11aa976ca3cd8b37733604012a3f01225d9b2bae7": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "fastmcp generate-cli code generation logic for optional string parameters"
+    ],
+    "risks": [
+      "Potential impact on existing generated CLIs that rely on JSON-encoded strings for optional parameters; need to ensure backward compatibility or update documentation."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a minimal FastMCP server with an optional string parameter, generate CLI, run with a plain string argument, and assert no JSONDecodeError and correct output."
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred fix approach or if there are existing tests for the CLI generation that need updating."
+    ],
+    "why": "The issue provides a clear reproduction with exact commands and traceback, identifying the root cause as the generated CLI wrapping optional string parameters in json.loads(). The expected behavior is explicitly stated, making the fix actionable."
   },
   "311cb65cbedfcf0eae16f1edc34a66184b89cd9da96df8cf72e3c2e021714bac": {
     "confidence": 0.7,
@@ -12512,6 +12623,40 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue clearly describes a silent correctness bug in Valkey vector store reset/delete_col, with concrete repro and root cause. However, three closed PRs (#6996, #7013, #7023) already target the same fix, and the repo policy requires an accepted issue before PR review. The issue is not yet labelled accepted, and the author of #7013 explicitly requests that label. This is a duplicate-review situation: the fix is well understood but needs maintainer acceptance and coordination with existing PRs."
   },
+  "54eeb961fd4b540da9ac94aeef927c7b454bdad9ec70ca411e3df24e8a10f732": {
+    "confidence": 0.85,
+    "contradictions": [
+      "No contradictions found in supplied evidence."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/core/src/core/geminiChat.ts",
+      "packages/core/src/services/chatCompressionService.ts",
+      "packages/core/src/core/client.ts",
+      "packages/core/src/core/turn.ts",
+      "packages/core/src/agents/runtime/agent-core.ts",
+      "packages/core/src/services/sessionService.ts"
+    ],
+    "risks": [
+      "Potential semantic overlap with existing PR #9506 and #8276; need to compare implementation boundaries to avoid duplication. Also, changing public setter signature may affect callers in client.ts, turn.ts, agent-core.ts, sessionService.ts, and ACP session; must re-verify caller list on the target branch."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression tests for each of the three sites: tryCompress entry invalidation, compression service getters, and setLastPromptTokenCount route key stamping. Use the issue's described scenario of consecutive non-exact modelOverride sends to verify token counts are retained and cache-sharing fast path is taken."
+    ],
+    "unknowns": [
+      "Exact implementation details of PR #9506 and #8276 that may already cover parts of the fix; need to compare code paths to ensure no duplicate work. Also, runtime behavior not verified in unattended CI, but static and probe-verified evidence is sufficient."
+    ],
+    "why": "Issue provides a precise root cause with three code sites, a concrete fix direction, and a clear validation path (regression tests per site). It is a follow-up to PR #9506 and part of the #9454 route-scoped token counts work. The evidence includes static verification and probe-verified findings, making it actionable despite being blocked on PR #9506."
+  },
   "54f500e1c103575dbd2371679d1842416df165e1cbe3fe56abd07dce40f5378f": {
     "confidence": 0.8,
     "contradictions": [],
@@ -13329,6 +13474,32 @@
       "Whether a pre-validation hook is acceptable in the public API"
     ],
     "why": "Issue clearly identifies a validation-before-middleware ordering problem in FunctionTool.invoke, with concrete production examples and a minimal reproduction. However, the proposed fixes (coercion or pre-validation hook) require design confirmation from maintainers, and the deterministic gate is HUMAN_REVIEW."
+  },
+  "5990c17048f0e66d40ff1df52fd568c4021af28c5a85665288afaac762a97cfc": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "litellm/proxy/utils.py",
+      "litellm/proxy/hooks/responses_id_security.py",
+      "litellm/sandbox/sandbox_tools.py"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #37657; need to ensure the fix does not conflict with maintainer design preferences."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use the provided mock_provider.py and repro_config.yaml to reproduce the TypeError, then add a regression test that asserts a streaming request with code_interpreter_interception returns a valid SSE stream without errors."
+    ],
+    "unknowns": [
+      "Whether the cache corruption issue is independently reproducible; the issue author notes it was not reproduced locally."
+    ],
+    "why": "Issue provides a clear, reproducible bug with a concrete traceback and a minimal repro setup, identifying the root cause as a non-iterable ModelResponseStream object in the streaming interception path. The expected fix is well-scoped and testable, and the existing PR #37657 is still a draft with gaps, leaving room for a competitive contribution."
   },
   "59b2abad237e73a563901483e0df6ac773ab2893b3536cd79ea63f083bdda1d8": {
     "confidence": 0.7,
@@ -14571,6 +14742,39 @@
     "wait_reason": null,
     "why": "Issue clearly identifies a missing event emission for scheduled turns in ACP, with a concrete reproduction timeline and two actionable fix options. No competing PR or issue found; PR #2906 is keyword-only and not a material competitor. The fix is a targeted runtime behavior change with a clear test path."
   },
+  "620b645b07a697658c61e04902e20dc27e8cba2bfaab41029d83953e78846686": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "deepspeed/runtime/zero/stage_1_and_2.py",
+      "Add handling for zero-sized parameters in ZeRO-1/2 reduction",
+      "Possibly add validation to reject zero-sized trainable parameters during initialization"
+    ],
+    "risks": [
+      "Potential behavior change for edge cases; need to ensure zero-sized parameters are either handled consistently or explicitly rejected",
+      "The fix might affect performance if not implemented carefully"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided repro.py with ZeRO stage 1 and 2 on a single GPU and assert no KeyError",
+      "Add a regression test that includes a zero-sized parameter in a parameter group and verifies training completes",
+      "Compare against ZeRO stage 0 and PyTorch DDP as controls"
+    ],
+    "unknowns": [
+      "Exact implementation details of the fix in the existing PR #8280",
+      "Whether maintainers prefer handling zero-sized parameters or rejecting them explicitly"
+    ],
+    "why": "The issue provides a minimal reproducer, a clear traceback, and a root-cause hypothesis (zero-sized parameters absent from param_to_partition_ids) with a suggested fix. The maintainer has approved a related PR, indicating the bug is real and actionable. The track is llm_algorithm because it involves distributed training internals (ZeRO partitioning) and numerical correctness, with a concrete validation path via the provided reproducer."
+  },
   "62388b41d2dc80d7f79b9ee063b1570cd6d45c9cd6738f7822e22b9d94f5a8ca": {
     "confidence": 0.7,
     "contradictions": [
@@ -15252,6 +15456,31 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue reports a concrete crash in Anthropic tool_reference handling with a clear root cause and minimal repro, but the supplied evidence flags a potential duplicate issue #52398 sharing stack signatures and code paths, and the deterministic gate is HUMAN_REVIEW. The existing merged PR #40190 added tool_reference support but lacks regression tests, so a new PR could be valuable, but duplicate review is needed first."
+  },
+  "6531ad0088bb53ca4df7b8e0aba3bd726a0eb8f11a644189a77c0ab67f47566a": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Qwen3_5ForConditionalGeneration generation path",
+      "sampling/logits/pipe logic in runtime"
+    ],
+    "risks": [
+      "Potential maintainer preference for different fix location; need to avoid broad API changes."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run provided curl repro on 0.5.17 to confirm token loop; add regression test asserting non-repetitive output for Qwen3.5-arch model."
+    ],
+    "unknowns": [
+      "Exact root cause not yet identified; maintainer design preference unknown."
+    ],
+    "why": "Issue provides a clear regression with exact broken/working versions, isolated variables, and a reproducible command. Root cause is localized to generation/sampling for Qwen3.5-arch, with code anchors. No competing PR covers this path."
   },
   "65df70baa60bb014fa5d15be411e3b5a5cab4e541a456a00eaf51e692ebef185": {
     "confidence": 0.7,
@@ -25985,6 +26214,35 @@
     ],
     "why": "The issue reports a max_tokens mismatch for a specific model on DeepInfra, but the root cause is unclear: whether it's a gateway default, model catalog misconfiguration, or upstream limit change. No maintainer confirmation or design direction exists, and the fix could involve provider-specific logic or configuration changes."
   },
+  "aff421968b7a3e5c304b28a4ed2dee30bda8f581810816e287f7014a2fe6ce7d": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "run_commands input schema gate (j4o)",
+      "runtime normalizer/executor (K4o/Pgn)",
+      "UI preview formatter (lmr/Rci)"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #13438; need to differentiate by adding root-cause coverage and comprehensive tests.",
+      "Changing schema gate to accept any object may weaken validation; must ensure fallback logic is safe."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing test that calls run_commands with an object command using an alias key (e.g., cmd) and asserts execution succeeds and preview shows the command text.",
+      "Add regression tests for string commands and direct-exec with args to ensure unchanged behavior."
+    ],
+    "unknowns": [
+      "Exact implementation details of the existing PR #13438 and whether it already covers all three seams."
+    ],
+    "why": "Issue provides a clear root cause (strict zod gate, runtime normalizer, and preview formatter all assume string-only or specific key), a concrete reproduction (object command with alias key fails with 'Invalid input' and preview shows '[object Object]'), and a proposed three-seam fix. Existing PR #13438 is open but lacks root-cause coverage, leaving room for a more complete contribution."
+  },
   "b027b51de95571dc51caf125e2ca0febeca6e7c68e471833211ef1491ec86ed4": {
     "confidence": 0.85,
     "contradictions": [],
@@ -29552,6 +29810,63 @@
     "wait_reason": null,
     "why": "Issue clearly identifies a user-visible bug in /api/v1/retrieval metadata filtering, with a concrete root cause (in-memory vs push-down filter path) and a minimal repro. Existing PR #18219 overlaps semantically but does not reference this issue and may not fully address the reported behavior; a new PR that explicitly fixes the retrieval path with a regression test would be materially better."
   },
+  "c66e07364d970b4071842e6bfbf786a1bd5c73d7baee03f4217b58869d6c71f1": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #11434 is marked MERGED but lacks tests and is over 30 days old; PR #18556 is open and technically complete with tests."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "rag/nlp/__init__.py",
+      "test/unit_test/rag/test_naive_merge.py"
+    ],
+    "risks": [
+      "Changing custom-delimiter behavior may break existing tests that expect chunk size to be ignored (e.g., test_custom_delimiter_ignores_chunk_size).",
+      "Potential performance impact if merging large numbers of segments."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test in test_naive_merge.py using the reported delimiter and a multi-paragraph text, asserting max token count <= chunk_token_num * 1.1.",
+      "Run existing unit tests for naive_merge to ensure no regressions."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer Option A (merge) or complete removal of custom delimiters as suggested by skbs-eng."
+    ],
+    "why": "Issue provides a detailed root cause (custom-delimiter branch bypasses chunk_token_num, bare chars leak into split pattern), a concrete reproduction with expected/actual outputs, and a clear minimal fix (Option A: merge segments via merge_paragraphs). An open PR #18556 already implements this fix with tests, but the issue remains actionable and the fix is technically sound."
+  },
+  "c670e3a30b96547078c697effe42c1879a9e6ac18197d3836227fe8aaa77e704": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "Scheduler.get_new_batch_prefill()",
+      "PrefillAdder budget check after chunked request resumption"
+    ],
+    "risks": [
+      "Potential interaction with existing scheduler logic or maintainer design preferences; need to ensure minimal change and avoid altering API behavior."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that sets Scheduler.chunked_req to consume all remaining chunk budget, places a waiting request, and asserts that the waiting request is not processed for cache matching or load-back when rem_chunk_tokens is exhausted."
+    ],
+    "unknowns": [
+      "Exact code location and maintainer preference for fix implementation; whether the existing PR #35645 will be updated with tests."
+    ],
+    "why": "Issue provides a clear root cause: after resuming a chunked request, the scheduler fails to re-check the updated chunk budget before scanning the waiting queue, causing unnecessary cache matching and host-cache load-back. Reproduction steps are concrete and deterministic at the scheduler level, and the expected behavior is well-defined. An open PR exists but lacks tests and root-cause coverage, leaving room for a more complete contribution."
+  },
   "c68be7c4e33146174afd7d0e2471e65c041174db6749499bd57cacd176dd0520": {
     "confidence": 0.7,
     "contradictions": [],
@@ -30142,6 +30457,37 @@
       "Whether file alone is sufficient for reproduction"
     ],
     "why": "The issue reports a deterministic hang but a maintainer could not reproduce with the provided file and steps, and the warning alone is not sufficient evidence of the hang. The root cause remains unclear and the reproduction is incomplete."
+  },
+  "c9df18ceee2c705d26ffe74f002cc970c8729cb9714413238aa086dbc57ecdab": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #31324 is titled elevenlabs but overlaps on response_format paths; unclear if it covers zai provider."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "litellm/llms/zai/chat/transformation.py",
+      "litellm/llms/openai/openai.py"
+    ],
+    "risks": [
+      "Potential conflict with existing PR #31324 that has semantic overlap; need to compare implementation boundaries.",
+      "Modifying openai.py to pop json_mode may affect other providers; ensure no regression."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproduction script with and without the fix to verify schema-valid JSON output.",
+      "Add unit tests for ZAIChatConfig.get_supported_openai_params and map_openai_params to ensure response_format is translated to tool calls."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a different implementation approach or have design constraints.",
+      "Exact behavior of Z.AI API for forced tool calls across all GLM models."
+    ],
+    "why": "Issue provides a precise root cause (missing response_format in ZAIChatConfig allowlist), a validated fix path (reuse _add_response_format_to_tools), and a concrete reproduction script. The proposed change is actionable and testable."
   },
   "ca135e4e909adc9515585f89c7720fa67ac5b04452219ecef5111f0d49667fcf": {
     "confidence": 0.95,
@@ -32591,6 +32937,36 @@
       "Whether maintainers have a preferred implementation approach or if the closed PR will be revived."
     ],
     "why": "Issue provides a precise root cause across three code paths, a concrete reproduction, and a suggested fix. The candidate is actionable despite an existing closed PR lacking tests and root-cause coverage."
+  },
+  "d8e4cee836982fbd787012f3120cb1f3937d5561b3efd4f253a3507f414c868c": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "AudioRecognition audio routing",
+      "STT stream lifecycle",
+      "activity transition handling"
+    ],
+    "risks": [
+      "Potential maintainer design preferences for audio routing implementation",
+      "Risk of introducing API behavior changes if fix is not minimal"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a regression test that simulates multi-turn conversation with audio frames arriving but no user_state_changed events, asserting that audio is routed to STT/VAD/turn detection components.",
+      "Run existing unit tests for AudioRecognition and turn detection packages."
+    ],
+    "unknowns": [
+      "Exact root cause within AudioRecognition not yet pinpointed",
+      "No maintainer confirmation or design approval"
+    ],
+    "why": "Issue provides detailed reproduction attempts, multiple configurations, and evidence isolating the failure to shared audio routing infrastructure (AudioRecognition) rather than specific VAD/STT components. Root cause is clearly identified as a framework-level audio routing freeze, with concrete code anchors and a validation path via existing tests and targeted reproduction."
   },
   "d90931ce4843cfecd8a001954c60a99fdce15220b3581596f86a4ce0f7c06f5a": {
     "confidence": 0.8,
@@ -38317,6 +38693,41 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue clearly describes a silent correctness bug in Valkey vector store reset/delete_col, with root cause and reproduction. However, multiple PRs (#6996, #7013, #7023) already exist and are closed pending issue acceptance; maintainer BCathcart is actively involved. The issue is not yet accepted, and the correct next step is to accept the issue and review the existing PRs, not start new work."
+  },
+  "f93222858d05c8f84ae821987677421f3623a68a533902663b806f881a762a89": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Initial claim of policy-only effect contradicted by later measurements showing load-dependent fragmentation",
+      "Controlled pair initially reported as policy discriminator later shown to produce 0 hits on FCFS too"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "scheduler budget carving in align mode",
+      "prefix caching alignment logic",
+      "instrumentation counters for off-boundary chunk ends"
+    ],
+    "risks": [
+      "Potential trade-off of one step latency for cacheable states",
+      "Need to distinguish from LRU eviction (already ruled out by low cache usage)",
+      "Hardware-specific (GB10/sm121) may not generalize"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add counter for chunk ends carved off-boundary in align mode and verify it lights up under concurrent load",
+      "Prototype boundary-aware carve (round per-request step budget down to block boundary) and test on GB10 with quiet/busy load cycles, measuring hit-rate and latency deltas"
+    ],
+    "unknowns": [
+      "Exact implementation details of boundary-aware carve",
+      "Whether maintainers will accept the proposed fix direction"
+    ],
+    "why": "The issue identifies a concrete LLM algorithm mechanism (align-mode prefix caching with Mamba hybrid architecture) and a root cause (budget fragmentation causing off-boundary chunk ends) confirmed by contributor analysis and production A/B data. The validation path is concrete: instrumented counter for off-boundary chunk ends and boundary-aware carve prototype with hit-rate/latency deltas."
   },
   "f9388995937b1e55bd8977335851a0e9859696c4056b203c018e1a8a6a848547": {
     "confidence": 0.8,
