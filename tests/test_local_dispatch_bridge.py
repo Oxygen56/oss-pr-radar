@@ -3555,32 +3555,16 @@ def test_private_task_dispatch_defaults_to_one_active_task(monkeypatch, tmp_path
     assert result["reason"] == "task_wip_limit"
 
 
-def test_independent_review_defers_while_issue_task_is_active(monkeypatch, tmp_path):
-    class Store:
-        @staticmethod
-        def active_task_count(**_kwargs):
-            return 1
-
-    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+def test_independent_review_runs_while_issue_task_lifecycle_is_active(monkeypatch, tmp_path):
     monkeypatch.setattr(
         MODULE,
         "review_once",
-        lambda *_args, **_kwargs: pytest.fail(
-            "independent review must not interrupt an active issue task"
-        ),
+        lambda *_args, **_kwargs: {"ok": True, "updated": ["a/b#1"]},
     )
 
     result = MODULE.independent_review_run(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
 
-    assert result == {
-        "ok": True,
-        "deferred": True,
-        "reason": "active_issue_task",
-        "activeTaskCount": 1,
-        "updated": [],
-        "skipped": [],
-        "errors": [],
-    }
+    assert result == {"ok": True, "updated": ["a/b#1"]}
 
 
 def test_new_issue_priority_includes_pending_independent_review(monkeypatch, tmp_path):

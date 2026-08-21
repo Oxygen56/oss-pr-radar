@@ -3017,20 +3017,8 @@ def _global_task_wip(
 
 
 def independent_review_run(args: argparse.Namespace) -> dict[str, Any]:
-    """Never start a second model turn while an issue task owns the desktop writer."""
+    """Run one serialized review independently of task lifecycle bookkeeping."""
 
-    store = ledger(args.ledger)
-    active = _active_task_count(store)
-    if active:
-        return {
-            "ok": True,
-            "deferred": True,
-            "reason": "active_issue_task",
-            "activeTaskCount": active,
-            "updated": [],
-            "skipped": [],
-            "errors": [],
-        }
     return review_once(ROOT, args.ledger)
 
 
