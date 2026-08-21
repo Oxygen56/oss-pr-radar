@@ -5,6 +5,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import sqlite3
 import subprocess
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
@@ -18,6 +19,35 @@ from .release_binding import bind_runtime, runtime_ledger_path, runtime_python
 
 DEFAULT_PROJECT_ID = "5e41d21c-cba3-4be0-9a02-7eef35b67625"
 Runner = Callable[[Path, str, Sequence[str], set[int], int], dict[str, Any]]
+
+
+def _managed_runtime_has_local_state(path: Path) -> bool:
+    """Return true when importing a redacted snapshot would erase local bindings."""
+
+    if not path.is_file() or path.stat().st_size == 0:
+        return False
+    try:
+        with sqlite3.connect(path) as connection:
+            tables = {
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            required = {
+                "managed_opportunities",
+                "managed_tasks",
+                "managed_prs",
+                "managed_lifecycle_events",
+            }
+            if not required.issubset(tables):
+                return False
+            return any(
+                connection.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone() is not None
+                for table in required
+            )
+    except sqlite3.Error:
+        return False
 
 
 def run_json_command(
@@ -68,12 +98,16 @@ def controller_cycle(
         require_operational_authorization(root)
     managed_path = runtime_ledger_path(root)
     managed_snapshot_path = root / "state" / "managed_lifecycle.snapshot.json.gz"
-    import_snapshot(managed_path, managed_snapshot_path, allow_missing=True)
+    if _managed_runtime_has_local_state(managed_path):
+        managed_restore = {"ok": True, "restored": False, "reason": "local_state_active"}
+    else:
+        managed_restore = import_snapshot(managed_path, managed_snapshot_path, allow_missing=True)
     managed_adapter = ManagedAdapter(root)
     managed_adapter.ensure()
     python = str(runtime_python(root))
     bridge_script = str(binding.script("scripts/local_dispatch_bridge.py"))
     stages: dict[str, dict[str, Any]] = {}
+    stages["managedRestore"] = managed_restore
     failures: list[dict[str, str]] = []
 
     def run_stage(

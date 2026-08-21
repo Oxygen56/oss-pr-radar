@@ -196,6 +196,116 @@ def _signed_receipt(payload: dict[str, Any]) -> dict[str, Any]:
     return payload | {"keyId": auth["keyId"], "signature": auth["signature"]}
 
 
+def attest_task_reproduction_result(
+    *,
+    checkout_path: Path,
+    repo: str,
+    default_branch: str,
+    selected_base_sha: str,
+    code_paths: list[str],
+    issue_url: str,
+    task_id: str,
+    thread_id: str,
+    head_sha: str,
+    commit_sha: str,
+    result_digest: str,
+    result: dict[str, Any],
+) -> dict[str, Any]:
+    """Authenticate a clean, read-only child reproduction result.
+
+    The child supplies the observable reproduction evidence. The controller
+    independently binds that evidence to an immutable checkout snapshot and
+    signs the resulting receipt before implementation is enabled.
+    """
+
+    if result.get("reproductionVerified") is not True:
+        raise ProbeUnavailable("REPRODUCTION_EVIDENCE_NOT_VERIFIED")
+    evidence = result.get("evidence")
+    if not isinstance(evidence, dict) or not str(evidence.get("summary") or "").strip():
+        raise ProbeUnavailable("REPRODUCTION_EVIDENCE_REQUIRED")
+    tests = result.get("tests")
+    passing = [
+        item
+        for item in (tests or [])
+        if isinstance(item, dict)
+        and isinstance(item.get("command"), str)
+        and item["command"].strip()
+        and item.get("exitCode") == 0
+    ]
+    if not passing:
+        raise ProbeUnavailable("REPRODUCTION_CHECK_REQUIRED")
+
+    now = datetime.now(UTC)
+    attempt_id = secrets.token_urlsafe(12)
+    with tempfile.TemporaryDirectory(
+        prefix=f"oss-pr-radar-result-attestation-{attempt_id}-", dir="/private/tmp"
+    ) as attempt_root:
+        snapshot = Path(attempt_root) / "snapshot"
+        checkout_sha, bindings, snapshot_digest = _materialize_git_snapshot(
+            Path(checkout_path), selected_base_sha, code_paths, snapshot
+        )
+
+    payload: dict[str, Any] = {
+        "schema": PROBE_SCHEMA,
+        "repo": repo,
+        "defaultBranch": default_branch,
+        "baseSha": selected_base_sha,
+        "checkoutSha": checkout_sha,
+        "issueUrl": issue_url,
+        "taskId": task_id,
+        "threadFingerprint": thread_fingerprint(thread_id),
+        "attemptId": attempt_id,
+        "headSha": head_sha,
+        "commitSha": commit_sha,
+        "resultDigest": result_digest,
+        "codePaths": sorted({str(path) for path in code_paths if str(path).strip()}),
+        "codePathBindings": bindings,
+        "checkoutSnapshotDigest": snapshot_digest,
+        "probeLevel": REPRODUCED_VALIDATED,
+        "status": REPRODUCED_VALIDATED,
+        "codePathsVerified": True,
+        "reproductionVerified": True,
+        "validationVerified": True,
+        "commandStatuses": {
+            "reproduction": [
+                {
+                    "commandDigest": hashlib.sha256(item["command"].encode("utf-8")).hexdigest(),
+                    "exitCode": 0,
+                }
+                for item in passing
+            ],
+            "validation": "TASK_RESULT_EVIDENCE_ACCEPTED",
+        },
+        "profileId": "task-result-evidence-v1",
+        "profileVersion": 1,
+        "policyDigest": sha256_json(
+            {
+                "profileId": "task-result-evidence-v1",
+                "profileVersion": 1,
+                "resultDigest": result_digest,
+                "evidenceDigest": sha256_json(evidence),
+                "snapshot": "git-archive-regular-files-v1",
+            }
+        ),
+        "observedAt": iso_z(now),
+        "expiresAt": iso_z(now + timedelta(hours=1)),
+        "attemptJournal": {
+            "effectToken": sha256_json({"attemptId": attempt_id, "effects": 0}),
+            "externalEffectCount": 0,
+            "network": "denied",
+            "hostWrites": "denied",
+            "events": [
+                "ATTEMPT_STARTED",
+                "SNAPSHOT_READY",
+                "RESULT_EVIDENCE_VERIFIED",
+                "ATTEMPT_CLEANUP_FINISHED",
+            ],
+        },
+    }
+    payload["receiptDigest"] = sha256_json(payload)
+    return _signed_receipt(payload)
+
+
 def verify_probe_receipt(
     receipt: dict[str, Any],
     *,

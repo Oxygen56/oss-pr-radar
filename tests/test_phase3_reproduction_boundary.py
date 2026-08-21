@@ -30,6 +30,7 @@ from oss_pr_radar.repo_probe import (
     PATHS_VERIFIED,
     REPRODUCED_VALIDATED,
     TRUSTED_PROBE_PROFILES,
+    attest_task_reproduction_result,
     run_repo_probe,
     run_reproduction_probe,
     verify_probe_receipt,
@@ -55,6 +56,45 @@ def real_checkout(tmp_path):
         ["git", "rev-parse", "HEAD"], cwd=checkout, check=True, capture_output=True, text=True
     ).stdout.strip()
     return checkout, sha
+
+
+def test_controller_attests_clean_child_reproduction_evidence(tmp_path):
+    checkout, sha = real_checkout(tmp_path)
+    result = {
+        "stage": "REPRODUCED_VALIDATED",
+        "reproductionVerified": True,
+        "evidence": {"summary": "The pinned implementation reproduces the boundary failure."},
+        "tests": [{"command": "python target.py", "exitCode": 0}],
+    }
+
+    receipt = attest_task_reproduction_result(
+        checkout_path=checkout,
+        repo="owner/repo",
+        default_branch="main",
+        selected_base_sha=sha,
+        code_paths=["target.py"],
+        issue_url="https://github.com/owner/repo/issues/1",
+        task_id="task-1",
+        thread_id="thread-1",
+        head_sha=sha,
+        commit_sha=sha,
+        result_digest="result-1",
+        result=result,
+    )
+
+    assert receipt["profileId"] == "task-result-evidence-v1"
+    assert verify_probe_receipt(
+        receipt,
+        repo="owner/repo",
+        base_sha=sha,
+        code_paths=["target.py"],
+        issue_url="https://github.com/owner/repo/issues/1",
+        task_id="task-1",
+        thread_id="thread-1",
+        head_sha=sha,
+        commit_sha=sha,
+        result_digest="result-1",
+    )
 
 
 def test_missing_probe_contract_is_reproduction_required(tmp_path):

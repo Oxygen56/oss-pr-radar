@@ -6,11 +6,13 @@ from pathlib import Path
 import pytest
 
 from oss_pr_radar.controller import (
+    _managed_runtime_has_local_state,
     compact_controller_result,
     controller_cycle,
     run_locked_controller_cycle,
     write_controller_report,
 )
+from oss_pr_radar.managed_lifecycle import ManagedLedger, migrate_schema
 
 pytestmark = pytest.mark.usefixtures("current_signing_key")
 DEV_CODE_ROOT = Path(__file__).parents[1]
@@ -60,6 +62,34 @@ def test_controller_cycle_runs_one_ordered_sync_and_drain(tmp_path):
     assert calls.index("resultIngestion") < calls.index("independentReview")
     assert calls.index("restoreReconcile") < calls.index("drain")
     assert result["summary"]["drainAction"] == "issue_task_dispatched"
+
+
+def test_controller_does_not_restore_redacted_snapshot_over_live_task_binding(tmp_path):
+    database = tmp_path / "radar.sqlite3"
+    migrate_schema(database)
+    managed = ManagedLedger(database)
+    managed.upsert_opportunity(
+        opportunity_key="owner/repo#1",
+        owner="owner",
+        repo="repo",
+        issue_number=1,
+        issue_url="https://github.com/owner/repo/issues/1",
+        state="SYSTEM_PROCESSING",
+        source="test",
+        provenance={},
+    )
+    managed.bind_task(
+        task_id="task-1",
+        opportunity_key="owner/repo#1",
+        thread_id="thread-private",
+        worktree_path="/private/worktree",
+        source="test",
+    )
+
+    assert _managed_runtime_has_local_state(database) is True
+    task = managed.read_task("task-1")
+    assert task["thread_id"] == "thread-private"
+    assert task["worktree_path"] == "/private/worktree"
 
 
 def test_controller_reingests_an_independently_reviewed_result(tmp_path):

@@ -1375,7 +1375,13 @@ class RadarLedger:
             return True
 
     def update_intent_probe_metadata(
-        self, intent_id: str, *, probe_level: str, task_stage: str, receipt_digest: str
+        self,
+        intent_id: str,
+        *,
+        probe_level: str,
+        task_stage: str,
+        receipt_digest: str,
+        code_paths: list[str] | None = None,
     ) -> bool:
         """Persist live probe authorization without changing the intent identity."""
 
@@ -1389,6 +1395,14 @@ class RadarLedger:
             payload["probeLevel"] = probe_level
             payload["taskStage"] = task_stage
             payload["probeReceiptDigest"] = receipt_digest
+            if code_paths is not None:
+                normalized_paths = sorted({str(path) for path in code_paths if str(path).strip()})
+                payload["codePaths"] = normalized_paths
+                pre_task = payload.get("preTaskEvidence")
+                if isinstance(pre_task, dict):
+                    payload["preTaskEvidence"] = dict(pre_task) | {
+                        "codePathsPlan": normalized_paths
+                    }
             connection.execute(
                 "UPDATE intents SET payload_json=?,updated_at=? WHERE intent_id=?",
                 (

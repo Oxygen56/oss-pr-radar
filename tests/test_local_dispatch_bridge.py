@@ -1106,6 +1106,119 @@ def registered_store(tmp_path: Path, worktree: Path | None = None) -> tuple[Rada
     return store, worktree
 
 
+def test_verified_reproduction_alias_advances_to_implementation(tmp_path):
+    store, worktree = registered_store(tmp_path)
+    run_git(worktree, "config", "user.name", "Test Contributor")
+    run_git(worktree, "config", "user.email", "test@example.com")
+    (worktree / "runtime.py").write_text("value = 1\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "-m", "chore: baseline")
+    run_git(worktree, "branch", "-M", "main")
+    base_sha = run_git(worktree, "rev-parse", "HEAD")
+
+    with store.connect() as connection:
+        payload = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM intents WHERE intent_id='intent-1'"
+            ).fetchone()[0]
+        )
+        payload.update(
+            {
+                "defaultBranch": "main",
+                "selectedBaseSha": base_sha,
+                "codePaths": ["runtime.py"],
+                "preTaskEvidence": {
+                    "defaultBranch": "main",
+                    "baseSha": base_sha,
+                    "codePathsPlan": ["runtime.py"],
+                },
+                "probeRequired": True,
+                "probeLevel": "PATHS_VERIFIED",
+                "taskStage": "REPRODUCTION_REQUIRED",
+            }
+        )
+        connection.execute(
+            "UPDATE intents SET payload_json=? WHERE intent_id='intent-1'",
+            (json.dumps(payload, sort_keys=True),),
+        )
+
+    managed = ManagedLedger(store.path, ensure_schema=True)
+    managed.upsert_opportunity(
+        opportunity_key="a/b#1",
+        owner="a",
+        repo="b",
+        issue_number=1,
+        issue_url="https://github.com/a/b/issues/1",
+        state="SYSTEM_PROCESSING",
+        source="test-legal-fixture",
+        provenance={"fixture": True},
+        metadata={"selectedBaseSha": base_sha, "codePaths": ["runtime.py"]},
+    )
+    managed.bind_task(
+        task_id="intent-1",
+        opportunity_key="a/b#1",
+        thread_id="thread-1",
+        worktree_path=str(worktree),
+        state="REPRODUCTION_REQUIRED",
+        provenance={
+            "selectedBaseSha": base_sha,
+            "codePaths": ["runtime.py"],
+        },
+    )
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    context = json.loads(context_path.read_text(encoding="utf-8"))
+    result_path = Path(context["resultPath"])
+    result_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": MODULE.TASK_RESULT_SCHEMA,
+                "contextDigest": context["contextDigest"],
+                "key": "a/b#1",
+                "issueUrl": "https://github.com/a/b/issues/1",
+                "threadId": "thread-1",
+                "worktreePath": str(worktree.resolve()),
+                "stage": "AUDIT_NO_GO",
+                "reason": "AUTOMATION_REPRODUCTION_RECEIPT_REQUIRED",
+                "reproductionVerified": True,
+                "evidence": {
+                    "summary": "The pinned runtime path reproduces the reported boundary."
+                },
+                "tests": [
+                    {
+                        "command": "python3 runtime.py",
+                        "exitCode": 0,
+                        "summary": "Reproduction check passed",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert result["ok"] is True, result
+    assert result["ingested"] == [{"key": "a/b#1", "stage": "IMPLEMENTATION_READY"}]
+    finalized = json.loads(result_path.read_text(encoding="utf-8"))
+    assert finalized["stage"] == "REPRODUCED_VALIDATED"
+    assert finalized["reason"] == "REPRODUCTION_CONFIRMED"
+    assert finalized["reproductionReceipt"]["profileId"] == "task-result-evidence-v1"
+    with store.connect() as connection:
+        payload = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM intents WHERE intent_id='intent-1'"
+            ).fetchone()[0]
+        )
+    assert payload["taskStage"] == "IMPLEMENTATION_READY"
+    assert payload["probeLevel"] == "REPRODUCED_VALIDATED"
+    assert managed.read_task("intent-1")["state"] == "IMPLEMENTATION_READY"
+
+
 def bind_validation_runtime(monkeypatch, root: Path) -> Path:
     monkeypatch.setattr(MODULE, "ROOT", root)
     state = root / "state"

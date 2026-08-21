@@ -23,7 +23,7 @@ from .opportunity import (
     validate_result_classification,
 )
 from .release_binding import runtime_ledger_path
-from .repo_probe import REPRODUCED_VALIDATED, verify_probe_receipt
+from .repo_probe import REPRODUCED_VALIDATED, thread_fingerprint, verify_probe_receipt
 from .util import sha256_json
 
 
@@ -740,6 +740,38 @@ class ManagedAdapter:
             result_digest=result_digest,
         ):
             raise PermissionError("current-key REPRODUCED_VALIDATED receipt is required")
+        opportunity_key = f"{owner}/{repo}#{_number}"
+        self.ledger.ensure_opportunity_evidence(
+            opportunity_key=opportunity_key,
+            selected_base_sha=str(
+                candidate.get("selectedBaseSha")
+                or (candidate.get("preTaskEvidence") or {}).get("baseSha")
+                or ""
+            ),
+            code_paths=paths,
+        )
+        existing = self.ledger.read_task(task_id) or {}
+        thread_id = str(candidate.get("threadId") or existing.get("thread_id") or "")
+        if not thread_id:
+            raise RuntimeError("managed reproduction transition requires a bound thread")
+        self.ledger.bind_task(
+            task_id=task_id,
+            opportunity_key=opportunity_key,
+            thread_id=thread_id,
+            worktree_path=candidate.get("worktreePath") or existing.get("worktree_path"),
+            state="REPRODUCTION_REQUIRED",
+            source="reproduction-result",
+            provenance={
+                "taskStage": "REPRODUCTION_REQUIRED",
+                "probeLevel": "PATHS_VERIFIED",
+                "selectedBaseSha": receipt.get("baseSha"),
+                "codePaths": paths,
+                "headSha": receipt.get("headSha"),
+                "commitSha": receipt.get("commitSha"),
+                "resultDigest": result_digest,
+                "threadFingerprint": thread_fingerprint(thread_id),
+            },
+        )
         return self.ledger.transition_task_to_implementation(
             task_id=task_id,
             receipt_digest=str(receipt.get("receiptDigest") or result_digest),

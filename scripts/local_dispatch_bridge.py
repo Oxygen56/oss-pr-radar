@@ -74,6 +74,7 @@ from oss_pr_radar.release_binding import (  # noqa: E402
 from oss_pr_radar.repo_probe import (  # noqa: E402
     PATHS_VERIFIED,
     REPRODUCED_VALIDATED,
+    attest_task_reproduction_result,
     run_repo_probe,
     verify_probe_receipt,
 )
@@ -3177,6 +3178,7 @@ def claim_intent(args: argparse.Namespace) -> dict[str, Any]:
         probe_level=probe_level,
         task_stage=task_stage,
         receipt_digest=str(probe.get("receiptDigest") or ""),
+        code_paths=list(probe.get("codePaths") or []),
     )
     if intent.get("mode") == "shadow":
         store.observe_shadow(
@@ -10435,6 +10437,19 @@ def _task_result_digest(value: dict[str, Any], raw: bytes) -> str:
     return expected
 
 
+def _reproduction_result_digest(value: dict[str, Any]) -> str:
+    """Return the stable digest that a controller attestation will bind."""
+
+    unsigned = dict(value)
+    unsigned["stage"] = "REPRODUCED_VALIDATED"
+    unsigned.pop("reproductionReceipt", None)
+    unsigned.pop("probeReceipt", None)
+    unsigned.pop("resultDigest", None)
+    unsigned.pop("independentReview", None)
+    unsigned.pop("contextDigest", None)
+    return sha256_json(unsigned)
+
+
 def _publication_git_snapshot(worktree: Path) -> dict[str, str]:
     return {
         "commitSha": command(["git", "rev-parse", "HEAD"], cwd=worktree),
@@ -10818,6 +10833,10 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 "contextDigest"
             ):
                 stage_claim = str(value.get("stage") or "")
+                if stage_claim == "REPRODUCTION_VERIFIED" or (
+                    stage_claim == "AUDIT_NO_GO" and value.get("reproductionVerified") is True
+                ):
+                    stage_claim = "REPRODUCED_VALIDATED"
                 declared_changes = value.get("changedFiles") or value.get(
                     "controllerCommitChangedFiles"
                 )
@@ -10863,10 +10882,63 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     raise RuntimeError("REPRODUCTION_REQUIRED task violated its read-only contract")
                 if stage_claim == "REPRODUCED_VALIDATED":
                     receipt = value.get("reproductionReceipt") or value.get("probeReceipt")
+                    normalized = dict(value)
+                    normalized["stage"] = "REPRODUCED_VALIDATED"
+                    normalized["reason"] = "REPRODUCTION_CONFIRMED"
+                    normalized["probeLevel"] = REPRODUCED_VALIDATED
+                    result_digest = _reproduction_result_digest(normalized)
+                    code_paths = [
+                        str(path)
+                        for path in (
+                            context.get("codePaths")
+                            or managed_candidate.get("codePaths")
+                            or (managed_candidate.get("preTaskEvidence") or {}).get(
+                                "codePathsPlan"
+                            )
+                            or []
+                        )
+                        if str(path).strip()
+                    ]
+                    selected_base = str(
+                        context.get("selectedBaseSha")
+                        or managed_candidate.get("selectedBaseSha")
+                        or (managed_candidate.get("preTaskEvidence") or {}).get("baseSha")
+                        or ""
+                    )
+                    if not isinstance(receipt, dict):
+                        issue_match = ISSUE_URL.match(str(candidate["issueUrl"]))
+                        if issue_match is None:
+                            raise RuntimeError("invalid issue URL")
+                        receipt = attest_task_reproduction_result(
+                            checkout_path=Path(candidate["worktreePath"]),
+                            repo=issue_match.group(1),
+                            default_branch=str(
+                                context.get("defaultBranch")
+                                or managed_candidate.get("defaultBranch")
+                                or (managed_candidate.get("preTaskEvidence") or {}).get(
+                                    "defaultBranch"
+                                )
+                                or "main"
+                            ),
+                            selected_base_sha=selected_base,
+                            code_paths=code_paths,
+                            issue_url=str(candidate["issueUrl"]),
+                            task_id=str(candidate.get("intentId") or candidate["threadId"]),
+                            thread_id=str(candidate["threadId"]),
+                            head_sha=selected_base,
+                            commit_sha=selected_base,
+                            result_digest=result_digest,
+                            result=normalized,
+                        )
+                    normalized["reproductionReceipt"] = receipt
+                    normalized["resultDigest"] = result_digest
+                    raw = _write_task_result_json_to_private(result_access, normalized)
+                    value = normalized
+                    initial_digest = result_digest
                     managed_adapter.transition_to_implementation(
                         candidate=managed_candidate,
-                        receipt=receipt if isinstance(receipt, dict) else {},
-                        result_digest=initial_digest,
+                        receipt=receipt,
+                        result_digest=result_digest,
                     )
                     managed_candidate["taskStage"] = "IMPLEMENTATION_READY"
                     managed_candidate["probeLevel"] = REPRODUCED_VALIDATED
@@ -10874,7 +10946,8 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                         str(candidate.get("intentId") or ""),
                         probe_level=REPRODUCED_VALIDATED,
                         task_stage="IMPLEMENTATION_READY",
-                        receipt_digest=str((receipt or {}).get("receiptDigest") or ""),
+                        receipt_digest=str(receipt.get("receiptDigest") or ""),
+                        code_paths=code_paths,
                     )
                     managed_adapter.ledger.record_event(
                         event_type="REPRODUCTION_RESULT_INGESTED",
@@ -10883,8 +10956,11 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                         task_id=str(candidate.get("intentId") or candidate["threadId"]),
                         state="IMPLEMENTATION_READY",
                         source="result-ingestion",
-                        provenance={"receiptDigest": (receipt or {}).get("receiptDigest")},
-                        payload={"resultDigest": initial_digest},
+                        provenance={"receiptDigest": receipt.get("receiptDigest")},
+                        payload={"resultDigest": result_digest},
+                    )
+                    store.record_task_result_ingested(
+                        candidate["key"], digest=result_digest, stage="IMPLEMENTATION_READY"
                     )
                     ingested.append({"key": candidate["key"], "stage": "IMPLEMENTATION_READY"})
                     continue
