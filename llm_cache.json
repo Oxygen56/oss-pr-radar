@@ -21947,6 +21947,38 @@
     ],
     "why": "Issue reports a flaky CUDA graph capture failure in a vLLM fullgraph test, but the root cause is unknown and the reporter explicitly asks for duplicate confirmation. A contributor attempted reproduction on H100 and failed, noting the CI uses H200 and cross-test state may matter. No maintainer assignment or design confirmation exists, and open PR lookup failed due to rate limit, so duplicate work cannot be excluded."
   },
+  "8b795226153c2cec09bf9bf695d0b6ebcdb7e760c11f87fc1e1447f60de558bd": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "llmcompressor/pipelines/sequential/",
+      "FX tracing logic to skip ignored modules",
+      "possibly add support for dense Qwen3-VL in AWQ/GPTQ calibration"
+    ],
+    "risks": [
+      "The fix may require changes to the FX tracer that could affect other models.",
+      "Potential performance impact if tracing is skipped incorrectly.",
+      "Need to ensure compatibility with different transformers versions."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided repro_qwen3vl_awq_bug.py with the specified environment to confirm the crash.",
+      "After fix, run the same script and verify calibration completes without error.",
+      "Add a regression test that runs AWQ/GPTQ calibration on a small dense Qwen3-VL model with visual.* ignored, ensuring no FX trace failure."
+    ],
+    "unknowns": [
+      "Exact maintainer preference for fix approach (e.g., skip tracing vs. make vision tower traceable).",
+      "Whether a specific transformers version resolves the traceability issue."
+    ],
+    "why": "The issue provides a clear root cause: the sequential pipeline FX-traces the vision tower even when it is in the ignore list, and Qwen3-VL's rot_pos_emb is not FX-traceable, causing a CUDA driver error. It includes a minimal reproduction script and environment details, and the failure is isolated to the calibration/tracing path (RTN works). This is a concrete, actionable bug in an LLM quantization algorithm."
+  },
   "8bbf2c53df2caa1e03f26ec1571ec0e685657e5587c0fd1f8f1be34647b30c4e": {
     "confidence": 0.8,
     "contradictions": [
@@ -26386,6 +26418,37 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "The issue reports a concrete AttributeError in ParallelLMHead during NVFP4 Marlin path, with a plausible root cause identified in comments (missing output_size_per_partition in CompressedTensorsW8A8Fp8.create_weights). However, the deterministic gate is HUMAN_REVIEW, and there is a potential duplicate issue #52407 sharing stack signatures. The candidate is technically actionable but requires maintainer confirmation to avoid duplicate work and to validate the root cause on supported hardware."
+  },
+  "ae9e6d74cad4cad4f7d58b3c118d437629d5fc78e21091e5e28a7303cd70141a": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #45877 is marked as MERGED but the issue states it introduced the bug; however, the issue's root cause analysis is consistent with the merged code being the source of the regression."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "Modify _PARTIAL_PARAM_RE in DeepSeek V4 streaming parser to use negative lookahead to avoid capturing DSML markup",
+      "Add regression test for streaming tool call argument parsing"
+    ],
+    "risks": [
+      "Potential impact on other streaming parser behavior if regex change is too broad",
+      "Need to ensure compatibility with existing streaming engine tests"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided regex-level reproduction to confirm the fix produces expected output",
+      "Add a unit test for the streaming parser that simulates partial DSML tags and verifies clean argument JSON"
+    ],
+    "unknowns": [
+      "Whether the proposed fix has been validated against the full streaming engine test suite",
+      "Whether maintainers prefer a different approach than the proposed regex change"
+    ],
+    "why": "Issue provides a clear root cause (regex in _PARTIAL_PARAM_RE introduced by PR #45877) and a concrete reproduction with expected vs actual output. The proposed fix is specific and testable. Although a related PR #53228 exists, it is open and not merged, so the issue remains actionable."
   },
   "aec3914e518f72f930560b4e67a2899354e12aa4996efb8f96366f5c1019aea4": {
     "confidence": 0.8,
