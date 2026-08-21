@@ -5850,6 +5850,8 @@ def task_turn_deliver(args: argparse.Namespace) -> dict[str, Any]:
                 worker_argv = [
                     sys.executable,
                     str(Path(__file__).resolve()),
+                    "--runtime-root",
+                    str(getattr(args, "runtime_root", STATE.parent)),
                     "--ledger",
                     str(args.ledger),
                     "task-turn-worker",
@@ -13399,6 +13401,7 @@ def drain_once(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def main() -> int:
+    global STATE
     parser = argparse.ArgumentParser()
     parser.add_argument("--ledger", type=Path, default=None)
     parser.add_argument(
@@ -13678,6 +13681,7 @@ def main() -> int:
         )
         return 2
     args.runtime_root = args.runtime_root.resolve()
+    STATE = args.runtime_root / "state"
     expected_ledger = runtime_ledger_path(args.runtime_root).resolve()
     if args.ledger is None:
         args.ledger = expected_ledger
