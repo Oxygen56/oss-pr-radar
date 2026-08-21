@@ -948,8 +948,6 @@ def launch_agent_spec(
         "WorkingDirectory": str(runtime_root),
         "RunAtLoad": True,
         "StartInterval": interval,
-        "ProcessType": "Background",
-        "LowPriorityIO": True,
         "StandardOutPath": str(log_dir / "publication-agent.log"),
         "StandardErrorPath": str(log_dir / "publication-agent.error.log"),
     }
@@ -985,8 +983,6 @@ def _worker_spec(
         "WorkingDirectory": str(runtime_root),
         "RunAtLoad": True,
         "StartInterval": max(60, int(interval_seconds)),
-        "ProcessType": "Background",
-        "LowPriorityIO": True,
         "StandardOutPath": str(log_dir / f"{label.rsplit('.', 1)[-1]}.log"),
         "StandardErrorPath": str(log_dir / f"{label.rsplit('.', 1)[-1]}.error.log"),
     }

@@ -656,6 +656,8 @@ def test_launch_agent_uses_local_venv_and_contains_no_credentials(tmp_path):
     )
     assert spec["WorkingDirectory"] == str(root.resolve())
     assert spec["ProgramArguments"][-2:] == ["--mode", "fast"]
+    assert "ProcessType" not in spec
+    assert "LowPriorityIO" not in spec
     assert "FEISHU" not in str(spec)
     assert "DEEPSEEK" not in str(spec)
 
@@ -1014,6 +1016,10 @@ def test_worker_specs_are_separate_and_use_expected_intervals(tmp_path):
     assert fast["Label"] != slow["Label"]
     assert slow["StartInterval"] == 60
     assert queue["StartInterval"] == 300
+    assert "ProcessType" not in slow
+    assert "LowPriorityIO" not in slow
+    assert "ProcessType" not in queue
+    assert "LowPriorityIO" not in queue
     assert slow["ProgramArguments"][-2:] == ["--root", str((tmp_path / "radar").resolve())]
     assert "queue_importer.py" in queue["ProgramArguments"][-3]
 
