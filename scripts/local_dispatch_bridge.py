@@ -2780,6 +2780,21 @@ def _resolve_repo_code_paths(
 
     resolved: set[str] = set()
     code_search_terms: list[str] = []
+    source_suffixes = (
+        ".py",
+        ".pyi",
+        ".js",
+        ".jsx",
+        ".ts",
+        ".tsx",
+        ".go",
+        ".rs",
+        ".java",
+        ".cc",
+        ".cpp",
+        ".c",
+        ".h",
+    )
     for path in normalized:
         if path in tree_paths:
             resolved.add(path)
@@ -2797,7 +2812,8 @@ def _resolve_repo_code_paths(
             stem_matches = {
                 candidate
                 for candidate in tree_paths
-                if candidate.rsplit("/", 1)[-1].rsplit(".", 1)[0].replace("-", "_").casefold()
+                if candidate.casefold().endswith(source_suffixes)
+                and candidate.rsplit("/", 1)[-1].rsplit(".", 1)[0].replace("-", "_").casefold()
                 == snake_stem
             }
             if len(stem_matches) == 1:
@@ -2811,23 +2827,7 @@ def _resolve_repo_code_paths(
         if len(basename_matches) == 1:
             resolved.update(basename_matches)
             continue
-        if not path.casefold().endswith(
-            (
-                ".py",
-                ".pyi",
-                ".js",
-                ".jsx",
-                ".ts",
-                ".tsx",
-                ".go",
-                ".rs",
-                ".java",
-                ".cc",
-                ".cpp",
-                ".c",
-                ".h",
-            )
-        ):
+        if not path.casefold().endswith(source_suffixes):
             code_search_terms.append(path.rsplit(".", 1)[-1])
 
     for term in dict.fromkeys(code_search_terms):

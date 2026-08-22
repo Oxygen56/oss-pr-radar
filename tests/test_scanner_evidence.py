@@ -1146,6 +1146,17 @@ def test_state_drift_is_rechecked_with_the_latest_evidence_snapshot(monkeypatch,
 def test_unresolved_code_surface_is_retried_instead_of_terminalized(monkeypatch, tmp_path):
     seen_path = tmp_path / "seen.json"
     report_path = tmp_path / "scan.json"
+    seen_path.write_text(
+        json.dumps(
+            {
+                "livekit/agents#6919": {
+                    "status": "silent_exploration",
+                    "analyzed": "2026-08-22T15:00:00Z",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
     candidate = {
         "repo": "livekit/agents",
         "num": 6919,
@@ -1204,6 +1215,7 @@ def test_unresolved_code_surface_is_retried_instead_of_terminalized(monkeypatch,
 
     seen = json.loads(seen_path.read_text(encoding="utf-8"))
     assert seen["livekit/agents#6919"]["status"] == "code_surface_retry"
+    assert seen["livekit/agents#6919"]["first_deferred_at"] == "2026-08-22T15:00:00Z"
     assert select_seen_rechecks(seen)[0][0] == "livekit/agents#6919"
 
 

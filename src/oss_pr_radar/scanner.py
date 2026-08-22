@@ -4957,13 +4957,20 @@ class Radar:
                         "llm_error_category": review.get("error_category") or review.get("status"),
                     }
                     if silent_status in SEEN_RECHECK_STATUSES:
-                        entry["first_deferred_at"] = (
-                            previous.get("first_deferred_at")
-                            if isinstance(previous, dict)
-                            and previous.get("status") in SEEN_RECHECK_STATUSES
-                            and previous.get("first_deferred_at")
-                            else self.analyzed
-                        )
+                        prior_deferred_at = ""
+                        if isinstance(previous, dict):
+                            if previous.get("status") in SEEN_RECHECK_STATUSES:
+                                prior_deferred_at = str(previous.get("first_deferred_at") or "")
+                            elif (
+                                silent_status == "code_surface_retry"
+                                and previous.get("status") == "silent_exploration"
+                            ):
+                                prior_deferred_at = str(
+                                    previous.get("first_deferred_at")
+                                    or previous.get("analyzed")
+                                    or ""
+                                )
+                        entry["first_deferred_at"] = prior_deferred_at or self.analyzed
                     self.seen[key] = entry
                     continue
                 digest = candidate_notification_digest(candidate)

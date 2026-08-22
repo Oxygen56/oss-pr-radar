@@ -3880,6 +3880,25 @@ def test_repo_code_path_resolution_uses_unique_tree_stem_when_code_search_fails(
     ) == ["livekit-agents/livekit/agents/voice/audio_recognition.py"]
 
 
+def test_repo_code_path_resolution_does_not_bind_same_named_document():
+    class Client:
+        def repository_tree(self, _repo, _ref):
+            return [{"type": "blob", "path": "docs/audio_recognition.md"}]
+
+        def api(self, *_args, **_kwargs):
+            raise RuntimeError("code search unavailable")
+
+    assert (
+        MODULE._resolve_repo_code_paths(
+            Client(),
+            repo="livekit/agents",
+            ref="d" * 40,
+            code_paths=["AudioRecognition"],
+        )
+        == []
+    )
+
+
 def test_dispatch_notification_receipt_is_per_created_thread(tmp_path):
     store, _worktree = registered_store(tmp_path)
 
