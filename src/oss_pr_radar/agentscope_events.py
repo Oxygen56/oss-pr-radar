@@ -7,6 +7,7 @@ delay work; it cannot duplicate a task.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -179,6 +180,13 @@ class GitHubIssuePoller:
             try:
                 token = subprocess.run(["gh", "auth", "token"], check=True, capture_output=True, text=True, timeout=3).stdout.strip()
             except (OSError, subprocess.SubprocessError):
+                token = ""
+        if not token and require_auth:
+            try:
+                stored = subprocess.run(["/usr/bin/security", "find-generic-password", "-s", "gh:github.com", "-w"], check=True, capture_output=True, text=True, timeout=3).stdout.strip()
+                if stored.startswith("go-keyring-base64:"):
+                    token = base64.b64decode(stored.split(":", 1)[1]).decode("utf-8")
+            except (OSError, ValueError, base64.binascii.Error, subprocess.SubprocessError):
                 token = ""
         if not token and require_auth:
             raise RuntimeError("GitHub authentication unavailable; refusing anonymous polling")
