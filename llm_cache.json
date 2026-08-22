@@ -14271,6 +14271,43 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue describes a real silent-failure bug in Go EPP scorers with a clear root cause (missing worker-ID header on FFI error) and a concrete repro path. However, open PR #13365 overlaps semantically and touches the same code paths, and the issue itself notes an in-flight migration to Rust EPP that may change the fix location. The exact trigger for multimodal requests is unconfirmed, requiring maintainer input or logs. Given the overlapping PR and unresolved design questions, a new PR should not be started without maintainer review."
   },
+  "58c23f0deb3dc5ec949899d6b9bd5cbc10bff5a9eba175ae38a7b99afc34a12d": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue claims Bug 1 root cause exists, but recent comment states it is already fixed in current staging branch"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "Fix OAuth2 client_credentials credential hydration from persisted config",
+      "Fix config.yaml env var resolution for client_id/client_secret",
+      "Fix MCP tool listing timeout in passthrough mode",
+      "Fix over-broad scope parameter in OAuth2 flows"
+    ],
+    "risks": [
+      "Potential overlap with existing merged PR #26871 for Bug 1",
+      "Changes to OAuth2 scope handling may affect existing flows",
+      "Timeout fix may require deeper investigation into session plumbing"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test for client_credentials with persisted credentials via REST API and config.yaml",
+      "Add test for env var resolution in mcp_servers config",
+      "Add test for passthrough timeout with mocked upstream",
+      "Add test for scope parameter in client_credentials and authorization_code flows"
+    ],
+    "unknowns": [
+      "Whether Bug 2 and Bug 3 are still reproducible on the current branch",
+      "Exact location of timeout in passthrough mode",
+      "Maintainer preference for scope handling approach"
+    ],
+    "why": "The issue provides a detailed root cause analysis with code anchors and a concrete reproduction path. The recent comments indicate that the primary bug (Bug 1) may already be fixed in the current staging branch, but the issue also contains additional distinct bugs (Bug 2 and Bug 3) that remain unaddressed and are actionable. The evidence supports a clear validation path for these remaining bugs."
+  },
   "58fc1e0adbeea4894177270f3c549b0789c865557588337f5a3b444a13ceee49": {
     "confidence": 0.7,
     "contradictions": [],
@@ -21786,6 +21823,32 @@
       "Whether there is an existing open PR addressing this issue"
     ],
     "why": "The issue reports a clear assertion failure in the DeepSeek V4 MoE layer, but the root cause is not definitively identified. The comment suggests possible version incompatibility or configuration issues, but no maintainer confirmation or reproduction details are provided. The open PR and related issue lookups timed out, so duplicate work cannot be ruled out."
+  },
+  "84459cd2ce976a3ff4bc49a1bb5b73d835ffcc25a2ada070cccf47eb7be2b24d": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "Route matching logic in proxy to prioritize config-declared pass_through_endpoints over generic routes",
+      "custom_llm_provider resolution in openai_files_endpoints/files_endpoints.py to handle custom prefixes"
+    ],
+    "risks": [
+      "Changing route precedence may affect existing behavior for other custom prefixes; need to ensure no regression in built-in /anthropic handling"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that configures a pass_through_endpoints entry with a custom prefix (e.g., /claude-aws/v1/files) and verifies the request is routed to the configured target instead of the generic files route",
+      "Test that the custom prefix does not cause LlmProviders enum validation failure"
+    ],
+    "unknowns": [
+      "Exact maintainer preference for fix implementation; whether the proposed fix aligns with existing architecture"
+    ],
+    "why": "The issue provides a clear root cause: route precedence causes custom pass_through_endpoints prefixes to be shadowed by the generic /{provider}/v1/files route, and the custom_llm_provider derivation from the URL prefix fails strict enum validation. Concrete reproduction steps and live HTTP responses are supplied, making the bug actionable."
   },
   "845556cf2f51b8a383d5a48a72ba0137b2d23c934eabdba7f097e1592b2d2172": {
     "confidence": 0.8,
@@ -32783,6 +32846,38 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "The issue reports a crash in deep_gemm_moe_permute during cudagraph mode with deepep_v2, but the root cause is not fully diagnosed. A potential duplicate issue #52897 shares stack signatures, and an open PR #52632 directly addresses DeepEP-V2 cudagraph path but lacks tests and does not reference this issue. The deterministic gate is HUMAN_REVIEW, and the submission policy conflict blocks automatic action."
+  },
+  "cd9c3edc5317427ee0add5fe32e6e25807de3873b9262621bee43435eaa819e3": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Maintainer comment claims fix in v4.1.11, but issue remains open and no closing reference"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "run_commands input schema gate",
+      "runtime command normalizer/executor",
+      "UI preview formatter"
+    ],
+    "risks": [
+      "Potential behavior change for existing string-array commands",
+      "Maintainer may prefer a different fix already shipped in v4.1.11"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression tests for object command items with various keys (cmd, exec, etc.) verifying execution and preview rendering",
+      "Run existing run_commands unit tests and VS Code extension integration tests"
+    ],
+    "unknowns": [
+      "Whether the v4.1.11 fix fully addresses the key-agnostic requirement or only specific aliases"
+    ],
+    "why": "Issue provides a detailed root cause across three seams (schema gate, runtime normalizer, preview formatter) with a concrete repro and a verified local patch. Maintainer comment indicates a fix in v4.1.11, but the issue remains open and the proposed key-agnostic approach is broader than a single alias fix. The evidence supports actionable code work with a clear validation path."
   },
   "cdb5b29aae24d407245bb10f03d6d4e62aff35aa7814535f34c68924ca0f3047": {
     "confidence": 0.85,
