@@ -11842,6 +11842,39 @@
     ],
     "why": "Issue reports a user-visible bug loading MiniMaxH3 with sglang, but lacks a clear root cause and the provided reproduction is incomplete (no error message text, only an image). The deterministic gate requires HUMAN_REVIEW, and related issue/open PR lookups timed out, so duplicate work cannot be excluded."
   },
+  "4b7f3b1940b0c5b8ad71bba6a334577deea18b175a1c4f0c5f586c4ec08e2368": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Maintainer comment says fixed in v4.1.11, but issue remains open and no explicit confirmation from reporter."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "run_commands input schema gate (j4o)",
+      "runtime normalizer/executor (K4o/Pgn)",
+      "preview formatter (lmr/Rci)"
+    ],
+    "risks": [
+      "Potential behavior change for object commands with unexpected keys; need to ensure fallback to first string-valued property does not break existing valid inputs.",
+      "Maintainer may prefer a different implementation or already fixed in v4.1.11, leading to duplicate effort."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with { commands: [{ cmd: 'Get-ChildItem ...' }] } and assert no '✖ Invalid input' error and preview shows command text.",
+      "Add regression tests for string commands and { command: 'node', args: ['-v'] } to ensure unchanged behavior.",
+      "Run existing unit tests for the affected modules and static checks."
+    ],
+    "unknowns": [
+      "Whether the maintainer's fix in v4.1.11 fully addresses the issue or if the proposed patch is still needed.",
+      "Exact implementation details of the maintainer's fix and whether it aligns with the proposed approach."
+    ],
+    "why": "Issue provides a clear root cause (strict zod gate, runtime normalizer, and preview formatter each assume a fixed 'command' key), a concrete reproduction (object-form commands with guessed keys like 'cmd' fail with '✖ Invalid input' and preview shows '[object Object]'), and a proposed key-agnostic fix across three seams. The maintainer comment indicates a fix in v4.1.11, but the issue remains open and the proposed patch is a valid alternative. The evidence includes code anchors and a local patch, making the work actionable."
+  },
   "4b8709b0ddf23938285422990f90486c435c11e66961fe0e04577e52045684b2": {
     "confidence": 0.85,
     "contradictions": [
@@ -15124,6 +15157,37 @@
     ],
     "why": "Issue identifies a concrete NoneType dereference in vLLM's speculative decoding embedding-sharing path, with a clear root cause and reproduction steps. The fix is a targeted guard, and the issue is algorithmically relevant (model architecture, distributed training). No competing PR exists."
   },
+  "5dad764c622c96edd962ec36c9a2f67b082ff11605d90a9afc95fa6a420dceb6": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Original repro no longer reproduces on 1.4.x line per maintainer comment, but structural hazard remains"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "runtime image packaging or documentation for flashinfer version coupling",
+      "serve-time image test or build-time assert"
+    ],
+    "risks": [
+      "Maintainer may prefer documenting unsupported workflow over packaging change",
+      "Existing PR #13650 may partially overlap and require coordination"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided docker repro with vllm==0.23.0 on the 1.3.0-dev.1-cuda13 image to confirm the skew error",
+      "After fix, verify serve-time registry inspection passes for NemotronH with matched flashinfer versions"
+    ],
+    "unknowns": [
+      "Whether in-container vLLM upgrades are a supported workflow (contract decision pending)"
+    ],
+    "why": "Issue identifies a clear root cause: baked flashinfer-jit-cache version skew with flashinfer-python breaks vLLM serve-time registry inspection. Repro command and workaround are provided. Maintainer triage confirms engagement and a contract decision is pending, but the issue remains actionable for a docs note or packaging fix. Existing PRs overlap semantically but do not cover the root cause, so no duplicate blocker."
+  },
   "5dba3127410b2447e90b5c35b1ac6a07e6b246655ad12ecb0201c73d2fbf409a": {
     "confidence": 0.7,
     "contradictions": [],
@@ -15852,6 +15916,41 @@
       "The exact mechanism causing the nondeterminism is not identified"
     ],
     "why": "The issue reports a reproducible nondeterminism in vLLM's batch-invariance feature, with detailed controls and a confirmed reproduction by a second user. However, the root cause is not identified, and the deterministic gate requires HUMAN_REVIEW. The open PR and related issue lookups timed out, so duplicate work cannot be excluded. The candidate is algorithmically relevant but needs maintainer investigation and design confirmation."
+  },
+  "62560311075906199a217cadcc0ec46dd32fcd85088aa0972daaae9bf797a4b6": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The issue's bisection points to torch 2.11, but a contributor's A/B test shows torch 2.11 is faster on a fixed vLLM commit, suggesting a vLLM change is the cause."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/entrypoints/pooling/base/serving.py",
+      "vllm/renderers/base.py",
+      "vllm/config/model.py"
+    ],
+    "risks": [
+      "The root cause is not definitively confirmed; the proposed fix may not fully restore performance.",
+      "Changes to executor configuration could affect other pooling workloads or introduce regressions."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run benchmark with --renderer-num-workers > 1 on bge-m3 to see if throughput recovers to pre-regression levels.",
+      "Reproduce on current main to confirm the issue is still live."
+    ],
+    "unknowns": [
+      "Whether the proposed root cause (executor contention) is confirmed by the one-flag test.",
+      "Whether the issue is already fixed on current main."
+    ],
+    "why": "The issue provides a clear performance regression with bisection across releases, ruling out several hypotheses. A contributor identified a plausible root cause in the pooling entrypoint's executor configuration, with a concrete one-flag test to confirm. The evidence supports a specific code change and validation path."
   },
   "62648c0f05b0582e3c4d5bb8592366d89170f78a8e128425e1ad7a1c47edcae3": {
     "confidence": 0.85,
@@ -23755,6 +23854,36 @@
       "Whether the proposed branches are ready for PR submission"
     ],
     "why": "Issue reports three concrete bugs in the diffusion multi-output rollout path, with detailed code references and a clear root cause for each. However, the deterministic gate is HUMAN_REVIEW, and the issue explicitly asks for maintainer confirmation on intended semantics for Bug 1 and Bug 3. The existing PR #22183 is weak (no tests, stale) but not clearly superseded. Maintainer input is needed to confirm design intent before implementation."
+  },
+  "8ea9acd2424b79e47f25c59a36dcd8a8915568ba0e523550623cc1ad3806ec8b": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/parser/gemma4.py",
+      "vllm/v1/engine",
+      "tool_choice enforcement logic"
+    ],
+    "risks": [
+      "Overlap with existing PRs (#49409, #51524, #50502) may require coordination; content-dependent reproduction may be flaky."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test: request with tool_choice='required' and gemma4 parser, assert tool_calls non-empty and finish_reason consistent; run with synthetic payload and fixed seed."
+    ],
+    "unknowns": [
+      "Exact root cause of enforcement gap (Defect 1) not fully isolated; whether existing PRs fully fix the issue."
+    ],
+    "why": "Issue identifies a concrete LLM algorithm bug: tool_choice='required' not enforced in gemma4 parser, producing prose-only responses with finish_reason='tool_calls' and empty tool_calls. Root cause partially identified (#53255) and reproduction evidence provided (loop script, failure counts). Validation path exists via targeted tests on parser behavior."
   },
   "8eb22418c372fec773b2ab9633fe83c4f795012068179ff56d23d47d44d938f7": {
     "confidence": 0.9,
