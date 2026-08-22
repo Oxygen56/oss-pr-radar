@@ -34269,6 +34269,39 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue reports a CI failure with a plausible environment/cache root cause, but existing PR #52256 overlaps the exact test file and is maintainer-owned with passing CI. The issue is not verified on main and the failure may be node-specific. A new PR would risk duplicating #52256 or addressing a non-reproducible environment issue."
   },
+  "da84c242c48f45fad5fdc23df5993e3dde30a8cec96a6d049cac2ee0574a37ec": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #34577 is marked MERGED but issue reports it does not fully resolve the problem; comment by HumphreySun98 says kernel fix #47315 was withdrawn after hardware verification, while another comment suggests the issue may be an incomplete checkpoint rather than a kernel bug."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "csrc/quantization/marlin/dequant.h",
+      "vllm/model_executor/layers/quantization/compressed_tensors/schemes/compressed_tensors_wNa16.py"
+    ],
+    "risks": [
+      "The fix may interact with existing host-side compensation (#34577) and require coordinated changes to avoid double-compensation.",
+      "Hardware-specific behavior: validation on SM89/SM70 may not cover all non-FP4 GPUs; need to test on multiple architectures."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with a small NVFP4 model on a non-FP4 GPU (e.g., RTX 4090) using --dtype bfloat16 and assert output coherence (e.g., zero-value ratio < threshold, cosine similarity > 0.9 vs FP32 reference).",
+      "Add a unit test for dequant_fp8_scales<nv_bfloat162, kFE4M3fn> comparing against torch reference for all 238 normal FP8 scale values, ensuring bit-exact or tolerance-based match."
+    ],
+    "unknowns": [
+      "Whether the remaining garbled output on Latxa-Llama-3.1-8B-Instruct-w4a16_nvfp4 is due to the kernel bug or a separate checkpoint issue; requires re-testing on current main.",
+      "Exact scope of affected models: dense vs MoE, and whether the fix should also address the modelopt→MARLIN bridge dropping swiglu_alpha/beta."
+    ],
+    "why": "The issue identifies a concrete kernel-level bug in BF16 NVFP4 Marlin dequantization with a clear root cause (incorrect exponent widening in dequant.h) and a reproducible validation path (garbled output on non-FP4 GPUs, zero-value ratio, cosine similarity vs FP32 reference). The track is llm_algorithm and the evidence includes kernel_algorithm, numerics_quantization, and evaluation_method mechanisms, satisfying the algorithm requirement. Although related PRs exist, they lack regression tests and the issue remains open with unresolved reports, so the contribution is actionable."
+  },
   "da85de896707cae18237a14c499e137814ef5b471f46586a28e7153b00e75e15": {
     "confidence": 0.8,
     "contradictions": [],
