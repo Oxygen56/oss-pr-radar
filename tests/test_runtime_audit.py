@@ -13,6 +13,7 @@ from test_runtime import healthy_state
 
 from oss_pr_radar.ledger import RadarLedger
 from oss_pr_radar.runtime_audit import (
+    _runtime_journal,
     active_release_evidence,
     audit_snapshot,
     collect_snapshot,
@@ -363,6 +364,47 @@ def test_fault_replay_accepts_successful_short_lived_workers_without_pid():
 
     assert result["ok"] is True
     assert result["faults"] == []
+
+
+def test_fault_replay_uses_evaluated_health_for_short_lived_workers_without_pid():
+    now = time.time()
+    state = healthy_nested_state(now)
+    for worker in state["workers"].values():
+        worker.pop("healthy")
+
+    result = audit_snapshot(
+        {
+            "state": state,
+            "disk": {"level": "ok"},
+            "logBytes": 1024,
+            "release": {
+                "valid": True,
+                "releaseId": "release-a",
+                "policyDigest": "policy-a",
+            },
+            "workerProcesses": short_lived_worker_processes(),
+        },
+        now=now,
+    )
+
+    assert result["ok"] is True
+    assert result["faults"] == []
+
+
+def test_runtime_journal_trusts_idle_backoff_over_stale_started_operation(tmp_path):
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "slow-worker-backoff.json").write_text(
+        '{"inFlight":false,"retryAfter":9999999999}\n', encoding="utf-8"
+    )
+
+    journal = _runtime_journal(
+        tmp_path,
+        [{"status": "started", "operationId": "stale-start"}],
+        slow_alive=False,
+    )
+
+    assert journal == {"state": "IDLE", "inFlight": False, "processCrashed": False}
 
 
 def test_runtime_audit_rejects_tampered_active_release(tmp_path):

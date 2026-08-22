@@ -194,6 +194,8 @@ def _runtime_journal(
         }
     backoff = read_json(root / "state" / "slow-worker-backoff.json", {})
     backoff = backoff if isinstance(backoff, dict) else {}
+    if backoff.get("inFlight") is False:
+        return {"state": "IDLE", "inFlight": False, "processCrashed": False}
     started = {
         str(item.get("operationId")): item
         for item in operations
@@ -216,6 +218,16 @@ def _runtime_journal(
         "operationIds": sorted(started),
         "retryAfter": backoff.get("retryAfter"),
     }
+
+
+def _raw_worker_success(runtime_worker: dict[str, Any], worker: str) -> bool:
+    success_value = runtime_worker.get("lastSuccessAt") or runtime_worker.get(
+        "queueImportSuccessAt"
+    )
+    exit_value = runtime_worker.get("queueLastExitCode") if worker == "queue-importer" else None
+    if exit_value is None:
+        exit_value = runtime_worker.get("lastExitCode")
+    return exit_value == 0 and isinstance(success_value, str)
 
 
 def audit_snapshot(snapshot: dict[str, Any], *, now: float | None = None) -> dict[str, Any]:
@@ -268,17 +280,16 @@ def audit_snapshot(snapshot: dict[str, Any], *, now: float | None = None) -> dic
             runtime_workers.get(worker) if isinstance(runtime_workers, dict) else {}
         )
         runtime_worker = runtime_worker if isinstance(runtime_worker, dict) else {}
-        success_value = runtime_worker.get("lastSuccessAt") or runtime_worker.get(
-            "queueImportSuccessAt"
+        evaluated_workers = health.get("workers") if isinstance(health.get("workers"), dict) else {}
+        evaluated_worker = (
+            evaluated_workers.get(worker) if isinstance(evaluated_workers, dict) else {}
         )
-        exit_value = runtime_worker.get("lastExitCode")
-        if exit_value is None:
-            exit_value = runtime_worker.get("queueLastExitCode")
+        evaluated_worker = evaluated_worker if isinstance(evaluated_worker, dict) else {}
         clean_short_lived_success = (
             launch.get("pid") is None
-            and runtime_worker.get("healthy") is True
-            and exit_value == 0
-            and isinstance(success_value, str)
+            and evaluated_worker.get("healthy") is True
+            and evaluated_worker.get("lastExitCode") == 0
+            and isinstance(evaluated_worker.get("lastSuccessAt"), str)
         )
         if label != WORKER_LABELS[worker]:
             faults.append(f"{worker.upper()}_LABEL_MISMATCH")
@@ -389,7 +400,13 @@ def collect_snapshot(
             ),
         }
         launchctl_by_worker[worker] = launch | {"label": label}
-    slow_alive = worker_processes.get("slow", {}).get("process", {}).get("alive")
+    slow_launch = worker_processes.get("slow", {}).get("launchctl", {})
+    slow_runtime = state_workers.get("slow") if isinstance(state_workers, dict) else {}
+    slow_runtime = slow_runtime if isinstance(slow_runtime, dict) else {}
+    if slow_launch.get("pid") is None and _raw_worker_success(slow_runtime, "slow"):
+        slow_alive = None
+    else:
+        slow_alive = worker_processes.get("slow", {}).get("process", {}).get("alive")
     sqlite = _sqlite_evidence(
         runtime_ledger_path(root),
         slow_alive=slow_alive,
