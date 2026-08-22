@@ -37,6 +37,7 @@ from oss_pr_radar.pr_projection import projection_summary
 from oss_pr_radar.release_binding import runtime_root_digest
 from oss_pr_radar.stage6_verification import build_verification_manifest
 from oss_pr_radar.stage7_acceptance import (
+    _activated_worker_execution_ok,
     _managed_counts_append_only,
     build_managed_counts_evidence,
     check,
@@ -177,6 +178,42 @@ def test_final_ledger_append_only_guard_preserves_exact_pr_invariants():
         counts,
         expected_pr_states=states,
         current_pr_states={**states, "OPEN": 28},
+    )
+
+
+def test_stage7_acceptance_accepts_running_worker_without_last_exit_code():
+    running = {
+        "pid": 123,
+        "lastExitCode": None,
+        "processAlive": True,
+        "processVersionMatched": True,
+        "processWorkingDirectoryMatched": True,
+        "freshness": {"fresh": False},
+    }
+    assert _activated_worker_execution_ok(running) is True
+
+    assert (
+        _activated_worker_execution_ok(
+            {
+                **running,
+                "lastExitCode": 1,
+            }
+        )
+        is False
+    )
+
+    assert (
+        _activated_worker_execution_ok(
+            {
+                "pid": None,
+                "lastExitCode": 0,
+                "processAlive": False,
+                "processVersionMatched": False,
+                "processWorkingDirectoryMatched": False,
+                "freshness": {"fresh": True},
+            }
+        )
+        is True
     )
 
 

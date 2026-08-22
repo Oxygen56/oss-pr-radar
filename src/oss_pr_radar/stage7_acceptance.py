@@ -208,6 +208,25 @@ def _freshness(state: dict[str, Any], worker: str) -> dict[str, Any]:
     }
 
 
+def _activated_worker_execution_ok(item: dict[str, Any]) -> bool:
+    """Accept either a live release-bound worker or a fresh successful short run."""
+
+    running_ok = (
+        item.get("pid") is not None
+        and item.get("lastExitCode") in {None, 0}
+        and item.get("processAlive") is True
+        and item.get("processVersionMatched") is True
+        and item.get("processWorkingDirectoryMatched") is True
+    )
+    short_lived_ok = (
+        item.get("pid") is None
+        and item.get("lastExitCode") == 0
+        and isinstance(item.get("freshness"), dict)
+        and item["freshness"].get("fresh") is True
+    )
+    return running_ok or short_lived_ok
+
+
 def _stable_ledger_observation(path: Path, *, max_attempts: int = 3) -> dict[str, Any]:
     """Read one normalized SQLite backup for counts, digest, and effects."""
 
@@ -680,18 +699,7 @@ def check(
                 (item["loaded"] if require_workers_loaded else not item["loaded"])
                 and (
                     not require_workers_loaded
-                    or (
-                        item["lastExitCode"] == 0
-                        and item["freshness"]["fresh"]
-                        and (
-                            item["pid"] is None
-                            or (
-                                item["processAlive"] is True
-                                and item["processVersionMatched"] is True
-                                and item["processWorkingDirectoryMatched"] is True
-                            )
-                        )
-                    )
+                    or _activated_worker_execution_ok(item)
                 )
             )
         )
