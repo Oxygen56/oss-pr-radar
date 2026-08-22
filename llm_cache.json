@@ -6339,6 +6339,32 @@
     ],
     "why": "Issue reports a user-visible bug where code-explorer subagent hangs and fails, with a concrete repro prompt and environment. No competing PR or issue found, and the gate allows work. However, root cause is unknown and no maintainer confirmation exists, so confidence is moderate."
   },
+  "2b3f203708d6367ac25102825423932b7e6280b7e9075e85ad1ffbb145fe2fa0": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "Observational Memory history filtering to exclude Working Memory state signals",
+      "WorkingMemoryStateProcessor or observer input construction"
+    ],
+    "risks": [
+      "Potential impact on legitimate observation of state signals if filtering is too broad",
+      "Maintainer design preference may differ on provenance handling"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Seed resource-scoped Working Memory, run an ordinary task in a second thread, capture observer input, assert absence of state signal and no managed Working Memory update"
+    ],
+    "unknowns": [
+      "Exact maintainer preference for fix approach (filter vs provenance)"
+    ],
+    "why": "The issue provides a clear root cause: Observational Memory includes the Working Memory state signal in observer history, causing a self-feedback loop that can rewrite stored memory. It includes a concrete reproduction, expected vs actual behavior, and a suggested fix with regression test steps."
+  },
   "2b4221eef827d13c35bc177b47e2c2356f23906c8950586af977ba03854b3594": {
     "confidence": 0.8,
     "contradictions": [],
@@ -6664,6 +6690,38 @@
       "Whether model_info.enable_tag_filtering is intended to be supported in the current version; maintainer confirmation needed."
     ],
     "why": "The issue provides a clear, reproducible bug with expected vs actual behavior, identifies the likely root cause (per-deployment tag filtering override not implemented, causing deployment's own tags to be treated as required request tags), and includes code anchors. This is a valuable, actionable bug fix opportunity in the routing logic."
+  },
+  "2cb812b502e6a1ab0fd78e4f429baa1a7d8ef9ead39292c5465ab560f1991c09": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "llmcompressor/pipelines/sequential/",
+      "FX tracing logic to skip non-quantized modules",
+      "possibly add support for dense Qwen3-VL in AWQ/GPTQ calibration"
+    ],
+    "risks": [
+      "Fix may require changes to FX tracing that could affect other models",
+      "Potential performance impact if tracing is skipped incorrectly",
+      "Dependency on transformers version behavior may require pinning or workaround"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided repro_qwen3vl_awq_bug.py on the specified environment to confirm the crash",
+      "After fix, run the same script and verify calibration completes without error",
+      "Add a regression test that runs AWQ/GPTQ calibration on a small dense Qwen3-VL model with vision tower ignored, ensuring no FX trace failure"
+    ],
+    "unknowns": [
+      "Exact maintainer preference for fix approach",
+      "Whether a specific transformers version resolves the traceability issue"
+    ],
+    "why": "The issue provides a clear root cause: the sequential pipeline FX-traces the vision tower even when it is excluded from quantization, and Qwen3-VL's rot_pos_emb is not FX-traceable on transformers 4.57.x. A minimal reproduction script and environment details are supplied, enabling a concrete validation path."
   },
   "2ce03d3d0a2d0af56eb1b08b32d2f655bfc1824d3df534f2394cced5f75c57a7": {
     "confidence": 0.7,
@@ -10943,6 +11001,36 @@
       "Maintainer confirmation or assignment"
     ],
     "why": "Issue reports a concrete LLM algorithm regression: FP8-to-MXFP4 conversion yields degenerate output and FP8 completion length doubles. It includes conversion config, reproduction details, and expected behavior, but root cause is unconfirmed and related-issue/open-PR lookups timed out, so duplicate work cannot be excluded."
+  },
+  "49688798b6135d4b9fa1ab19ad3afe3b9abb0a9b92a7376919362a58ce4aa239": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "agent event processing",
+      "streaming event handling",
+      "sub-agent result handling"
+    ],
+    "risks": [
+      "Potential fix may alter streaming behavior affecting other sub-agents or normal conversations.",
+      "Root cause analysis is from an AI agent and may need maintainer verification."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Replay the provided trajectories (ce52e802, a3329445, 1205f458) and assert no long sequences of empty StreamingDeltaEvents after code-explorer returns.",
+      "Add a regression test that simulates a code-explorer sub-agent returning a large report and verifies the parent agent does not stall."
+    ],
+    "unknowns": [
+      "Exact code path responsible for generating empty streaming events is not pinpointed.",
+      "Whether the issue is already fixed by an existing PR (e.g., #4385) is unclear."
+    ],
+    "why": "Issue provides concrete reproduction steps, multiple example trajectories, and a detailed root-cause analysis pointing to the parent agent processing empty streaming events after code-explorer completion. The evidence includes code anchors and a clear validation path via trajectory replay."
   },
   "497956747ca2caf0ab86b8f812d382c3d43b8cdcc8ff113d26359603706dfec4": {
     "confidence": 0.7,
@@ -19280,6 +19368,31 @@
     ],
     "why": "Issue clearly describes a user-visible bug during rolling upgrades due to codec mismatch between v1.4 frontend and v1.2 workers. Existing PR #12658 is a draft with no tests and failing CI, leaving room for a stronger, well-tested fix."
   },
+  "77c9b8c40541b024e448a3cf1e1ea516d772e5a22f6d2577af7b950d1e39ce11": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "packages/core/src/loop/workflows/agentic-execution/llm-execution-step.ts",
+      "packages/core/src/agent/message-list/conversion/step-content.ts"
+    ],
+    "risks": [
+      "Potential behavior change in step content extraction could affect other consumers; need to ensure compatibility with existing step-content semantics."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test using the provided mock model and input processor to assert that processInputStep receives steps with populated content and toolCalls on the streaming path."
+    ],
+    "unknowns": [
+      "Maintainer design preference for the fix approach, but not blocking since root cause and validation path are clear."
+    ],
+    "why": "Issue provides a precise root cause (0-indexed count fed to 1-indexed extractor plus incorrect slice), a self-contained reproduction with expected/actual output, and clear code anchors. The bug is user-visible and impactful, and the fix is actionable without maintainer pre-approval."
+  },
   "77f2e86ec3af198cd6f11a86cb7bd5bb010b7b7638d6c5ca01be475aa1fca8a5": {
     "confidence": 0.85,
     "contradictions": [],
@@ -19728,6 +19841,36 @@
       "Whether the issue is specific to Windows file permissions or a broader activation logic flaw"
     ],
     "why": "Issue reports a high-impact Windows bug where install/uninstall/doctor/serve all fail with 'active CBM sessions and operations could not be stopped safely', with independent reproduction and a working recovery procedure. Root cause is likely in the activation transaction or daemon startup logic on Windows, possibly related to file access or session handling. No competing PR exists, and maintainer has acknowledged the bug as high priority."
+  },
+  "7b33dce06ba17798f573350dbca4a81ae0f69781d69baf5c665db927794703bd": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "AudioRecognition audio routing",
+      "track subscription handling",
+      "session audio delivery"
+    ],
+    "risks": [
+      "Fix may require changes to low-level audio pipeline, potentially affecting other session features",
+      "Intermittent nature may make regression test flaky"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce freeze with session recording enabled and verify audio.ogg lacks user audio after freeze",
+      "Add regression test simulating multi-turn conversation to ensure audio frames continue to be delivered to STT/VAD"
+    ],
+    "unknowns": [
+      "Exact code path causing audio routing failure not yet identified",
+      "Whether maintainer has already started a fix"
+    ],
+    "why": "Issue provides detailed reproduction, multiple configurations, and maintainer-requested recording evidence confirming audio stops reaching the session. Root cause is localized to audio routing in AudioRecognition or track subscription, with clear validation path via session recording and DEBUG logs."
   },
   "7b71933caccca17af79798f06baa3d1a64a554f8e95201c87417c0379d97418b": {
     "confidence": 0.6,
@@ -20362,6 +20505,34 @@
     ],
     "wait_reason": "ASSIGNMENT",
     "why": "Issue clearly describes a bug with a minimal repro and explicit contract question, but the repository requires assignment and the issue author requests maintainer confirmation before work. Existing PR #8584 is closed and weak, so a new PR could be viable after assignment."
+  },
+  "7fd77c1dd723880d8e8cae13dd17cca142aa09064bf07e0529a5f98e55002058": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "active_erisc-crt0.cc: initialize gp register",
+      "possibly adjust linker script or build flags"
+    ],
+    "risks": [
+      "Initializing gp may affect other firmware paths; need to verify no regression on other platforms",
+      "The fix may require coordination with firmware toolchain changes"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided 5-line repro on a Blackhole galaxy with fabric enabled",
+      "Add a regression test that checks gp initialization or runs the fabric router sync on BH 2-erisc mode"
+    ],
+    "unknowns": [
+      "Exact patch details for gp initialization in active_erisc-crt0.cc",
+      "Whether the fix requires changes to the linker script or build system"
+    ],
+    "why": "Issue provides a concrete regression with known good/bad commits, a 5-line repro, and a detailed root-cause hypothesis confirmed by a contributor comment: PR #53968 enabled gp-relative relaxation on a core where gp is never initialized, corrupting the local handshake address. The fix is actionable: initialize gp in active_erisc-crt0.cc."
   },
   "7feb6f2391f66148daab39f0e52c63a4228243d5bf8b48c494fee9ce19148d75": {
     "confidence": 0.85,
@@ -29255,6 +29426,35 @@
     ],
     "why": "Issue describes a clear user-facing bug with a known root cause (image blocks replayed to text-only providers) and a proposed fix (filter based on supports_image_input). However, the deterministic gate is HUMAN_REVIEW, and the issue is labeled 'triage: needs-decision' with design confirmation required. A recent comment indicates a maintainer-recommended direction and a working config-based workaround, but the default policy for unknown models remains unresolved. No open PR exists, so a new PR could be valuable, but maintainer confirmation is needed."
   },
+  "be2c387c671584eda6125220bbf5964cbd4573bfc8324d65ae6a28f75e624279": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "CMake configuration logic in top-level CMakeLists.txt and cmake/aarch64_linux_toolchain.cmake to auto-detect aarch64 native builds or error out clearly",
+      "Possibly add validation for CMAKE_CUDA_ARCHITECTURES when EMBEDDED_TARGET=jetson-orin"
+    ],
+    "risks": [
+      "Potential impact on cross-compilation workflows if auto-detection is too aggressive",
+      "Need to ensure the fix does not break existing builds that intentionally target other architectures"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce by building natively on Jetson AGX Orin without specifying the toolchain file and verify that XQA kernels are generated for SM87 or that configuration fails with a clear message",
+      "Run the provided Qwen3-VL inference test to confirm runtime decoding succeeds after fix"
+    ],
+    "unknowns": [
+      "Exact maintainer preference for auto-detection vs. error message",
+      "Whether the fix should also update documentation or CI scripts"
+    ],
+    "why": "Issue provides a clear root cause: CMake fails to set AARCH64_BUILD when building natively on aarch64 without the toolchain file, leading to XQA kernels generated for wrong SM architectures. Concrete reproduction steps and a validated workaround are supplied, making the fix actionable."
+  },
   "be2c563fe4aba0273707932dac03182c8f9b3e2f9399ca290f4bef2ee7fac3ba": {
     "confidence": 0.85,
     "contradictions": [],
@@ -29673,6 +29873,30 @@
       "Maintainer preference on scope (images only vs all media types) and whether to accept unfamiliar image MIME types."
     ],
     "why": "Issue clearly identifies a security-relevant bug in shared download_item path with verified repro and suggested fix direction. However, existing PR #7334 already implements a fix but is auto-closed due to assignment policy; maintainer assignment/confirmation is required to proceed."
+  },
+  "c08f6aa2da9675d6969eb6ea20ef46dfc319b20e028ac7e6411b6ced390011fe": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Custom-auth OAuth2 token exchange logic in the auth service to handle TikTok's non-standard token response (e.g., accept client_key and parse access_token correctly)"
+    ],
+    "risks": [
+      "Potential impact on other custom-auth OAuth2 flows if the fix is too broad; need to ensure TikTok-specific handling is isolated."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a regression test that mocks TikTok's token endpoint response (missing access_token or error object) and verifies the token exchange succeeds when the response is corrected, or fails with a clear error otherwise."
+    ],
+    "unknowns": [
+      "Exact location of the token exchange code in the repository and whether maintainers have a preferred design for handling provider-specific quirks."
+    ],
+    "why": "The issue provides a clear, reproducible bug with a concrete root cause hypothesis (TikTok's non-standard OAuth2 token exchange requiring client_key and returning access_token at top level) and a detailed reproduction path. The expected fix is a minimal change in the custom-auth OAuth2 token exchange logic to handle TikTok's response format. The evidence includes ordered steps, executable commands, and code anchors, making the contribution actionable."
   },
   "c0ba76ae47e3750946c1e502ee01758f4b2e8ef175ba29fdd21b606f7296e429": {
     "confidence": 0.7,
@@ -31093,6 +31317,42 @@
       "Exact plugin-daemon version that should be paired with Dify 1.2.0"
     ],
     "why": "The issue is a user-facing bug caused by a version mismatch between Dify API and plugin-daemon, where the Pydantic enum in the API does not recognize 'structured-output'. The root cause is clear (missing enum value in the API's ModelFeature), but the fix requires updating the enum and ensuring compatibility with the daemon version. The repository has a policy requiring AI disclosure, which conflicts with automated public actions, and the deterministic gate is ALLOW_PRIVATE_WORK, not a full green light. No maintainer confirmation or design approval exists, and the fix may involve cross-component version alignment."
+  },
+  "c7af80128effde3d6b36a4af9c5ed448b703b5c6d9cca4880fa1c1a64d43259d": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found; the issue and triage comments agree on the root cause and impact."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/core/src/core/geminiChat.ts",
+      "packages/core/src/services/chatCompressionService.ts",
+      "packages/core/src/core/client.ts",
+      "packages/core/src/core/turn.ts",
+      "packages/core/src/agents/runtime/agent-core.ts",
+      "packages/core/src/core/sessionService.ts"
+    ],
+    "risks": [
+      "The fix changes the public setter setLastPromptTokenCount signature, requiring updates to all callers; caller list may differ on the branch that lands #9454 work.",
+      "The issue is blocked on PR #9506 merging; if #9506 changes, the fix may need adjustment.",
+      "Semantic overlap with PR #9506 requires careful comparison to avoid conflicting changes."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test for each of the three sites: (1) tryCompress entry invalidation uses the request route key when provided; (2) ChatCompressionService.compress() reads stateful getters without invalidating the request-route count; (3) setLastPromptTokenCount stamps the request route key when called from the in-send success path. Run targeted unit tests for the core package and static checks."
+    ],
+    "unknowns": [
+      "Exact caller list for setLastPromptTokenCount on the branch that lands #9454 work; runtime behavior not verified in unattended CI."
+    ],
+    "why": "The issue precisely identifies three code sites where the request route is not threaded through the in-send compression path, with static verification from the triage bot confirming each site. The fix direction is concrete and conservative, with a clear validation path via regression tests per site. Although there is semantic overlap with PR #9506, the issue is explicitly a follow-up to that PR and the overlap is expected; the issue is not a duplicate but a distinct defect that only exists on the #9506 branch. The evidence is sufficient to establish actionability."
   },
   "c7afd07aed4751fedbef611c3776ce5c613398142633af751526c2636024990f": {
     "confidence": 0.85,
