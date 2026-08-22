@@ -4,6 +4,7 @@ import json
 import subprocess
 import sys
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 from test_deploy_local_runtime import make_repositories
@@ -37,6 +38,52 @@ def healthy_worker_processes():
             "stalePidConflict": False,
         }
         for worker in ("fast", "slow", "queue-importer")
+    }
+
+
+def short_lived_worker_processes():
+    return {
+        worker: {
+            "label": {
+                "fast": "com.oss-pr-radar.local-publication",
+                "slow": "com.oss-pr-radar.local-publication-slow",
+                "queue-importer": "com.oss-pr-radar.queue-importer",
+            }[worker],
+            "launchctl": {"pid": None, "lastExitCode": 0},
+            "process": {
+                "alive": False,
+                "versionMatched": False,
+                "releaseIdentityMatched": False,
+                "workingDirectoryMatched": False,
+            },
+            "stalePidConflict": False,
+        }
+        for worker in ("fast", "slow", "queue-importer")
+    }
+
+
+def healthy_nested_state(now: float) -> dict:
+    last_success = datetime.fromtimestamp(now - 10, UTC).isoformat().replace("+00:00", "Z")
+    return {
+        "workers": {
+            worker: {
+                "healthy": True,
+                **(
+                    {"queueLastExitCode": 0, "queueImportSuccessAt": last_success}
+                    if worker == "queue-importer"
+                    else {"lastExitCode": 0, "lastSuccessAt": last_success}
+                ),
+                "consecutiveFailures": 0,
+            }
+            for worker in ("fast", "slow", "queue-importer")
+        },
+        "deployment": {
+            "pendingPublicationEffects": 0,
+            "manifestVerified": True,
+            "deploymentDirty": False,
+            "releaseVersion": "release-a",
+            "policyDigest": "policy-a",
+        },
     }
 
 
@@ -289,6 +336,27 @@ def test_fault_replay_is_clean_for_verified_healthy_runtime():
                 "policyDigest": "policy-a",
             },
             "workerProcesses": healthy_worker_processes(),
+        },
+        now=now,
+    )
+
+    assert result["ok"] is True
+    assert result["faults"] == []
+
+
+def test_fault_replay_accepts_successful_short_lived_workers_without_pid():
+    now = time.time()
+    result = audit_snapshot(
+        {
+            "state": healthy_nested_state(now),
+            "disk": {"level": "ok"},
+            "logBytes": 1024,
+            "release": {
+                "valid": True,
+                "releaseId": "release-a",
+                "policyDigest": "policy-a",
+            },
+            "workerProcesses": short_lived_worker_processes(),
         },
         now=now,
     )

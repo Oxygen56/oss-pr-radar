@@ -263,21 +263,42 @@ def audit_snapshot(snapshot: dict[str, Any], *, now: float | None = None) -> dic
         label = evidence.get("label")
         launch = evidence.get("launchctl") if isinstance(evidence.get("launchctl"), dict) else {}
         actual = evidence.get("process") if isinstance(evidence.get("process"), dict) else {}
+        runtime_workers = state.get("workers") if isinstance(state.get("workers"), dict) else {}
+        runtime_worker = (
+            runtime_workers.get(worker) if isinstance(runtime_workers, dict) else {}
+        )
+        runtime_worker = runtime_worker if isinstance(runtime_worker, dict) else {}
+        success_value = runtime_worker.get("lastSuccessAt") or runtime_worker.get(
+            "queueImportSuccessAt"
+        )
+        exit_value = runtime_worker.get("lastExitCode")
+        if exit_value is None:
+            exit_value = runtime_worker.get("queueLastExitCode")
+        clean_short_lived_success = (
+            launch.get("pid") is None
+            and runtime_worker.get("healthy") is True
+            and exit_value == 0
+            and isinstance(success_value, str)
+        )
         if label != WORKER_LABELS[worker]:
             faults.append(f"{worker.upper()}_LABEL_MISMATCH")
-        if launch.get("pid") is None or actual.get("alive") is not True:
+        if launch.get("pid") is None:
+            if not clean_short_lived_success:
+                faults.append(f"{worker.upper()}_PID_NOT_ALIVE")
+        elif actual.get("alive") is not True:
             faults.append(f"{worker.upper()}_PID_NOT_ALIVE")
         if launch.get("lastExitCode") not in {None, 0}:
             faults.append(f"{worker.upper()}_LAST_EXIT_NONZERO")
         if launch.get("labelMatched") is False:
             faults.append(f"{worker.upper()}_LABEL_MISMATCH")
-        if (
-            actual.get("versionMatched") is not True
-            or actual.get("releaseIdentityMatched") is not True
-        ):
-            faults.append(f"{worker.upper()}_RELEASE_MISMATCH")
-        if actual.get("workingDirectoryMatched") is not True:
-            faults.append(f"{worker.upper()}_WORKDIR_MISMATCH")
+        if launch.get("pid") is not None:
+            if (
+                actual.get("versionMatched") is not True
+                or actual.get("releaseIdentityMatched") is not True
+            ):
+                faults.append(f"{worker.upper()}_RELEASE_MISMATCH")
+            if actual.get("workingDirectoryMatched") is not True:
+                faults.append(f"{worker.upper()}_WORKDIR_MISMATCH")
         if evidence.get("stalePidConflict"):
             faults.append("STALE_PID_CONFLICT")
     operations = snapshot.get("operations") or []
