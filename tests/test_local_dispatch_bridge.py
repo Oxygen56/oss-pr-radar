@@ -51,6 +51,7 @@ SPEC.loader.exec_module(MODULE)
 V47_SUPERSEDED_REVISION = "oss_pr_radar_v47_semantic_evidence_only"
 V48_SUPERSEDED_REVISION = "oss_pr_radar_v48_semantic_evidence_only"
 V49_SUPERSEDED_REVISION = "oss_pr_radar_v49_payload_bound_evidence_ids"
+V50_SUPERSEDED_REVISION = "oss_pr_radar_v50_material_contradictions"
 
 
 @pytest.fixture(autouse=True)
@@ -165,7 +166,7 @@ def test_resolve_repo_code_paths_keeps_unique_suffixes_only():
 
 
 def _superseded_scanner_revision() -> str:
-    return V47_SUPERSEDED_REVISION
+    return V50_SUPERSEDED_REVISION
 
 
 def _enqueue_signed_intent(

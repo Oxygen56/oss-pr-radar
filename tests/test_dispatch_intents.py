@@ -417,21 +417,22 @@ def test_current_intent_requires_policy_watermark():
         verify_queue(queue, signer, now=NOW)
 
 
-def test_signed_v48_current_format_queue_is_only_superseded_not_dispatchable():
+def test_signed_previous_current_format_queue_is_only_superseded_not_dispatchable():
     signer = DispatchSigner(KEY)
-    legacy = SUPERSEDED_SCANNER_DECISION_CONTRACTS["oss_pr_radar_v48_semantic_evidence_only"]
+    scanner_version = "oss_pr_radar_v50_material_contradictions"
+    legacy = SUPERSEDED_SCANNER_DECISION_CONTRACTS[scanner_version]
     issue_url = "https://github.com/example/project/issues/42"
     intent = signer.seal(
         {
             "version": legacy["intentVersion"],
-            "intentId": "legacy-intent-v48",
+            "intentId": "legacy-intent-v50",
             "key": "example/project#42",
             "repo": "example/project",
             "issueNumber": 42,
             "issueUrl": issue_url,
             "issueUpdatedAt": "2026-08-04T00:00:00Z",
             "policyDigest": "policy-digest",
-            "scannerVersion": "oss_pr_radar_v48_semantic_evidence_only",
+            "scannerVersion": scanner_version,
             "decisionContractDigest": legacy["decisionContractDigest"],
             "contractDigest": legacy["contractDigest"],
             "promptDigest": sha256_text(canonical_prompt(issue_url)),
@@ -443,7 +444,7 @@ def test_signed_v48_current_format_queue_is_only_superseded_not_dispatchable():
     queue = signer.seal(
         {
             "version": QUEUE_VERSION,
-            "scannerVersion": "oss_pr_radar_v48_semantic_evidence_only",
+            "scannerVersion": scanner_version,
             "decisionContractDigest": legacy["decisionContractDigest"],
             "contractDigest": legacy["contractDigest"],
             "intentCount": 1,
@@ -456,7 +457,7 @@ def test_signed_v48_current_format_queue_is_only_superseded_not_dispatchable():
     stale = superseded_scanner_revision_queue(queue, signer)
     assert stale is not None
     assert stale["status"] == "superseded_scanner_revision"
-    assert stale["scannerVersion"] == "oss_pr_radar_v48_semantic_evidence_only"
+    assert stale["scannerVersion"] == scanner_version
     assert stale["intentCount"] == 1
 
 
