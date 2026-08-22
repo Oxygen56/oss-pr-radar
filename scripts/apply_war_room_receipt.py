@@ -57,6 +57,7 @@ def apply(
         adapter.record_user_decision_delivery(
             candidate_key=str(event["candidateKey"]),
             notification_digest=notification_digest,
+            channel=str(outbox["channel"]),
             status=str(delivered["status"]),
             receipt_id=str(delivered["receiptId"]),
             source_artifact_digest=artifact_digest,

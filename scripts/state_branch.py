@@ -27,6 +27,7 @@ FILES = {
     "repo_cache.json": Path("state/repo_cache.json"),
     "dispatch_queue.json": Path("state/dispatch_queue.json"),
     "notification_outbox.json": Path("state/notification_outbox.json"),
+    "war_room_codex_outbox.json": Path("state/war_room_codex_outbox.json"),
     "watchlist.json": Path("state/watchlist.json"),
     "health.json": Path("state/health.json"),
     "pending_rechecks.json": Path("state/pending_rechecks.json"),
@@ -38,6 +39,7 @@ BASE_SHA = Path("state/base_sha.txt")
 MANIFEST_VERSION = "radar_state_v2"
 CONTROLLER_FEEDBACK_FILES = {
     "controller_terminal_feedback.json": Path("state/controller_terminal_feedback.json"),
+    "controller_decision_feedback.json": Path("state/controller_decision_feedback.json"),
 }
 CONTROLLER_FEEDBACK_MANIFEST = "controller_feedback_manifest.json"
 CONTROLLER_FEEDBACK_BASE_SHA = Path("state/controller_feedback_base_sha.txt")

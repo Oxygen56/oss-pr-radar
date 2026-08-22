@@ -190,6 +190,13 @@ def controller_cycle(
             "skipped": True,
             "reason": ("remote_scan_active" if remote_scan_active else "workflow_not_operational"),
         }
+    bridge(
+        "codexDecisionSessions",
+        "codex-decision-dispatch",
+        "--project-id",
+        project_id,
+        timeout=900,
+    )
     bridge("refreshPullRequests", "refresh-prs")
 
     recovery = bridge("contextRecovery", "context-recover")
@@ -323,12 +330,15 @@ def _compact_summary(stages: dict[str, dict[str, Any]]) -> dict[str, Any]:
     queue = stages.get("finalQueue") or {}
     quality = stages.get("quality") or {}
     health = stages.get("finalWorkflowHealth") or stages.get("workflowHealth") or {}
+    decision_sessions = stages.get("codexDecisionSessions") or {}
     return {
         "localAgentHealthy": bool((stages.get("finalLocalAgentStatus") or {}).get("ok")),
         "operationalHealthy": bool(health.get("operationalHealthy")),
         "githubNaturalScheduleHealthy": bool(health.get("githubNaturalScheduleHealthy")),
         "drainAction": drain.get("action"),
         "drainKey": drain.get("key"),
+        "decisionSessionsCreated": len(decision_sessions.get("created") or []),
+        "decisionSessionsExisting": len(decision_sessions.get("existing") or []),
         "pendingCount": len(queue.get("pending") or []),
         "submitReadyRate": quality.get("submitReadyRate"),
         "filterMissRate": quality.get("filterMissRate"),

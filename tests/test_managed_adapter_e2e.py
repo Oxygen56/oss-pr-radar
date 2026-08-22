@@ -180,6 +180,10 @@ def test_scan_adapter_whitelists_only_authenticated_human_review_notifications(t
     assert rows[0]["state"] == "DECISION_REQUIRED"
     assert first["reviewRequired"] is True
     assert first["notificationStatus"] == "PENDING"
+    assert first["notificationStatusByChannel"] == {
+        "feishu": "PENDING",
+        "codex": "PENDING",
+    }
     assert rows[1]["state"] == "SYSTEM_PROCESSING"
     assert second["reviewRequired"] is False
 

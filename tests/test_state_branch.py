@@ -127,11 +127,20 @@ def publish_raw_state(root: Path, branch: str, available: dict[str, Path]) -> No
 
 def test_publish_and_restore_verify_manifest(tmp_path):
     root, origin = initialized_repo(tmp_path)
+    codex_outbox = root / "state" / "war_room_codex_outbox.json"
+    codex_outbox.write_text(
+        '{"schema": "oss-pr-radar.war-room-outbox.v1", "events": []}\n',
+        encoding="utf-8",
+    )
     MODULE.publish(root, "radar-state")
     restored = tmp_path / "restored"
     git("clone", str(origin), str(restored), cwd=tmp_path)
     MODULE.restore(restored, "radar-state")
     assert json.loads((restored / "state" / "seen.json").read_text()) == {}
+    assert (
+        json.loads((restored / "state" / "war_room_codex_outbox.json").read_text())["schema"]
+        == "oss-pr-radar.war-room-outbox.v1"
+    )
     assert (restored / "state" / "base_sha.txt").read_text().strip()
 
 
@@ -139,6 +148,11 @@ def test_controller_feedback_uses_an_independent_integrity_branch(tmp_path):
     root, origin = initialized_repo(tmp_path)
     feedback = root / "state" / "controller_terminal_feedback.json"
     feedback.write_text('{"a/b#1": {"status": "controller_terminal"}}\n', encoding="utf-8")
+    decision_feedback = root / "state" / "controller_decision_feedback.json"
+    decision_feedback.write_text(
+        '{"schema": "oss-pr-radar.codex-decision-feedback.v1", "events": {}}\n',
+        encoding="utf-8",
+    )
     MODULE.publish(
         root,
         "radar-controller-feedback",
@@ -162,6 +176,10 @@ def test_controller_feedback_uses_an_independent_integrity_branch(tmp_path):
     assert json.loads((restored / "state" / "controller_terminal_feedback.json").read_text()) == {
         "a/b#1": {"status": "controller_terminal"}
     }
+    assert (
+        json.loads((restored / "state" / "controller_decision_feedback.json").read_text())["schema"]
+        == "oss-pr-radar.codex-decision-feedback.v1"
+    )
     assert not (restored / "state" / "seen.json").exists()
 
 

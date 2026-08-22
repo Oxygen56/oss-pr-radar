@@ -128,7 +128,7 @@ def validate_reply_mode(reply: dict[str, Any]) -> None:
 def build_outbox(artifact: dict[str, Any], *, channel: str) -> dict[str, Any]:
     """Build an idempotent channel outbox from one validated artifact."""
 
-    from .war_room_projection import validate_projection
+    from .war_room_projection import notification_status_for_channel, validate_projection
 
     validate_projection(artifact)
     if channel not in {"feishu", "codex"}:
@@ -184,8 +184,7 @@ def build_outbox(artifact: dict[str, Any], *, channel: str) -> dict[str, Any]:
         }
         for item in artifact["items"]
         if (item["actionable"] or item["reviewRequired"])
-        and not item["notified"]
-        and item["notificationStatus"] != "RECONCILE_REQUIRED"
+        and notification_status_for_channel(item, channel) not in {"SENT", "RECONCILE_REQUIRED"}
     ]
     for event in events:
         event["attemptId"] = sha256_json(

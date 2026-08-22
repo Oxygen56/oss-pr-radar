@@ -148,11 +148,21 @@ def _opportunity_display_metadata(metadata_raw: str, provenance_raw: str) -> dic
         result["originKind"] = origin_kind
     notification_digest = str(metadata.get("notificationDigest") or "")
     notification_status = str(metadata.get("notificationStatus") or "PENDING")
+    raw_status_by_channel = metadata.get("notificationStatusByChannel")
+    raw_status_by_channel = raw_status_by_channel if isinstance(raw_status_by_channel, dict) else {}
+    notification_status_by_channel = {
+        "feishu": str(raw_status_by_channel.get("feishu") or notification_status),
+        "codex": str(raw_status_by_channel.get("codex") or "PENDING"),
+    }
     if (
         metadata.get("reviewRequired") is True
         and metadata.get("gateDecision") == "HUMAN_REVIEW"
         and re.fullmatch(r"[0-9a-f]{64}", notification_digest)
         and notification_status in {"PENDING", "SENT", "FAILED", "RECONCILE_REQUIRED"}
+        and all(
+            status in {"PENDING", "SENT", "FAILED", "RECONCILE_REQUIRED"}
+            for status in notification_status_by_channel.values()
+        )
     ):
         result.update(
             {
@@ -160,6 +170,7 @@ def _opportunity_display_metadata(metadata_raw: str, provenance_raw: str) -> dic
                 "gateDecision": "HUMAN_REVIEW",
                 "notificationDigest": notification_digest,
                 "notificationStatus": notification_status,
+                "notificationStatusByChannel": notification_status_by_channel,
                 "notified": notification_status == "SENT",
             }
         )
@@ -174,6 +185,17 @@ def _validate_snapshot_opportunity(row: dict[str, Any]) -> bool:
         issue_number=row["issueNumber"],
         issue_url=row["issueUrl"],
     )
+    raw_status_by_channel = row.get("notificationStatusByChannel")
+    if raw_status_by_channel is not None and (
+        not isinstance(raw_status_by_channel, dict)
+        or set(raw_status_by_channel) != {"feishu", "codex"}
+        or any(
+            status not in {"PENDING", "SENT", "FAILED", "RECONCILE_REQUIRED"}
+            for status in raw_status_by_channel.values()
+        )
+        or raw_status_by_channel.get("feishu") != row.get("notificationStatus")
+    ):
+        raise ValueError("managed snapshot channel notification state is invalid")
     return True
 
 
@@ -1219,6 +1241,13 @@ def _insert_snapshot(connection: sqlite3.Connection, rows: dict[str, list[dict[s
                                 "gateDecision": row["gateDecision"],
                                 "notificationDigest": row["notificationDigest"],
                                 "notificationStatus": row["notificationStatus"],
+                                "notificationStatusByChannel": row.get(
+                                    "notificationStatusByChannel"
+                                )
+                                or {
+                                    "feishu": row["notificationStatus"],
+                                    "codex": "PENDING",
+                                },
                                 "notified": row.get("notified") is True,
                             }
                             if row.get("reviewRequired") is True

@@ -92,6 +92,7 @@ from oss_pr_radar.util import (  # noqa: E402
     read_json,
     sha256_json,
 )
+from oss_pr_radar.war_room_messages import canonical_event_digest  # noqa: E402
 
 STATE = ROOT / "state"
 LEDGER_PATH = STATE / "radar_ledger.sqlite3"
@@ -307,6 +308,9 @@ PR_STAGE_PRIORITY = {
 LOCAL_PR_ACTION_STAGES = {"VALIDATION_PENDING", "FIX_READY"}
 TERMINAL_PR_STAGES = {"MERGED", "CLOSED"}
 CONTROLLER_TERMINAL_STATUS = "controller_terminal"
+CODEX_DECISION_BINDINGS_SCHEMA = "oss-pr-radar.codex-decision-bindings.v1"
+CODEX_DECISION_FEEDBACK_SCHEMA = "oss-pr-radar.codex-decision-feedback.v1"
+CODEX_DECISION_MAX_PER_CYCLE = 5
 PUBLISHED_TASK_STAGES = {
     "PR_OPEN",
     "CI_GREEN",
@@ -1570,6 +1574,117 @@ def fetch_cloud_queue() -> dict[str, Any]:
     return value
 
 
+def fetch_cloud_codex_outbox() -> dict[str, Any] | None:
+    """Read the durable Codex outbox only after checking the state manifest."""
+
+    ref = "refs/radar/import/radar-state"
+    fetched = subprocess.run(
+        [
+            "git",
+            "fetch",
+            "--no-write-fetch-head",
+            "origin",
+            f"+radar-state:{ref}",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+    )
+    if fetched.returncode != 0:
+        raise RuntimeError(
+            (fetched.stderr or fetched.stdout or b"radar-state fetch failed")[:300].decode(
+                "utf-8", errors="replace"
+            )
+        )
+
+    def show(name: str, *, allow_missing: bool = False) -> bytes | None:
+        completed = subprocess.run(
+            ["git", "show", f"{ref}:{name}"],
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+        )
+        if completed.returncode == 0:
+            return completed.stdout
+        if allow_missing:
+            return None
+        raise RuntimeError(f"radar-state file is missing: {name}")
+
+    manifest_raw = show("state_manifest.json")
+    assert manifest_raw is not None
+    try:
+        manifest = json.loads(manifest_raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("radar-state manifest is invalid") from exc
+    if manifest.get("version") != "radar_state_v2":
+        raise RuntimeError("radar-state manifest version is unsupported")
+    metadata = (manifest.get("files") or {}).get("war_room_codex_outbox.json")
+    raw = show("war_room_codex_outbox.json", allow_missing=True)
+    if metadata is None and raw is None:
+        return None
+    if not isinstance(metadata, dict) or raw is None:
+        raise RuntimeError("Codex decision outbox is not bound by the state manifest")
+    if hashlib.sha256(raw).hexdigest() != metadata.get("sha256"):
+        raise RuntimeError("Codex decision outbox digest does not match the state manifest")
+    try:
+        value = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("Codex decision outbox is invalid") from exc
+    _validate_codex_decision_outbox(value)
+    return value
+
+
+def _validate_codex_decision_outbox(value: Any) -> None:
+    if (
+        not isinstance(value, dict)
+        or value.get("schema") != "oss-pr-radar.war-room-outbox.v1"
+        or value.get("channel") != "codex"
+        or not re.fullmatch(r"[0-9a-f]{64}", str(value.get("sourceArtifactDigest") or ""))
+    ):
+        raise RuntimeError("Codex decision outbox envelope is invalid")
+    events = value.get("events")
+    if not isinstance(events, list):
+        raise RuntimeError("Codex decision outbox events are invalid")
+    event_ids: set[str] = set()
+    for event in events:
+        if not isinstance(event, dict):
+            raise RuntimeError("Codex decision outbox event is invalid")
+        if event.get("status") != "PENDING":
+            raise RuntimeError("Codex decision outbox event status is invalid")
+        action_kind = str(event.get("actionKind") or "")
+        if action_kind not in {"USER_DECISION", "MANAGED_TASK"}:
+            raise RuntimeError("Codex decision outbox action is invalid")
+        identity = {
+            "channel": "codex",
+            "candidate": event.get("candidateKey"),
+            "taskId": event.get("taskId"),
+            "actionKind": action_kind,
+            "notificationDigest": event.get("notificationDigest"),
+        }
+        expected_id = sha256_json(identity)
+        event_id = str(event.get("eventId") or "")
+        if (
+            event_id != expected_id
+            or event.get("idempotencyKey") != expected_id[:50]
+            or event.get("attemptId") != sha256_json({"channel": "codex", "event": expected_id})
+            or event_id in event_ids
+        ):
+            raise RuntimeError("Codex decision outbox event identity is invalid")
+        if not all(
+            isinstance(event.get(name), str) and str(event[name]).strip()
+            for name in ("candidateKey", "title", "reason", "nextAction")
+        ):
+            raise RuntimeError("Codex decision outbox display fields are invalid")
+        if action_kind == "USER_DECISION" and (
+            event.get("taskId") is not None
+            or not re.fullmatch(r"[0-9a-f]{64}", str(event.get("notificationDigest") or ""))
+        ):
+            raise RuntimeError("Codex user-decision binding is invalid")
+        if action_kind == "MANAGED_TASK" and not event.get("taskId"):
+            raise RuntimeError("Codex managed-task binding is invalid")
+        event_ids.add(event_id)
+
+
 def fetch_cloud_pr_followup() -> dict[str, Any]:
     raw = command(["git", "show", "refs/radar/import/radar-state:pr_followup.json"], cwd=ROOT)
     value = json.loads(raw)
@@ -2526,7 +2641,7 @@ def _publish_controller_feedback_updates(
                 "controller-feedback",
                 "--allow-missing",
             ],
-            cwd=ROOT,
+            cwd=STATE.parent,
             timeout=90,
         )
         feedback = read_json(feedback_path, missing={})
@@ -2557,7 +2672,7 @@ def _publish_controller_feedback_updates(
                     "--profile",
                     "controller-feedback",
                 ],
-                cwd=ROOT,
+                cwd=STATE.parent,
                 timeout=90,
             )
             return True, attempt
@@ -2566,6 +2681,73 @@ def _publish_controller_feedback_updates(
                 raise
             sleep(min(2**attempt, 8))
     raise RuntimeError("controller terminal feedback publish attempts exhausted")
+
+
+def _publish_controller_decision_feedback_updates(
+    updates: dict[str, dict[str, Any]], max_attempts: int = 5
+) -> tuple[bool, int]:
+    """Merge durable Codex-session receipts into the controller feedback branch."""
+
+    state_script = ROOT / "scripts" / "state_branch.py"
+    feedback_path = STATE / "controller_decision_feedback.json"
+    for attempt in range(1, max_attempts + 1):
+        command(
+            [
+                sys.executable,
+                str(state_script),
+                "restore",
+                "--profile",
+                "controller-feedback",
+                "--allow-missing",
+            ],
+            cwd=STATE.parent,
+            timeout=90,
+        )
+        feedback = read_json(
+            feedback_path,
+            missing={"schema": CODEX_DECISION_FEEDBACK_SCHEMA, "events": {}},
+        )
+        if (
+            not isinstance(feedback, dict)
+            or feedback.get("schema") != CODEX_DECISION_FEEDBACK_SCHEMA
+            or not isinstance(feedback.get("events"), dict)
+        ):
+            raise RuntimeError("controller Codex decision feedback is invalid")
+        events = dict(feedback["events"])
+        changed = False
+        for event_id, update in updates.items():
+            previous = events.get(event_id) if isinstance(events.get(event_id), dict) else {}
+            semantic_update = {name: value for name, value in update.items() if name != "analyzed"}
+            if previous and all(
+                previous.get(name) == value for name, value in semantic_update.items()
+            ):
+                continue
+            events[event_id] = previous | update
+            changed = True
+        if not changed:
+            return False, attempt
+        atomic_write_json(
+            feedback_path,
+            {"schema": CODEX_DECISION_FEEDBACK_SCHEMA, "events": events},
+        )
+        try:
+            command(
+                [
+                    sys.executable,
+                    str(state_script),
+                    "publish",
+                    "--profile",
+                    "controller-feedback",
+                ],
+                cwd=STATE.parent,
+                timeout=90,
+            )
+            return True, attempt
+        except RuntimeError as exc:
+            if "state branch changed since restore" not in str(exc) or attempt == max_attempts:
+                raise
+            sleep(min(2**attempt, 8))
+    raise RuntimeError("controller Codex decision feedback publish attempts exhausted")
 
 
 def list_pending(path: Path = LEDGER_PATH) -> dict[str, Any]:
@@ -4414,6 +4596,629 @@ def root_task_create(args: argparse.Namespace) -> dict[str, Any]:
             return result
         sleep(0.25)
     raise RuntimeError("root task creation result is unknown; orphan reconciliation required")
+
+
+def _codex_decision_prompt(event: dict[str, Any]) -> str:
+    issue_url = _issue_url_from_key(str(event.get("candidateKey") or ""))
+    return "\n".join(
+        (
+            "这是 OSS PR Radar 创建的候选决策会话，不是代码实施任务。",
+            "",
+            f"候选：{issue_url}",
+            f"事项：{event['title']}",
+            f"当前原因：{event['reason']}",
+            f"建议下一步：{event['nextAction']}",
+            "",
+            "请读取完整 issue、评论、仓库规则和相关 PR，给出简短中文建议，并明确需要用户决定什么。",
+            "不要修改代码、公开评论或创建 PR。若涉及公开披露 AI 使用，只准备私下措辞并等待用户确认。",
+        )
+    )
+
+
+def _issue_url_from_key(key: str) -> str:
+    match = re.fullmatch(
+        rf"({GITHUB_ID_SEGMENT.pattern}/{GITHUB_ID_SEGMENT.pattern})#([1-9][0-9]{{0,9}})",
+        key,
+    )
+    if match is None:
+        raise RuntimeError("Codex decision candidate key is invalid")
+    return f"https://github.com/{match.group(1)}/issues/{match.group(2)}"
+
+
+def _codex_decision_title(event: dict[str, Any], title_time: str) -> str:
+    return compact_title(
+        f"[有价值·待决策] {title_time} {event['candidateKey']} {str(event['title']).strip()}"
+    )
+
+
+def _codex_decision_bindings_path() -> Path:
+    return STATE / "codex_decision_sessions.json"
+
+
+def _read_codex_decision_bindings() -> dict[str, Any]:
+    value = read_json(
+        _codex_decision_bindings_path(),
+        missing={"schema": CODEX_DECISION_BINDINGS_SCHEMA, "events": {}},
+    )
+    if (
+        not isinstance(value, dict)
+        or value.get("schema") != CODEX_DECISION_BINDINGS_SCHEMA
+        or not isinstance(value.get("events"), dict)
+    ):
+        raise RuntimeError("local Codex decision bindings are invalid")
+    return value
+
+
+def _record_codex_decision_binding(event_id: str, binding: dict[str, Any]) -> None:
+    path = _codex_decision_bindings_path()
+    lock_path = path.with_suffix(".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+", encoding="utf-8") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        value = _read_codex_decision_bindings()
+        events = dict(value["events"])
+        events[event_id] = binding
+        atomic_write_json(path, {"schema": CODEX_DECISION_BINDINGS_SCHEMA, "events": events})
+
+
+def _codex_decision_thread(thread_id: str) -> dict[str, Any] | None:
+    if not THREAD_DB.is_file():
+        return None
+    connection = sqlite3.connect(THREAD_DB)
+    try:
+        row = connection.execute(
+            """SELECT title,archived,first_user_message,cwd,project_id,thread_source
+               FROM threads WHERE id=?""",
+            (thread_id,),
+        ).fetchone()
+    finally:
+        connection.close()
+    if row is None:
+        return None
+    return {
+        "title": str(row[0] or ""),
+        "archived": int(row[1] or 0),
+        "prompt": canonical_prompt(str(row[2] or "")),
+        "cwd": str(row[3] or ""),
+        "projectId": str(row[4]) if row[4] is not None else None,
+        "threadSource": str(row[5] or ""),
+    }
+
+
+def _codex_decision_thread_matches(
+    thread: dict[str, Any],
+    *,
+    prompt: str,
+    project_id: str,
+    require_unarchived: bool,
+) -> bool:
+    try:
+        cwd = Path(str(thread.get("cwd") or "")).resolve()
+    except (OSError, RuntimeError, ValueError):
+        return False
+    return (
+        cwd == GITHUB_ROOT.resolve()
+        and thread.get("threadSource") == "appServer"
+        and thread.get("projectId") in {None, "", project_id}
+        and (not require_unarchived or int(thread.get("archived") or 0) == 0)
+        and canonical_prompt(str(thread.get("prompt") or "")) == canonical_prompt(prompt)
+    )
+
+
+def _recover_codex_decision_thread(prompt: str, *, project_id: str) -> str | None:
+    if not THREAD_DB.is_file():
+        return None
+    connection = sqlite3.connect(THREAD_DB)
+    try:
+        rows = connection.execute(
+            """SELECT id,title,archived,first_user_message,cwd,project_id,thread_source
+               FROM threads
+               WHERE archived=0 AND cwd=? AND first_user_message=?
+                 AND thread_source='appServer'
+                 AND (project_id IS NULL OR project_id=?)
+               ORDER BY updated_at DESC LIMIT 5""",
+            (str(GITHUB_ROOT.resolve()), prompt, project_id),
+        ).fetchall()
+    finally:
+        connection.close()
+    return next(
+        (
+            str(row[0])
+            for row in rows
+            if _codex_decision_thread_matches(
+                {
+                    "title": str(row[1] or ""),
+                    "archived": int(row[2] or 0),
+                    "prompt": canonical_prompt(str(row[3] or "")),
+                    "cwd": str(row[4] or ""),
+                    "projectId": str(row[5]) if row[5] is not None else None,
+                    "threadSource": str(row[6] or ""),
+                },
+                prompt=prompt,
+                project_id=project_id,
+                require_unarchived=True,
+            )
+        ),
+        None,
+    )
+
+
+def _existing_codex_decision_binding(
+    event: dict[str, Any], *, project_id: str
+) -> dict[str, Any] | None:
+    event_id = str(event["eventId"])
+    prompt = _codex_decision_prompt(event)
+    prompt_digest = sha256_json(canonical_prompt(prompt))
+    stored = (_read_codex_decision_bindings().get("events") or {}).get(event_id)
+    if isinstance(stored, dict):
+        thread_id = str(stored.get("threadId") or "")
+        thread = _codex_decision_thread(thread_id)
+        if (
+            thread is not None
+            and _codex_decision_thread_matches(
+                thread,
+                prompt=prompt,
+                project_id=project_id,
+                require_unarchived=False,
+            )
+            and stored.get("candidateKey") == event.get("candidateKey")
+            and stored.get("notificationDigest") == event.get("notificationDigest")
+            and stored.get("projectId") == project_id
+            and stored.get("promptDigest") == prompt_digest
+        ):
+            return stored
+    recovered = _recover_codex_decision_thread(prompt, project_id=project_id)
+    if recovered is None:
+        return None
+    title_time = datetime.now().astimezone().strftime("%m-%d %H:%M")
+    binding = {
+        "eventId": event_id,
+        "candidateKey": event["candidateKey"],
+        "notificationDigest": event["notificationDigest"],
+        "threadId": recovered,
+        "turnId": "",
+        "projectId": project_id,
+        "titleTime": title_time,
+        "desiredTitle": _codex_decision_title(event, title_time),
+        "promptDigest": prompt_digest,
+        "createdAt": iso_z(datetime.now(UTC)),
+        "recovered": True,
+    }
+    _record_codex_decision_binding(event_id, binding)
+    return binding
+
+
+def _codex_decision_worker(args: argparse.Namespace) -> dict[str, Any]:
+    request = read_json(Path(args.request), missing={})
+    event = request.get("event") if isinstance(request, dict) else None
+    source_digest = str(request.get("sourceArtifactDigest") or "")
+    if not isinstance(event, dict):
+        raise RuntimeError("Codex decision worker request is invalid")
+    _validate_codex_decision_outbox(
+        {
+            "schema": "oss-pr-radar.war-room-outbox.v1",
+            "channel": "codex",
+            "sourceArtifactDigest": source_digest,
+            "events": [event],
+        }
+    )
+    if event.get("actionKind") != "USER_DECISION":
+        raise RuntimeError("Codex decision worker received a managed task")
+    event_id = str(event["eventId"])
+    opportunity_key = str(event["candidateKey"])
+    title_time = str(request.get("titleTime") or "")
+    if not re.fullmatch(r"[0-1][0-9]-[0-3][0-9] [0-2][0-9]:[0-5][0-9]", title_time):
+        raise RuntimeError("Codex decision title time is invalid")
+    prompt = _codex_decision_prompt(event)
+    desired_title = _codex_decision_title(event, title_time)
+    executable = shutil.which("codex")
+    if not executable:
+        raise RuntimeError("codex executable is unavailable")
+    store = ledger(args.ledger)
+    process = None
+    thread_id = ""
+    turn_id = ""
+    buffer = b""
+    selector = selectors.DefaultSelector()
+    try:
+        with _app_server_action_session(
+            store,
+            opportunity_key=opportunity_key,
+            argv=[
+                executable,
+                "app-server",
+                "--disable",
+                "recommended_plugins",
+                "--disable",
+                "remote_plugin",
+                "--stdio",
+            ],
+            cwd=GITHUB_ROOT,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            bufsize=0,
+        ) as started_process:
+            process = started_process
+            if process.stdin is None or process.stdout is None:
+                raise RuntimeError("app server pipes are unavailable")
+            selector.register(process.stdout, selectors.EVENT_READ)
+            process.stdin.write(
+                b"".join(
+                    (json.dumps(item, ensure_ascii=False) + "\n").encode("utf-8")
+                    for item in (
+                        {
+                            "id": 0,
+                            "method": "initialize",
+                            "params": {
+                                "clientInfo": {"name": "oss-pr-radar", "version": "1.0"},
+                                "capabilities": {"experimentalApi": True},
+                            },
+                        },
+                        {
+                            "id": 1,
+                            "method": "thread/start",
+                            "params": {
+                                "cwd": str(GITHUB_ROOT.resolve()),
+                                "sandbox": "danger-full-access",
+                                "approvalPolicy": "never",
+                                "threadSource": "appServer",
+                            },
+                        },
+                    )
+                )
+            )
+            process.stdin.flush()
+            buffer, message = _read_app_server_response(
+                process,
+                selector,
+                buffer,
+                response_id=1,
+                timeout=30,
+                action="thread/start",
+            )
+            thread_id = str(((message.get("result") or {}).get("thread") or {}).get("id") or "")
+            if not thread_id:
+                raise RuntimeError("app server did not create a Codex decision task")
+            _require_task_action_clear(store, opportunity_key)
+            _write_turn_start_request(
+                process,
+                thread_id=thread_id,
+                cwd=GITHUB_ROOT,
+                prompt=prompt,
+                delivery_kind="user-decision",
+                delivery_token=event_id,
+            )
+        buffer, message = _read_app_server_response(
+            process,
+            selector,
+            buffer,
+            response_id=2,
+            timeout=45,
+            action="turn/start",
+        )
+        turn_id = str(((message.get("result") or {}).get("turn") or {}).get("id") or "")
+        if not turn_id:
+            raise RuntimeError("app server did not start the Codex decision turn")
+        deadline = monotonic() + 30
+        while monotonic() < deadline:
+            thread = _codex_decision_thread(thread_id)
+            if thread is not None and _codex_decision_thread_matches(
+                thread,
+                prompt=prompt,
+                project_id=args.project_id,
+                require_unarchived=True,
+            ):
+                break
+            sleep(0.25)
+        else:
+            raise RuntimeError("Codex decision task was not persisted in the desktop index")
+        binding = {
+            "eventId": event_id,
+            "candidateKey": event["candidateKey"],
+            "notificationDigest": event["notificationDigest"],
+            "threadId": thread_id,
+            "turnId": turn_id,
+            "projectId": args.project_id,
+            "titleTime": title_time,
+            "desiredTitle": desired_title,
+            "promptDigest": sha256_json(canonical_prompt(prompt)),
+            "createdAt": iso_z(datetime.now(UTC)),
+        }
+        _record_codex_decision_binding(event_id, binding)
+        _ensure_desktop_thread_title(thread_id, desired_title)
+        _atomic_json(Path(args.receipt), {"ok": True} | binding)
+        terminal = _wait_for_app_server_terminal_turn(
+            process,
+            selector,
+            buffer,
+            thread_id=thread_id,
+            turn_id=turn_id,
+        )
+        return {"ok": True} | binding | ({"turnStatus": terminal["status"]} if terminal else {})
+    except Exception as exc:
+        receipt_path = Path(args.receipt)
+        if not receipt_path.exists():
+            _atomic_json(
+                receipt_path,
+                {"ok": False, "error": f"{type(exc).__name__}:{str(exc)[:300]}"},
+            )
+        raise
+    finally:
+        selector.close()
+        if process is not None and process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
+
+
+def _active_codex_decision_worker(event_id: str) -> dict[str, Any] | None:
+    receipt_root = STATE / "codex_decision_receipts"
+    launch_path = receipt_root / f"{event_id}.launch.json"
+    request_path = receipt_root / f"{event_id}.request.json"
+    launch = read_json(launch_path, missing={})
+    request = read_json(request_path, missing={})
+    event = request.get("event") if isinstance(request, dict) else None
+    if (
+        not isinstance(launch, dict)
+        or launch.get("eventId") != event_id
+        or not isinstance(event, dict)
+        or event.get("eventId") != event_id
+    ):
+        return None
+    pid = int(launch.get("pid") or 0)
+    if not pid or not _pid_is_alive(pid):
+        return None
+    try:
+        command_line = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "command="],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        ).stdout.strip()
+    except (OSError, RuntimeError, subprocess.SubprocessError):
+        return None
+    if (
+        "local_dispatch_bridge.py" not in command_line
+        or "codex-decision-worker" not in command_line
+        or event_id not in command_line
+    ):
+        return None
+    return {"pid": pid, "startedAt": launch.get("startedAt"), "eventId": event_id}
+
+
+def _create_codex_decision_task(
+    args: argparse.Namespace,
+    *,
+    event: dict[str, Any],
+    source_artifact_digest: str,
+) -> dict[str, Any]:
+    event_id = str(event["eventId"])
+    receipt_root = STATE / "codex_decision_receipts"
+    receipt_root.mkdir(parents=True, exist_ok=True)
+    request = receipt_root / f"{event_id}.request.json"
+    receipt = receipt_root / f"{event_id}.json"
+    launch = receipt_root / f"{event_id}.launch.json"
+    log = receipt_root / f"{event_id}.log"
+    if _active_codex_decision_worker(event_id) is not None:
+        raise RuntimeError("Codex decision task creation is already in progress")
+    receipt.unlink(missing_ok=True)
+    launch.unlink(missing_ok=True)
+    atomic_write_json(
+        request,
+        {
+            "sourceArtifactDigest": source_artifact_digest,
+            "titleTime": datetime.now().astimezone().strftime("%m-%d %H:%M"),
+            "event": event,
+        },
+    )
+    with log.open("ab") as handle:
+        worker = subprocess.Popen(
+            [
+                sys.executable,
+                str(Path(__file__).resolve()),
+                "--ledger",
+                str(args.ledger),
+                "--runtime-root",
+                str(args.runtime_root),
+                "codex-decision-worker",
+                "--project-id",
+                args.project_id,
+                "--request",
+                str(request),
+                "--receipt",
+                str(receipt),
+            ],
+            cwd=ROOT,
+            stdin=subprocess.DEVNULL,
+            stdout=handle,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    _atomic_json(
+        launch,
+        {"pid": worker.pid, "startedAt": iso_z(datetime.now(UTC)), "eventId": event_id},
+    )
+    deadline = monotonic() + 75
+    while monotonic() < deadline:
+        if receipt.exists():
+            result = read_json(receipt, missing={})
+            if not result.get("ok"):
+                raise RuntimeError(str(result.get("error") or "Codex decision task failed"))
+            return result
+        sleep(0.25)
+    raise RuntimeError("Codex decision task result is unknown; reconciliation required")
+
+
+def _codex_decision_feedback(
+    event: dict[str, Any], binding: dict[str, Any], source_artifact_digest: str
+) -> dict[str, Any]:
+    delivery_id = sha256_json(
+        {
+            "eventId": event["eventId"],
+            "threadDigest": hashlib.sha256(str(binding["threadId"]).encode()).hexdigest(),
+        }
+    )
+    receipt_id = sha256_json(
+        {
+            "channel": "codex",
+            "eventId": event["eventId"],
+            "candidateKey": event["candidateKey"],
+            "notificationDigest": event["notificationDigest"],
+            "deliveryId": delivery_id,
+            "status": "SENT",
+        }
+    )
+    return {
+        "eventId": event["eventId"],
+        "candidateKey": event["candidateKey"],
+        "notificationDigest": event["notificationDigest"],
+        "sourceArtifactDigest": source_artifact_digest,
+        "canonicalEventDigest": canonical_event_digest(event),
+        "status": "SENT",
+        "receiptId": receipt_id,
+        "deliveryId": delivery_id,
+        "analyzed": iso_z(datetime.now(UTC)),
+    }
+
+
+def dispatch_codex_decisions(args: argparse.Namespace) -> dict[str, Any]:
+    outbox = fetch_cloud_codex_outbox()
+    if outbox is None:
+        return {
+            "ok": True,
+            "created": [],
+            "existing": [],
+            "deferred": [],
+            "warnings": [],
+            "errors": [],
+            "reason": "codex_outbox_not_published_yet",
+        }
+    lock_path = STATE / "codex_decision_dispatch.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+", encoding="utf-8") as lock:
+        try:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return {
+                "ok": True,
+                "busy": True,
+                "created": [],
+                "existing": [],
+                "deferred": [
+                    {
+                        "key": str(event.get("candidateKey") or ""),
+                        "reason": "dispatch_already_running",
+                    }
+                    for event in outbox["events"]
+                    if isinstance(event, dict) and event.get("actionKind") == "USER_DECISION"
+                ],
+                "warnings": [],
+                "errors": [],
+            }
+        return _dispatch_codex_decisions_locked(args, outbox)
+
+
+def _dispatch_codex_decisions_locked(
+    args: argparse.Namespace, outbox: dict[str, Any]
+) -> dict[str, Any]:
+    source_digest = str(outbox["sourceArtifactDigest"])
+    events = [
+        event
+        for event in outbox["events"]
+        if isinstance(event, dict) and event.get("actionKind") == "USER_DECISION"
+    ]
+    created: list[dict[str, Any]] = []
+    existing: list[dict[str, Any]] = []
+    deferred: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    feedback_updates: dict[str, dict[str, Any]] = {}
+    created_count = 0
+    for event in events:
+        key = str(event["candidateKey"])
+        try:
+            binding = _existing_codex_decision_binding(event, project_id=args.project_id)
+            was_created = False
+            if binding is None:
+                if _active_codex_decision_worker(str(event["eventId"])) is not None:
+                    deferred.append({"key": key, "reason": "creation_in_progress"})
+                    continue
+                if created_count >= CODEX_DECISION_MAX_PER_CYCLE:
+                    deferred.append({"key": key, "reason": "per_cycle_creation_limit"})
+                    continue
+                binding = _create_codex_decision_task(
+                    args,
+                    event=event,
+                    source_artifact_digest=source_digest,
+                )
+                created_count += 1
+                was_created = True
+            thread = _codex_decision_thread(str(binding["threadId"]))
+            if thread is None:
+                raise RuntimeError("bound Codex decision task is missing")
+            if not _codex_decision_thread_matches(
+                thread,
+                prompt=_codex_decision_prompt(event),
+                project_id=args.project_id,
+                require_unarchived=False,
+            ):
+                raise RuntimeError("bound Codex decision task identity is invalid")
+            if thread["archived"] == 0:
+                _ensure_desktop_thread_title(
+                    str(binding["threadId"]),
+                    str(
+                        binding.get("desiredTitle")
+                        or _codex_decision_title(event, binding["titleTime"])
+                    ),
+                )
+            feedback = _codex_decision_feedback(event, binding, source_digest)
+            feedback_updates[str(event["eventId"])] = feedback
+            try:
+                ManagedAdapter(ROOT, args.ledger).record_user_decision_delivery(
+                    candidate_key=key,
+                    notification_digest=str(event["notificationDigest"]),
+                    channel="codex",
+                    status="SENT",
+                    receipt_id=str(feedback["receiptId"]),
+                    source_artifact_digest=source_digest,
+                    message_id=str(feedback["deliveryId"]),
+                )
+            except (OSError, RuntimeError, ValueError, sqlite3.Error) as exc:
+                warnings.append({"key": key, "warning": f"local_ledger:{str(exc)[:200]}"})
+            summary = {"key": key, "threadId": binding["threadId"]}
+            (created if was_created else existing).append(summary)
+        except (OSError, RuntimeError, ValueError, sqlite3.Error) as exc:
+            errors.append({"key": key, "error": f"{type(exc).__name__}:{str(exc)[:300]}"})
+    state_changed = False
+    publish_attempts = 0
+    if feedback_updates:
+        try:
+            state_changed, publish_attempts = _publish_controller_decision_feedback_updates(
+                feedback_updates
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            errors.append(
+                {
+                    "key": "controller-feedback",
+                    "error": f"{type(exc).__name__}:{str(exc)[:300]}",
+                }
+            )
+    return {
+        "ok": not errors,
+        "sourceArtifactDigest": source_digest,
+        "created": created,
+        "existing": existing,
+        "deferred": deferred,
+        "warnings": warnings,
+        "errors": errors,
+        "feedbackStateChanged": state_changed,
+        "feedbackPublishAttempts": publish_attempts,
+    }
 
 
 def _task_turn_reservation(
@@ -13603,6 +14408,12 @@ def main() -> int:
     subparsers.add_parser("sync")
     subparsers.add_parser("queue-import")
     subparsers.add_parser("publish-terminal-feedback")
+    codex_decision_dispatch_parser = subparsers.add_parser("codex-decision-dispatch")
+    codex_decision_dispatch_parser.add_argument("--project-id", default=DEFAULT_TASK_PROJECT_ID)
+    codex_decision_worker_parser = subparsers.add_parser("codex-decision-worker")
+    codex_decision_worker_parser.add_argument("--project-id", required=True)
+    codex_decision_worker_parser.add_argument("--request", required=True)
+    codex_decision_worker_parser.add_argument("--receipt", required=True)
     subparsers.add_parser("list")
     alerts_parser = subparsers.add_parser("alerts")
     alerts_parser.add_argument("--min-age-minutes", type=int, default=70)
@@ -13897,6 +14708,10 @@ def main() -> int:
         result = import_signed_queue(args.ledger)
     elif args.operation == "publish-terminal-feedback":
         result = publish_terminal_feedback(args)
+    elif args.operation == "codex-decision-dispatch":
+        result = dispatch_codex_decisions(args)
+    elif args.operation == "codex-decision-worker":
+        result = _codex_decision_worker(args)
     elif args.operation == "list":
         result = list_pending(args.ledger)
     elif args.operation == "alerts":

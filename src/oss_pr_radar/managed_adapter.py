@@ -28,6 +28,26 @@ from .release_binding import runtime_ledger_path
 from .repo_probe import REPRODUCED_VALIDATED, thread_fingerprint, verify_probe_receipt
 from .util import canonical_json, sha256_json
 
+NOTIFICATION_CHANNELS = ("feishu", "codex")
+NOTIFICATION_DELIVERY_STATUSES = {"PENDING", "SENT", "FAILED", "RECONCILE_REQUIRED"}
+
+
+def _notification_status_by_channel(metadata: dict[str, Any]) -> dict[str, str]:
+    """Read channel delivery state, treating the legacy scalar as Feishu-only."""
+
+    raw = metadata.get("notificationStatusByChannel")
+    raw = raw if isinstance(raw, dict) else {}
+    legacy_feishu = str(metadata.get("notificationStatus") or "PENDING")
+    statuses: dict[str, str] = {}
+    for channel in NOTIFICATION_CHANNELS:
+        status = str(raw.get(channel) or "")
+        if status not in NOTIFICATION_DELIVERY_STATUSES:
+            status = legacy_feishu if channel == "feishu" else "PENDING"
+        if status not in NOTIFICATION_DELIVERY_STATUSES:
+            status = "PENDING"
+        statuses[channel] = status
+    return statuses
+
 
 class GitHubAbsenceQueries:
     """Exact, read-only GitHub queries used by the slow publication reconciler."""
@@ -162,16 +182,17 @@ class ManagedAdapter:
                     parsed = {}
                 if isinstance(parsed, dict):
                     existing_metadata = parsed
-            notification_status = "PENDING"
+            notification_status_by_channel = {
+                channel: "PENDING" for channel in NOTIFICATION_CHANNELS
+            }
             if (
                 decision_metadata["reviewRequired"]
                 and existing_metadata.get("reviewRequired") is True
                 and existing_metadata.get("notificationDigest")
                 == decision_metadata["notificationDigest"]
             ):
-                prior_status = str(existing_metadata.get("notificationStatus") or "PENDING")
-                if prior_status in {"PENDING", "SENT", "FAILED", "RECONCILE_REQUIRED"}:
-                    notification_status = prior_status
+                notification_status_by_channel = _notification_status_by_channel(existing_metadata)
+            notification_status = notification_status_by_channel["feishu"]
             classification = preflight.get("classification")
             opportunity_state = (
                 "DECISION_REQUIRED"
@@ -208,6 +229,7 @@ class ManagedAdapter:
                     "capacityDisposition": candidate.get("capacityDisposition"),
                     **decision_metadata,
                     "notificationStatus": notification_status,
+                    "notificationStatusByChannel": notification_status_by_channel,
                     "notified": bool(
                         decision_metadata["reviewRequired"] and notification_status == "SENT"
                     ),
@@ -326,6 +348,7 @@ class ManagedAdapter:
         *,
         candidate_key: str,
         notification_digest: str,
+        channel: str,
         status: str,
         receipt_id: str,
         source_artifact_digest: str,
@@ -335,6 +358,8 @@ class ManagedAdapter:
     ) -> dict[str, Any]:
         """Apply an authenticated USER_DECISION delivery without creating a task."""
 
+        if channel not in NOTIFICATION_CHANNELS:
+            raise ValueError("unsupported user decision delivery channel")
         if status not in {"SENT", "FAILED"}:
             raise ValueError("unsupported user decision delivery status")
         if not re.fullmatch(r"[0-9a-f]{64}", notification_digest):
@@ -363,7 +388,8 @@ class ManagedAdapter:
                 )
             ):
                 raise ValueError("user decision delivery does not match the managed opportunity")
-            prior_status = str(metadata.get("notificationStatus") or "PENDING")
+            notification_status_by_channel = _notification_status_by_channel(metadata)
+            prior_status = notification_status_by_channel[channel]
             next_status = (
                 "SENT"
                 if status == "SENT"
@@ -373,13 +399,17 @@ class ManagedAdapter:
             )
             if prior_status == "SENT" and next_status != "SENT":
                 raise ValueError("sent user decision delivery cannot be downgraded")
+            notification_status_by_channel[channel] = next_status
+            feishu_status = notification_status_by_channel["feishu"]
             metadata.update(
                 {
-                    "notificationStatus": next_status,
-                    "notified": next_status == "SENT",
-                    "deliveryReceiptId": receipt_id,
+                    "notificationStatus": feishu_status,
+                    "notificationStatusByChannel": notification_status_by_channel,
+                    "notified": feishu_status == "SENT",
                 }
             )
+            if channel == "feishu":
+                metadata["deliveryReceiptId"] = receipt_id
             connection.execute(
                 "UPDATE managed_opportunities SET metadata_json=? WHERE opportunity_key=?",
                 (canonical_json(metadata), candidate_key),
@@ -403,8 +433,12 @@ class ManagedAdapter:
             opportunity_key=candidate_key,
             state=next_status,
             source="war_room",
-            provenance={"sourceArtifactDigest": source_artifact_digest},
+            provenance={
+                "channel": channel,
+                "sourceArtifactDigest": source_artifact_digest,
+            },
             payload={
+                "channel": channel,
                 "notificationDigest": notification_digest,
                 "messageId": message_id if next_status == "SENT" else "",
                 "error": error if next_status != "SENT" else "",

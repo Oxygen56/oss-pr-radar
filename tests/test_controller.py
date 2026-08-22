@@ -57,7 +57,9 @@ def test_controller_cycle_runs_one_ordered_sync_and_drain(tmp_path):
 
     assert result["ok"] is True
     assert calls.count("queueSync") == 1
+    assert calls.count("codexDecisionSessions") == 1
     assert calls.count("drain") == 1
+    assert calls.index("queueSync") < calls.index("codexDecisionSessions")
     assert calls.index("resultIngestion") < calls.index("drain")
     assert calls.index("resultIngestion") < calls.index("independentReview")
     assert calls.index("restoreReconcile") < calls.index("drain")

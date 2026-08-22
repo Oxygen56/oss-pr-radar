@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from oss_pr_radar.ledger import RadarLedger
+from oss_pr_radar.managed_adapter import ManagedAdapter
 from oss_pr_radar.managed_lifecycle import (
     REPLY_TEMPLATE_ID,
     ManagedLedger,
@@ -221,8 +222,11 @@ def test_user_decision_sent_is_suppressed_and_failed_is_retried_idempotently(tmp
     path = managed_db(tmp_path)
     ledger = ManagedLedger(path)
     add_user_decision(ledger, status="PENDING")
-    pending = build_outbox(build_projection(path), channel="feishu")
+    pending_projection = build_projection(path)
+    pending = build_outbox(pending_projection, channel="feishu")
+    pending_codex = build_outbox(pending_projection, channel="codex")
     pending_event_id = pending["events"][0]["eventId"]
+    pending_codex_event_id = pending_codex["events"][0]["eventId"]
 
     add_user_decision(ledger, status="FAILED")
     failed = build_outbox(build_projection(path), channel="feishu")
@@ -231,7 +235,12 @@ def test_user_decision_sent_is_suppressed_and_failed_is_retried_idempotently(tmp
     add_user_decision(ledger, status="SENT")
     sent = build_projection(path)
     assert sent["items"][0]["notified"] is True
+    assert sent["items"][0]["notificationStatusByChannel"] == {
+        "feishu": "SENT",
+        "codex": "PENDING",
+    }
     assert build_outbox(sent, channel="feishu")["events"] == []
+    assert build_outbox(sent, channel="codex")["events"][0]["eventId"] == (pending_codex_event_id)
 
 
 def test_user_decision_authority_survives_authenticated_snapshot_round_trip(
@@ -248,6 +257,60 @@ def test_user_decision_authority_survives_authenticated_snapshot_round_trip(
     artifact = build_projection(restored)
     assert artifact["items"][0]["actionKind"] == "USER_DECISION"
     assert build_outbox(artifact, channel="feishu")["events"][0]["candidateKey"] == ("owner/repo#8")
+
+
+def test_legacy_sent_status_round_trip_is_feishu_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", "snapshot-user-decision-key" * 2)
+    source = managed_db(tmp_path / "source")
+    add_user_decision(ManagedLedger(source), status="SENT")
+    snapshot = tmp_path / "managed.snapshot.json.gz"
+    export_snapshot(source, snapshot)
+
+    restored = managed_db(tmp_path / "restored")
+    import_snapshot(restored, snapshot)
+    artifact = build_projection(restored)
+
+    assert artifact["items"][0]["notificationStatusByChannel"] == {
+        "feishu": "SENT",
+        "codex": "PENDING",
+    }
+    assert build_outbox(artifact, channel="feishu")["events"] == []
+    assert build_outbox(artifact, channel="codex")["events"][0]["candidateKey"] == ("owner/repo#8")
+
+
+def test_codex_sent_status_survives_authenticated_snapshot_round_trip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", "snapshot-user-decision-key" * 2)
+    source = managed_db(tmp_path / "source")
+    add_user_decision(ManagedLedger(source))
+    adapter = ManagedAdapter(tmp_path / "source", source)
+    adapter.record_user_decision_delivery(
+        candidate_key="owner/repo#8",
+        notification_digest=USER_DECISION_DIGEST,
+        channel="codex",
+        status="SENT",
+        receipt_id="codex-receipt-1",
+        source_artifact_digest="codex-artifact-1",
+        message_id="codex-task-1",
+    )
+    snapshot = tmp_path / "managed.snapshot.json.gz"
+    export_snapshot(source, snapshot)
+
+    restored = managed_db(tmp_path / "restored")
+    import_snapshot(restored, snapshot)
+    artifact = build_projection(restored)
+
+    assert artifact["items"][0]["notificationStatus"] == "PENDING"
+    assert artifact["items"][0]["notified"] is False
+    assert artifact["items"][0]["notificationStatusByChannel"] == {
+        "feishu": "PENDING",
+        "codex": "SENT",
+    }
+    assert build_outbox(artifact, channel="feishu")["events"][0]["candidateKey"] == ("owner/repo#8")
+    assert build_outbox(artifact, channel="codex")["events"] == []
 
 
 def test_gate_bound_task_is_the_only_actionable_source_and_exports_are_idempotent(

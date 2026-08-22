@@ -127,6 +127,38 @@ def _signed_dispatch_queue(
     return signer.seal(queue)
 
 
+def _codex_decision_outbox(key: str = "owner/repo#1") -> dict:
+    notification_digest = "a" * 64
+    identity = {
+        "channel": "codex",
+        "candidate": key,
+        "taskId": None,
+        "actionKind": "USER_DECISION",
+        "notificationDigest": notification_digest,
+    }
+    event_id = sha256_json(identity)
+    event = {
+        "eventId": event_id,
+        "candidateKey": key,
+        "taskId": None,
+        "actionKind": "USER_DECISION",
+        "notificationDigest": notification_digest,
+        "attemptId": sha256_json({"channel": "codex", "event": event_id}),
+        "title": "需要决定是否继续",
+        "reason": "需要你确认下一步。",
+        "nextAction": "请确认处理方向。",
+        "status": "PENDING",
+        "idempotencyKey": event_id[:50],
+        "card": {},
+    }
+    return {
+        "schema": "oss-pr-radar.war-room-outbox.v1",
+        "channel": "codex",
+        "sourceArtifactDigest": "b" * 64,
+        "events": [event],
+    }
+
+
 def test_resolve_repo_code_paths_expands_unique_basenames_and_drops_identifiers():
     class Client:
         def repository_tree(self, repo, ref):
@@ -1506,6 +1538,371 @@ def test_canonical_prompt_unwraps_delegation():
     assert MODULE.canonical_prompt(wrapped) == prompt
 
 
+def test_codex_decision_outbox_requires_deterministic_event_identity():
+    outbox = _codex_decision_outbox()
+    MODULE._validate_codex_decision_outbox(outbox)
+
+    outbox["events"][0]["eventId"] = "0" * 64
+    with pytest.raises(RuntimeError, match="event identity"):
+        MODULE._validate_codex_decision_outbox(outbox)
+
+
+def test_codex_decision_outbox_rejects_non_pending_event():
+    outbox = _codex_decision_outbox()
+    outbox["events"][0]["status"] = "SENT"
+
+    with pytest.raises(RuntimeError, match="event status"):
+        MODULE._validate_codex_decision_outbox(outbox)
+
+
+def test_codex_decision_dispatch_creates_once_and_reuses_session(monkeypatch, tmp_path):
+    outbox = _codex_decision_outbox()
+    event = outbox["events"][0]
+    binding = {
+        "eventId": event["eventId"],
+        "candidateKey": event["candidateKey"],
+        "notificationDigest": event["notificationDigest"],
+        "threadId": "thread-1",
+        "turnId": "turn-1",
+        "projectId": "github",
+        "titleTime": "08-23 12:00",
+        "desiredTitle": "[有价值·待决策] 08-23 12:00 owner/repo#1 需要决定是否继续",
+        "promptDigest": "prompt",
+    }
+    created_calls = []
+    existing_calls = 0
+    delivery_calls = []
+    published = []
+
+    def existing(_event, *, project_id):
+        nonlocal existing_calls
+        assert project_id == "github"
+        existing_calls += 1
+        return None if existing_calls == 1 else binding
+
+    def create(_args, **kwargs):
+        created_calls.append(kwargs)
+        return binding
+
+    def record_delivery(_self, **kwargs):
+        delivery_calls.append(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr(MODULE, "fetch_cloud_codex_outbox", lambda: outbox)
+    monkeypatch.setattr(MODULE, "_existing_codex_decision_binding", existing)
+    monkeypatch.setattr(MODULE, "_create_codex_decision_task", create)
+    monkeypatch.setattr(
+        MODULE,
+        "_codex_decision_thread",
+        lambda _thread_id: {
+            "title": "title",
+            "archived": 0,
+            "prompt": MODULE._codex_decision_prompt(event),
+            "cwd": str(MODULE.GITHUB_ROOT),
+            "projectId": None,
+            "threadSource": "appServer",
+        },
+    )
+    monkeypatch.setattr(MODULE, "_ensure_desktop_thread_title", lambda *_args: None)
+    monkeypatch.setattr(MODULE.ManagedAdapter, "record_user_decision_delivery", record_delivery)
+    monkeypatch.setattr(
+        MODULE,
+        "_publish_controller_decision_feedback_updates",
+        lambda updates: published.append(updates) or (True, 1),
+    )
+    args = SimpleNamespace(
+        ledger=tmp_path / "ledger.sqlite3",
+        runtime_root=tmp_path,
+        project_id="github",
+    )
+
+    first = MODULE.dispatch_codex_decisions(args)
+    second = MODULE.dispatch_codex_decisions(args)
+
+    assert first["ok"] is True
+    assert first["created"] == [{"key": "owner/repo#1", "threadId": "thread-1"}]
+    assert second["existing"] == [{"key": "owner/repo#1", "threadId": "thread-1"}]
+    assert len(created_calls) == 1
+    assert len(delivery_calls) == 2
+    assert all(call["channel"] == "codex" for call in delivery_calls)
+    assert len(published) == 2
+    assert set(published[0]) == {event["eventId"]}
+
+
+def test_codex_decision_dispatch_serializes_concurrent_creators(monkeypatch, tmp_path):
+    outbox = _codex_decision_outbox()
+    event = outbox["events"][0]
+    prompt = MODULE._codex_decision_prompt(event)
+    state = tmp_path / "state"
+    state.mkdir()
+    monkeypatch.setattr(MODULE, "STATE", state)
+    monkeypatch.setattr(MODULE, "fetch_cloud_codex_outbox", lambda: outbox)
+    monkeypatch.setattr(
+        MODULE,
+        "_existing_codex_decision_binding",
+        lambda _event, *, project_id: None,
+    )
+    monkeypatch.setattr(MODULE, "_active_codex_decision_worker", lambda _event_id: None)
+    started = threading.Event()
+    release = threading.Event()
+    created_calls = []
+
+    def create(_args, **kwargs):
+        created_calls.append(kwargs)
+        started.set()
+        assert release.wait(timeout=5)
+        return {
+            "eventId": event["eventId"],
+            "candidateKey": event["candidateKey"],
+            "notificationDigest": event["notificationDigest"],
+            "threadId": "thread-1",
+            "turnId": "turn-1",
+            "projectId": "github",
+            "titleTime": "08-23 12:00",
+            "desiredTitle": MODULE._codex_decision_title(event, "08-23 12:00"),
+            "promptDigest": sha256_json(MODULE.canonical_prompt(prompt)),
+        }
+
+    monkeypatch.setattr(MODULE, "_create_codex_decision_task", create)
+    monkeypatch.setattr(
+        MODULE,
+        "_codex_decision_thread",
+        lambda _thread_id: {
+            "title": "",
+            "archived": 0,
+            "prompt": prompt,
+            "cwd": str(MODULE.GITHUB_ROOT),
+            "projectId": None,
+            "threadSource": "appServer",
+        },
+    )
+    monkeypatch.setattr(MODULE, "_ensure_desktop_thread_title", lambda *_args: None)
+    monkeypatch.setattr(
+        MODULE.ManagedAdapter,
+        "record_user_decision_delivery",
+        lambda *_args, **_kwargs: {"ok": True},
+    )
+    monkeypatch.setattr(
+        MODULE, "_publish_controller_decision_feedback_updates", lambda _updates: (True, 1)
+    )
+    args = SimpleNamespace(
+        ledger=tmp_path / "ledger.sqlite3", runtime_root=tmp_path, project_id="github"
+    )
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        first = executor.submit(MODULE.dispatch_codex_decisions, args)
+        assert started.wait(timeout=5)
+        second = MODULE.dispatch_codex_decisions(args)
+        release.set()
+        first_result = first.result(timeout=5)
+
+    assert first_result["ok"] is True
+    assert second["ok"] is True
+    assert second["busy"] is True
+    assert second["deferred"] == [{"key": "owner/repo#1", "reason": "dispatch_already_running"}]
+    assert len(created_calls) == 1
+
+
+def test_codex_decision_recovery_requires_target_workspace(monkeypatch, tmp_path):
+    event = _codex_decision_outbox()["events"][0]
+    prompt = MODULE._codex_decision_prompt(event)
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            """CREATE TABLE threads (
+                id TEXT, title TEXT, archived INTEGER, first_user_message TEXT,
+                cwd TEXT, project_id TEXT, thread_source TEXT, updated_at INTEGER
+            )"""
+        )
+        rows = [
+            ("wrong-cwd", "", 0, prompt, str(tmp_path), None, "appServer", 5),
+            (
+                "wrong-project",
+                "",
+                0,
+                prompt,
+                str(MODULE.GITHUB_ROOT),
+                "other",
+                "appServer",
+                4,
+            ),
+            (
+                "wrong-source",
+                "",
+                0,
+                prompt,
+                str(MODULE.GITHUB_ROOT),
+                None,
+                "user",
+                3,
+            ),
+            (
+                "archived",
+                "",
+                1,
+                prompt,
+                str(MODULE.GITHUB_ROOT),
+                None,
+                "appServer",
+                2,
+            ),
+            (
+                "correct",
+                "",
+                0,
+                prompt,
+                str(MODULE.GITHUB_ROOT),
+                None,
+                "appServer",
+                1,
+            ),
+        ]
+        connection.executemany("INSERT INTO threads VALUES (?,?,?,?,?,?,?,?)", rows)
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+
+    assert MODULE._recover_codex_decision_thread(prompt, project_id="github") == "correct"
+
+
+def test_codex_decision_feedback_uses_runtime_state_root(monkeypatch, tmp_path):
+    state = tmp_path / "runtime" / "state"
+    state.mkdir(parents=True)
+    monkeypatch.setattr(MODULE, "STATE", state)
+    calls = []
+
+    def command(args, **kwargs):
+        calls.append((args, kwargs.get("cwd")))
+        return ""
+
+    monkeypatch.setattr(MODULE, "command", command)
+    update = {
+        "event-1": {
+            "eventId": "event-1",
+            "candidateKey": "owner/repo#1",
+            "notificationDigest": "a" * 64,
+            "sourceArtifactDigest": "b" * 64,
+            "canonicalEventDigest": "c" * 64,
+            "status": "SENT",
+            "receiptId": "d" * 64,
+            "deliveryId": "e" * 64,
+            "analyzed": "2026-08-23T00:00:00Z",
+        }
+    }
+
+    changed, attempts = MODULE._publish_controller_decision_feedback_updates(update)
+
+    assert changed is True
+    assert attempts == 1
+    assert [args[2] for args, _cwd in calls] == ["restore", "publish"]
+    assert [cwd for _args, cwd in calls] == [state.parent, state.parent]
+    saved = json.loads((state / "controller_decision_feedback.json").read_text())
+    assert saved["events"]["event-1"]["receiptId"] == "d" * 64
+
+
+def test_codex_decision_worker_creates_and_titles_independent_task(monkeypatch, tmp_path):
+    outbox = _codex_decision_outbox()
+    event = outbox["events"][0]
+    request = tmp_path / "decision-request.json"
+    receipt = tmp_path / "decision-receipt.json"
+    request.write_text(
+        json.dumps(
+            {
+                "sourceArtifactDigest": outbox["sourceArtifactDigest"],
+                "titleTime": "08-23 12:00",
+                "event": event,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class Process(_FakeTaskTurnProcess):
+        def __init__(self):
+            super().__init__()
+            self.terminated = False
+
+        def poll(self):
+            return 0 if not self.terminated else 1
+
+        def terminate(self):
+            self.terminated = True
+
+        @staticmethod
+        def wait(timeout=None):
+            return 0
+
+    process = Process()
+
+    @contextmanager
+    def action_session(*_args, **_kwargs):
+        yield process
+
+    def read_response(_process, _selector, buffer, *, response_id, **_kwargs):
+        if response_id == 1:
+            return buffer, {"result": {"thread": {"id": "thread-1"}}}
+        return buffer, {"result": {"turn": {"id": "turn-1"}}}
+
+    desired_titles = []
+    prompt = MODULE._codex_decision_prompt(event)
+    state = tmp_path / "state"
+    state.mkdir()
+    monkeypatch.setattr(MODULE, "STATE", state)
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: object())
+    monkeypatch.setattr(MODULE, "_app_server_action_session", action_session)
+    monkeypatch.setattr(MODULE.selectors, "DefaultSelector", _FakeTaskTurnSelector)
+    monkeypatch.setattr(MODULE, "_read_app_server_response", read_response)
+    monkeypatch.setattr(MODULE, "_require_task_action_clear", lambda *_args: None)
+    monkeypatch.setattr(
+        MODULE,
+        "_codex_decision_thread",
+        lambda thread_id: (
+            {
+                "title": "",
+                "archived": 0,
+                "prompt": prompt,
+                "cwd": str(MODULE.GITHUB_ROOT),
+                "projectId": None,
+                "threadSource": "appServer",
+            }
+            if thread_id == "thread-1"
+            else None
+        ),
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "_ensure_desktop_thread_title",
+        lambda thread_id, title: desired_titles.append((thread_id, title)),
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "_wait_for_app_server_terminal_turn",
+        lambda *_args, **_kwargs: {"turnId": "turn-1", "status": "completed"},
+    )
+    monkeypatch.setattr(MODULE.shutil, "which", lambda _name: "/usr/bin/codex")
+
+    result = MODULE._codex_decision_worker(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            project_id="github",
+            request=str(request),
+            receipt=str(receipt),
+        )
+    )
+
+    messages = _task_turn_messages(process)
+    turn = next(message for message in messages if message.get("method") == "turn/start")
+    assert turn["params"]["clientUserMessageId"] == (
+        f"oss-pr-radar:user-decision:{event['eventId']}"
+    )
+    assert turn["params"]["cwd"] == str(MODULE.GITHUB_ROOT)
+    assert turn["params"]["input"][0]["text"] == prompt
+    assert not prompt.startswith("[$gh-issue-pr]")
+    assert desired_titles == [
+        ("thread-1", "[有价值·待决策] 08-23 12:00 owner/repo#1 需要决定是否继续")
+    ]
+    assert result["threadId"] == "thread-1"
+    assert result["turnStatus"] == "completed"
+    assert json.loads(receipt.read_text())["ok"] is True
+
+
 def test_terminal_feedback_is_published_only_for_unchanged_issues(monkeypatch, tmp_path):
     store, _worktree = registered_store(tmp_path)
     store.record_stage("a/b#1", "AUDIT_NO_GO", reason="ALREADY_FIXED")
@@ -1513,6 +1910,7 @@ def test_terminal_feedback_is_published_only_for_unchanged_issues(monkeypatch, t
     state.mkdir()
     feedback_path = state / "controller_terminal_feedback.json"
     calls = []
+    command_cwds = []
 
     class GitHub:
         def issue(self, _repo, _number):
@@ -1520,11 +1918,13 @@ def test_terminal_feedback_is_published_only_for_unchanged_issues(monkeypatch, t
 
     monkeypatch.setattr(MODULE, "STATE", state)
     monkeypatch.setattr(MODULE, "GitHubClient", GitHub)
-    monkeypatch.setattr(
-        MODULE,
-        "command",
-        lambda args, **_kwargs: calls.append(args) or "",
-    )
+
+    def record_command(args, **kwargs):
+        calls.append(args)
+        command_cwds.append(kwargs.get("cwd"))
+        return ""
+
+    monkeypatch.setattr(MODULE, "command", record_command)
 
     result = MODULE.publish_terminal_feedback(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
 
@@ -1536,6 +1936,7 @@ def test_terminal_feedback_is_published_only_for_unchanged_issues(monkeypatch, t
     assert saved["a/b#1"]["terminal_reason"] == "ALREADY_FIXED"
     assert [call[2] for call in calls] == ["restore", "publish"]
     assert all("controller-feedback" in call for call in calls)
+    assert command_cwds == [state.parent, state.parent]
 
 
 def test_terminal_feedback_reloads_and_merges_after_concurrent_publish(monkeypatch, tmp_path):

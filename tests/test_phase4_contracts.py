@@ -69,6 +69,15 @@ def test_radar_scan_exports_authenticated_state_with_the_managed_key():
         assert "RADAR_DISPATCH_HMAC_KEY: ${{ secrets.RADAR_DISPATCH_HMAC_KEY }}" in section
 
 
+def test_radar_scan_applies_controller_decision_feedback_before_scanning():
+    workflow = (ROOT / ".github/workflows/radar.yml").read_text(encoding="utf-8")
+    scan = workflow.split("\n  scan:\n", 1)[1].split("\n  build-state:\n", 1)[0]
+    restore = scan.index("--profile controller-feedback")
+    apply_feedback = scan.index("scripts/apply_controller_decision_feedback.py")
+    scan_candidates = scan.index("python -m oss_pr_radar.scanner")
+    assert restore < apply_feedback < scan_candidates
+
+
 def test_radar_receipt_persistence_consumes_the_current_pending_state():
     workflow = (ROOT / ".github/workflows/radar.yml").read_text(encoding="utf-8")
     section = workflow.split("\n  persist-receipt:\n", 1)[1]

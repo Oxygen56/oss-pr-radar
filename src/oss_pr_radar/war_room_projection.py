@@ -27,6 +27,7 @@ PROJECTION_BUCKETS = (
 EVIDENCE_LEVELS = ("待补充", "有记录", "已核实", "外部记录")
 ACTION_KINDS = ("NONE", "MANAGED_TASK", "USER_DECISION")
 NOTIFICATION_STATUSES = ("NONE", "PENDING", "SENT", "FAILED", "RECONCILE_REQUIRED")
+NOTIFICATION_CHANNELS = ("feishu", "codex")
 
 
 class ProjectionError(ValueError):
@@ -46,6 +47,37 @@ def _text(*values: Any) -> str:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return ""
+
+
+def _metadata_notification_status_by_channel(metadata: dict[str, Any]) -> dict[str, str]:
+    """Return channel state with the legacy scalar applying only to Feishu."""
+
+    raw = metadata.get("notificationStatusByChannel")
+    raw = raw if isinstance(raw, dict) else {}
+    legacy_feishu = str(metadata.get("notificationStatus") or "PENDING")
+    statuses: dict[str, str] = {}
+    for channel in NOTIFICATION_CHANNELS:
+        status = str(raw.get(channel) or "")
+        if status not in NOTIFICATION_STATUSES[1:]:
+            status = legacy_feishu if channel == "feishu" else "PENDING"
+        if status not in NOTIFICATION_STATUSES[1:]:
+            status = "PENDING"
+        statuses[channel] = status
+    return statuses
+
+
+def notification_status_for_channel(item: dict[str, Any], channel: str) -> str:
+    """Read one projected channel status without letting legacy Feishu state leak."""
+
+    if channel not in NOTIFICATION_CHANNELS:
+        raise ValueError("channel must be feishu or codex")
+    raw = item.get("notificationStatusByChannel")
+    if isinstance(raw, dict) and raw.get(channel) in NOTIFICATION_STATUSES:
+        return str(raw[channel])
+    legacy = str(item.get("notificationStatus") or "NONE")
+    if channel == "feishu" or item.get("actionKind") != "USER_DECISION":
+        return legacy
+    return "PENDING"
 
 
 def _plain_title(*values: Any) -> str:
@@ -226,7 +258,8 @@ def _item(
     actionable = bool(task is not None and gate_passed)
     metadata = _json(opportunity["metadata_json"] if opportunity else "{}")
     notification_digest = str(metadata.get("notificationDigest") or "")
-    notification_status = str(metadata.get("notificationStatus") or "PENDING")
+    notification_status_by_channel = _metadata_notification_status_by_channel(metadata)
+    notification_status = notification_status_by_channel["feishu"]
     review_required = bool(
         task is None
         and opportunity is not None
@@ -241,6 +274,7 @@ def _item(
     if not review_required:
         notification_digest = ""
         notification_status = "NONE"
+        notification_status_by_channel = {channel: "NONE" for channel in NOTIFICATION_CHANNELS}
     notified = bool(review_required and notification_status == "SENT")
     return {
         "candidateKey": key,
@@ -251,6 +285,7 @@ def _item(
         "actionKind": action_kind,
         "notificationDigest": notification_digest or None,
         "notificationStatus": notification_status,
+        "notificationStatusByChannel": notification_status_by_channel,
         "notified": notified,
         "taskId": task["task_id"] if task is not None else None,
         "creationGatePassed": gate_passed,
@@ -383,6 +418,21 @@ def validate_projection(value: dict[str, Any]) -> None:
             or item.get("notificationStatus") not in NOTIFICATION_STATUSES
         ):
             raise ProjectionError("candidate notification state is invalid")
+        raw_status_by_channel = item.get("notificationStatusByChannel")
+        if raw_status_by_channel is not None and (
+            not isinstance(raw_status_by_channel, dict)
+            or set(raw_status_by_channel) != set(NOTIFICATION_CHANNELS)
+            or any(
+                raw_status_by_channel.get(channel) not in NOTIFICATION_STATUSES
+                for channel in NOTIFICATION_CHANNELS
+            )
+            or raw_status_by_channel.get("feishu") != item.get("notificationStatus")
+        ):
+            raise ProjectionError("candidate channel notification state is invalid")
+        status_by_channel = {
+            channel: notification_status_for_channel(item, channel)
+            for channel in NOTIFICATION_CHANNELS
+        }
         digest = item.get("notificationDigest")
         if digest is not None and not (
             isinstance(digest, str) and re.fullmatch(r"[0-9a-f]{64}", digest)
@@ -408,6 +458,7 @@ def validate_projection(value: dict[str, Any]) -> None:
                 or not item.get("taskId")
                 or item.get("notificationDigest") is not None
                 or item.get("notificationStatus") != "NONE"
+                or any(status != "NONE" for status in status_by_channel.values())
                 or item.get("notified") is not False
             ):
                 raise ProjectionError("managed task action binding is invalid")
@@ -420,6 +471,7 @@ def validate_projection(value: dict[str, Any]) -> None:
                 or item.get("bucket") != "DECISION_REQUIRED"
                 or item.get("notificationDigest") is None
                 or item.get("notificationStatus") == "NONE"
+                or any(status == "NONE" for status in status_by_channel.values())
                 or item.get("notified") != (item.get("notificationStatus") == "SENT")
             ):
                 raise ProjectionError("user decision action binding is invalid")
@@ -431,6 +483,7 @@ def validate_projection(value: dict[str, Any]) -> None:
                 item.get("notified") is not False,
                 item.get("notificationDigest") is not None,
                 item.get("notificationStatus") != "NONE",
+                any(status != "NONE" for status in status_by_channel.values()),
             )
         ):
             raise ProjectionError("non-actionable candidate has notification authority")

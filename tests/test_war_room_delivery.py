@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from oss_pr_radar.ledger import RadarLedger
+from oss_pr_radar.managed_adapter import ManagedAdapter
 from oss_pr_radar.managed_lifecycle import ManagedLedger
 from oss_pr_radar.util import sha256_json
 from oss_pr_radar.war_room_delivery import (
@@ -95,6 +96,24 @@ def _user_decision_artifact(tmp_path: Path) -> tuple[Path, dict]:
         observed_at="2026-08-19T00:00:00Z",
     )
     return ledger_path, export_projection(ledger_path)
+
+
+def _review_candidate(*, repo: str, number: int, digest: str, title: str) -> dict:
+    return {
+        "repo": repo,
+        "num": number,
+        "url": f"https://github.com/{repo}/issues/{number}",
+        "title": title,
+        "score": 10,
+        "category": "WAIT_MAINTAINER",
+        "gate_decision": "HUMAN_REVIEW",
+        "auto_spawn": False,
+        "notify": True,
+        "maturity": "mature",
+        "preTaskGate": {"allowed": True},
+        "llm_review": {"status": "ok", "semanticSignal": "NO_OBJECTION"},
+        "notification_digest": digest,
+    }
 
 
 def _write_inputs(tmp_path: Path, artifact: dict, queue: dict) -> tuple[Path, Path, Path]:
@@ -308,7 +327,99 @@ def test_user_decision_sent_receipt_suppresses_replay_and_updates_seen(
     assert seen["notified"] is True
     projected = export_projection(ledger_path)
     assert projected["items"][0]["notificationStatus"] == "SENT"
+    assert projected["items"][0]["notificationStatusByChannel"] == {
+        "feishu": "SENT",
+        "codex": "PENDING",
+    }
     assert build_outbox(projected, channel="feishu")["events"] == []
+    assert build_outbox(projected, channel="codex")["events"][0]["candidateKey"] == ("owner/repo#8")
+
+
+def test_feishu_sent_keeps_mastra_in_next_codex_round_with_second_candidate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", "delivery-two-round-key" * 2)
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY_ID", "delivery-current")
+    ledger_path = tmp_path / "state" / "two-round-ledger.sqlite3"
+    adapter = ManagedAdapter(tmp_path, ledger_path)
+    mastra = _review_candidate(
+        repo="mastra-ai/mastra",
+        number=21961,
+        digest="c" * 64,
+        title="OM-managed Working Memory can overwrite stored memory",
+    )
+    first_report = {
+        "run_id": "mastra-round",
+        "now": "2026-08-22T16:39:41Z",
+        "candidate_details": [mastra],
+    }
+    assert adapter.record_scan_report(first_report)["recorded"] == 1
+    first_projection = export_projection(ledger_path)
+    first_codex = build_outbox(first_projection, channel="codex")
+    mastra_event = first_codex["events"][0]
+
+    feishu = build_outbox(first_projection, channel="feishu")
+    receipt = build_receipt_document(
+        artifact_digest=first_projection["artifactDigest"],
+        receipts=[
+            sign_delivery_receipt(
+                artifact_digest=first_projection["artifactDigest"],
+                event=feishu["events"][0],
+                status="SENT",
+                message_id="om_mastra",
+            )
+        ],
+    )
+    seen_path = tmp_path / "seen.json"
+    seen_path.write_text(
+        json.dumps(
+            {
+                "mastra-ai/mastra#21961": {
+                    "status": "queued_outbox",
+                    "notified": False,
+                    "notification_digest": "c" * 64,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    applier = _load_script(
+        "apply_war_room_receipt_two_round_test",
+        ROOT / "scripts/apply_war_room_receipt.py",
+    )
+    assert applier.apply(
+        ledger_path=ledger_path,
+        outbox=feishu,
+        receipt=receipt,
+        seen_path=seen_path,
+    ) == {"applied": 1, "seenUpdated": 1}
+
+    compressor = _review_candidate(
+        repo="vllm-project/llm-compressor",
+        number=3071,
+        digest="d" * 64,
+        title="Qwen3-VL calibration fails during tracing",
+    )
+    second_report = {
+        "run_id": "compressor-round",
+        "now": "2026-08-22T16:48:36Z",
+        "candidate_details": [mastra, compressor],
+    }
+    assert adapter.record_scan_report(second_report)["recorded"] == 2
+    second_projection = export_projection(ledger_path)
+    second_feishu = build_outbox(second_projection, channel="feishu")
+    second_codex = build_outbox(second_projection, channel="codex")
+
+    assert [event["candidateKey"] for event in second_feishu["events"]] == [
+        "vllm-project/llm-compressor#3071"
+    ]
+    assert [event["candidateKey"] for event in second_codex["events"]] == [
+        "mastra-ai/mastra#21961",
+        "vllm-project/llm-compressor#3071",
+    ]
+    retained_mastra = second_codex["events"][0]
+    assert retained_mastra["eventId"] == mastra_event["eventId"]
+    assert canonical_event_digest(retained_mastra) == canonical_event_digest(mastra_event)
 
 
 def test_user_decision_failed_receipt_retries_same_event(tmp_path: Path, monkeypatch):
