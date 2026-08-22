@@ -232,6 +232,10 @@ class EventLane:
                 CREATE TABLE IF NOT EXISTS event_lane_state (
                     key TEXT PRIMARY KEY, value_json TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS event_lane_threads (
+                    event_key TEXT PRIMARY KEY, thread_id TEXT NOT NULL,
+                    turn_id TEXT, status TEXT NOT NULL, receipt_json TEXT NOT NULL DEFAULT '{}'
+                );
             """)
 
     def connect(self) -> sqlite3.Connection:
@@ -329,6 +333,15 @@ class EventLane:
     def pending(self) -> int:
         with self.connect() as db:
             return int(db.execute("SELECT count(*) FROM event_lane_events WHERE status IN ('pending','leased')").fetchone()[0])
+
+    def handler_thread(self, event_key: str) -> dict[str, Any] | None:
+        with self.connect() as db:
+            row = db.execute("SELECT * FROM event_lane_threads WHERE event_key=?", (event_key,)).fetchone()
+        return dict(row) if row else None
+
+    def bind_handler_thread(self, event_key: str, thread_id: str, turn_id: str, receipt: dict[str, Any]) -> None:
+        with self.writer() as db:
+            db.execute("INSERT INTO event_lane_threads(event_key,thread_id,turn_id,status,receipt_json) VALUES(?,?,?,?,?) ON CONFLICT(event_key) DO UPDATE SET thread_id=excluded.thread_id,turn_id=excluded.turn_id,status=excluded.status,receipt_json=excluded.receipt_json", (event_key, thread_id, turn_id, "started", json.dumps(receipt, sort_keys=True)))
 
     def import_queue(self, queue: dict[str, Any], *, wake: Callable[[dict[str, Any]], Any] | None = None) -> dict[str, int]:
         """Import intents and PR follow-up records, then wake each unique task once."""

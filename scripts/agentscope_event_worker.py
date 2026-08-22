@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -16,7 +18,66 @@ from oss_pr_radar.ledger import RadarLedger  # noqa: E402
 from oss_pr_radar.local_publication import run_bridge  # noqa: E402
 
 
-def bridge_delivery(root: Path, event: dict) -> None:
+def issue_handler_delivery(root: Path, lane: EventLane, event: dict) -> None:
+    """Start/resume the dedicated issue handler and persist its turn receipt."""
+    key = f"{event.get('repo')}#{event.get('number')}"
+    binding = lane.handler_thread(key)
+    if binding is None:
+        with lane.connect() as db:
+            active = db.execute("SELECT count(*) FROM event_lane_threads WHERE status='started'").fetchone()[0]
+        if int(active) >= 3:
+            raise RuntimeError("AgentScope handler capacity is full")
+    executable = shutil.which("codex") or "/opt/homebrew/bin/codex"
+    if not Path(executable).exists():
+        raise RuntimeError("codex executable is unavailable")
+    prompt = (
+        f"Handle AgentScope issue event {event['eventId']} for {event.get('issue', {}).get('html_url') or key}. "
+        "First verify it is an open code issue, unassigned, unclaimed, without duplicate PR or maintainer-reserved design. "
+        "Only one complete PR is allowed; do not make partial fixes, claims, CLA/AI/legal declarations, force pushes, or destructive changes. "
+        "Respect a maximum of three active Oxygen56 tasks and stop in watch-only state when maintainer input is needed for 24 hours. "
+        "If eligible, reproduce the behavior, implement the complete issue, run target validation, and prepare the authorized PR."
+    )
+    process = subprocess.Popen([executable, "app-server", "--disable", "recommended_plugins", "--disable", "remote_plugin", "--stdio"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, start_new_session=True)
+    try:
+        assert process.stdin and process.stdout
+        requests = [{"id": 1, "method": "initialize", "params": {"clientInfo": {"name": "oss-pr-radar-agentscope", "version": "1"}, "capabilities": {"experimentalApi": True}}}]
+        if binding:
+            requests.append({"id": 2, "method": "thread/resume", "params": {"threadId": binding["thread_id"]}})
+            thread_id = str(binding["thread_id"])
+        else:
+            requests.append({"id": 2, "method": "thread/start", "params": {"cwd": str(root), "sandbox": "danger-full-access", "approvalPolicy": "never", "threadSource": "appServer"}})
+            thread_id = ""
+        for request in requests:
+            process.stdin.write(json.dumps(request) + "\n")
+            process.stdin.flush()
+            for line in process.stdout:
+                message = json.loads(line)
+                if message.get("id") == request["id"]:
+                    if request["id"] == 2 and not binding:
+                        thread_id = str(((message.get("result") or {}).get("thread") or {}).get("id") or "")
+                    break
+        if not thread_id:
+            raise RuntimeError("App Server did not return a thread receipt")
+        process.stdin.write(json.dumps({"id": 3, "method": "turn/start", "params": {"threadId": thread_id, "input": [{"type": "text", "text": prompt}]}}) + "\n")
+        process.stdin.flush()
+        turn_id = ""
+        for line in process.stdout:
+            message = json.loads(line)
+            if message.get("id") == 3:
+                turn_id = str(((message.get("result") or {}).get("turn") or {}).get("id") or "")
+                break
+        if not turn_id:
+            raise RuntimeError("App Server did not return a turn receipt")
+        lane.bind_handler_thread(key, thread_id, turn_id, {"eventId": event["eventId"], "threadId": thread_id, "turnId": turn_id})
+    finally:
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+
+
+def bridge_delivery(root: Path, lane: EventLane, event: dict) -> None:
     """Use the existing serialized drain, whose bridge performs App Server turns."""
     key = f"{event.get('repo')}#{event.get('number')}"
     ledger = RadarLedger(root / "state" / "radar_ledger.sqlite3")
@@ -24,7 +85,8 @@ def bridge_delivery(root: Path, event: dict) -> None:
     mapped = mapped or any(item.get("key") == key for item in ledger.pr_followup_candidates())
     mapped = mapped or any(item.get("key") == key for item in ledger.implementation_followup_candidates())
     if not mapped:
-        raise RuntimeError("event has no existing ledger task/thread mapping")
+        issue_handler_delivery(root, lane, event)
+        return
     result = run_bridge(root, "drain-once", timeout=300)
     if not result.get("ok") or result.get("busy"):
         raise RuntimeError(f"event drain not committed: {result}")
@@ -61,7 +123,7 @@ def run_once(root: Path, *, deliver=None) -> dict:
     drained = {"claimed": 0, "delivered": 0, "pending": lane.pending()}
     if deliver is None:
         def deliver(event):
-            bridge_delivery(root, event)
+            bridge_delivery(root, lane, event)
     if result.events:
         drained = dispatch_once(lane, deliver)
     return {
