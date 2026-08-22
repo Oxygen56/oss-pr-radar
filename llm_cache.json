@@ -1492,6 +1492,33 @@
     ],
     "why": "Issue reports a tool call error when switching moe-runner-backend from marlin to flashinfer_mxfp4, but lacks a minimal reproduction and root cause analysis. Open PR lookup timed out, and related PRs may overlap. Maintainer input needed."
   },
+  "0b843c25785449fc52f4f4c82f486ae158019b361169280e169554d766fd3d2f": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "cline-session-factory.ts",
+      "local-runtime-host.ts",
+      "agent-runtime.ts"
+    ],
+    "risks": [
+      "Potential duplicate side effects from re-running non-idempotent commands after auth retry; maintainer may prefer a different fix approach."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided steps on the latest build; if Unauthorized appears and task continues, capture logs to determine whether error is thrown or in-stream; add a regression test simulating token expiry during a pending approval and verify auth retry refreshes credentials and does not duplicate side effects."
+    ],
+    "unknowns": [
+      "Whether the issue is already fixed in the latest build; exact log lines from the failure; maintainer design preference on handling duplicate side effects."
+    ],
+    "why": "Issue provides a concrete reproduction with ordered steps and a clear observed/expected behavior. A contributor traced the current code path and identified plausible root causes (token expiry during long-pending approval, auth-retry wiring, or mid-stream error handling) with specific code anchors. The validation path is a retest on latest build with the same 45-minute wait and log inspection, which is actionable."
+  },
   "0bf9ce8c08da3bccee182b02e96cfff5ed3c58805be59e87efbcec67ed00dd7d": {
     "confidence": 0.7,
     "contradictions": [
@@ -4113,6 +4140,34 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue provides a clear root cause (layer_idx=None during DSPARK draft CUDA graph capture) and a concrete repro, but an open PR (#17356) with semantic overlap and maintainer ownership requires manual comparison before creating a new task."
   },
+  "1f3d7501cc33e5902b8212e9e3fdbb7493cd25f02fd17a587bff752cc4acef70": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Original skew no longer reproduces on 1.4.x line per maintainer comment, but structural hazard remains latent."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "runtime image packaging for flashinfer-jit-cache",
+      "serve-time image test or documentation of unsupported workflow"
+    ],
+    "risks": [
+      "Potential overlap with PR #13650 which touches similar dependency pinning; need to compare implementation boundaries."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with docker run and pip install vllm==0.23.0 on the 1.3.0 image; verify fix by checking flashinfer versions match or FLASHINFER_DISABLE_VERSION_CHECK is documented; add a build-time assert or serve-time test for version parity."
+    ],
+    "unknowns": [
+      "Whether in-container vLLM upgrades are a supported workflow; maintainer contract decision pending."
+    ],
+    "why": "Issue identifies a clear root cause: baked flashinfer-jit-cache version skew with in-container vLLM upgrade causes serve-time registry failure. Evidence includes executable repro, observed error, and verified workaround. Maintainer triage engaged and awaiting contract decision, but the bug is actionable with a concrete fix (version-matched packaging or documented unsupported workflow)."
+  },
   "1f53e9b99d0be3dbe80ef80533a54c160e03b984ec185bf1f5c81187df7d0cd8": {
     "confidence": 0.7,
     "contradictions": [],
@@ -5119,6 +5174,31 @@
     ],
     "why": "Issue reports a clear failure when using ModelSlim W8A8 main model with MTP speculative decoding on NPU, where MTP layers are stored as FLOAT and rejected by get_moe_scheme. The proposed fix (support mixed quantization) is plausible but requires design confirmation on whether MTP layers should fall back to FP/BF16 and how to handle quantization config sharing. Existing PR #32754 has semantic overlap but is not directly linked; maintainer review is needed to avoid duplicate work."
   },
+  "2473bd5cfda4fcf0f32c1bc075975f8008b4ce0a186cab47eb690af9631e142d": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "vllm/config/speculative.py: include num_speculative_tokens and num_speculative_tokens_per_batch_size in compute_hash()"
+    ],
+    "risks": [
+      "Potential hash changes may invalidate existing caches, causing recompilation for all users; ensure backward compatibility or document cache invalidation."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce the bug by running vLLM with num_speculative_tokens=9 then 7 using the same cache, expecting the assertion error. After the fix, run the same sequence and verify no error and correct recompilation."
+    ],
+    "unknowns": [
+      "Whether the proposed fix is already covered by PR #53367, which lacks tests; the issue itself is actionable regardless."
+    ],
+    "why": "The issue clearly identifies a root cause: SpeculativeConfig.compute_hash() omits num_speculative_tokens, causing torch.compile cache collisions across different speculative token counts. It provides a concrete reproduction, expected vs actual behavior, and a proposed fix. The track is llm_algorithm with a concrete validation path: reproduce the assertion error and verify the fix by running with different k values."
+  },
   "25066b07d1f7cda452b8737faa42d21033e07bc2bfd836691b46bd198f4530fe": {
     "confidence": 0.7,
     "contradictions": [],
@@ -5147,6 +5227,36 @@
       "Whether the fix has been tested against a live multi-round session"
     ],
     "why": "The issue provides a detailed root cause in middleware.py, a concrete reproduction, and a proposed 13-line fix. However, the fix has not been tested against a live multi-round session, and the maintainer has not confirmed the design direction. The related issue #24758 is closed but may indicate prior maintainer preferences. The candidate is actionable but requires maintainer confirmation before implementation."
+  },
+  "252507edf5646f1910df14222ce8884a482bbc8e1540d4340b680fdf22f29a38": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Maintainer claims fixed in v4.1.11, but issue remains open and no explicit confirmation from reporter"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "run_commands schema gate (j4o)",
+      "runtime normalizer (K4o)",
+      "preview formatter (lmr/Rci)"
+    ],
+    "risks": [
+      "Potential behavior change for malformed inputs; need to ensure backward compatibility with string commands and direct-exec with args"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression tests for object commands with aliased keys (e.g., cmd, exec) verifying execution and preview rendering",
+      "Run existing run_commands tests and e2e tests for VS Code extension"
+    ],
+    "unknowns": [
+      "Whether the fix in v4.1.11 fully addresses all three seams and whether the reporter has verified it"
+    ],
+    "why": "The issue provides a clear root cause (strict schema gate, runtime normalizer, and preview formatter all assume the 'command' key), a concrete reproduction (object-form commands with guessed keys), and a validated patch with expected behavior. The maintainer's comment indicates a fix in v4.1.11, but the issue remains open and the patch is still actionable for verification or further improvement."
   },
   "255b91502b065467846296d52c3974c5dba9622468772f23b07194e6435359c5": {
     "confidence": 0.85,
@@ -10193,6 +10303,30 @@
       "Maintainer preference on whether to accept 'error' as alias or reject it"
     ],
     "why": "The issue clearly identifies a stringly-typed validation mode that silently degrades unknown values to 'warn', with specific code locations and a concrete fix direction. The bug is user-visible, affects schema validation correctness, and is reproducible from source. No competing PR or related issue exists, and the maintainer has not yet responded, but the issue is actionable and well-scoped."
+  },
+  "43859c36710b9265a09715717f5b0e2a6c97ecb9ab7620c6aa24088e0a013cde": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Server.call_tool() error handling",
+      "_make_error_result to accept and include structured data"
+    ],
+    "risks": [
+      "Potential API change to _make_error_result signature could affect existing callers; need to ensure backward compatibility or update internal call sites."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a unit test that triggers a jsonschema.ValidationError (e.g., missing required field, wrong type) and assert the resulting CallToolResult contains structured data with validator, schema_path, and json_path fields."
+    ],
+    "unknowns": [
+      "Exact maintainer preference on whether to include schema_path/json_path or just validator; whether the fix should be applied to both v1 and v2 branches."
+    ],
+    "why": "The issue clearly identifies a root cause: Server.call_tool() discards structured jsonschema.ValidationError fields, leaving only a free-text message. The suggested fix is concrete and actionable: forward e.validator, e.schema_path, and e.json_path into a structured data field in the error result. This is a local fix in the SDK's error handling, with a clear validation path via unit tests and a provided repro offer."
   },
   "449fdde3b0c5d7f226516460f4e888e7b2bd478490903a5049911142539c6a64": {
     "confidence": 0.6,
@@ -18168,6 +18302,40 @@
     "wait_reason": null,
     "why": "Issue describes a concrete protocol inconsistency in the Responses streaming path: commentary SSE frames are dropped while the terminal payload retains the item. The expected behavior is clearly specified with two policy options, and a validation plan with a recorded fixture is provided. No competing PR or issue found, and the gate allows work."
   },
+  "713b7f53871159ecf64b9d112afc33617674b73019e58e00dead20668f25d7d8": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #12973 is draft and incomplete, but issue remains open and root cause not fully covered"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "apps/vscode/src/shared/storage/types.ts",
+      "apps/cli/src/utils/reasoning.ts",
+      "apps/vscode/proto/cline/state.proto"
+    ],
+    "risks": [
+      "Potential conflict with existing PR #12973 if it is completed",
+      "Proto enum change may require regeneration and could affect gRPC paths"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add unit tests for OPENAI_REASONING_EFFORT_OPTIONS including 'max'",
+      "Add CLI test for --reasoning-effort max parsing",
+      "Update providerReasoningControls.test.tsx to verify Max appears in dropdown",
+      "Run reasoning-options.test.ts and reasoning-effort.test.ts"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a per-model dropdown filter over a global option list",
+      "Whether the proto enum change is required for the fix"
+    ],
+    "why": "Issue provides a clear root cause (missing 'max' in UI and CLI whitelists) with code anchors and a concrete fix. Existing PR #12973 overlaps but is draft and incomplete, so the issue remains actionable."
+  },
   "7180eafb3f5daded788ae121f33f8da2f4cf39fe96b9de1ade59eb72c4a56438": {
     "confidence": 0.7,
     "contradictions": [],
@@ -26003,6 +26171,34 @@
     ],
     "why": "The issue identifies a clear root cause (core.autocrlf corrupts patch files) and proposes a concrete fix (.gitattributes entry). However, the deterministic gate requires HUMAN_REVIEW, and the maintainer has not confirmed the fix approach or assigned the issue. The proposed change is a config-only fix, which is low-risk but needs maintainer approval to ensure it aligns with repo conventions."
   },
+  "a6432aa8b2541a57ab7b796fe67b5bec50f24bcb713a4ae4301bdf327fd8582a": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "extensions/intellij/src/testIntegration/kotlin/com/github/continuedev/continueintellijextension/Autocomplete.kt",
+      "test fixture config in extensions/intellij/src/testIntegration/.../test-continue/config.json",
+      "possibly build.gradle.kts for test framework settings"
+    ],
+    "risks": [
+      "The root cause may be a combination of factors (autocomplete not firing, TestLLM not loaded, timing), requiring iterative debugging.",
+      "Changing test behavior might mask real product bugs if the test is disabled or removed."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the specific integration test `:testIntegration > Autocomplete.testAutocomplete()` locally or in CI after applying a fix, ensuring it passes with the pinned FFmpeg version.",
+      "Add a regression test that reproduces the assertion failure without the FFmpeg workaround, e.g., by directly invoking the autocomplete logic with TestLLM."
+    ],
+    "unknowns": [
+      "Exact root cause among the four listed hypotheses is not confirmed; maintainer preference among options A/B/C is unknown."
+    ],
+    "why": "Issue provides a clear failing assertion, code anchor, and multiple plausible root causes with a concrete validation path (run the integration test). The latent bug is user-visible and blocks CI, making a fix actionable."
+  },
   "a6ff5f2141ad8ab6215ace197e615b6110ec510ed6080dd2c44cb9ec99fb83e0": {
     "confidence": 0.7,
     "contradictions": [],
@@ -27602,6 +27798,38 @@
       "Maintainer's chosen direction (rename vs. allowlist) is not yet decided."
     ],
     "why": "Issue clearly identifies root cause: Codex filters env vars matching *KEY*, *SECRET*, *TOKEN* before MCP startup, and the plugin hardcodes MEM0_API_KEY. However, maintainers explicitly request a design decision between renaming the variable or documenting a narrow allowlist, and no PR has been accepted. Existing PR #6792 lacks tests and has failing CI, so a better PR is possible but requires maintainer direction."
+  },
+  "b3c81b55640d91a61a03823e57296f8bf6320ac468a540660c59b9f332fc3cb9": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Torch-only A/B shows 2.11 faster, contradicting initial torch-boundary hypothesis"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "pooling entrypoint executor configuration",
+      "renderer worker pool sizing or isolation"
+    ],
+    "risks": [
+      "Root cause hypothesis not yet empirically confirmed; alternative causes may exist",
+      "Performance regression may be environment-specific"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run /v1/embeddings benchmark with --renderer-num-workers > 1 on a single build to confirm recovery",
+      "Reproduce on current main to check if regression is live"
+    ],
+    "unknowns": [
+      "Whether --renderer-num-workers > 1 recovers the gap",
+      "Whether regression reproduces on current main"
+    ],
+    "why": "The issue provides a reproducible throughput regression with detailed benchmark methodology, bisection across releases, and a concrete root-cause hypothesis (executor serialization in pooling entrypoints) supported by code references and prior art. The proposed validation path (flag test and current-main reproduction) is concrete and actionable."
   },
   "b3e2e92851db034a879006923f6f53df535e28e68fcd2fda9c1433279330732e": {
     "confidence": 0.7,
@@ -37471,6 +37699,37 @@
     ],
     "wait_reason": "ASSIGNMENT",
     "why": "The issue clearly describes a concrete bug: InitServer discards three errors and mutates Server fields before validation. The proposed design is actionable with narrow seams and deterministic tests. However, the repository requires assignment and the issue explicitly states implementation is blocked on maintainer approval, so work cannot start without maintainer authorization."
+  },
+  "e94470db13869d73474f641de6eb7c78d051bcf4d74304d243ea9f88a16116e5": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "vite.config.ts watch.ignored patterns",
+      "scripts/dev-safe.mjs env expansion handling",
+      "documentation in .env.sample"
+    ],
+    "risks": [
+      "Potential overlap with existing PRs #1856 and #16104; must ensure new PR includes tests and addresses root cause to avoid duplication.",
+      "Changing watch.ignored may inadvertently ignore legitimate files if patterns are too broad."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that starts the dev server with OH_CANVAS_SAFE_STATE_DIR containing literal $HOME, writes a JSON file to the runtime state dir, and asserts no full-reload HMR event is emitted.",
+      "Run existing Vite config unit tests and dev-server integration tests."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the defensive watch.ignored fix over the root-cause env expansion fix; this is a design choice, not a blocker."
+    ],
+    "why": "Issue provides a precise root cause (Node --env-file literal expansion) and a concrete reproduction with empirical HMR evidence. The proposed fix (extend Vite watch.ignored) is actionable and testable. Existing PRs lack regression tests, leaving room for a proper contribution."
   },
   "e978276646fcd0104adc6abd64f55fb72a84bb630a2686a4b3ecf85be9527b09": {
     "confidence": 0.85,

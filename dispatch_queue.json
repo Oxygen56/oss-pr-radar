@@ -1,14 +1,323 @@
 {
   "contractDigest": "0ffabde97bae00693068b61ed03087975ec1c57c989c591a2b43af8aa3ecf505",
-  "decisionContractDigest": "feeb8a88be0effea9330e569fb0f4c62de7e9dbfb0c2729c6a74984dd5ecd6c1",
-  "generatedAt": "2026-08-22T15:00:07.620509Z",
-  "intentCount": 0,
-  "intents": [],
+  "decisionContractDigest": "bea3254376f7aced8aef5e8a7d060fa881c49ffefdc92fe1a0f5ba16740e04db",
+  "generatedAt": "2026-08-22T15:44:50.758718Z",
+  "intentCount": 1,
+  "intents": [
+    {
+      "actionabilityEvidence": {
+        "algorithm_wait_evidence": false,
+        "code_anchors": [
+          "vllm/config/vllm.py",
+          "vllm/config/speculative.py",
+          "vllm.py",
+          "speculative.py",
+          "`num_speculative_tokens`",
+          "`torch.compile`",
+          "method uses",
+          "`eagle3`"
+        ],
+        "dependency_confirmation": false,
+        "dependency_pr_numbers": [],
+        "design_confirmation": false,
+        "help_wanted": false,
+        "maintainer_active_investigation": false,
+        "maintainer_approved": false,
+        "maintainer_revalidation_requested": false,
+        "needs_confirmation": false,
+        "ownership_confirmation": false,
+        "probe_ready": true,
+        "public_repro_signals": 2,
+        "reproduction_evidence": [
+          "expected_actual_pair",
+          "minimal_example"
+        ],
+        "root_cause_signal": true,
+        "usage_confirmation": false,
+        "wait_reasons": []
+      },
+      "algorithmEvidence": {
+        "code_path_signal": true,
+        "curated_repo": false,
+        "depth": "medium",
+        "experiment_signal": true,
+        "formula_signal": false,
+        "matched_terms": [
+          "hidden state",
+          "hidden states",
+          "tensor parallel"
+        ],
+        "mechanism_count": 2,
+        "mechanisms": [
+          "model_architecture",
+          "distributed_training"
+        ],
+        "operational_only": false,
+        "qualified": true,
+        "score": 8
+      },
+      "authorizationSource": "signed_live_revalidation_required",
+      "autoSpawn": true,
+      "autoSubmitAuthorized": false,
+      "category": "LOCAL_FIX_ONLY",
+      "contractDigest": "0ffabde97bae00693068b61ed03087975ec1c57c989c591a2b43af8aa3ecf505",
+      "decisionContractDigest": "bea3254376f7aced8aef5e8a7d060fa881c49ffefdc92fe1a0f5ba16740e04db",
+      "decisionDigest": "3573ab40664a2d5484d661678c9561dbc8c4e5c2ddbb42895bf4e0d502feec97",
+      "defaultBranch": "main",
+      "evidenceDigest": "44cb8f6193b8425a5b505ab142e1219901b026e7521c4afac59a9c7e24aa17b9",
+      "expiresAt": "2026-08-22T17:44:50.758718Z",
+      "intentId": "003b25e908aacdc524f45e790cb682cd6ee731fc55d8e9a03678b66f2ab46c10",
+      "issueNumber": 53366,
+      "issueUpdatedAt": "2026-08-22T09:07:36Z",
+      "issueUrl": "https://github.com/vllm-project/vllm/issues/53366",
+      "issuedAt": "2026-08-22T15:44:50.758718Z",
+      "key": "vllm-project/vllm#53366",
+      "llmReview": {
+        "confidence": 0.9,
+        "decision": "NEW_CLEAN_CANDIDATE",
+        "model": "deepseek-v4-flash",
+        "semanticSignal": "NO_OBJECTION",
+        "status": "ok",
+        "waitReason": null
+      },
+      "maturity": "mature",
+      "mode": "canary",
+      "nonce": "33d450c2d32352ba7a5b62fd1fc49d72",
+      "notify": true,
+      "policyDigest": "5c3ff74806b2f2e496e1ea0d76a1de5e30e38b4fce821d788a3836e42bb834f3",
+      "preTaskEvidence": {
+        "aiDisclosureConflict": true,
+        "assigneeDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "assignmentRequired": false,
+        "baseLookupStatus": "ok",
+        "baseSha": "da329cc303a5233e17fa3d553ce0a3d6ceea87a8",
+        "codePathsPlan": [
+          "vllm/config/vllm.py",
+          "vllm/config/speculative.py",
+          "vllm.py",
+          "speculative.py"
+        ],
+        "defaultBranch": "main",
+        "designDigest": "014c0ea27901d742664d033c73aba507178bb901e8ce7a485534e7669fe19240",
+        "duplicate": {
+          "best_score": 29,
+          "best_url": "https://github.com/vllm-project/vllm/pull/53367",
+          "components": {
+            "ciIsDiagnosticOnly": true,
+            "independentEvidence": {
+              "codeChange": true,
+              "keyPathCoverage": true,
+              "maintainerRecognition": false,
+              "tests": false
+            },
+            "rootCauseCoverage": false
+          },
+          "gaps": [
+            "缺少根因覆盖证据",
+            "缺少测试文件"
+          ],
+          "prs": [
+            {
+              "additions": 5,
+              "age_days": 0,
+              "author_association": "NONE",
+              "changed_files": 1,
+              "ci_competition_weight": 0,
+              "deletions": 0,
+              "gaps": [
+                "缺少测试文件"
+              ],
+              "ignored_nontechnical_failed_checks": [],
+              "is_draft": false,
+              "issue_body_link": false,
+              "issue_body_link_relation": "",
+              "maintainer_owned": false,
+              "material_competition_gaps": [
+                "缺少回归测试"
+              ],
+              "number": 53367,
+              "overlapping_paths": [
+                "vllm/config/speculative.py"
+              ],
+              "reference_relation": "COVERAGE",
+              "references_issue": true,
+              "root_cause_coverage": false,
+              "rule_closed": false,
+              "score": 29,
+              "semantic_distinctive_overlap": [
+                "compiled_graph",
+                "num_speculative_tokens",
+                "torch_compile"
+              ],
+              "semantic_overlap": true,
+              "semantic_overlap_count": 12,
+              "state": "OPEN",
+              "strengths": [
+                "明确关联 issue",
+                "CI 失败待归因，不作为竞争依据",
+                "近期仍活跃",
+                "标题/正文与 issue 关键词匹配"
+              ],
+              "technical_complete": false,
+              "technical_failed_checks": [
+                "pre-run-check",
+                "pre-run-check"
+              ],
+              "test_files": 0,
+              "title": "[Bugfix] Include num_speculative_tokens in SpeculativeConfig compute_hash",
+              "url": "https://github.com/vllm-project/vllm/pull/53367"
+            },
+            {
+              "additions": 385,
+              "age_days": 0,
+              "author_association": "CONTRIBUTOR",
+              "changed_files": 4,
+              "ci_competition_weight": 0,
+              "deletions": 4,
+              "gaps": [
+                "未明确 closing/reference 目标 issue"
+              ],
+              "ignored_nontechnical_failed_checks": [],
+              "is_draft": false,
+              "issue_body_link": false,
+              "issue_body_link_relation": "",
+              "maintainer_owned": false,
+              "material_competition_gaps": [],
+              "number": 53168,
+              "overlapping_paths": [],
+              "reference_relation": "REFERENCE",
+              "references_issue": false,
+              "root_cause_coverage": false,
+              "rule_closed": false,
+              "score": 38,
+              "semantic_distinctive_overlap": [
+                "torch_compile"
+              ],
+              "semantic_overlap": false,
+              "semantic_overlap_count": 8,
+              "state": "OPEN",
+              "strengths": [
+                "包含测试文件 1 个",
+                "已有成功 CI/check",
+                "近期仍活跃",
+                "标题/正文与 issue 关键词匹配"
+              ],
+              "technical_complete": false,
+              "technical_failed_checks": [],
+              "test_files": 1,
+              "title": "[Kernel][Kimi] Fuse MoonViT Q/K complex RoPE",
+              "url": "https://github.com/vllm-project/vllm/pull/53168"
+            },
+            {
+              "additions": 225,
+              "age_days": 0,
+              "author_association": "CONTRIBUTOR",
+              "changed_files": 3,
+              "ci_competition_weight": 0,
+              "deletions": 44,
+              "gaps": [
+                "未明确 closing/reference 目标 issue",
+                "缺少测试文件"
+              ],
+              "ignored_nontechnical_failed_checks": [],
+              "is_draft": false,
+              "issue_body_link": false,
+              "issue_body_link_relation": "",
+              "maintainer_owned": false,
+              "material_competition_gaps": [
+                "缺少回归测试"
+              ],
+              "number": 51171,
+              "overlapping_paths": [],
+              "reference_relation": "REFERENCE",
+              "references_issue": false,
+              "root_cause_coverage": false,
+              "rule_closed": false,
+              "score": -14,
+              "semantic_distinctive_overlap": [
+                "num_speculative_tokens"
+              ],
+              "semantic_overlap": false,
+              "semantic_overlap_count": 7,
+              "state": "OPEN",
+              "strengths": [
+                "CI 失败待归因，不作为竞争依据",
+                "近期仍活跃",
+                "标题/正文与 issue 关键词匹配"
+              ],
+              "technical_complete": false,
+              "technical_failed_checks": [
+                "pre-run-check"
+              ],
+              "test_files": 0,
+              "title": "[ROCm][MLA] Reach FULL cudagraphs for AITER MLA speculative decoding",
+              "url": "https://github.com/vllm-project/vllm/pull/51171"
+            }
+          ],
+          "status": "weak_pr_competition_possible",
+          "summary": "已有直接关联但证据不完整的 PR #53367：缺少测试文件；只有能补足根因、测试或关键路径覆盖时才值得竞争"
+        },
+        "duplicateDigest": "05676ba4bba6f4dc76bf26e3827e56f47359282e64ed04c1e2217125a1701b32",
+        "duplicateStatus": "weak_pr_competition_possible",
+        "issue": {
+          "assignees": [],
+          "state": "open"
+        },
+        "issueDigest": "9c49b614efa2b63b4a337cd50c3ab62beab668386e8a5315baabb47a9246aae1",
+        "matureRepository": true,
+        "policy": {
+          "status": "ai_disclosure_conflict"
+        },
+        "probeRequired": true,
+        "reproductionPathPlan": true,
+        "schema": "pre_task_evidence_v1",
+        "validationPathPlan": true
+      },
+      "preTaskEvidenceDigest": "9bd307a861982e252510d1f4937cac4cdfd77bcf08e555e9b35df90da3afc329",
+      "preTaskGate": {
+        "allowed": true,
+        "baseSha": "da329cc303a5233e17fa3d553ce0a3d6ceea87a8",
+        "classification": null,
+        "evidenceDigest": "9bd307a861982e252510d1f4937cac4cdfd77bcf08e555e9b35df90da3afc329",
+        "expected": {
+          "assigneeDigest": "",
+          "baseSha": "",
+          "designDigest": "",
+          "duplicateDigest": "",
+          "issueDigest": ""
+        },
+        "reason": "PRE_TASK_EVIDENCE_PASSED",
+        "reasons": [],
+        "schema": "pre_task_evidence_v1"
+      },
+      "probeLevel": "PENDING",
+      "probeProfile": null,
+      "probeRequired": true,
+      "promptDigest": "8a3952147176b1e67c8aa607c29ff20da11cf2b4adf0435041d485dfe35244f8",
+      "publicSubmissionAllowed": false,
+      "publicationMode": "canary",
+      "repo": "vllm-project/vllm",
+      "runId": "scan-20260822T154129Z-d7ffc2bbdd84",
+      "scanGate": "ALLOW_PRIVATE_WORK",
+      "scannerVersion": "oss_pr_radar_v52_recheck_pr_validation",
+      "score": 13,
+      "selectedBaseSha": "da329cc303a5233e17fa3d553ce0a3d6ceea87a8",
+      "signature": "f0a5f71b00aaa61af08cc6f762b56ddecf74b707660053a6051b75db882d0e20",
+      "snapshotId": "263e438fd7935d3c91b32c3937b58945d9a75203b97bad941808916096978aab",
+      "sourceSha": "f1651c8073ec445ffc4bbc3f163c01dcd25b170a",
+      "status": "PENDING",
+      "submissionPolicy": "ai_disclosure_conflict",
+      "taskStage": "PREFLIGHT",
+      "title": "[Bug]: torch.compile cache key does not include num_speculative_tokens, causing compiled-graph collision across different speculative-token counts",
+      "track": "llm_algorithm",
+      "version": "dispatch_intent_v7"
+    }
+  ],
   "mode": "canary",
-  "newIntentCount": 0,
-  "runId": "scan-20260822T145601Z-afc333abb5f8",
-  "scannerVersion": "oss_pr_radar_v51_bounded_wait_evidence",
-  "signature": "cb32c2cf6d08f41b41b9c891312cd0dc4aad90183f358125b8598d90f331b088",
-  "sourceSha": "5b41ec9dd1f094ef00b85c6261f2a5659dd7af59",
+  "newIntentCount": 1,
+  "runId": "scan-20260822T154129Z-d7ffc2bbdd84",
+  "scannerVersion": "oss_pr_radar_v52_recheck_pr_validation",
+  "signature": "c6fd7183408a8117d604e339f34132bd4cd94cb32d3d0ab338082d0f08bf2e2c",
+  "sourceSha": "f1651c8073ec445ffc4bbc3f163c01dcd25b170a",
   "version": "dispatch_intents_v7"
 }
