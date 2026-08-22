@@ -1169,6 +1169,7 @@ def test_legacy_silent_state_drift_is_rearmed_without_issue_update(monkeypatch, 
     items = radar.collect_items()
 
     assert radar.seen["livekit/agents#6919"]["status"] == "state_drift"
+    assert radar.seen["livekit/agents#6919"]["first_deferred_at"] == "2026-08-22T15:00:00Z"
     recheck = items["livekit/agents#6919"]
     assert recheck["_explicit_recheck"] is True
     assert recheck["expected_base_sha"] == "b" * 40
@@ -1784,6 +1785,32 @@ def test_seen_rechecks_prioritize_actionable_history_then_original_wait_time():
         "example/actionable#2",
         "example/ordinary-old#3",
         "example/ordinary-new#1",
+    ]
+
+
+def test_seen_rechecks_prioritize_state_drift_over_generic_backlog():
+    seen = {
+        "example/ordinary#1": {
+            "status": "inspection_budget_deferred",
+            "first_deferred_at": "2026-08-04T00:00:00Z",
+        },
+        "example/drift#2": {
+            "status": "state_drift",
+            "first_deferred_at": "2026-08-04T02:00:00Z",
+        },
+        "example/actionable#3": {
+            "status": "inspection_budget_deferred",
+            "deferred_from_status": "queued_outbox",
+            "first_deferred_at": "2026-08-04T03:00:00Z",
+        },
+    }
+
+    selected = select_seen_rechecks(seen, limit=3)
+
+    assert [key for key, _ in selected] == [
+        "example/actionable#3",
+        "example/drift#2",
+        "example/ordinary#1",
     ]
 
 

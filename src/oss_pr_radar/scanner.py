@@ -1433,9 +1433,17 @@ def select_seen_rechecks(
         for key, value in seen.items()
         if isinstance(value, dict) and value.get("status") in SEEN_RECHECK_STATUSES
     ]
+
+    def recheck_priority(value: dict[str, Any]) -> int:
+        if value.get("deferred_from_status") in {"queued_outbox", "notified"}:
+            return 0
+        if value.get("status") == "state_drift":
+            return 1
+        return 2
+
     candidates.sort(
         key=lambda pair: (
-            0 if pair[1].get("deferred_from_status") in {"queued_outbox", "notified"} else 1,
+            recheck_priority(pair[1]),
             str(
                 pair[1].get("first_deferred_at")
                 or pair[1].get("requeued_at")
@@ -1461,7 +1469,9 @@ def rearm_legacy_state_drift_rechecks(seen: dict[str, Any], analyzed: str) -> in
             {
                 "status": "state_drift",
                 "reason": "state_drift_recheck",
-                "first_deferred_at": analyzed,
+                "first_deferred_at": value.get("first_deferred_at")
+                or value.get("analyzed")
+                or analyzed,
                 "requeued_at": analyzed,
             }
         )
