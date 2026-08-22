@@ -24813,6 +24813,39 @@
     ],
     "why": "The issue provides a detailed design for a sandbox gateway with clear architectural decisions, implementation locations, and a concrete verification plan. It identifies specific code anchors and proposes a fail-closed routing mechanism with three isolated upstream paths. The design is actionable and includes a test plan covering unit, e2e, and security negative cases."
   },
+  "9e0539153ea6e672745998dc5d17697c901a1ac2b6b42df1102eee644b559a08": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #49409 has semantic overlap but is older and may not cover the enforcement gap"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "gemma4 tool parser enforcement of tool_choice='required'",
+      "finish_reason logic to only report tool_calls when a tool call is produced"
+    ],
+    "risks": [
+      "Reproduction is content-dependent and may not trigger on idle servers, requiring load simulation",
+      "Potential overlap with existing PRs (#53256, #51524) that may already address parts of the issue"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided loop script with the sanitized payload under concurrent load to reproduce the failure",
+      "Add regression tests for tool_choice='required' with gemma4 parser ensuring tool_calls is non-empty and finish_reason is consistent"
+    ],
+    "unknowns": [
+      "Exact code path for the enforcement gap in the gemma4 parser",
+      "Whether existing PRs fully resolve the issue or need extension"
+    ],
+    "why": "The issue identifies a concrete bug in the gemma4 tool parser where tool_choice='required' is not enforced, leading to prose-only responses mislabeled as tool calls. Root cause is partially established (finish_reason logic) and a validation path exists via the provided loop script and payload variations."
+  },
   "9e52c5effae05aed5b2afe1dac9ef639d8e14042616605a378c795b5633638c0": {
     "confidence": 0.7,
     "contradictions": [],
@@ -36725,6 +36758,36 @@
       "Root cause of the mapping error; whether existing PR #12679 fully addresses the issue; maintainer's preferred solution"
     ],
     "why": "Issue reports an intermittent error with no root cause identified; existing PR #12679 lacks root-cause coverage and tests are insufficient. No maintainer confirmation or design direction. The track is agent_ai_infra, but the issue is a bug report without a concrete algorithm or validation path."
+  },
+  "e6c2e3bf3965fa0d04f48a692d2744652ad6e7975262527436152e27e7fa5955": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found in supplied evidence."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/config/speculative.py: include num_speculative_tokens and num_speculative_tokens_per_batch_size in compute_hash()",
+      "vllm/config/vllm.py: ensure VllmConfig.compute_hash() propagates the updated speculative config hash"
+    ],
+    "risks": [
+      "Potential hash collisions with other config fields if not carefully combined; need to ensure backward compatibility with existing cache entries.",
+      "The fix may require recompilation for each k, which could increase startup time but is necessary for correctness."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test for SpeculativeConfig.compute_hash() that verifies different num_speculative_tokens values produce different hashes.",
+      "Add an integration test that runs the minimal reproduction: start server with k=9, then k=7 without clearing cache, and assert no assertion error."
+    ],
+    "unknowns": [
+      "Exact implementation details of compute_hash() in the current codebase; whether num_speculative_tokens_per_batch_size is always present or only when dynamic speculative decoding is enabled."
+    ],
+    "why": "The issue clearly identifies a root cause: SpeculativeConfig.compute_hash() omits num_speculative_tokens, causing torch.compile cache collisions across different speculative token counts. It provides a concrete reproduction, expected vs actual behavior, and a proposed fix. The track is llm_algorithm and the issue involves a concrete mechanism (model_architecture, distributed_training) with a clear validation path via numerical regression or controlled experiment."
   },
   "e6e87b063d38fd174859437a5da3e3521a1b38850f1ef57170553ee92e3e9725": {
     "confidence": 0.8,
