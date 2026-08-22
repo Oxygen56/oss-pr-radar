@@ -10,7 +10,7 @@ from .util import sha256_json
 SCAN_SCHEMA = "oss-pr-radar.scan.v2"
 CANDIDATE_SCHEMA = "oss-pr-radar.candidate.v3"
 EVIDENCE_SCHEMA = "oss-pr-radar.evidence.v1"
-CONTRACT_REVISION = "trust-core-v9-semantic-evidence-only"
+CONTRACT_REVISION = "trust-core-v10-semantic-retry-fail-closed"
 ACTIONABLE_REVIEW_STATUSES = frozenset({"ok"})
 
 CONTRACT_MANIFEST = {
@@ -90,22 +90,43 @@ def validate_candidate(candidate: dict[str, Any]) -> None:
         _require(isinstance(algorithm, dict), "algorithm candidate requires algorithm_evidence")
         actionability = candidate.get("actionability_evidence") or {}
         wait_reasons = {str(reason).upper() for reason in actionability.get("wait_reasons") or []}
-        bounded_wait = bool(
-            candidate.get("auto_spawn") is False
-            and candidate.get("category") == "WAIT_MAINTAINER"
-            and candidate.get("gate_decision") == "HUMAN_REVIEW"
-            and wait_reasons & {"DESIGN_CONFIRMATION", "DEPENDENCY", "OWNERSHIP_REVIEW"}
+        bounded_algorithm_evidence = bool(
+            wait_reasons & {"DESIGN_CONFIRMATION", "DEPENDENCY", "OWNERSHIP_REVIEW"}
             and int(algorithm.get("score") or 0) >= 5
             and int(algorithm.get("mechanism_count") or 0) >= 2
             and algorithm.get("code_path_signal") is True
             and algorithm.get("operational_only") is False
         )
+        bounded_wait = bool(
+            bounded_algorithm_evidence
+            and candidate.get("auto_spawn") is False
+            and candidate.get("category") == "WAIT_MAINTAINER"
+            and candidate.get("gate_decision") == "HUMAN_REVIEW"
+        )
+        review = candidate.get("llm_review")
+        preflight = candidate.get("preTaskGate") or candidate.get("pre_task_gate")
+        semantic_retry = bool(
+            bounded_algorithm_evidence
+            and candidate.get("auto_spawn") is False
+            and candidate.get("notify") is False
+            and candidate.get("maturity") == "exploration"
+            and candidate.get("category") == "SEMANTIC_REVIEW_RETRY"
+            and candidate.get("gate_decision") == "RETRY_REQUIRED"
+            and isinstance(review, dict)
+            and str(review.get("semanticSignal") or review.get("semantic_signal") or "") == "RETRY"
+            and isinstance(preflight, dict)
+            and preflight.get("allowed") is False
+            and preflight.get("classification") == "blocked_pre_task"
+            and any(
+                str(reason).startswith("semantic_") for reason in preflight.get("reasons") or []
+            )
+        )
         _require(
-            algorithm.get("qualified") is True or bounded_wait,
+            algorithm.get("qualified") is True or bounded_wait or semantic_retry,
             "algorithm evidence must be qualified or a bounded human-review wait",
         )
         _require(
-            int(algorithm.get("score") or 0) >= (5 if bounded_wait else 7),
+            int(algorithm.get("score") or 0) >= (5 if bounded_wait or semantic_retry else 7),
             "algorithm evidence score is below threshold",
         )
         _require(

@@ -73,6 +73,23 @@ def test_semantic_review_retry_replaces_pre_llm_candidate_outcome():
     }
 
 
+def test_semantic_review_retry_with_successful_model_call_is_still_deferred():
+    outcome = candidate_issue_outcome(
+        {
+            "repo": "a/b",
+            "num": 1,
+            "track": "llm_algorithm",
+            "category": "SEMANTIC_REVIEW_RETRY",
+            "gate_decision": "RETRY_REQUIRED",
+            "auto_spawn": False,
+            "llm_review": {"status": "ok", "semanticSignal": "RETRY"},
+        }
+    )
+
+    assert outcome["status"] == "deferred"
+    assert outcome["reason"] == "semantic_review_retry"
+
+
 def test_old_budget_rechecks_expire_but_future_issue_updates_can_rearm():
     now = datetime(2026, 8, 15, tzinfo=UTC)
     seen = {
@@ -875,6 +892,124 @@ def test_semantic_regate_demotes_stale_auto_spawn_and_report_validates(monkeypat
     assert final["maturity"] == "exploration"
     assert final["category"] == "WAIT_MAINTAINER"
     assert final["gate_decision"] == "HUMAN_REVIEW"
+
+
+@pytest.mark.parametrize(
+    "retry_review",
+    [
+        {"status": "retry", "semanticSignal": "RETRY", "error_category": "timeout"},
+        {"status": "ok", "semanticSignal": "RETRY", "confidence": 0.9},
+    ],
+)
+def test_bounded_algorithm_semantic_retry_validates_and_is_rechecked(
+    monkeypatch, tmp_path, retry_review
+):
+    seen_path = tmp_path / "seen.json"
+    report_path = tmp_path / "scan.json"
+    candidate = {
+        "repo": "example/project",
+        "num": 8291,
+        "title": "Algorithm dependency needs an implementation decision",
+        "url": "https://github.com/example/project/issues/8291",
+        "score": 9,
+        "category": "WAIT_MAINTAINER",
+        "gate_decision": "HUMAN_REVIEW",
+        "auto_spawn": False,
+        "notify": True,
+        "maturity": "mature",
+        "track": "llm_algorithm",
+        "labels": ["bug"],
+        "issue_updated": "2026-08-04T00:00:00Z",
+        "submission_policy": "normal",
+        "public_submission_allowed": True,
+        "actionability_evidence": {
+            "needs_confirmation": True,
+            "wait_reasons": ["DEPENDENCY", "OWNERSHIP_REVIEW"],
+        },
+        "algorithm_evidence": {
+            "score": 5,
+            "mechanism_count": 2,
+            "qualified": False,
+            "code_path_signal": True,
+            "operational_only": False,
+        },
+        "open_pr_assessment": {"status": "human_review_required", "prs": []},
+        "related_issue_assessment": {"status": "none"},
+        "llm_review": {
+            "status": "ok",
+            "semanticSignal": "NO_OBJECTION",
+            "confidence": 0.95,
+        },
+        "preTaskEvidence": {
+            "issue": {"state": "open", "assignees": []},
+            "baseSha": "a" * 40,
+            "issueDigest": "issue-digest",
+            "policy": {"status": "normal"},
+            "codePathsPlan": ["src/runtime.py"],
+            "reproductionPathPlan": True,
+            "validationPathPlan": True,
+            "matureRepository": True,
+            "duplicate": {"status": "none"},
+        },
+        "preTaskGate": {"allowed": True, "expected": {}},
+    }
+
+    class RetryEvaluator:
+        @classmethod
+        def from_environment(cls, _path):
+            return cls()
+
+        def evaluate_candidates(self, candidates):
+            candidates[0]["llm_review"] = dict(retry_review)
+            candidates[0]["category"] = "SEMANTIC_REVIEW_RETRY"
+            candidates[0]["gate_decision"] = "RETRY_REQUIRED"
+            candidates[0]["auto_spawn"] = False
+            candidates[0]["notify"] = False
+            return candidates
+
+    radar = Radar(
+        datetime(2026, 8, 4, tzinfo=UTC),
+        2,
+        seen_path,
+        "",
+        dry_run=True,
+        notify=False,
+    )
+    monkeypatch.setattr(radar, "collect_items", lambda: {"example/project#8291": {}})
+    monkeypatch.setattr(radar, "shortlist", lambda _items: ([candidate], 1, 1))
+    monkeypatch.setattr(scanner, "DeepSeekEvaluator", RetryEvaluator)
+
+    result = radar.run(report_path)
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    validate_report(report, require_v2=True)
+    final = report["candidate_details"][0]
+    seen = json.loads(seen_path.read_text(encoding="utf-8"))
+
+    assert final["category"] == "SEMANTIC_REVIEW_RETRY"
+    assert final["gate_decision"] == "RETRY_REQUIRED"
+    assert final["auto_spawn"] is False
+    assert final["notify"] is False
+    assert final["maturity"] == "exploration"
+    assert final["preTaskGate"]["allowed"] is False
+    assert final["preTaskGate"]["classification"] == "blocked_pre_task"
+    assert result["auto_spawn_candidates"] == 0
+    assert result["notification_candidate_count"] == 0
+    assert result["issue_outcomes"]["example/project#8291"]["status"] == "deferred"
+    assert seen["example/project#8291"]["status"] == "semantic_review_retry"
+    assert select_seen_rechecks(seen)[0][0] == "example/project#8291"
+
+    next_radar = Radar(
+        datetime(2026, 8, 4, 1, tzinfo=UTC),
+        2,
+        seen_path,
+        "",
+        dry_run=True,
+        notify=False,
+    )
+    monkeypatch.setattr(next_radar, "add_repo_issues", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(next_radar, "add_search", lambda *_args, **_kwargs: None)
+    items = next_radar.collect_items()
+    assert items["example/project#8291"]["_explicit_recheck"] is True
 
 
 def test_outbox_recovers_lost_deferred_notification_identity(monkeypatch, tmp_path):

@@ -1826,7 +1826,13 @@ def candidate_issue_outcome(candidate: dict[str, Any]) -> dict[str, Any]:
             "gate_decision": candidate.get("gate_decision"),
         }
     review = candidate.get("llm_review") if isinstance(candidate.get("llm_review"), dict) else {}
-    if review.get("status") in {"retry", "not_configured"}:
+    semantic_retry = bool(
+        review.get("status") in {"retry", "not_configured"}
+        or str(review.get("semanticSignal") or review.get("semantic_signal") or "") == "RETRY"
+        or candidate.get("category") == "SEMANTIC_REVIEW_RETRY"
+        or candidate.get("gate_decision") == "RETRY_REQUIRED"
+    )
+    if semantic_retry:
         return {
             "status": "deferred",
             "reason": "semantic_review_retry",
@@ -4832,10 +4838,13 @@ class Radar:
                 if candidate.get("notify") is False:
                     review = candidate.get("llm_review") or {}
                     silent_status = (
-                        "silent_exploration"
-                        if candidate.get("maturity") == "exploration"
+                        "semantic_review_retry"
+                        if candidate.get("category") == "SEMANTIC_REVIEW_RETRY"
+                        or candidate.get("gate_decision") == "RETRY_REQUIRED"
                         else "capacity_deferred"
                         if candidate.get("capacityDisposition") == "MATURE_BUDGET_DEFERRED"
+                        else "silent_exploration"
+                        if candidate.get("maturity") == "exploration"
                         else "semantic_review_retry"
                     )
                     self.seen[key] = {

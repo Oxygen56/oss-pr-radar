@@ -353,10 +353,10 @@ def verify_queue(
         expected = LEGACY_QUEUE_CONTRACTS.get(version)
     if expected is None:
         raise SignatureError("unsupported dispatch queue")
-    if queue.get("contractDigest") != expected["contractDigest"]:
-        raise SignatureError("stale dispatch contract")
     if queue.get("scannerVersion") != expected["scannerVersion"]:
         raise SignatureError("stale scanner decision revision")
+    if queue.get("contractDigest") != expected["contractDigest"]:
+        raise SignatureError("stale dispatch contract")
     if queue.get("decisionContractDigest") != expected["decisionContractDigest"]:
         raise SignatureError("stale dispatch decision revision")
     signer.verify(queue)

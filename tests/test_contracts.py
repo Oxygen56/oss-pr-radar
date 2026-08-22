@@ -97,6 +97,40 @@ def test_bounded_algorithm_wait_is_valid_but_cannot_auto_spawn():
         validate_report({"scan_ok": True, "candidate_details": [value]})
 
 
+def test_bounded_algorithm_semantic_retry_is_valid_only_when_fail_closed():
+    value = candidate(
+        track="llm_algorithm",
+        category="SEMANTIC_REVIEW_RETRY",
+        gate_decision="RETRY_REQUIRED",
+        auto_spawn=False,
+        notify=False,
+        maturity="exploration",
+        actionability_evidence={
+            "needs_confirmation": True,
+            "wait_reasons": ["DEPENDENCY"],
+        },
+        algorithm_evidence={
+            "score": 5,
+            "mechanism_count": 2,
+            "qualified": False,
+            "code_path_signal": True,
+            "operational_only": False,
+        },
+        llm_review={"status": "ok", "semanticSignal": "RETRY"},
+        preTaskGate={
+            "allowed": False,
+            "classification": "blocked_pre_task",
+            "reasons": ["semantic_retry"],
+        },
+    )
+
+    validate_report({"scan_ok": True, "candidate_details": [value]})
+
+    value["notify"] = True
+    with pytest.raises(ContractError, match="qualified"):
+        validate_report({"scan_ok": True, "candidate_details": [value]})
+
+
 def test_failed_scan_is_rejected():
     with pytest.raises(ContractError):
         validate_report({"scan_ok": False, "scan_error": "incomplete", "candidate_details": []})
