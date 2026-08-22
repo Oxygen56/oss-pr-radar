@@ -339,9 +339,9 @@ class EventLane:
             row = db.execute("SELECT * FROM event_lane_threads WHERE event_key=?", (event_key,)).fetchone()
         return dict(row) if row else None
 
-    def bind_handler_thread(self, event_key: str, thread_id: str, turn_id: str, receipt: dict[str, Any]) -> None:
+    def bind_handler_thread(self, event_key: str, thread_id: str, turn_id: str, receipt: dict[str, Any], *, status: str = "started") -> None:
         with self.writer() as db:
-            db.execute("INSERT INTO event_lane_threads(event_key,thread_id,turn_id,status,receipt_json) VALUES(?,?,?,?,?) ON CONFLICT(event_key) DO UPDATE SET thread_id=excluded.thread_id,turn_id=excluded.turn_id,status=excluded.status,receipt_json=excluded.receipt_json", (event_key, thread_id, turn_id, "started", json.dumps(receipt, sort_keys=True)))
+            db.execute("INSERT INTO event_lane_threads(event_key,thread_id,turn_id,status,receipt_json) VALUES(?,?,?,?,?) ON CONFLICT(event_key) DO UPDATE SET thread_id=excluded.thread_id,turn_id=excluded.turn_id,status=excluded.status,receipt_json=excluded.receipt_json", (event_key, thread_id, turn_id, status, json.dumps(receipt, sort_keys=True)))
 
     def import_queue(self, queue: dict[str, Any], *, wake: Callable[[dict[str, Any]], Any] | None = None) -> dict[str, int]:
         """Import intents and PR follow-up records, then wake each unique task once."""
