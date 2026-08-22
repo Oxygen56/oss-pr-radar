@@ -39,7 +39,7 @@ def spec(runtime_root: Path, *, home: Path | None = None) -> dict[str, object]:
         "RunAtLoad": True,
         "StandardOutPath": str(log / "agentscope-events.log"),
         "StandardErrorPath": str(log / "agentscope-events.error.log"),
-        "EnvironmentVariables": {"PYTHONUNBUFFERED": "1"},
+        "EnvironmentVariables": {"PYTHONUNBUFFERED": "1", "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"},
     }
 
 
