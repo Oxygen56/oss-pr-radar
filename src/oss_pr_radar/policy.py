@@ -12,7 +12,7 @@ from typing import Any
 from .llm import SEMANTIC_EVIDENCE_BINDING_CONTRACT
 
 POLICY_VERSION = "submit_ready_quality_v1"
-SCANNER_DECISION_REVISION = "oss_pr_radar_v50_material_contradictions"
+SCANNER_DECISION_REVISION = "oss_pr_radar_v51_bounded_wait_evidence"
 DISPATCH_DECISION_REVISION = "signed_intent_v9_transactional_creation"
 DECISION_CONTRACT_SCHEMA = 9
 DECISION_CONTRACT_MANIFEST = {
@@ -158,17 +158,35 @@ def predict_candidate(
         return Prediction("WATCH", "POLICY_BLOCKED")
     if candidate.get("hardware_compatible") is not True:
         return Prediction("WATCH", "HARDWARE_BLOCKED")
+    wait_reasons = {str(reason).upper() for reason in actionability.get("wait_reasons") or []}
     if candidate.get("track") == "llm_algorithm":
         algorithm = candidate.get("algorithm_evidence")
         if not isinstance(algorithm, dict):
             return Prediction("DROP", "ALGORITHM_EVIDENCE_MISSING")
+        bounded_wait = bool(
+            candidate.get("auto_spawn") is False
+            and category == "WAIT_MAINTAINER"
+            and gate == "HUMAN_REVIEW"
+            and wait_reasons & {"DESIGN_CONFIRMATION", "DEPENDENCY", "OWNERSHIP_REVIEW"}
+            and int(algorithm.get("score") or 0) >= 5
+            and int(algorithm.get("mechanism_count") or 0) >= 2
+            and algorithm.get("code_path_signal") is True
+            and algorithm.get("operational_only") is False
+        )
         if (
-            algorithm.get("qualified") is not True
-            or algorithm.get("operational_only") is not False
-            or int(algorithm.get("score") or 0) < 7
+            (
+                algorithm.get("qualified") is not True
+                or algorithm.get("operational_only") is not False
+                or int(algorithm.get("score") or 0) < 7
+            )
+            and not bounded_wait
             or int(algorithm.get("mechanism_count") or 0) < 1
         ):
             return Prediction("DROP", "ALGORITHM_EVIDENCE_WEAK")
+    if wait_reasons & {"DEPENDENCY", "OWNERSHIP_REVIEW"}:
+        return Prediction("WATCH", "DEPENDENCY_OR_OWNERSHIP_REVIEW")
+    if actionability.get("needs_confirmation") and not actionability.get("maintainer_approved"):
+        return Prediction("WATCH", "DESIGN_UNAPPROVED")
     clean_candidate = bool(category == "NEW_CLEAN_CANDIDATE" and gate == "ALLOW_TO_WORK")
     if not private_only and not clean_candidate and not weak_competition:
         return Prediction("WATCH", "RADAR_GATE_NOT_CLEAN")
@@ -216,8 +234,6 @@ def predict_candidate(
     if related_status and related_status != "none":
         return Prediction("WATCH", "RELATED_ISSUE_AUDIT_FAILED")
 
-    if actionability.get("needs_confirmation") and not actionability.get("maintainer_approved"):
-        return Prediction("WATCH", "DESIGN_UNAPPROVED")
     if re.search(
         r"必须(?:先)?(?:得到|获得|等待)?.{0,12}(?:维护者|maintainer).{0,12}(?:确认|批准|approval)|"
         r"(?:requires?|needs?).{0,12}(?:maintainer )?(?:approval|assignment)|"

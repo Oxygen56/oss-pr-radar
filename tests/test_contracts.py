@@ -72,6 +72,31 @@ def test_candidate_requires_policy_watermark():
         validate_report({"scan_ok": True, "candidate_details": [value]})
 
 
+def test_bounded_algorithm_wait_is_valid_but_cannot_auto_spawn():
+    value = candidate(
+        track="llm_algorithm",
+        actionability_evidence={
+            "needs_confirmation": True,
+            "wait_reasons": ["DESIGN_CONFIRMATION"],
+        },
+        algorithm_evidence={
+            "score": 5,
+            "mechanism_count": 2,
+            "qualified": False,
+            "code_path_signal": True,
+            "operational_only": False,
+        },
+    )
+
+    validate_report({"scan_ok": True, "candidate_details": [value]})
+
+    value["auto_spawn"] = True
+    value["category"] = "NEW_CLEAN_CANDIDATE"
+    value["gate_decision"] = "ALLOW_TO_WORK"
+    with pytest.raises(ContractError, match="qualified"):
+        validate_report({"scan_ok": True, "candidate_details": [value]})
+
+
 def test_failed_scan_is_rejected():
     with pytest.raises(ContractError):
         validate_report({"scan_ok": False, "scan_error": "incomplete", "candidate_details": []})

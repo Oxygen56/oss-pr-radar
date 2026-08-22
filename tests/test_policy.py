@@ -68,3 +68,32 @@ def test_algorithm_track_requires_qualified_mechanism_evidence():
 
     assert prediction.tier == "DROP"
     assert prediction.reason_code == "ALGORITHM_EVIDENCE_WEAK"
+
+
+def test_bounded_algorithm_dependency_wait_is_watched_not_dropped():
+    candidate = candidate_with_weak_pr()
+    candidate.update(
+        {
+            "track": "llm_algorithm",
+            "category": "WAIT_MAINTAINER",
+            "gate_decision": "HUMAN_REVIEW",
+            "auto_spawn": False,
+            "open_pr_assessment": {"status": "semantic_overlap_requires_review", "prs": []},
+            "actionability_evidence": {
+                "needs_confirmation": True,
+                "wait_reasons": ["DEPENDENCY", "OWNERSHIP_REVIEW"],
+            },
+            "algorithm_evidence": {
+                "score": 6,
+                "mechanism_count": 2,
+                "qualified": False,
+                "code_path_signal": True,
+                "operational_only": False,
+            },
+        }
+    )
+
+    prediction = predict_candidate(candidate)
+
+    assert prediction.tier == "WATCH"
+    assert prediction.reason_code == "DEPENDENCY_OR_OWNERSHIP_REVIEW"

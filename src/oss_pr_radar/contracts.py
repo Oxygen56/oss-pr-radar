@@ -88,9 +88,24 @@ def validate_candidate(candidate: dict[str, Any]) -> None:
     if track == "llm_algorithm":
         algorithm = candidate.get("algorithm_evidence")
         _require(isinstance(algorithm, dict), "algorithm candidate requires algorithm_evidence")
-        _require(algorithm.get("qualified") is True, "algorithm evidence must be qualified")
+        actionability = candidate.get("actionability_evidence") or {}
+        wait_reasons = {str(reason).upper() for reason in actionability.get("wait_reasons") or []}
+        bounded_wait = bool(
+            candidate.get("auto_spawn") is False
+            and candidate.get("category") == "WAIT_MAINTAINER"
+            and candidate.get("gate_decision") == "HUMAN_REVIEW"
+            and wait_reasons & {"DESIGN_CONFIRMATION", "DEPENDENCY", "OWNERSHIP_REVIEW"}
+            and int(algorithm.get("score") or 0) >= 5
+            and int(algorithm.get("mechanism_count") or 0) >= 2
+            and algorithm.get("code_path_signal") is True
+            and algorithm.get("operational_only") is False
+        )
         _require(
-            int(algorithm.get("score") or 0) >= 7,
+            algorithm.get("qualified") is True or bounded_wait,
+            "algorithm evidence must be qualified or a bounded human-review wait",
+        )
+        _require(
+            int(algorithm.get("score") or 0) >= (5 if bounded_wait else 7),
             "algorithm evidence score is below threshold",
         )
         _require(

@@ -87,15 +87,23 @@ SEEN_RECHECK_STATUSES = frozenset(
 )
 SCANNER_MIGRATION_RECHECK_STATUSES = frozenset(
     {
+        "algorithm_mechanism_evidence_low",
         "hardware_unavailable",
+        "no_bug_or_maintainer_actionability",
         "notified",
+        "off_topic",
         "queued_outbox",
+        "trivial",
     }
 )
 SCANNER_MIGRATION_RECHECK_PRIORITY = (
     "queued_outbox",
     "notified",
     "hardware_unavailable",
+    "off_topic",
+    "trivial",
+    "no_bug_or_maintainer_actionability",
+    "algorithm_mechanism_evidence_low",
 )
 MAX_ISSUES_PER_REPO_PER_SCAN = 4
 EXCLUDED_REPOS = {"openai/codex"}
@@ -440,7 +448,8 @@ HIGH_RE = re.compile(
     r"\b(agent|tool[- ]call|function[- ]call|structured output|mcp|memory|workflow|"
     r"human[- ]?in[- ]?the[- ]?loop|ag[- ]ui|interrupt|resume payload|deferred tool|"
     r"streaming|scheduler|kv cache|prefix cache|"
-    r"cuda graph|distributed|parallel|routing|speculative|inference|serving|"
+    r"cuda graph|distributed|parallel|routing|llm proxy|model gateway|"
+    r"pass[- ]through endpoints?|provider route|route precedence|speculative|inference|serving|"
     r"throughput|latency|batch|token|reasoning|executor|runtime|eval|benchmark|"
     r"vector|retrieval|embedding|rerank|multimodal|audio|video|fps|mrope|rope)\b",
     re.I,
@@ -477,6 +486,10 @@ IMPACT_RE = re.compile(
 TRIVIAL_RE = re.compile(
     r"\b(typo|readme|docs only|documentation only|minor docs|comment only|"
     r"chore|dependency bump)\b",
+    re.I,
+)
+TRIVIAL_BODY_RE = re.compile(
+    r"\b(?:docs only|documentation only|minor docs|comment only|dependency bump)\b",
     re.I,
 )
 ACTIVE_RE = re.compile(
@@ -526,7 +539,7 @@ INTERNAL_AUTOMATION_ISSUE_RE = re.compile(
 )
 BUG_ACTIONABILITY_RE = re.compile(
     r"\b(bug|regression|crash|exception|error|fail(?:s|ed|ure|ing)?|break(?:s|ing)?|broken|"
-    r"incorrect|corrupt|hang(?:s|ed|ing)?|stall(?:s|ed|ing)?|freeze(?:s|frozen)?|"
+    r"incorrect|corrupt|reject(?:s|ed|ing)?|hang(?:s|ed|ing)?|stall(?:s|ed|ing)?|freeze(?:s|frozen)?|"
     r"deadlock|oom|memory leak|garbled|mismatch|collapse(?:s|d)?|"
     r"unbounded|runaway|catastrophic|degrad(?:e|es|ed|ation)|slowdown|"
     r"discard(?:s|ed|ing)?|silent(?:ly)?|missing|never|livelock(?:s|ed|ing)?)\b|"
@@ -694,7 +707,8 @@ LLM_ALGORITHM_SIGNAL_PATTERNS = {
     "model_architecture": re.compile(
         r"\b(?:attention|self[- ]attention|cross[- ]attention|RoPE|rotary embedding|"
         r"position(?:al)? embedding|hidden states?|logits?|vocab(?:ulary)? projection|"
-        r"KV heads?|GQA|MQA|MLP|activation function|normalization|RMSNorm|"
+        r"vocab(?:ulary)?[- ]parallel|KV heads?|GQA|MQA|MLP|activation function|"
+        r"normalization|RMSNorm|"
         r"mixture of experts|MoE|router logits?|expert routing)\b",
         re.I,
     ),
@@ -817,6 +831,10 @@ def public_reproduction_evidence(body: str) -> tuple[str, ...]:
         signals.append("expected_actual_pair")
     if TRACEBACK_FRAME_RE.search(body):
         signals.append("traceback_frame")
+    if re.search(r"\bHTTP\s+[45]\d{2}\b", body, re.I) and re.search(
+        r"[\"'](?:error|detail|message)[\"']\s*:", body, re.I
+    ):
+        signals.append("http_failure_response")
     if STEP_SEQUENCE_RE.search(body):
         signals.append("ordered_steps")
     for block in re.findall(r"```[^\n]*\n(.*?)```", body, re.I | re.S):
@@ -829,6 +847,23 @@ def public_reproduction_evidence(body: str) -> tuple[str, ...]:
         for block in re.findall(r"```[^\n]*\n(.*?)```", body, re.I | re.S)
     ):
         signals.append("minimal_example")
+    for block in re.findall(
+        r"(?:^|\n)#{1,6}\s+repro(?:duction|ducer)?\s*\n+```(?:python|py)\s*\n(.*?)```",
+        body,
+        re.I | re.S,
+    ):
+        compact = re.sub(r"\s+", "", block)
+        if (
+            len(compact) >= 160
+            and re.search(r"(?:^|\n)\s*(?:from\s+\S+\s+import|import\s+\S+)", block, re.M)
+            and re.search(r"\b(?:assert|raise|initialize|forward|backward|generate)\b", block, re.I)
+            and (
+                BUG_ACTIONABILITY_RE.search(body)
+                or re.search(r"\b(?:Value|Type|Runtime|Assertion)Error\b", body)
+            )
+        ):
+            signals.append("executable_python_reproducer")
+            break
     return tuple(dict.fromkeys(signals))
 
 
@@ -932,6 +967,17 @@ API_DESIGN_RE = re.compile(
     r"\b(?:needs?|requires?)\s+(?:a\s+)?maintainer\s+"
     r"(?:design|scope|behavior)\s+(?:call|decision|confirmation)\b|"
     r"\bopen\s+design\s+questions?\b",
+    re.I | re.S,
+)
+IMPLEMENTATION_POLICY_CHOICE_RE = re.compile(
+    r"\b(?:policy|semantic|behavior(?:al)?|compatibility)\s+divergence\s+to\s+resolve\b|"
+    r"\bmultiple\s+(?:valid\s+)?(?:implementation\s+)?(?:options|behaviors)\b",
+    re.I,
+)
+PENDING_PR_DEPENDENCY_RE = re.compile(
+    r"\b(?:depends?\s+on|based\s+on|after|once)\s+(?:pr\s*)?#(\d+)\b|"
+    r"(?:pr\s*)?#(\d+)\b.{0,180}\b(?:deliberately|intentionally)\s+"
+    r"(?:left|kept)\b.{0,100}\b(?:in\s+place|out|separate|todo)\b",
     re.I | re.S,
 )
 SEMANTIC_STOPWORDS = {
@@ -1173,6 +1219,39 @@ def issue_body_pr_link_relation(issue_context: str, repo: str, pr_num: int) -> s
         ):
             return "coverage"
     return "reference"
+
+
+def pending_pr_dependency_numbers(text: str) -> tuple[int, ...]:
+    """Extract explicit implementation/base dependencies without treating every link as one."""
+
+    numbers = {
+        int(value) for groups in PENDING_PR_DEPENDENCY_RE.findall(text) for value in groups if value
+    }
+    return tuple(sorted(numbers))
+
+
+def pr_issue_reference_relation(text: str, issue_num: int) -> str:
+    """Distinguish a PR's separate-work reference from actual issue coverage."""
+
+    issue_ref = rf"#\s*{issue_num}\b"
+    if re.search(
+        rf"\b(?:not\s+related\s+to|unrelated\s+to)\s+this\s+pr\b.{{0,320}}{issue_ref}|"
+        rf"\btracked\s+in\s+{issue_ref}|"
+        rf"\b(?:opened|filed)\s+{issue_ref}\s+to\s+track\b.{{0,320}}"
+        rf"\b(?:keeping|kept|leave|leaving|left)\b.{{0,80}}\bout\s+of\s+this\s+pr\b|"
+        rf"\b(?:left|kept)\b.{{0,120}}\bfor\s+(?:a\s+)?separate\s+change\b.{{0,320}}"
+        rf"{issue_ref}",
+        text,
+        re.I | re.S,
+    ):
+        return "NON_COVERING_REFERENCE"
+    if re.search(
+        rf"\b(?:fix(?:e[sd])?|close[sd]?|resolve[sd]?)\s+{issue_ref}",
+        text,
+        re.I,
+    ):
+        return "COVERAGE"
+    return "REFERENCE"
 
 
 def llm_algorithm_evidence(
@@ -3109,22 +3188,21 @@ class Radar:
         test_files = [path for path in file_paths if TEST_FILE_RE.search(path)]
         closing_value = detail.get("closingIssuesReferences")
         closing = closing_value if isinstance(closing_value, list) else []
-        references_issue = any(
-            ref.get("number") == issue_num for ref in closing if isinstance(ref, dict)
-        )
-        references_issue = (
-            references_issue
-            or bool(hit.get("_linked_from_issue"))
-            or bool(
-                re.search(
-                    rf"\b(fix(e[sd])?|close[sd]?|resolve[sd]?)\s+#?{issue_num}\b|#{issue_num}\b",
-                    text,
-                    re.I,
-                )
-            )
-        )
         issue_body_link = bool(hit.get("_issue_body_link"))
         issue_body_link_relation = str(hit.get("_issue_body_link_relation") or "")
+        reference_relation = pr_issue_reference_relation(
+            f"{title}\n{body}\n{comment_text}", issue_num
+        )
+        references_issue = any(
+            ref.get("number") == issue_num for ref in closing if isinstance(ref, dict)
+        ) or bool(
+            issue_body_link
+            or issue_body_link_relation == "coverage"
+            or reference_relation == "COVERAGE"
+            or str(hit.get("_timeline_event") or "").casefold() == "connected"
+        )
+        if reference_relation == "NON_COVERING_REFERENCE":
+            references_issue = False
 
         checks_value = detail.get("statusCheckRollup")
         checks = checks_value if isinstance(checks_value, list) else []
@@ -3266,6 +3344,7 @@ class Radar:
             "title": title,
             "score": score,
             "references_issue": references_issue,
+            "reference_relation": reference_relation,
             "issue_body_link": issue_body_link,
             "issue_body_link_relation": issue_body_link_relation,
             "semantic_overlap": semantic_overlap,
@@ -3539,17 +3618,46 @@ class Radar:
         design_confirmation = bool(
             re.search(r"\btriage\b", labels_text, re.I)
             or API_DESIGN_RE.search(title + "\n" + body[:3000])
+            or IMPLEMENTATION_POLICY_CHOICE_RE.search(title + "\n" + body[:8000])
         ) and not (maintainer_approved or help_wanted)
+        dependency_pr_numbers = pending_pr_dependency_numbers(body[:12000])
+        dependency_confirmation = bool(dependency_pr_numbers)
+        author_association = str(issue.get("author_association") or "").upper()
+        ownership_confirmation = bool(
+            dependency_confirmation and author_association in {"MEMBER", "OWNER", "COLLABORATOR"}
+        )
         usage_confirmation = bool(USAGE_AMBIGUITY_RE.search(title + "\n" + body[:3000])) and not (
             maintainer_approved or help_wanted
         )
         needs_confirmation = (
             needs_confirmation
             or design_confirmation
+            or dependency_confirmation
+            or ownership_confirmation
             or usage_confirmation
             or (maintainer_active_investigation and not (maintainer_approved or help_wanted))
             or (maintainer_revalidation_requested and not (maintainer_approved or help_wanted))
         )
+        wait_reasons = []
+        if design_confirmation:
+            wait_reasons.append("DESIGN_CONFIRMATION")
+        if dependency_confirmation:
+            wait_reasons.append("DEPENDENCY")
+        if ownership_confirmation:
+            wait_reasons.append("OWNERSHIP_REVIEW")
+        algorithm_wait_evidence = bool(
+            wait_reasons
+            and int(algorithm_evidence.get("score") or 0) >= 5
+            and int(algorithm_evidence.get("mechanism_count") or 0) >= 2
+            and algorithm_evidence.get("code_path_signal") is True
+            and algorithm_evidence.get("operational_only") is False
+            and (
+                public_repro_signals >= 1
+                or root_cause_signal
+                or algorithm_evidence.get("experiment_signal") is True
+            )
+        )
+        probe_ready = probe_ready or algorithm_wait_evidence
         issue_author = ((issue.get("user") or {}).get("login") or "").lower()
         report_retracted = any(
             RETRACTED_RE.search(comment.get("body") or "")
@@ -3585,8 +3693,7 @@ class Radar:
             return None, "assigned"
         if SKIP_LABEL_RE.search(labels_text):
             return None, "low_value_label"
-        if TRIVIAL_RE.search(title + "\n" + body[:1500]):
-            return None, "trivial"
+        trivial = bool(TRIVIAL_RE.search(issue_kind_text) or TRIVIAL_BODY_RE.search(body[:1500]))
         if SECURITY_SENSITIVE_RE.search(title + "\n" + body[:3000]) or SECURITY_LABEL_RE.search(
             labels_text
         ):
@@ -3620,6 +3727,8 @@ class Radar:
         )
         if ACTIVE_RE.search(body) or claims:
             return None, "someone_active"
+        if trivial:
+            return None, "trivial"
         if RFC_RE.search(title + "\n" + labels_text + "\n" + body[:1200]) and not (
             maintainer_approved
         ):
@@ -3677,7 +3786,7 @@ class Radar:
         if track == LLM_ALGORITHM_TRACK:
             if algorithm_evidence["operational_only"]:
                 return None, "algorithm_operational_or_configuration_only"
-            if not algorithm_evidence["qualified"]:
+            if not algorithm_evidence["qualified"] and not algorithm_wait_evidence:
                 return None, "algorithm_mechanism_evidence_low"
         if track != LLM_ALGORITHM_TRACK and not HIGH_RE.search(topic_text):
             return None, "off_topic"
@@ -3875,6 +3984,11 @@ class Radar:
                 "help_wanted": help_wanted,
                 "needs_confirmation": needs_confirmation,
                 "design_confirmation": design_confirmation,
+                "dependency_confirmation": dependency_confirmation,
+                "dependency_pr_numbers": list(dependency_pr_numbers),
+                "ownership_confirmation": ownership_confirmation,
+                "wait_reasons": wait_reasons,
+                "algorithm_wait_evidence": algorithm_wait_evidence,
                 "usage_confirmation": usage_confirmation,
                 "maintainer_active_investigation": maintainer_active_investigation,
                 "maintainer_revalidation_requested": maintainer_revalidation_requested,
@@ -3889,7 +4003,13 @@ class Radar:
                 else (
                     "仅准备本地修复和私有提交包，不执行任何公开 GitHub 动作。"
                     if bucket == "conflict"
-                    else "先在 issue 下请求分配/确认方案，获批后再开 PR。"
+                    else (
+                        "等待相关基础 PR 落地并确认实现归属，再重新扫描；当前不创建任务或 PR。"
+                        if dependency_confirmation
+                        else "先请维护者确认设计方向，获批后再创建实现任务。"
+                        if design_confirmation
+                        else "先在 issue 下请求分配/确认方案，获批后再开 PR。"
+                    )
                 )
             ),
             "role_eta": role_eta,
@@ -4235,6 +4355,7 @@ class Radar:
                     if related_issue_assessment["status"] == "potential_overlap"
                     else "相关 issue 审计失败；恢复审计并确认无重复后再进入实现。"
                 )
+            actionability = scored.get("actionability_evidence") or {}
             pr_assessment = self.assess_open_prs(
                 base["repo"],
                 base["num"],
@@ -4245,6 +4366,19 @@ class Radar:
             # status=none makes the downstream policy correctly treat the audit as
             # missing, which would hold every otherwise-clean candidate forever.
             scored["open_pr_assessment"] = pr_assessment
+            dependency_numbers = {
+                int(number)
+                for number in actionability.get("dependency_pr_numbers") or []
+                if str(number).isdigit()
+            }
+            for assessment in pr_assessment.get("prs") or []:
+                if not isinstance(assessment, dict):
+                    continue
+                if (
+                    int(assessment.get("number") or 0) in dependency_numbers
+                    and assessment.get("references_issue") is not True
+                ):
+                    assessment["relation"] = "BASE_DEPENDENCY_NON_COVERING"
             if pr_assessment["status"] in {"covered_strong", "competition_saturated"}:
                 rejection_reason = (
                     "open_pr_strong"
@@ -4289,8 +4423,12 @@ class Radar:
                 )
             elif pr_assessment["status"] == "semantic_overlap_requires_review":
                 scored["open_pr_assessment"] = pr_assessment
-                scored["bucket"] = "competition"
-                scored["category"] = "PR_COMPETITION_OPPORTUNITY"
+                if actionability.get("needs_confirmation"):
+                    scored["bucket"] = "needs_approval"
+                    scored["category"] = "WAIT_MAINTAINER"
+                else:
+                    scored["bucket"] = "competition"
+                    scored["category"] = "PR_COMPETITION_OPPORTUNITY"
                 scored["gate_decision"] = "HUMAN_REVIEW"
                 scored["auto_spawn"] = False
                 scored["why"] = f"{scored['why']}；已有 PR 与 issue 代码路径和关键语义重合"

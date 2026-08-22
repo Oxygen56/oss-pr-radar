@@ -55,6 +55,19 @@ python -m example.repro --streaming --tool-call
     assert evidence == ("expected_actual_pair", "ordered_steps", "executable_command")
 
 
+def test_http_error_payload_is_independent_public_failure_evidence():
+    evidence = public_reproduction_evidence(
+        """```bash
+curl -X POST http://localhost:4000/custom/v1/files -F file=@probe.txt
+```
+{"detail":[{"type":"missing","message":"Field required"}]}
+HTTP 422
+"""
+    )
+
+    assert evidence == ("http_failure_response", "executable_command")
+
+
 def test_backend_context_does_not_turn_a_software_bug_into_hardware_only():
     assert not requires_unavailable_hardware(
         "[ROCm] Structured output is misclassified after reasoning",

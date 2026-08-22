@@ -144,6 +144,50 @@ def test_cross_repo_timeline_pr_details_are_loaded_from_its_own_repo(monkeypatch
     assert result["references_issue"] is True
 
 
+def test_cross_reference_that_tracks_separate_work_is_not_pr_coverage(monkeypatch, tmp_path):
+    instance = radar(tmp_path)
+    monkeypatch.setattr(instance, "open_pr_hits", lambda *args: [{"number": 8241}])
+    monkeypatch.setattr(
+        instance,
+        "pr_detail",
+        lambda *args: {
+            "number": 8241,
+            "title": "Replace AutoTP process-wide globals with per-model metadata",
+            "url": "https://github.com/deepspeedai/DeepSpeed/pull/8241",
+            "body": "Fixes #8231. Ulysses's own multi-model case is left for a separate change.",
+            "state": "OPEN",
+            "updatedAt": "2026-08-22T11:21:53Z",
+            "files": [
+                {"path": "deepspeed/sequence/layer.py"},
+                {"path": "tests/unit/v1/autotp/test_autotp_multiple_models.py"},
+            ],
+            "changedFiles": 2,
+            "statusCheckRollup": [{"name": "unit", "conclusion": "SUCCESS"}],
+            "authorAssociation": "COLLABORATOR",
+            "comments": [
+                {
+                    "body": (
+                        "The transformers embedding_rowwise drift is not related to this PR; "
+                        "it is tracked in #8290 and will move with that later fix."
+                    )
+                }
+            ],
+            "closingIssuesReferences": [{"number": 8231}],
+        },
+    )
+
+    result = instance.assess_open_prs(
+        "deepspeedai/DeepSpeed",
+        8290,
+        "AutoTP rejects embedding_rowwise in tp_plan",
+        "deepspeed/module_inject/tp_plan_converter.py",
+    )
+
+    assert result["status"] != "covered_strong"
+    assert result["prs"][0]["references_issue"] is False
+    assert result["prs"][0]["reference_relation"] == "NON_COVERING_REFERENCE"
+
+
 def test_one_stale_direct_pr_remains_a_competition_opportunity(monkeypatch, tmp_path):
     instance = radar(tmp_path)
     monkeypatch.setattr(instance, "open_pr_hits", lambda *args: [{"number": 9}])

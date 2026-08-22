@@ -1194,8 +1194,11 @@ def test_migration_rechecks_prioritize_actionable_queue_over_newer_rejections(
     assert len(radar.forced_recheck_keys) == scanner.MAX_SCANNER_MIGRATION_RECHECKS
 
 
-def test_scanner_migration_does_not_reopen_unrelated_terminal_rejections():
-    assert "no_bug_or_maintainer_actionability" not in SCANNER_MIGRATION_RECHECK_STATUSES
+def test_scanner_migration_reopens_repaired_relevance_rejections_only():
+    assert "off_topic" in SCANNER_MIGRATION_RECHECK_STATUSES
+    assert "trivial" in SCANNER_MIGRATION_RECHECK_STATUSES
+    assert "no_bug_or_maintainer_actionability" in SCANNER_MIGRATION_RECHECK_STATUSES
+    assert "algorithm_mechanism_evidence_low" in SCANNER_MIGRATION_RECHECK_STATUSES
     assert "frontend_interaction_issue" not in SCANNER_MIGRATION_RECHECK_STATUSES
 
 
@@ -1481,3 +1484,156 @@ def test_repository_policy_cache_reuses_unchanged_blob_shas(monkeypatch, tmp_pat
     )
     assert second.submission_policy("example/project") == "normal"
     assert content_calls == ["repos/example/project/contents/CONTRIBUTING.md"]
+
+
+def test_litellm_custom_passthrough_route_enters_agent_infra_candidates(tmp_path):
+    radar = Radar(datetime(2026, 8, 22, tzinfo=UTC), 2, tmp_path / "seen.json", "", dry_run=True)
+    base = {
+        "repo": "BerriAI/litellm",
+        "num": 37925,
+        "title": "Custom pass_through_endpoints prefixes can never work for file uploads",
+        "url": "https://github.com/BerriAI/litellm/issues/37925",
+    }
+    issue = {
+        "state": "open",
+        "title": base["title"],
+        "body": """A LiteLLM proxy fronts a non-default Anthropic-compatible host.
+Steps to reproduce
+1. Configure pass_through_endpoints at /claude-aws/v1/files.
+2. Upload a file through that model gateway route.
+Expected behavior: the configured target receives the request.
+Actual behavior: the generic provider route wins because of route precedence and returns 422.
+```bash
+curl -X POST http://localhost:4000/claude-aws/v1/files -F file=@probe.txt
+```
+The handler in litellm/proxy/openai_files_endpoints/files_endpoints.py then derives the
+custom_llm_provider from the URL segment, so another prefix never resolves correctly.
+""",
+        "labels": [{"name": "proxy"}, {"name": "llm translation"}],
+        "assignees": [],
+        "user": {"login": "reporter"},
+    }
+
+    candidate, reason = radar.score_issue(base, issue, [])
+
+    assert reason is None
+    assert candidate is not None
+    assert candidate["track"] == "agent_ai_infra"
+    assert candidate["category"] == "NEW_CLEAN_CANDIDATE"
+    assert candidate["auto_spawn"] is True
+
+
+def test_active_dify_fix_beats_historical_chore_reference(tmp_path):
+    radar = Radar(datetime(2026, 8, 22, tzinfo=UTC), 2, tmp_path / "seen.json", "", dry_run=True)
+    base = {
+        "repo": "langgenius/dify",
+        "num": 41096,
+        "title": "Change-email duplicate guards compare Account.email case-sensitively",
+        "url": "https://github.com/langgenius/dify/issues/41096",
+    }
+    issue = {
+        "state": "open",
+        "title": base["title"],
+        "body": """Registration started normalizing in #29978 (`chore: case insensitive email`),
+but old mixed-case rows remain. Steps to reproduce:
+1. Store Taken@Example.com.
+2. Change another account to taken@example.com.
+Expected behavior: EMAIL_IN_USE. Actual behavior: a duplicate row is written.
+The checks in api/repositories/account_repository.py compare Account.email case-sensitively.
+I have a fix with regression tests ready and will open a PR referencing this issue.
+""",
+        "labels": [],
+        "assignees": [],
+        "user": {"login": "reporter"},
+    }
+
+    candidate, reason = radar.score_issue(base, issue, [])
+
+    assert candidate is None
+    assert reason == "someone_active"
+
+
+def test_deepspeed_policy_divergence_is_a_bounded_design_wait(tmp_path):
+    radar = Radar(datetime(2026, 8, 22, tzinfo=UTC), 2, tmp_path / "seen.json", "", dry_run=True)
+    base = {
+        "repo": "deepspeedai/DeepSpeed",
+        "num": 8290,
+        "title": "HF tp_plan embedding_rowwise makes AutoTP reject the whole plan",
+        "url": "https://github.com/deepspeedai/DeepSpeed/issues/8290",
+    }
+    issue = {
+        "state": "open",
+        "title": base["title"],
+        "body": """deepspeed/module_inject/tp_plan_converter.py has a strict allowlist.
+## Repro
+```python
+import torch
+import deepspeed
+from transformers import AutoModelForCausalLM, Qwen2Config
+config = Qwen2Config(vocab_size=1000, hidden_size=128, num_attention_heads=4,
+                     num_key_value_heads=4, tie_word_embeddings=True)
+model = AutoModelForCausalLM.from_config(config)
+engine = deepspeed.initialize(model=model, model_parameters=model.parameters(),
+                              config={"tensor_parallel": {"autotp_size": 2}})
+# ValueError: unsupported partition style embedding_rowwise
+```
+There is a policy divergence to resolve: DeepSpeed keeps the tied vocab projection
+replicated, while transformers intends vocab-parallel tensor parallel sharding.
+Options include preserving replication or supporting the new row-wise behavior.
+""",
+        "labels": [],
+        "assignees": [],
+        "author_association": "COLLABORATOR",
+        "user": {"login": "collaborator"},
+    }
+
+    candidate, reason = radar.score_issue(base, issue, [])
+
+    assert reason is None
+    assert candidate is not None
+    assert candidate["category"] == "WAIT_MAINTAINER"
+    assert candidate["gate_decision"] == "HUMAN_REVIEW"
+    assert candidate["auto_spawn"] is False
+    assert candidate["algorithm_evidence"]["qualified"] is False
+    assert candidate["actionability_evidence"]["probe_ready"] is True
+    assert candidate["actionability_evidence"]["wait_reasons"] == ["DESIGN_CONFIRMATION"]
+
+
+def test_deepspeed_followup_global_is_dependency_and_ownership_wait(tmp_path):
+    radar = Radar(datetime(2026, 8, 22, tzinfo=UTC), 2, tmp_path / "seen.json", "", dry_run=True)
+    base = {
+        "repo": "deepspeedai/DeepSpeed",
+        "num": 8291,
+        "title": "Ulysses process-wide KV-head global breaks a second model",
+        "url": "https://github.com/deepspeedai/DeepSpeed/issues/8291",
+    }
+    issue = {
+        "state": "open",
+        "title": base["title"],
+        "body": """deepspeed/sequence/layer.py stores _ulysses_num_kv_heads process-wide.
+The first sequence-parallel model locks the KV heads, so a second attention model with a
+different head count silently corrupts the all-to-all shard layout and backward path.
+#8241 deliberately left this global in place with its own TODO.
+Suggested approach: mirror the per-model AutoTP fix in #8241 by threading the head count
+through DistributedAttention and _SeqAllToAll ctx.
+Regression test: run two DistributedAttention instances with different head counts through
+forward and backward in the same process.
+""",
+        "labels": [],
+        "assignees": [],
+        "author_association": "COLLABORATOR",
+        "user": {"login": "collaborator"},
+    }
+
+    candidate, reason = radar.score_issue(base, issue, [])
+
+    assert reason is None
+    assert candidate is not None
+    assert candidate["category"] == "WAIT_MAINTAINER"
+    assert candidate["gate_decision"] == "HUMAN_REVIEW"
+    assert candidate["auto_spawn"] is False
+    assert candidate["actionability_evidence"]["dependency_pr_numbers"] == [8241]
+    assert candidate["actionability_evidence"]["wait_reasons"] == [
+        "DEPENDENCY",
+        "OWNERSHIP_REVIEW",
+    ]
