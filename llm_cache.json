@@ -2537,6 +2537,37 @@
     ],
     "why": "The issue describes a concrete bug in the AI Gateway's provider translation layer: valid Anthropic computer use tool fields are not mapped correctly for Bedrock/Vertex fallbacks, causing HTTP 400 errors. A public reproduction via curl is provided, and no competing PR or issue exists. The fix is a targeted schema mapping correction in the translation adapter."
   },
+  "11d6859a58112aa490f491da8c8686e0217382f35bea8742b012184c5e11299f": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The issue states the sanitized payload did not reproduce on an idle server, but the original private payload also did not fail on idle in a small sample; the failure is load-dependent, which is consistent but makes validation harder."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/parser/gemma4.py",
+      "vllm/v1/engine/processor.py",
+      "vllm/v1/serve/chat_utils.py"
+    ],
+    "risks": [
+      "The failure is content-dependent and load-sensitive, making it hard to reproduce deterministically; the fix may need to handle edge cases in the grammar or sampling logic."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that sends a request with tool_choice='required' and a prompt that historically triggers prose-only output, asserting that the response contains at least one tool_call and finish_reason is 'tool_calls' only when tool_calls is non-empty. Use the sanitized payload under concurrent load to reproduce the failure, and verify the fix with a small model and fixed seed."
+    ],
+    "unknowns": [
+      "The exact private payload is not available, so the fix must be validated with the sanitized payload under load; the root cause of the enforcement gap (Defect 1) is not fully pinpointed to a specific code location."
+    ],
+    "why": "Issue provides a concrete, reproducible bug in the gemma4 tool parser: tool_choice='required' fails to enforce tool generation, and finish_reason is incorrectly set to 'tool_calls' with empty tool_calls. Root cause is partially identified (finish_reason logic in #53255) and the enforcement gap is clearly described. The issue includes a loop script and failure statistics, enabling a regression test. Although the exact private payload is not published, the sanitized payload and load conditions are specified, and the code path is anchored in the parser. The track is llm_algorithm because it involves the tool-calling mechanism and evaluation methodology, with a clear reference-vs-implementation test path."
+  },
   "11dcfe2b2ff63bc503586d56e28bbd38af22aec3c84c6c43305433c810e7333b": {
     "confidence": 0.85,
     "contradictions": [
@@ -19869,6 +19900,37 @@
     ],
     "why": "The issue provides a clear, reproducible bug with two independent root causes (guard skipped without input processors, and model-id regex gating) and concrete code anchors. The proposed fix is well-scoped and testable."
   },
+  "78587d606e212b8aff42b6abea0a93d9954baedb86eea2e364b6989fe8c8e563": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Maintainer's torch-only A/B shows torch 2.11 faster, contradicting the issue's torch-boundary bisect; this points to a vLLM-side change."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "vllm/entrypoints/pooling/base/serving.py",
+      "vllm/renderers/base.py",
+      "vllm/config/model.py"
+    ],
+    "risks": [
+      "Root cause hypothesis is based on code reading and prior art, not yet benchmark-verified; the actual cause could be a different vLLM change in the window."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run bge-m3 benchmark with --renderer-num-workers > 1 on a fixed vLLM build to confirm throughput recovery.",
+      "Reproduce on current main with the same RuBQ 4096-doc methodology to check if regression is live."
+    ],
+    "unknowns": [
+      "Whether --renderer-num-workers > 1 recovers the gap; whether the regression still reproduces on current main."
+    ],
+    "why": "The issue provides a reproducible ~18% pooling throughput regression, bisected to the v0.19→v0.20 window, with a concrete root-cause hypothesis (shared single-thread renderer executor serializing preprocessing/postprocessing) supported by code references and prior art (#43444, #49019). A clear validation path exists via --renderer-num-workers and current-main reproduction."
+  },
   "7880bebb8bfab06abfa35696c2a4a4cdd88dcd998dd9bde05ec6d4b73dbaaa01": {
     "confidence": 0.85,
     "contradictions": [],
@@ -26228,6 +26290,34 @@
       "Status of related issue audit (timeout) and whether #50894 is viable"
     ],
     "why": "Issue provides a clear root cause and reproduction for a user-visible crash with TP>1, but the deterministic gate requires HUMAN_REVIEW and the related issue audit failed (timeout). A draft PR (#50894) exists with failed CI and incomplete evidence, so a new clean candidate is not appropriate without maintainer confirmation."
+  },
+  "a48a202b467b8134c639beed94e1bf51440a24ddf2081f2a8e97824083c16997": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Original skew no longer reproduces on 1.4.x per maintainer comment, but issue remains open and structural hazard is acknowledged."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "runtime-image packaging or documentation",
+      "flashinfer version coupling or unsupported-workflow note"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #13650; need to compare implementation boundaries before creating a duplicate."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided docker command on the affected image; verify the version mismatch error. After fix, run the same command and confirm serve-time registry inspection passes without the env var."
+    ],
+    "unknowns": [
+      "Whether in-container vLLM upgrades are a supported workflow; maintainer decision pending."
+    ],
+    "why": "Issue provides a clear root cause (flashinfer-jit-cache version skew), a concrete reproduction command, and a verified workaround. The suggested fixes are actionable and the maintainer triage indicates engagement. Although the original skew no longer reproduces on 1.4.x, the structural hazard remains and the issue is still open, making a documentation or packaging fix valuable."
   },
   "a4a9b8abca860f2895cecbf4d15a3db008406c854fcdf9ce38e1e67aef3dbb49": {
     "confidence": 0.8,
@@ -33580,6 +33670,38 @@
       "Maintainer confirmation of expected behavior"
     ],
     "why": "Issue provides a concrete, reproducible numerical bug in a core LLM inference kernel: host-side max_seq_len changes bf16 rounding via kernel-selection heuristics, breaking eager vs CUDA-graph bit-exactness. Includes minimal repro, fp32 reference, and root-cause code anchors. This is a valid algorithm/numerics defect with a clear validation path."
+  },
+  "d2716be961b905e068dfdba81df5ee361261fde254b67ae85d58da9bbc070d71": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Maintainer comment claims fixed in v4.1.11, but issue remains open and no linked PR; may be partially addressed"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "run_commands input schema gate",
+      "run_commands execution normalizer",
+      "run_commands preview formatter"
+    ],
+    "risks": [
+      "Potential behavior change for malformed objects; need to ensure fallback to first string property does not mask real errors",
+      "Preview formatter changes may affect other command rendering paths"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing test that calls run_commands with {commands:[{cmd:'echo hi'}]} and asserts execution succeeds and preview shows 'echo hi'",
+      "Add regression tests for string commands and {command:'node', args:['-v']} to ensure unchanged behavior"
+    ],
+    "unknowns": [
+      "Whether the maintainer's fix in v4.1.11 fully covers all three seams or only execution",
+      "Exact implementation details of the local patch (not fully provided)"
+    ],
+    "why": "Issue provides a clear root cause (strict zod gate, runtime normalizer, and preview formatter each assume a fixed 'command' key), a concrete reproduction (model emits {cmd:...} causing '✖ Invalid input' and '[object Object]' preview), and a proposed three-seam fix with local patch verification. The candidate is actionable and technically valuable."
   },
   "d2867ddc8f955404c7dbceaa8c4e4e62b7893071f83cdc8ef99ddc26bfeb14f8": {
     "confidence": 0.7,
