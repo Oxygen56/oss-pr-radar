@@ -11555,6 +11555,32 @@
     ],
     "why": "The issue details four concrete, reproducible bugs in LiteLLM's image/video routes for OpenAI-compatible backends, with clear root causes and expected behavior. However, the track is agent_ai_infra, not llm_algorithm, and the candidate lacks maintainer approval or explicit design confirmation. The presence of multiple related PRs and the need for maintainer input on API behavior changes warrant a wait decision."
   },
+  "4ac3c242a95453185d0913c9ca46afc9bcd8a3af1c4ce1584173d8f953d8831f": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/llms/elevenlabs/transformation.py",
+      "litellm/llms/elevenlabs/"
+    ],
+    "risks": [
+      "Potential breaking change if parameter names conflict with existing LiteLLM options; need to ensure backward compatibility."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add unit test that mocks ElevenLabs API and verifies diarize, timestamps_granularity, detect_speaker_roles, etc. are included in multipart form data when passed to LiteLLM transcription endpoint."
+    ],
+    "unknowns": [
+      "Exact code location where parameters are dropped; maintainer preference on implementation approach."
+    ],
+    "why": "Issue clearly identifies missing pass-through of ElevenLabs diarization parameters in LiteLLM's speech-to-text provider, with expected vs actual behavior and example request. No duplicate PR found; root cause is likely in provider parameter mapping."
+  },
   "4afef72f7faab589c64235738ae45e53d02e3da49950703caefc8301617da865": {
     "confidence": 0.9,
     "contradictions": [
@@ -17431,6 +17457,38 @@
     ],
     "wait_reason": "DESIGN_CONFIRMATION",
     "why": "Issue clearly identifies error suppression in hgctl upgrade/uninstall and has maintainer approval, but a design conflict remains: strict fail-closed semantics would break local-docker installs without kubeconfig. The maintainer requires Design #4403 revision and approval before implementation."
+  },
+  "69605fd98dc882648e2fcf1c09dcaafcf36dae1e0dfe22bd17e74748b569bcb7": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The issue states the bug is not reproducible on an idle server, but the provided loop script and payload variations suggest a potential reproduction path under load."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/parser/gemma4.py",
+      "vllm/v1/engine",
+      "tool_choice enforcement logic",
+      "finish_reason computation"
+    ],
+    "risks": [
+      "The bug is content-dependent and may be hard to reproduce deterministically; the fix might need to handle edge cases in grammar enforcement."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided loop script with the sanitized payload under concurrent load to reproduce the failure.",
+      "Add a regression test that asserts tool_choice='required' always produces a non-empty tool_calls array and correct finish_reason."
+    ],
+    "unknowns": [
+      "Exact root cause of the enforcement gap in the gemma4 parser; whether existing PRs fully cover the issue."
+    ],
+    "why": "The issue identifies a concrete, reproducible bug in the gemma4 tool parser where tool_choice='required' is not enforced, leading to prose-only responses mislabeled as tool calls. Root cause is partially identified (finish_reason logic) and the enforcement gap is clearly described. The track is llm_algorithm because it involves the tool-calling mechanism and structured output enforcement, with a clear validation path via the provided loop script and payload variations."
   },
   "696e02a999f1d011ae915149f892da85ad6d48baaeb77c7118e9f6f1d84d1d0e": {
     "confidence": 0.7,
@@ -24286,6 +24344,38 @@
     ],
     "why": "Issue provides a deterministic failure with a clear root cause in the Bedrock Converse lowering: consecutive user messages are not merged, violating Anthropic's requirement for toolResult blocks. The fix is a minimal merge in the lowering, analogous to the existing anthropic-messages protocol. No competing PR or issue found."
   },
+  "937bebb9102c0bf9343d1bec842af47ee24dbcdf41bf1da696e90baaa48662ae": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Original skew no longer reproduces on 1.4.x, but structural hazard remains"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "runtime image packaging",
+      "flashinfer-jit-cache pinning",
+      "serve-time version check or documentation"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #13650 or #13645; need to compare implementation boundaries",
+      "Maintainer may prefer documentation-only fix over packaging change"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided docker repro with vllm==0.23.0 on the affected image to confirm the error",
+      "Add a build-time or serve-time test that asserts flashinfer-python and flashinfer-jit-cache versions match"
+    ],
+    "unknowns": [
+      "Whether in-container vLLM upgrades are a supported workflow",
+      "Whether existing PR #13650 already addresses the root cause"
+    ],
+    "why": "Issue provides a clear root cause (flashinfer-jit-cache version skew), a concrete reproduction command, and a verified workaround. The suggested fix is actionable and the maintainer triage indicates engagement. The structural hazard remains latent even though the original skew no longer reproduces on 1.4.x, so the issue is still relevant for a durable fix."
+  },
   "93919a7400f327dac017fdab818ec3c66503b7cae0336660a726c80c24bf0ac5": {
     "confidence": 0.7,
     "contradictions": [],
@@ -27300,6 +27390,34 @@
     ],
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue reports SSRF proxy retry failures after upgrade, but root cause is ambiguous: likely timeout misconfiguration or retry multiplication. Existing PRs are closed and not directly linked. No maintainer confirmation or clear design direction."
+  },
+  "aa17af67f1948ff60be92a0f9e043780212cfb519d65dd6e852fc3d47ecd96da": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "haystack/components/preprocessors/embedding_based_document_splitter.py",
+      "test/components/preprocessors/test_embedding_based_document_splitter.py"
+    ],
+    "risks": [
+      "Potential behavior change for users relying on the current trailing split behavior, though it aligns with documented min_length semantics.",
+      "Merging backward may violate max_length if the preceding chunk is already near max; need to handle that edge case."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test for _merge_small_splits with a trailing short split (e.g., [60, 10] with min_length=50) asserting merged output length 70.",
+      "Add an end-to-end test using the deterministic embedder from the issue to verify the trailing 'Ok.' is merged into the previous chunk."
+    ],
+    "unknowns": [
+      "Maintainer design preference on whether to merge backward or adjust documentation; however, the issue clearly states the documented behavior is broken, so the fix direction is clear."
+    ],
+    "why": "Issue provides a precise root cause in _merge_small_splits, a minimal isolated repro, and an end-to-end deterministic reproduction. The fix is a small, well-scoped change to merge the trailing short split backward, with clear test coverage gap identified."
   },
   "aa807a846ae766af80addfd956d9e867d8f2523a76832cd963b319b737fe8e30": {
     "confidence": 0.7,
@@ -34800,6 +34918,42 @@
     ],
     "why": "The issue provides a reproducible memory leak in the V2 runner with Qwen3 models, including exact commands, environment, and comparative evidence (V1 stable, TranslateGemma stable). It identifies likely components (scheduler state, prefix caching, request lifecycle) and has community confirmation with per-request leak rate. This is a concrete, actionable bug report with clear validation path."
   },
+  "d5f441596bd37139e39536d1329c299b02b9810538dd94d4d8159cd2ebc805e6": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Torch-only A/B shows 2.11 faster, contradicting initial torch-boundary hypothesis; but this supports vLLM-side cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/entrypoints/pooling/base/serving.py",
+      "vllm/renderers/base.py",
+      "vllm/config/model.py"
+    ],
+    "risks": [
+      "Root cause hypothesis not yet empirically confirmed; could be another vLLM change in the window",
+      "Performance benchmarks are sensitive to hardware and environment; need controlled setup"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run /v1/embeddings benchmark with --renderer-num-workers > 1 on a single build to confirm recovery",
+      "Reproduce on current main to check if regression persists",
+      "Add regression test comparing throughput with default vs increased renderer workers"
+    ],
+    "unknowns": [
+      "Whether --renderer-num-workers > 1 actually recovers the gap",
+      "Whether the issue reproduces on current main"
+    ],
+    "why": "The issue provides a reproducible throughput regression with detailed benchmark methodology, bisection across releases, and a concrete root-cause hypothesis (shared single-thread executor introduced by #39763) supported by code references and prior art. The proposed validation path (--renderer-num-workers > 1 and testing on current main) is concrete and actionable."
+  },
   "d60f2e1a91c19c80c1bd36488768d32e4c7d161c9b8e8568ba983863722a7637": {
     "confidence": 0.7,
     "contradictions": [
@@ -40191,6 +40345,35 @@
     "unknowns": [],
     "wait_reason": null,
     "why": "Issue is a user error: diffusers never shipped a Trainer class; the API is from transformers. The proposed fix (adding trainer.py) would be a wrapper/API addition, not an algorithm contribution. No concrete algorithm mechanism or validation path."
+  },
+  "f1c8c3ba23b56e055accc3d9d8a3eeb78de1e40393ec4f16df6bf2c834df34c3": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Recent comments state Bug 1 hydration is fixed on default branch, while issue claims it is broken; this does not affect Bug 3 actionability"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "Fix OAuth2 scope handling in client_credentials and authorization_code flows to use configured scopes or omit scope parameter",
+      "Add regression tests for scope construction in token requests and authorize redirects"
+    ],
+    "risks": [
+      "Changing scope behavior may affect existing users relying on discovery scopes; need to ensure backward compatibility or config opt-in"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a test that mocks OIDC discovery returning a broad scopes_supported list and verifies the token request uses only configured scopes or omits scope",
+      "Add an integration test for authorization_code flow that checks the authorize redirect's scope parameter"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a config option for scopes or default to omitting scope; exact location of scope construction code"
+    ],
+    "why": "The issue provides a detailed root cause for Bug 1 (missing hydration of persisted client credentials) and Bug 3 (over-broad scope from discovery), with concrete code anchors and a clear reproduction path. Recent comments indicate Bug 1's hydration is already fixed on the default branch, but Bug 3 remains unaddressed and is actionable. The issue is technically valuable and not fully covered by existing PRs."
   },
   "f1fecc58d9ad1a22f75e3a02c674e39f84615b0f4f56797bde44e7035c9d16fe": {
     "confidence": 0.8,
