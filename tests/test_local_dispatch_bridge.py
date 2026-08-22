@@ -724,6 +724,92 @@ def test_event_drain_creates_exactly_one_new_issue_task(monkeypatch, tmp_path):
     ]
 
 
+def test_event_drain_pauses_when_active_task_hit_codex_usage_limit(monkeypatch, tmp_path):
+    rollout = tmp_path / "rollout.jsonl"
+    rollout.write_text(
+        json.dumps(
+            {
+                "type": "event_msg",
+                "payload": {
+                    "type": "task_complete",
+                    "turn_id": "turn-usage-limit",
+                    "error": {
+                        "codex_error_info": "usage_limit_exceeded",
+                        "message": (
+                            "You've hit your usage limit. Visit settings or try again "
+                            "at Aug 27th, 2026 11:08 PM."
+                        ),
+                    },
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "CREATE TABLE threads ("
+            "id TEXT, archived INTEGER, title TEXT, updated_at INTEGER, rollout_path TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?,?,?)",
+            ("thread-1", 0, "[有价值] a/b#1", 123, str(rollout)),
+        )
+
+    class Store:
+        def active_task_count(self, **_kwargs):
+            return 5
+
+        def task_context_candidates(self):
+            return [
+                {
+                    "key": "a/b#1",
+                    "intentStatus": "DISPATCHED",
+                    "threadId": "thread-1",
+                }
+            ]
+
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+    monkeypatch.setattr(
+        MODULE, "restore_reconcile", lambda _args: {"ok": True, "restored": [], "errors": []}
+    )
+    monkeypatch.setattr(MODULE, "_rearm_negative_followup_deliveries", lambda _store: [])
+    monkeypatch.setattr(MODULE, "_rearm_interrupted_recovery_turns", lambda _store: ([], []))
+    monkeypatch.setattr(MODULE, "live_thread_turn_states", lambda _thread_ids: {})
+    monkeypatch.setattr(
+        MODULE,
+        "publication_feedback_list",
+        lambda _args: pytest.fail("account usage pause should stop before dispatch probes"),
+    )
+
+    result = MODULE._drain_once_unlocked(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            runtime_root=tmp_path,
+            project_id="github-project",
+            owner="event-drain",
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["action"] == "none"
+    assert result["accountBlocked"]["reason"] == "codex_usage_limit_exceeded"
+    assert result["accountBlocked"]["resumeAfter"] == "Aug 27th, 2026 11:08 PM"
+    assert result["held"] == [
+        {
+            "key": "a/b#1",
+            "threadId": "thread-1",
+            "reason": "codex_usage_limit_exceeded",
+            "resumeAfter": "Aug 27th, 2026 11:08 PM",
+            "turnId": "turn-usage-limit",
+            "threadUpdatedAt": 123,
+            "currentTitle": "[有价值] a/b#1",
+        }
+    ]
+
+
 def test_root_task_create_passes_runtime_root_to_worker(monkeypatch, tmp_path):
     runtime_root = tmp_path / "runtime"
     runtime_root.mkdir()

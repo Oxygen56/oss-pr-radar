@@ -330,6 +330,8 @@ IMMEDIATE_RECOVERY_ERROR_CODES = {
     "responseStreamDisconnected",
     "responseTooManyFailedAttempts",
 }
+CODEX_USAGE_LIMIT_ERROR_CODE = "usage_limit_exceeded"
+CODEX_USAGE_LIMIT_RESUME_RE = re.compile(r"\btry again at\s+(.+?)(?:\.|$)", re.IGNORECASE)
 BENIGN_POLICY_RECOVERY_PROMPT = (
     "这是一个普通开源软件的本地 GPU 张量生命周期修复续办，不是网络安全任务。"
     "保留现有工作树和已完成改动，直接完成离线测试、独立复核以及 Workspace Result "
@@ -425,6 +427,19 @@ def latest_thread_turn_state(rollout_path: str | None) -> dict[str, Any] | None:
             "turnId": str(payload.get("turn_id") or ""),
         }
     return None
+
+
+def _is_codex_usage_limit_state(turn_state: dict[str, Any] | None) -> bool:
+    if not turn_state or turn_state.get("status") != "failed":
+        return False
+    code = str(turn_state.get("code") or "")
+    message = str(turn_state.get("message") or "")
+    return code == CODEX_USAGE_LIMIT_ERROR_CODE or "usage limit" in message.casefold()
+
+
+def _codex_usage_limit_resume_after(message: str) -> str | None:
+    match = CODEX_USAGE_LIMIT_RESUME_RE.search(message)
+    return match.group(1).strip() if match else None
 
 
 def _terminal_state_from_app_server_turn(turn: dict[str, Any]) -> dict[str, Any] | None:
@@ -3016,6 +3031,92 @@ def _global_task_wip(
     limit = _private_task_limit()
     active = _active_task_count(store, exclude_intent_id=exclude_intent_id)
     return limit is not None and active >= limit, active, limit
+
+
+def _thread_bound_issue_tasks(store: Any) -> list[dict[str, Any]]:
+    loader = getattr(store, "active_task_threads", None)
+    if callable(loader):
+        return list(loader())
+    candidates = getattr(store, "task_context_candidates", None)
+    if not callable(candidates):
+        return []
+    return [
+        item
+        for item in candidates()
+        if item.get("intentStatus") == "DISPATCHED" and item.get("threadId")
+    ]
+
+
+def _codex_usage_limit_pause(store: Any) -> dict[str, Any] | None:
+    tasks = _thread_bound_issue_tasks(store)
+    thread_ids = sorted({str(item.get("threadId") or "") for item in tasks if item.get("threadId")})
+    if not thread_ids or not THREAD_DB.is_file():
+        return None
+
+    placeholders = ",".join("?" for _ in thread_ids)
+    rows: dict[str, tuple[int, str, int, str | None]] = {}
+    try:
+        connection = sqlite3.connect(THREAD_DB)
+        values = connection.execute(
+            f"SELECT id,archived,title,updated_at,rollout_path FROM threads "
+            f"WHERE id IN ({placeholders})",
+            thread_ids,
+        ).fetchall()
+        rows = {
+            str(row[0]): (int(row[1] or 0), str(row[2] or ""), int(row[3] or 0), row[4])
+            for row in values
+        }
+    except sqlite3.Error:
+        return None
+    finally:
+        if "connection" in locals():
+            connection.close()
+
+    live_probe: set[str] = set()
+    persisted_states: dict[str, dict[str, Any] | None] = {}
+    for thread_id in thread_ids:
+        row = rows.get(thread_id)
+        if row is None or row[0] != 0:
+            continue
+        state = latest_thread_turn_state(row[3])
+        persisted_states[thread_id] = state
+        if state is None:
+            live_probe.add(thread_id)
+    live_states = live_thread_turn_states(live_probe)
+
+    tasks_by_thread = {str(item.get("threadId") or ""): item for item in tasks}
+    blocked: list[dict[str, Any]] = []
+    resume_after: str | None = None
+    for thread_id in thread_ids:
+        row = rows.get(thread_id)
+        if row is None or row[0] != 0:
+            continue
+        state = persisted_states.get(thread_id) or live_states.get(thread_id)
+        if not _is_codex_usage_limit_state(state):
+            continue
+        message = str((state or {}).get("message") or "")
+        resume_after = resume_after or _codex_usage_limit_resume_after(message)
+        task = tasks_by_thread.get(thread_id) or {}
+        blocked.append(
+            {
+                "key": task.get("key"),
+                "threadId": thread_id,
+                "reason": "codex_usage_limit_exceeded",
+                "resumeAfter": _codex_usage_limit_resume_after(message),
+                "turnId": (state or {}).get("turnId"),
+                "threadUpdatedAt": row[2],
+                "currentTitle": row[1],
+            }
+        )
+
+    if not blocked:
+        return None
+    return {
+        "reason": "codex_usage_limit_exceeded",
+        "resumeAfter": resume_after,
+        "activeTaskCount": _active_task_count(store),
+        "tasks": blocked,
+    }
 
 
 def independent_review_run(args: argparse.Namespace) -> dict[str, Any]:
@@ -13013,6 +13114,17 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
     rearmed = _rearm_negative_followup_deliveries(store)
     recovery_rearmed, recovery_exhausted = _rearm_interrupted_recovery_turns(store)
     rearmed.extend(recovery_rearmed)
+    account_pause = _codex_usage_limit_pause(store)
+    if account_pause:
+        return {
+            "ok": True,
+            "action": "none",
+            "held": account_pause["tasks"],
+            "accountBlocked": account_pause,
+            "restored": restored_items,
+            "rearmed": rearmed,
+            "recoveryRetryExhausted": recovery_exhausted,
+        }
 
     publication_feedback_state = publication_feedback_list(argparse.Namespace(ledger=args.ledger))
     if publication_feedback_state.get("candidates"):
