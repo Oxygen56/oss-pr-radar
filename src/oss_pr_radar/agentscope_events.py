@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import sqlite3
+import subprocess
 import time
 import urllib.error
 import urllib.request
@@ -173,6 +174,11 @@ class GitHubIssuePoller:
     def _headers(state: dict[str, Any], *, conditional: bool) -> dict[str, str]:
         headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
         token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+        if not token:
+            try:
+                token = subprocess.run(["gh", "auth", "token"], check=True, capture_output=True, text=True, timeout=3).stdout.strip()
+            except (OSError, subprocess.SubprocessError):
+                token = ""
         if token:
             headers["Authorization"] = f"Bearer {token}"
         if conditional and state.get("gateEtag"):
