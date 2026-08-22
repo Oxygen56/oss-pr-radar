@@ -11904,6 +11904,38 @@
     ],
     "why": "The issue is a detailed, evidence-rich bug report about a silent device-side wedge in the sparse-decode MLA kernel, with a clear request for maintainer guidance on the correct owner and diagnostic path. However, the root cause is not established, the report explicitly asks for guidance rather than proposing a patch, and the deterministic gate is HUMAN_REVIEW. The open PR and related issue lookups failed, so duplicate work cannot be excluded. Actionability is limited by the need for maintainer input and the lack of a reliable reproducer."
   },
+  "4dbaa062d418a563ade3082676cce85c920d73f72206d77efce325fe08f584fd": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue bisects to torch 2.11, but maintainer's torch-only A/B shows torch 2.11 is faster on a fixed vLLM commit"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "pooling entrypoint executor configuration",
+      "renderer worker pool sizing or isolation"
+    ],
+    "risks": [
+      "Root cause may be elsewhere; the proposed fix might not fully restore performance",
+      "Changes to executor configuration could affect other pooling/reranker paths"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run benchmark with --renderer-num-workers > 1 on /v1/embeddings to see if throughput recovers",
+      "Reproduce on current main to confirm the regression is still live"
+    ],
+    "unknowns": [
+      "Whether --renderer-num-workers > 1 actually recovers the gap",
+      "Whether the regression still reproduces on current main"
+    ],
+    "why": "The issue provides a clear performance regression with a bisected torch boundary, but a maintainer's torch-only A/B shows torch 2.11 is faster, and a contributor's code analysis identifies a plausible vLLM-side root cause (#39763) with a concrete one-flag test. The evidence supports a concrete validation path and actionable code work."
+  },
   "4dcbfd248d1320c249e1314b6bdaf14f0635a730e011252574e18378bc311a1b": {
     "confidence": 0.85,
     "contradictions": [],
