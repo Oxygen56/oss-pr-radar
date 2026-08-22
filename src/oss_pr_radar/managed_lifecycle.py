@@ -1810,6 +1810,17 @@ class ManagedLedger:
                         "probeReceipt": existing_provenance.get("probeReceipt"),
                     }
                 )
+                established_receipt = existing_provenance.get("probeReceipt")
+                if isinstance(established_receipt, dict):
+                    provenance.update(
+                        {
+                            "selectedBaseSha": established_receipt.get("baseSha"),
+                            "codePaths": list(established_receipt.get("codePaths") or []),
+                            "headSha": established_receipt.get("headSha"),
+                            "commitSha": established_receipt.get("commitSha"),
+                            "resultDigest": established_receipt.get("resultDigest"),
+                        }
+                    )
             connection.execute(
                 """INSERT INTO managed_tasks
                    (task_id,opportunity_key,thread_id,worktree_path,state,source,
@@ -1952,6 +1963,110 @@ class ManagedLedger:
                     return None
             return receipt
         return None
+
+    def implementation_authorization_receipt(
+        self,
+        *,
+        task_id: str,
+        thread_id: str,
+        worktree_path: str,
+        repo: str,
+        issue_url: str,
+        receipt_digest: str | None = None,
+        checkout_path: Path | None = None,
+    ) -> dict[str, Any] | None:
+        """Verify the signed receipt behind an established implementation transition.
+
+        Receipt freshness is a transition-time constraint. Once the managed task has
+        durably reached ``IMPLEMENTATION_READY``, replaying its controller context
+        must validate the immutable task binding and signature without depending on
+        mutable opportunity metadata or the receipt's one-hour transport lifetime.
+        """
+
+        from .repo_probe import (
+            REPRODUCED_VALIDATED,
+            validate_checkout_paths,
+            verify_probe_receipt,
+        )
+
+        connection = self._connection()
+        try:
+            task_row = connection.execute(
+                "SELECT * FROM managed_tasks WHERE task_id=?", (task_id,)
+            ).fetchone()
+            opportunity_row = (
+                connection.execute(
+                    "SELECT * FROM managed_opportunities WHERE opportunity_key=?",
+                    (task_row["opportunity_key"],),
+                ).fetchone()
+                if task_row is not None
+                else None
+            )
+        finally:
+            connection.close()
+        if task_row is None or opportunity_row is None or task_row["state"] != "IMPLEMENTATION_READY":
+            return None
+        if not task_row["thread_id"] or task_row["thread_id"] != thread_id:
+            return None
+        if not task_row["worktree_path"]:
+            return None
+        if Path(str(task_row["worktree_path"])).resolve() != Path(worktree_path).resolve():
+            return None
+        try:
+            identity = canonical_opportunity_identity(
+                opportunity_key=task_row["opportunity_key"],
+                owner=opportunity_row["owner"],
+                repo=opportunity_row["repo"],
+                issue_number=opportunity_row["issue_number"],
+                issue_url=opportunity_row["issue_url"],
+            )
+            provenance = json.loads(task_row["provenance_json"] or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+        if not isinstance(provenance, dict):
+            return None
+        if repo != f"{identity['owner']}/{identity['repo']}" or issue_url != identity["issueUrl"]:
+            return None
+        receipt = provenance.get("probeReceipt")
+        if not isinstance(receipt, dict):
+            return None
+        stored_digest = str(provenance.get("probeReceiptDigest") or "")
+        candidate_digest = str(receipt.get("receiptDigest") or "")
+        if not stored_digest or candidate_digest != stored_digest:
+            return None
+        if receipt_digest is not None and receipt_digest != stored_digest:
+            return None
+        selected_base_sha = str(receipt.get("baseSha") or "")
+        code_paths = [str(path) for path in (receipt.get("codePaths") or []) if str(path).strip()]
+        head_sha = str(receipt.get("headSha") or "")
+        commit_sha = str(receipt.get("commitSha") or "")
+        result_digest = str(receipt.get("resultDigest") or "")
+        if not all((selected_base_sha, code_paths, head_sha, commit_sha, result_digest)):
+            return None
+        if not verify_probe_receipt(
+            receipt,
+            repo=repo,
+            base_sha=selected_base_sha,
+            code_paths=code_paths,
+            required_level=REPRODUCED_VALIDATED,
+            issue_url=issue_url,
+            task_id=task_id,
+            thread_id=thread_id,
+            thread_fingerprint_value=str(provenance.get("threadFingerprint") or "") or None,
+            head_sha=head_sha,
+            commit_sha=commit_sha,
+            result_digest=result_digest,
+            enforce_freshness=False,
+        ):
+            return None
+        if checkout_path is not None:
+            try:
+                current_bindings = validate_checkout_paths(checkout_path, code_paths)
+            except Exception:
+                return None
+            if current_bindings != receipt.get("codePathBindings"):
+                return None
+        return receipt
 
     def upsert_pr(
         self,
@@ -2138,6 +2253,11 @@ class ManagedLedger:
                     "probeLevel": "REPRODUCED_VALIDATED",
                     "probeReceiptDigest": receipt_digest,
                     "probeReceipt": candidate_receipt,
+                    "selectedBaseSha": candidate_receipt["baseSha"],
+                    "codePaths": list(candidate_receipt["codePaths"]),
+                    "headSha": candidate_receipt["headSha"],
+                    "commitSha": candidate_receipt["commitSha"],
+                    "resultDigest": candidate_receipt["resultDigest"],
                 }
             )
             connection.execute(
@@ -2989,6 +3109,11 @@ class ManagedLedger:
                     "probeLevel": REPRODUCED_VALIDATED,
                     "probeReceiptDigest": receipt["receiptDigest"],
                     "probeReceipt": receipt,
+                    "selectedBaseSha": receipt["baseSha"],
+                    "codePaths": list(receipt["codePaths"]),
+                    "headSha": receipt["headSha"],
+                    "commitSha": receipt["commitSha"],
+                    "resultDigest": receipt["resultDigest"],
                 }
             )
             connection.execute(

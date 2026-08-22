@@ -3805,74 +3805,56 @@ def write_task_context(
     private_dir = cwd / TASK_PRIVATE_DIR
     private_dir.mkdir(parents=True, exist_ok=True)
     os.chmod(private_dir, 0o700)
+    path = private_dir / "task-context.json"
+    prior_context: dict[str, Any] = {}
+    if path.is_file() and not path.is_symlink():
+        try:
+            prior_value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            prior_value = {}
+        if isinstance(prior_value, dict):
+            prior_context = prior_value
     managed = _is_managed_worktree(cwd)
     project_root = GITHUB_ROOT.resolve() if managed else cwd.resolve()
     raw_task_stage = str(context.get("taskStage") or "REPRODUCTION_REQUIRED")
     raw_probe_level = str(context.get("probeLevel") or "UNVERIFIED")
-    probe_receipt_digest = str(context.get("probeReceiptDigest") or "")
     managed_ledger = ManagedLedger(store.path, ensure_schema=True)
     managed_task = managed_ledger.read_task(str(context.get("intentId") or ""))
+    managed_provenance: dict[str, Any] = {}
     if managed_task and managed_task.get("readSource") == "managed":
         try:
             managed_provenance = json.loads(managed_task.get("provenance_json") or "{}")
         except (TypeError, json.JSONDecodeError):
             managed_provenance = {}
-        if managed_task.get("state") == "IMPLEMENTATION_READY" and isinstance(
-            managed_provenance.get("probeReceipt"), dict
-        ):
-            raw_task_stage = "IMPLEMENTATION_READY"
-            raw_probe_level = str(managed_provenance.get("probeLevel") or "")
-            probe_receipt_digest = str(
-                managed_provenance.get("probeReceiptDigest")
-                or managed_provenance["probeReceipt"].get("receiptDigest")
-                or ""
-            )
     verified_receipt = None
-    if raw_task_stage == "IMPLEMENTATION_READY":
-        issue_match = ISSUE_URL.fullmatch(issue_url)
-        if issue_match is None:
-            raise RuntimeError("issue URL is invalid")
-        repo_identity = issue_match.group(1)
-        selected_base = str(context.get("selectedBaseSha") or "")
-        code_paths = [str(path) for path in (context.get("codePaths") or []) if str(path).strip()]
-        expected_policy = (
-            str(
-                context.get("policyDigest")
-                or (context.get("preTaskEvidence") or {}).get("policyDigest")
-                or ""
-            )
-            or None
-        )
-        if (
-            selected_base
-            and code_paths
-            and context.get("headSha")
-            and context.get("commitSha")
-            and context.get("resultDigest")
-        ):
-            verified_receipt = ManagedLedger(
-                store.path, ensure_schema=True
-            ).current_reproduction_receipt(
+    issue_match = ISSUE_URL.fullmatch(issue_url)
+    if issue_match is None:
+        raise RuntimeError("issue URL is invalid")
+    repo_identity = issue_match.group(1)
+    if managed_task and managed_task.get("state") == "IMPLEMENTATION_READY":
+        managed_receipt = managed_provenance.get("probeReceipt")
+        if isinstance(managed_receipt, dict):
+            verified_receipt = managed_ledger.implementation_authorization_receipt(
                 task_id=str(context.get("intentId") or ""),
-                receipt_digest=probe_receipt_digest,
+                thread_id=thread_id,
+                worktree_path=str(cwd.resolve()),
                 repo=repo_identity,
                 issue_url=issue_url,
-                selected_base_sha=selected_base,
-                code_paths=code_paths,
-                head_sha=str(context.get("headSha")),
-                commit_sha=str(context.get("commitSha")),
-                result_digest=str(context.get("resultDigest")),
-                policy_digest=expected_policy,
+                receipt_digest=str(managed_receipt.get("receiptDigest") or ""),
             )
+            if verified_receipt is not None:
+                context["selectedBaseSha"] = verified_receipt["baseSha"]
+                context["codePaths"] = verified_receipt["codePaths"]
+                context["headSha"] = verified_receipt["headSha"]
+                context["commitSha"] = verified_receipt["commitSha"]
+                context["resultDigest"] = verified_receipt["resultDigest"]
     if verified_receipt is not None:
         context["reproductionReceipt"] = verified_receipt
         raw_task_stage = "IMPLEMENTATION_READY"
         raw_probe_level = REPRODUCED_VALIDATED
-        probe_receipt_digest = str(verified_receipt["receiptDigest"])
     else:
         raw_task_stage = "REPRODUCTION_REQUIRED"
         raw_probe_level = "UNVERIFIED"
-        probe_receipt_digest = ""
     task_stage = raw_task_stage
     reproduction_only = task_stage == "REPRODUCTION_REQUIRED"
     allowed_actions = (
@@ -3905,7 +3887,6 @@ def write_task_context(
         "childMayComment": False,
     }
     payload["contextDigest"] = _task_context_digest(context, effective_prepared_head)
-    path = private_dir / "task-context.json"
     bootstrap_path = None
     if managed:
         context_fd, context_parent, context_handles = _open_shared_context_parent(
@@ -3921,6 +3902,26 @@ def write_task_context(
         if bootstrap_path is not None:
             for fd in reversed(context_handles):
                 os.close(fd)
+    repaired_same_result = (
+        not reproduction_only
+        and prior_context.get("taskStage") == "REPRODUCTION_REQUIRED"
+        and prior_context.get("childMayEditFiles") is False
+        and prior_context.get("intentId") == payload.get("intentId")
+        and prior_context.get("threadId") == payload.get("threadId")
+        and bool(prior_context.get("worktreePath"))
+        and Path(str(prior_context.get("worktreePath") or "")).resolve() == cwd.resolve()
+        and prior_context.get("resultDigest") == payload.get("resultDigest")
+        and bool(payload.get("resultDigest"))
+    )
+    if repaired_same_result:
+        store.record_implementation_context_repair(
+            key=str(payload.get("key") or ""),
+            task_id=str(payload.get("intentId") or ""),
+            thread_id=thread_id,
+            worktree_path=str(cwd.resolve()),
+            result_digest=str(payload["resultDigest"]),
+            context_digest=str(payload["contextDigest"]),
+        )
     return path
 
 
@@ -4533,6 +4534,7 @@ def _task_turn_start_unlocked(
     prompt: str,
     delivery_kind: str,
     delivery_token: str,
+    delivery_attempt_digest: str | None = None,
     validation_binding: dict[str, Any] | None = None,
     validation_candidate: dict[str, Any] | None = None,
 ) -> None:
@@ -4543,6 +4545,7 @@ def _task_turn_start_unlocked(
         delivery_kind=delivery_kind,
         thread_id=thread_id,
         delivery_token=delivery_token,
+        delivery_attempt_digest=delivery_attempt_digest,
         **(
             {
                 "reservation_digest": validation_binding["reservationDigest"],
@@ -4572,6 +4575,7 @@ def _task_turn_start_unlocked(
         prompt=prompt,
         delivery_kind=delivery_kind,
         delivery_token=delivery_token,
+        delivery_attempt_digest=delivery_attempt_digest,
         validation_reservation_digest=(
             str(validation_binding["reservationDigest"])
             if delivery_kind == "validation-followup" and validation_binding
@@ -4588,6 +4592,7 @@ def _write_turn_start_request(
     prompt: str,
     delivery_kind: str = "",
     delivery_token: str = "",
+    delivery_attempt_digest: str | None = None,
     validation_reservation_digest: str | None = None,
 ) -> None:
     if process.stdin is None:
@@ -4602,7 +4607,13 @@ def _write_turn_start_request(
     }
     if delivery_kind and delivery_token:
         client_message_id = f"oss-pr-radar:{delivery_kind}:{delivery_token}"
-        if delivery_kind == "validation-followup":
+        if (
+            delivery_kind == "implementation-followup"
+            and delivery_attempt_digest
+            and delivery_attempt_digest != delivery_token
+        ):
+            client_message_id += f":{delivery_attempt_digest}"
+        elif delivery_kind == "validation-followup":
             if not validation_reservation_digest:
                 raise RuntimeError("validation task turn requires its reservation digest")
             client_message_id += f":{validation_reservation_digest}"
@@ -4633,6 +4644,7 @@ def _guarded_task_turn_start(
     prompt: str,
     delivery_kind: str,
     delivery_token: str,
+    delivery_attempt_digest: str | None = None,
     validation_binding: dict[str, Any] | None = None,
     validation_candidate: dict[str, Any] | None = None,
 ) -> None:
@@ -4646,6 +4658,7 @@ def _guarded_task_turn_start(
             prompt=prompt,
             delivery_kind=delivery_kind,
             delivery_token=delivery_token,
+            delivery_attempt_digest=delivery_attempt_digest,
             validation_binding=validation_binding,
             validation_candidate=validation_candidate,
         )
@@ -4826,6 +4839,16 @@ def _app_server_task_turn_worker(args: argparse.Namespace) -> dict[str, Any]:
     if candidate is None:
         raise RuntimeError("task-turn delivery reservation is unavailable")
     candidate = candidate | {"threadId": args.thread_id}
+    delivery_attempt_digest = (
+        str(candidate.get("implementationFollowupAttemptDigest") or args.delivery_token)
+        if args.delivery_kind == "implementation-followup"
+        else None
+    )
+    if args.delivery_kind == "implementation-followup" and (
+        (getattr(args, "delivery_attempt_digest", None) or args.delivery_token)
+        != delivery_attempt_digest
+    ):
+        raise RuntimeError("implementation task-turn attempt binding mismatch")
     validation_binding: dict[str, Any] | None = None
     if args.delivery_kind == "validation-followup":
         binding_reader = getattr(store, "validation_followup_delivery_binding", None)
@@ -4956,6 +4979,7 @@ def _app_server_task_turn_worker(args: argparse.Namespace) -> dict[str, Any]:
                 prompt=prompt,
                 delivery_kind=args.delivery_kind,
                 delivery_token=args.delivery_token,
+                delivery_attempt_digest=delivery_attempt_digest,
                 validation_binding=validation_binding,
                 validation_candidate=candidate,
             )
@@ -4977,6 +5001,11 @@ def _app_server_task_turn_worker(args: argparse.Namespace) -> dict[str, Any]:
             "turnId": turn_id,
             "deliveryKind": args.delivery_kind,
             "deliveryToken": args.delivery_token,
+            **(
+                {"deliveryAttemptDigest": delivery_attempt_digest}
+                if delivery_attempt_digest
+                else {}
+            ),
             **(
                 {"reservationDigest": validation_binding["reservationDigest"]}
                 if validation_binding
@@ -5115,6 +5144,7 @@ def _task_turn_delivery_identity(
     delivery_kind: str,
     thread_id: str,
     delivery_token: str,
+    delivery_attempt_digest: str | None = None,
     validation_reservation_digest: str | None = None,
 ) -> dict[str, str]:
     identity = {
@@ -5122,7 +5152,13 @@ def _task_turn_delivery_identity(
         "threadId": thread_id,
         "deliveryToken": delivery_token,
     }
-    if delivery_kind == "validation-followup":
+    if (
+        delivery_kind == "implementation-followup"
+        and delivery_attempt_digest
+        and delivery_attempt_digest != delivery_token
+    ):
+        identity["deliveryAttemptDigest"] = delivery_attempt_digest
+    elif delivery_kind == "validation-followup":
         if not validation_reservation_digest or not re.fullmatch(
             r"[0-9a-f]{64}", validation_reservation_digest
         ):
@@ -5136,6 +5172,7 @@ def _task_turn_delivery_file_key(
     delivery_kind: str,
     thread_id: str,
     delivery_token: str,
+    delivery_attempt_digest: str | None = None,
     validation_reservation_digest: str | None = None,
 ) -> str:
     return sha256_json(
@@ -5143,6 +5180,7 @@ def _task_turn_delivery_file_key(
             delivery_kind=delivery_kind,
             thread_id=thread_id,
             delivery_token=delivery_token,
+            delivery_attempt_digest=delivery_attempt_digest,
             validation_reservation_digest=validation_reservation_digest,
         )
     )
@@ -5287,12 +5325,16 @@ def _desktop_task_handoff(
             "worktreePath": candidate.get("worktree_path"),
             "reservedAt": candidate.get("created_at"),
         }
-    return {
+    handoff = {
         "deliveryKind": delivery_kind,
         "threadId": str(normalized.get("threadId") or ""),
         "deliveryToken": delivery_token,
         "prompt": _task_turn_prompt(delivery_kind, normalized),
     }
+    attempt_digest = normalized.get("implementationFollowupAttemptDigest")
+    if delivery_kind == "implementation-followup" and attempt_digest:
+        handoff["deliveryAttemptDigest"] = str(attempt_digest)
+    return handoff
 
 
 def _discard_negative_task_turn_receipt(
@@ -5683,10 +5725,16 @@ def task_turn_deliver(args: argparse.Namespace) -> dict[str, Any]:
         if args.delivery_kind == "validation-followup"
         else None
     )
+    delivery_attempt_digest = (
+        str(candidate.get("implementationFollowupAttemptDigest") or args.delivery_token)
+        if args.delivery_kind == "implementation-followup"
+        else None
+    )
     receipt_key = _task_turn_delivery_file_key(
         delivery_kind=args.delivery_kind,
         thread_id=args.thread_id,
         delivery_token=args.delivery_token,
+        delivery_attempt_digest=delivery_attempt_digest,
         validation_reservation_digest=validation_reservation_digest,
     )
     receipt_root = STATE / "task_turn_receipts"
@@ -5926,6 +5974,7 @@ def task_turn_deliver(args: argparse.Namespace) -> dict[str, Any]:
                 delivery_kind=args.delivery_kind,
                 thread_id=args.thread_id,
                 delivery_token=args.delivery_token,
+                delivery_attempt_digest=delivery_attempt_digest,
                 **(
                     {
                         "reservation_digest": validation_binding["reservationDigest"],
@@ -5963,6 +6012,10 @@ def task_turn_deliver(args: argparse.Namespace) -> dict[str, Any]:
                     "--delivery-token",
                     args.delivery_token,
                 ]
+                if delivery_attempt_digest:
+                    worker_argv.extend(
+                        ["--delivery-attempt-digest", delivery_attempt_digest]
+                    )
                 if validation_binding:
                     worker_argv.extend(
                         [
@@ -6019,6 +6072,11 @@ def task_turn_deliver(args: argparse.Namespace) -> dict[str, Any]:
             "threadId": args.thread_id,
             "deliveryKind": args.delivery_kind,
             "deliveryToken": args.delivery_token,
+            **(
+                {"deliveryAttemptDigest": delivery_attempt_digest}
+                if delivery_attempt_digest
+                else {}
+            ),
             **(
                 {"reservationDigest": validation_reservation_digest}
                 if validation_reservation_digest
@@ -13757,6 +13815,7 @@ def main() -> int:
     )
     task_turn_worker_parser.add_argument("--thread-id", required=True)
     task_turn_worker_parser.add_argument("--delivery-token", required=True)
+    task_turn_worker_parser.add_argument("--delivery-attempt-digest")
     task_turn_worker_parser.add_argument("--reservation-digest")
     task_turn_worker_parser.add_argument("--snapshot-id")
     task_turn_worker_parser.add_argument("--snapshot-path")

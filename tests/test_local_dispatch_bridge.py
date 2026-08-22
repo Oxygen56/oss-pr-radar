@@ -9398,6 +9398,159 @@ def _legal_queue_publication_fixture(tmp_path: Path, *, request_id: str = "reque
     }
 
 
+def test_implementation_context_survives_missing_opportunity_code_paths(tmp_path):
+    store, worktree, _result_path = _controller_commit_result(tmp_path)
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE managed_opportunities SET metadata_json='{}' WHERE opportunity_key='a/b#1'"
+        )
+
+    context = json.loads(
+        MODULE.write_task_context(
+            store,
+            issue_url="https://github.com/a/b/issues/1",
+            thread_id="thread-1",
+            cwd=worktree,
+        ).read_text(encoding="utf-8")
+    )
+
+    assert context["taskStage"] == "IMPLEMENTATION_READY"
+    assert context["childMayEditFiles"] is True
+    assert context["codePaths"] == ["runtime.py"]
+    assert context["reproductionReceipt"]["receiptDigest"] == context["probeReceiptDigest"]
+
+
+def test_implementation_context_survives_expired_transition_receipt(
+    monkeypatch, tmp_path
+):
+    import oss_pr_radar.repo_probe as repo_probe
+
+    store, worktree, _result_path = _controller_commit_result(tmp_path)
+    managed = ManagedLedger(store.path, ensure_schema=True)
+    provenance = json.loads(managed.read_task("intent-1")["provenance_json"])
+    receipt = provenance["probeReceipt"]
+    real_datetime = datetime
+
+    class FutureDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return real_datetime.now(UTC) + timedelta(hours=2)
+
+    monkeypatch.setattr(repo_probe, "datetime", FutureDateTime)
+    assert not repo_probe.verify_probe_receipt(
+        receipt,
+        repo="a/b",
+        base_sha=receipt["baseSha"],
+        code_paths=list(receipt["codePaths"]),
+        issue_url=receipt["issueUrl"],
+        task_id="intent-1",
+        thread_id="thread-1",
+        head_sha=receipt["headSha"],
+        commit_sha=receipt["commitSha"],
+        result_digest=receipt["resultDigest"],
+    )
+
+    context = json.loads(
+        MODULE.write_task_context(
+            store,
+            issue_url="https://github.com/a/b/issues/1",
+            thread_id="thread-1",
+            cwd=worktree,
+        ).read_text(encoding="utf-8")
+    )
+
+    assert context["taskStage"] == "IMPLEMENTATION_READY"
+    assert context["childMayEditFiles"] is True
+    assert context["resultDigest"] == receipt["resultDigest"]
+
+
+def test_repaired_implementation_context_rearms_same_result_once(tmp_path):
+    store, worktree, _result_path = _controller_commit_result(tmp_path)
+    managed = ManagedLedger(store.path, ensure_schema=True)
+    provenance = json.loads(managed.read_task("intent-1")["provenance_json"])
+    result_digest = str(provenance["probeReceipt"]["resultDigest"])
+    store.record_task_result_ingested(
+        "a/b#1", digest=result_digest, stage="IMPLEMENTATION_READY"
+    )
+    initial = store.implementation_followup_candidates()[0]
+    store.reserve_implementation_followup(
+        thread_id="thread-1", result_digest=result_digest
+    )
+    store.commit_implementation_followup(
+        thread_id="thread-1", result_digest=result_digest
+    )
+    assert initial["implementationFollowupAttemptDigest"] == result_digest
+
+    context_path = worktree / ".oss-pr-radar" / "task-context.json"
+    denied_context = json.loads(context_path.read_text(encoding="utf-8"))
+    denied_context.update(
+        {
+            "taskStage": "REPRODUCTION_REQUIRED",
+            "probeLevel": "UNVERIFIED",
+            "allowedActions": [
+                "read_issue",
+                "read_repo",
+                "run_reproduction_probe",
+                "write_structured_result",
+            ],
+            "taskMode": "reproduction_only",
+            "childMayEditFiles": False,
+        }
+    )
+    context_path.write_text(json.dumps(denied_context), encoding="utf-8")
+
+    repaired = json.loads(
+        MODULE.write_task_context(
+            store,
+            issue_url="https://github.com/a/b/issues/1",
+            thread_id="thread-1",
+            cwd=worktree,
+        ).read_text(encoding="utf-8")
+    )
+    assert repaired["taskStage"] == "IMPLEMENTATION_READY"
+    candidates = store.implementation_followup_candidates()
+    assert len(candidates) == 1
+    assert candidates[0]["resultDigest"] == result_digest
+    attempt_digest = candidates[0]["implementationFollowupAttemptDigest"]
+    assert attempt_digest != result_digest
+
+    reserved = store.reserve_implementation_followup(
+        thread_id="thread-1", result_digest=result_digest
+    )
+    assert reserved["implementationFollowupAttemptDigest"] == attempt_digest
+    authorization = store.authorize_task_turn_delivery(
+        delivery_kind="implementation-followup",
+        thread_id="thread-1",
+        delivery_token=result_digest,
+        delivery_attempt_digest=attempt_digest,
+    )
+    assert authorization["deliveryAttemptDigest"] == attempt_digest
+    store.commit_implementation_followup(
+        thread_id="thread-1", result_digest=result_digest
+    )
+    MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+
+    assert store.implementation_followup_candidates() == []
+    with store.connect() as connection:
+        repaired_count = connection.execute(
+            """SELECT COUNT(*) FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type='IMPLEMENTATION_CONTEXT_REPAIRED'"""
+        ).fetchone()[0]
+        sent_count = connection.execute(
+            """SELECT COUNT(*) FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type='IMPLEMENTATION_FOLLOWUP_SENT'"""
+        ).fetchone()[0]
+    assert repaired_count == 1
+    assert sent_count == 2
+
+
 def test_controller_normalizes_child_base_to_prepared_default_branch(tmp_path):
     store, _worktree, result_path = _controller_commit_result(
         tmp_path,

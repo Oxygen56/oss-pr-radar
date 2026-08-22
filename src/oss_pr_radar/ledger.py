@@ -4017,94 +4017,39 @@ class RadarLedger:
         raw_probe_level = str(payload.get("probeLevel") or "UNVERIFIED")
         raw_task_stage = str(payload.get("taskStage") or "REPRODUCTION_REQUIRED")
         probe_receipt_digest = str(payload.get("probeReceiptDigest") or "")
-        implementation_authorized = (
-            raw_task_stage == "IMPLEMENTATION_READY"
-            and raw_probe_level == "REPRODUCED_VALIDATED"
-            and bool(probe_receipt_digest)
-        )
         verified_probe_receipt = None
-        if implementation_authorized:
-            try:
-                from .managed_lifecycle import ManagedLedger
+        try:
+            from .managed_lifecycle import ManagedLedger
 
-                issue_path = issue_url.removeprefix("https://github.com/").split("/issues/", 1)[0]
-                expected_paths = [
-                    str(path)
-                    for path in (
-                        payload.get("codePaths")
-                        or (payload.get("preTaskEvidence") or {}).get("codePathsPlan")
-                        or []
-                    )
-                    if str(path).strip()
-                ]
-                verified_probe_receipt = ManagedLedger(
-                    self.path, ensure_schema=True
-                ).current_reproduction_receipt(
+            managed_ledger = ManagedLedger(self.path, ensure_schema=True)
+            managed_task = managed_ledger.read_task(str(row["intent_id"] or ""))
+            managed_provenance = json.loads((managed_task or {}).get("provenance_json") or "{}")
+            managed_receipt = managed_provenance.get("probeReceipt")
+            if (
+                managed_task
+                and managed_task.get("state") == "IMPLEMENTATION_READY"
+                and isinstance(managed_receipt, dict)
+            ):
+                verified_probe_receipt = managed_ledger.implementation_authorization_receipt(
                     task_id=str(row["intent_id"] or ""),
-                    receipt_digest=probe_receipt_digest,
-                    repo=issue_path,
-                    issue_url=issue_url,
-                    selected_base_sha=str(
-                        payload.get("selectedBaseSha")
-                        or (payload.get("preTaskEvidence") or {}).get("baseSha")
-                        or ""
-                    ),
-                    code_paths=expected_paths,
-                    head_sha=str(payload.get("headSha") or ""),
-                    commit_sha=str(payload.get("commitSha") or ""),
-                    result_digest=str(payload.get("resultDigest") or ""),
-                    policy_digest=str(
-                        payload.get("policyDigest")
-                        or (payload.get("preTaskEvidence") or {}).get("policyDigest")
-                        or ""
-                    )
-                    or None,
+                    thread_id=str(row["thread_id"] or ""),
+                    worktree_path=str(row["worktree_path"] or ""),
+                    repo=str(managed_receipt.get("repo") or ""),
+                    issue_url=str(managed_receipt.get("issueUrl") or ""),
+                    receipt_digest=str(managed_receipt.get("receiptDigest") or ""),
                 )
-            except (OSError, RuntimeError, ValueError, sqlite3.Error):
-                verified_probe_receipt = None
+                if verified_probe_receipt is not None:
+                    raw_task_stage = "IMPLEMENTATION_READY"
+                    raw_probe_level = "REPRODUCED_VALIDATED"
+                    probe_receipt_digest = str(verified_probe_receipt["receiptDigest"])
+                    payload["selectedBaseSha"] = verified_probe_receipt["baseSha"]
+                    payload["codePaths"] = verified_probe_receipt["codePaths"]
+                    payload["resultDigest"] = verified_probe_receipt["resultDigest"]
+                    payload["headSha"] = verified_probe_receipt["headSha"]
+                    payload["commitSha"] = verified_probe_receipt["commitSha"]
+        except (OSError, RuntimeError, ValueError, sqlite3.Error, json.JSONDecodeError):
+            verified_probe_receipt = None
         implementation_authorized = verified_probe_receipt is not None
-        if not implementation_authorized:
-            # A legacy payload may retain an older result digest after the
-            # managed task has already recorded the authoritative receipt.
-            # Re-read the complete receipt from managed provenance, never from
-            # a digest-only field, and use its bound identity for the context.
-            try:
-                from .managed_lifecycle import ManagedLedger
-
-                managed_task = ManagedLedger(self.path, ensure_schema=True).read_task(
-                    str(row["intent_id"] or "")
-                )
-                managed_provenance = json.loads((managed_task or {}).get("provenance_json") or "{}")
-                managed_receipt = managed_provenance.get("probeReceipt")
-                if (
-                    managed_task
-                    and managed_task.get("state") == "IMPLEMENTATION_READY"
-                    and isinstance(managed_receipt, dict)
-                ):
-                    verified_probe_receipt = ManagedLedger(
-                        self.path, ensure_schema=True
-                    ).current_reproduction_receipt(
-                        task_id=str(row["intent_id"] or ""),
-                        receipt_digest=str(managed_receipt.get("receiptDigest") or ""),
-                        repo=str(managed_receipt.get("repo") or ""),
-                        issue_url=str(managed_receipt.get("issueUrl") or ""),
-                        selected_base_sha=str(managed_receipt.get("baseSha") or ""),
-                        code_paths=list(managed_receipt.get("codePaths") or []),
-                        head_sha=str(managed_receipt.get("headSha") or ""),
-                        commit_sha=str(managed_receipt.get("commitSha") or ""),
-                        result_digest=str(managed_receipt.get("resultDigest") or ""),
-                    )
-                    if verified_probe_receipt is not None:
-                        raw_task_stage = "IMPLEMENTATION_READY"
-                        raw_probe_level = "REPRODUCED_VALIDATED"
-                        probe_receipt_digest = str(verified_probe_receipt["receiptDigest"])
-                        payload["selectedBaseSha"] = verified_probe_receipt["baseSha"]
-                        payload["codePaths"] = verified_probe_receipt["codePaths"]
-                        payload["resultDigest"] = verified_probe_receipt["resultDigest"]
-                        payload["headSha"] = verified_probe_receipt["headSha"]
-                        payload["commitSha"] = verified_probe_receipt["commitSha"]
-            except (OSError, RuntimeError, ValueError, sqlite3.Error, json.JSONDecodeError):
-                verified_probe_receipt = None
         task_stage = raw_task_stage if implementation_authorized else "REPRODUCTION_REQUIRED"
         implementation_authorized = verified_probe_receipt is not None
         allowed_actions = (
@@ -4231,6 +4176,85 @@ class RadarLedger:
             for row in rows
         ]
 
+    def record_implementation_context_repair(
+        self,
+        *,
+        key: str,
+        task_id: str,
+        thread_id: str,
+        worktree_path: str,
+        result_digest: str,
+        context_digest: str,
+    ) -> bool:
+        """Append one rearm marker after a denied implementation context is repaired."""
+
+        repair_digest = sha256_text(
+            f"{task_id}|{thread_id}|{Path(worktree_path).resolve()}|"
+            f"{result_digest}|{context_digest}"
+        )
+        now = iso_z(datetime.now(UTC))
+        with self.transaction() as connection:
+            binding = connection.execute(
+                """SELECT i.worktree_path,t.worktree_path AS managed_worktree_path FROM intents i
+                   JOIN managed_tasks t ON t.task_id=i.intent_id
+                   WHERE i.intent_id=? AND i.opportunity_key=? AND i.thread_id=?
+                     AND i.status='DISPATCHED' AND t.state='IMPLEMENTATION_READY'
+                     AND t.thread_id=i.thread_id
+                     AND json_extract(t.provenance_json,'$.probeReceipt.resultDigest')=?
+                     AND json_extract(t.provenance_json,'$.probeReceipt.receiptDigest')=
+                         json_extract(t.provenance_json,'$.probeReceiptDigest')""",
+                (task_id, key, thread_id, result_digest),
+            ).fetchone()
+            reproduction = connection.execute(
+                """SELECT 1 FROM events
+                   WHERE opportunity_key=? AND event_type='TASK_RESULT_INGESTED'
+                     AND dedupe_key=?
+                     AND json_extract(payload_json,'$.stage')='IMPLEMENTATION_READY'""",
+                (key, result_digest),
+            ).fetchone()
+            sent = connection.execute(
+                """SELECT id FROM events
+                   WHERE opportunity_key=? AND event_type='IMPLEMENTATION_FOLLOWUP_SENT'
+                     AND (dedupe_key=? OR json_extract(payload_json,'$.resultDigest')=?)
+                     AND json_extract(payload_json,'$.threadId')=?
+                   ORDER BY id DESC LIMIT 1""",
+                (key, result_digest, result_digest, thread_id),
+            ).fetchone()
+            if (
+                binding is None
+                or not binding["worktree_path"]
+                or not binding["managed_worktree_path"]
+                or Path(str(binding["worktree_path"])).resolve() != Path(worktree_path).resolve()
+                or Path(str(binding["managed_worktree_path"])).resolve()
+                != Path(worktree_path).resolve()
+                or reproduction is None
+                or sent is None
+            ):
+                return False
+            if connection.execute(
+                """SELECT 1 FROM events
+                   WHERE opportunity_key=? AND event_type='IMPLEMENTATION_CONTEXT_REPAIRED'
+                     AND dedupe_key=?""",
+                (key, repair_digest),
+            ).fetchone():
+                return False
+            self._event(
+                connection,
+                key,
+                "IMPLEMENTATION_CONTEXT_REPAIRED",
+                repair_digest,
+                {
+                    "taskId": task_id,
+                    "threadId": thread_id,
+                    "worktreePath": str(Path(worktree_path).resolve()),
+                    "resultDigest": result_digest,
+                    "contextDigest": context_digest,
+                    "priorSentEventId": int(sent["id"]),
+                },
+                now,
+            )
+        return True
+
     def implementation_followup_candidates(self) -> list[dict[str, Any]]:
         """Return reproduced tasks that still need their implementation turn."""
 
@@ -4259,25 +4283,47 @@ class RadarLedger:
                 if not result_digest:
                     continue
                 sent = connection.execute(
-                    """SELECT 1 FROM events
+                    """SELECT id FROM events
                        WHERE opportunity_key=?
                          AND event_type='IMPLEMENTATION_FOLLOWUP_SENT'
-                         AND dedupe_key=?""",
-                    (task["key"], result_digest),
+                         AND (dedupe_key=? OR json_extract(payload_json,'$.resultDigest')=?)
+                       ORDER BY id DESC LIMIT 1""",
+                    (task["key"], result_digest, result_digest),
                 ).fetchone()
                 reserved = connection.execute(
-                    """SELECT 1 FROM events
+                    """SELECT id FROM events
                        WHERE opportunity_key=?
                          AND event_type='IMPLEMENTATION_FOLLOWUP_RESERVED'
-                         AND dedupe_key=?""",
-                    (task["key"], result_digest),
+                         AND (dedupe_key=? OR json_extract(payload_json,'$.resultDigest')=?)
+                       ORDER BY id DESC LIMIT 1""",
+                    (task["key"], result_digest, result_digest),
                 ).fetchone()
-                if sent is None and reserved is None:
+                repair = connection.execute(
+                    """SELECT id,dedupe_key FROM events
+                       WHERE opportunity_key=?
+                         AND event_type='IMPLEMENTATION_CONTEXT_REPAIRED'
+                         AND json_extract(payload_json,'$.resultDigest')=?
+                         AND json_extract(payload_json,'$.threadId')=?
+                       ORDER BY id DESC LIMIT 1""",
+                    (task["key"], result_digest, task["threadId"]),
+                ).fetchone()
+                repair_rearms = (
+                    repair is not None
+                    and sent is not None
+                    and int(repair["id"]) > int(sent["id"])
+                    and (reserved is None or int(reserved["id"]) < int(repair["id"]))
+                )
+                if (sent is None and reserved is None) or repair_rearms:
                     candidates.append(
                         task
                         | {
                             "resultDigest": result_digest,
                             "reproducedAt": reproduction["created_at"],
+                            "implementationFollowupAttemptDigest": (
+                                str(repair["dedupe_key"])
+                                if repair_rearms and repair is not None
+                                else result_digest
+                            ),
                         }
                     )
         return candidates
@@ -4302,6 +4348,7 @@ class RadarLedger:
             "resultDigest": result_digest,
             "issueUrl": candidate["issueUrl"],
             "worktreePath": candidate["worktreePath"],
+            "attemptDigest": candidate["implementationFollowupAttemptDigest"],
         }
         with self.transaction() as connection:
             require_quarantine_clear(
@@ -4313,7 +4360,7 @@ class RadarLedger:
                 connection,
                 str(candidate["key"]),
                 "IMPLEMENTATION_FOLLOWUP_RESERVED",
-                result_digest,
+                str(candidate["implementationFollowupAttemptDigest"]),
                 payload,
                 now,
             )
@@ -4345,7 +4392,10 @@ class RadarLedger:
                 "intentId": row["intent_id"],
                 "threadId": row["thread_id"],
                 "worktreePath": row["worktree_path"],
-                "resultDigest": row["dedupe_key"],
+                "resultDigest": str(
+                    json.loads(row["payload_json"]).get("resultDigest") or row["dedupe_key"]
+                ),
+                "implementationFollowupAttemptDigest": row["dedupe_key"],
                 "reservedAt": row["created_at"],
                 "reservation": json.loads(row["payload_json"]),
             }
@@ -4372,8 +4422,12 @@ class RadarLedger:
                 connection,
                 str(candidate["key"]),
                 "IMPLEMENTATION_FOLLOWUP_SENT",
-                result_digest,
-                {"threadId": thread_id, "resultDigest": result_digest},
+                str(candidate["implementationFollowupAttemptDigest"]),
+                {
+                    "threadId": thread_id,
+                    "resultDigest": result_digest,
+                    "attemptDigest": candidate["implementationFollowupAttemptDigest"],
+                },
                 now,
             )
 
@@ -8144,6 +8198,7 @@ class RadarLedger:
         delivery_kind: str,
         thread_id: str,
         delivery_token: str,
+        delivery_attempt_digest: str | None = None,
         reservation_digest: str | None = None,
         snapshot_id: str | None = None,
         snapshot_path: str | None = None,
@@ -8181,7 +8236,11 @@ class RadarLedger:
             raise LedgerError("unsupported task-turn delivery kind")
         now = iso_z(datetime.now(UTC))
         idempotency_key = f"task-turn-start:{delivery_kind}:{thread_id}:{delivery_token}"
-        if delivery_kind == "validation-followup":
+        if delivery_kind == "implementation-followup":
+            if not delivery_attempt_digest:
+                delivery_attempt_digest = delivery_token
+            idempotency_key += f":{delivery_attempt_digest}"
+        elif delivery_kind == "validation-followup":
             required = (
                 reservation_digest,
                 snapshot_id,
@@ -8203,7 +8262,25 @@ class RadarLedger:
                 raise LedgerError("validation task-turn worktree input binding is invalid")
             idempotency_key += f":{reservation_digest}"
         with self.transaction() as connection:
-            if delivery_kind == "validation-followup":
+            if delivery_kind == "implementation-followup":
+                row = connection.execute(
+                    """SELECT r.opportunity_key,r.payload_json,r.dedupe_key
+                       FROM events r
+                       WHERE r.event_type='IMPLEMENTATION_FOLLOWUP_RESERVED'
+                         AND json_extract(r.payload_json,'$.threadId')=?
+                         AND (r.dedupe_key=? OR json_extract(r.payload_json,'$.resultDigest')=?)
+                         AND NOT EXISTS (
+                           SELECT 1 FROM events sent
+                           WHERE sent.opportunity_key=r.opportunity_key
+                             AND sent.event_type='IMPLEMENTATION_FOLLOWUP_SENT'
+                             AND sent.dedupe_key=r.dedupe_key
+                         )
+                       ORDER BY r.id DESC LIMIT 1""",
+                    (thread_id, delivery_token, delivery_token),
+                ).fetchone()
+                if row is not None and row["dedupe_key"] != delivery_attempt_digest:
+                    raise LedgerError("implementation task-turn attempt binding mismatch")
+            elif delivery_kind == "validation-followup":
                 row = connection.execute(
                     """SELECT r.id,r.opportunity_key,r.payload_json
                        FROM events r
@@ -8252,7 +8329,9 @@ class RadarLedger:
                 "threadId": thread_id,
                 "deliveryToken": delivery_token,
             }
-            if delivery_kind == "validation-followup":
+            if delivery_kind == "implementation-followup":
+                binding["deliveryAttemptDigest"] = delivery_attempt_digest
+            elif delivery_kind == "validation-followup":
                 binding.update(
                     {
                         "reservationDigest": reservation_digest,

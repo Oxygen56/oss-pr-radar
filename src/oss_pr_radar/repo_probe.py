@@ -324,6 +324,7 @@ def verify_probe_receipt(
     result_digest: str | None = None,
     policy_digest: str | None = None,
     max_age_seconds: int = 3600,
+    enforce_freshness: bool = True,
 ) -> bool:
     if not isinstance(receipt, dict):
         return False
@@ -392,11 +393,14 @@ def verify_probe_receipt(
         expires_at = parse_time(str(receipt.get("expiresAt") or ""))
     except (TypeError, ValueError):
         return False
-    now = datetime.now(UTC)
-    if observed_at > now + timedelta(minutes=5) or expires_at < now:
+    if expires_at < observed_at:
         return False
-    if (now - observed_at).total_seconds() > max(1, max_age_seconds):
-        return False
+    if enforce_freshness:
+        now = datetime.now(UTC)
+        if observed_at > now + timedelta(minutes=5) or expires_at < now:
+            return False
+        if (now - observed_at).total_seconds() > max(1, max_age_seconds):
+            return False
     if level == REPRODUCED_VALIDATED and not (
         receipt.get("reproductionVerified") is True and receipt.get("validationVerified") is True
     ):
