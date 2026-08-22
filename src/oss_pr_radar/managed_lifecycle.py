@@ -2004,7 +2004,11 @@ class ManagedLedger:
             )
         finally:
             connection.close()
-        if task_row is None or opportunity_row is None or task_row["state"] != "IMPLEMENTATION_READY":
+        if (
+            task_row is None
+            or opportunity_row is None
+            or task_row["state"] != "IMPLEMENTATION_READY"
+        ):
             return None
         if not task_row["thread_id"] or task_row["thread_id"] != thread_id:
             return None

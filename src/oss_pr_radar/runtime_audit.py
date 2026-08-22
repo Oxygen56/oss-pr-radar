@@ -276,9 +276,7 @@ def audit_snapshot(snapshot: dict[str, Any], *, now: float | None = None) -> dic
         launch = evidence.get("launchctl") if isinstance(evidence.get("launchctl"), dict) else {}
         actual = evidence.get("process") if isinstance(evidence.get("process"), dict) else {}
         runtime_workers = state.get("workers") if isinstance(state.get("workers"), dict) else {}
-        runtime_worker = (
-            runtime_workers.get(worker) if isinstance(runtime_workers, dict) else {}
-        )
+        runtime_worker = runtime_workers.get(worker) if isinstance(runtime_workers, dict) else {}
         runtime_worker = runtime_worker if isinstance(runtime_worker, dict) else {}
         evaluated_workers = health.get("workers") if isinstance(health.get("workers"), dict) else {}
         evaluated_worker = (

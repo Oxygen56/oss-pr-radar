@@ -245,8 +245,7 @@ def test_compact_controller_result_exposes_safe_release_binding_mismatch():
         "ok": False,
         "blocked": "operational authorization required",
         "error": (
-            "explicit code root is not the active immutable release: "
-            "/private/sensitive/release"
+            "explicit code root is not the active immutable release: /private/sensitive/release"
         ),
     }
 

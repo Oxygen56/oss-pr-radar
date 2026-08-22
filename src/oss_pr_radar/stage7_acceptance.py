@@ -697,10 +697,7 @@ def check(
             not strict
             or (
                 (item["loaded"] if require_workers_loaded else not item["loaded"])
-                and (
-                    not require_workers_loaded
-                    or _activated_worker_execution_ok(item)
-                )
+                and (not require_workers_loaded or _activated_worker_execution_ok(item))
             )
         )
         for item in worker_reports

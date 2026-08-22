@@ -4335,8 +4335,7 @@ class RadarLedger:
             (
                 item
                 for item in self.implementation_followup_candidates()
-                if item.get("threadId") == thread_id
-                and item.get("resultDigest") == result_digest
+                if item.get("threadId") == thread_id and item.get("resultDigest") == result_digest
             ),
             None,
         )
@@ -4402,15 +4401,12 @@ class RadarLedger:
             for row in rows
         ]
 
-    def commit_implementation_followup(
-        self, *, thread_id: str, result_digest: str
-    ) -> None:
+    def commit_implementation_followup(self, *, thread_id: str, result_digest: str) -> None:
         candidate = next(
             (
                 item
                 for item in self.unresolved_implementation_followups()
-                if item.get("threadId") == thread_id
-                and item.get("resultDigest") == result_digest
+                if item.get("threadId") == thread_id and item.get("resultDigest") == result_digest
             ),
             None,
         )

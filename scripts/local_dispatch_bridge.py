@@ -3911,10 +3911,7 @@ def write_task_context(
         and prior_context.get("threadId") == payload.get("threadId")
         and bool(prior_context.get("worktreePath"))
         and Path(str(prior_context.get("worktreePath") or "")).resolve() == cwd.resolve()
-        and (
-            not prior_result_digest
-            or prior_result_digest == payload.get("resultDigest")
-        )
+        and (not prior_result_digest or prior_result_digest == payload.get("resultDigest"))
         and bool(payload.get("resultDigest"))
     )
     if repaired_same_result:
@@ -4420,8 +4417,7 @@ def _task_turn_reservation(
             (
                 item
                 for item in store.unresolved_implementation_followups()
-                if item.get("threadId") == thread_id
-                and item.get("resultDigest") == delivery_token
+                if item.get("threadId") == thread_id and item.get("resultDigest") == delivery_token
             ),
             None,
         )
@@ -4767,9 +4763,7 @@ def _commit_task_turn_delivery(
     validation_reservation_digest: str | None = None,
 ) -> None:
     if delivery_kind == "implementation-followup":
-        store.commit_implementation_followup(
-            thread_id=thread_id, result_digest=delivery_token
-        )
+        store.commit_implementation_followup(thread_id=thread_id, result_digest=delivery_token)
     elif delivery_kind == "pr-followup":
         store.commit_pr_followup(thread_id=thread_id, wake_digest=delivery_token)
     elif delivery_kind == "validation-followup":
@@ -6017,9 +6011,7 @@ def task_turn_deliver(args: argparse.Namespace) -> dict[str, Any]:
                     args.delivery_token,
                 ]
                 if delivery_attempt_digest:
-                    worker_argv.extend(
-                        ["--delivery-attempt-digest", delivery_attempt_digest]
-                    )
+                    worker_argv.extend(["--delivery-attempt-digest", delivery_attempt_digest])
                 if validation_binding:
                     worker_argv.extend(
                         [

@@ -1335,9 +1335,7 @@ def test_verified_reproduction_alias_advances_to_implementation(tmp_path):
         delivery_token=result_digest,
     )
     assert authorization["opportunityKey"] == "a/b#1"
-    store.commit_implementation_followup(
-        thread_id="thread-1", result_digest=result_digest
-    )
+    store.commit_implementation_followup(thread_id="thread-1", result_digest=result_digest)
     assert store.implementation_followup_candidates() == []
     assert store.unresolved_implementation_followups() == []
 
@@ -9420,9 +9418,7 @@ def test_implementation_context_survives_missing_opportunity_code_paths(tmp_path
     assert context["reproductionReceipt"]["receiptDigest"] == context["probeReceiptDigest"]
 
 
-def test_implementation_context_survives_expired_transition_receipt(
-    monkeypatch, tmp_path
-):
+def test_implementation_context_survives_expired_transition_receipt(monkeypatch, tmp_path):
     import oss_pr_radar.repo_probe as repo_probe
 
     store, worktree, _result_path = _controller_commit_result(tmp_path)
@@ -9465,23 +9461,15 @@ def test_implementation_context_survives_expired_transition_receipt(
 
 
 @pytest.mark.parametrize("prior_has_result_digest", [True, False])
-def test_repaired_implementation_context_rearms_same_result_once(
-    tmp_path, prior_has_result_digest
-):
+def test_repaired_implementation_context_rearms_same_result_once(tmp_path, prior_has_result_digest):
     store, worktree, _result_path = _controller_commit_result(tmp_path)
     managed = ManagedLedger(store.path, ensure_schema=True)
     provenance = json.loads(managed.read_task("intent-1")["provenance_json"])
     result_digest = str(provenance["probeReceipt"]["resultDigest"])
-    store.record_task_result_ingested(
-        "a/b#1", digest=result_digest, stage="IMPLEMENTATION_READY"
-    )
+    store.record_task_result_ingested("a/b#1", digest=result_digest, stage="IMPLEMENTATION_READY")
     initial = store.implementation_followup_candidates()[0]
-    store.reserve_implementation_followup(
-        thread_id="thread-1", result_digest=result_digest
-    )
-    store.commit_implementation_followup(
-        thread_id="thread-1", result_digest=result_digest
-    )
+    store.reserve_implementation_followup(thread_id="thread-1", result_digest=result_digest)
+    store.commit_implementation_followup(thread_id="thread-1", result_digest=result_digest)
     assert initial["implementationFollowupAttemptDigest"] == result_digest
 
     context_path = worktree / ".oss-pr-radar" / "task-context.json"
@@ -9530,9 +9518,7 @@ def test_repaired_implementation_context_rearms_same_result_once(
         delivery_attempt_digest=attempt_digest,
     )
     assert authorization["deliveryAttemptDigest"] == attempt_digest
-    store.commit_implementation_followup(
-        thread_id="thread-1", result_digest=result_digest
-    )
+    store.commit_implementation_followup(thread_id="thread-1", result_digest=result_digest)
     MODULE.write_task_context(
         store,
         issue_url="https://github.com/a/b/issues/1",
