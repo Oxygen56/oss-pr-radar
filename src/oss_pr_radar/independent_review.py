@@ -322,6 +322,8 @@ def codex_review_runner(
                     "read-only",
                     "--ignore-user-config",
                     "--ignore-rules",
+                    "--disable",
+                    "plugins",
                     "--skip-git-repo-check",
                     "--config",
                     "project_doc_max_bytes=0",

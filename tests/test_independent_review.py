@@ -555,6 +555,7 @@ def test_codex_runner_is_ephemeral_and_read_only(tmp_path, monkeypatch):
     assert "--ephemeral" in observed["argv"]
     assert observed["argv"][observed["argv"].index("--sandbox") + 1] == "read-only"
     assert "--ignore-user-config" in observed["argv"]
+    assert observed["argv"][observed["argv"].index("--disable") + 1] == "plugins"
     assert "--skip-git-repo-check" in observed["argv"]
     assert "project_doc_max_bytes=0" in observed["argv"]
     assert observed["argv"][observed["argv"].index("--add-dir") + 1] == str(worktree)
