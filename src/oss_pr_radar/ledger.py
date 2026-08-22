@@ -2695,6 +2695,12 @@ class RadarLedger:
                          'TASK_RESULT_INGESTED','PR_FOLLOWUP_RESULT_INGESTED'
                        )
                    )
+                     AND NOT EXISTS (
+                     SELECT 1 FROM events terminal
+                     WHERE terminal.opportunity_key=o.key
+                       AND terminal.id>r.id
+                       AND terminal.event_type IN ('AUDIT_NO_GO','MERGED','CLOSED')
+                   )
                    ORDER BY r.created_at"""
             ).fetchall()
         return [
@@ -2750,6 +2756,12 @@ class RadarLedger:
                          AND result.event_type IN (
                            'TASK_RESULT_INGESTED','PR_FOLLOWUP_RESULT_INGESTED'
                          )
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events terminal
+                       WHERE terminal.opportunity_key=o.key
+                         AND terminal.id>r.id
+                         AND terminal.event_type IN ('AUDIT_NO_GO','MERGED','CLOSED')
                      )
                    ORDER BY s.created_at"""
             ).fetchall()

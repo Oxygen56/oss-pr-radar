@@ -1874,6 +1874,47 @@ def test_recent_dispatch_can_be_authorized_for_terminal_error_recovery(tmp_path)
     assert store.unresolved_recoveries()[0]["threadId"] == "thread-1"
 
 
+def test_terminal_stage_retires_unsent_recovery_reservation(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+    recovery = store.recovery_candidates(min_age_minutes=0)[0]
+    store.reserve_recovery(thread_id="thread-1", nonce=recovery["recoveryNonce"])
+    assert store.unresolved_recoveries()[0]["threadId"] == "thread-1"
+
+    store.record_stage("a/b#1", "AUDIT_NO_GO", reason="WRONG_REPO")
+
+    assert store.unresolved_recoveries() == []
+
+
+def test_terminal_stage_retires_sent_recovery_without_result(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+    recovery = store.recovery_candidates(min_age_minutes=0)[0]
+    store.reserve_recovery(thread_id="thread-1", nonce=recovery["recoveryNonce"])
+    store.commit_recovery(thread_id="thread-1", nonce=recovery["recoveryNonce"])
+    assert store.sent_recoveries_without_result()[0]["threadId"] == "thread-1"
+
+    store.record_stage("a/b#1", "AUDIT_NO_GO", reason="WRONG_REPO")
+
+    assert store.sent_recoveries_without_result() == []
+
+
 def test_unknown_recovery_delivery_can_be_abandoned_and_rearmed(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(intent())
