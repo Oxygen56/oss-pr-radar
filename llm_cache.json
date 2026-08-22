@@ -7785,6 +7785,38 @@
     ],
     "why": "The issue identifies a concrete bug in vLLM's attention backend probe: only ImportError is caught, causing other exceptions to crash engine init. The fix is clear and testable. However, the supplied gate decision is HUMAN_REVIEW, and there is a potential duplicate issue #51593 with shared stack signatures, requiring maintainer confirmation before proceeding."
   },
+  "35829ed7da3bd8d042f7ad8d72242727db184d6b5686dce54708dbf4a828d15a": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The issue states that the sanitized payload did not reproduce on an idle server, but the original private payload failed under load, indicating the bug is load-dependent."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "gemma4 tool parser enforcement of tool_choice='required'",
+      "finish_reason logic to only report tool_calls when a tool call is actually produced"
+    ],
+    "risks": [
+      "The bug may be content-dependent and hard to reproduce deterministically, requiring load or specific prompt patterns.",
+      "The fix may need to coordinate with existing PRs (e.g., #53256, #51524) to avoid conflicts."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a regression test that sends a request with tool_choice='required' and a prompt that historically triggers prose-only output, asserting that the response contains a tool call and finish_reason is not 'tool_calls' when no tool call is present.",
+      "Run the existing test suite for the gemma4 parser and the frontend finish_reason logic."
+    ],
+    "unknowns": [
+      "The exact code path where tool_choice='required' is not enforced in the gemma4 parser is not fully identified.",
+      "Whether the fix should be in the parser, the sampling logic, or the frontend finish_reason handling is not fully determined."
+    ],
+    "why": "The issue identifies a concrete bug in the gemma4 tool parser where tool_choice='required' is not enforced, leading to prose-only responses with finish_reason='tool_calls' and empty tool_calls. The root cause is partially identified (finish_reason logic) and the enforcement gap is clearly described. The issue provides a reproduction methodology (loop script, payload variations) and references related PRs, making it actionable for a code fix."
+  },
   "35a70c95f5369b89f4a990e6dbee9a1001de98642deba1ed2a9b112274d8be9a": {
     "confidence": 0.7,
     "contradictions": [],
@@ -11935,6 +11967,40 @@
       "Whether the regression still reproduces on current main"
     ],
     "why": "The issue provides a clear performance regression with a bisected torch boundary, but a maintainer's torch-only A/B shows torch 2.11 is faster, and a contributor's code analysis identifies a plausible vLLM-side root cause (#39763) with a concrete one-flag test. The evidence supports a concrete validation path and actionable code work."
+  },
+  "4dbaa5d145e10df23b962e4837d34aa4922e489bf8d18c90b17db48ad1aef670": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Maintainer comment says original skew no longer reproduces on 1.4.x, but issue targets 1.3.0-dev.1; fix may need to target older image or prevent future recurrence"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "runtime-image packaging: couple flashinfer-jit-cache with flashinfer-python version",
+      "add serve-time image test or build-time assert",
+      "document unsupported in-container vLLM upgrade workflow if not supported"
+    ],
+    "risks": [
+      "Existing PR #13650 may partially address packaging but does not cover root cause; need to compare implementation",
+      "Maintainer may prefer documentation-only resolution; need design confirmation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with docker run on vllm-runtime:1.3.0-dev.1-cuda13, pip install vllm==0.23.0, then vllm serve NemotronH; verify version mismatch error",
+      "After fix, run same repro and verify engine starts without FLASHINFER_DISABLE_VERSION_CHECK",
+      "Add CI test that builds runtime image and checks flashinfer-python and flashinfer-jit-cache versions match"
+    ],
+    "unknowns": [
+      "Whether in-container vLLM upgrades are a supported workflow; maintainer decision pending",
+      "Whether PR #13650 or #13645 already fixes the root cause; need manual comparison"
+    ],
+    "why": "Issue identifies a clear root cause: baked flashinfer-jit-cache version skew with in-container vLLM upgrade causes serve-time registry failure. Maintainer triage confirms engagement and provides a concrete build-time assert pattern as a validation path. The suggested fix is actionable and the issue is not fully covered by existing PRs."
   },
   "4dcbfd248d1320c249e1314b6bdaf14f0635a730e011252574e18378bc311a1b": {
     "confidence": 0.85,
