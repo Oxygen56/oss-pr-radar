@@ -12,16 +12,23 @@ ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from oss_pr_radar.agentscope_events import EventLane, GitHubIssuePoller, dispatch_once  # noqa: E402
+from oss_pr_radar.ledger import RadarLedger  # noqa: E402
 from oss_pr_radar.local_publication import run_bridge  # noqa: E402
 
 
 def bridge_delivery(root: Path, event: dict) -> None:
     """Use the existing serialized drain, whose bridge performs App Server turns."""
+    key = f"{event.get('repo')}#{event.get('number')}"
+    ledger = RadarLedger(root / "state" / "radar_ledger.sqlite3")
+    mapped = any(item.get("key") == key for item in ledger.pending())
+    mapped = mapped or any(item.get("key") == key for item in ledger.pr_followup_candidates())
+    mapped = mapped or any(item.get("key") == key for item in ledger.implementation_followup_candidates())
+    if not mapped:
+        raise RuntimeError("event has no existing ledger task/thread mapping")
     result = run_bridge(root, "drain-once", timeout=300)
     if not result.get("ok") or result.get("busy"):
         raise RuntimeError(f"event drain not committed: {result}")
-    expected_key = f"{event.get('repo')}#{event.get('number')}"
-    if result.get("key") != expected_key:
+    if result.get("key") != key:
         raise RuntimeError("event drain did not consume this event")
     if result.get("action") not in {
         "issue_task_dispatched",
