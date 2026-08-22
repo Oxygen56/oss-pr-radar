@@ -301,6 +301,33 @@ def test_terminalized_live_audit_is_published_before_cycle_finishes(tmp_path):
     assert result["terminalFeedback"]["published"] == 1
 
 
+def test_ingested_terminal_result_is_published_without_drain_terminalization(tmp_path):
+    calls = []
+
+    def runner(_root: Path, operation: str):
+        calls.append(operation)
+        if operation == "context-recover":
+            return {"ok": True, "verified": 0, "errors": []}
+        if operation == "ingest-results":
+            return {
+                "ok": True,
+                "ingested": [{"key": "a/b#1", "stage": "AUDIT_NO_GO"}],
+                "publicationRequests": [],
+                "errors": [],
+            }
+        if operation == "drain-once":
+            return {"ok": True, "action": "none", "terminalized": []}
+        if operation == "publish-terminal-feedback":
+            return {"ok": True, "published": 1, "errors": []}
+        return {"ok": True, "published": [], "pending": [], "blocked": [], "errors": []}
+
+    result = advance_once(tmp_path, runner=runner)
+
+    assert calls[-2:] == ["drain-once", "publish-terminal-feedback"]
+    assert result["ok"] is True
+    assert result["terminalFeedback"]["published"] == 1
+
+
 def test_fast_publication_is_quiet_when_no_result_or_request_exists(tmp_path):
     def runner(_root: Path, operation: str):
         if operation == "context-recover":

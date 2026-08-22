@@ -77,6 +77,7 @@ OPPORTUNITY_CAPACITY = 10
 MAX_SCANNER_MIGRATION_RECHECKS = 8
 SEEN_RECHECK_STATUSES = frozenset(
     {
+        "code_surface_retry",
         "send_failed",
         "status_update",
         "inspection_budget_deferred",
@@ -953,6 +954,52 @@ def probe_code_paths(anchors: Iterable[str]) -> list[str]:
         for anchor in anchors
         if ISSUE_CODE_PATH_RE.fullmatch(anchor) or ISSUE_CODE_FILE_RE.fullmatch(anchor)
     ]
+
+
+def _symbol_filename_stems(anchor: str) -> tuple[str, ...]:
+    """Convert code symbols such as ``AudioRecognition`` to filename stems."""
+
+    value = str(anchor).strip().strip("`")
+    value = re.sub(
+        r"^(?:class|function|method|module|operator|kernel|scheduler|parser|handler)\s+",
+        "",
+        value,
+        flags=re.I,
+    )
+    stems: list[str] = []
+    for part in re.split(r"[.:]", value):
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{2,}", part):
+            continue
+        snake = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", part)
+        snake = re.sub(r"(?<=[A-Z])(?=[A-Z][a-z])", "_", snake).casefold()
+        stems.append(snake)
+    return tuple(dict.fromkeys(stems))
+
+
+def resolve_probe_code_paths(anchors: Iterable[str], repository_paths: Iterable[str]) -> list[str]:
+    """Resolve verified repository files from literal paths and symbol anchors."""
+
+    anchor_list = list(anchors)
+    resolved = probe_code_paths(anchor_list)
+    symbol_stems = {stem for anchor in anchor_list for stem in _symbol_filename_stems(anchor)}
+    if not symbol_stems:
+        return list(dict.fromkeys(resolved))
+
+    def path_priority(path: str) -> tuple[bool, int, str]:
+        lowered = f"/{path.casefold()}"
+        is_test = "/test/" in lowered or "/tests/" in lowered or Path(path).name.startswith("test_")
+        return is_test, path.count("/"), path
+
+    matches: list[str] = []
+    for path in repository_paths:
+        basename = Path(path).name
+        if not ISSUE_CODE_FILE_RE.fullmatch(basename):
+            continue
+        stem = basename.rsplit(".", 1)[0].replace("-", "_").casefold()
+        if stem in symbol_stems:
+            matches.append(path)
+    resolved.extend(sorted(dict.fromkeys(matches), key=path_priority)[:8])
+    return list(dict.fromkeys(resolved))
 
 
 RELATED_FAILURE_SIGNATURE_RE = re.compile(
@@ -2122,6 +2169,7 @@ class Radar:
         self.errors: list[str] = []
         self.repo_cache: dict[str, tuple[bool, str]] = {}
         self.policy_cache: dict[str, str] = {}
+        self.repo_tree_paths: dict[str, tuple[str, ...]] = {}
         self.repo_cache_path = repo_cache_path
         cached = load_json(repo_cache_path, {})
         self.persistent_repo_cache: dict[str, Any] = (
@@ -2575,6 +2623,13 @@ class Radar:
         if not isinstance(raw_tree, list):
             self.policy_cache[repo] = static_rule if static_rule != "normal" else "policy_unknown"
             return self.policy_cache[repo]
+        self.repo_tree_paths[repo] = tuple(
+            str(entry["path"])
+            for entry in raw_tree
+            if isinstance(entry, dict)
+            and entry.get("type") == "blob"
+            and isinstance(entry.get("path"), str)
+        )
         entries = select_policy_entries([entry for entry in raw_tree if isinstance(entry, dict)])
         policy_paths = [str(entry["path"]) for entry in entries]
         primary_files = {str(entry["path"]): str(entry.get("sha") or "") for entry in entries}
@@ -4517,7 +4572,10 @@ class Radar:
                 in {"needs_assignment", "ai_disclosure_and_assignment"},
                 "aiDisclosureConflict": policy
                 in {"ai_disclosure_conflict", "ai_disclosure_and_assignment"},
-                "codePathsPlan": probe_code_paths(actionability.get("code_anchors") or []),
+                "codePathsPlan": resolve_probe_code_paths(
+                    actionability.get("code_anchors") or [],
+                    self.repo_tree_paths.get(base["repo"], ()),
+                ),
                 "reproductionPathPlan": bool(actionability.get("probe_ready")),
                 "validationPathPlan": bool(scored.get("test_path")),
                 "probeRequired": True,
@@ -4879,6 +4937,9 @@ class Radar:
                         or candidate.get("gate_decision") == "RETRY_REQUIRED"
                         else "state_drift"
                         if gate.get("classification") == "state_drift"
+                        else "code_surface_retry"
+                        if gate.get("classification") == "blocked_pre_task"
+                        and "no_code_surface" in (gate.get("reasons") or [])
                         else "capacity_deferred"
                         if candidate.get("capacityDisposition") == "MATURE_BUDGET_DEFERRED"
                         else "silent_exploration"

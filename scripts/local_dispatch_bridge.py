@@ -2792,6 +2792,17 @@ def _resolve_repo_code_paths(
                 resolved.update(suffix_matches)
             continue
         if "." not in path:
+            snake_stem = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", path)
+            snake_stem = re.sub(r"(?<=[A-Z])(?=[A-Z][a-z])", "_", snake_stem).casefold()
+            stem_matches = {
+                candidate
+                for candidate in tree_paths
+                if candidate.rsplit("/", 1)[-1].rsplit(".", 1)[0].replace("-", "_").casefold()
+                == snake_stem
+            }
+            if len(stem_matches) == 1:
+                resolved.update(stem_matches)
+                continue
             code_search_terms.append(path)
             continue
         basename_matches = {
@@ -2966,7 +2977,7 @@ def _audit_intent(intent: dict[str, Any]) -> tuple[Any, Any]:
         if not paths_verified:
             verdict = replace(
                 verdict,
-                status="HOLD" if code_paths else "BLOCK",
+                status="HOLD",
                 reason_code="REPO_PATHS_REQUIRED" if code_paths else "REPO_PATHS_UNRESOLVED",
             )
         elif not reproduced and not visible_reproduction_task:

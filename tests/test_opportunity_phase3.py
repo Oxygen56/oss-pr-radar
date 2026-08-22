@@ -130,6 +130,10 @@ def test_policy_duplicate_and_code_surface_fail_closed():
     assert docs["classification"] == "task_no_go"
     assert "no_code_surface" in docs["reasons"]
 
+    unresolved_symbol = pre_task_gate(candidate(), evidence(codePaths=[]))
+    assert unresolved_symbol["classification"] == "blocked_pre_task"
+    assert unresolved_symbol["reason"] == "no_code_surface"
+
     strong = pre_task_gate(
         candidate(),
         evidence(duplicate={"status": "covered_strong"}, duplicateStatus="covered_strong"),

@@ -50,6 +50,7 @@ SLOW_WORK_LOCK = "slow-worker.lock"
 SLOW_REQUEST_STATE = "slow-work-request.json"
 SLOW_BACKOFF_STATE = "slow-worker-backoff.json"
 MAX_FAST_OPERATION_SECONDS = 15
+TERMINAL_FEEDBACK_STAGES = {"AUDIT_NO_GO", "MERGED", "CLOSED"}
 
 
 def _slow_worker_diagnostic(
@@ -748,6 +749,9 @@ def advance_once(
         *list(ingestion.get("ingested") or []),
         *list(post_review_ingestion.get("ingested") or []),
     ]
+    terminal_feedback_needed = any(
+        item.get("stage") in TERMINAL_FEEDBACK_STAGES for item in ingested
+    )
     title_reconciliation = runner(root, "title-reconcile")
     cleanup_reconciliation = runner(root, "cleanup-reconcile")
     publication = runner(root, "publication-run")
@@ -811,8 +815,10 @@ def advance_once(
         drain = runner(root, "drain-once")
         errors.extend(list(drain.get("errors") or []))
         if drain.get("terminalized"):
-            terminal_feedback = runner(root, "publish-terminal-feedback")
-            errors.extend(list(terminal_feedback.get("errors") or []))
+            terminal_feedback_needed = True
+    if terminal_feedback_needed and lifecycle_healthy:
+        terminal_feedback = runner(root, "publish-terminal-feedback")
+        errors.extend(list(terminal_feedback.get("errors") or []))
     drain_activity = bool(
         drain.get("action")
         and drain.get("action") not in {"none", "not_triggered", "drain_already_running"}

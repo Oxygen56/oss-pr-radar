@@ -50,6 +50,21 @@ def test_probe_code_paths_excludes_symbol_only_anchors():
     ) == ["apps/daemon/src/server.ts"]
 
 
+def test_resolve_probe_code_paths_binds_camel_case_symbol_to_verified_repository_file():
+    assert scanner.resolve_probe_code_paths(
+        ["`AudioRecognition`", "apps/daemon/src/server.ts"],
+        [
+            "livekit-agents/tests/voice/audio_recognition.py",
+            "livekit-agents/livekit/agents/voice/audio_recognition.py",
+            "livekit-agents/livekit/agents/voice/agent_activity.py",
+        ],
+    ) == [
+        "apps/daemon/src/server.ts",
+        "livekit-agents/livekit/agents/voice/audio_recognition.py",
+        "livekit-agents/tests/voice/audio_recognition.py",
+    ]
+
+
 def test_semantic_review_retry_replaces_pre_llm_candidate_outcome():
     outcome = candidate_issue_outcome(
         {
@@ -1126,6 +1141,70 @@ def test_state_drift_is_rechecked_with_the_latest_evidence_snapshot(monkeypatch,
     )
     assert repinned_gate["allowed"] is True
     assert repinned_gate["classification"] is None
+
+
+def test_unresolved_code_surface_is_retried_instead_of_terminalized(monkeypatch, tmp_path):
+    seen_path = tmp_path / "seen.json"
+    report_path = tmp_path / "scan.json"
+    candidate = {
+        "repo": "livekit/agents",
+        "num": 6919,
+        "title": "AudioRecognition receives duplicate audio frames",
+        "url": "https://github.com/livekit/agents/issues/6919",
+        "score": 9,
+        "category": "WAIT_MAINTAINER",
+        "gate_decision": "HUMAN_REVIEW",
+        "auto_spawn": False,
+        "notify": False,
+        "maturity": "exploration",
+        "track": "agent_ai_infra",
+        "labels": ["bug"],
+        "issue_updated": "2026-08-21T10:00:00Z",
+        "submission_policy": "normal",
+        "public_submission_allowed": True,
+        "actionability_evidence": {"public_repro_signals": 1},
+        "open_pr_assessment": {"status": "none"},
+        "related_issue_assessment": {"status": "none"},
+        "llm_review": {
+            "status": "ok",
+            "semanticSignal": "NO_OBJECTION",
+            "confidence": 0.95,
+        },
+        "preTaskEvidence": {"baseSha": "b" * 40, "codePathsPlan": []},
+        "preTaskGate": {
+            "allowed": False,
+            "classification": "blocked_pre_task",
+            "reason": "no_code_surface",
+            "reasons": ["no_code_surface"],
+            "expected": {},
+        },
+    }
+
+    class IdentityEvaluator:
+        @classmethod
+        def from_environment(cls, _path):
+            return cls()
+
+        def evaluate_candidates(self, candidates):
+            return candidates
+
+    radar = Radar(
+        datetime(2026, 8, 22, 16, tzinfo=UTC),
+        2,
+        seen_path,
+        "",
+        dry_run=True,
+        notify=False,
+    )
+    monkeypatch.setattr(radar, "collect_items", lambda: {"livekit/agents#6919": {}})
+    monkeypatch.setattr(radar, "shortlist", lambda _items: ([candidate], 1, 1))
+    monkeypatch.setattr(scanner, "DeepSeekEvaluator", IdentityEvaluator)
+
+    radar.run(report_path)
+
+    seen = json.loads(seen_path.read_text(encoding="utf-8"))
+    assert seen["livekit/agents#6919"]["status"] == "code_surface_retry"
+    assert select_seen_rechecks(seen)[0][0] == "livekit/agents#6919"
 
 
 def test_legacy_silent_state_drift_is_rearmed_without_issue_update(monkeypatch, tmp_path):

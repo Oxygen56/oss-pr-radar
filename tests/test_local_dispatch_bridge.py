@@ -3855,6 +3855,31 @@ def test_claim_hold_does_not_terminalize_candidate(monkeypatch, tmp_path):
     assert stage == "QUALIFIED"
 
 
+def test_repo_code_path_resolution_uses_unique_tree_stem_when_code_search_fails():
+    class Client:
+        def repository_tree(self, _repo, _ref):
+            return [
+                {
+                    "type": "blob",
+                    "path": "livekit-agents/livekit/agents/voice/audio_recognition.py",
+                },
+                {
+                    "type": "blob",
+                    "path": "livekit-agents/livekit/agents/voice/agent_activity.py",
+                },
+            ]
+
+        def api(self, *_args, **_kwargs):
+            raise RuntimeError("code search unavailable")
+
+    assert MODULE._resolve_repo_code_paths(
+        Client(),
+        repo="livekit/agents",
+        ref="d" * 40,
+        code_paths=["AudioRecognition"],
+    ) == ["livekit-agents/livekit/agents/voice/audio_recognition.py"]
+
+
 def test_dispatch_notification_receipt_is_per_created_thread(tmp_path):
     store, _worktree = registered_store(tmp_path)
 
@@ -15124,6 +15149,8 @@ import oss_pr_radar.local_publication as _publication
 from oss_pr_radar.release_binding import runtime_ledger_path
 _bridge = Path(os.environ['RADAR_TEST_BRIDGE'])
 def _real_bridge(root, operation, **kwargs):
+    if operation == 'publish-terminal-feedback':
+        return {'ok': True, 'published': 1, 'errors': []}
     completed = subprocess.run(
         [sys.executable, str(_bridge), '--runtime-root', str(root),
          '--ledger', str(runtime_ledger_path(root)), operation],

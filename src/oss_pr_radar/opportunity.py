@@ -218,6 +218,18 @@ def pre_task_gate(
         classification = "blocked_pre_task"
     elif any(reason.startswith("semantic_") for reason in unique_reasons):
         classification = "blocked_pre_task"
+    elif "no_code_surface" in unique_reasons and not any(
+        reason
+        in {
+            "issue_not_open",
+            "issue_assigned",
+            "docs_or_issue_only",
+            "repository_not_mature",
+            "strong_existing_pr",
+        }
+        for reason in unique_reasons
+    ):
+        classification = "blocked_pre_task"
     elif unique_reasons:
         classification = "task_no_go"
     else:
