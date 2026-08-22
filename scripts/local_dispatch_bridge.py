@@ -4610,6 +4610,7 @@ def _codex_decision_prompt(event: dict[str, Any]) -> str:
             f"建议下一步：{event['nextAction']}",
             "",
             "请读取完整 issue、评论、仓库规则和相关 PR，给出简短中文建议，并明确需要用户决定什么。",
+            "不要创建子任务、子 Agent 或委派其他会话；只在当前会话内完成这次只读判断。",
             "不要修改代码、公开评论或创建 PR。若涉及公开披露 AI 使用，只准备私下措辞并等待用户确认。",
         )
     )
@@ -4831,6 +4832,10 @@ def _codex_decision_worker(args: argparse.Namespace) -> dict[str, Any]:
                 "recommended_plugins",
                 "--disable",
                 "remote_plugin",
+                "--disable",
+                "multi_agent",
+                "--disable",
+                "multi_agent_v2",
                 "--stdio",
             ],
             cwd=GITHUB_ROOT,

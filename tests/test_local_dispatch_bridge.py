@@ -1555,6 +1555,12 @@ def test_codex_decision_outbox_rejects_non_pending_event():
         MODULE._validate_codex_decision_outbox(outbox)
 
 
+def test_codex_decision_prompt_forbids_subtask_fanout():
+    prompt = MODULE._codex_decision_prompt(_codex_decision_outbox()["events"][0])
+
+    assert "不要创建子任务、子 Agent 或委派其他会话" in prompt
+
+
 def test_codex_decision_dispatch_creates_once_and_reuses_session(monkeypatch, tmp_path):
     outbox = _codex_decision_outbox()
     event = outbox["events"][0]
@@ -1831,8 +1837,11 @@ def test_codex_decision_worker_creates_and_titles_independent_task(monkeypatch, 
 
     process = Process()
 
+    app_server_argv = []
+
     @contextmanager
-    def action_session(*_args, **_kwargs):
+    def action_session(*_args, **kwargs):
+        app_server_argv.extend(kwargs["argv"])
         yield process
 
     def read_response(_process, _selector, buffer, *, response_id, **_kwargs):
@@ -1895,6 +1904,10 @@ def test_codex_decision_worker_creates_and_titles_independent_task(monkeypatch, 
     assert turn["params"]["cwd"] == str(MODULE.GITHUB_ROOT)
     assert turn["params"]["input"][0]["text"] == prompt
     assert not prompt.startswith("[$gh-issue-pr]")
+    assert app_server_argv.count("multi_agent") == 1
+    assert app_server_argv.count("multi_agent_v2") == 1
+    assert app_server_argv[app_server_argv.index("multi_agent") - 1] == "--disable"
+    assert app_server_argv[app_server_argv.index("multi_agent_v2") - 1] == "--disable"
     assert desired_titles == [
         ("thread-1", "[有价值·待决策] 08-23 12:00 owner/repo#1 需要决定是否继续")
     ]
