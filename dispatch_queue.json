@@ -1,9 +1,194 @@
 {
   "contractDigest": "0ffabde97bae00693068b61ed03087975ec1c57c989c591a2b43af8aa3ecf505",
   "decisionContractDigest": "bea3254376f7aced8aef5e8a7d060fa881c49ffefdc92fe1a0f5ba16740e04db",
-  "generatedAt": "2026-08-22T16:10:34.067990Z",
-  "intentCount": 1,
+  "generatedAt": "2026-08-22T16:46:17.481157Z",
+  "intentCount": 2,
   "intents": [
+    {
+      "actionabilityEvidence": {
+        "algorithm_wait_evidence": false,
+        "code_anchors": [
+          "Node.js",
+          "`tiktok`",
+          "`use_custom_auth`",
+          "`access_token`",
+          "`client_key`",
+          "`client_id`",
+          "parser then",
+          "`redirect_url`"
+        ],
+        "dependency_confirmation": false,
+        "dependency_pr_numbers": [],
+        "design_confirmation": false,
+        "help_wanted": false,
+        "maintainer_active_investigation": false,
+        "maintainer_approved": false,
+        "maintainer_revalidation_requested": false,
+        "needs_confirmation": false,
+        "ownership_confirmation": false,
+        "probe_ready": true,
+        "public_repro_signals": 2,
+        "reproduction_evidence": [
+          "ordered_steps",
+          "executable_command"
+        ],
+        "root_cause_signal": false,
+        "usage_confirmation": false,
+        "wait_reasons": []
+      },
+      "algorithmEvidence": null,
+      "authorizationSource": "signed_live_revalidation_required",
+      "autoSpawn": true,
+      "autoSubmitAuthorized": true,
+      "category": "NEW_CLEAN_CANDIDATE",
+      "contractDigest": "0ffabde97bae00693068b61ed03087975ec1c57c989c591a2b43af8aa3ecf505",
+      "decisionContractDigest": "bea3254376f7aced8aef5e8a7d060fa881c49ffefdc92fe1a0f5ba16740e04db",
+      "decisionDigest": "e79492d146e19197f4cdef54ee153871478b13e667aa870d7aa68a2c333a632e",
+      "defaultBranch": "next",
+      "evidenceDigest": "a5d14facad884a5a430da2c6853928b1831f37d52b711f6221c9396f5fff2130",
+      "expiresAt": "2026-08-22T18:46:17.481157Z",
+      "intentId": "fe59be5327a2873b9d108b5ee487f6676dc978af0950dc5e3f542aff97cd3133",
+      "issueNumber": 4198,
+      "issueUpdatedAt": "2026-08-21T18:40:56Z",
+      "issueUrl": "https://github.com/ComposioHQ/composio/issues/4198",
+      "issuedAt": "2026-08-22T16:46:17.481157Z",
+      "key": "ComposioHQ/composio#4198",
+      "llmReview": {
+        "confidence": 0.85,
+        "decision": "NEW_CLEAN_CANDIDATE",
+        "model": "deepseek-v4-flash",
+        "semanticSignal": "NO_OBJECTION",
+        "status": "ok",
+        "waitReason": null
+      },
+      "maturity": "mature",
+      "mode": "canary",
+      "nonce": "6774d056cd51e77e24e2d0fe1e95622a",
+      "notify": true,
+      "policyDigest": "4bff3d2fbe38cf782163be872f6ed5f8349aec14eea31086ab17ad54f8b4ed38",
+      "preTaskEvidence": {
+        "aiDisclosureConflict": false,
+        "assigneeDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "assignmentRequired": false,
+        "baseLookupStatus": "ok",
+        "baseSha": "8d01a375a0516eab0b4a5dce2375a1c5b5d640a0",
+        "codePathsPlan": [
+          "Node.js"
+        ],
+        "defaultBranch": "next",
+        "designDigest": "014c0ea27901d742664d033c73aba507178bb901e8ce7a485534e7669fe19240",
+        "duplicate": {
+          "best_score": -12,
+          "best_url": "https://github.com/ComposioHQ/composio/pull/3980",
+          "keywordOverlapOnly": true,
+          "prs": [
+            {
+              "additions": 21,
+              "age_days": 24,
+              "author_association": "COLLABORATOR",
+              "changed_files": 1,
+              "ci_competition_weight": 0,
+              "deletions": 0,
+              "gaps": [
+                "未明确 closing/reference 目标 issue",
+                "缺少测试文件",
+                "仍是 draft",
+                "超过 14 天未更新"
+              ],
+              "ignored_nontechnical_failed_checks": [
+                "unnamed"
+              ],
+              "is_draft": true,
+              "issue_body_link": false,
+              "issue_body_link_relation": "",
+              "maintainer_owned": true,
+              "material_competition_gaps": [
+                "缺少回归测试",
+                "仍是 draft"
+              ],
+              "number": 3980,
+              "overlapping_paths": [],
+              "reference_relation": "REFERENCE",
+              "references_issue": false,
+              "root_cause_coverage": false,
+              "rule_closed": false,
+              "score": -12,
+              "semantic_distinctive_overlap": [
+                "access_token"
+              ],
+              "semantic_overlap": false,
+              "semantic_overlap_count": 6,
+              "state": "OPEN",
+              "strengths": [
+                "已有成功 CI/check",
+                "由仓库维护者或协作者提交",
+                "标题/正文与 issue 关键词匹配"
+              ],
+              "technical_complete": false,
+              "technical_failed_checks": [],
+              "test_files": 0,
+              "title": "docs: add TikTok OAuth troubleshooting FAQ",
+              "url": "https://github.com/ComposioHQ/composio/pull/3980"
+            }
+          ],
+          "status": "none",
+          "summary": "仅发现未直接关联、无代码路径或强机制重合的 PR #3980；保留为搜索上下文，不阻止实现"
+        },
+        "duplicateDigest": "3709ccc2729453e98b9a235ea7c098fe9e33a781a9117ee6b6e749ecd1e3e3e2",
+        "duplicateStatus": "none",
+        "issue": {
+          "assignees": [],
+          "state": "open"
+        },
+        "issueDigest": "bf89548cc841a6638bae1de910eae0c2220a14a655b14f0077c71af6a0dacf14",
+        "matureRepository": true,
+        "policy": {
+          "status": "normal"
+        },
+        "probeRequired": true,
+        "reproductionPathPlan": true,
+        "schema": "pre_task_evidence_v1",
+        "validationPathPlan": true
+      },
+      "preTaskEvidenceDigest": "4dc15f6da957b05d437787812d04fefcb77c9493ceed55d285979e2e3649f803",
+      "preTaskGate": {
+        "allowed": true,
+        "baseSha": "8d01a375a0516eab0b4a5dce2375a1c5b5d640a0",
+        "classification": null,
+        "evidenceDigest": "4dc15f6da957b05d437787812d04fefcb77c9493ceed55d285979e2e3649f803",
+        "expected": {
+          "assigneeDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "baseSha": "8d01a375a0516eab0b4a5dce2375a1c5b5d640a0",
+          "designDigest": "014c0ea27901d742664d033c73aba507178bb901e8ce7a485534e7669fe19240",
+          "duplicateDigest": "3709ccc2729453e98b9a235ea7c098fe9e33a781a9117ee6b6e749ecd1e3e3e2",
+          "issueDigest": "bf89548cc841a6638bae1de910eae0c2220a14a655b14f0077c71af6a0dacf14"
+        },
+        "reason": "PRE_TASK_EVIDENCE_PASSED",
+        "reasons": [],
+        "schema": "pre_task_evidence_v1"
+      },
+      "probeLevel": "PENDING",
+      "probeProfile": null,
+      "probeRequired": true,
+      "promptDigest": "c27de2428da7114e3935aa7c7492e8a459ed333db6d588e57049d0429c0b3bfd",
+      "publicSubmissionAllowed": true,
+      "publicationMode": "canary",
+      "repo": "ComposioHQ/composio",
+      "runId": "scan-20260822T164207Z-300c5e763c66",
+      "scanGate": "ALLOW_TO_WORK",
+      "scannerVersion": "oss_pr_radar_v52_recheck_pr_validation",
+      "score": 11,
+      "selectedBaseSha": "8d01a375a0516eab0b4a5dce2375a1c5b5d640a0",
+      "signature": "d7280e6c1a49f04b5913ec328d9058d2f6eda1204b7f3a0fe47ea682d7ae2d0b",
+      "snapshotId": "fe78d5c36dad481c865b377ecf19d6146d9d065f3468c43bc29de80a737c87e6",
+      "sourceSha": "70191377632afbb451160bc9baa282c3a926f8ec",
+      "status": "PENDING",
+      "submissionPolicy": "normal",
+      "taskStage": "PREFLIGHT",
+      "title": "TikTok custom-auth OAuth2 token exchange fails: access_token missing after successful consent",
+      "track": "agent_ai_infra",
+      "version": "dispatch_intent_v7"
+    },
     {
       "actionabilityEvidence": {
         "algorithm_wait_evidence": false,
@@ -65,7 +250,7 @@
       "decisionDigest": "3573ab40664a2d5484d661678c9561dbc8c4e5c2ddbb42895bf4e0d502feec97",
       "defaultBranch": "main",
       "evidenceDigest": "44cb8f6193b8425a5b505ab142e1219901b026e7521c4afac59a9c7e24aa17b9",
-      "expiresAt": "2026-08-22T18:10:34.067990Z",
+      "expiresAt": "2026-08-22T18:46:17.481157Z",
       "intentId": "003b25e908aacdc524f45e790cb682cd6ee731fc55d8e9a03678b66f2ab46c10",
       "issueNumber": 53366,
       "issueUpdatedAt": "2026-08-22T09:07:36Z",
@@ -296,14 +481,14 @@
       "promptDigest": "8a3952147176b1e67c8aa607c29ff20da11cf2b4adf0435041d485dfe35244f8",
       "publicSubmissionAllowed": false,
       "publicationMode": "canary",
-      "renewedAt": "2026-08-22T16:10:34.067990Z",
+      "renewedAt": "2026-08-22T16:46:17.481157Z",
       "repo": "vllm-project/vllm",
       "runId": "scan-20260822T154129Z-d7ffc2bbdd84",
       "scanGate": "ALLOW_PRIVATE_WORK",
       "scannerVersion": "oss_pr_radar_v52_recheck_pr_validation",
       "score": 13,
       "selectedBaseSha": "da329cc303a5233e17fa3d553ce0a3d6ceea87a8",
-      "signature": "cfc3c88becc78bc879bcc6f1bc732ce3d0fbe177810d17666a19c7ee2d082ed6",
+      "signature": "e850a5c49c65e9d2c03c881922a5796da94fe0c18b8bd475d456e74f8a3cd1fc",
       "snapshotId": "263e438fd7935d3c91b32c3937b58945d9a75203b97bad941808916096978aab",
       "sourceSha": "f1651c8073ec445ffc4bbc3f163c01dcd25b170a",
       "status": "PENDING",
@@ -315,10 +500,10 @@
     }
   ],
   "mode": "canary",
-  "newIntentCount": 0,
-  "runId": "scan-20260822T160753Z-23f121e4585b",
+  "newIntentCount": 1,
+  "runId": "scan-20260822T164207Z-300c5e763c66",
   "scannerVersion": "oss_pr_radar_v52_recheck_pr_validation",
-  "signature": "aad6a888df025845d6aeb25c2da1511660c1f9a5b7731015ef46a1f3de4520d7",
-  "sourceSha": "f1651c8073ec445ffc4bbc3f163c01dcd25b170a",
+  "signature": "3a62f7d73b4c5209af67f51048b0509e6c500ad5a5d262f73a8b81015e671d73",
+  "sourceSha": "70191377632afbb451160bc9baa282c3a926f8ec",
   "version": "dispatch_intents_v7"
 }

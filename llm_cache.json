@@ -477,6 +477,32 @@
     "wait_reason": null,
     "why": "Issue describes a concrete, user-visible bug with a clear root cause: plugin tool input decoding uses the server's effect instance on a foreign schema, causing version drift failures. The issue provides a minimal reproduction, expected vs actual behavior, and multiple suggested fix directions. No competing PR or issue exists, and the gate allows work."
   },
+  "048d240efdc66e1091957c300e766d4d29f74442f41a96e3794eb4b0fac7d5ab": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "Observational Memory observer input filtering",
+      "WorkingMemoryStateProcessor signal provenance handling"
+    ],
+    "risks": [
+      "Potential impact on legitimate state-signal observation if filtering is too broad; maintainer design preference may differ."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Seed resource-scoped Working Memory, run a task in a second thread, capture observer input, assert absence of state signal and no memory update."
+    ],
+    "unknowns": [
+      "Exact maintainer-preferred fix approach (filter vs provenance tagging)."
+    ],
+    "why": "The issue provides a clear root cause: Working Memory state signals are included in Observational Memory's observer input, causing self-feedback and silent memory overwrites. It includes a concrete reproduction path, expected vs actual behavior, and a suggested fix with regression test steps."
+  },
   "048d329428fa98c0b4e0d94a7ca407995c07a5444dd683da03d0c14cbe83da78": {
     "confidence": 0.9,
     "contradictions": [],
@@ -3988,6 +4014,35 @@
       "Whether this is a known plugin bug or model-specific issue"
     ],
     "why": "Issue reports a runtime crash on NPU for a specific model, but root cause is unconfirmed and likely in the NPU plugin or stateful inference, not a clear algorithm defect. No maintainer confirmation or design direction; requires maintainer investigation."
+  },
+  "1e0a99a1ea63cc5742c834f1dadf42ea8d095a187869ce31959be6c8ff46c230": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "llmcompressor/pipelines/sequential/",
+      "FX tracing logic to skip ignored modules",
+      "vision tower handling in calibration pipeline"
+    ],
+    "risks": [
+      "Potential performance impact if skipping tracing changes graph construction for other models.",
+      "May require handling of non-traceable modules beyond vision tower."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided repro script with Qwen3-VL-2B-Instruct and AWQ/GPTQ W4A16 to confirm the crash, then verify the fix allows calibration to complete without tracing the vision tower.",
+      "Add a regression test that runs a small dense Qwen3-VL model with visual.* ignored and asserts successful calibration."
+    ],
+    "unknowns": [
+      "Exact fix approach (e.g., skip tracing ignored modules vs. patching rot_pos_emb) is not specified, but this is normal implementation uncertainty."
+    ],
+    "why": "The issue identifies a concrete root cause: the sequential pipeline FX-traces the vision tower even when it is excluded from quantization, and Qwen3-VL's rot_pos_emb is not FX-traceable, causing a CUDA driver error. It provides a minimal reproduction script and environment details, and confirms RTN works, isolating the calibration/tracing path. This is a valid LLM quantization algorithm bug with a clear validation path."
   },
   "1e41f8cdda3a655395b14f2b3be58dae87d677fbc358d75317125176530f583d": {
     "confidence": 0.9,
@@ -17532,6 +17587,30 @@
     ],
     "why": "Issue provides a precise root cause (has_custom branch bypasses chunk_token_num, bare chars leak into split pattern), a concrete reproduction with expected/actual outputs, and a clear minimal fix (Option A). An open PR #18556 already implements the fix with tests, but the issue remains actionable for independent work or review."
   },
+  "6c785549a5e21426b787b137fc48fb9f30d9dd96c5cce9dbc1a181d852112da5": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "OAuth2 token exchange logic in Composio backend to handle TikTok-specific parameter naming and response parsing"
+    ],
+    "risks": [
+      "Changing token exchange behavior may affect other OAuth2 providers; need to ensure backward compatibility."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a regression test that mocks TikTok token endpoint returning access_token at top level and verifies the exchange succeeds; run existing auth-related unit tests."
+    ],
+    "unknowns": [
+      "Exact code location of the token exchange parser; whether maintainers prefer a provider-specific workaround or a general fix."
+    ],
+    "why": "The issue provides a clear, reproducible OAuth2 token-exchange failure for TikTok custom auth, with a likely root cause (TikTok requires client_key instead of client_id and returns access_token at top level). The reproduction steps and expected behavior are concrete, making the fix actionable."
+  },
   "6c8f10a04ab386a229a4c98323ae8fe36422aabb093efa84860c263e52f34c58": {
     "confidence": 0.7,
     "contradictions": [
@@ -19043,6 +19122,37 @@
     ],
     "wait_reason": null,
     "why": "Issue identifies a concrete algorithmic bug in ThinkingBudgetStateHolder: it fails to treat <tool_call> as an implicit reasoning end, causing forced reasoning_end tokens to corrupt tool-call arguments. Existing PRs #44689/#44690 are weak (no tests, stale, CI failures), so a materially better PR with regression tests is plausible."
+  },
+  "74facd5ee6348ff75f344cb5c5dce2bbaa4a4aa323da3c1dbd489a9b1fb1ab54": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #35938 is titled 'Warn when deterministic inference is combined with a quantized KV cache' but does not reference this issue; semantic overlap is inferred from keywords only"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "forward_batch_info.py: populate extend_prefix_lens_cpu and extend_seq_lens_cpu in spec extend branch",
+      "attention_backend_setup.py: add prefill/decode split for speculative draft attention backend"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #35938 which may already address part of the issue; need to compare implementation boundaries",
+      "Changing speculative draft attention backend config may affect other backends and require careful backward compatibility"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided sglang serve command with --kv-cache-dtype nvfp4 and DFLASH to reproduce the crash",
+      "Add a regression test that exercises speculative decoding with NVFP4 KV cache and verifies no crash"
+    ],
+    "unknowns": [
+      "Whether PR #35938 actually fixes the root cause or only adds a warning; need to inspect its diff",
+      "Maintainer preference for the suggested fix approach (populating fields vs. backend split)"
+    ],
+    "why": "Issue provides a clear root cause (extend_prefix_lens_cpu not set in spec branch), a deterministic reproduction command, and a concrete suggested fix. The bug is user-visible and affects a key path (speculative decoding with NVFP4 KV cache)."
   },
   "757f74065dd04d0c1b894743a4393d3f5786549b755b07fe7111e0658cd613a7": {
     "confidence": 0.8,
@@ -25270,6 +25380,37 @@
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue provides a detailed, reproducible regression in ADK 2.7.0 where relayed human-input pauses are flattened, preventing remote agent resume and enabling silent approval-gate bypass. Root cause is clearly identified (classification by function call name instead of origin) with a concrete fix suggestion. However, the submission policy requires assignment, and the gate decision is HUMAN_REVIEW, so work cannot start without maintainer confirmation."
   },
+  "9e99a7ccf2ecd474e269d58fd860cbd4572c43fbbc9a39224cc6c45a584d2bff": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue table reports 473 bytes for SQL payload, but maintainer comment says reproduction snippet is 172 bytes"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "agentscope/model/_openai_model.py",
+      "agentscope/agent/_react_agent.py",
+      "count_tokens implementation"
+    ],
+    "risks": [
+      "Potential dependency on specific tokenizer or chat template configuration",
+      "Need to avoid duplicating existing PR #2397 work"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run reproduction script with provided SQL payload and compare count_tokens vs actual usage",
+      "Add regression tests for non-ASCII, numeric, and JSON payloads with fixed tokenizer and chat template"
+    ],
+    "unknowns": [
+      "Exact payloads, model/tokenizer, chat template, and vLLM version used in benchmark"
+    ],
+    "why": "Issue provides a clear root cause (token underestimation in count_tokens), concrete reproduction steps, benchmark data, and a validation path comparing estimates to actual usage. The existing PR #2397 is a draft and lacks root-cause coverage, leaving room for a more complete fix."
+  },
   "9ed41ee46f2bb9856794228543909cf13d9abe9798db33cee69fb2f18b0d1e50": {
     "confidence": 0.8,
     "contradictions": [],
@@ -29849,6 +29990,43 @@
     "wait_reason": null,
     "why": "Issue provides a deterministic minimal repro, clear expected behavior, and a maintainer bot confirms reproduction on main with a root-cause hint (coordinator returns before reattaching earlier settlements). No competing PR exists; related PR #1993 is a draft docs-only state machine with no code overlap. Actionable fix: ensure the turn resumes when the last pending request is settled, or reject partial batch responses."
   },
+  "beaa78f123012c12f48d7dfdc58cadf28e513a7ddac1ea1140635d0e03659e17": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "Add targetRouteKey option to TryCompressOptions",
+      "Modify tryCompress entry invalidation to use request route",
+      "Provide non-invalidating read view for ChatCompressionService",
+      "Add optional route key to setLastPromptTokenCount",
+      "Update callers in client.ts, turn.ts, agent-core.ts, sessionService.ts"
+    ],
+    "risks": [
+      "Potential API change to public setter setLastPromptTokenCount may affect external callers",
+      "Implementation must coordinate three sites to avoid inconsistent behavior",
+      "Blocked on PR #9506; must be implemented after that merges"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test for each of the three sites: verify token count is not invalidated when request route differs from active route",
+      "Test that cache-sharing fast path is taken for override routes",
+      "Test that setLastPromptTokenCount stamps the request route when provided"
+    ],
+    "unknowns": [
+      "Exact implementation details of the non-invalidating read view",
+      "Whether maintainers prefer a different approach than suggested",
+      "Exact caller list after PR #9506 merges"
+    ],
+    "why": "Issue clearly identifies a concrete bug in the in-send compression path where request route is not threaded through, causing token counts to be invalidated against the active route instead of the request route. Root cause is precisely described with three specific code sites and a suggested fix direction. The issue is a follow-up from PR #9506 and is blocked on that PR, but the evidence is sufficient to define actionable work."
+  },
   "beecc287bc9f8cdb13af4d81a38799af1eeea85a3668d8ca65e47ed566c2f268": {
     "confidence": 0.7,
     "contradictions": [],
@@ -33469,6 +33647,39 @@
     ],
     "why": "Issue clearly identifies a root cause: importlib.metadata.version('mem0ai') fails without installed distribution, breaking source-tree imports and pytest. Existing PR #6811 directly addresses this but lacks regression tests, leaving room for a materially better PR with tests and robust fallback."
   },
+  "d3943dd9d9136a25c506cd10e06699af7511947b89b3e64728e7608c1a025883": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The issue initially attributes the hang to MTP, but later comments show it occurs without MTP, indicating a broader root cause.",
+      "The TP=1 reproduction contradicts the multiproc-specific theory, suggesting a second hang path or a more general issue."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "vllm/v1/executor/multiproc_executor.py",
+      "vllm/distributed/device_communicators/shm_broadcast.py"
+    ],
+    "risks": [
+      "The fix may mask underlying worker stalls that cause the deadline to expire; a more robust solution might require reverting the FutureWrapper refactor or adding heartbeat mechanisms.",
+      "Clamping timeout to zero could cause premature timeouts if the system clock or scheduling delays are not accounted for."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that simulates a stale deadline by creating a FutureWrapper with an already-expired deadline and verifying that get_response does not block indefinitely.",
+      "Run existing multiproc executor tests with a mocked clock to force negative timeout and assert immediate timeout."
+    ],
+    "unknowns": [
+      "Whether the proposed one-line fix fully resolves the hang in all configurations, especially TP=1 and multi-node setups.",
+      "The exact interaction with DeepEP and FlashInfer autotuning that amplifies the race condition."
+    ],
+    "why": "The issue provides a detailed root-cause analysis with code-level evidence: the FutureWrapper refactoring in multiproc_executor.py captures stale deadlines, leading to negative timeouts that zmq interprets as infinite poll, causing hangs. Multiple independent reproductions across different models and hardware confirm the bug. The proposed fix (clamping timeout to non-negative) is concrete and testable."
+  },
   "d39487f7ced9c16237fc4fd045f94cd674def980788266d3e59c6d23acd7c121": {
     "confidence": 0.85,
     "contradictions": [],
@@ -33655,6 +33866,31 @@
       "Actual root cause of engine core initialization failure; environment details beyond provided logs."
     ],
     "why": "The issue is a usage/support request for a runtime initialization failure, not a concrete algorithm bug. It lacks a clear root cause, minimal reproduction, or actionable code path. The track requires a concrete algorithm mechanism and validation path, which are absent."
+  },
+  "d45312f433e952269a5d0fea2b448335f79f81da7a019c2d727babaf8fd4a4b3": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "CMake configuration logic in top-level CMakeLists.txt and cmake/aarch64_linux_toolchain.cmake to auto-detect aarch64 or validate CMAKE_CUDA_ARCHITECTURES for jetson-orin"
+    ],
+    "risks": [
+      "Potential impact on cross-compilation flows if auto-detection is too aggressive; need to ensure existing toolchain-based builds remain unaffected"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Build natively on Jetson AGX Orin without toolchain file and verify CMake output shows SM87; run Qwen3-VL INT4 AWQ inference to confirm decoding succeeds"
+    ],
+    "unknowns": [
+      "Exact maintainer preference for auto-detection vs. hard error; no maintainer comment or approval yet"
+    ],
+    "why": "Issue provides a clear root cause: native aarch64 build without toolchain file leaves AARCH64_BUILD unset, causing CMake to select SM80/86/89 instead of SM87 for XQA kernels, leading to runtime GQA kernel failure. Concrete reproduction steps and a validated workaround are supplied, making the fix actionable."
   },
   "d4ccf82713410fd1d27a196f14591ed86ce9b70af698f8a2729553f628ce3887": {
     "confidence": 0.6,
@@ -34365,6 +34601,34 @@
       "Maintainer acknowledgment or design preference"
     ],
     "why": "Issue reports performance degradation with MTP at high context but lacks a minimal reproduction, profiling data, or a clear root cause. No maintainer confirmation or design direction. The track is agent_ai_infra, not llm_algorithm, so algorithm evidence is not required, but the lack of actionable technical detail and maintainer input blocks a clean start."
+  },
+  "d83acb6da91bd7b5104f85619fac58e5f223f11efad229427ee44cf5d8f91cb2": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "AudioRecognition audio routing",
+      "RoomIO track subscription lifecycle",
+      "STT stream consumption"
+    ],
+    "risks": [
+      "Fix may require changes to low-level audio routing that could affect other session features; need to avoid breaking existing turn detection behavior."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce freeze with session.start(record={'audio': True}) and DEBUG logs; verify audio.ogg lacks user audio after freeze while server recording contains it.",
+      "Add regression test simulating multi-turn conversation with track subscription interruption to ensure audio frames continue reaching session."
+    ],
+    "unknowns": [
+      "Exact code path where audio frames stop being delivered (track subscription vs RoomIO internal routing) not yet pinpointed; maintainer has not confirmed a specific fix."
+    ],
+    "why": "Issue provides detailed reproduction, multiple configurations isolating the failure to audio routing infrastructure, and maintainer-guided recording evidence confirming user audio stops reaching the session. Root cause is narrowed to track subscription or RoomIO delivery, with a concrete validation path via session recording and DEBUG logs."
   },
   "d83cb699561986b97604b82baceae1d6070c1f219cf70192e1f4ef3f1102349a": {
     "confidence": 0.8,
