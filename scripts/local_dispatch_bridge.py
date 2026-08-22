@@ -3902,6 +3902,7 @@ def write_task_context(
         if bootstrap_path is not None:
             for fd in reversed(context_handles):
                 os.close(fd)
+    prior_result_digest = prior_context.get("resultDigest")
     repaired_same_result = (
         not reproduction_only
         and prior_context.get("taskStage") == "REPRODUCTION_REQUIRED"
@@ -3910,7 +3911,10 @@ def write_task_context(
         and prior_context.get("threadId") == payload.get("threadId")
         and bool(prior_context.get("worktreePath"))
         and Path(str(prior_context.get("worktreePath") or "")).resolve() == cwd.resolve()
-        and prior_context.get("resultDigest") == payload.get("resultDigest")
+        and (
+            not prior_result_digest
+            or prior_result_digest == payload.get("resultDigest")
+        )
         and bool(payload.get("resultDigest"))
     )
     if repaired_same_result:

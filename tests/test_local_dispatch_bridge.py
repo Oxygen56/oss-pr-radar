@@ -9464,7 +9464,10 @@ def test_implementation_context_survives_expired_transition_receipt(
     assert context["resultDigest"] == receipt["resultDigest"]
 
 
-def test_repaired_implementation_context_rearms_same_result_once(tmp_path):
+@pytest.mark.parametrize("prior_has_result_digest", [True, False])
+def test_repaired_implementation_context_rearms_same_result_once(
+    tmp_path, prior_has_result_digest
+):
     store, worktree, _result_path = _controller_commit_result(tmp_path)
     managed = ManagedLedger(store.path, ensure_schema=True)
     provenance = json.loads(managed.read_task("intent-1")["provenance_json"])
@@ -9497,6 +9500,8 @@ def test_repaired_implementation_context_rearms_same_result_once(tmp_path):
             "childMayEditFiles": False,
         }
     )
+    if not prior_has_result_digest:
+        denied_context.pop("resultDigest", None)
     context_path.write_text(json.dumps(denied_context), encoding="utf-8")
 
     repaired = json.loads(
