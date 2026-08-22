@@ -210,18 +210,11 @@ jobs:
           name: pr-followup-state-${{ github.run_id }}
           path: .
 
-      - name: Import follow-up and ensure managed projection
+      - name: Import authenticated scan and follow-up state
         run: |
+          PYTHONPATH=src python scripts/import_managed_snapshot.py
           python scripts/sync_managed_followup.py state/pr_followup.json reports/pr_updates.json
           PYTHONPATH=src python scripts/process_managed_replies.py
-          PYTHONPATH=src python scripts/export_managed_snapshot.py
-          PYTHONPATH=src python scripts/export_war_room_projection.py \
-            --ledger-copy state/radar_ledger.sqlite3 \
-            --artifact reports/war_room_projection.json \
-            --views reports/war_room_views.json \
-            --feishu-outbox state/war_room_feishu_outbox.json \
-            --codex-outbox state/war_room_codex_outbox.json \
-            --source-commit "$GITHUB_SHA"
 
       - name: Build signed dispatch queue
         run: >-
@@ -236,6 +229,17 @@ jobs:
           python scripts/build_watchlist.py
           reports/latest_scan.json
           state/watchlist.json
+
+      - name: Export managed lifecycle and War Room projection
+        run: |
+          PYTHONPATH=src python scripts/export_managed_snapshot.py
+          PYTHONPATH=src python scripts/export_war_room_projection.py \
+            --ledger-copy state/radar_ledger.sqlite3 \
+            --artifact reports/war_room_projection.json \
+            --views reports/war_room_views.json \
+            --feishu-outbox state/war_room_feishu_outbox.json \
+            --codex-outbox state/war_room_codex_outbox.json \
+            --source-commit "$GITHUB_SHA"
 
       - name: Upload pending state
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -345,5 +349,13 @@ jobs:
           state/war_room_feishu_outbox.json
           receipt/war_room_feishu_outbox.json
           state/war_room_feishu_outbox.json
+      - name: Apply authenticated user-decision delivery state
+        run: |
+          PYTHONPATH=src python scripts/apply_war_room_receipt.py \
+            state/radar_ledger.sqlite3 \
+            state/war_room_feishu_outbox.json \
+            receipt/war_room_feishu_outbox.json \
+            state/seen.json
+          PYTHONPATH=src python scripts/export_managed_snapshot.py
       - name: Commit receipt checkpoint
         run: python scripts/state_branch.py publish

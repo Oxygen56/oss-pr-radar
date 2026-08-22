@@ -8,6 +8,7 @@ their own lifecycle decisions.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,8 @@ PROJECTION_BUCKETS = (
     "PORTFOLIO_READY",
 )
 EVIDENCE_LEVELS = ("待补充", "有记录", "已核实", "外部记录")
+ACTION_KINDS = ("NONE", "MANAGED_TASK", "USER_DECISION")
+NOTIFICATION_STATUSES = ("NONE", "PENDING", "SENT", "FAILED", "RECONCILE_REQUIRED")
 
 
 class ProjectionError(ValueError):
@@ -221,15 +224,33 @@ def _item(
     )
     key = str(opportunity["opportunity_key"] if opportunity else pr["pr_key"])
     actionable = bool(task is not None and gate_passed)
-    notified = bool(
-        actionable
-        and _json(opportunity["metadata_json"] if opportunity else "{}").get("notified") is True
+    metadata = _json(opportunity["metadata_json"] if opportunity else "{}")
+    notification_digest = str(metadata.get("notificationDigest") or "")
+    notification_status = str(metadata.get("notificationStatus") or "PENDING")
+    review_required = bool(
+        task is None
+        and opportunity is not None
+        and opportunity["source"] == "scanner"
+        and state == "DECISION_REQUIRED"
+        and metadata.get("reviewRequired") is True
+        and metadata.get("gateDecision") == "HUMAN_REVIEW"
+        and re.fullmatch(r"[0-9a-f]{64}", notification_digest)
+        and notification_status in NOTIFICATION_STATUSES[1:]
     )
+    action_kind = "MANAGED_TASK" if actionable else "USER_DECISION" if review_required else "NONE"
+    if not review_required:
+        notification_digest = ""
+        notification_status = "NONE"
+    notified = bool(review_required and notification_status == "SENT")
     return {
         "candidateKey": key,
         "bucket": bucket,
         **display,
         "actionable": actionable,
+        "reviewRequired": review_required,
+        "actionKind": action_kind,
+        "notificationDigest": notification_digest or None,
+        "notificationStatus": notification_status,
         "notified": notified,
         "taskId": task["task_id"] if task is not None else None,
         "creationGatePassed": gate_passed,
@@ -351,10 +372,22 @@ def validate_projection(value: dict[str, Any]) -> None:
     for item in items:
         if not isinstance(item, dict) or item.get("bucket") not in PROJECTION_BUCKETS:
             raise ProjectionError("candidate bucket is invalid")
-        if not isinstance(item.get("actionable"), bool) or not isinstance(
-            item.get("notified"), bool
+        if (
+            not isinstance(item.get("actionable"), bool)
+            or not isinstance(item.get("reviewRequired"), bool)
+            or not isinstance(item.get("notified"), bool)
         ):
             raise ProjectionError("candidate action flags are invalid")
+        if (
+            item.get("actionKind") not in ACTION_KINDS
+            or item.get("notificationStatus") not in NOTIFICATION_STATUSES
+        ):
+            raise ProjectionError("candidate notification state is invalid")
+        digest = item.get("notificationDigest")
+        if digest is not None and not (
+            isinstance(digest, str) and re.fullmatch(r"[0-9a-f]{64}", digest)
+        ):
+            raise ProjectionError("candidate notification digest is invalid")
         if item["candidateKey"] in seen:
             raise ProjectionError("candidate appears more than once")
         seen.add(item["candidateKey"])
@@ -367,14 +400,40 @@ def validate_projection(value: dict[str, Any]) -> None:
             raise ProjectionError("candidate display fields must be plain text")
         if not any("\u4e00" <= char <= "\u9fff" for char in item["title"]):
             raise ProjectionError("candidate title must be Simplified Chinese")
-        if item.get("actionable") is not True and item.get("notified") is True:
-            raise ProjectionError("non-actionable candidate cannot be notified")
-        if item.get("actionable") is not True and item.get("creationGatePassed") is not False:
-            raise ProjectionError("non-actionable candidate must have a failed creation gate")
-        if item.get("actionable") is True and item.get("creationGatePassed") is not True:
-            raise ProjectionError("actionable candidate lacks a creation gate")
-        if item.get("actionable") is True and not item.get("taskId"):
-            raise ProjectionError("actionable candidate lacks a managed task")
+        if item["actionKind"] == "MANAGED_TASK":
+            if (
+                item.get("actionable") is not True
+                or item.get("reviewRequired") is not False
+                or item.get("creationGatePassed") is not True
+                or not item.get("taskId")
+                or item.get("notificationDigest") is not None
+                or item.get("notificationStatus") != "NONE"
+                or item.get("notified") is not False
+            ):
+                raise ProjectionError("managed task action binding is invalid")
+        elif item["actionKind"] == "USER_DECISION":
+            if (
+                item.get("actionable") is not False
+                or item.get("reviewRequired") is not True
+                or item.get("creationGatePassed") is not False
+                or item.get("taskId") is not None
+                or item.get("bucket") != "DECISION_REQUIRED"
+                or item.get("notificationDigest") is None
+                or item.get("notificationStatus") == "NONE"
+                or item.get("notified") != (item.get("notificationStatus") == "SENT")
+            ):
+                raise ProjectionError("user decision action binding is invalid")
+        elif any(
+            (
+                item.get("actionable") is not False,
+                item.get("reviewRequired") is not False,
+                item.get("creationGatePassed") is not False,
+                item.get("notified") is not False,
+                item.get("notificationDigest") is not None,
+                item.get("notificationStatus") != "NONE",
+            )
+        ):
+            raise ProjectionError("non-actionable candidate has notification authority")
     flattened: list[dict[str, Any]] = []
     for bucket in PROJECTION_BUCKETS:
         bucket_items = value["buckets"].get(bucket)
@@ -409,7 +468,9 @@ def build_views(artifact: dict[str, Any]) -> dict[str, Any]:
     """Render Feishu and Codex views without re-evaluating lifecycle state."""
 
     validate_projection(artifact)
-    actionable = [item for item in artifact["items"] if item["actionable"]]
+    actionable = [
+        item for item in artifact["items"] if item["actionable"] or item["reviewRequired"]
+    ]
     views: dict[str, Any] = {
         "schema": VIEW_SCHEMA,
         "sourceArtifactDigest": artifact["artifactDigest"],
@@ -432,8 +493,11 @@ def validate_views(value: dict[str, Any]) -> None:
     right = [item.get("candidateKey") for item in codex.get("items") or []]
     if left != right:
         raise ProjectionError("Feishu and Codex actionable views differ")
-    if any(item.get("actionable") is not True for item in feishu.get("items") or []):
-        raise ProjectionError("non-actionable item entered a channel view")
+    if any(
+        item.get("actionable") is not True and item.get("reviewRequired") is not True
+        for item in feishu.get("items") or []
+    ):
+        raise ProjectionError("unauthorized item entered a channel view")
 
 
 def write_views(artifact: dict[str, Any], output: Path) -> dict[str, Any]:

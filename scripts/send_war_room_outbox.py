@@ -39,6 +39,8 @@ def validate(value: dict) -> None:
             "eventId",
             "candidateKey",
             "taskId",
+            "actionKind",
+            "notificationDigest",
             "title",
             "reason",
             "nextAction",

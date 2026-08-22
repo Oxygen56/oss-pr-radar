@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -24,7 +26,7 @@ from .opportunity import (
 )
 from .release_binding import runtime_ledger_path
 from .repo_probe import REPRODUCED_VALIDATED, thread_fingerprint, verify_probe_receipt
-from .util import sha256_json
+from .util import canonical_json, sha256_json
 
 
 class GitHubAbsenceQueries:
@@ -91,6 +93,28 @@ def _scan_outcome_result_type(outcome: dict[str, Any]) -> str:
     return classify_scan_outcome(status, reason)
 
 
+def _user_decision_metadata(candidate: dict[str, Any], preflight: dict[str, Any]) -> dict[str, Any]:
+    """Return the narrowly authenticated no-task notification state."""
+
+    review = candidate.get("llm_review") or {}
+    notification_digest = str(candidate.get("notification_digest") or "")
+    review_required = bool(
+        candidate.get("category") == "WAIT_MAINTAINER"
+        and candidate.get("gate_decision") == "HUMAN_REVIEW"
+        and candidate.get("auto_spawn") is False
+        and external_side_effect_allowed(candidate)
+        and preflight.get("allowed") is True
+        and review.get("status") == "ok"
+        and review.get("semanticSignal") == "NO_OBJECTION"
+        and re.fullmatch(r"[0-9a-f]{64}", notification_digest)
+    )
+    return {
+        "reviewRequired": review_required,
+        "gateDecision": "HUMAN_REVIEW" if review_required else "",
+        "notificationDigest": notification_digest if review_required else "",
+    }
+
+
 @dataclass
 class ManagedAdapter:
     root: Path
@@ -124,9 +148,35 @@ class ManagedAdapter:
             candidate_keys.add(key)
             preflight = candidate.get("preTaskGate") or candidate.get("pre_task_gate")
             preflight = preflight if isinstance(preflight, dict) else {}
+            decision_metadata = _user_decision_metadata(candidate, preflight)
+            existing_metadata: dict[str, Any] = {}
+            with ledger._connection() as connection:
+                existing = connection.execute(
+                    "SELECT metadata_json FROM managed_opportunities WHERE opportunity_key=?",
+                    (key,),
+                ).fetchone()
+            if existing is not None:
+                try:
+                    parsed = json.loads(existing["metadata_json"] or "{}")
+                except (TypeError, json.JSONDecodeError):
+                    parsed = {}
+                if isinstance(parsed, dict):
+                    existing_metadata = parsed
+            notification_status = "PENDING"
+            if (
+                decision_metadata["reviewRequired"]
+                and existing_metadata.get("reviewRequired") is True
+                and existing_metadata.get("notificationDigest")
+                == decision_metadata["notificationDigest"]
+            ):
+                prior_status = str(existing_metadata.get("notificationStatus") or "PENDING")
+                if prior_status in {"PENDING", "SENT", "FAILED", "RECONCILE_REQUIRED"}:
+                    notification_status = prior_status
             classification = preflight.get("classification")
             opportunity_state = (
-                "DECISION_REQUIRED" if candidate.get("auto_spawn") else "SYSTEM_PROCESSING"
+                "DECISION_REQUIRED"
+                if candidate.get("auto_spawn") or decision_metadata["reviewRequired"]
+                else "SYSTEM_PROCESSING"
             )
             if classification == "blocked_pre_task":
                 opportunity_state = "WAITING_EXTERNAL"
@@ -148,6 +198,7 @@ class ManagedAdapter:
                 observed_at=str(report.get("now") or "") or None,
                 metadata={
                     "candidateDigest": candidate.get("evidence_digest"),
+                    "title": candidate.get("title"),
                     "preTaskEvidence": candidate.get("preTaskEvidence")
                     or candidate.get("pre_task_evidence")
                     or {},
@@ -155,6 +206,11 @@ class ManagedAdapter:
                     "ranking": candidate.get("ranking") or {},
                     "maturity": candidate.get("maturity") or "mature",
                     "capacityDisposition": candidate.get("capacityDisposition"),
+                    **decision_metadata,
+                    "notificationStatus": notification_status,
+                    "notified": bool(
+                        decision_metadata["reviewRequired"] and notification_status == "SENT"
+                    ),
                 },
             )
             if isinstance(preflight, dict) and preflight.get("allowed") is not True:
@@ -191,6 +247,7 @@ class ManagedAdapter:
                     or {},
                     "maturity": candidate.get("maturity") or "mature",
                     "capacityDisposition": candidate.get("capacityDisposition"),
+                    **decision_metadata,
                 },
             )
             if (
@@ -263,6 +320,97 @@ class ManagedAdapter:
             )
             outcomes_recorded += 1
         return {"ok": True, "recorded": recorded, "outcomesRecorded": outcomes_recorded}
+
+    def record_user_decision_delivery(
+        self,
+        *,
+        candidate_key: str,
+        notification_digest: str,
+        status: str,
+        receipt_id: str,
+        source_artifact_digest: str,
+        reconciliation_required: bool = False,
+        message_id: str = "",
+        error: str = "",
+    ) -> dict[str, Any]:
+        """Apply an authenticated USER_DECISION delivery without creating a task."""
+
+        if status not in {"SENT", "FAILED"}:
+            raise ValueError("unsupported user decision delivery status")
+        if not re.fullmatch(r"[0-9a-f]{64}", notification_digest):
+            raise ValueError("user decision notification digest is invalid")
+        if not receipt_id or not source_artifact_digest:
+            raise ValueError("user decision delivery binding is missing")
+        ledger = self.ledger
+        connection = ledger._connection()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT metadata_json FROM managed_opportunities WHERE opportunity_key=?",
+                (candidate_key,),
+            ).fetchone()
+            if row is None:
+                raise ValueError("user decision opportunity is missing")
+            try:
+                metadata = json.loads(row["metadata_json"] or "{}")
+            except (TypeError, json.JSONDecodeError) as exc:
+                raise ValueError("user decision opportunity metadata is invalid") from exc
+            if not isinstance(metadata, dict) or not all(
+                (
+                    metadata.get("reviewRequired") is True,
+                    metadata.get("gateDecision") == "HUMAN_REVIEW",
+                    metadata.get("notificationDigest") == notification_digest,
+                )
+            ):
+                raise ValueError("user decision delivery does not match the managed opportunity")
+            prior_status = str(metadata.get("notificationStatus") or "PENDING")
+            next_status = (
+                "SENT"
+                if status == "SENT"
+                else "RECONCILE_REQUIRED"
+                if reconciliation_required
+                else "FAILED"
+            )
+            if prior_status == "SENT" and next_status != "SENT":
+                raise ValueError("sent user decision delivery cannot be downgraded")
+            metadata.update(
+                {
+                    "notificationStatus": next_status,
+                    "notified": next_status == "SENT",
+                    "deliveryReceiptId": receipt_id,
+                }
+            )
+            connection.execute(
+                "UPDATE managed_opportunities SET metadata_json=? WHERE opportunity_key=?",
+                (canonical_json(metadata), candidate_key),
+            )
+            connection.commit()
+        except Exception:
+            if connection.in_transaction:
+                connection.rollback()
+            raise
+        finally:
+            connection.close()
+        event = ledger.record_event(
+            event_type=(
+                "USER_DECISION_NOTIFICATION_SENT"
+                if next_status == "SENT"
+                else "USER_DECISION_NOTIFICATION_RECONCILE_REQUIRED"
+                if next_status == "RECONCILE_REQUIRED"
+                else "USER_DECISION_NOTIFICATION_FAILED"
+            ),
+            idempotency_key=f"user-decision-delivery:{receipt_id}",
+            opportunity_key=candidate_key,
+            state=next_status,
+            source="war_room",
+            provenance={"sourceArtifactDigest": source_artifact_digest},
+            payload={
+                "notificationDigest": notification_digest,
+                "messageId": message_id if next_status == "SENT" else "",
+                "error": error if next_status != "SENT" else "",
+            },
+        )
+        return {"ok": True, "status": next_status, "eventCreated": event["created"]}
 
     def record_dispatch_queue(self, queue: dict[str, Any]) -> dict[str, Any]:
         ledger = self.ledger

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 from datetime import UTC, datetime
 
@@ -133,6 +134,54 @@ def test_scanner_entrypoint_writes_managed_opportunity(tmp_path, monkeypatch):
             "SELECT opportunity_key,source FROM managed_opportunities"
         ).fetchone()
     assert dict(row) == {"opportunity_key": "owner/repo#7", "source": "scanner"}
+
+
+def test_scan_adapter_whitelists_only_authenticated_human_review_notifications(tmp_path):
+    database = tmp_path / "state" / "radar_ledger.sqlite3"
+    adapter = ManagedAdapter(tmp_path, database)
+    base = {
+        "repo": "owner/repo",
+        "title": "Needs a maintainer decision",
+        "score": 9,
+        "category": "WAIT_MAINTAINER",
+        "gate_decision": "HUMAN_REVIEW",
+        "auto_spawn": False,
+        "notify": True,
+        "maturity": "mature",
+        "preTaskGate": {"allowed": True},
+        "llm_review": {"status": "ok", "semanticSignal": "NO_OBJECTION"},
+        "notification_digest": "c" * 64,
+    }
+    report = {
+        "run_id": "scan-review",
+        "now": "2026-08-19T00:00:00Z",
+        "candidate_details": [
+            {
+                **base,
+                "num": 8,
+                "url": "https://github.com/owner/repo/issues/8",
+            },
+            {
+                **base,
+                "num": 9,
+                "url": "https://github.com/owner/repo/issues/9",
+                "llm_review": {"status": "error", "semanticSignal": "NO_OBJECTION"},
+            },
+        ],
+    }
+
+    assert adapter.record_scan_report(report)["recorded"] == 2
+    with ManagedLedger(database)._connection() as connection:
+        rows = connection.execute(
+            "SELECT opportunity_key,state,metadata_json FROM managed_opportunities ORDER BY opportunity_key"
+        ).fetchall()
+    first = json.loads(rows[0]["metadata_json"])
+    second = json.loads(rows[1]["metadata_json"])
+    assert rows[0]["state"] == "DECISION_REQUIRED"
+    assert first["reviewRequired"] is True
+    assert first["notificationStatus"] == "PENDING"
+    assert rows[1]["state"] == "SYSTEM_PROCESSING"
+    assert second["reviewRequired"] is False
 
 
 def test_real_control_plane_adapter_path_reaches_all_projection_buckets(tmp_path):

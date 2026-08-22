@@ -18,6 +18,7 @@ from oss_pr_radar.managed_lifecycle import (
     public_reply_policy_digest,
     verify_task_creation_authorization,
 )
+from oss_pr_radar.managed_snapshot import export_snapshot, import_snapshot
 from oss_pr_radar.war_room_deploy import build_copy, verify_copy
 from oss_pr_radar.war_room_messages import build_outbox, build_public_reply, validate_outboxes
 from oss_pr_radar.war_room_migration import prepare_copy, rollback_copy
@@ -30,6 +31,7 @@ from oss_pr_radar.war_room_projection import (
 )
 
 ROOT = Path(__file__).parents[1]
+USER_DECISION_DIGEST = "a" * 64
 
 
 def managed_db(tmp_path: Path) -> Path:
@@ -53,6 +55,35 @@ def add_opportunity(ledger: ManagedLedger, key: str, *, gate: bool = False) -> N
         source="test",
         provenance={"title": "标题"},
         metadata={"title": "标题", "preTaskGate": {"allowed": gate}, "notify": True},
+        observed_at="2026-08-19T00:00:00Z",
+    )
+
+
+def add_user_decision(
+    ledger: ManagedLedger,
+    key: str = "owner/repo#8",
+    *,
+    status: str = "PENDING",
+) -> None:
+    owner_repo, number = key.rsplit("#", 1)
+    owner, repo = owner_repo.split("/", 1)
+    ledger.upsert_opportunity(
+        opportunity_key=key,
+        owner=owner,
+        repo=repo,
+        issue_number=int(number),
+        issue_url=f"https://github.com/{owner_repo}/issues/{number}",
+        state="DECISION_REQUIRED",
+        source="scanner",
+        provenance={"title": "需要确认候选处理方向"},
+        metadata={
+            "title": "需要确认候选处理方向",
+            "reviewRequired": True,
+            "gateDecision": "HUMAN_REVIEW",
+            "notificationDigest": USER_DECISION_DIGEST,
+            "notificationStatus": status,
+            "notified": status == "SENT",
+        },
         observed_at="2026-08-19T00:00:00Z",
     )
 
@@ -165,6 +196,58 @@ def test_mature_notified_candidate_without_task_produces_no_external_send(tmp_pa
     )
     assert completed.returncode == 0, completed.stderr
     assert json.loads(output_path.read_text(encoding="utf-8"))["events"] == []
+
+
+def test_authenticated_user_decision_without_task_uses_one_projection(tmp_path: Path):
+    path = managed_db(tmp_path)
+    ledger = ManagedLedger(path)
+    add_user_decision(ledger)
+
+    artifact = build_projection(path)
+    item = artifact["items"][0]
+    assert item["actionable"] is False
+    assert item["reviewRequired"] is True
+    assert item["actionKind"] == "USER_DECISION"
+    assert item["creationGatePassed"] is False
+    assert item["taskId"] is None
+    outboxes = {channel: build_outbox(artifact, channel=channel) for channel in ("feishu", "codex")}
+    validate_outboxes(artifact, outboxes)
+    assert [event["candidateKey"] for event in outboxes["feishu"]["events"]] == ["owner/repo#8"]
+    assert [event["candidateKey"] for event in outboxes["codex"]["events"]] == ["owner/repo#8"]
+    assert outboxes["feishu"]["events"][0]["taskId"] is None
+
+
+def test_user_decision_sent_is_suppressed_and_failed_is_retried_idempotently(tmp_path: Path):
+    path = managed_db(tmp_path)
+    ledger = ManagedLedger(path)
+    add_user_decision(ledger, status="PENDING")
+    pending = build_outbox(build_projection(path), channel="feishu")
+    pending_event_id = pending["events"][0]["eventId"]
+
+    add_user_decision(ledger, status="FAILED")
+    failed = build_outbox(build_projection(path), channel="feishu")
+    assert failed["events"][0]["eventId"] == pending_event_id
+
+    add_user_decision(ledger, status="SENT")
+    sent = build_projection(path)
+    assert sent["items"][0]["notified"] is True
+    assert build_outbox(sent, channel="feishu")["events"] == []
+
+
+def test_user_decision_authority_survives_authenticated_snapshot_round_trip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", "snapshot-user-decision-key" * 2)
+    source = managed_db(tmp_path / "source")
+    add_user_decision(ManagedLedger(source))
+    snapshot = tmp_path / "managed.snapshot.json.gz"
+    export_snapshot(source, snapshot)
+
+    restored = managed_db(tmp_path / "restored")
+    import_snapshot(restored, snapshot)
+    artifact = build_projection(restored)
+    assert artifact["items"][0]["actionKind"] == "USER_DECISION"
+    assert build_outbox(artifact, channel="feishu")["events"][0]["candidateKey"] == ("owner/repo#8")
 
 
 def test_gate_bound_task_is_the_only_actionable_source_and_exports_are_idempotent(

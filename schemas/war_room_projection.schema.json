@@ -28,7 +28,7 @@
   "$defs": {
     "item": {
       "type": "object",
-      "required": ["candidateKey", "bucket", "title", "reason", "evidenceLevel", "nextAction", "actionable", "notified", "creationGatePassed", "taskId", "originKind", "originPrUrl"],
+      "required": ["candidateKey", "bucket", "title", "reason", "evidenceLevel", "nextAction", "actionable", "reviewRequired", "actionKind", "notificationDigest", "notificationStatus", "notified", "creationGatePassed", "taskId", "originKind", "originPrUrl"],
       "properties": {
         "candidateKey": {"type": "string", "minLength": 1},
         "bucket": {"enum": ["DECISION_REQUIRED", "SYSTEM_PROCESSING", "WAITING_EXTERNAL", "PORTFOLIO_READY"]},
@@ -37,6 +37,10 @@
         "evidenceLevel": {"enum": ["待补充", "有记录", "已核实", "外部记录"]},
         "nextAction": {"type": "string", "minLength": 1},
         "actionable": {"type": "boolean"},
+        "reviewRequired": {"type": "boolean"},
+        "actionKind": {"enum": ["NONE", "MANAGED_TASK", "USER_DECISION"]},
+        "notificationDigest": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "notificationStatus": {"enum": ["NONE", "PENDING", "SENT", "FAILED", "RECONCILE_REQUIRED"]},
         "notified": {"type": "boolean"},
         "creationGatePassed": {"type": "boolean"},
         "taskId": {"type": ["string", "null"]},
@@ -48,6 +52,10 @@
         {
           "properties": {
             "actionable": {"const": false},
+            "reviewRequired": {"const": false},
+            "actionKind": {"const": "NONE"},
+            "notificationDigest": {"type": "null"},
+            "notificationStatus": {"const": "NONE"},
             "notified": {"const": false},
             "creationGatePassed": {"const": false}
           }
@@ -55,8 +63,25 @@
         {
           "properties": {
             "actionable": {"const": true},
+            "reviewRequired": {"const": false},
+            "actionKind": {"const": "MANAGED_TASK"},
+            "notificationDigest": {"type": "null"},
+            "notificationStatus": {"const": "NONE"},
+            "notified": {"const": false},
             "creationGatePassed": {"const": true},
             "taskId": {"type": "string", "minLength": 1}
+          }
+        },
+        {
+          "properties": {
+            "bucket": {"const": "DECISION_REQUIRED"},
+            "actionable": {"const": false},
+            "reviewRequired": {"const": true},
+            "actionKind": {"const": "USER_DECISION"},
+            "notificationDigest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "notificationStatus": {"enum": ["PENDING", "SENT", "FAILED", "RECONCILE_REQUIRED"]},
+            "creationGatePassed": {"const": false},
+            "taskId": {"type": "null"}
           }
         }
       ]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from .managed_security import sign_current, verify_current
@@ -31,8 +32,16 @@ def _payload(
         raise ValueError("delivery receipt status is invalid")
     if not artifact_digest or not event.get("eventId"):
         raise ValueError("delivery receipt identity is missing")
-    if not event.get("taskId") or not event.get("attemptId"):
-        raise ValueError("delivery receipt task or attempt is missing")
+    if not event.get("attemptId"):
+        raise ValueError("delivery receipt attempt is missing")
+    action_kind = event.get("actionKind")
+    if action_kind == "USER_DECISION":
+        if event.get("taskId") is not None or not re.fullmatch(
+            r"[0-9a-f]{64}", str(event.get("notificationDigest") or "")
+        ):
+            raise ValueError("user decision delivery binding is invalid")
+    elif action_kind != "MANAGED_TASK" or not event.get("taskId"):
+        raise ValueError("delivery receipt managed task binding is invalid")
     message_id = str(message_id or "").strip()
     error = _error(error)
     if status == "SENT" and not message_id:

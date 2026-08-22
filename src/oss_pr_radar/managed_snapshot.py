@@ -146,6 +146,23 @@ def _opportunity_display_metadata(metadata_raw: str, provenance_raw: str) -> dic
     origin_kind = metadata.get("originKind") or provenance.get("originKind")
     if isinstance(origin_kind, str) and origin_kind.strip():
         result["originKind"] = origin_kind
+    notification_digest = str(metadata.get("notificationDigest") or "")
+    notification_status = str(metadata.get("notificationStatus") or "PENDING")
+    if (
+        metadata.get("reviewRequired") is True
+        and metadata.get("gateDecision") == "HUMAN_REVIEW"
+        and re.fullmatch(r"[0-9a-f]{64}", notification_digest)
+        and notification_status in {"PENDING", "SENT", "FAILED", "RECONCILE_REQUIRED"}
+    ):
+        result.update(
+            {
+                "reviewRequired": True,
+                "gateDecision": "HUMAN_REVIEW",
+                "notificationDigest": notification_digest,
+                "notificationStatus": notification_status,
+                "notified": notification_status == "SENT",
+            }
+        )
     return result
 
 
@@ -1196,6 +1213,17 @@ def _insert_snapshot(connection: sqlite3.Connection, rows: dict[str, list[dict[s
                         "codePaths": row.get("codePaths") or [],
                         **({"title": row["displayTitle"]} if row.get("displayTitle") else {}),
                         **({"originKind": row["originKind"]} if row.get("originKind") else {}),
+                        **(
+                            {
+                                "reviewRequired": True,
+                                "gateDecision": row["gateDecision"],
+                                "notificationDigest": row["notificationDigest"],
+                                "notificationStatus": row["notificationStatus"],
+                                "notified": row.get("notified") is True,
+                            }
+                            if row.get("reviewRequired") is True
+                            else {}
+                        ),
                     }
                 ),
             ),

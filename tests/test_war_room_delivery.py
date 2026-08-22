@@ -23,6 +23,7 @@ from oss_pr_radar.war_room_messages import (
 from oss_pr_radar.war_room_projection import export_projection
 
 ROOT = Path(__file__).parents[1]
+USER_DECISION_DIGEST = "b" * 64
 
 
 def _load_script(name: str, path: Path):
@@ -66,6 +67,34 @@ def _artifact(tmp_path: Path) -> dict:
         intent_id="task-2",
     )
     return export_projection(ledger_path)
+
+
+def _user_decision_artifact(tmp_path: Path) -> tuple[Path, dict]:
+    os.environ.setdefault("RADAR_DISPATCH_HMAC_KEY", "delivery-fixture-key")
+    ledger_path = tmp_path / "state" / "user-decision-ledger.sqlite3"
+    ledger_path.parent.mkdir(parents=True, exist_ok=True)
+    RadarLedger(ledger_path)
+    ledger = ManagedLedger(ledger_path, ensure_schema=True)
+    ledger.upsert_opportunity(
+        opportunity_key="owner/repo#8",
+        owner="owner",
+        repo="repo",
+        issue_number=8,
+        issue_url="https://github.com/owner/repo/issues/8",
+        state="DECISION_REQUIRED",
+        source="scanner",
+        provenance={"title": "需要确认候选处理方向"},
+        metadata={
+            "title": "需要确认候选处理方向",
+            "reviewRequired": True,
+            "gateDecision": "HUMAN_REVIEW",
+            "notificationDigest": USER_DECISION_DIGEST,
+            "notificationStatus": "PENDING",
+            "notified": False,
+        },
+        observed_at="2026-08-19T00:00:00Z",
+    )
+    return ledger_path, export_projection(ledger_path)
 
 
 def _write_inputs(tmp_path: Path, artifact: dict, queue: dict) -> tuple[Path, Path, Path]:
@@ -215,6 +244,123 @@ def test_legitimate_sender_receipt_merge_replay_and_conflict_rejection(
     )
     with pytest.raises(ValueError, match="conflicting"):
         merger.merge(merged, conflicting)
+
+
+def test_user_decision_sent_receipt_suppresses_replay_and_updates_seen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", "delivery-user-decision-key" * 2)
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY_ID", "delivery-current")
+    ledger_path, artifact = _user_decision_artifact(tmp_path)
+    queue = build_outbox(artifact, channel="feishu")
+    event = queue["events"][0]
+    receipt = build_receipt_document(
+        artifact_digest=artifact["artifactDigest"],
+        receipts=[
+            sign_delivery_receipt(
+                artifact_digest=artifact["artifactDigest"],
+                event=event,
+                status="SENT",
+                message_id="om_user_decision",
+            )
+        ],
+    )
+    merger = _load_script(
+        "merge_war_room_receipt_user_decision_sent_test",
+        ROOT / "scripts/merge_war_room_receipt.py",
+    )
+    merged = merger.merge(queue, receipt)
+    seen_path = tmp_path / "seen.json"
+    seen_path.write_text(
+        json.dumps(
+            {
+                "owner/repo#8": {
+                    "status": "queued_outbox",
+                    "notified": False,
+                    "notification_digest": USER_DECISION_DIGEST,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    applier = _load_script(
+        "apply_war_room_receipt_user_decision_sent_test",
+        ROOT / "scripts/apply_war_room_receipt.py",
+    )
+
+    first = applier.apply(
+        ledger_path=ledger_path,
+        outbox=merged,
+        receipt=receipt,
+        seen_path=seen_path,
+    )
+    second = applier.apply(
+        ledger_path=ledger_path,
+        outbox=merged,
+        receipt=receipt,
+        seen_path=seen_path,
+    )
+
+    assert first == {"applied": 1, "seenUpdated": 1}
+    assert second == {"applied": 1, "seenUpdated": 1}
+    seen = json.loads(seen_path.read_text(encoding="utf-8"))["owner/repo#8"]
+    assert seen["status"] == "notified"
+    assert seen["notified"] is True
+    projected = export_projection(ledger_path)
+    assert projected["items"][0]["notificationStatus"] == "SENT"
+    assert build_outbox(projected, channel="feishu")["events"] == []
+
+
+def test_user_decision_failed_receipt_retries_same_event(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", "delivery-user-decision-key" * 2)
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY_ID", "delivery-current")
+    ledger_path, artifact = _user_decision_artifact(tmp_path)
+    queue = build_outbox(artifact, channel="feishu")
+    event = queue["events"][0]
+    receipt = build_receipt_document(
+        artifact_digest=artifact["artifactDigest"],
+        receipts=[
+            sign_delivery_receipt(
+                artifact_digest=artifact["artifactDigest"],
+                event=event,
+                status="FAILED",
+                error="temporary transport failure",
+            )
+        ],
+    )
+    merger = _load_script(
+        "merge_war_room_receipt_user_decision_failed_test",
+        ROOT / "scripts/merge_war_room_receipt.py",
+    )
+    merged = merger.merge(queue, receipt)
+    seen_path = tmp_path / "seen.json"
+    seen_path.write_text(
+        json.dumps(
+            {
+                "owner/repo#8": {
+                    "status": "queued_outbox",
+                    "notified": False,
+                    "notification_digest": USER_DECISION_DIGEST,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    applier = _load_script(
+        "apply_war_room_receipt_user_decision_failed_test",
+        ROOT / "scripts/apply_war_room_receipt.py",
+    )
+    applier.apply(
+        ledger_path=ledger_path,
+        outbox=merged,
+        receipt=receipt,
+        seen_path=seen_path,
+    )
+
+    seen = json.loads(seen_path.read_text(encoding="utf-8"))["owner/repo#8"]
+    assert seen["status"] == "send_failed"
+    retried = build_outbox(export_projection(ledger_path), channel="feishu")
+    assert retried["events"][0]["eventId"] == event["eventId"]
 
 
 def test_forged_receipts_missing_message_id_and_wrong_attempt_fail(

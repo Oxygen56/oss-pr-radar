@@ -12,6 +12,8 @@ EVENT_BINDING_FIELDS = (
     "eventId",
     "candidateKey",
     "taskId",
+    "actionKind",
+    "notificationDigest",
     "attemptId",
     "title",
     "reason",
@@ -138,13 +140,14 @@ def build_outbox(artifact: dict[str, Any], *, channel: str) -> dict[str, Any]:
                     "channel": channel,
                     "candidate": item["candidateKey"],
                     "taskId": item["taskId"],
-                    "title": item["title"],
-                    "reason": item["reason"],
-                    "nextAction": item["nextAction"],
+                    "actionKind": item["actionKind"],
+                    "notificationDigest": item["notificationDigest"],
                 }
             ),
             "candidateKey": item["candidateKey"],
             "taskId": item["taskId"],
+            "actionKind": item["actionKind"],
+            "notificationDigest": item["notificationDigest"],
             "title": item["title"],
             "reason": item["reason"],
             "nextAction": item["nextAction"],
@@ -154,16 +157,15 @@ def build_outbox(artifact: dict[str, Any], *, channel: str) -> dict[str, Any]:
                     "channel": channel,
                     "candidate": item["candidateKey"],
                     "taskId": item["taskId"],
-                    "title": item["title"],
-                    "reason": item["reason"],
-                    "nextAction": item["nextAction"],
+                    "actionKind": item["actionKind"],
+                    "notificationDigest": item["notificationDigest"],
                 }
             )[:50],
             "card": {
                 "config": {"wide_screen_mode": True},
                 "header": {
                     "title": {"tag": "plain_text", "content": item["title"]},
-                    "template": "green",
+                    "template": "yellow" if item["reviewRequired"] else "green",
                 },
                 "elements": [
                     {
@@ -181,7 +183,9 @@ def build_outbox(artifact: dict[str, Any], *, channel: str) -> dict[str, Any]:
             },
         }
         for item in artifact["items"]
-        if item["actionable"]
+        if (item["actionable"] or item["reviewRequired"])
+        and not item["notified"]
+        and item["notificationStatus"] != "RECONCILE_REQUIRED"
     ]
     for event in events:
         event["attemptId"] = sha256_json(
