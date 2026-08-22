@@ -9534,6 +9534,37 @@
     ],
     "why": "The issue describes a plausible bug in categorize.py where LLM reasoning output may cause misclassification, but the proposed fix is a simple string truncation that may not be robust across different LLM formats. The deterministic gate requires HUMAN_REVIEW, and there is no maintainer confirmation or active investigation. The related issue audit timed out, leaving unknowns about existing duplicates or ongoing work."
   },
+  "3d3e13b5614d3cc45e027bca6f3987e95c9ed16078b2d2a7497ee93410bbd110": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue claims client_id/client_secret never reach runtime, but recent comment states hydration already exists on default branch"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "Fix passthrough timeout in MCP session/connection handling",
+      "Fix scope parameter construction to avoid requesting all discovery scopes"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #36831 if it expands scope",
+      "Changes to OAuth2 scope handling may affect other flows or IdP compatibility"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a regression test for passthrough timeout using a mock upstream that responds quickly and assert tools/list completes within timeout",
+      "Create a test for client_credentials and authorization_code flows verifying the scope parameter is either omitted or limited to configured scopes"
+    ],
+    "unknowns": [
+      "Whether the passthrough timeout and scope bugs are still present on the current default branch",
+      "Exact location of the passthrough timeout delay within litellm's session/connection setup"
+    ],
+    "why": "Issue provides detailed root-cause analysis with code anchors and a concrete reproduction path. Recent comments indicate the primary bug (credential hydration) is already fixed on the default branch, but the issue also contains two additional distinct bugs (passthrough timeout and over-broad scope) that remain actionable. The open PR #36831 overlaps semantically but does not cover the root cause, so a new contribution targeting the unresolved bugs is valuable."
+  },
   "3d8d56f2a1163257e8c3b98b83a3d76268af7143c63433fde8a248ec68177279": {
     "confidence": 0.85,
     "contradictions": [],
@@ -12605,6 +12636,34 @@
     ],
     "why": "The issue reports multiple structured-output backend failures with Kimi-K2.6 + EAGLE3, including a likely xgrammar bitmask desync under speculative decoding and an outlines compile-thread leak. The report is detailed and reproducible, but the root cause of the xgrammar desync is not confirmed; it may be a pre-existing bug in EAGLE3 interaction rather than a new algorithm defect. The outlines thread leak is a concrete bug but is more of an infrastructure/error-handling issue than a core LLM algorithm. The issue lacks maintainer confirmation and a clear reference implementation for validation."
   },
+  "4e6a387752654f9c9e69717b11c77b262610f1462b75946a4d7a140034efd1a1": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Potential duplicate issue #53227 and overlapping PRs #49409, #51524, #50502 may already address parts; need to compare implementation boundaries"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "gemma4 tool parser enforcement of required tool_choice",
+      "finish_reason logic to check actual tool_calls"
+    ],
+    "risks": [
+      "Reproduction is content-dependent and may require specific load conditions; fix may need to handle edge cases in parser grammar"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run loop script with sanitized payload under concurrent load to reproduce; add regression test for required tool_choice with gemma4 parser ensuring tool_calls non-empty and finish_reason consistent"
+    ],
+    "unknowns": [
+      "Exact root cause of enforcement gap in gemma4 parser; whether existing PRs fully cover the issue"
+    ],
+    "why": "Issue identifies a concrete LLM algorithm bug: tool_choice='required' not enforced in gemma4 parser, producing prose-only responses with contradictory finish_reason. Root cause partially known (finish_reason logic) and enforcement gap is clear. Validation path exists via loop script and sanitized payload under load. Although reproduction is content-dependent, the issue provides sufficient evidence and a concrete test plan."
+  },
   "4f2937b4e858e2ae22edefca3ae80e225d19325119bb46f3b1140d9cf558bc4e": {
     "confidence": 0.7,
     "contradictions": [
@@ -12663,6 +12722,35 @@
       "Maintainer preference on implementation approach (e.g., windowed vs cumulative tps)"
     ],
     "why": "Issue provides a clear, reproducible bug with root cause traced to missing timing/tps tracking in the non-MLLM scheduler path. No competing PR or issue exists. The fix is localized and actionable."
+  },
+  "4f8bc4b0789f1775fbcf5e1e199b3ce084212d74a6bad6f6eb382c2a3700f367": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/tools/wait-for-user.ts",
+      "orchestrator prompt or scheduler logic"
+    ],
+    "risks": [
+      "Potential behavior change in orchestrator turn-ending could affect legitimate HITL flows",
+      "Adaptive grace period may need tuning for different model latencies"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test that spawns background tasks and asserts wait_for_user is rejected while background tasks are running",
+      "Add test for wake scheduler grace period and corrective notice"
+    ],
+    "unknowns": [
+      "Exact implementation details of the wake scheduler and current wait_for_user validation logic"
+    ],
+    "why": "Issue provides a clear root cause (orchestrator prompt lacks explicit wait mechanism, wait_for_user tool description not excluding background tasks) and a concrete reproduction path. Maintainer comment narrows scope to two actionable sub-problems (RC-F validation and RC-B wake-churn fix), with prior art PR #1001 merged but not bullet-proof. Evidence includes session logs and code anchors."
   },
   "4fbd9ee4e90f7bd75c43d1bdda36c28ad0c32124535ad1fb50b2cfdce6bb3296": {
     "confidence": 0.6,
@@ -33045,6 +33133,33 @@
     ],
     "why": "Issue reports a tool-call error when switching moe-runner-backend to flashinfer_mxfp4, but lacks a minimal repro and root cause analysis. Open PR lookup timed out, and related PRs may overlap. Maintainer input needed."
   },
+  "caf167e133df12864241461e3ae99d8234769739ed4c713245e98896e7d3bc58": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/core/src/core/openaiContentGenerator/pipeline.ts",
+      "packages/core/src/permissions/classifier.ts"
+    ],
+    "risks": [
+      "OpenRouter may not support the exact `reasoning: { enabled: false }` shape; need to verify against OpenRouter API docs.",
+      "The fix may need to handle other OpenAI-compatible gateways beyond OpenRouter."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test for buildRequest that verifies the request body includes `reasoning: { enabled: false }` when baseUrl contains 'openrouter.ai'.",
+      "Add an integration test that simulates an OpenRouter endpoint with a thinking-capable model and verifies the classifier stage 1 succeeds."
+    ],
+    "unknowns": [
+      "Exact OpenRouter API schema for disabling thinking is not confirmed; the fix direction is based on static analysis and may need adjustment."
+    ],
+    "why": "Issue provides a clear user-visible bug with reproduction steps and expected/actual behavior. Maintainer triage (static analysis) identifies a plausible root cause: OpenRouter is missing from the thinking-disable branch in the OpenAI-compatible pipeline, causing the classifier to fail closed. The fix direction is concrete: add an OpenRouter-aware branch emitting `reasoning: { enabled: false }` when baseUrl is openrouter.ai. This is actionable and testable."
+  },
   "cb2694a1ae6fdd6e87627687316a2e5d96520f0b817bd4c8dc166616b5cb084b": {
     "confidence": 0.85,
     "contradictions": [],
@@ -40216,6 +40331,41 @@
     ],
     "why": "Issue provides a clear, reproducible failure scenario with concrete error, affected sessions, and a workaround. It identifies a plausible root cause (replaying stale reasoning metadata) and suggests a minimal fix. The track is agent_ai_infra, and the issue is actionable for a maintainer to implement a targeted fix."
   },
+  "efe2191324ee83c82d554a928f92abe1fa26645dd7013153c884645126f25aed": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The issue author's bisection points to torch 2.11, but a maintainer's A/B test on a fixed vLLM commit shows torch 2.11 is faster, suggesting a vLLM change is the cause."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/entrypoints/pooling/base/serving.py",
+      "vllm/renderers/base.py",
+      "vllm/config/model.py"
+    ],
+    "risks": [
+      "The root cause is hypothesized from code reading and prior issues; the one-flag test may not fully confirm the mechanism.",
+      "The regression may be caused by multiple factors, and the fix could introduce other performance regressions."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided benchmark with --renderer-num-workers > 1 to see if throughput recovers on /v1/embeddings.",
+      "Reproduce on current main to check if the regression is still present."
+    ],
+    "unknowns": [
+      "Whether the proposed root cause (renderer executor) fully explains the regression, and whether a fix is already in progress or merged."
+    ],
+    "why": "The issue provides a reproducible throughput regression with detailed benchmarks and bisection, and a comment identifies a plausible root cause in vLLM's pooling entrypoint executor configuration, with a concrete one-flag test to confirm. This is a valuable performance investigation with a clear validation path."
+  },
   "f01e8ed94cb606bd2d116a807536da5306da0fa0c1e9d6d0460c8807fd351727": {
     "confidence": 0.85,
     "contradictions": [
@@ -40714,6 +40864,36 @@
       "Does the AIC autoApply path reach _apply_disagg_workers or bypass it?"
     ],
     "why": "The issue reports a bug in DGDR autoApply for prefill workers, but a maintainer comment indicates the fix may already be present on main (commit a9a7db43a) and the reporter's environment may be using an outdated profiler image. The root cause is uncertain: either the issue is already fixed or the bug lies in a different code path (AIC autoApply) that is not clearly identified. The evidence is contradictory and incomplete, requiring clarification before action."
+  },
+  "f3a2c0a4c905f78db7646454cb5005d59d7d7e601a0dbab4df26bb73e231eab7": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Original issue reports skew on 1.3.0-dev.1, but comment says 1.4.0-efa no longer reproduces; however latent hazard remains"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "runtime image packaging: couple flashinfer-jit-cache with flashinfer-python version",
+      "or documentation: add unsupported-workflow note and build-time assert pattern"
+    ],
+    "risks": [
+      "Potential overlap with PR #13650 which touches similar dependency pinning; need to compare implementation boundaries",
+      "Maintainer decision required on whether in-container vLLM upgrades are supported"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a serve-time image test that installs a newer vLLM in-container and verifies model registry inspection succeeds",
+      "or add a build-time assert in Dockerfile to fail on version mismatch"
+    ],
+    "unknowns": [
+      "Whether maintainers will declare in-container vLLM upgrades supported or unsupported"
+    ],
+    "why": "Issue identifies a clear root cause: baked flashinfer-jit-cache version skew with flashinfer-python breaks serve-time registry inspection. Evidence includes reproduction command, observed error, and verified workaround. Recent comments confirm the hazard is latent and propose concrete fixes (coupling packages or documenting unsupported workflow)."
   },
   "f3c40d15a182db9f9127ac7e3c7c1e4b9539fb87ce51bf3085c49887c598ecd0": {
     "confidence": 0.7,
@@ -42501,6 +42681,31 @@
     ],
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue describes a plausible version-drift bug in effect-based plugin tool decoding, with a concrete repro and suggested fixes. However, the root cause is not confirmed by maintainers, no code-level verification is provided, and the suggested directions have different design tradeoffs. The only comment is from an unaffiliated user and adds no authoritative evidence."
+  },
+  "fbdc82cda1ee72f63db3b32bd2e28e1515c36dd8cc1959b53923a43085277ef8": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "LiteLLM ElevenLabs speech-to-text provider to forward multipart fields: diarize, tag_audio_events, timestamps_granularity, num_speakers, diarization_threshold, detect_speaker_roles, language_code"
+    ],
+    "risks": [
+      "Potential maintainer preference for a different parameter mapping or validation; risk of altering API behavior for existing users if not carefully scoped."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit/integration test that sends a request with diarize=true and related fields to the ElevenLabs provider and asserts the outgoing multipart payload includes those fields; optionally mock the upstream API to verify pass-through."
+    ],
+    "unknowns": [
+      "Exact code location and current implementation details of the ElevenLabs speech-to-text provider; whether maintainers have a preferred design for parameter forwarding."
+    ],
+    "why": "Issue clearly identifies missing pass-through of ElevenLabs diarization parameters in LiteLLM's speech-to-text provider, with concrete expected vs actual behavior and a minimal reproduction shape. No competing PR or duplicate issue found, and the issue remains open with recent confirmation that it is still broken."
   },
   "fbf0275f8c8d9b2d4de82667b2e7615ad53e91748f395b874a2ae327d082d6c2": {
     "confidence": 0.7,

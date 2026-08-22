@@ -1,8 +1,8 @@
 {
   "contractDigest": "0ffabde97bae00693068b61ed03087975ec1c57c989c591a2b43af8aa3ecf505",
   "decisionContractDigest": "bea3254376f7aced8aef5e8a7d060fa881c49ffefdc92fe1a0f5ba16740e04db",
-  "generatedAt": "2026-08-22T22:45:42.121325Z",
-  "intentCount": 1,
+  "generatedAt": "2026-08-22T23:42:27.126221Z",
+  "intentCount": 3,
   "intents": [
     {
       "actionabilityEvidence": {
@@ -46,7 +46,7 @@
       "decisionDigest": "38678a8d158a688a23300e2336da09f02f0a7699dc6ef4d0b3e0ab2892743c9a",
       "defaultBranch": "litellm_internal_staging",
       "evidenceDigest": "17eb4aebe97a6c627cb2196a531b60725b2670a117045168ec969875d925843f",
-      "expiresAt": "2026-08-23T00:45:42.121325Z",
+      "expiresAt": "2026-08-23T01:42:27.126221Z",
       "intentId": "7758546fb9cdc05790f2474fae58914ca00532cf10c403a54676de021e413c11",
       "issueNumber": 37925,
       "issueUpdatedAt": "2026-08-22T11:31:43Z",
@@ -261,14 +261,14 @@
       "promptDigest": "a047d3f0e0e1f07729249f1956aa3a3e7c88bdd12a79f37ca32a83b9220c6fa1",
       "publicSubmissionAllowed": true,
       "publicationMode": "canary",
-      "renewedAt": "2026-08-22T22:45:42.121325Z",
+      "renewedAt": "2026-08-22T23:42:27.126221Z",
       "repo": "BerriAI/litellm",
       "runId": "scan-20260822T185200Z-b326b417c69a",
       "scanGate": "ALLOW_TO_WORK",
       "scannerVersion": "oss_pr_radar_v52_recheck_pr_validation",
       "score": 11,
       "selectedBaseSha": "490c9f9f3faa0ba88b600f57abfb73f9f83b48ff",
-      "signature": "9025869f74ae2d56ceb7e7fcc97c28364f6255d652b21dd168dafae8887421e5",
+      "signature": "92ef4ed9705a6c26d402806a1b2ab90dd888072199bb7bf0d93bd5bb120da4bd",
       "snapshotId": "3a08036686dcf7321894c68a6d595830d89baf2db15ec70f1e172c5b8e07679f",
       "sourceSha": "6bc53389d97eb630b24d84cb7fd93d20a440ffca",
       "status": "PENDING",
@@ -277,13 +277,410 @@
       "title": "[Bug]: Custom pass_through_endpoints prefixes for a non-default Anthropic-compatible host can never work for file uploads — no prefix satisfies both route precedence and custom_llm_provider resolution",
       "track": "agent_ai_infra",
       "version": "dispatch_intent_v7"
+    },
+    {
+      "actionabilityEvidence": {
+        "algorithm_wait_evidence": false,
+        "code_anchors": [
+          "packages/core/src/permissions/classifier.ts",
+          "packages/core/src/core/openaiContentGenerator/pipeline.ts",
+          "openaiContentGenerator/pipeline.ts",
+          "classifier.ts",
+          "pipeline.ts",
+          "`unavailable`",
+          "`runSideQuery`",
+          "`BaseLlmClient.generateJson`"
+        ],
+        "dependency_confirmation": false,
+        "dependency_pr_numbers": [],
+        "design_confirmation": false,
+        "help_wanted": false,
+        "maintainer_active_investigation": false,
+        "maintainer_approved": false,
+        "maintainer_revalidation_requested": false,
+        "needs_confirmation": false,
+        "ownership_confirmation": false,
+        "probe_ready": true,
+        "public_repro_signals": 2,
+        "reproduction_evidence": [
+          "expected_actual_pair",
+          "ordered_steps"
+        ],
+        "root_cause_signal": false,
+        "usage_confirmation": false,
+        "wait_reasons": []
+      },
+      "algorithmEvidence": null,
+      "authorizationSource": "signed_live_revalidation_required",
+      "autoSpawn": true,
+      "autoSubmitAuthorized": true,
+      "category": "NEW_CLEAN_CANDIDATE",
+      "contractDigest": "0ffabde97bae00693068b61ed03087975ec1c57c989c591a2b43af8aa3ecf505",
+      "decisionContractDigest": "bea3254376f7aced8aef5e8a7d060fa881c49ffefdc92fe1a0f5ba16740e04db",
+      "decisionDigest": "e68817c80f6307c23bc793da75ef3451391f3ec698e5f963d55298c2bbad4fcb",
+      "defaultBranch": "main",
+      "evidenceDigest": "cbbc20d5bcbc3e2ad9caa694bf1bc6f63682aff50dfc99fb08d3b63947c272a9",
+      "expiresAt": "2026-08-23T01:42:27.126221Z",
+      "intentId": "ddb1986fbc1960e7e28251abfdb9177f91aacff1993452049c18777133b4a808",
+      "issueNumber": 9757,
+      "issueUpdatedAt": "2026-08-22T23:32:24Z",
+      "issueUrl": "https://github.com/QwenLM/qwen-code/issues/9757",
+      "issuedAt": "2026-08-22T23:42:27.126221Z",
+      "key": "QwenLM/qwen-code#9757",
+      "llmReview": {
+        "confidence": 0.85,
+        "decision": "NEW_CLEAN_CANDIDATE",
+        "model": "deepseek-v4-flash",
+        "semanticSignal": "NO_OBJECTION",
+        "status": "ok",
+        "waitReason": null
+      },
+      "maturity": "mature",
+      "mode": "canary",
+      "nonce": "594b35f87994eb5299f155ae49264be9",
+      "notify": true,
+      "policyDigest": "96676eec1e3ad3e1cb8668126f3e5ead529ba48bf91d471740a06c3be23ede77",
+      "preTaskEvidence": {
+        "aiDisclosureConflict": false,
+        "assigneeDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "assignmentRequired": false,
+        "baseLookupStatus": "ok",
+        "baseSha": "db0519563db2c11b33c132e3ac248dbf032a70b9",
+        "codePathsPlan": [
+          "packages/core/src/permissions/classifier.ts",
+          "packages/core/src/core/openaiContentGenerator/pipeline.ts",
+          "openaiContentGenerator/pipeline.ts",
+          "classifier.ts",
+          "pipeline.ts"
+        ],
+        "defaultBranch": "main",
+        "designDigest": "014c0ea27901d742664d033c73aba507178bb901e8ce7a485534e7669fe19240",
+        "duplicate": {
+          "prs": [],
+          "status": "none",
+          "summary": "未发现相关 open PR"
+        },
+        "duplicateDigest": "28a3bb38f5cdb345d3caf4fb83167265745af501b1cb9362fcce3ffee2995fc8",
+        "duplicateStatus": "none",
+        "issue": {
+          "assignees": [],
+          "state": "open"
+        },
+        "issueDigest": "43c9b8f927d507ecbd002e7c43d49b2afabbaf3d44690cfd7dd2d48df4bfb9d8",
+        "matureRepository": true,
+        "policy": {
+          "status": "normal"
+        },
+        "probeRequired": true,
+        "reproductionPathPlan": true,
+        "schema": "pre_task_evidence_v1",
+        "validationPathPlan": true
+      },
+      "preTaskEvidenceDigest": "a730104ded7ea5794d3245b9f2373ed09573cc6eba44b28a6fdd2eae50d19021",
+      "preTaskGate": {
+        "allowed": true,
+        "baseSha": "db0519563db2c11b33c132e3ac248dbf032a70b9",
+        "classification": null,
+        "evidenceDigest": "a730104ded7ea5794d3245b9f2373ed09573cc6eba44b28a6fdd2eae50d19021",
+        "expected": {
+          "assigneeDigest": "",
+          "baseSha": "",
+          "designDigest": "",
+          "duplicateDigest": "",
+          "issueDigest": ""
+        },
+        "reason": "PRE_TASK_EVIDENCE_PASSED",
+        "reasons": [],
+        "schema": "pre_task_evidence_v1"
+      },
+      "probeLevel": "PENDING",
+      "probeProfile": null,
+      "probeRequired": true,
+      "promptDigest": "0974f76ae695713d7222572e6266bc47fb9ce0d688c95ba37ebb3c4d82377596",
+      "publicSubmissionAllowed": true,
+      "publicationMode": "canary",
+      "repo": "QwenLM/qwen-code",
+      "runId": "scan-20260822T233855Z-cbfd4e86f697",
+      "scanGate": "ALLOW_TO_WORK",
+      "scannerVersion": "oss_pr_radar_v52_recheck_pr_validation",
+      "score": 11,
+      "selectedBaseSha": "db0519563db2c11b33c132e3ac248dbf032a70b9",
+      "signature": "19a0836454bd6c60d6c2e4c1ca97ebf41cd0a33fc0fb972e42d1295a458cf36c",
+      "snapshotId": "147159579445f995c47c8e24d4c016c1e19c0130c9c1f04af10141e851f250c7",
+      "sourceSha": "575c8e22f816f8f164046ead746ea6c5a453869d",
+      "status": "PENDING",
+      "submissionPolicy": "normal",
+      "taskStage": "PREFLIGHT",
+      "title": "Auto Mode classifier stage 1 unavailable with OpenRouter",
+      "track": "agent_ai_infra",
+      "version": "dispatch_intent_v7"
+    },
+    {
+      "actionabilityEvidence": {
+        "algorithm_wait_evidence": false,
+        "code_anchors": [
+          "wait-for-user.ts",
+          "`wait_for_user`",
+          "scheduler resumes"
+        ],
+        "dependency_confirmation": false,
+        "dependency_pr_numbers": [],
+        "design_confirmation": false,
+        "help_wanted": false,
+        "maintainer_active_investigation": false,
+        "maintainer_approved": false,
+        "maintainer_revalidation_requested": false,
+        "needs_confirmation": false,
+        "ownership_confirmation": false,
+        "probe_ready": true,
+        "public_repro_signals": 1,
+        "reproduction_evidence": [
+          "ordered_steps"
+        ],
+        "root_cause_signal": true,
+        "usage_confirmation": false,
+        "wait_reasons": []
+      },
+      "algorithmEvidence": null,
+      "authorizationSource": "signed_live_revalidation_required",
+      "autoSpawn": true,
+      "autoSubmitAuthorized": true,
+      "category": "NEW_CLEAN_CANDIDATE",
+      "contractDigest": "0ffabde97bae00693068b61ed03087975ec1c57c989c591a2b43af8aa3ecf505",
+      "decisionContractDigest": "bea3254376f7aced8aef5e8a7d060fa881c49ffefdc92fe1a0f5ba16740e04db",
+      "decisionDigest": "f45bef7f9d85843dbadf578b8a88206981af7bfbf6c11a8075b1366df52abbb3",
+      "defaultBranch": "master",
+      "evidenceDigest": "d5f7097b996eb8381e4978319c1d52c8347d1c17922695cf6ec83daf381f6c95",
+      "expiresAt": "2026-08-23T01:42:27.126221Z",
+      "intentId": "ffa5d549e7136a636b58775c12784b8a11e2068a448b07dc8a4e8070d800890d",
+      "issueNumber": 1000,
+      "issueUpdatedAt": "2026-08-22T23:32:10Z",
+      "issueUrl": "https://github.com/alvinunreal/oh-my-opencode-slim/issues/1000",
+      "issuedAt": "2026-08-22T23:42:27.126221Z",
+      "key": "alvinunreal/oh-my-opencode-slim#1000",
+      "llmReview": {
+        "confidence": 0.85,
+        "decision": "NEW_CLEAN_CANDIDATE",
+        "model": "deepseek-v4-flash",
+        "semanticSignal": "NO_OBJECTION",
+        "status": "ok",
+        "waitReason": null
+      },
+      "maturity": "mature",
+      "mode": "canary",
+      "nonce": "ad1a9e4d20e9d713a30449a4eedef05e",
+      "notify": true,
+      "policyDigest": "100505e48cf28476e2697b683e0cc99e51b6bd88b93c007a2bbd5aa4454ea55e",
+      "preTaskEvidence": {
+        "aiDisclosureConflict": false,
+        "assigneeDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "assignmentRequired": false,
+        "baseLookupStatus": "ok",
+        "baseSha": "f47b1c2ff342281c76e1660c0a2c72d5229f8f02",
+        "codePathsPlan": [
+          "wait-for-user.ts",
+          "src/tools/wait-for-user.ts"
+        ],
+        "defaultBranch": "master",
+        "designDigest": "014c0ea27901d742664d033c73aba507178bb901e8ce7a485534e7669fe19240",
+        "duplicate": {
+          "prs": [
+            {
+              "additions": 24,
+              "age_days": 11,
+              "author_association": "CONTRIBUTOR",
+              "changed_files": 5,
+              "ci_competition_weight": 0,
+              "deletions": 4,
+              "gaps": [
+                "未明确 closing/reference 目标 issue"
+              ],
+              "ignored_nontechnical_failed_checks": [],
+              "is_draft": false,
+              "issue_body_link": false,
+              "issue_body_link_relation": "",
+              "maintainer_owned": false,
+              "material_competition_gaps": [],
+              "number": 1001,
+              "overlapping_paths": [
+                "src/tools/wait-for-user.ts"
+              ],
+              "reference_relation": "REFERENCE",
+              "references_issue": false,
+              "root_cause_coverage": false,
+              "rule_closed": false,
+              "score": 38,
+              "semantic_distinctive_overlap": [
+                "wait_for_user"
+              ],
+              "semantic_overlap": true,
+              "semantic_overlap_count": 8,
+              "state": "MERGED",
+              "strengths": [
+                "包含测试文件 2 个",
+                "已有成功 CI/check",
+                "标题/正文与 issue 关键词匹配",
+                "改动文件与 issue 代码路径重合"
+              ],
+              "technical_complete": false,
+              "technical_failed_checks": [],
+              "test_files": 2,
+              "title": "fix(orchestrator): prevent wait_for_user loop for background tasks",
+              "url": "https://github.com/alvinunreal/oh-my-opencode-slim/pull/1001"
+            },
+            {
+              "additions": 581,
+              "age_days": 19,
+              "author_association": "CONTRIBUTOR",
+              "changed_files": 5,
+              "ci_competition_weight": 0,
+              "deletions": 44,
+              "gaps": [
+                "未明确 closing/reference 目标 issue",
+                "超过 14 天未更新"
+              ],
+              "ignored_nontechnical_failed_checks": [],
+              "is_draft": false,
+              "issue_body_link": false,
+              "issue_body_link_relation": "",
+              "maintainer_owned": false,
+              "material_competition_gaps": [],
+              "number": 925,
+              "overlapping_paths": [],
+              "reference_relation": "REFERENCE",
+              "references_issue": false,
+              "root_cause_coverage": false,
+              "rule_closed": false,
+              "score": 20,
+              "semantic_distinctive_overlap": [
+                "wait_for_user"
+              ],
+              "semantic_overlap": false,
+              "semantic_overlap_count": 6,
+              "state": "MERGED",
+              "strengths": [
+                "包含测试文件 1 个",
+                "已有成功 CI/check",
+                "标题/正文与 issue 关键词匹配"
+              ],
+              "technical_complete": false,
+              "technical_failed_checks": [],
+              "test_files": 1,
+              "title": "fix(task-session-manager): reconcile terminal jobs on next request instead of idle-only",
+              "url": "https://github.com/alvinunreal/oh-my-opencode-slim/pull/925"
+            },
+            {
+              "additions": 913,
+              "age_days": 32,
+              "author_association": "CONTRIBUTOR",
+              "changed_files": 22,
+              "ci_competition_weight": 0,
+              "deletions": 32,
+              "gaps": [
+                "未明确 closing/reference 目标 issue",
+                "超过 30 天未更新",
+                "改动面偏大"
+              ],
+              "ignored_nontechnical_failed_checks": [],
+              "is_draft": false,
+              "issue_body_link": false,
+              "issue_body_link_relation": "",
+              "maintainer_owned": false,
+              "material_competition_gaps": [
+                "超过 30 天未更新"
+              ],
+              "number": 861,
+              "overlapping_paths": [
+                "src/tools/wait-for-user.ts"
+              ],
+              "reference_relation": "REFERENCE",
+              "references_issue": false,
+              "root_cause_coverage": false,
+              "rule_closed": false,
+              "score": 6,
+              "semantic_distinctive_overlap": [
+                "wait_for_user"
+              ],
+              "semantic_overlap": true,
+              "semantic_overlap_count": 4,
+              "state": "MERGED",
+              "strengths": [
+                "包含测试文件 8 个",
+                "已有成功 CI/check",
+                "标题/正文与 issue 关键词匹配",
+                "改动文件与 issue 代码路径重合"
+              ],
+              "technical_complete": false,
+              "technical_failed_checks": [],
+              "test_files": 8,
+              "title": "fix: add explicit wait_for_user for text-only HITL",
+              "url": "https://github.com/alvinunreal/oh-my-opencode-slim/pull/861"
+            }
+          ],
+          "status": "none",
+          "summary": "未发现相关 open PR；仅发现未直接关联 issue 的历史 PR"
+        },
+        "duplicateDigest": "f0cb9d608cc77b0030795e863a758f30754fd561c2cff49e7c8d721611425d4f",
+        "duplicateStatus": "none",
+        "issue": {
+          "assignees": [],
+          "state": "open"
+        },
+        "issueDigest": "6d65807a6c09448a5b8627d259d4abba3e400ae01eb48f7c3a181023cc11ed64",
+        "matureRepository": true,
+        "policy": {
+          "status": "normal"
+        },
+        "probeRequired": true,
+        "reproductionPathPlan": true,
+        "schema": "pre_task_evidence_v1",
+        "validationPathPlan": true
+      },
+      "preTaskEvidenceDigest": "55c1d98f3c3dddc2fc08d1c47b5f7a64884f86943269ef03a9a9ae83d27ce490",
+      "preTaskGate": {
+        "allowed": true,
+        "baseSha": "f47b1c2ff342281c76e1660c0a2c72d5229f8f02",
+        "classification": null,
+        "evidenceDigest": "55c1d98f3c3dddc2fc08d1c47b5f7a64884f86943269ef03a9a9ae83d27ce490",
+        "expected": {
+          "assigneeDigest": "",
+          "baseSha": "",
+          "designDigest": "",
+          "duplicateDigest": "",
+          "issueDigest": ""
+        },
+        "reason": "PRE_TASK_EVIDENCE_PASSED",
+        "reasons": [],
+        "schema": "pre_task_evidence_v1"
+      },
+      "probeLevel": "PENDING",
+      "probeProfile": null,
+      "probeRequired": true,
+      "promptDigest": "927585851a69967e3dbb8429d1877ad309fdef167b884b019170740fea378982",
+      "publicSubmissionAllowed": true,
+      "publicationMode": "canary",
+      "repo": "alvinunreal/oh-my-opencode-slim",
+      "runId": "scan-20260822T233855Z-cbfd4e86f697",
+      "scanGate": "ALLOW_TO_WORK",
+      "scannerVersion": "oss_pr_radar_v52_recheck_pr_validation",
+      "score": 10,
+      "selectedBaseSha": "f47b1c2ff342281c76e1660c0a2c72d5229f8f02",
+      "signature": "d4370e1182eb46d402c6955d7e1610baf2c08c554eec85c6fa896cdebbc52276",
+      "snapshotId": "147159579445f995c47c8e24d4c016c1e19c0130c9c1f04af10141e851f250c7",
+      "sourceSha": "575c8e22f816f8f164046ead746ea6c5a453869d",
+      "status": "PENDING",
+      "submissionPolicy": "normal",
+      "taskStage": "PREFLIGHT",
+      "title": "[Bug]: Endless `wait_for_user` loop after spawning background tasks",
+      "track": "agent_ai_infra",
+      "version": "dispatch_intent_v7"
     }
   ],
   "mode": "canary",
-  "newIntentCount": 0,
-  "runId": "scan-20260822T224229Z-8c7e0cb0951a",
+  "newIntentCount": 2,
+  "runId": "scan-20260822T233855Z-cbfd4e86f697",
   "scannerVersion": "oss_pr_radar_v52_recheck_pr_validation",
-  "signature": "ecda4ffcfd8545e89311c1c398b546dacc8519832aec26387b3d0b674b9f7143",
+  "signature": "38bad7bc7112910cb427107ff48b9daa49f4ca22718a52135ff5a16f495801aa",
   "sourceSha": "575c8e22f816f8f164046ead746ea6c5a453869d",
   "version": "dispatch_intents_v7"
 }
