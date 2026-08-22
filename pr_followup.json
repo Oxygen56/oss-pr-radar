@@ -1,13 +1,13 @@
 {
-  "digest": "cdbce566647d67d78aa855a32ad124f544cf868bbe1fa0a647d1cebd67209591",
-  "generatedAt": "2026-08-22T18:51:20.527497Z",
+  "digest": "64c980782021b35dcd44fd2b5f0891e6de7f612c41ed64e861250b9d6e97106e",
+  "generatedAt": "2026-08-22T19:34:56.047968Z",
   "items": [
     {
       "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
       "actions": [],
       "baseRefName": "litellm_internal_staging",
       "baseSha": "490c9f9f3faa0ba88b600f57abfb73f9f83b48ff",
-      "checkedAt": "2026-08-22T18:51:20.527497Z",
+      "checkedAt": "2026-08-22T19:34:56.047968Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -33,7 +33,7 @@
       "headSha": "5d08d5e3096c1751f79905098b8b1c8d3dce5a44",
       "key": "BerriAI/litellm#36372",
       "mergeConflict": false,
-      "mergeableState": "unknown",
+      "mergeableState": "blocked",
       "number": 36372,
       "repo": "BerriAI/litellm",
       "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
@@ -49,7 +49,7 @@
       ],
       "baseRefName": "litellm_internal_staging",
       "baseSha": "490c9f9f3faa0ba88b600f57abfb73f9f83b48ff",
-      "checkedAt": "2026-08-22T18:51:20.527497Z",
+      "checkedAt": "2026-08-22T19:34:56.047968Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -86,7 +86,7 @@
       "headSha": "29fcded639ff5cd5a7b6ef105bf3411699983dd8",
       "key": "BerriAI/litellm#36374",
       "mergeConflict": true,
-      "mergeableState": "unknown",
+      "mergeableState": "dirty",
       "number": 36374,
       "repo": "BerriAI/litellm",
       "taskActionDigest": "1493d04d8974ef24e83a69805b3c3c93e00589d70a55ed710e40a32dc1ef209b",
@@ -105,7 +105,7 @@
       ],
       "baseRefName": "litellm_internal_staging",
       "baseSha": "490c9f9f3faa0ba88b600f57abfb73f9f83b48ff",
-      "checkedAt": "2026-08-22T18:51:20.527497Z",
+      "checkedAt": "2026-08-22T19:34:56.047968Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -237,7 +237,7 @@
       "headSha": "f24a24547bc3300f86336d67ef54fb59c46ff67c",
       "key": "BerriAI/litellm#36791",
       "mergeConflict": false,
-      "mergeableState": "unknown",
+      "mergeableState": "blocked",
       "number": 36791,
       "repo": "BerriAI/litellm",
       "taskActionDigest": "d63b2237dd8026801aa70c5f3c1630d3eaab1c26447023579f612efe4c392465",
@@ -254,7 +254,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "d723cc47ee43e5ca3c3c4ec2473f205d44acede2",
-      "checkedAt": "2026-08-22T18:51:20.527497Z",
+      "checkedAt": "2026-08-22T19:34:56.047968Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -297,7 +297,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "944172f6c0d0f90fdc1921fd38c1dcae62c48592",
-      "checkedAt": "2026-08-22T18:51:20.527497Z",
+      "checkedAt": "2026-08-22T19:34:56.047968Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -350,7 +350,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "944172f6c0d0f90fdc1921fd38c1dcae62c48592",
-      "checkedAt": "2026-08-22T18:51:20.527497Z",
+      "checkedAt": "2026-08-22T19:34:56.047968Z",
       "ciStatus": "PASSED",
       "draft": true,
       "evidence": {
@@ -406,7 +406,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "16b2e712d198166c9359e77055b13bf2668bf5ae",
-      "checkedAt": "2026-08-22T18:51:20.527497Z",
+      "checkedAt": "2026-08-22T19:34:56.047968Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -465,13 +465,54 @@
       "url": "https://github.com/agentscope-ai/QwenPaw/pull/6825"
     },
     {
+      "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
+      "actions": [],
+      "baseRefName": "main",
+      "baseSha": "da00849f2c3db60b16edaf2371ae1d863f341ae2",
+      "checkedAt": "2026-08-22T19:34:56.047968Z",
+      "ciStatus": "PASSED",
+      "draft": true,
+      "evidence": {
+        "actionableCheckNames": [],
+        "baseCompareError": null,
+        "baseCompareStatus": null,
+        "baseIntegrationRequired": false,
+        "baseMergeBaseSha": null,
+        "baseRefName": "main",
+        "baseSha": "da00849f2c3db60b16edaf2371ae1d863f341ae2",
+        "changedFiles": [
+          "src/agentscope/model/_base.py",
+          "tests/model_count_tokens_test.py",
+          "tests/utils.py"
+        ],
+        "failingChecks": [],
+        "headSha": "688b6b306fafecb64595bfe83411abf536a69a9d",
+        "maintainerEvents": [],
+        "mergeConflict": false,
+        "mergeConflictPreparationVersion": null,
+        "requestedChanges": [],
+        "unresolvedReviewThreads": []
+      },
+      "headSha": "688b6b306fafecb64595bfe83411abf536a69a9d",
+      "key": "agentscope-ai/agentscope#2397",
+      "mergeConflict": false,
+      "mergeableState": "blocked",
+      "number": 2397,
+      "repo": "agentscope-ai/agentscope",
+      "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
+      "taskActions": [],
+      "taskFollowupRequired": false,
+      "title": "fix(model): use conservative fallback token estimate",
+      "url": "https://github.com/agentscope-ai/agentscope/pull/2397"
+    },
+    {
       "actionDigest": "aaebebd5a95421c0c823ac3b3b327b31eb76e2996635c0e35c8490f3e9bea84e",
       "actions": [
         "存在未解决审查线程"
       ],
       "baseRefName": "main",
       "baseSha": "bb3100e6114f6647494be27e1a8ba04dea410cb8",
-      "checkedAt": "2026-08-22T18:51:20.527497Z",
+      "checkedAt": "2026-08-22T19:34:56.047968Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -564,7 +605,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "e8bde60164f9ef820068ec36ffe6b7be6bd8fd26",
-      "checkedAt": "2026-08-22T18:51:20.527497Z",
+      "checkedAt": "2026-08-22T19:34:56.047968Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -608,7 +649,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "cbff54d645d2cd8ee1f1c358a82f3f473588433d",
-      "checkedAt": "2026-08-22T18:51:20.527497Z",
+      "checkedAt": "2026-08-22T19:34:56.047968Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -670,7 +711,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "85ddbfedf609166b2d2c76c3d80506649fee82a9",
-      "checkedAt": "2026-08-22T18:51:20.527497Z",
+      "checkedAt": "2026-08-22T19:34:56.047968Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -715,7 +756,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "a21633d53930abc5d62b8dbd6b608995f2ccb4b1",
-      "checkedAt": "2026-08-22T18:51:20.527497Z",
+      "checkedAt": "2026-08-22T19:34:56.047968Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -780,7 +821,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "1de61b178aec844e0aa362474274ccbf6acf9403",
-      "checkedAt": "2026-08-22T18:51:20.527497Z",
+      "checkedAt": "2026-08-22T19:34:56.047968Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -820,7 +861,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "1de61b178aec844e0aa362474274ccbf6acf9403",
-      "checkedAt": "2026-08-22T18:51:20.527497Z",
+      "checkedAt": "2026-08-22T19:34:56.047968Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -860,7 +901,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "1de61b178aec844e0aa362474274ccbf6acf9403",
-      "checkedAt": "2026-08-22T18:51:20.527497Z",
+      "checkedAt": "2026-08-22T19:34:56.047968Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -902,7 +943,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "1de61b178aec844e0aa362474274ccbf6acf9403",
-      "checkedAt": "2026-08-22T18:51:20.527497Z",
+      "checkedAt": "2026-08-22T19:34:56.047968Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -990,7 +1031,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "be5bfaff2b16d623a6c85a8e8f0a98d80f05899d",
-      "checkedAt": "2026-08-22T18:51:20.527497Z",
+      "checkedAt": "2026-08-22T19:34:56.047968Z",
       "ciStatus": "PASSED",
       "draft": true,
       "evidence": {
@@ -1034,7 +1075,7 @@
       ],
       "baseRefName": "main-v2",
       "baseSha": "b9cf32f81f8090b25084471dd84539fe421bc88b",
-      "checkedAt": "2026-08-22T18:51:20.527497Z",
+      "checkedAt": "2026-08-22T19:34:56.047968Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -1105,7 +1146,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "d9f4d3d288257593471fc708a9ab851779005ca5",
-      "checkedAt": "2026-08-22T18:51:20.527497Z",
+      "checkedAt": "2026-08-22T19:34:56.047968Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -1179,7 +1220,7 @@
       ],
       "baseRefName": "master",
       "baseSha": "c25498501542e6c358e60e6170e86692ac49b875",
-      "checkedAt": "2026-08-22T18:51:20.527497Z",
+      "checkedAt": "2026-08-22T19:34:56.047968Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -1272,7 +1313,7 @@
       ],
       "baseRefName": "master",
       "baseSha": "c25498501542e6c358e60e6170e86692ac49b875",
-      "checkedAt": "2026-08-22T18:51:20.527497Z",
+      "checkedAt": "2026-08-22T19:34:56.047968Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -1326,7 +1367,7 @@
       ],
       "baseRefName": "master",
       "baseSha": "c25498501542e6c358e60e6170e86692ac49b875",
-      "checkedAt": "2026-08-22T18:51:20.527497Z",
+      "checkedAt": "2026-08-22T19:34:56.047968Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -1382,7 +1423,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "09ef6b2b7119e35a6787fc249f916f8b47b28615",
-      "checkedAt": "2026-08-22T18:51:20.527497Z",
+      "checkedAt": "2026-08-22T19:34:56.047968Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -1452,7 +1493,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "8d5b7865bd0521e75fe9ab1b260eeccc83f8a378",
-      "checkedAt": "2026-08-22T18:51:20.527497Z",
+      "checkedAt": "2026-08-22T19:34:56.047968Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -1494,7 +1535,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "d9d3fb6252f7ae9e7f8104edce7266f0782a813c",
-      "checkedAt": "2026-08-22T18:51:20.527497Z",
+      "checkedAt": "2026-08-22T19:34:56.047968Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -1567,7 +1608,7 @@
       "actions": [],
       "baseRefName": "master",
       "baseSha": "7c4d2733dc0521f0f1203f3664df305905a80095",
-      "checkedAt": "2026-08-22T18:51:20.527497Z",
+      "checkedAt": "2026-08-22T19:34:56.047968Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -1618,7 +1659,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "acead0507d7de44e216d24533964106ca1d1d044",
-      "checkedAt": "2026-08-22T18:51:20.527497Z",
+      "checkedAt": "2026-08-22T19:34:56.047968Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -1661,7 +1702,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "ddbb90e36f2d148c7982f6ed85b09d31cabf5944",
-      "checkedAt": "2026-08-22T18:51:20.527497Z",
+      "checkedAt": "2026-08-22T19:34:56.047968Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -1726,7 +1767,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "831ec6239a9c594053231523b88b8e398f27cf1b",
-      "checkedAt": "2026-08-22T18:51:20.527497Z",
+      "checkedAt": "2026-08-22T19:34:56.047968Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -1798,7 +1839,7 @@
       "actions": [],
       "baseRefName": "develop",
       "baseSha": "29f9bb7161775cd807565fd3041eb2b7d1be071c",
-      "checkedAt": "2026-08-22T18:51:20.527497Z",
+      "checkedAt": "2026-08-22T19:34:56.047968Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -1847,7 +1888,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "d8021225eb7e7b276d5ceb476b0a4650240f27f8",
-      "checkedAt": "2026-08-22T18:51:20.527497Z",
+      "checkedAt": "2026-08-22T19:34:56.047968Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -1891,7 +1932,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "cce0a1244b5a3ee60411fb403f65f856a1d012f0",
-      "checkedAt": "2026-08-22T18:51:20.527497Z",
+      "checkedAt": "2026-08-22T19:34:56.047968Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -2146,7 +2187,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "cce0a1244b5a3ee60411fb403f65f856a1d012f0",
-      "checkedAt": "2026-08-22T18:51:20.527497Z",
+      "checkedAt": "2026-08-22T19:34:56.047968Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -2393,7 +2434,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "cce0a1244b5a3ee60411fb403f65f856a1d012f0",
-      "checkedAt": "2026-08-22T18:51:20.527497Z",
+      "checkedAt": "2026-08-22T19:34:56.047968Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -2617,7 +2658,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "cce0a1244b5a3ee60411fb403f65f856a1d012f0",
-      "checkedAt": "2026-08-22T18:51:20.527497Z",
+      "checkedAt": "2026-08-22T19:34:56.047968Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -2839,7 +2880,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "236f78cc5c39362f80c0c7df1ffe810466525f33",
-      "checkedAt": "2026-08-22T18:51:20.527497Z",
+      "checkedAt": "2026-08-22T19:34:56.047968Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -3012,7 +3053,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "236f78cc5c39362f80c0c7df1ffe810466525f33",
-      "checkedAt": "2026-08-22T18:51:20.527497Z",
+      "checkedAt": "2026-08-22T19:34:56.047968Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -3146,7 +3187,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "236f78cc5c39362f80c0c7df1ffe810466525f33",
-      "checkedAt": "2026-08-22T18:51:20.527497Z",
+      "checkedAt": "2026-08-22T19:34:56.047968Z",
       "ciStatus": "FAILED",
       "draft": true,
       "evidence": {
@@ -3203,7 +3244,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "236f78cc5c39362f80c0c7df1ffe810466525f33",
-      "checkedAt": "2026-08-22T18:51:20.527497Z",
+      "checkedAt": "2026-08-22T19:34:56.047968Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {

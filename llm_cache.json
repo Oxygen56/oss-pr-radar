@@ -12765,6 +12765,38 @@
     ],
     "why": "Issue describes a deterministic deadlock with clear root cause (WORLD-group broadcast in fastsafetensors loader when only PP-last-stage ranks load draft model). However, the supplied gate decision is HUMAN_REVIEW, and the related issue audit failed (timeout), leaving uncertainty about maintainer awareness and existing design preferences. The open PR #50514 is related but has failing CI and does not directly fix the loader issue."
   },
+  "5096e5d63b5f9b9fba1586f322de170529ce602960070a63e738ada77e6c4d04": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Maintainer comment claims fixed in v4.1.11, but issue remains open and no linked PR; may indicate incomplete fix or need for verification"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "run_commands schema gate",
+      "runtime normalizer/executor",
+      "preview formatter"
+    ],
+    "risks": [
+      "Potential behavior change for existing string-command users if not carefully backward-compatible",
+      "Key-agnostic fallback may pick unintended properties if object has multiple string-valued properties"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression tests for object-form commands with various keys (cmd, exec, etc.) verifying execution and preview rendering",
+      "Run existing run_commands tests and relevant unit tests"
+    ],
+    "unknowns": [
+      "Whether the maintainer's claimed fix in v4.1.11 fully addresses the issue or if the proposed patch is still needed",
+      "Exact implementation details of the proposed patch (not fully provided in issue body)"
+    ],
+    "why": "The issue provides a clear root cause (strict zod schema gate rejects object-form commands, runtime normalizer and preview formatter only handle 'command' key) and a concrete validation path (reproduce with object-form commands, verify execution and preview rendering). The suggested fix is technically sound and actionable."
+  },
   "50c26ffde7a7860e82bba6ce69b84887706f151ef750acb35b27df5475a1c7ab": {
     "confidence": 0.7,
     "contradictions": [],
@@ -16157,6 +16189,32 @@
       "Whether the repository requires assignment or design confirmation for this fix"
     ],
     "why": "Issue provides a clear race condition with root cause and reproduction steps, but submission policy conflicts with repository's AI disclosure requirement, and no maintainer approval or design confirmation exists. Existing PRs are closed and lack tests, so a new PR is plausible but requires maintainer guidance."
+  },
+  "6342118dc49e390bd8674d5407e5b817adf36cead53186ba9095c2255a35284b": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "LiteLLM ElevenLabs speech-to-text provider parameter mapping"
+    ],
+    "risks": [
+      "Potential API behavior change if parameters are not supported by all models"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add unit test verifying diarize and related fields are forwarded in multipart request to ElevenLabs API"
+    ],
+    "unknowns": [
+      "Exact code location and maintainer preference for implementation"
+    ],
+    "why": "Issue clearly identifies missing pass-through of ElevenLabs speech-to-text diarization parameters in LiteLLM, with expected vs actual behavior and example request. Root cause is likely in provider parameter mapping. No competing PR or duplicate found."
   },
   "635020ac901084eaeb870a245e21bbb730628c9b79bf5ee7a11be59acff4b119": {
     "confidence": 0.7,
