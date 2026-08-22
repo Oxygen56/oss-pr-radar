@@ -6,7 +6,7 @@ from oss_pr_radar.agentscope_events import EventLane, GitHubIssuePoller, dispatc
 
 
 def _issue(number: int, updated: str, *, pr: bool = False) -> dict:
-    value = {"number": number, "updated_at": updated, "title": f"item {number}"}
+    value = {"number": number, "updated_at": updated, "title": f"item {number}", "labels": [{"name": "bug"}]}
     if pr:
         value["pull_request"] = {"url": "https://example.test/pr"}
     return value
@@ -22,9 +22,9 @@ def test_poller_304_is_empty_and_sends_conditional_headers(tmp_path):
         return 304, {"ETag": '"v1"'}, None
 
     poller = GitHubIssuePoller(tmp_path / "poll.json", transport=transport)
-    first = poller.poll(now=datetime(2026, 8, 22, tzinfo=UTC))
+    baseline = poller.poll(now=datetime(2026, 8, 22, tzinfo=UTC))
     second = poller.poll(now=datetime(2026, 8, 22, 0, 1, tzinfo=UTC))
-    assert first.status == "ok" and len(first.events) == 1
+    assert baseline.status == "baseline"
     assert second.status == "not_modified" and not second.events
     assert calls[1][1]["If-None-Match"] == '"v1"'
 
@@ -34,14 +34,17 @@ def test_poller_paginates_with_overlap_and_dedupes_at_lane(tmp_path):
 
     def transport(url, headers):
         calls.append(url)
+        if "direction=desc" in url:
+            return 200, {"ETag": "gate"}, [_issue(3, "2026-08-22T00:02:00Z")]
         if "page=1" in url:
             return 200, {}, [_issue(1, "2026-08-22T00:00:00Z"), _issue(2, "2026-08-22T00:01:00Z"), _issue(3, "2026-08-22T00:02:00Z")]
         return 200, {}, [_issue(3, "2026-08-22T00:02:00Z")]
 
     poller = GitHubIssuePoller(tmp_path / "poll.json", transport=transport, per_page=3)
+    assert poller.poll().status == "baseline"
     result = poller.poll()
     lane = EventLane(tmp_path / "events.db")
-    assert len(result.events) == 4 and len(calls) == 2
+    assert len(result.events) == 4 and len(calls) == 4
     assert lane.append_many(result.events) == 3
     assert lane.append(result.events[0]) is False
 
@@ -75,6 +78,6 @@ def test_queue_import_includes_followups_and_wakes_once(tmp_path):
 
 def test_ttl_marks_stale_pending_watch_only(tmp_path):
     lane = EventLane(tmp_path / "events.db", ttl_seconds=10)
-    lane.append({"eventId": "old"}, now=0)
+    lane.append({"eventId": "old", "designWait": True}, now=0)
     assert lane.expire_claims(now=11) == 1
-    assert lane.pending() == 1
+    assert lane.pending() == 0

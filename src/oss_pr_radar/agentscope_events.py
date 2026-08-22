@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sqlite3
 import time
 import urllib.error
@@ -95,22 +96,40 @@ class GitHubIssuePoller:
         state = self._load()
         current = (now or datetime.now(UTC)).astimezone(UTC)
         previous = _parse_time(str(state.get("watermark") or ""))
+        if previous is None:
+            status, response_headers, payload = self.transport(
+                f"https://api.github.com/repos/{self.repo}/issues?state=all&sort=updated&direction=desc&per_page={self.per_page}&page=1",
+                self._headers(state, conditional=False),
+            )
+            if status != 200 or not isinstance(payload, list):
+                raise RuntimeError(f"GitHub issues baseline failed: HTTP {status}")
+            latest = max((_parse_time(str(item.get("updated_at") or "")) for item in payload if isinstance(item, dict)), default=None)
+            watermark = (latest or current).isoformat().replace("+00:00", "Z")
+            self._save({"schemaVersion": "agentscope_poll_v1", "watermark": watermark,
+                        "gateEtag": response_headers.get("ETag"),
+                        "gateLastModified": response_headers.get("Last-Modified"),
+                        "updatedAt": current.isoformat().replace("+00:00", "Z")})
+            return PollResult("baseline", pages=1, next_since=watermark,
+                              etag=response_headers.get("ETag"), last_modified=response_headers.get("Last-Modified"))
         since = previous - timedelta(seconds=self.overlap_seconds) if previous else None
-        headers = {"Accept": "application/vnd.github+json"}
-        if state.get("etag"):
-            headers["If-None-Match"] = str(state["etag"])
-        if state.get("lastModified"):
-            headers["If-Modified-Since"] = str(state["lastModified"])
+        gate_status, gate_headers, _gate_payload = self.transport(
+            f"https://api.github.com/repos/{self.repo}/issues?state=all&sort=updated&direction=desc&per_page={self.per_page}&page=1",
+            self._headers(state, conditional=True),
+        )
+        if gate_status == 304:
+            return PollResult("not_modified", pages=1, etag=state.get("gateEtag"), last_modified=state.get("gateLastModified"))
+        if gate_status != 200:
+            raise RuntimeError(f"GitHub issues gate failed: HTTP {gate_status}")
         events: list[dict[str, Any]] = []
         page = 1
         max_updated = previous
-        final_headers: dict[str, str] = {}
+        final_headers: dict[str, str] = {"ETag": gate_headers.get("ETag", ""), "Last-Modified": gate_headers.get("Last-Modified", "")}
         while True:
             query = f"?state=all&sort=updated&direction=asc&per_page={self.per_page}&page={page}"
             if since:
                 query += "&since=" + since.isoformat().replace("+00:00", "Z")
             status, response_headers, payload = self.transport(
-                f"https://api.github.com/repos/{self.repo}/issues{query}", headers
+                f"https://api.github.com/repos/{self.repo}/issues{query}", self._headers(state, conditional=False)
             )
             final_headers.update(response_headers)
             if status == 304:
@@ -123,6 +142,8 @@ class GitHubIssuePoller:
                 updated = _parse_time(str(item.get("updated_at") or ""))
                 if updated and (max_updated is None or updated > max_updated):
                     max_updated = updated
+                if not self._is_relevant(item):
+                    continue
                 event = {
                     "version": EVENT_VERSION,
                     "repo": self.repo,
@@ -131,7 +152,7 @@ class GitHubIssuePoller:
                     "updatedAt": item.get("updated_at"),
                     "issue": item,
                 }
-                event["eventId"] = f"github:{_digest({k: event[k] for k in event if k != 'eventId'})}"
+                event["eventId"] = f"github:{self.repo}:{item.get('number')}:{event['kind']}:{item.get('updated_at')}"
                 events.append(event)
             if len(payload) < self.per_page:
                 break
@@ -140,13 +161,39 @@ class GitHubIssuePoller:
         self._save({
             "schemaVersion": "agentscope_poll_v1",
             "watermark": watermark,
-            "etag": final_headers.get("ETag") or state.get("etag"),
-            "lastModified": final_headers.get("Last-Modified") or state.get("lastModified"),
+            "gateEtag": final_headers.get("ETag") or state.get("gateEtag"),
+            "gateLastModified": final_headers.get("Last-Modified") or state.get("gateLastModified"),
             "updatedAt": current.isoformat().replace("+00:00", "Z"),
         })
         return PollResult("ok", tuple(events), page, watermark,
-                          final_headers.get("ETag") or state.get("etag"),
-                          final_headers.get("Last-Modified") or state.get("lastModified"))
+                          final_headers.get("ETag") or state.get("gateEtag"),
+                          final_headers.get("Last-Modified") or state.get("gateLastModified"))
+
+    @staticmethod
+    def _headers(state: dict[str, Any], *, conditional: bool) -> dict[str, str]:
+        headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
+        token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        if conditional and state.get("gateEtag"):
+            headers["If-None-Match"] = str(state["gateEtag"])
+        if conditional and state.get("gateLastModified"):
+            headers["If-Modified-Since"] = str(state["gateLastModified"])
+        return headers
+
+    @staticmethod
+    def _is_relevant(item: dict[str, Any]) -> bool:
+        title = str(item.get("title") or "").lower()
+        body = str(item.get("body") or "").lower()
+        labels = {str(label.get("name") or "").lower() for label in item.get("labels") or [] if isinstance(label, dict)}
+        if item.get("pull_request"):
+            author = str((item.get("user") or {}).get("login") or "").lower()
+            return author == "oxygen56" or any(token in title for token in ("ci", "review", "conflict"))
+        if any(token in title or token in body for token in ("documentation", "docs:", "dependency", "bump ")):
+            return False
+        return bool({"bug", "feature", "enhancement", "help wanted", "good first issue", "code"} & labels) or any(
+            token in title or token in body for token in ("bug", "error", "crash", "exception", "regression", "implement")
+        )
 
 
 class EventLane:
@@ -264,7 +311,7 @@ class EventLane:
 
     def pending(self) -> int:
         with self.connect() as db:
-            return int(db.execute("SELECT count(*) FROM event_lane_events WHERE status!='delivered'").fetchone()[0])
+            return int(db.execute("SELECT count(*) FROM event_lane_events WHERE status IN ('pending','leased')").fetchone()[0])
 
     def import_queue(self, queue: dict[str, Any], *, wake: Callable[[dict[str, Any]], Any] | None = None) -> dict[str, int]:
         """Import intents and PR follow-up records, then wake each unique task once."""
@@ -282,7 +329,7 @@ class EventLane:
                          "eventId": f"queue:{_digest({key: key, 'taskId': task_id, 'payload': value})}"}
                 if self.append(event, priority=100 if key != "intents" else 50):
                     imported += 1
-                task_ids.add(task_id)
+                    task_ids.add(task_id)
         if wake:
             for task_id in sorted(task_ids):
                 wake({"taskId": task_id, "reason": "queue_import"})
@@ -291,7 +338,7 @@ class EventLane:
     def expire_claims(self, *, now: float | None = None) -> int:
         current = time.time() if now is None else now
         with self.writer() as db:
-            result = db.execute("UPDATE event_lane_events SET status='watch_only' WHERE status='pending' AND created_at<?", (current - self.ttl_seconds,))
+            result = db.execute("UPDATE event_lane_events SET status='watch_only' WHERE status='pending' AND created_at<? AND json_extract(payload_json,'$.designWait')=1", (current - self.ttl_seconds,))
             return result.rowcount
 
 
