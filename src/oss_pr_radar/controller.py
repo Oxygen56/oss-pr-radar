@@ -406,9 +406,40 @@ def compact_controller_result(
     }
     if desktop_handoff is not None:
         compact["desktopHandoff"] = desktop_handoff
+    startup_blocker = _safe_startup_blocker(result)
+    if startup_blocker is not None:
+        compact["startupBlocker"] = startup_blocker
     if report_path is not None:
         compact["reportPath"] = str(report_path)
     return compact
+
+
+def _safe_startup_blocker(result: dict[str, Any]) -> dict[str, str] | None:
+    """Return a stable, non-sensitive summary for pre-cycle failures."""
+
+    if result.get("ok") is not False or result.get("stages"):
+        return None
+    error = str(result.get("error") or "")
+    blocked = str(result.get("blocked") or "")
+    if "explicit code root is not the active immutable release" in error:
+        return {
+            "errorCode": "RELEASE_BINDING_MISMATCH",
+            "message": "自动任务绑定的版本已不是当前运行版本；本轮未执行。",
+        }
+    if (
+        "operational authorization" in error.lower()
+        or "operational authorization" in blocked.lower()
+    ):
+        return {
+            "errorCode": "OPERATIONAL_AUTHORIZATION_REQUIRED",
+            "message": "当前运行版本尚未完成授权；本轮未执行。",
+        }
+    if error or blocked:
+        return {
+            "errorCode": "CONTROLLER_START_FAILED",
+            "message": "控制器启动失败；本轮未执行。",
+        }
+    return None
 
 
 def _pending_desktop_handoff(stages: dict[str, dict[str, Any]]) -> dict[str, Any] | None:

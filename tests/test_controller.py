@@ -192,6 +192,7 @@ def test_controller_output_is_compact_and_full_evidence_stays_in_report(tmp_path
     assert compact["warnings"]["prFollowupQuarantined"] == 1
     assert compact["warnings"]["titleUpdatesPending"] == 1
     assert "stages" not in compact
+    assert "startupBlocker" not in compact
     assert len(str(compact)) < 1000
 
 
@@ -236,3 +237,25 @@ def test_compact_controller_result_exposes_one_desktop_handoff():
     compact = compact_controller_result(result)
 
     assert compact["desktopHandoff"] == handoff
+    assert "startupBlocker" not in compact
+
+
+def test_compact_controller_result_exposes_safe_release_binding_mismatch():
+    result = {
+        "ok": False,
+        "blocked": "operational authorization required",
+        "error": (
+            "explicit code root is not the active immutable release: "
+            "/private/sensitive/release"
+        ),
+    }
+
+    compact = compact_controller_result(result)
+
+    assert compact["startupBlocker"] == {
+        "errorCode": "RELEASE_BINDING_MISMATCH",
+        "message": "自动任务绑定的版本已不是当前运行版本；本轮未执行。",
+    }
+    assert "error" not in compact
+    assert "blocked" not in compact
+    assert "/private/sensitive/release" not in str(compact)
