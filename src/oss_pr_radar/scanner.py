@@ -1408,6 +1408,43 @@ def parse_github_time(value: str | None, default: datetime) -> datetime:
         return default
 
 
+def canonical_issue_identity(
+    requested_repo: str,
+    requested_number: int,
+    issue: dict[str, Any],
+) -> tuple[str, int]:
+    """Resolve the live issue identity after GitHub follows an issue transfer."""
+
+    repository_match = re.fullmatch(
+        r"https://api\.github\.com/repos/([^/\s]+/[^/?#\s]+)/?",
+        str(issue.get("repository_url") or ""),
+        re.I,
+    )
+    html_match = re.fullmatch(
+        r"https://github\.com/([^/\s]+/[^/?#\s]+)/issues/([1-9][0-9]*)/?",
+        str(issue.get("html_url") or ""),
+        re.I,
+    )
+    repo = (
+        repository_match.group(1)
+        if repository_match
+        else html_match.group(1)
+        if html_match
+        else requested_repo
+    )
+    returned_number = issue.get("number")
+    number = (
+        returned_number
+        if isinstance(returned_number, int)
+        and not isinstance(returned_number, bool)
+        and returned_number > 0
+        else int(html_match.group(2))
+        if html_match
+        else requested_number
+    )
+    return repo, number
+
+
 CODE_MARKERS = {
     "src",
     "python",
@@ -4019,6 +4056,7 @@ class Radar:
                 deadline_deferred_bases.extend(inspection_bases[index:])
                 break
             key = f"{base['repo']}#{base['num']}"
+            requested_key = key
             self.inspected_repo_names.add(str(base["repo"]))
             issue = self.issue(base["repo"], base["num"])
             if not issue:
@@ -4046,6 +4084,35 @@ class Radar:
                     ),
                 }
                 continue
+            canonical_repo, canonical_number = canonical_issue_identity(
+                str(base["repo"]), int(base["num"]), issue
+            )
+            if (canonical_repo, canonical_number) != (base["repo"], base["num"]):
+                canonical_url = str(issue.get("html_url") or "") or (
+                    f"https://github.com/{canonical_repo}/issues/{canonical_number}"
+                )
+                base = {
+                    **base,
+                    "repo": canonical_repo,
+                    "num": canonical_number,
+                    "url": canonical_url,
+                }
+                key = f"{canonical_repo}#{canonical_number}"
+                self.inspected_repo_names.add(canonical_repo)
+                self.issue_outcomes[requested_key] = {
+                    "status": "rejected",
+                    "reason": "issue_transferred",
+                    "canonical_key": key,
+                }
+                self.seen[requested_key] = {
+                    "analyzed": self.analyzed,
+                    "status": "issue_transferred",
+                    "reason": "issue_transferred",
+                    "canonical_key": key,
+                    "url": canonical_url,
+                    "title": issue.get("title") or base.get("title") or key,
+                    "issue_updated": issue.get("updated_at") or base.get("updated") or "",
+                }
             if issue.get("state") != "open" or issue.get("pull_request"):
                 reject("not_open_or_pull_request", base)
                 continue

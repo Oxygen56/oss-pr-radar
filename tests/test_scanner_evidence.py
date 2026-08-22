@@ -15,6 +15,7 @@ from oss_pr_radar.scanner import (
     Radar,
     candidate_issue_outcome,
     candidate_notification_digest,
+    canonical_issue_identity,
     controller_terminal_issue_outcomes,
     count_seen_rechecks,
     expire_stale_rechecks,
@@ -171,6 +172,115 @@ def test_missing_issue_is_terminal_but_transient_fetch_failure_requeues(monkeypa
     assert missing.seen[key]["status"] == "issue_not_found"
     assert transient.issue_outcomes[transient_key]["reason"] == "issue_fetch_failed"
     assert transient.seen[transient_key]["status"] == "status_update"
+
+
+def test_transferred_issue_uses_canonical_identity_for_every_followup(monkeypatch, tmp_path):
+    instance = Radar(
+        datetime(2026, 8, 22, tzinfo=UTC),
+        2,
+        tmp_path / "seen.json",
+        "",
+        dry_run=True,
+        notify=False,
+    )
+    base = {
+        "repo": "langgenius/dify",
+        "num": 40768,
+        "title": "Persistent memory for agents",
+        "url": "https://github.com/langgenius/dify/issues/40768",
+        "updated": "2026-08-14T12:05:00Z",
+        "labels": ["bug"],
+        "assignees": [],
+        "_explicit_recheck": True,
+    }
+    issue = {
+        "number": 2885,
+        "state": "open",
+        "title": base["title"],
+        "body": "A reproducible agent memory bug with src/plugin.py as the failing path.",
+        "updated_at": base["updated"],
+        "repository_url": "https://api.github.com/repos/langgenius/dify-plugins",
+        "html_url": "https://github.com/langgenius/dify-plugins/issues/2885",
+    }
+    followups = []
+    scored = {
+        **base,
+        "score": 10,
+        "bucket": "immediate",
+        "category": "NEW_CLEAN_CANDIDATE",
+        "gate_decision": "ALLOW_TO_WORK",
+        "auto_spawn": True,
+        "public_submission_allowed": True,
+        "hardware_compatible": True,
+        "risk": "Low",
+        "next_step": "Reproduce locally.",
+        "track": "agent_ai_infra",
+        "actionability_evidence": {"code_anchors": ["src/plugin.py"], "probe_ready": True},
+        "test_path": "Run the focused regression.",
+    }
+
+    monkeypatch.setattr(instance, "repo_quality", lambda *_args: (True, "ok"))
+    monkeypatch.setattr(instance, "issue", lambda *_args: issue)
+    monkeypatch.setattr(
+        instance,
+        "comments",
+        lambda repo, number: followups.append(("comments", repo, number)) or [],
+    )
+
+    def score_issue(canonical_base, *_args):
+        followups.append(("score", canonical_base["repo"], canonical_base["num"]))
+        return scored | canonical_base, None
+
+    monkeypatch.setattr(instance, "score_issue", score_issue)
+    monkeypatch.setattr(
+        instance,
+        "submission_policy",
+        lambda repo: followups.append(("policy", repo, 0)) or "normal",
+    )
+    monkeypatch.setattr(
+        instance,
+        "assess_related_issues",
+        lambda repo, number, *_args: (
+            followups.append(("related", repo, number)) or {"status": "none", "issues": []}
+        ),
+    )
+    monkeypatch.setattr(
+        instance,
+        "assess_open_prs",
+        lambda repo, number, *_args: (
+            followups.append(("prs", repo, number)) or {"status": "none", "prs": []}
+        ),
+    )
+    monkeypatch.setattr(
+        instance,
+        "default_branch_evidence",
+        lambda repo: (
+            followups.append(("base", repo, 0))
+            or {"status": "ok", "defaultBranch": "main", "baseSha": "a" * 40}
+        ),
+    )
+
+    candidates, _, inspected = instance.shortlist({"langgenius/dify#40768": base})
+
+    assert inspected == 1
+    assert candidates[0]["repo"] == "langgenius/dify-plugins"
+    assert candidates[0]["num"] == 2885
+    assert all(call[1] == "langgenius/dify-plugins" for call in followups)
+    assert all(call[2] in {0, 2885} for call in followups)
+    assert instance.issue_outcomes["langgenius/dify#40768"] == {
+        "status": "rejected",
+        "reason": "issue_transferred",
+        "canonical_key": "langgenius/dify-plugins#2885",
+    }
+    assert instance.seen["langgenius/dify#40768"]["status"] == "issue_transferred"
+
+
+def test_canonical_issue_identity_falls_back_to_html_url():
+    assert canonical_issue_identity(
+        "langgenius/dify",
+        40768,
+        {"html_url": "https://github.com/langgenius/dify-plugins/issues/2885"},
+    ) == ("langgenius/dify-plugins", 2885)
 
 
 def test_optional_discovery_retries_rate_limit(monkeypatch, tmp_path):
