@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import re
 import subprocess
 import time
@@ -19,16 +20,23 @@ class GitHubError(RuntimeError):
 Runner = Callable[[list[str], int], str]
 Sleeper = Callable[[float], None]
 
+_PROXY_ENV_NAMES = (
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+)
 
-def is_transient_github_error(error: BaseException | str) -> bool:
-    """Return whether a read failed for a retryable transport/server reason."""
 
+def _is_connectivity_github_error(error: BaseException | str) -> bool:
     message = str(error).strip().casefold()
     if isinstance(error, subprocess.TimeoutExpired):
         return True
-    if re.search(r"\bhttp\s+(?:408|429|5\d\d)\b", message):
+    if re.search(r"\b(?:unexpected\s+)?eof(?:\s+while\s+reading)?\b", message):
         return True
-    if re.search(r"(?:^|[\s:\"])(?:unexpected\s+)?eof\s*$", message):
+    if "ssl_error_syscall" in message or re.search(r"\bssl\s+syscall\b", message):
         return True
     return any(
         marker in message
@@ -39,18 +47,59 @@ def is_transient_github_error(error: BaseException | str) -> bool:
             "connection reset",
             "connection refused",
             "tls handshake timeout",
+            "network is unreachable",
+            "no route to host",
         )
     )
 
 
-def _default_runner(args: list[str], timeout: int) -> str:
-    completed = subprocess.run(
-        args,
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
+def is_transient_github_error(error: BaseException | str) -> bool:
+    """Return whether a read failed for a retryable transport/server reason."""
+
+    message = str(error).strip().casefold()
+    return _is_connectivity_github_error(error) or bool(
+        re.search(r"\bhttp\s+(?:408|429|5\d\d)\b", message)
     )
+
+
+def _default_runner(args: list[str], timeout: int) -> str:
+    started = time.monotonic()
+    proxy_env = os.environ.copy()
+    proxy_configured = any(proxy_env.get(name) for name in _PROXY_ENV_NAMES)
+    direct_env = dict(proxy_env)
+    for name in _PROXY_ENV_NAMES:
+        direct_env.pop(name, None)
+
+    def invoke(env: dict[str, str], call_timeout: float) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            args,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=max(1.0, call_timeout),
+            env=env,
+        )
+
+    direct_timeout = float(timeout) if not proxy_configured else min(float(timeout), 10.0)
+    try:
+        completed = invoke(direct_env, direct_timeout)
+    except subprocess.TimeoutExpired:
+        if not proxy_configured:
+            raise
+        remaining = timeout - (time.monotonic() - started)
+        if remaining <= 1.0:
+            raise
+        completed = invoke(proxy_env, remaining)
+
+    direct_error = (completed.stderr or completed.stdout or "GitHub command failed").strip()
+    if (
+        completed.returncode != 0
+        and proxy_configured
+        and _is_connectivity_github_error(direct_error)
+    ):
+        remaining = timeout - (time.monotonic() - started)
+        if remaining > 1.0:
+            completed = invoke(proxy_env, remaining)
     if completed.returncode != 0:
         error = (completed.stderr or completed.stdout or "GitHub command failed").strip()
         raise GitHubError(error[:1000])

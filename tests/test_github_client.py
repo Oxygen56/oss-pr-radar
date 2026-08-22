@@ -1,4 +1,72 @@
-from oss_pr_radar.github_client import GitHubClient, GitHubError
+import subprocess
+
+from oss_pr_radar import github_client
+from oss_pr_radar.github_client import GitHubClient, GitHubError, is_transient_github_error
+
+
+def test_default_runner_uses_direct_connection_before_proxy(monkeypatch):
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:7897")
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:7897")
+    monkeypatch.setenv("ALL_PROXY", "socks5h://127.0.0.1:7897")
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(args, 0, stdout='{"number":1}', stderr="")
+
+    monkeypatch.setattr(github_client.subprocess, "run", fake_run)
+
+    assert GitHubClient().issue("a/b", 1)["number"] == 1
+    assert len(calls) == 1
+    assert all(name not in calls[0][1]["env"] for name in github_client._PROXY_ENV_NAMES)
+    assert calls[0][1]["timeout"] == 10.0
+
+
+def test_default_runner_falls_back_to_proxy_after_direct_eof(monkeypatch):
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:7897")
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            return subprocess.CompletedProcess(
+                args,
+                1,
+                stdout="",
+                stderr='Get "https://api.github.com/repos/a/b/issues/1": EOF',
+            )
+        return subprocess.CompletedProcess(args, 0, stdout='{"number":1}', stderr="")
+
+    monkeypatch.setattr(github_client.subprocess, "run", fake_run)
+
+    assert GitHubClient(retry_delays=()).issue("a/b", 1)["number"] == 1
+    assert len(calls) == 2
+    assert "HTTPS_PROXY" not in calls[0]["env"]
+    assert calls[1]["env"]["HTTPS_PROXY"] == "http://127.0.0.1:7897"
+
+
+def test_default_runner_does_not_proxy_fallback_for_github_http_error(monkeypatch):
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:7897")
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append(kwargs)
+        return subprocess.CompletedProcess(args, 1, stdout="", stderr="HTTP 500")
+
+    monkeypatch.setattr(github_client.subprocess, "run", fake_run)
+
+    try:
+        GitHubClient(retry_delays=()).issue("a/b", 1)
+    except GitHubError:
+        pass
+    else:
+        raise AssertionError("expected GitHubError")
+    assert len(calls) == 1
+
+
+def test_transient_errors_include_ssl_syscall_and_eof_while_reading():
+    assert is_transient_github_error("OpenSSL SSL_connect: SSL_ERROR_SYSCALL")
+    assert is_transient_github_error("unexpected EOF while reading")
 
 
 def test_api_retries_plain_eof_and_then_succeeds():

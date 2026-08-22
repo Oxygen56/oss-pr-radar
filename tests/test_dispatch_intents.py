@@ -312,7 +312,7 @@ def test_stale_scanner_report_cannot_build_dispatch_queue():
 
 
 def test_current_scanner_revision_and_decision_contract_filter_non_contradictions():
-    assert SCANNER_DECISION_REVISION == "oss_pr_radar_v50_material_contradictions"
+    assert SCANNER_DECISION_REVISION == "oss_pr_radar_v51_bounded_wait_evidence"
     assert decision_contract_digest() != (
         "63d9b5419e4b58f072055513e60148abadfd4bfc9e8ae799e791a761ff3f56a4"
     )
