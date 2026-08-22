@@ -1317,9 +1317,11 @@ def test_stage7_acceptance_and_contracts_bind_to_one_release(tmp_path):
     assert "运行正常；当前没有需要你处理的事情。" in heartbeat_prompt
     assert "已开始或继续处理；你无需操作。" in heartbeat_prompt
     assert "never show JSON, paths, logs, prompts, or internal fields" in heartbeat_prompt
+    assert "even when command exit is nonzero or final JSON ok=false" in heartbeat_prompt
     assert heartbeat_prompt.index(
-        "if the command fails or final JSON ok=false"
-    ) < heartbeat_prompt.index("if it succeeds without desktopHandoff")
+        "if it contains desktopHandoff"
+    ) < heartbeat_prompt.index("if the command fails or final JSON ok=false")
+    assert "when there is no desktopHandoff" in heartbeat_prompt
     daily_prompt = canonical_prompt(
         "dailyWarRoom", runtime, contracts["dailyWarRoom"]["releaseCommand"]
     )
