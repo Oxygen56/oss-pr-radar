@@ -20,8 +20,23 @@ def bridge_delivery(root: Path, event: dict) -> None:
     result = run_bridge(root, "drain-once", timeout=300)
     if not result.get("ok") or result.get("busy"):
         raise RuntimeError(f"event drain not committed: {result}")
+    expected_key = f"{event.get('repo')}#{event.get('number')}"
+    if result.get("key") != expected_key:
+        raise RuntimeError("event drain did not consume this event")
+    if result.get("action") not in {
+        "issue_task_dispatched",
+        "pr_followup_dispatched",
+        "implementation_followup_dispatched",
+        "publication_feedback_dispatched",
+        "recovery_dispatched",
+    }:
+        raise RuntimeError("event drain produced no task receipt for this event")
     delivery = result.get("delivery") or {}
     if delivery.get("requiresReconciliation") or delivery.get("requiresDesktopHandoff"):
+        handoff = root / "state" / "agentscope-event-handoff.jsonl"
+        handoff.parent.mkdir(parents=True, exist_ok=True)
+        with handoff.open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps({"event": event, "result": result}, sort_keys=True) + "\n")
         raise RuntimeError("event drain requires durable handoff/reconciliation")
 
 

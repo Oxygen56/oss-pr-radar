@@ -64,6 +64,7 @@ class GitHubIssuePoller:
     ) -> None:
         self.state_path = Path(state_path)
         self.repo = repo
+        self.auth_required = transport is None
         self.transport = transport or self._http_transport
         self.overlap_seconds = max(0, overlap_seconds)
         self.per_page = max(1, min(per_page, 100))
@@ -100,7 +101,7 @@ class GitHubIssuePoller:
         if previous is None:
             status, response_headers, payload = self.transport(
                 f"https://api.github.com/repos/{self.repo}/issues?state=all&sort=updated&direction=desc&per_page={self.per_page}&page=1",
-                self._headers(state, conditional=False),
+                self._headers(state, conditional=False, require_auth=self.auth_required),
             )
             if status != 200 or not isinstance(payload, list):
                 raise RuntimeError(f"GitHub issues baseline failed: HTTP {status}")
@@ -115,7 +116,7 @@ class GitHubIssuePoller:
         since = previous - timedelta(seconds=self.overlap_seconds) if previous else None
         gate_status, gate_headers, _gate_payload = self.transport(
             f"https://api.github.com/repos/{self.repo}/issues?state=all&sort=updated&direction=desc&per_page={self.per_page}&page=1",
-            self._headers(state, conditional=True),
+            self._headers(state, conditional=True, require_auth=self.auth_required),
         )
         if gate_status == 304:
             return PollResult("not_modified", pages=1, etag=state.get("gateEtag"), last_modified=state.get("gateLastModified"))
@@ -130,7 +131,7 @@ class GitHubIssuePoller:
             if since:
                 query += "&since=" + since.isoformat().replace("+00:00", "Z")
             status, response_headers, payload = self.transport(
-                f"https://api.github.com/repos/{self.repo}/issues{query}", self._headers(state, conditional=False)
+                f"https://api.github.com/repos/{self.repo}/issues{query}", self._headers(state, conditional=False, require_auth=self.auth_required)
             )
             final_headers.update(response_headers)
             if status == 304:
@@ -171,7 +172,7 @@ class GitHubIssuePoller:
                           final_headers.get("Last-Modified") or state.get("gateLastModified"))
 
     @staticmethod
-    def _headers(state: dict[str, Any], *, conditional: bool) -> dict[str, str]:
+    def _headers(state: dict[str, Any], *, conditional: bool, require_auth: bool) -> dict[str, str]:
         headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
         token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
         if not token:
@@ -179,6 +180,8 @@ class GitHubIssuePoller:
                 token = subprocess.run(["gh", "auth", "token"], check=True, capture_output=True, text=True, timeout=3).stdout.strip()
             except (OSError, subprocess.SubprocessError):
                 token = ""
+        if not token and require_auth:
+            raise RuntimeError("GitHub authentication unavailable; refusing anonymous polling")
         if token:
             headers["Authorization"] = f"Bearer {token}"
         if conditional and state.get("gateEtag"):
