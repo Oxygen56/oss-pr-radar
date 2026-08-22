@@ -10662,6 +10662,7 @@ def _bind_final_reproduction_receipt(
     context: dict[str, Any],
     value: dict[str, Any],
     result_access: _ValidationWorktreeDirectory,
+    managed_ledger: ManagedLedger | None = None,
 ) -> tuple[dict[str, Any], bytes]:
     """Inherit verified reproduction evidence into a controller-finalized fix."""
 
@@ -10740,10 +10741,19 @@ def _bind_final_reproduction_receipt(
                 result_digest=str(current_receipt.get("resultDigest") or ""),
             )
         )
+        context_receipt = context.get("reproductionReceipt") or context.get("probeReceipt")
+        durable_receipt = None
+        if isinstance(context_receipt, dict) and managed_ledger is not None:
+            durable_receipt = managed_ledger.implementation_authorization_receipt(
+                task_id=task_id,
+                thread_id=str(candidate["threadId"]),
+                worktree_path=str(result_access.worktree),
+                repo=issue_match.group(1),
+                issue_url=issue_url,
+                receipt_digest=str(context_receipt.get("receiptDigest") or ""),
+            )
         source_receipt = (
-            current_receipt
-            if current_receipt_reusable
-            else context.get("reproductionReceipt") or context.get("probeReceipt")
+            current_receipt if current_receipt_reusable else durable_receipt or context_receipt
         )
         if not isinstance(source_receipt, dict):
             raise RuntimeError("REPRODUCED_VALIDATED probe receipt is required")
@@ -10758,6 +10768,7 @@ def _bind_final_reproduction_receipt(
             head_sha=commit_sha,
             commit_sha=commit_sha,
             result_digest=result_digest,
+            enforce_source_freshness=source_receipt is not durable_receipt,
         )
     normalized["resultDigest"] = result_digest
     normalized["reproductionReceipt"] = rebound
@@ -11468,6 +11479,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     context=context,
                     value=value,
                     result_access=result_access,
+                    managed_ledger=managed_adapter.ledger,
                 )
                 quality = value.get("quality")
                 assert isinstance(quality, dict)

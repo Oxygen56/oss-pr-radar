@@ -9459,6 +9459,22 @@ def test_implementation_context_survives_expired_transition_receipt(monkeypatch,
     assert context["childMayEditFiles"] is True
     assert context["resultDigest"] == receipt["resultDigest"]
 
+    result_path = worktree / ".oss-pr-radar" / "result.json"
+    result_value = json.loads(result_path.read_text(encoding="utf-8"))
+    result_value["contextDigest"] = context["contextDigest"]
+    result_value.pop("reproductionReceipt", None)
+    result_value.pop("probeReceipt", None)
+    result_value.pop("resultDigest", None)
+    result_path.write_text(json.dumps(result_value), encoding="utf-8")
+
+    ingested = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert ingested["ok"] is True
+    assert ingested["ingested"] == [{"key": "a/b#1", "stage": "FIX_READY"}]
+    finalized = json.loads(result_path.read_text(encoding="utf-8"))
+    assert finalized["reproductionReceipt"]["bindingPurpose"] == "implementation-result-v1"
+    assert finalized["reproductionReceipt"]["derivedFromReceiptDigest"] == receipt["receiptDigest"]
+
 
 @pytest.mark.parametrize("prior_has_result_digest", [True, False])
 def test_repaired_implementation_context_rearms_same_result_once(tmp_path, prior_has_result_digest):

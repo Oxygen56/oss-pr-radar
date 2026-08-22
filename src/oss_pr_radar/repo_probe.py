@@ -439,6 +439,7 @@ def rebind_probe_receipt(
     head_sha: str,
     commit_sha: str,
     result_digest: str,
+    enforce_source_freshness: bool = True,
 ) -> dict[str, Any]:
     """Bind authenticated reproduction evidence to its final implementation result."""
 
@@ -454,6 +455,7 @@ def rebind_probe_receipt(
         head_sha=str(receipt.get("headSha") or ""),
         commit_sha=str(receipt.get("commitSha") or ""),
         result_digest=str(receipt.get("resultDigest") or ""),
+        enforce_freshness=enforce_source_freshness,
     ):
         raise ProbeUnavailable("REPRODUCTION_RECEIPT_INVALID")
     if not all(re.fullmatch(r"[0-9a-f]{40}", value) for value in (head_sha, commit_sha)):
