@@ -28,6 +28,8 @@ NO_CODE_ACTION_RE = re.compile(
     re.I,
 )
 NO_MATERIAL_CONTRADICTION_RE = re.compile(
+    r"\b(?:(?:contradictions?|conflicts?)\s*:\s*)?none\s+"
+    r"(?:found|identified|reported)\b|"
     r"\b(?:no|without)\s+(?:(?:direct|material|actual|meaningful)\s+)?"
     r"(?:contradictions?|conflicts?)\b|"
     r"\b(?:does?|did|do)\s+not\s+(?:directly\s+)?(?:contradict|conflict\s+with)\b|"

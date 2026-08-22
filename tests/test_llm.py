@@ -603,7 +603,19 @@ def test_routine_fix_choice_does_not_force_semantic_retry(tmp_path, monkeypatch)
     assert result[0]["auto_spawn"] is True
 
 
-def test_explicit_non_contradiction_does_not_block_actionable_candidate(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    "contradiction",
+    [
+        "Open PR #25387 is closed and lacks tests, but the issue remains open; "
+        "no direct contradiction.",
+        "None found in supplied evidence.",
+        "None identified.",
+        "None reported.",
+    ],
+)
+def test_explicit_non_contradiction_does_not_block_actionable_candidate(
+    tmp_path, monkeypatch, contradiction
+):
     instance = evaluator(tmp_path)
     monkeypatch.setattr(
         instance,
@@ -617,10 +629,7 @@ def test_explicit_non_contradiction_does_not_block_actionable_candidate(tmp_path
             "expected_changes": ["Persist max_end_user_budget_id"],
             "test_plan": ["Add a persistence regression test"],
             "evidence_ids": ["issue_data.issue_body"],
-            "contradictions": [
-                "Open PR #25387 is closed and lacks tests, but the issue remains open; "
-                "no direct contradiction."
-            ],
+            "contradictions": [contradiction],
         },
     )
 
