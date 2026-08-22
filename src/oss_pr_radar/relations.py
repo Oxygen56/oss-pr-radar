@@ -43,6 +43,8 @@ class PullRelation:
     checks_green: bool | None
     maintainer_approved: bool
     maintainer_owned: bool
+    targeted_check_unproven: bool
+    current_blocking_review: bool
     draft: bool
     state: str
     merged: bool
@@ -71,6 +73,37 @@ def _active_exact_pr(updated_at: str, *, now: datetime) -> bool:
         return parse_time(updated_at) >= now - ACTIVE_EXACT_PR_WINDOW
     except (TypeError, ValueError):
         return True
+
+
+def _review_commit(review: dict[str, Any]) -> str:
+    commit = review.get("commit")
+    if isinstance(commit, dict):
+        return str(commit.get("oid") or commit.get("sha") or "")
+    return str(review.get("commit_id") or review.get("commitId") or "")
+
+
+def _current_blocking_review(pr: dict[str, Any], reviews: list[dict[str, Any]]) -> bool:
+    head = pr.get("head") if isinstance(pr.get("head"), dict) else {}
+    head_sha = str(head.get("sha") or pr.get("headRefOid") or "")
+    for review in reviews:
+        review_commit = _review_commit(review)
+        if head_sha and review_commit and review_commit != head_sha:
+            continue
+        state = str(review.get("state") or "").upper()
+        body = str(review.get("body") or "")
+        if state == "CHANGES_REQUESTED" or re.search(r"\bP[012]\s*:", body, re.I):
+            return True
+    return False
+
+
+def _targeted_check_unproven(issue_title: str, checks: list[dict[str, Any]]) -> bool:
+    targeted = [
+        check for check in checks if _overlap(issue_title, str(check.get("name") or "")) >= 0.18
+    ]
+    proven = {"success", "neutral", "skipped"}
+    return bool(targeted) and any(
+        str(check.get("conclusion") or "").casefold() not in proven for check in targeted
+    )
 
 
 def assess_relations(
@@ -139,16 +172,19 @@ def assess_relations(
                 if isinstance(item, dict)
             }
             checks_green = bool(conclusions) and conclusions <= {"success", "neutral", "skipped"}
+        check_rows = [item for item in checks or [] if isinstance(item, dict)]
+        targeted_check_unproven = _targeted_check_unproven(issue_title, check_rows)
         draft = bool(pr.get("draft") or pr.get("isDraft"))
         state = str(pr.get("state") or "open").upper()
         merged = bool(pr.get("merged_at") or pr.get("mergedAt"))
+        reviews = [item for item in pr.get("reviews") or [] if isinstance(item, dict)]
         maintainer_approved = any(
             str(review.get("state") or "").upper() == "APPROVED"
             and str(review.get("author_association") or "").upper()
             in {"OWNER", "MEMBER", "COLLABORATOR"}
-            for review in pr.get("reviews") or []
-            if isinstance(review, dict)
+            for review in reviews
         )
+        current_blocking_review = _current_blocking_review(pr, reviews)
         author_association = str(
             pr.get("author_association") or pr.get("authorAssociation") or ""
         ).upper()
@@ -160,6 +196,10 @@ def assess_relations(
             exact
             and state == "OPEN"
             and (_active_exact_pr(updated_at, now=now) or maintainer_approved or maintainer_owned)
+            and has_tests
+            and not draft
+            and not targeted_check_unproven
+            and not current_blocking_review
         ):
             relation = "STRONG_EXACT_DUPLICATE"
         elif exact and state == "OPEN":
@@ -183,6 +223,8 @@ def assess_relations(
                 checks_green=checks_green,
                 maintainer_approved=maintainer_approved,
                 maintainer_owned=maintainer_owned,
+                targeted_check_unproven=targeted_check_unproven,
+                current_blocking_review=current_blocking_review,
                 draft=draft,
                 state=state,
                 merged=merged,

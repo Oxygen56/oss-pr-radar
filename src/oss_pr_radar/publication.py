@@ -696,6 +696,8 @@ def audit_publication_request(
     }
     if not authorization_evidence.complete:
         return PublicationAudit("DEFER", "LIVE_EVIDENCE_INCOMPLETE", request_id, live)
+    if verdict.status == "HOLD":
+        return PublicationAudit("DEFER", verdict.reason_code, request_id, live)
     if verdict.status != "ALLOW":
         return PublicationAudit("BLOCK", verdict.reason_code, request_id, live)
     target_base_value = request.get("targetBase")
@@ -831,10 +833,10 @@ def broker_publication_request(
 ) -> dict[str, Any]:
     audit = audit_publication_request(store, request_id, client=client)
     if audit.status == "DEFER":
-        store.defer_publication_request(request_id, audit.reason)
+        store.defer_publication_request(request_id, audit.reason, evidence=audit.evidence)
         return {"ok": True, "granted": False, "pending": True, "audit": audit.as_dict()}
     if audit.status != "ALLOW":
-        store.block_publication_request(request_id, audit.reason)
+        store.block_publication_request(request_id, audit.reason, evidence=audit.evidence)
         return {"ok": True, "granted": False, "pending": False, "audit": audit.as_dict()}
     row = store.publication_request(request_id)
     assert row is not None

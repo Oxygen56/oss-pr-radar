@@ -312,7 +312,7 @@ def test_stale_scanner_report_cannot_build_dispatch_queue():
 
 
 def test_current_scanner_revision_and_decision_contract_filter_non_contradictions():
-    assert SCANNER_DECISION_REVISION == "oss_pr_radar_v51_bounded_wait_evidence"
+    assert SCANNER_DECISION_REVISION == "oss_pr_radar_v52_recheck_pr_validation"
     assert decision_contract_digest() != (
         "63d9b5419e4b58f072055513e60148abadfd4bfc9e8ae799e791a761ff3f56a4"
     )
@@ -419,13 +419,13 @@ def test_current_intent_requires_policy_watermark():
 
 def test_signed_previous_current_format_queue_is_only_superseded_not_dispatchable():
     signer = DispatchSigner(KEY)
-    scanner_version = "oss_pr_radar_v50_material_contradictions"
+    scanner_version = "oss_pr_radar_v51_bounded_wait_evidence"
     legacy = SUPERSEDED_SCANNER_DECISION_CONTRACTS[scanner_version]
     issue_url = "https://github.com/example/project/issues/42"
     intent = signer.seal(
         {
             "version": legacy["intentVersion"],
-            "intentId": "legacy-intent-v50",
+            "intentId": "legacy-intent-v51",
             "key": "example/project#42",
             "repo": "example/project",
             "issueNumber": 42,

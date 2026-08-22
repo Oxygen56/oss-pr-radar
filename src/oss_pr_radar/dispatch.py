@@ -22,6 +22,7 @@ SUPERSEDED_SCANNER_DECISION_REVISIONS = frozenset(
         "oss_pr_radar_v48_semantic_evidence_only",
         "oss_pr_radar_v49_payload_bound_evidence_ids",
         "oss_pr_radar_v50_material_contradictions",
+        "oss_pr_radar_v51_bounded_wait_evidence",
     }
 )
 SUPERSEDED_SCANNER_DECISION_CONTRACTS = {
@@ -52,6 +53,13 @@ SUPERSEDED_SCANNER_DECISION_CONTRACTS = {
             "22524fef22264e03e24fd139de5a9e4c82a85bebf162081c87ca6ec13aeafa8f"
         ),
         "contractDigest": "a4a72ff173c07ee40bcbb7f0de7aeb3d217b1ef7700aa04f9015806c191b44d9",
+    },
+    "oss_pr_radar_v51_bounded_wait_evidence": {
+        "intentVersion": INTENT_VERSION,
+        "decisionContractDigest": (
+            "feeb8a88be0effea9330e569fb0f4c62de7e9dbfb0c2729c6a74984dd5ecd6c1"
+        ),
+        "contractDigest": "0ffabde97bae00693068b61ed03087975ec1c57c989c591a2b43af8aa3ecf505",
     },
 }
 LEGACY_QUEUE_CONTRACTS = {

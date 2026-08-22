@@ -7,6 +7,7 @@ import pytest
 
 from oss_pr_radar import scanner
 from oss_pr_radar.contracts import validate_report
+from oss_pr_radar.opportunity import pre_task_gate
 from oss_pr_radar.outbox import build_outbox
 from oss_pr_radar.policy import decision_contract_digest
 from oss_pr_radar.scanner import (
@@ -1010,6 +1011,235 @@ def test_bounded_algorithm_semantic_retry_validates_and_is_rechecked(
     monkeypatch.setattr(next_radar, "add_search", lambda *_args, **_kwargs: None)
     items = next_radar.collect_items()
     assert items["example/project#8291"]["_explicit_recheck"] is True
+
+
+def test_state_drift_is_rechecked_with_the_latest_evidence_snapshot(monkeypatch, tmp_path):
+    seen_path = tmp_path / "seen.json"
+    report_path = tmp_path / "scan.json"
+    current_evidence = {
+        "issue": {"state": "open", "assignees": []},
+        "baseSha": "b" * 40,
+        "issueDigest": "current-issue",
+        "designDigest": "current-design",
+        "assigneeDigest": "current-assignees",
+        "duplicateDigest": "current-duplicates",
+        "policy": {"status": "normal"},
+        "codePathsPlan": ["src/runtime.py"],
+        "reproductionPathPlan": True,
+        "validationPathPlan": True,
+        "matureRepository": True,
+        "duplicate": {"status": "none"},
+    }
+    candidate = {
+        "repo": "example/project",
+        "num": 42,
+        "title": "Runtime state changed after discovery",
+        "url": "https://github.com/example/project/issues/42",
+        "score": 9,
+        "category": "WAIT_MAINTAINER",
+        "gate_decision": "HUMAN_REVIEW",
+        "auto_spawn": False,
+        "notify": False,
+        "maturity": "exploration",
+        "track": "agent_ai_infra",
+        "labels": ["bug"],
+        "issue_updated": "2026-08-04T00:00:00Z",
+        "submission_policy": "normal",
+        "public_submission_allowed": True,
+        "actionability_evidence": {"public_repro_signals": 1},
+        "open_pr_assessment": {"status": "none"},
+        "related_issue_assessment": {"status": "none"},
+        "llm_review": {
+            "status": "ok",
+            "semanticSignal": "NO_OBJECTION",
+            "confidence": 0.95,
+        },
+        "preTaskEvidence": current_evidence,
+        "preTaskGate": {
+            "allowed": False,
+            "classification": "state_drift",
+            "reason": "base_sha_changed",
+            "reasons": ["base_sha_changed"],
+            "expected": {
+                "baseSha": "a" * 40,
+                "issueDigest": "old-issue",
+                "designDigest": "old-design",
+                "assigneeDigest": "old-assignees",
+                "duplicateDigest": "old-duplicates",
+            },
+        },
+    }
+
+    class IdentityEvaluator:
+        @classmethod
+        def from_environment(cls, _path):
+            return cls()
+
+        def evaluate_candidates(self, candidates):
+            return candidates
+
+    radar = Radar(
+        datetime(2026, 8, 4, tzinfo=UTC),
+        2,
+        seen_path,
+        "",
+        dry_run=True,
+        notify=False,
+    )
+    monkeypatch.setattr(radar, "collect_items", lambda: {"example/project#42": {}})
+    monkeypatch.setattr(radar, "shortlist", lambda _items: ([candidate], 1, 1))
+    monkeypatch.setattr(scanner, "DeepSeekEvaluator", IdentityEvaluator)
+
+    radar.run(report_path)
+    seen = json.loads(seen_path.read_text(encoding="utf-8"))
+    assert seen["example/project#42"]["status"] == "state_drift"
+    assert select_seen_rechecks(seen)[0][0] == "example/project#42"
+
+    next_radar = Radar(
+        datetime(2026, 8, 4, 1, tzinfo=UTC),
+        2,
+        seen_path,
+        "",
+        dry_run=True,
+        notify=False,
+    )
+    monkeypatch.setattr(next_radar, "add_repo_issues", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(next_radar, "add_search", lambda *_args, **_kwargs: None)
+
+    items = next_radar.collect_items()
+    recheck = items["example/project#42"]
+    assert recheck["_explicit_recheck"] is True
+    assert recheck["expected_base_sha"] == current_evidence["baseSha"]
+    assert recheck["expected_issue_digest"] == current_evidence["issueDigest"]
+    assert recheck["expected_duplicate_digest"] == current_evidence["duplicateDigest"]
+
+    repinned_gate = pre_task_gate(
+        candidate,
+        current_evidence,
+        expected={
+            "baseSha": current_evidence["baseSha"],
+            "issueDigest": current_evidence["issueDigest"],
+            "designDigest": current_evidence["designDigest"],
+            "assigneeDigest": current_evidence["assigneeDigest"],
+            "duplicateDigest": current_evidence["duplicateDigest"],
+        },
+    )
+    assert repinned_gate["allowed"] is True
+    assert repinned_gate["classification"] is None
+
+
+def test_legacy_silent_state_drift_is_rearmed_without_issue_update(monkeypatch, tmp_path):
+    seen_path = tmp_path / "seen.json"
+    seen_path.write_text(
+        json.dumps(
+            {
+                "livekit/agents#6919": {
+                    "status": "silent_exploration",
+                    "analyzed": "2026-08-22T15:00:00Z",
+                    "issue_updated": "2026-08-21T10:00:00Z",
+                    "base_sha": "b" * 40,
+                    "pre_task_evidence": {
+                        "baseSha": "b" * 40,
+                        "issueDigest": "current-issue",
+                        "designDigest": "current-design",
+                        "assigneeDigest": "current-assignees",
+                        "duplicateDigest": "current-duplicates",
+                    },
+                    "pre_task_gate": {
+                        "allowed": False,
+                        "classification": "state_drift",
+                        "reasons": ["base_sha_changed", "duplicate_changed"],
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    radar = Radar(
+        datetime(2026, 8, 22, 16, tzinfo=UTC),
+        2,
+        seen_path,
+        "",
+        dry_run=True,
+        notify=False,
+    )
+    monkeypatch.setattr(radar, "add_repo_issues", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(radar, "add_search", lambda *_args, **_kwargs: None)
+
+    items = radar.collect_items()
+
+    assert radar.seen["livekit/agents#6919"]["status"] == "state_drift"
+    recheck = items["livekit/agents#6919"]
+    assert recheck["_explicit_recheck"] is True
+    assert recheck["expected_base_sha"] == "b" * 40
+    assert recheck["expected_issue_digest"] == "current-issue"
+
+
+def test_repeated_state_drift_preserves_first_deferred_time(monkeypatch, tmp_path):
+    seen_path = tmp_path / "seen.json"
+    report_path = tmp_path / "scan.json"
+    first_deferred = "2026-08-04T00:00:00Z"
+    seen_path.write_text(
+        json.dumps(
+            {
+                "example/project#42": {
+                    "status": "state_drift",
+                    "first_deferred_at": first_deferred,
+                    "requeued_at": first_deferred,
+                    "analyzed": first_deferred,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    candidate = {
+        "repo": "example/project",
+        "num": 42,
+        "title": "Moving base",
+        "url": "https://github.com/example/project/issues/42",
+        "score": 9,
+        "category": "WAIT_MAINTAINER",
+        "gate_decision": "HUMAN_REVIEW",
+        "auto_spawn": False,
+        "notify": False,
+        "maturity": "exploration",
+        "track": "agent_ai_infra",
+        "issue_updated": "2026-08-04T00:00:00Z",
+        "llm_review": {"status": "ok", "semanticSignal": "NO_OBJECTION", "confidence": 0.9},
+        "preTaskEvidence": {"baseSha": "b" * 40},
+        "preTaskGate": {
+            "allowed": False,
+            "classification": "state_drift",
+            "expected": {"baseSha": "a" * 40},
+        },
+    }
+
+    class IdentityEvaluator:
+        @classmethod
+        def from_environment(cls, _path):
+            return cls()
+
+        def evaluate_candidates(self, candidates):
+            return candidates
+
+    radar = Radar(
+        datetime(2026, 8, 4, 1, tzinfo=UTC),
+        2,
+        seen_path,
+        "",
+        dry_run=True,
+        notify=False,
+    )
+    monkeypatch.setattr(radar, "collect_items", lambda: {"example/project#42": {}})
+    monkeypatch.setattr(radar, "shortlist", lambda _items: ([candidate], 1, 1))
+    monkeypatch.setattr(scanner, "DeepSeekEvaluator", IdentityEvaluator)
+
+    radar.run(report_path)
+
+    seen = json.loads(seen_path.read_text(encoding="utf-8"))
+    assert seen["example/project#42"]["status"] == "state_drift"
+    assert seen["example/project#42"]["first_deferred_at"] == first_deferred
+    assert seen["example/project#42"]["requeued_at"] == "2026-08-04T01:00:00Z"
 
 
 def test_outbox_recovers_lost_deferred_notification_identity(monkeypatch, tmp_path):

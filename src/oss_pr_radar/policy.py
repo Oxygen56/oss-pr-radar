@@ -12,7 +12,7 @@ from typing import Any
 from .llm import SEMANTIC_EVIDENCE_BINDING_CONTRACT
 
 POLICY_VERSION = "submit_ready_quality_v1"
-SCANNER_DECISION_REVISION = "oss_pr_radar_v51_bounded_wait_evidence"
+SCANNER_DECISION_REVISION = "oss_pr_radar_v52_recheck_pr_validation"
 DISPATCH_DECISION_REVISION = "signed_intent_v9_transactional_creation"
 DECISION_CONTRACT_SCHEMA = 9
 DECISION_CONTRACT_MANIFEST = {

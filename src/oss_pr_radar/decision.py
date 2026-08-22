@@ -63,6 +63,15 @@ def authorize(candidate: dict[str, Any], evidence: EvidenceBundle) -> Authorizat
     relations = {item.get("relation") for item in evidence.pull_relations}
     if relations & {"STRONG_EXACT_DUPLICATE", "STRONG_MERGED_COVERAGE"}:
         return decision("BLOCK", "STRONG_EXISTING_PR", "duplicate")
+    if any(
+        item.get("exact_link") is True
+        and (
+            item.get("targeted_check_unproven") is True
+            or item.get("current_blocking_review") is True
+        )
+        for item in evidence.pull_relations
+    ):
+        return decision("HOLD", "EXISTING_PR_VALIDATION_PENDING", "duplicate")
     assignees = issue.get("assignees") or []
     if assignees:
         return decision("BLOCK", "ISSUE_ASSIGNED", "ownership")

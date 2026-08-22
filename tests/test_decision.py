@@ -1,3 +1,5 @@
+import pytest
+
 from oss_pr_radar.decision import authorize
 from oss_pr_radar.evidence import EvidenceBundle
 
@@ -83,6 +85,52 @@ def test_strong_existing_pr_precedes_contributor_claim():
     assert result.reason_code == "STRONG_EXISTING_PR"
     assert result.checks["duplicate"] == "BLOCK"
     assert result.checks["ownership"] == "PASS"
+
+
+@pytest.mark.parametrize("blocker", ["targeted_check_unproven", "current_blocking_review"])
+def test_competition_candidate_cannot_bypass_unresolved_exact_pr_validation(blocker):
+    current = evidence("A normal runtime bug report.")
+    value = EvidenceBundle(
+        **{
+            **current.__dict__,
+            "pull_relations": (
+                {
+                    "relation": "WEAK_OR_PARTIAL_EXACT",
+                    "exact_link": True,
+                    blocker: True,
+                },
+            ),
+        }
+    )
+    competition = candidate() | {"category": "PR_COMPETITION_OPPORTUNITY"}
+
+    result = authorize(competition, value)
+
+    assert result.status == "HOLD"
+    assert result.reason_code == "EXISTING_PR_VALIDATION_PENDING"
+    assert result.checks["duplicate"] == "HOLD"
+
+
+def test_strong_relation_precedes_a_second_pr_pending_validation():
+    current = evidence("A normal runtime bug report.")
+    value = EvidenceBundle(
+        **{
+            **current.__dict__,
+            "pull_relations": (
+                {"relation": "STRONG_EXACT_DUPLICATE", "exact_link": True},
+                {
+                    "relation": "WEAK_OR_PARTIAL_EXACT",
+                    "exact_link": True,
+                    "current_blocking_review": True,
+                },
+            ),
+        }
+    )
+
+    result = authorize(candidate(), value)
+
+    assert result.status == "BLOCK"
+    assert result.reason_code == "STRONG_EXISTING_PR"
 
 
 def test_security_label_is_blocked_even_when_issue_text_is_generic():

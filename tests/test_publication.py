@@ -519,7 +519,7 @@ def test_broker_still_blocks_a_new_pr_when_a_strong_competitor_exists(tmp_path):
             }
 
         def pull_files(self, repo, number):
-            return [{"filename": "file.txt"}]
+            return [{"filename": "tests/test_streaming.py"}]
 
         def pull_reviews(self, repo, number):
             return []
@@ -532,6 +532,60 @@ def test_broker_still_blocks_a_new_pr_when_a_strong_competitor_exists(tmp_path):
     assert result["granted"] is False
     assert result["pending"] is False
     assert result["audit"]["reason"] == "STRONG_EXISTING_PR"
+
+
+def test_broker_defers_unresolved_exact_pr_validation_and_recovers(monkeypatch, tmp_path):
+    store, request, _ = prepared_request(tmp_path)
+    monkeypatch.setattr(publication, "_changed_files", lambda *args: ["file.txt"])
+
+    class PendingCompetitionClient(Client):
+        def related_open_prs(self, repo, number, **kwargs):
+            return [{"number": 9, "_repo": repo}]
+
+        def pull_request(self, repo, number):
+            return {
+                "number": number,
+                "state": "open",
+                "html_url": f"https://github.com/{repo}/pull/{number}",
+                "title": "Fix streaming tool arguments",
+                "body": "Fixes #7",
+                "draft": False,
+                "updated_at": "2026-08-09T01:00:00Z",
+                "head": {"sha": "competing-head"},
+            }
+
+        def pull_files(self, repo, number):
+            return [{"filename": "tests/test_streaming.py"}]
+
+        def pull_reviews(self, repo, number):
+            return []
+
+        def check_runs(self, repo, ref):
+            return [{"name": "Streaming tool arguments", "conclusion": None}]
+
+    deferred = broker_publication_request(
+        store,
+        request["request_id"],
+        client=PendingCompetitionClient(),
+    )
+
+    assert deferred["granted"] is False
+    assert deferred["pending"] is True
+    assert deferred["audit"]["reason"] == "EXISTING_PR_VALIDATION_PENDING"
+    assert store.publication_request(request["request_id"])["status"] == "PENDING"
+    with store.connect() as connection:
+        event = connection.execute(
+            """SELECT payload_json FROM events
+               WHERE event_type='PUBLICATION_DEFERRED' ORDER BY id DESC LIMIT 1"""
+        ).fetchone()
+    payload = json.loads(event["payload_json"])
+    relations = payload["auditEvidence"]["evidence"]["pull_relations"]
+    assert relations[0]["url"] == "https://github.com/example/project/pull/9"
+    assert relations[0]["targeted_check_unproven"] is True
+
+    recovered = broker_publication_request(store, request["request_id"], client=Client())
+
+    assert recovered["granted"] is True, recovered
 
 
 @pytest.mark.parametrize("completion", ["direct", "effect"])

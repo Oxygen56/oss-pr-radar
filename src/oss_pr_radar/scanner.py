@@ -83,6 +83,7 @@ SEEN_RECHECK_STATUSES = frozenset(
         "candidate_overflow",
         "policy_migration_pending",
         "semantic_review_retry",
+        "state_drift",
     }
 )
 SCANNER_MIGRATION_RECHECK_STATUSES = frozenset(
@@ -1446,6 +1447,28 @@ def select_seen_rechecks(
     return candidates[: max(0, limit)]
 
 
+def rearm_legacy_state_drift_rechecks(seen: dict[str, Any], analyzed: str) -> int:
+    """Recover state drift that older scanners mislabeled as silent exploration."""
+
+    rearmed = 0
+    for value in seen.values():
+        if not isinstance(value, dict) or value.get("status") != "silent_exploration":
+            continue
+        gate = value.get("pre_task_gate") or value.get("preTaskGate") or {}
+        if not isinstance(gate, dict) or gate.get("classification") != "state_drift":
+            continue
+        value.update(
+            {
+                "status": "state_drift",
+                "reason": "state_drift_recheck",
+                "first_deferred_at": analyzed,
+                "requeued_at": analyzed,
+            }
+        )
+        rearmed += 1
+    return rearmed
+
+
 def expire_stale_rechecks(
     seen: dict[str, Any], now: datetime, *, max_age_hours: int = SEEN_RECHECK_HOURS
 ) -> int:
@@ -2324,6 +2347,7 @@ class Radar:
         algorithm_index = int(self.now.timestamp() // 3600) % len(LLM_ALGORITHM_DISCOVERY_QUERIES)
         algorithm_query = LLM_ALGORITHM_DISCOVERY_QUERIES[algorithm_index]
         self.add_search(items, f"{base} label:bug {algorithm_query}", 15, required=False)
+        rearm_legacy_state_drift_rechecks(self.seen, self.analyzed)
         self.deferred_rechecks_expired = expire_stale_rechecks(self.seen, self.now)
         rechecks = select_seen_rechecks(self.seen)
         self.deferred_rechecks_before = count_seen_rechecks(self.seen)
@@ -4837,17 +4861,21 @@ class Radar:
                 key = f"{candidate['repo']}#{candidate['num']}"
                 if candidate.get("notify") is False:
                     review = candidate.get("llm_review") or {}
+                    gate = candidate.get("preTaskGate") or candidate.get("pre_task_gate") or {}
+                    previous = self.seen.get(key)
                     silent_status = (
                         "semantic_review_retry"
                         if candidate.get("category") == "SEMANTIC_REVIEW_RETRY"
                         or candidate.get("gate_decision") == "RETRY_REQUIRED"
+                        else "state_drift"
+                        if gate.get("classification") == "state_drift"
                         else "capacity_deferred"
                         if candidate.get("capacityDisposition") == "MATURE_BUDGET_DEFERRED"
                         else "silent_exploration"
                         if candidate.get("maturity") == "exploration"
                         else "semantic_review_retry"
                     )
-                    self.seen[key] = {
+                    entry = {
                         "analyzed": self.analyzed,
                         "status": silent_status,
                         "reason": silent_status,
@@ -4857,6 +4885,15 @@ class Radar:
                         "issue_updated": candidate.get("issue_updated") or "",
                         "llm_error_category": review.get("error_category") or review.get("status"),
                     }
+                    if silent_status in SEEN_RECHECK_STATUSES:
+                        entry["first_deferred_at"] = (
+                            previous.get("first_deferred_at")
+                            if isinstance(previous, dict)
+                            and previous.get("status") in SEEN_RECHECK_STATUSES
+                            and previous.get("first_deferred_at")
+                            else self.analyzed
+                        )
+                    self.seen[key] = entry
                     continue
                 digest = candidate_notification_digest(candidate)
                 previous = self.seen.get(key)

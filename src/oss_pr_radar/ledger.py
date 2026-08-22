@@ -5159,7 +5159,13 @@ class RadarLedger:
                 artifact=artifact,
             )
 
-    def defer_publication_request(self, request_id: str, reason: str) -> None:
+    def defer_publication_request(
+        self,
+        request_id: str,
+        reason: str,
+        *,
+        evidence: dict[str, Any] | None = None,
+    ) -> None:
         now = iso_z(datetime.now(UTC))
         with self.transaction() as connection:
             row = connection.execute(
@@ -5173,8 +5179,26 @@ class RadarLedger:
                    WHERE request_id=? AND status='PENDING'""",
                 (reason, now, request_id),
             )
+            self._event(
+                connection,
+                row["opportunity_key"],
+                "PUBLICATION_DEFERRED",
+                f"{request_id}:{reason}:{sha256_json(evidence or {})}",
+                {
+                    "requestId": request_id,
+                    "reason": reason,
+                    "auditEvidence": evidence or {},
+                },
+                now,
+            )
 
-    def block_publication_request(self, request_id: str, reason: str) -> None:
+    def block_publication_request(
+        self,
+        request_id: str,
+        reason: str,
+        *,
+        evidence: dict[str, Any] | None = None,
+    ) -> None:
         now = iso_z(datetime.now(UTC))
         with self.transaction() as connection:
             row = connection.execute(
@@ -5194,7 +5218,11 @@ class RadarLedger:
                 row["opportunity_key"],
                 "PUBLICATION_BLOCKED",
                 f"{request_id}:{reason}",
-                {"requestId": request_id, "reason": reason},
+                {
+                    "requestId": request_id,
+                    "reason": reason,
+                    "auditEvidence": evidence or {},
+                },
                 now,
             )
             # Blocking is a safe contraction.  Do not let its optional PR
