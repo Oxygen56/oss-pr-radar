@@ -22381,6 +22381,33 @@
     ],
     "why": "Issue provides a clear root cause and repro, but maintainer comment questions the desired behavior (retry vs fast fail) and suggests possible UX mitigation, indicating design confirmation is needed before implementation."
   },
+  "7e07050b98bd464031f7b9a3ae693bb757c430eaa319bab29364e270d7a3cb99": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "clampReasoningEffort() fallback logic",
+      "OpenAI-compatible buildReasoningConfig() path",
+      "reasoning effort validation and persistence"
+    ],
+    "risks": [
+      "Potential interaction with samplingParams passthrough behavior; fix must not break verbatim passthrough contract."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test asserting that 'max' is never sent to an endpoint that doesn't accept it, covering both the clamp fallback and the OpenAI-compatible passthrough path."
+    ],
+    "unknowns": [
+      "Exact provider supported tier list for OpenAI-compatible endpoints; whether maintainers prefer option 1, 2, or 3."
+    ],
+    "why": "The issue provides a clear root cause: clampReasoningEffort() falls back to the full tier list including 'max', and the OpenAI-compatible path bypasses clamping entirely. The triage confirms the root cause and extends it to the buildReasoningConfig() path. A concrete fix direction and regression test are specified."
+  },
   "7e14d982cb7b2e600b260dde7d74d085573348ce2d70026d174a999032b73aaa": {
     "confidence": 0.8,
     "contradictions": [],
@@ -27593,6 +27620,33 @@
       "Whether the bug is in generic ACP lifecycle or WeChat adapter"
     ],
     "why": "Issue is a real user-visible bug with strong reproduction evidence, but the deterministic gate requires HUMAN_REVIEW and the maintainer bot explicitly states a product decision is needed on cross-channel delivery policy. Existing PRs are closed unmerged and do not settle the policy, so a new PR would be premature without maintainer direction."
+  },
+  "9fbb08e40e0079a1f53cdeae1d8c3f8a89c84abe9f42d4cc6c6954c240a28055": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "backend/packages/harness/deerflow/tui/app.py: add PageUp/PageDown bindings to scroll #scroll while composer focused",
+      "backend/packages/harness/deerflow/tui/app.py: modify _refresh_transcript to preserve scroll position when not at bottom"
+    ],
+    "risks": [
+      "Potential maintainer preference for alternative key bindings or scroll behavior",
+      "Risk of breaking existing TUI interactions if bindings conflict with other keys"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided deterministic reproduction script to confirm failure on current main",
+      "Add regression tests as suggested: PageUp changes scroll_y with composer focused, PageDown reverses, refresh preserves position when scrolled up, refresh follows when at bottom"
+    ],
+    "unknowns": [
+      "Maintainer design preferences for key bindings and scroll-follow behavior"
+    ],
+    "why": "Issue provides a clear root cause (missing app-level PageUp/PageDown bindings and unconditional scroll_end) with a deterministic reproduction script and expected behavior. The fix is localized to the TUI app and testable via Textual pilot."
   },
   "9fc2716ad8ef169dd75dd1e78a1a28d629ac0cb48e3ee7756b79a75d5c9a417f": {
     "confidence": 0.7,

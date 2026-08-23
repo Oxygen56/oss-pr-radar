@@ -1,13 +1,13 @@
 {
-  "digest": "77100610478aebdd113c570a413756eed026424d975eb70126f1f67ab6c75062",
-  "generatedAt": "2026-08-23T17:38:54.608644Z",
+  "digest": "0499a74eef560a30bb95e9825817bd45773e7bc0b0511cd649ff799a416e248c",
+  "generatedAt": "2026-08-23T18:50:52.608120Z",
   "items": [
     {
       "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
       "actions": [],
       "baseRefName": "litellm_internal_staging",
       "baseSha": "f005afa1460385a218be8ef1fdfa49998bf93523",
-      "checkedAt": "2026-08-23T17:38:54.608644Z",
+      "checkedAt": "2026-08-23T18:50:52.608120Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -90,7 +90,7 @@
       ],
       "baseRefName": "litellm_internal_staging",
       "baseSha": "f005afa1460385a218be8ef1fdfa49998bf93523",
-      "checkedAt": "2026-08-23T17:38:54.608644Z",
+      "checkedAt": "2026-08-23T18:50:52.608120Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -160,7 +160,7 @@
       ],
       "baseRefName": "litellm_internal_staging",
       "baseSha": "f005afa1460385a218be8ef1fdfa49998bf93523",
-      "checkedAt": "2026-08-23T17:38:54.608644Z",
+      "checkedAt": "2026-08-23T18:50:52.608120Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -363,7 +363,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "9a715820c41fca4e6fdd9c55d881af0d5838e0b0",
-      "checkedAt": "2026-08-23T17:38:54.608644Z",
+      "checkedAt": "2026-08-23T18:50:52.608120Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -421,7 +421,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "944172f6c0d0f90fdc1921fd38c1dcae62c48592",
-      "checkedAt": "2026-08-23T17:38:54.608644Z",
+      "checkedAt": "2026-08-23T18:50:52.608120Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -477,7 +477,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "944172f6c0d0f90fdc1921fd38c1dcae62c48592",
-      "checkedAt": "2026-08-23T17:38:54.608644Z",
+      "checkedAt": "2026-08-23T18:50:52.608120Z",
       "ciStatus": "PASSED",
       "draft": true,
       "evidence": {
@@ -530,13 +530,111 @@
       "url": "https://github.com/Oxygen56/fixtureforge/pull/2"
     },
     {
+      "actionDigest": "aab54e315a0dd37216f201ff3165de203da39d9190591238556ada3824adbd16",
+      "actions": [
+        "存在未回复的维护者评论"
+      ],
+      "baseRefName": "main",
+      "baseSha": "113437c3569be0d4e613dfb50759525e6fea3d86",
+      "checkedAt": "2026-08-23T18:50:52.608120Z",
+      "ciStatus": "PASSED",
+      "draft": false,
+      "evidence": {
+        "actionableCheckNames": [],
+        "baseCompareError": null,
+        "baseCompareStatus": null,
+        "baseIntegrationRequired": false,
+        "baseMergeBaseSha": null,
+        "baseRefName": "main",
+        "baseSha": "113437c3569be0d4e613dfb50759525e6fea3d86",
+        "changedFiles": [
+          "pr_agent/tools/pr_code_suggestions.py"
+        ],
+        "failingChecks": [],
+        "headSha": "a4fb20c79dd8cc3df06f22fc22014b8d41f5b196",
+        "maintainerEvents": [
+          {
+            "actorLogin": "IsmaelMartinez",
+            "actorType": "User",
+            "authorAssociation": "COLLABORATOR",
+            "createdAt": "2026-08-16T09:30:21Z",
+            "eventId": "github:top-level-comment:The-PR-Agent/pr-agent#2429:5306756844",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "The-PR-Agent/pr-agent#2429",
+            "summary": "Thanks for picking this up, and sorry it went so long without a review. I ran `dedent_code` from `a4fb20c7` against a tab-indented file and it does not hold yet. With a one-tab anchor and a four-space suggestion, `delta_spaces` is negative, so `textwrap.dedent` strips the common prefix and nothing restores the original depth. The block comes back at column zero instead of one tab in. Separately, `",
+            "targetPrKey": "The-PR-Agent/pr-agent#2429",
+            "targetRepo": "The-PR-Agent/pr-agent",
+            "url": "https://github.com/The-PR-Agent/pr-agent/pull/2429#issuecomment-5306756844"
+          },
+          {
+            "actorLogin": "IsmaelMartinez",
+            "actorType": "User",
+            "authorAssociation": "COLLABORATOR",
+            "createdAt": "2026-08-23T17:48:59Z",
+            "eventId": "github:top-level-comment:The-PR-Agent/pr-agent#2429:5387548174",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "The-PR-Agent/pr-agent#2429",
+            "summary": "Following up on my comment above, having now run the branch end to end. Two corrections to what I wrote then. The issue's own case never reaches the new code: a flush-left snippet against a one-tab anchor makes `delta_spaces` +1, so `textwrap.indent` adds the tab and `lstrip(' ')` then finds nothing. Output is byte-identical to main. And `elif delta_spaces < 0` sits outside the tab guard, so it ch",
+            "targetPrKey": "The-PR-Agent/pr-agent#2429",
+            "targetRepo": "The-PR-Agent/pr-agent",
+            "url": "https://github.com/The-PR-Agent/pr-agent/pull/2429#issuecomment-5387548174"
+          }
+        ],
+        "mergeConflict": false,
+        "mergeConflictPreparationVersion": null,
+        "requestedChanges": [],
+        "unansweredMaintainerComments": [
+          {
+            "actorLogin": "IsmaelMartinez",
+            "actorType": "User",
+            "authorAssociation": "COLLABORATOR",
+            "createdAt": "2026-08-16T09:30:21Z",
+            "eventId": "github:top-level-comment:The-PR-Agent/pr-agent#2429:5306756844",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "The-PR-Agent/pr-agent#2429",
+            "summary": "Thanks for picking this up, and sorry it went so long without a review. I ran `dedent_code` from `a4fb20c7` against a tab-indented file and it does not hold yet. With a one-tab anchor and a four-space suggestion, `delta_spaces` is negative, so `textwrap.dedent` strips the common prefix and nothing restores the original depth. The block comes back at column zero instead of one tab in. Separately, `",
+            "targetPrKey": "The-PR-Agent/pr-agent#2429",
+            "targetRepo": "The-PR-Agent/pr-agent",
+            "url": "https://github.com/The-PR-Agent/pr-agent/pull/2429#issuecomment-5306756844"
+          },
+          {
+            "actorLogin": "IsmaelMartinez",
+            "actorType": "User",
+            "authorAssociation": "COLLABORATOR",
+            "createdAt": "2026-08-23T17:48:59Z",
+            "eventId": "github:top-level-comment:The-PR-Agent/pr-agent#2429:5387548174",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "The-PR-Agent/pr-agent#2429",
+            "summary": "Following up on my comment above, having now run the branch end to end. Two corrections to what I wrote then. The issue's own case never reaches the new code: a flush-left snippet against a one-tab anchor makes `delta_spaces` +1, so `textwrap.indent` adds the tab and `lstrip(' ')` then finds nothing. Output is byte-identical to main. And `elif delta_spaces < 0` sits outside the tab guard, so it ch",
+            "targetPrKey": "The-PR-Agent/pr-agent#2429",
+            "targetRepo": "The-PR-Agent/pr-agent",
+            "url": "https://github.com/The-PR-Agent/pr-agent/pull/2429#issuecomment-5387548174"
+          }
+        ],
+        "unresolvedReviewThreads": []
+      },
+      "headSha": "a4fb20c79dd8cc3df06f22fc22014b8d41f5b196",
+      "key": "The-PR-Agent/pr-agent#2429",
+      "mergeConflict": false,
+      "mergeableState": "unknown",
+      "number": 2429,
+      "repo": "The-PR-Agent/pr-agent",
+      "taskActionDigest": "28830998ee1d80d9b0d53141e95b03a7e87644f4d03a958984441eb732a09363",
+      "taskActions": [
+        "存在未回复的维护者评论"
+      ],
+      "taskFollowupRequired": true,
+      "title": "fix: preserve original indentation character in /improve suggestions",
+      "url": "https://github.com/The-PR-Agent/pr-agent/pull/2429"
+    },
+    {
       "actionDigest": "6c4c9b1ecff1763d481fab17b07275150ca3e8ffe7825611ff12b3d1f61aab16",
       "actions": [
         "分支存在合并冲突"
       ],
       "baseRefName": "main",
       "baseSha": "16b2e712d198166c9359e77055b13bf2668bf5ae",
-      "checkedAt": "2026-08-23T17:38:54.608644Z",
+      "checkedAt": "2026-08-23T18:50:52.608120Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -626,7 +724,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "da00849f2c3db60b16edaf2371ae1d863f341ae2",
-      "checkedAt": "2026-08-23T17:38:54.608644Z",
+      "checkedAt": "2026-08-23T18:50:52.608120Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -684,7 +782,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "004cd02b1aaba31c3579436d8cd07602644ed442",
-      "checkedAt": "2026-08-23T17:38:54.608644Z",
+      "checkedAt": "2026-08-23T18:50:52.608120Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -831,7 +929,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "542fefb3b94be87760b2513fff889b91bb5b6672",
-      "checkedAt": "2026-08-23T17:38:54.608644Z",
+      "checkedAt": "2026-08-23T18:50:52.608120Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -890,7 +988,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "cbff54d645d2cd8ee1f1c358a82f3f473588433d",
-      "checkedAt": "2026-08-23T17:38:54.608644Z",
+      "checkedAt": "2026-08-23T18:50:52.608120Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -1018,7 +1116,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "85ddbfedf609166b2d2c76c3d80506649fee82a9",
-      "checkedAt": "2026-08-23T17:38:54.608644Z",
+      "checkedAt": "2026-08-23T18:50:52.608120Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -1078,7 +1176,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "a21633d53930abc5d62b8dbd6b608995f2ccb4b1",
-      "checkedAt": "2026-08-23T17:38:54.608644Z",
+      "checkedAt": "2026-08-23T18:50:52.608120Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -1158,62 +1256,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "be8b984d10d1ad0e9a3917e051ac697f592587d2",
-      "checkedAt": "2026-08-23T17:38:54.608644Z",
-      "ciStatus": "PASSED",
-      "draft": false,
-      "evidence": {
-        "actionableCheckNames": [],
-        "baseCompareError": null,
-        "baseCompareStatus": null,
-        "baseIntegrationRequired": false,
-        "baseMergeBaseSha": null,
-        "baseRefName": "main",
-        "baseSha": "be8b984d10d1ad0e9a3917e051ac697f592587d2",
-        "changedFiles": [
-          "apps/vscode/src/shared/services/Logger.test.ts",
-          "apps/vscode/src/shared/services/Logger.ts"
-        ],
-        "failingChecks": [],
-        "headSha": "cf14b4143080c2975e352dc8789826a9542b46b1",
-        "maintainerEvents": [
-          {
-            "actorLogin": "greptile-apps[bot]",
-            "actorType": "Bot",
-            "authorAssociation": "CONTRIBUTOR",
-            "createdAt": "2026-08-08T08:16:49Z",
-            "eventId": "github:top-level-comment:cline/cline#13082:5225289483",
-            "eventType": "TOP_LEVEL_COMMENT",
-            "opportunityKey": "cline/cline#13082",
-            "summary": "<!-- greptile-status --> PR author is not in the allowed authors list.",
-            "targetPrKey": "cline/cline#13082",
-            "targetRepo": "cline/cline",
-            "url": "https://github.com/cline/cline/pull/13082#issuecomment-5225289483"
-          }
-        ],
-        "mergeConflict": false,
-        "mergeConflictPreparationVersion": null,
-        "requestedChanges": [],
-        "unansweredMaintainerComments": [],
-        "unresolvedReviewThreads": []
-      },
-      "headSha": "cf14b4143080c2975e352dc8789826a9542b46b1",
-      "key": "cline/cline#13082",
-      "mergeConflict": false,
-      "mergeableState": "blocked",
-      "number": 13082,
-      "repo": "cline/cline",
-      "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
-      "taskActions": [],
-      "taskFollowupRequired": false,
-      "title": "fix(vscode): preserve error details in release logs",
-      "url": "https://github.com/cline/cline/pull/13082"
-    },
-    {
-      "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
-      "actions": [],
-      "baseRefName": "main",
-      "baseSha": "be8b984d10d1ad0e9a3917e051ac697f592587d2",
-      "checkedAt": "2026-08-23T17:38:54.608644Z",
+      "checkedAt": "2026-08-23T18:50:52.608120Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -1268,7 +1311,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "be8b984d10d1ad0e9a3917e051ac697f592587d2",
-      "checkedAt": "2026-08-23T17:38:54.608644Z",
+      "checkedAt": "2026-08-23T18:50:52.608120Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -1325,7 +1368,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "be8b984d10d1ad0e9a3917e051ac697f592587d2",
-      "checkedAt": "2026-08-23T17:38:54.608644Z",
+      "checkedAt": "2026-08-23T18:50:52.608120Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -1430,7 +1473,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "be5bfaff2b16d623a6c85a8e8f0a98d80f05899d",
-      "checkedAt": "2026-08-23T17:38:54.608644Z",
+      "checkedAt": "2026-08-23T18:50:52.608120Z",
       "ciStatus": "PASSED",
       "draft": true,
       "evidence": {
@@ -1477,7 +1520,7 @@
       ],
       "baseRefName": "main-v2",
       "baseSha": "2fae7e1b167ad5973e4ad4eea5459d28b2ddb722",
-      "checkedAt": "2026-08-23T17:38:54.608644Z",
+      "checkedAt": "2026-08-23T18:50:52.608120Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -1549,7 +1592,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "e753651b7df26febe00bde2cb043225e644cd207",
-      "checkedAt": "2026-08-23T17:38:54.608644Z",
+      "checkedAt": "2026-08-23T18:50:52.608120Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -1663,7 +1706,7 @@
       ],
       "baseRefName": "master",
       "baseSha": "07f3bd3953115e45791f2d77426720166b561ba9",
-      "checkedAt": "2026-08-23T17:38:54.608644Z",
+      "checkedAt": "2026-08-23T18:50:52.608120Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -1770,7 +1813,7 @@
       ],
       "baseRefName": "master",
       "baseSha": "07f3bd3953115e45791f2d77426720166b561ba9",
-      "checkedAt": "2026-08-23T17:38:54.608644Z",
+      "checkedAt": "2026-08-23T18:50:52.608120Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -1838,7 +1881,7 @@
       ],
       "baseRefName": "master",
       "baseSha": "07f3bd3953115e45791f2d77426720166b561ba9",
-      "checkedAt": "2026-08-23T17:38:54.608644Z",
+      "checkedAt": "2026-08-23T18:50:52.608120Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -1908,7 +1951,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "09ef6b2b7119e35a6787fc249f916f8b47b28615",
-      "checkedAt": "2026-08-23T17:38:54.608644Z",
+      "checkedAt": "2026-08-23T18:50:52.608120Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -1993,7 +2036,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "8d5b7865bd0521e75fe9ab1b260eeccc83f8a378",
-      "checkedAt": "2026-08-23T17:38:54.608644Z",
+      "checkedAt": "2026-08-23T18:50:52.608120Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -2036,7 +2079,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "d9d3fb6252f7ae9e7f8104edce7266f0782a813c",
-      "checkedAt": "2026-08-23T17:38:54.608644Z",
+      "checkedAt": "2026-08-23T18:50:52.608120Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -2123,7 +2166,7 @@
       "actions": [],
       "baseRefName": "master",
       "baseSha": "7c4d2733dc0521f0f1203f3664df305905a80095",
-      "checkedAt": "2026-08-23T17:38:54.608644Z",
+      "checkedAt": "2026-08-23T18:50:52.608120Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -2188,7 +2231,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "acead0507d7de44e216d24533964106ca1d1d044",
-      "checkedAt": "2026-08-23T17:38:54.608644Z",
+      "checkedAt": "2026-08-23T18:50:52.608120Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -2232,7 +2275,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "ddbb90e36f2d148c7982f6ed85b09d31cabf5944",
-      "checkedAt": "2026-08-23T17:38:54.608644Z",
+      "checkedAt": "2026-08-23T18:50:52.608120Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -2337,7 +2380,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "679e7ecb64a2e09042b009b549b81dc0d0b983bb",
-      "checkedAt": "2026-08-23T17:38:54.608644Z",
+      "checkedAt": "2026-08-23T18:50:52.608120Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -2423,7 +2466,7 @@
       "actions": [],
       "baseRefName": "develop",
       "baseSha": "29f9bb7161775cd807565fd3041eb2b7d1be071c",
-      "checkedAt": "2026-08-23T17:38:54.608644Z",
+      "checkedAt": "2026-08-23T18:50:52.608120Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -2487,7 +2530,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "d8021225eb7e7b276d5ceb476b0a4650240f27f8",
-      "checkedAt": "2026-08-23T17:38:54.608644Z",
+      "checkedAt": "2026-08-23T18:50:52.608120Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -2546,7 +2589,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "d1af3c89233c475fc1bf11939d86787e6cddd58c",
-      "checkedAt": "2026-08-23T17:38:54.608644Z",
+      "checkedAt": "2026-08-23T18:50:52.608120Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -2828,7 +2871,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "d1af3c89233c475fc1bf11939d86787e6cddd58c",
-      "checkedAt": "2026-08-23T17:38:54.608644Z",
+      "checkedAt": "2026-08-23T18:50:52.608120Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -3076,7 +3119,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "d1af3c89233c475fc1bf11939d86787e6cddd58c",
-      "checkedAt": "2026-08-23T17:38:54.608644Z",
+      "checkedAt": "2026-08-23T18:50:52.608120Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -3301,7 +3344,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "d1af3c89233c475fc1bf11939d86787e6cddd58c",
-      "checkedAt": "2026-08-23T17:38:54.608644Z",
+      "checkedAt": "2026-08-23T18:50:52.608120Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -3524,7 +3567,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "185cada36bb25aa55f762d004d54c5ca1e3fc753",
-      "checkedAt": "2026-08-23T17:38:54.608644Z",
+      "checkedAt": "2026-08-23T18:50:52.608120Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -3711,7 +3754,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "185cada36bb25aa55f762d004d54c5ca1e3fc753",
-      "checkedAt": "2026-08-23T17:38:54.608644Z",
+      "checkedAt": "2026-08-23T18:50:52.608120Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -3847,7 +3890,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "185cada36bb25aa55f762d004d54c5ca1e3fc753",
-      "checkedAt": "2026-08-23T17:38:54.608644Z",
+      "checkedAt": "2026-08-23T18:50:52.608120Z",
       "ciStatus": "FAILED",
       "draft": true,
       "evidence": {
@@ -3907,7 +3950,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "185cada36bb25aa55f762d004d54c5ca1e3fc753",
-      "checkedAt": "2026-08-23T17:38:54.608644Z",
+      "checkedAt": "2026-08-23T18:50:52.608120Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
