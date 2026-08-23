@@ -69,6 +69,9 @@ def test_default_runner_does_not_proxy_fallback_for_github_http_error(monkeypatc
 def test_transient_errors_include_ssl_syscall_and_eof_while_reading():
     assert is_transient_github_error("OpenSSL SSL_connect: SSL_ERROR_SYSCALL")
     assert is_transient_github_error("unexpected EOF while reading")
+    assert is_transient_github_error(
+        "Failed to connect to github.com port 443: Couldn't connect to server"
+    )
 
 
 def test_api_retries_plain_eof_and_then_succeeds():

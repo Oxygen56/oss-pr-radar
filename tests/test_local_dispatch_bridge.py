@@ -4712,6 +4712,62 @@ def test_new_repo_clone_is_shallow_and_atomic(monkeypatch, tmp_path):
     assert not list(tmp_path.glob(".large-repo.radar-clone-*"))
 
 
+def test_new_repo_clone_retries_transient_failure_after_cleaning_partial_clone(
+    monkeypatch, tmp_path
+):
+    attempts = []
+    delays = []
+
+    def fake_command(args, cwd=None, timeout=300, stdin=None):
+        attempts.append((args, cwd, timeout, stdin))
+        clone_target = Path(args[-1])
+        if len(attempts) == 1:
+            clone_target.mkdir(parents=True)
+            (clone_target / "partial").write_text("incomplete", encoding="utf-8")
+            raise RuntimeError("curl 56 Recv failure: Operation timed out")
+        assert not clone_target.exists()
+        clone_target.mkdir(parents=True)
+        (clone_target / ".git").mkdir()
+        return ""
+
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", tmp_path)
+    monkeypatch.setattr(MODULE, "GITHUB_GIT_RETRY_DELAYS", (0.25,))
+    monkeypatch.setattr(MODULE, "command", fake_command)
+    monkeypatch.setattr(MODULE, "sleep", delays.append)
+    monkeypatch.setattr(MODULE, "prewarm_source_repo", lambda _path: None)
+
+    path = MODULE.source_repo("example/large-repo")
+
+    assert path == (tmp_path / "large-repo").resolve()
+    assert len(attempts) == 2
+    assert delays == [0.25]
+    assert not list(tmp_path.glob(".large-repo.radar-clone-*"))
+
+
+def test_new_repo_clone_exhausts_transient_retries_and_cleans_partial_clone(
+    monkeypatch, tmp_path
+):
+    attempts = []
+
+    def failing_command(args, cwd=None, timeout=300, stdin=None):
+        attempts.append((args, cwd, timeout, stdin))
+        clone_target = Path(args[-1])
+        clone_target.mkdir(parents=True)
+        (clone_target / "partial").write_text("incomplete", encoding="utf-8")
+        raise RuntimeError("Failed to connect to github.com: Couldn't connect to server")
+
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", tmp_path)
+    monkeypatch.setattr(MODULE, "GITHUB_GIT_RETRY_DELAYS", (0, 0))
+    monkeypatch.setattr(MODULE, "command", failing_command)
+    monkeypatch.setattr(MODULE, "sleep", lambda _delay: None)
+
+    with pytest.raises(RuntimeError, match="Failed to connect"):
+        MODULE.source_repo("example/large-repo")
+
+    assert len(attempts) == 3
+    assert not list(tmp_path.glob(".large-repo.radar-clone-*"))
+
+
 def test_existing_repo_fetches_and_prewarms_default_snapshot(monkeypatch, tmp_path):
     repo = tmp_path / "large-repo"
     repo.mkdir()

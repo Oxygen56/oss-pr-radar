@@ -123,6 +123,7 @@ APP_SERVER_WATCHDOG_STALE_SECONDS = 15.0
 APP_SERVER_WATCHDOG_EXTERNAL_PROBE_SECONDS = 30.0
 APP_SERVER_EVENT_DRAIN_SLICE_SECONDS = 1.0
 APP_SERVER_TASK_TURN_MAX_SECONDS = 45 * 60.0
+GITHUB_GIT_RETRY_DELAYS = (1.0, 3.0)
 VALIDATION_PREFETCH_TIMEOUTS = {
     "cargo_locked_fetch": 300,
     "go_locked_download": 300,
@@ -1312,6 +1313,27 @@ def command(
     return completed.stdout.strip()
 
 
+def github_git_command(
+    args: list[str],
+    *,
+    cwd: Path | None = None,
+    timeout: int = 300,
+    before_retry: Callable[[], None] | None = None,
+) -> str:
+    """Retry bounded GitHub git transport failures without hiding hard errors."""
+
+    for attempt in range(len(GITHUB_GIT_RETRY_DELAYS) + 1):
+        try:
+            return command(args, cwd=cwd, timeout=timeout)
+        except (RuntimeError, subprocess.TimeoutExpired) as exc:
+            if attempt >= len(GITHUB_GIT_RETRY_DELAYS) or not is_transient_github_error(exc):
+                raise
+            if before_retry is not None:
+                before_retry()
+            sleep(GITHUB_GIT_RETRY_DELAYS[attempt])
+    raise AssertionError("unreachable")
+
+
 def signing_key() -> str:
     value = os.environ.get("RADAR_DISPATCH_HMAC_KEY")
     if value:
@@ -1410,7 +1432,7 @@ def fetch_default_branch(path: Path) -> None:
     branch = default_ref.removeprefix(prefix)
     if not branch or branch == "HEAD":
         raise RuntimeError("origin/HEAD does not name a default branch")
-    command(
+    github_git_command(
         [
             "git",
             "fetch",
@@ -1449,7 +1471,7 @@ def fetch_target_branch(
             f"+refs/heads/{target['branch']}:{tracking_ref}",
         ]
     )
-    command(fetch_args, cwd=path, timeout=180)
+    github_git_command(fetch_args, cwd=path, timeout=180)
     fetched_sha = command(["git", "rev-parse", "--verify", tracking_ref], cwd=path)
     if fetched_sha.casefold() != target["sha"]:
         raise RuntimeError("target branch changed after live audit")
@@ -1491,7 +1513,11 @@ def source_repo(repo: str, *, target_base: dict[str, Any] | None = None) -> Path
         if target_base is not None:
             clone_args.extend(["--branch", validate_target_base(target_base)["defaultBranch"]])
         clone_args.extend([f"https://github.com/{repo}.git", str(clone_target)])
-        command(clone_args, timeout=180)
+        github_git_command(
+            clone_args,
+            timeout=180,
+            before_retry=lambda: shutil.rmtree(clone_target, ignore_errors=True),
+        )
         if destination.exists():
             shutil.rmtree(clone_target, ignore_errors=True)
             return source_repo(repo, target_base=target_base)
