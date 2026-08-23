@@ -14,6 +14,7 @@ from oss_pr_radar.local_publication import (
     advance_once,
     compact_advance_result,
     fast_advance_once,
+    fast_bridge,
     launch_agent_spec,
     queue_import_launch_agent_spec,
     queue_import_once,
@@ -25,6 +26,27 @@ from oss_pr_radar.local_publication import (
 from oss_pr_radar.runtime import RuntimeLockBusy
 
 pytestmark = pytest.mark.usefixtures("current_signing_key")
+
+
+def test_fast_bridge_deadline_covers_bounded_cold_start(monkeypatch, tmp_path):
+    observed = {}
+
+    def bridge(_root, operation, **kwargs):
+        observed.update(operation=operation, **kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr("oss_pr_radar.local_publication.run_bridge", bridge)
+
+    result = fast_bridge(
+        tmp_path,
+        "local-receipt-enqueue",
+        code_root=Path(__file__).parents[1],
+        allow_unreleased_code=True,
+    )
+
+    assert result == {"ok": True}
+    assert observed["operation"] == "local-receipt-enqueue"
+    assert observed["timeout"] == 60
 
 
 def test_run_bridge_terminates_the_process_group_on_timeout(monkeypatch, tmp_path):

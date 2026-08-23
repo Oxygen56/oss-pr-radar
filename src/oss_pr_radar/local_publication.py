@@ -50,7 +50,12 @@ FAST_WORK_LOCK = "fast-worker.lock"
 SLOW_WORK_LOCK = "slow-worker.lock"
 SLOW_REQUEST_STATE = "slow-work-request.json"
 SLOW_BACKOFF_STATE = "slow-worker-backoff.json"
-MAX_FAST_OPERATION_SECONDS = 15
+# The bridge runs in a fresh Python process.  Its deadline therefore includes
+# interpreter and native-extension startup, which can exceed 15 seconds under
+# ordinary host load before the local-only operation even opens the ledger.
+# Keep the bound below the fast-worker health freshness window while allowing
+# enough time for that cold start.
+MAX_FAST_OPERATION_SECONDS = 60
 TERMINAL_FEEDBACK_STAGES = {"AUDIT_NO_GO", "MERGED", "CLOSED"}
 
 
