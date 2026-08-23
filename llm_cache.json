@@ -3902,6 +3902,31 @@
     ],
     "why": "Issue reports a regression in DeepSpeed launcher causing NCCL CUDA error 600 during process-group init, but root cause is unconfirmed; no maintainer investigation or design confirmation. Track requires concrete algorithm mechanism; this is a runtime/launcher bug with no clear algorithmic invariant or reference implementation."
   },
+  "1ca8cd3deca97b673859cbace91bbabe1969b203183862c033e9911b141fe3d1": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/cli/src/config/mcpApprovals.ts",
+      "packages/core/src/utils/paths.ts"
+    ],
+    "risks": [
+      "Legacy approval entries with original casing may become orphaned; need migration or case-insensitive lookup."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test for normalizeProjectRoot on win32 with mixed-case drive letters; add integration test simulating CLI approval and VS Code lookup with different casing; verify legacy entries are migrated or matched case-insensitively."
+    ],
+    "unknowns": [
+      "Exact implementation choice (lowercase in normalizeProjectRoot vs shared helper) and migration strategy are not specified, but these are normal implementation decisions."
+    ],
+    "why": "Issue provides a clear root cause (case-sensitive path keys on Windows) with code anchors and a suggested fix aligned with existing conventions. Triage confirms root cause and notes a legacy-key migration concern. Actionable and valuable."
+  },
   "1cb6cb60744ca6624683d8981e21489b35c5019198e94d35cfe562b7e64dabbb": {
     "confidence": 0.85,
     "contradictions": [],
@@ -9103,6 +9128,40 @@
     ],
     "why": "Issue provides a clear root cause and repro for a real resource leak, but existing PRs #5416 and #5417 overlap semantically and may already address the fix. The deterministic gate requires HUMAN_REVIEW, and the open PR assessment indicates semantic overlap requiring manual comparison. No maintainer approval or active investigation is present, so starting new work risks duplication."
   },
+  "39d40e229e78df184ebd90028d268f52022987045d2f3e7c3a7dff2f4f975b40": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims no hydration path exists, but comments state merged PR #26871 already implements it on the default branch.",
+      "Issue reports Bug 1 as unresolved, but comments indicate it is fixed in current staging."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "Verify current default branch behavior for Bug 1; if resolved, focus on Bug 2 (passthrough timeout) and Bug 3 (scope over-request) with new reproductions."
+    ],
+    "risks": [
+      "Duplicating existing fix for Bug 1 if not carefully scoped.",
+      "Bug 2 and Bug 3 may require deeper investigation and may not be actionable without more details."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the existing manager test module (468 tests) on the current default branch to confirm Bug 1 is fixed.",
+      "Create a minimal reproduction for Bug 2 using the provided debug_passthrough.py script to isolate the timeout.",
+      "Create a minimal reproduction for Bug 3 by registering an OAuth2 client_credentials server and inspecting the token request scope parameter."
+    ],
+    "unknowns": [
+      "Whether the reported bugs (especially Bug 2 and Bug 3) still reproduce on the current default branch.",
+      "Whether the open PR #36831 addresses any of the reported bugs or is a duplicate.",
+      "The exact scope of the remaining work after the hydration fix is confirmed."
+    ],
+    "why": "The issue reports multiple bugs, but recent comments indicate the primary root cause (Bug 1) is already fixed on the default branch by merged PR #26871. The remaining bugs (Bug 2 and Bug 3) lack sufficient reproduction evidence and root-cause clarity, and the issue is not directly linked to any open PR. The evidence is contradictory: the issue claims a missing hydration path, while comments show it exists. This makes the contribution opportunity unclear and potentially duplicative."
+  },
   "3a3200715a179e3fb66c57614d719443eb1e631b0ee64c9dd39ac5f0c96fc6ef": {
     "confidence": 0.7,
     "contradictions": [],
@@ -11522,6 +11581,33 @@
       "Whether the issue is limited to media generate or also affects media wait, as maintainer asked; this affects the scope of the fix but does not block actionability."
     ],
     "why": "Issue provides a clear Windows-specific bug with reproduction steps, a working workaround, and maintainer confirmation that the gap is real and actionable. The root cause is likely PowerShell stdout capture failure when invoking the Electron/Node runtime directly, and the fix path is concrete."
+  },
+  "4944fbc0144194155c39e2d510a9b6901b096286f8d461aeb1bb56fbf3aaa8c0": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "ElevenLabs speech-to-text provider parameter mapping",
+      "LiteLLM transcription request handling"
+    ],
+    "risks": [
+      "Potential maintainer preference for parameter naming or API design; avoid breaking existing behavior."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that sends a transcription request with diarize=true and related fields, asserting they are forwarded to the ElevenLabs API mock.",
+      "Run existing provider tests and static checks."
+    ],
+    "unknowns": [
+      "Exact code location for ElevenLabs provider parameter mapping; whether maintainers have a preferred fix approach."
+    ],
+    "why": "Issue clearly identifies missing pass-through of ElevenLabs speech-to-text diarization parameters in LiteLLM, with expected vs actual behavior and concrete request shape. No competing PR or duplicate issue found. Root cause is likely in provider parameter mapping, and a regression test can be built from the provided example."
   },
   "4961b0a13b56d79c4df2e927f409e444e51418867a185f336ac491791c91a41f": {
     "confidence": 0.7,
@@ -15197,6 +15283,40 @@
     ],
     "why": "Issue clearly identifies a missing capability id hint in the generic leaf-toolset error branch, with a concrete repro and root cause. However, the deterministic gate requires HUMAN_REVIEW, and an existing PR (#7125) already attempts to address this but is closed with failed CI, indicating maintainer attention is needed."
   },
+  "5b966867b0103b78439fac1ed068568e280660313e850db1dcd53830b6675227": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The issue states the bug is not reproducible on an idle server with sanitized payload, but the actionability evidence claims 'public_repro_signals: 1' and 'reproduction_evidence: executable_command'."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "vllm/parser/gemma4.py",
+      "vllm/v1/engine/processor.py",
+      "vllm/entrypoints/openai/serving_chat.py"
+    ],
+    "risks": [
+      "The reproducer is content-dependent and may not trigger in CI without the exact private payload; tests may need to simulate the parser behavior directly.",
+      "Potential overlap with existing PRs (#51524, #50502) may require coordination to avoid conflicting fixes."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that mocks the gemma4 parser to return no tool calls when tool_choice='required' and asserts finish_reason is not 'tool_calls' and that the response is rejected or retried.",
+      "Add an integration test using a small model with a crafted prompt that triggers the in-context imitation, verifying that tool_choice='required' always produces a tool call."
+    ],
+    "unknowns": [
+      "Whether the existing PRs (#51524, #50502) already fix the enforcement gap or only the finish_reason mislabeling.",
+      "The exact root cause of the enforcement gap in the parser or sampling logic."
+    ],
+    "why": "The issue identifies a concrete, reproducible bug in the gemma4 tool parser where tool_choice='required' is not enforced, leading to prose-only responses mislabeled as tool calls. The root cause is partially identified (finish_reason logic) and the enforcement gap is clearly described. The issue provides a validation path via a loop script and payload variations, and the code paths are anchored in the parser and frontend. Although the reproducer is content-dependent and not fully public, the evidence is sufficient to guide a fix and regression test."
+  },
   "5bf31c1c511c32742999b2776c6aaeef68a89356618185ba743d5f6376321a0c": {
     "confidence": 0.7,
     "contradictions": [
@@ -17079,6 +17199,40 @@
       "Whether the proposed fix scope aligns with maintainer design preferences"
     ],
     "why": "Issue provides a detailed root-cause analysis and clear reproduction steps, but the deterministic gate requires HUMAN_REVIEW. Existing PR #1458 overlaps semantically and may already address part of the issue, but lacks regression tests and has requested changes. Maintainer design confirmation is needed before starting new work."
+  },
+  "65f4b0c284aafea4de7e0d3354f1c0bf4e9a98e54ade036359bbfe3ca09f3299": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #8241 is marked as NON_COVERING_REFERENCE but has semantic overlap; issue claims #8241 deliberately left the global in place, while PR summary suggests replacing process-wide globals with per-model AutoTPMeta."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "deepspeed/sequence/layer.py",
+      "DistributedAttention",
+      "single_all_to_all",
+      "uneven_heads_all2all",
+      "_SeqAllToAll backward"
+    ],
+    "risks": [
+      "Potential overlap with PR #8241 which may already address part of the issue; need to compare implementation boundaries.",
+      "Backward path must correctly restore head count from ctx; risk of subtle bugs in gradient computation."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test mirroring TestAutoTPMultipleModels: create two DistributedAttention instances with different head counts (e.g., 3 vs 2 over sp=2), run forward+backward in same process, assert first instance's split unchanged after second is exercised."
+    ],
+    "unknowns": [
+      "Whether PR #8241 already fixes the Ulysses global or only AutoTP's; need to inspect PR changes to confirm coverage."
+    ],
+    "why": "Issue identifies a concrete distributed-training invariant violation: process-wide global for Ulysses KV head count causes silent corruption when multiple models with different head counts run in the same process. Root cause is clearly located in deepspeed/sequence/layer.py, with a suggested fix mirroring an existing per-model fix in PR #8241. Validation path includes a specific regression test with two DistributedAttention instances."
   },
   "6646d622b98b27dbbbc920212fe5a4a9ef1119ee0ae232525eae00314a5c1aa0": {
     "confidence": 0.85,
@@ -21636,6 +21790,36 @@
     ],
     "wait_reason": null,
     "why": "Issue clearly describes a bug in variable expansion within test vars, provides a minimal reproduction, and references a prior fix for a similar issue. No competing PR or maintainer assignment found, and the fix is localized to the variable expansion logic."
+  },
+  "7e729c92d762a857a1097595a739f38539eeb99455b05f885afd32c26da7823d": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Original issue reports skew on 1.3.0; maintainer comment says 1.4.0-efa no longer reproduces, but latent hazard remains."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "runtime image packaging or documentation for flashinfer-jit-cache version coupling",
+      "serve-time image test or build-time assert pattern"
+    ],
+    "risks": [
+      "Maintainer may prefer a documentation-only resolution, reducing code change scope.",
+      "Existing PR #13650 may partially overlap; need to compare before implementing."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided docker run command on the 1.3.0 image to confirm the error, then apply the fix and verify the engine starts without FLASHINFER_DISABLE_VERSION_CHECK.",
+      "Add a regression test that checks flashinfer-python and flashinfer-jit-cache versions match in the runtime image."
+    ],
+    "unknowns": [
+      "Whether in-container vLLM upgrades are officially supported, which determines the preferred fix (packaging vs docs)."
+    ],
+    "why": "Issue clearly identifies a version-skew root cause between baked flashinfer-jit-cache and upgraded flashinfer, with a concrete repro command and verified workaround. Maintainer triage engaged and a contributor confirmed the latent hazard persists on current images, making a documentation or packaging fix actionable."
   },
   "7e899af95aa2fbf9b319b5d63467b3e8c9f63aceabcc9c0135785b4d6f9160b6": {
     "confidence": 0.8,
@@ -32647,6 +32831,39 @@
     ],
     "why": "The issue reports a CUDA illegal memory access in the GDN kernel with multiple reproductions, but the root cause is not yet identified. Existing PRs (e.g., #51508) target the GDN path but do not reference this issue, and a maintainer has not confirmed the fix direction. The deterministic gate requires HUMAN_REVIEW, and the open PR assessment indicates semantic overlap requiring manual comparison."
   },
+  "c56656de7b211140ada13336cf20127f44be30f06bc18f3e8a5b56673a809100": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #8294 is marked as REFERENCE but not linked to the issue; semantic overlap is high but root cause coverage is not confirmed."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "deepspeed/module_inject/tp_plan_converter.py",
+      "tests/unit/v1/autotp/test_tp_plan_real_models.py"
+    ],
+    "risks": [
+      "Potential semantic divergence: mapping embedding_rowwise to SKIP may not match transformers' intended vocab-parallel behavior; need to confirm with maintainers.",
+      "PR #8294 may not fully cover all tied-embedding models or edge cases; need to compare with issue requirements."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproducer with transformers main and 2 GPUs to confirm the ValueError; after fix, verify AutoTP initializes without error and tied embeddings remain replicated (or sharded as intended).",
+      "Run existing test_tp_plan_real_models.py::test_qwen2_tied_lm_head_falls_back_to_replicated to ensure it passes."
+    ],
+    "unknowns": [
+      "Whether PR #8294 fully resolves the issue or requires additional changes for all tied-embedding models.",
+      "Maintainer preference on whether to replicate or shard tied embeddings."
+    ],
+    "why": "Issue provides a clear root cause: transformers main injects 'embedding_rowwise' into tp_plan for tied-embedding models, which DeepSpeed's strict allowlist rejects. Includes a concrete executable reproducer and identifies the exact code paths. An open PR (#8294) directly addresses this by converting embedding_rowwise entries to SKIP specs, but it is not linked to the issue and may need review for completeness."
+  },
   "c57a11e7b85512cff9def08a0d83758e0481c40b31020444ed228dfc08e39c59": {
     "confidence": 0.7,
     "contradictions": [],
@@ -36035,6 +36252,33 @@
       "No maintainer confirmation on preferred fix approach, but the issue is clearly actionable and no competing PR exists."
     ],
     "why": "Issue reports a user-visible bug where transient MCP transport failure leaves the active conversation permanently pending. A contributor reproduced the root cause on current main: the configured read timeout is never passed to the MCP SDK ClientSession, so in-flight requests can hang indefinitely. The fix is a small, well-scoped change with a clear regression test path."
+  },
+  "d77faddeeba8dec4b295cc4d1b589145f3b543bc81b6f66c5d6ea7718c122e7a": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "hgctl/pkg/installer/standalone.go",
+      "hgctl/pkg/installer/standalone_agent.go",
+      "hgctl/pkg/installer/installer_docker.go",
+      "hgctl/pkg/installer tests"
+    ],
+    "risks": [
+      "Changing Agent.Version() to propagate read errors affects Install call site and display-only reads; must handle whitespace normalization to avoid trailing newline leaking into stored version."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test that starts with stored v1.0.0 Profile, simulates successful upgrade to v2.0.0, and verifies in-memory and persisted Profiles report v2.0.0 with all other fields unchanged.",
+      "Add tests for runtime failure (no Profile write), unreadable VERSION (error, no overwrite), and Profile save failure (error returned).",
+      "Run go test ./pkg/installer from hgctl module."
+    ],
+    "unknowns": [],
+    "why": "Issue provides a confirmed root cause (inverted version-read condition and missing Profile save), maintainer approval, and a concrete validation path with regression tests. The change is a bounded correctness fix with clear scope and success criteria."
   },
   "d78cc3572a7c09ec72aa148feac25b1b2fabde50ed5f214bd197290f44999101": {
     "confidence": 0.85,
