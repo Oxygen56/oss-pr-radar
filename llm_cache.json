@@ -866,6 +866,38 @@
     ],
     "why": "The issue reports a user-visible behavior change in DeepSeek-V4-Pro default reasoning effort caused by a merged PR. The root cause is identified (PR #50580 changed default behavior), but the desired fix is ambiguous: whether to revert, add a warning, or make the behavior configurable. No maintainer input or design confirmation exists, and the issue is a bug report without a clear code path."
   },
+  "06807b45ed1ddc9d3eda3f7052c022df42caba5f2a5dab89ca3bcaccf667526c": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #44343 claims to address the issue but lacks root-cause coverage; issue expects a more general fix."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "ToolRegistry websearch filtering logic",
+      "webSearchEnabled function",
+      "provider configuration for websearch tool"
+    ],
+    "risks": [
+      "Potential behavior change for existing providers if default enabling is chosen; need to ensure backward compatibility.",
+      "Duplicate work with existing PR #44343; must differentiate by addressing root cause more comprehensively."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that simulates a custom provider (e.g., Ollama) and asserts websearch is included when provider is not in whitelist but websearch is enabled via config or env.",
+      "Run existing tool registry tests and provider integration tests."
+    ],
+    "unknowns": [
+      "Maintainer design preference for default enabling vs per-provider config.",
+      "Whether existing PR #44343 will be merged or superseded."
+    ],
+    "why": "Issue provides a clear root cause (hardcoded provider whitelist in webSearchEnabled) with concrete reproduction steps and MITM evidence. An open PR (#44343) exists but lacks root-cause coverage and full validation, leaving room for a more complete fix. The change is actionable and testable."
+  },
   "069537ccff0377072030476af57f7a7f691e08c0334ce5129f9d9b2c11f37993": {
     "confidence": 0.85,
     "contradictions": [],
@@ -21817,6 +21849,41 @@
     "wait_reason": "DESIGN_CONFIRMATION",
     "why": "The issue identifies a real gap in observational memory compaction after provider context overflow, with concrete code anchors and a reproducible scenario. However, the proposed fix requires API design decisions (new compact() vs extending observe()) and maintainer triage is pending; the issue is labeled needs triage and a bot comment instructs waiting for maintainer approval before opening a PR."
   },
+  "7bc722ddb07a0a8f4ca7ba85f9dd0056284d976405aa95d44d827430deedac32": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The issue's benchmark table reports 473 bytes for the SQL snippet, but a maintainer comment states the snippet is 172 bytes, indicating a discrepancy in the reproduction data."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "agentscope/model/_openai_model.py",
+      "agentscope/agent/_react_agent.py",
+      "count_tokens implementation"
+    ],
+    "risks": [
+      "The fix may require a tokenizer dependency or API call, adding latency or complexity.",
+      "The open PR #2397 may be merged first, making this work redundant."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproduce.py against a local vLLM endpoint with the five benchmark payloads and compare count_tokens estimates to actual usage.input_tokens; assert underestimation ratio is below a threshold (e.g., <1.2x).",
+      "Add unit tests for count_tokens with non-ASCII, numeric, and JSON payloads using a mock tokenizer or reference tokenizer."
+    ],
+    "unknowns": [
+      "Exact payloads for the five benchmark scenarios are not fully provided; the maintainer requested them.",
+      "The exact model/tokenizer and chat-template configuration used in the benchmark are not specified.",
+      "Whether usage.input_tokens includes system prompt or tool schemas is unclear."
+    ],
+    "why": "The issue identifies a concrete algorithmic bug in token estimation (fixed bytes/4 heuristic) with benchmark data showing 1.84x-3.09x underestimation, a clear root cause in count_tokens, and a reproducible script. The open PR #2397 is incomplete (lacks root-cause coverage), leaving room for a more complete fix. The evidence supports a numerical regression test against actual model usage."
+  },
   "7c027f17da0ba67beabaab3c4abae3bc113b6f8be741c12caef11798d4974632": {
     "confidence": 0.7,
     "contradictions": [],
@@ -33666,6 +33733,33 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue clearly identifies a silent uninitialized-logits bug in compressed-tensors lm_head dispatch, with a concrete root cause and reproduction. However, two open PRs (#35228, #28130) already target the same code path and semantics, and #35228 is maintainer-owned with review approval. The deterministic gate is HUMAN_REVIEW, and the existing PRs need comparison before new work starts."
+  },
+  "c6dc813d05b6795a6953bbd9f2212a4e589ed1e8379c9b632c28690607b964d9": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Agent Canvas sidebar token panel",
+      "frontend token usage accumulation logic"
+    ],
+    "risks": [
+      "Potential maintainer preference for a different data source or UI design; ensure fix aligns with existing patterns."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that mocks backend stats events with nonzero cache_read_tokens and verifies the sidebar displays the same value as the Usage Tab.",
+      "Run existing frontend unit tests for the token panel."
+    ],
+    "unknowns": [
+      "Exact frontend code path and component structure for the sidebar token panel; maintainer design preferences."
+    ],
+    "why": "Issue provides a clear frontend-only bug with exact reproduction steps, expected vs actual behavior, and backend evidence showing cache_read_tokens is correctly populated. Root cause is identified as the sidebar reading from a null 'metrics' field instead of the populated 'stats.usage_to_metrics' path. No competing open PRs or duplicate issues found."
   },
   "c6e0bfcbe76cdbf0d161fec52f2060af40a14ebfa3a62b00a4baa04399e5518d": {
     "confidence": 0.7,
