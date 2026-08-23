@@ -3971,6 +3971,36 @@
     ],
     "why": "The issue identifies a clear performance bug in subprocess spawning caused by an O(RLIMIT_NOFILE) close() loop, with a deterministic failing test and a concrete fix using close_range(). The proposed change is minimal, well-scoped, and directly addresses the root cause. No competing PR or related issue exists, and the maintainer has not expressed a conflicting preference."
   },
+  "1b5208b9298175ab6b9bcae33cbd95ed81beafa492accd98e9c37fe2dc5f3bf7": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "hgctl/pkg/helm/render.go: add empty-list guard in ParseLatestVersion",
+      "hgctl/pkg/helm/render_test.go: add tests for empty, non-empty development, and stable selection"
+    ],
+    "risks": [
+      "User-visible error message change; must be exact in regression test",
+      "Overly broad guard could affect stable path; guard is inside devel branch",
+      "Test with single entry may not lock ordering; use two-entry fixture"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add TestParseLatestVersionEmptyDevelopmentEntries using httptest server with YAML containing empty higress entries; verify no panic and exact error message",
+      "Add TestParseLatestVersionDevelopmentSelection with two entries in reverse order; expect first entry's AppVersion",
+      "Add TestParseLatestVersionStableSelection with same fixture; expect stable Version"
+    ],
+    "unknowns": [
+      "Maintainer approval status for implementation is pending; but design is already authorized and this is a design-only issue, so not blocking for semantic review"
+    ],
+    "why": "The issue provides a clear root cause (unchecked entries[0] access on empty list), a concrete design with exact code change, and a detailed verification plan including baseline red and fixed green tests. The evidence includes a reproducible command and code anchors, satisfying actionability."
+  },
   "1b7c66d012d382ff5a72380a7b29f5a73b84be527139e775fa88caace9e9002d": {
     "confidence": 0.85,
     "contradictions": [],
@@ -6082,6 +6112,38 @@
     ],
     "wait_reason": null,
     "why": "Issue provides a concrete, reproducible bug with a clear root cause: LLMSwitcher's downstream filter only gates inbound frames, allowing an inactive LLM's in-flight generation to emit tokens downstream after a manual switch. The minimal repro and expected/actual pair make the fix actionable."
+  },
+  "260c411857ac1b8f7ea128e24b01397200b4098afad3b9f916a67d725157c291": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #9478 is closed with changes requested but marked technical_complete; PR #9501 is open and may overlap"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "packages/core/src/core/reasoning-effort.ts",
+      "OpenAI-compatible pipeline buildReasoningConfig",
+      "settings persistence handling"
+    ],
+    "risks": [
+      "Fix may need to handle samplingParams passthrough path to avoid silently dropping reasoning",
+      "Potential API behavior change if clamping changes user-visible tiers"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test asserting 'max' never reaches the wire for an endpoint that doesn't accept it",
+      "Reproduce with OpenAI-compatible provider and /effort max, then verify fix prevents 400 and session breakage"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer option 1, 2, or 3; whether the fix should also address the samplingParams passthrough issue"
+    ],
+    "why": "Issue provides a clear root cause (clampReasoningEffort fallback includes 'max', and OpenAI-compatible path passes reasoning verbatim without clamping), a concrete reproduction, and a preferred fix direction. Triage confirms the root cause and notes the fix must cover the OpenAI-compatible pipeline. No duplicate issue found; PR #9478 is closed with changes requested, so the issue remains actionable."
   },
   "2619ebf09251835a708859179a9069fd07fe15c46fd7eea765779bd9fd6c5735": {
     "confidence": 0.7,
@@ -8781,6 +8843,31 @@
     ],
     "why": "Issue reports two concrete bugs with root cause hypotheses, but the supplied gate decision is HUMAN_REVIEW and related issue audit timed out. Existing PR #33592 is open but lacks tests and has CI failures, so competition is possible but not clearly superior. Maintainer confirmation is needed before starting work."
   },
+  "363a592b68f0ad15d014611652c39f3587da904d98be873259ff6504cdf4aa6d": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "api/controllers/mcp/mcp.py: replace sessionmaker().begin() with plain Session and explicit commit management"
+    ],
+    "risks": [
+      "Potential behavior change in transaction handling; need to ensure explicit commits cover all downstream operations."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a regression test that calls an MCP tool through the MCP controller and asserts no 'closed transaction' error, using the issue's reproduction steps."
+    ],
+    "unknowns": [
+      "Exact commit points in AppGenerateService.generate() that close the transaction; maintainer preference for fix implementation."
+    ],
+    "why": "Issue provides a clear regression with exact error message and reproduction steps. Dosu comment identifies root cause as SQLAlchemy session management in MCP controller, introduced by PR #34281, with a known fix pattern from PR #36392. The code path is in api/controllers/mcp/mcp.py, and a concrete validation path exists via reproducing the error and applying the fix pattern."
+  },
   "363e3b86243ec625f94b923e65f3f6715a4321bb012f3fde241cf5891ac3a425": {
     "confidence": 0.8,
     "contradictions": [],
@@ -10048,6 +10135,34 @@
     ],
     "wait_reason": "MISSING_EVIDENCE",
     "why": "The issue is a detailed bug report about a TMEM allocation spin loop in FlashMLA's sparse-decode MLA kernel, but it explicitly asks for maintainer guidance on the correct owner and diagnostic path, not a code contribution. The root cause is undetermined (phase mismatch vs. visibility vs. hardware state), and the reporter notes the spin loops are generated by ptxas, not hand-written, so a source-level fix is not straightforward. The issue is actionable only as a request for investigation, not as a concrete implementation task."
+  },
+  "3c9a0a7473ae744fd56e5ba8bec418d2afc3128784aca2edbea02da9d209b0a8": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found in supplied evidence."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/v1/attention/backends/flashinfer.py",
+      "vllm/model_executor/models/mistral3.py"
+    ],
+    "risks": [
+      "Potential overlap with existing PRs (e.g., #45288) that may already address the root cause; need to verify before implementing."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided minimal repro with FLASHINFER backend on sm_120 and assert non-degenerate output; add a regression test comparing FLASHINFER vs TRITON_ATTN outputs for Mistral3 with head_dim mismatch."
+    ],
+    "unknowns": [
+      "Whether the head_dim mismatch is the actual root cause or merely correlated; requires deeper investigation."
+    ],
+    "why": "Issue provides a concrete, reproducible bug with a clear root-cause hypothesis (head_dim mismatch in Mistral3) and a validation path via backend comparison and numerical regression. The evidence includes ordered repro steps, environment details, and code anchors, satisfying the llm_algorithm track requirements."
   },
   "3ccfec3428609455656a0ac379dba06b5a74ee6fac829f573253607b8b7104db": {
     "confidence": 0.7,
@@ -24117,6 +24232,33 @@
     ],
     "wait_reason": null,
     "why": "Issue reports a concrete user-visible bug: reasoning_content is null when using the sgl-model-gateway with --reasoning-parser qwen3, while the worker-side parser works. Reproduction steps and environment are provided, making it actionable. No competing PR or issue found. The root cause is likely in the gateway's parser implementation or integration, but not yet identified."
+  },
+  "870fe6b71eafd806a4db3956b4911b399c68bcdad6edebb8cd49ed59247fee83": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "website/src/pages/chat/ActivityViewer.tsx",
+      "ApprovalEntry.onAction trust handling for spawn approvals"
+    ],
+    "risks": [
+      "Maintainer may prefer one of the two fix directions; implementation must align with chosen product decision to avoid rework."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that simulates a spawn approval with a trust tier and asserts the card does not report 'Trusted' unless a standing grant is actually created; run targeted unit tests for ActivityViewer."
+    ],
+    "unknowns": [
+      "Which fix direction the maintainer will choose (narrow surface vs. thread grant) is not yet decided, but this does not block implementation since either is actionable."
+    ],
+    "why": "Issue clearly identifies a user-visible consent-integrity bug with a precise root cause in ApprovalEntry.onAction: non-chat approval types collapse trust tiers to one-shot approve while the UI still reports 'Trusted'. The fix is small and well-scoped, with two reasonable implementation directions left to maintainer preference. No duplicate or merged fix covers this path."
   },
   "871598ca2c382e296de994fbc08de68de4755825ae6c11e89dafa3226bdb6f6e": {
     "confidence": 0.8,
@@ -40048,6 +40190,42 @@
       "Maintainer design preference among the proposed fix options; whether any existing PR addresses this issue."
     ],
     "why": "The issue provides a detailed, reproducible bug with clear root cause: OM removes observed messages and only forwards model messages to sub-agents, breaking context forwarding and messageFilter. The proposed fixes are actionable and align with documented behavior."
+  },
+  "e36b12961891edcbbbce82f213260d5901d150c7a218f94997c91ff608a9af72": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Related issue #52897 shares stack signatures but has different title and behavior; overlap is only superficial."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "MoE backend selection logic",
+      "FlashInfer TRTLLM MoE kernel implementation",
+      "FP8 block-scale quantization handling"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #49636 which adds opt-in FlashInfer moe_ep backend; may need coordination.",
+      "Hardware requirement: GB200 GPUs with specific CUDA version may not be available in CI.",
+      "Numerical sensitivity: need to distinguish actual bug from floating-point variation."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided curl command with default backend and with --moe-backend deep_gemm, compare logprobs and top tokens.",
+      "Compute perplexity on a fixed prefix with both backends and assert significant drop with deep_gemm.",
+      "Add a regression test that checks next-token distribution for a small MoE model with FP8 block-scale weights."
+    ],
+    "unknowns": [
+      "Exact root cause in FlashInfer TRTLLM kernel not yet identified; may require kernel-level debugging.",
+      "Whether the fix should be in vLLM's backend selection or in FlashInfer library."
+    ],
+    "why": "The issue provides a concrete, reproducible bug in MoE backend selection causing incorrect logprobs and degenerate outputs, with a clear comparison between FlashInfer TRTLLM and deep_gemm backends. It includes an executable curl command and environment details, establishing a root cause in the MoE kernel path and a validation path via perplexity or next-token probability comparison."
   },
   "e38a19f54ec92da189678c6929767a7f28279bf0858e236e8056be48eb1f3dbf": {
     "confidence": 0.7,
