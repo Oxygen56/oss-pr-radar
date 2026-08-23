@@ -12,6 +12,11 @@ import pytest
 
 from scripts.host_radar_watcher import WATCHER_SCRIPT
 
+# Hashing and registering the existing shared tree can exceed five seconds
+# under concurrent local CPU or filesystem load. The watcher still reports
+# ready only after its fail-closed baseline and kernel watches are active.
+HOST_WATCHER_READY_TIMEOUT_SECONDS = 30
+
 
 def _host_radar_inventory(root: Path) -> str:
     """Fingerprint host shared state without following worktree contents."""
@@ -98,7 +103,7 @@ def no_host_radar_private_writes(tmp_path_factory):
         close_fds=True,
     )
     try:
-        ready_deadline = time.monotonic() + 5
+        ready_deadline = time.monotonic() + HOST_WATCHER_READY_TIMEOUT_SECONDS
         while not watcher_ready.exists() and time.monotonic() < ready_deadline:
             if watcher.poll() is not None:
                 watcher_stderr.flush()
