@@ -9081,6 +9081,55 @@ def test_prepare_pr_followup_accepts_fast_forwarded_base(monkeypatch, tmp_path):
     assert run_git(worktree, "status", "--porcelain") == ""
 
 
+def test_prepare_pr_followup_retries_transient_pr_head_fetch(monkeypatch, tmp_path):
+    worktree = tmp_path / "worktree"
+    remote = tmp_path / "remote.git"
+    worktree.mkdir()
+    run_git(worktree, "init")
+    run_git(worktree, "config", "user.name", "Test Contributor")
+    run_git(worktree, "config", "user.email", "test@example.com")
+    source = worktree / "runtime.py"
+    source.write_text("value = 1\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "-m", "chore: baseline")
+    run_git(remote.parent, "init", "--bare", str(remote))
+    run_git(worktree, "remote", "add", "origin", str(remote))
+    run_git(worktree, "switch", "-c", "fix/1-runtime")
+    source.write_text("value = 2\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "-m", "fix: runtime")
+    live_head = run_git(worktree, "rev-parse", "HEAD")
+    run_git(worktree, "push", "origin", "HEAD:refs/heads/fix/1-runtime")
+    run_git(remote, "update-ref", "refs/pull/9/head", live_head)
+    real_command = MODULE.command
+    fetch_attempts = []
+
+    def flaky_command(args, cwd=None, timeout=300, stdin=None):
+        if args[:2] == ["git", "fetch"] and any("refs/pull/9/head" in item for item in args):
+            fetch_attempts.append(args)
+            if len(fetch_attempts) == 1:
+                raise RuntimeError("curl 56 Recv failure: Operation timed out")
+        return real_command(args, cwd=cwd, timeout=timeout, stdin=stdin)
+
+    monkeypatch.setattr(MODULE, "_upstream_remote", lambda *_args: "origin")
+    monkeypatch.setattr(MODULE, "GITHUB_GIT_RETRY_DELAYS", (0,))
+    monkeypatch.setattr(MODULE, "command", flaky_command)
+    monkeypatch.setattr(MODULE, "sleep", lambda _delay: None)
+
+    prepared = MODULE._prepare_pr_followup(
+        {
+            "prUrl": "https://github.com/a/b/pull/9",
+            "worktreePath": str(worktree),
+            "branch": "fix/1-runtime",
+            "headSha": live_head,
+            "evidence": {"mergeConflict": False},
+        }
+    )
+
+    assert prepared == {"preparedHeadSha": live_head}
+    assert len(fetch_attempts) == 2
+
+
 def test_pr_followup_recreates_a_missing_controller_workspace(monkeypatch, tmp_path):
     project_root = tmp_path / "github"
     monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)

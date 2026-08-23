@@ -10085,7 +10085,7 @@ def _prepare_pr_followup(candidate: dict[str, Any]) -> dict[str, Any]:
             raise RuntimeError("PR follow-up base integration lacks base snapshot")
         command(["git", "check-ref-format", "--branch", base_ref_name], cwd=worktree)
         base_tracking_ref = f"refs/remotes/{remote}/{base_ref_name}"
-        command(
+        github_git_command(
             [
                 "git",
                 "fetch",
@@ -10118,7 +10118,7 @@ def _prepare_pr_followup(candidate: dict[str, Any]) -> dict[str, Any]:
                     actualBaseSha=fetched_base,
                 )
             base_sha = fetched_base
-    command(
+    github_git_command(
         [
             "git",
             "fetch",
