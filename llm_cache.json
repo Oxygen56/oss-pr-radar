@@ -7424,6 +7424,35 @@
     ],
     "why": "The issue clearly identifies a silent failure in RemoteA2aAgent when the A2A stream ends before a terminal state, with a concrete reproduction and expected behavior. No competing PR addresses this exact problem; existing PRs are keyword-overlap only."
   },
+  "32182cc586799197f06ab7e6eba02dda08dafd5e7a9d5d6691fa4e183b1ced57": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "HTTP client timeout configuration in Cline's API layer",
+      "LM Studio provider request handling"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #13486; need to ensure fix is more comprehensive or complementary",
+      "Changing timeout behavior may affect other providers; need to keep backward compatibility"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a failing test that simulates a long-running LM Studio response exceeding the default timeout",
+      "Run targeted unit tests for the modified provider and shared HTTP client"
+    ],
+    "unknowns": [
+      "Exact location of the hardcoded timeout in the codebase",
+      "Maintainer preference for configuration vs. automatic extension"
+    ],
+    "why": "Issue provides clear reproduction steps and evidence of client-side timeout causing premature disconnection; existing PR #13486 directly addresses the issue but lacks root-cause coverage, leaving room for a more complete fix."
+  },
   "322fd1a1e6d2977702f6f1a28c2f41572edb0886b26be2b00a283b63f0302add": {
     "confidence": 0.7,
     "contradictions": [],
@@ -18374,6 +18403,36 @@
     ],
     "why": "The issue provides a detailed root cause analysis with two distinct defects causing a permanent stall in batch cost reconciliation. It includes a reproducible test scenario with clear evidence of the bug and a proposed fix direction. The fix is actionable and testable."
   },
+  "6d5b1cdcdb32882b9ba26c9f5122365d1ade8961b6c32765732212cc3b2dec99": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims client_id/client_secret never reach runtime, but comment says hydration path exists on default branch."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "litellm/proxy/_experimental/mcp_server/outbound_credentials/adapter.py",
+      "litellm/proxy/_experimental/mcp_server/mcp_server_manager.py",
+      "litellm/proxy/_experimental/mcp_server/outbound_credentials/resolver.py"
+    ],
+    "risks": [
+      "Duplicate work if the fix is already merged; potential conflict with open PR #36831."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Verify current default branch behavior with the issue's reproduction steps, especially the hydration of client_id/client_secret from persisted credentials.",
+      "Run the focused manager test module to confirm 468 passed and add regression tests for the reported scenarios."
+    ],
+    "unknowns": [
+      "Whether the reported bug still reproduces on the current default branch; whether PR #36831 fully addresses the issue; whether the maintainer prefers a new PR or a release-image investigation."
+    ],
+    "why": "The issue reports a concrete bug with a traced root cause, but recent comments indicate the root cause may already be fixed on the default branch by merged PR #26871. The open PR #36831 also overlaps semantically. This creates material uncertainty about whether the work is still actionable or already covered."
+  },
   "6d72ecbd052e2f464a50a83414e06798ddfde8f7546dde6aa07ee7fa60a20349": {
     "confidence": 0.7,
     "contradictions": [
@@ -27230,6 +27289,39 @@
     ],
     "why": "Issue provides a clear failing assertion, code anchor, and multiple plausible root causes with a concrete validation path (run the integration test). The latent bug is user-visible and blocks CI, making a fix actionable."
   },
+  "a6a812194616c875dcc2ef51ad987ae8043eb7b514d52c334e7dd6ed87e9bd19": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The issue states that the sanitized payload did not reproduce on idle server, but the reproduction path suggests testing under concurrent load. This is not a contradiction but a condition for reproduction."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/parser/gemma4.py",
+      "vllm/model_executor/models/gemma4.py",
+      "vllm/v1/spec_decode/gemma4.py",
+      "rust/src/parser/src/unified/gemma4.rs"
+    ],
+    "risks": [
+      "The bug is content-dependent and may not reproduce on idle servers, making regression testing flaky. The fix may need to handle both the enforcement gap and the finish_reason inconsistency, which could be in different components."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use the provided loop script with the sanitized payload under concurrent load to reproduce the failure. Add a regression test that asserts tool_choice='required' always produces at least one tool call and that finish_reason is consistent with the presence of tool_calls."
+    ],
+    "unknowns": [
+      "The exact root cause of Defect 1 (enforcement gap) is not fully identified; it may be in the parser or the generation logic. The relationship to open PRs #51524 and #50502 needs manual comparison to ensure no duplicate fix."
+    ],
+    "why": "The issue identifies a concrete bug in the gemma4 tool parser: tool_choice='required' is not enforced, leading to prose-only responses with finish_reason='tool_calls' and empty tool_calls. The root cause is partially known (Defect 2 linked to #53255) and the issue provides a clear reproduction path (loop script, payload variations) and code anchors. The track is llm_algorithm because it involves the tool-calling mechanism and structured output enforcement, which is a core algorithm behavior. The evidence includes multiple open PRs with semantic overlap, but none fully cover the root cause, so the contribution is actionable."
+  },
   "a6ff5f2141ad8ab6215ace197e615b6110ec510ed6080dd2c44cb9ec99fb83e0": {
     "confidence": 0.7,
     "contradictions": [],
@@ -28266,6 +28358,33 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "The issue reports a concrete AttributeError in ParallelLMHead during NVFP4 Marlin path, with a plausible root cause identified in comments (missing output_size_per_partition in CompressedTensorsW8A8Fp8.create_weights). However, the deterministic gate is HUMAN_REVIEW, and there is a potential duplicate issue #52407 sharing stack signatures. The candidate is technically actionable but requires maintainer confirmation to avoid duplicate work and to validate the root cause on supported hardware."
+  },
+  "ae90d9497fb74f093a7fee05a9df63a8d23bf3e30832c798afbbb4e327d77af2": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "LiteLLM ElevenLabs speech-to-text provider parameter forwarding"
+    ],
+    "risks": [
+      "Potential API behavior change if parameters are not officially supported by LiteLLM's provider; need to confirm maintainer preference for pass-through vs explicit mapping."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that mocks ElevenLabs API and verifies diarize, timestamps_granularity, detect_speaker_roles, etc. are included in the multipart request when passed to LiteLLM."
+    ],
+    "unknowns": [
+      "Exact code location and current parameter mapping in LiteLLM's ElevenLabs provider; maintainer design preference for handling extra parameters."
+    ],
+    "why": "Issue clearly identifies missing pass-through of ElevenLabs diarization parameters in LiteLLM's speech-to-text provider, with concrete expected fields and reproduction shape. No competing PR or duplicate issue found. Root cause is evident from code path and API docs."
   },
   "ae9e6d74cad4cad4f7d58b3c118d437629d5fc78e21091e5e28a7303cd70141a": {
     "confidence": 0.85,
@@ -40072,6 +40191,35 @@
       "Whether there is an existing open PR addressing this."
     ],
     "why": "Issue reports a crash in vLLM metrics logging when CPU offloading is enabled, with a clear stack trace and multiple user confirmations. However, the root cause is not fully isolated; a comment suggests it may be a duplicate of #36755 and already fixed in dev. Open PR and related issue lookups timed out, so duplicate implementation cannot be ruled out. The deterministic gate is HUMAN_REVIEW, and the repository requires AI disclosure, which conflicts with automatic public actions."
+  },
+  "ee8a9c86aec400d28219c679bb5f7610f04663881e5a4e2713d6dbaa207a1f04": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Original skew no longer reproduces on 1.4.x per maintainer comment, but structural hazard remains."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "runtime-image packaging or documentation",
+      "serve-time image test or build-time assert"
+    ],
+    "risks": [
+      "Potential duplicate coverage by PR #13650, which overlaps on cuda13 and vllm_runtime but does not reference this issue; maintainer preference may favor documentation-only fix over packaging change."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with vllm-runtime:1.3.0-dev.1-cuda13 and pip install vllm==0.23.0, then verify FLASHINFER_DISABLE_VERSION_CHECK=1 workaround; for 1.4.x, run importlib.metadata version check to confirm matched pair and add a regression test for version alignment."
+    ],
+    "unknowns": [
+      "Whether in-container vLLM upgrades are a supported workflow; maintainer decision on preferred fix (docs vs packaging)."
+    ],
+    "why": "Issue identifies a clear root cause: baked flashinfer-jit-cache version skew with flashinfer-python causes serve-time registry failure. Evidence includes executable repro, verified workaround, and maintainer triage engaging the issue. Although the original skew no longer reproduces on 1.4.x, the structural hazard remains and the maintainer explicitly requests a contract decision, making the issue actionable for a documentation or packaging fix."
   },
   "ee8df59c545d68aa8918bb4088d85a57ed5d1134e3d5e62adef6e69d3c5535e7": {
     "confidence": 0.8,
