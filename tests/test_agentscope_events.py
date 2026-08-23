@@ -1,12 +1,19 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import importlib.util
 import json
 from datetime import UTC, datetime
 from pathlib import Path
 
-from oss_pr_radar.agentscope_events import EventLane, GitHubIssuePoller, dispatch_once
+from oss_pr_radar.agentscope_events import (
+    EventLane,
+    GitHubIssuePoller,
+    _github_event_id,
+    _github_event_identity,
+    dispatch_once,
+)
 
 
 def _event_worker_module():
@@ -105,6 +112,75 @@ def test_lease_owner_and_token_condition_ack(tmp_path):
     assert lane.pending() == 1
     assert lane.ack("e1", lease_token=claimed[0]["leaseToken"], owner="worker-a") is True
     assert lane.pending() == 0
+
+
+def test_github_identity_ignores_metadata_drift_and_tracks_material_revisions(tmp_path):
+    lane = EventLane(tmp_path / "events.db")
+    details = {
+        "pull": {"head": {"sha": "sha-1"}, "state": "open", "draft": False, "updated_at": "2026-08-24T00:00:00Z", "mergeable_state": "clean"},
+        "reviews": [{"id": 1, "state": "COMMENTED", "submitted_at": "2026-08-24T00:00:00Z", "commit_id": "sha-1", "body": "review"}],
+        "comments": [{"id": 2, "created_at": "2026-08-24T00:00:00Z", "updated_at": "2026-08-24T00:00:00Z", "body": "comment", "user": {"login": "reviewer"}}],
+        "checks": {"check_runs": [{"id": 3, "name": "ci", "head_sha": "sha-1", "status": "queued", "conclusion": None, "started_at": "2026-08-24T00:00:00Z", "completed_at": None, "app": {"slug": "github-actions", "owner": {"followers": 1}}}]},
+    }
+    first = _github_event(2397, "2026-08-24T00:00:00Z") | {
+        "eventId": "github:agentscope-ai/agentscope:2397:pr_update:legacy-a",
+        "prDetails": details,
+    }
+    metadata_drift = first | {
+        "eventId": "github:agentscope-ai/agentscope:2397:pr_update:legacy-b",
+        "prDetails": {**details, "checks": {"check_runs": [{**details["checks"]["check_runs"][0], "app": {"slug": "github-actions", "owner": {"followers": 999}, "permissions": {"checks": "write"}}}]}},
+    }
+    material_change = first | {
+        "eventId": "github:agentscope-ai/agentscope:2397:pr_update:legacy-c",
+        "prDetails": {**details, "checks": {"check_runs": [{**details["checks"]["check_runs"][0], "status": "completed", "conclusion": "success"}]}},
+    }
+    changed = _github_event(2397, "2026-08-24T00:01:00Z")
+    changed["prDetails"] = details
+    assert lane.append(first) is True
+    assert lane.append(metadata_drift) is False
+    assert lane.append(material_change) is True
+    assert lane.append(changed) is True
+    seen = []
+    assert dispatch_once(lane, seen.append, limit=3)["delivered"] == 3
+    assert [event["eventId"] for event in seen] == [first["eventId"], material_change["eventId"], changed["eventId"]]
+
+
+def test_plain_issue_has_no_material_suffix_and_stable_legacy_identity():
+    event = _github_event(2398, "2026-08-24T00:00:00Z")
+    event["eventId"] = _github_event_id(event)
+    assert event["eventId"] == "github:agentscope-ai/agentscope:2398:issue_update:2026-08-24T00:00:00Z"
+    assert _github_event_identity(event) == (
+        "agentscope-ai/agentscope", "2398", "issue_update", "2026-08-24T00:00:00Z", ""
+    )
+
+
+def test_active_pull_events_use_canonical_material_projection(tmp_path):
+    poller = GitHubIssuePoller(tmp_path / "poll.json", transport=lambda _url, _headers: (200, {}, []))
+    details = {
+        "pull": {"head": {"sha": "sha-1", "ref": "feature", "user": {"login": "Oxygen56", "repo": {"stargazers_count": 1}}}, "state": "open", "draft": False, "updated_at": "2026-08-24T00:00:00Z", "mergeable_state": "clean"},
+        "reviews": [{"id": 1, "state": "COMMENTED", "submitted_at": "2026-08-24T00:00:00Z", "commit_id": "sha-1", "body": "review"}],
+        "comments": [{"id": 2, "created_at": "2026-08-24T00:00:00Z", "updated_at": "2026-08-24T00:00:00Z", "body": "comment", "user": {"login": "reviewer"}}],
+        "checks": {"check_runs": [{"id": 3, "name": "ci", "head_sha": "sha-1", "status": "queued", "conclusion": None, "started_at": "2026-08-24T00:00:00Z", "completed_at": None, "app": {"slug": "github-actions", "owner": {"permissions": {"checks": "write"}, "stargazers_count": 1}}}]},
+    }
+    poller._enrich_pull_request = lambda item, _state: item
+
+    def item(value, updated="2026-08-24T00:00:00Z"):
+        return {"number": 2397, "updated_at": updated, "title": "implementation", "state": "open", "user": {"login": "Oxygen56"}, "pull_request": {"url": "https://example.test/pr"}, "agentscopeDetails": value}
+
+    baseline = poller._active_pull_events([item(details)], {})[0]["eventId"]
+    metadata = copy.deepcopy(details)
+    metadata["pull"]["head"]["repo"] = {"stargazers_count": 999, "owner": {"permissions": {"admin": True}}}
+    metadata["checks"]["check_runs"][0]["app"]["owner"]["stargazers_count"] = 999
+    assert poller._active_pull_events([item(metadata)], {})[0]["eventId"] == baseline
+    for key in ("reviews", "comments", "checks"):
+        changed = copy.deepcopy(details)
+        if key == "checks":
+            changed[key]["check_runs"][0].update({"status": "completed", "conclusion": "success"})
+        else:
+            changed[key][0]["body"] = "changed"
+        assert poller._active_pull_events([item(changed)], {})[0]["eventId"] != baseline
+    assert poller._active_pull_events([item(details)], {})[0]["eventId"] == baseline
+    assert poller._active_pull_events([item(details, "2026-08-24T00:01:00Z")], {})[0]["eventId"] != baseline
 
 
 def test_same_event_is_idempotent_but_new_event_resumes_same_thread(tmp_path):
@@ -257,6 +333,47 @@ def test_post_bootstrap_event_dispatches_once(tmp_path, monkeypatch):
     assert first["eventsInserted"] == 1 and first["drain"]["delivered"] == 1
     assert second["eventsInserted"] == 0 and second["codexWake"] is False
     assert [event["eventId"] for event in delivered] == [fresh["eventId"]]
+
+
+def test_material_time_after_boundary_is_dispatchable_even_with_old_issue_updated_at(tmp_path, monkeypatch):
+    worker = _event_worker_module()
+    boundary = "2026-08-23T12:00:00Z"
+    _write_bootstrap_seed(tmp_path, boundary)
+    events = []
+    for number, details in (
+        (2501, {"reviews": [{"id": 1, "submitted_at": "2026-08-23T12:01:00Z"}]}),
+        (2502, {"comments": [{"id": 2, "updated_at": "2026-08-23T12:02:00Z"}]}),
+        (2503, {"checks": {"check_runs": [{"id": 3, "started_at": "2026-08-23T12:03:00Z", "completed_at": "2026-08-23T12:04:00Z"}]}}),
+    ):
+        event = _github_event(number, "2026-08-23T11:00:00Z")
+        event["prDetails"] = details
+        events.append(event)
+    monkeypatch.setattr(worker.GitHubIssuePoller, "poll", lambda _self: type("Poll", (), {
+        "events": tuple(events), "status": "ok"
+    })())
+    delivered = []
+    result = worker.run_once(tmp_path, deliver=delivered.append)
+    assert result["eventsInserted"] == 3
+    assert result["drain"]["delivered"] == 3
+    assert result["drain"]["pending"] == 0
+    assert [event["eventId"] for event in delivered] == [event["eventId"] for event in events]
+
+
+def test_material_times_at_or_before_boundary_are_baseline(tmp_path, monkeypatch):
+    worker = _event_worker_module()
+    boundary = "2026-08-23T12:00:00Z"
+    _write_bootstrap_seed(tmp_path, boundary)
+    stale = _github_event(2504, "2026-08-23T11:00:00Z")
+    stale["prDetails"] = {"checks": {"check_runs": [{"id": 4, "started_at": "2026-08-23T11:30:00Z", "completed_at": "2026-08-23T11:59:59Z"}]}}
+    monkeypatch.setattr(worker.GitHubIssuePoller, "poll", lambda _self: type("Poll", (), {
+        "events": (stale,), "status": "ok"
+    })())
+    delivered = []
+    result = worker.run_once(tmp_path, deliver=delivered.append)
+    assert result["eventsInserted"] == 0
+    assert result["codexWake"] is False
+    assert result["drain"]["pending"] == 0
+    assert delivered == []
 
 
 def test_unmapped_event_uses_explicit_independent_release_bridge(tmp_path, monkeypatch):

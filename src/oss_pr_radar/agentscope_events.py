@@ -43,6 +43,114 @@ def _parse_time(value: str | None) -> datetime | None:
         return None
 
 
+def _stable_records(value: Any, keys: tuple[str, ...], sort_keys: tuple[str, ...]) -> list[dict[str, Any]]:
+    rows = value if isinstance(value, list) else []
+    projected = [
+        {key: row.get(key) for key in keys}
+        for row in rows
+        if isinstance(row, dict)
+    ]
+    return sorted(projected, key=lambda row: tuple(str(row.get(key) or "") for key in sort_keys))
+
+
+def _github_material_projection(event: dict[str, Any]) -> dict[str, Any]:
+    """Keep only stable PR review/comment/check material in event identity."""
+    details = event.get("prDetails") if isinstance(event.get("prDetails"), dict) else {}
+    if not details:
+        issue = event.get("issue") if isinstance(event.get("issue"), dict) else {}
+        details = issue.get("agentscopeDetails") if isinstance(issue.get("agentscopeDetails"), dict) else {}
+    if not details:
+        return {}
+    pull = details.get("pull") if isinstance(details.get("pull"), dict) else {}
+    pull_keys = (
+        "state", "draft", "updated_at", "mergeable_state", "mergeable", "rebaseable",
+        "comments", "review_comments",
+    )
+    pull_projection = {key: pull.get(key) for key in pull_keys} if pull else {}
+    if pull:
+        head = pull.get("head") if isinstance(pull.get("head"), dict) else {}
+        pull_projection["head"] = {
+            "sha": head.get("sha"),
+            "ref": head.get("ref"),
+            "user": {"login": str(((head.get("user") if isinstance(head.get("user"), dict) else {}) or {}).get("login") or "")},
+        }
+    reviews = _stable_records(
+        details.get("reviews"),
+        ("id", "state", "submitted_at", "commit_id", "body", "updated_at"),
+        ("id", "updated_at", "submitted_at"),
+    )
+    comments = _stable_records(
+        details.get("comments"),
+        ("id", "created_at", "updated_at", "body", "user"),
+        ("id", "updated_at", "created_at"),
+    )
+    comments = [
+        {
+            **{key: value for key, value in row.items() if key != "user"},
+            "user": {"login": str(((row.get("user") if isinstance(row.get("user"), dict) else {}) or {}).get("login") or "")},
+        }
+        for row in comments
+    ]
+    checks = details.get("checks") if isinstance(details.get("checks"), dict) else {}
+    check_runs = _stable_records(
+        checks.get("check_runs"),
+        ("id", "name", "head_sha", "status", "conclusion", "started_at", "completed_at", "app"),
+        ("id", "name"),
+    )
+    check_runs = [
+        {
+            **{key: value for key, value in row.items() if key != "app"},
+            "app": {"slug": str(((row.get("app") if isinstance(row.get("app"), dict) else {}) or {}).get("slug") or "")},
+        }
+        for row in check_runs
+    ]
+    material = {"pull": pull_projection, "reviews": reviews, "comments": comments, "checks": check_runs}
+    return material if any(material.values()) else {}
+
+
+def _github_material_digest(event: dict[str, Any]) -> str:
+    material = _github_material_projection(event)
+    return _digest(material) if material else ""
+
+
+def github_event_effective_time(event: dict[str, Any]) -> datetime | None:
+    """Return the latest stable time represented by a GitHub event."""
+    issue = event.get("issue") if isinstance(event.get("issue"), dict) else {}
+    values = [event.get("updatedAt"), issue.get("updated_at")]
+    material = _github_material_projection(event)
+    pull = material.get("pull") if isinstance(material.get("pull"), dict) else {}
+    values.append(pull.get("updated_at"))
+    for row in material.get("reviews") or []:
+        values.extend((row.get("updated_at"), row.get("submitted_at")))
+    for row in material.get("comments") or []:
+        values.extend((row.get("updated_at"), row.get("created_at")))
+    for row in material.get("checks") or []:
+        values.extend((row.get("completed_at"), row.get("started_at")))
+    parsed = [_parse_time(str(value)) for value in values if value]
+    parsed = [value for value in parsed if value is not None]
+    return max(parsed) if parsed else None
+
+
+def _github_event_id(event: dict[str, Any]) -> str:
+    base = f"github:{event.get('repo')}:{event.get('number')}:{event.get('kind')}:{event.get('updatedAt')}"
+    material_digest = _github_material_digest(event)
+    return f"{base}:{material_digest}" if material_digest else base
+
+
+def _github_event_identity(event: dict[str, Any]) -> tuple[str, str, str, str, str] | None:
+    """Return stable GitHub identity fields, including material revision."""
+    if not str(event.get("eventId") or "").startswith("github:") and not event.get("repo"):
+        return None
+    repo = str(event.get("repo") or "")
+    number = str(event.get("number") or "")
+    kind = str(event.get("kind") or "")
+    issue = event.get("issue") if isinstance(event.get("issue"), dict) else {}
+    updated = str(event.get("updatedAt") or issue.get("updated_at") or "")
+    if not repo or not number or not kind or not updated:
+        return None
+    return repo, number, kind, updated, _github_material_digest(event)
+
+
 @dataclass(frozen=True)
 class PollResult:
     status: str
@@ -194,15 +302,7 @@ class GitHubIssuePoller:
                 }
                 if item.get("pull_request"):
                     event["prDetails"] = item.get("agentscopeDetails") or {}
-                detail_suffix = (
-                    f":{_digest(item.get('agentscopeDetails'))[:16]}"
-                    if item.get("agentscopeDetails")
-                    else ""
-                )
-                event["eventId"] = (
-                    f"github:{self.repo}:{item.get('number')}:{event['kind']}:{item.get('updated_at')}"
-                    f"{detail_suffix}"
-                )
+                event["eventId"] = _github_event_id(event)
                 events.append(event)
             if len(payload) < self.per_page:
                 break
@@ -234,7 +334,6 @@ class GitHubIssuePoller:
             number = item.get("number")
             kind = "pr_update"
             details = item.get("agentscopeDetails") or {}
-            suffix = f":{_digest(details)[:16]}" if details else ""
             events.append(
                 {
                     "version": EVENT_VERSION,
@@ -244,7 +343,10 @@ class GitHubIssuePoller:
                     "updatedAt": item.get("updated_at"),
                     "issue": item,
                     "prDetails": details,
-                    "eventId": f"github:{self.repo}:{number}:{kind}:{item.get('updated_at')}{suffix}",
+                    "eventId": _github_event_id({
+                        "repo": self.repo, "number": number, "kind": kind,
+                        "updatedAt": item.get("updated_at"), "prDetails": details,
+                    }),
                 }
             )
         return events
@@ -345,20 +447,23 @@ class GitHubIssuePoller:
                 fingerprint = _digest({
                     "updatedAt": item.get("updated_at"), "state": item.get("state"),
                     "title": item.get("title"), "body": item.get("body"),
-                    "details": details,
+                    "material": _github_material_projection({
+                        "repo": self.repo, "number": item.get("number"), "kind": kind,
+                        "updatedAt": item.get("updated_at"), "prDetails": details,
+                    }),
                 })
                 next_fingerprints[item_key] = fingerprint
                 if not fingerprints:
                     continue
                 if fingerprints.get(item_key) == fingerprint:
                     continue
-                suffix = f":{_digest(details)[:16]}" if details else ""
-                events.append({
+                event = {
                     "version": EVENT_VERSION, "repo": self.repo, "number": item.get("number"),
                     "kind": kind, "updatedAt": item.get("updated_at"), "issue": item,
                     "prDetails": details,
-                    "eventId": f"github:{self.repo}:{item.get('number')}:{kind}:{item.get('updated_at')}{suffix}",
-                })
+                }
+                event["eventId"] = _github_event_id(event)
+                events.append(event)
             if len(payload) < self.per_page:
                 break
             page += 1
@@ -492,7 +597,18 @@ class EventLane:
                 target = f"{payload['repo']}#{payload['number']}"
             if target:
                 payload["eventKey"] = str(target)
+        identity = _github_event_identity(payload)
         with self.writer() as db:
+            if identity is not None:
+                for row in db.execute(
+                    "SELECT event_id,payload_json FROM event_lane_events WHERE event_id LIKE 'github:%'"
+                ):
+                    try:
+                        existing = json.loads(row["payload_json"])
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        continue
+                    if _github_event_identity(existing) == identity:
+                        return False
             result = db.execute(
                 "INSERT OR IGNORE INTO event_lane_events(event_id,payload_json,priority,created_at) VALUES(?,?,?,?)",
                 (event_id, json.dumps(payload, sort_keys=True), int(priority), time.time() if now is None else now),
@@ -622,9 +738,7 @@ class EventLane:
                 event_id = str(payload.get("eventId") or row["event_id"])
                 if not event_id.startswith("github:"):
                     continue
-                issue = payload.get("issue") if isinstance(payload.get("issue"), dict) else {}
-                raw_updated = payload.get("updatedAt") or issue.get("updated_at")
-                updated = _parse_time(str(raw_updated or ""))
+                updated = github_event_effective_time(payload)
                 if updated is None or updated > boundary:
                     continue
                 db.execute(
@@ -641,14 +755,26 @@ class EventLane:
         payload = dict(event)
         payload["eventId"] = event_id
         current = time.time() if now is None else now
-        issue = payload.get("issue") if isinstance(payload.get("issue"), dict) else {}
-        updated = _parse_time(str(payload.get("updatedAt") or issue.get("updated_at") or ""))
+        updated = github_event_effective_time(payload)
         if updated is None:
             raise ValueError("baseline GitHub event has no valid updatedAt")
         with self.writer() as db:
             row = db.execute(
                 "SELECT status FROM event_lane_events WHERE event_id=?", (event_id,)
             ).fetchone()
+            identity = _github_event_identity(payload)
+            if row is None and identity is not None:
+                for candidate in db.execute(
+                    "SELECT event_id,payload_json,status FROM event_lane_events WHERE event_id LIKE 'github:%'"
+                ):
+                    try:
+                        existing = json.loads(candidate["payload_json"])
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        continue
+                    if _github_event_identity(existing) == identity:
+                        event_id = str(candidate["event_id"])
+                        row = candidate
+                        break
             if row is None:
                 db.execute(
                     "INSERT INTO event_lane_events(event_id,payload_json,status,created_at,delivered_at) "

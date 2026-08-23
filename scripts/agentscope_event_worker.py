@@ -14,7 +14,12 @@ from urllib.parse import urlparse
 ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from oss_pr_radar.agentscope_events import EventLane, GitHubIssuePoller, dispatch_once  # noqa: E402
+from oss_pr_radar.agentscope_events import (  # noqa: E402
+    EventLane,
+    GitHubIssuePoller,
+    dispatch_once,
+    github_event_effective_time,
+)
 from oss_pr_radar.ledger import RadarLedger  # noqa: E402
 from oss_pr_radar.local_publication import run_bridge  # noqa: E402
 from oss_pr_radar.release_binding import runtime_ledger_path  # noqa: E402
@@ -445,9 +450,7 @@ def _bootstrap_boundary(root: Path, lane: EventLane) -> tuple[datetime | None, d
 
 
 def _event_updated_at(event: dict) -> datetime | None:
-    issue = event.get("issue") if isinstance(event.get("issue"), dict) else {}
-    raw = event.get("updatedAt") or issue.get("updated_at")
-    return _parse_time(str(raw or ""))
+    return github_event_effective_time(event)
 
 
 def _is_bootstrap_baseline(event: dict, boundary: datetime | None) -> bool:
