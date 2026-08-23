@@ -3654,6 +3654,38 @@
     "wait_reason": "MISSING_EVIDENCE",
     "why": "The issue clearly identifies a stale import path in lm-format-enforcer 0.11.3 causing a ModuleNotFoundError and HTTP 500. However, the fix likely belongs upstream in lm-format-enforcer, not vLLM, and the issue is a bug report without a proposed patch. The deterministic gate is HUMAN_REVIEW, and there is a potential duplicate issue #52620 with shared stack signatures, though semantic overlap is low. Actionability is limited without maintainer direction on where to fix."
   },
+  "17aaed2e5d362f7ab569b036fbaae67139cad3c456a048182fe3460d34f7a492": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The issue states it is NOT related to the unified quantization framework, but the algorithm evidence lists quantization mechanisms; this is not a factual contradiction but a scoping note."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "Dockerfile.ci",
+      "quantization fp8 serving path"
+    ],
+    "risks": [
+      "Clearing LD_LIBRARY_PATH might affect other CUDA-dependent components in the container, requiring regression testing.",
+      "The fix is Docker-specific and may not address similar issues in non-Docker environments."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce the CUBLAS_STATUS_INVALID_VALUE error using the provided command in the current Docker image.",
+      "Apply the LD_LIBRARY_PATH cleanup and rerun the same command to verify the error is resolved.",
+      "Add a smoke test that serves BAGEL-7B-MoT with --quantization fp8 in the CI Docker image."
+    ],
+    "unknowns": [
+      "Whether the maintainers prefer the one-liner fix or documentation-only workaround; however, the issue and comments indicate a fix is expected."
+    ],
+    "why": "The issue provides a clear root cause (LD_LIBRARY_PATH conflict shadowing PyTorch's bundled cuBLAS), a concrete reproduction command, and a minimal fix (clearing LD_LIBRARY_PATH in Dockerfile.ci). The algorithm evidence indicates a quantized GEMM kernel path, and the proposed fix is directly testable with a BAGEL FP8 smoke test."
+  },
   "17bfb7d2862fda69852a00db7e6ba38f84f96a67aadd79e1f0fa8ff6102d4acf": {
     "confidence": 0.85,
     "contradictions": [
@@ -16716,6 +16748,33 @@
     ],
     "why": "Issue clearly describes a race condition in workflow resume with a public repro and production evidence, but the fix requires design confirmation on storage-level atomic claim semantics and adapter compatibility. Existing PR #20512 is closed and insufficient, and maintainer input is explicitly requested."
   },
+  "60720a8aae85e4c6e38abfa77c6f636af542374e43f18147b1436b4a8cbdf95c": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "src/agents/run_internal/blocked_output.py",
+      "RunState serialization format"
+    ],
+    "risks": [
+      "Changing serialization format may break backward compatibility with existing checkpoints.",
+      "Positional index may be fragile if item order changes during resume."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test using the provided reproducer to assert serialized multi-turn approval checkpoints resume successfully.",
+      "Run existing unit tests for blocked_output and RunState serialization."
+    ],
+    "unknowns": [
+      "Maintainer preference for fix approach (identity vs positional) is not confirmed, but this is normal implementation uncertainty."
+    ],
+    "why": "Issue provides a clear root cause (identity-based boundary detection fails after serialization), a minimal offline reproducer, and a concrete suggested fix (positional index). This is a high-value bug in the agent runtime's durable pause/resume path."
+  },
   "60879f8856489f6d1a08256972d0304e1e9fac92ce7cfc68ac22543406dfe682": {
     "confidence": 0.85,
     "contradictions": [],
@@ -29051,6 +29110,35 @@
       "Exact implementation details of the fix in PR #8280; whether maintainers prefer explicit rejection over silent skipping."
     ],
     "why": "The issue provides a minimal reproducer, exact traceback, root-cause analysis (zero-sized parameter absent from param_to_partition_ids), and a proposed fix (skip numel()==0 entries). This is a concrete, actionable bug in ZeRO stage 1/2 with a clear validation path."
+  },
+  "a816c997ae3f01a49758a5883941546b24f3e9549ad71e5aea07bb3883278af6": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/core/reasoning-effort.ts",
+      "OpenAI-compatible pipeline buildReasoningConfig"
+    ],
+    "risks": [
+      "Potential interaction with samplingParams passthrough behavior; fix must not break verbatim contract."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test asserting 'max' never reaches the wire for an endpoint that doesn't accept it, covering both the clamp fallback and the samplingParams passthrough path."
+    ],
+    "unknowns": [
+      "Exact provider supported tier list for generic OpenAI-compatible providers; maintainer preference among the three proposed options."
+    ],
+    "why": "Issue provides a clear root cause (clampReasoningEffort fallback includes 'max' and OpenAI-compatible path bypasses clamp), a concrete reproduction, and a preferred fix direction. Triage confirms the root cause and identifies the additional bypass path. The issue is actionable and valuable."
   },
   "a823f9098feb4dc5ced8f3d3636c148611845bde47820abc7ccd29ab75c0285b": {
     "confidence": 0.85,
