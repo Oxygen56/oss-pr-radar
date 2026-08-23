@@ -2739,6 +2739,33 @@
     "unknowns": [],
     "why": "The issue is a duplicate of #39154 and the fix is already implemented in merged PR #39155. The candidate offers no new technical contribution beyond the existing merged solution."
   },
+  "12ad9f13871dd64e7497783f9eaa02af8917aabe188e1580d0fc5356e0ad1f43": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "ToolRegistry tool filtering logic",
+      "webSearchEnabled function",
+      "provider configuration for websearch tool"
+    ],
+    "risks": [
+      "Changing default behavior may affect existing users who rely on the whitelist; need to ensure backward compatibility or provide config option"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test for webSearchEnabled with a custom provider ID and no env flags, expecting true",
+      "Add an integration test simulating a custom provider request and verifying websearch tool is included in the tools list"
+    ],
+    "unknowns": [
+      "Maintainer preference on whether to enable by default or add config option"
+    ],
+    "why": "Issue provides a clear root cause (hardcoded provider whitelist in ToolRegistry.webSearchEnabled), concrete reproduction steps, and MITM evidence showing the tool is missing for custom providers. The fix is actionable: modify the whitelist logic or add per-provider configuration. No blocking unknowns; potential overlap with #36376 is low (different tool and behavior)."
+  },
   "12b16cabe82b6cb070e73b9e5069ab2ed2e2144c3f278ed79ca3f3b911755091": {
     "confidence": 0.8,
     "contradictions": [
@@ -4089,6 +4116,33 @@
       "Status of related issue audit failure"
     ],
     "why": "Issue provides a clear root cause and minimal reproduction for a user-visible bug, but the deterministic gate requires HUMAN_REVIEW and the related issue audit failed due to timeout. Existing PR #50955 is weak with failed CI, so a better PR may be possible, but maintainer confirmation is needed."
+  },
+  "1cfdc6a2944bbc9fb26e81686fa584bff1d2a2b7b2f609e772a2c8266b789ced": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "pydantic_ai_slim/pydantic_ai/messages.py: add InstructionPart to ModelRequestPart union",
+      "tests/test_instruction_part_roundtrip.py: add regression tests"
+    ],
+    "risks": [
+      "Potential API behavior change if InstructionPart was intentionally excluded, but evidence suggests oversight",
+      "Need to ensure discriminator handles new tag correctly, though issue states it already does"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproduction tests (tests/test_instruction_part_roundtrip.py) to confirm failures before fix and pass after",
+      "Run existing tests/test_messages.py to ensure no regression"
+    ],
+    "unknowns": [
+      "Maintainer design preference on union composition, but not blocking given clear bug and suggested fix"
+    ],
+    "why": "Issue provides a precise root cause (InstructionPart missing from ModelRequestPart union), a concrete reproduction with failing tests, and a verified minimal fix. The bug affects core serialization boundaries and is clearly actionable."
   },
   "1d54e8fb93c8e0bc200ebbda605b51126fdffd0a2268ace466d4e7b2a23e650b": {
     "confidence": 0.8,
@@ -9916,6 +9970,37 @@
       "Maintainer confirmation of the issue's validity and priority"
     ],
     "why": "The issue reports a flaky CI failure with cudaErrorStreamCaptureInvalidated, but the root cause is unknown and the reporter notes it may be a duplicate. A contributor attempted reproduction on H100 and could not reproduce, suggesting hardware-specific or cross-test interference. The issue is a bug report, not a feature request, and requires maintainer investigation to confirm root cause and desired fix."
+  },
+  "3fa29e92d2b4ec53406ba881dd8f4f5fea216d8e72d369edd2d7f8e1cb1ad06c": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The issue claims no copy-paste reproducer, but provides a loop script and sanitized payload; open PRs show overlapping fixes but none directly reference this issue."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/parser/gemma4.py",
+      "vllm/v1/engine",
+      "tool_choice enforcement logic"
+    ],
+    "risks": [
+      "The reproduction is content-dependent and may not trigger on idle servers, making validation flaky; overlapping PRs may already partially fix the issue, requiring careful comparison."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use the provided loop script with a sanitized payload under concurrent load to reproduce the failure; add a regression test that asserts tool_choice='required' always produces a non-empty tool_calls array and correct finish_reason."
+    ],
+    "unknowns": [
+      "Whether the open PRs fully address the enforcement gap (Defect 1) or only the finish_reason mislabeling (Defect 2); the exact root cause of the enforcement gap is not pinpointed to a specific code line."
+    ],
+    "why": "The issue identifies a concrete bug in the gemma4 tool parser where tool_choice='required' is not enforced, leading to prose-only responses mislabeled as tool_calls. The root cause is partially known (finish_reason logic) and the enforcement gap is clearly described. The issue provides a reproduction script and analysis, and there are open PRs addressing related aspects, indicating actionable code work."
   },
   "40120c597d6f87753f17a0f6cd00e6101f6f287b7852f34736136da724405542": {
     "confidence": 0.85,
@@ -16196,6 +16281,39 @@
     ],
     "why": "The issue describes a concrete bug with a clear root cause: the HTTP handler returns 200 before the async abort task dereferences a non-existent attribute on GenerateReqInput, causing a false success. The reproduction steps are detailed and include logs. No competing PR or issue exists, and the fix is straightforward: either validate the request object or handle the attribute error, and ensure the abort endpoint reports actual success/failure."
   },
+  "62857ed60354df98624a70f79fc4af272590b067985459bf7e253e9be57acfc6": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue claims client_id/client_secret are never hydrated, but recent comment states the hydration path exists on the default branch."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/_experimental/mcp_server/outbound_credentials/adapter.py",
+      "litellm/proxy/_experimental/mcp_server/mcp_server_manager.py",
+      "litellm/proxy/_experimental/mcp_server/outbound_credentials/resolver.py"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #36831 or merged fix #26871; need to verify current branch behavior before implementing.",
+      "Changing scope handling may affect existing OAuth2 flows; need to ensure backward compatibility."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce the client_credentials failure using the provided config.yaml and REST API registration, then verify that client_id/client_secret are correctly populated in the token request.",
+      "Add a regression test for os.environ/ resolution in the mcp_servers config loader.",
+      "Add a test to ensure the scope parameter is not over-broad when using discovery metadata."
+    ],
+    "unknowns": [
+      "Whether the reported bugs are still reproducible on the current default branch, given the recent comment indicating a fix may already be merged."
+    ],
+    "why": "The issue provides a detailed root cause analysis with code anchors and a concrete reproduction path for the OAuth2 client_credentials bug. Although recent comments indicate the hydration path may already be fixed on the default branch, the issue also identifies additional bugs (env var resolution, scope over-request) that remain actionable. The candidate is technically valuable and actionable."
+  },
   "628abd1f12241d27a0a83665090615e77e4458c0b74da6275122e83d34152b5d": {
     "confidence": 0.8,
     "contradictions": [],
@@ -18089,6 +18207,38 @@
     ],
     "why": "Issue identifies four scheduler defects with detailed reproduction and root-cause analysis; comments confirm bugs 1 and 4 fixed in v1.46, bug 3 partially addressed, and remaining bounded defect is recipe settings ignored in scheduled runs. Existing PR #11110 overlaps scheduler code but lacks tests and does not reference the issue. Maintainer design confirmation is pending for scope of recipe settings and unknown-setting validation."
   },
+  "6b96109e69e17a6be5b40b720df2a11218f2ef1310838c08359434bc82842258": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found; issue data is consistent."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "infra/console.ts",
+      "packages/codemode/src/stdlib/console.ts",
+      "packages/core/src/tool/tools.ts",
+      "packages/opencode/src/session/tools.ts"
+    ],
+    "risks": [
+      "Potential maintainer design preference for how to handle model-specific tool routing; fix might need to align with broader provider abstraction.",
+      "Risk of changing API behavior for other models if the fix is too broad."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use the provided curl command as a regression test to reproduce the 'Endpoint is unavailable' error for x-preview-f-free with tools, then verify the fix returns a valid tool_calls response.",
+      "Run existing unit tests for the tool and provider routing modules to ensure no regressions."
+    ],
+    "unknowns": [
+      "Exact root cause in the provider code (e.g., specific routing logic or model configuration) is not identified, but the reproduction is sufficient to guide debugging."
+    ],
+    "why": "Issue provides a concrete, reproducible failure (curl command) with clear evidence that the problem is specific to the Ox Alpha free model's tool path, not the API routes or key. Root cause is likely a routing/migration issue for that model backend, supported by recent renames. The contribution is actionable: add a regression test and fix the model-specific tool handling."
+  },
   "6b961b275a157be66a33e66cd7f64fa662951a2080065574169db7e555ee4736": {
     "confidence": 0.7,
     "contradictions": [],
@@ -19355,6 +19505,36 @@
     ],
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue reports a user-visible bug with a plausible root cause, but the triage bot's static analysis contradicts the reporter's claim and requests a wire capture to settle the diagnosis. The existing PR #8900 has semantic overlap and is already under review, so a new PR risks duplication. Actionability is blocked by missing wire-level evidence and unresolved maintainer direction."
+  },
+  "7247d5a2ef2afb33e4fb43d89615e155c6c066bc6d97a2a694b6312cc12ac20c": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "LiteLLM ElevenLabs speech-to-text provider parameter forwarding",
+      "Add support for diarize, tag_audio_events, timestamps_granularity, num_speakers, diarization_threshold, detect_speaker_roles, language_code"
+    ],
+    "risks": [
+      "Potential maintainer preference for parameter whitelisting vs generic pass-through",
+      "Risk of breaking existing behavior if parameter names conflict with LiteLLM's own options"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a failing test that sends a multipart request with diarize=true and related fields to the ElevenLabs provider and asserts they are forwarded to the upstream API",
+      "Run targeted unit tests for the ElevenLabs provider and static checks"
+    ],
+    "unknowns": [
+      "Exact code location and current implementation of ElevenLabs speech-to-text provider in LiteLLM"
+    ],
+    "why": "Issue clearly identifies missing pass-through of ElevenLabs diarization parameters in LiteLLM's speech-to-text provider, with concrete expected fields and a reproducible request shape. No duplicate PR or issue found, and the issue remains open with recent confirmation that it is still broken."
   },
   "728fd9dfee48442beceb511650a5e8f905a21872d61ac0ece3b1f88a92d1ef48": {
     "confidence": 0.85,
@@ -30477,6 +30657,36 @@
     ],
     "why": "The issue provides a precise root cause, a deterministic no-LLM repro, production impact metrics, and a concrete suggested fix. However, the deterministic gate requires HUMAN_REVIEW, and maintainer triage is needed to confirm design preferences (e.g., whether to use pending-updates check vs. tool-name filter, and whether to introduce StateDeltaEvent at the boundary) and to disambiguate potential overlap with issue #7491."
   },
+  "ba49f4df1363c48ef447c3164fe079355eb5ce24ca6c11eaee49c9c73cdbec38": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Original repro no longer occurs on 1.4.x, but latent hazard remains"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "runtime-image packaging: couple flashinfer-jit-cache with flashinfer-python version",
+      "docs: add unsupported-workflow note or env knob documentation"
+    ],
+    "risks": [
+      "Maintainer may prefer documenting unsupported workflow over packaging change",
+      "Existing PR #13650 may overlap; need to compare implementation boundaries"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a serve-time image test that installs a newer vLLM in-container and verifies flashinfer version match or registry inspection passes",
+      "Add a build-time assert in Dockerfile to fail on version skew"
+    ],
+    "unknowns": [
+      "Whether in-container vLLM upgrades are a supported workflow (maintainer decision pending)"
+    ],
+    "why": "Issue identifies a clear root cause: baked flashinfer-jit-cache version skew with in-container vLLM upgrade causes serve-time registry failure. Maintainer triage confirms engagement and a latent structural hazard remains even though the original repro no longer occurs on 1.4.x. The suggested fix (coupling package versions or documenting unsupported workflow) is actionable and validated by a build-time assert pattern."
+  },
   "baf84b37b45525f1717459a1d77d898ac45108686753c576c32e760588cd5979": {
     "confidence": 0.7,
     "contradictions": [
@@ -33817,6 +34027,45 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue clearly describes a WSL2 CUDA IPC crash with a concrete repro and a proposed auto-detection fix. However, PR #35259 has semantic overlap on the same code path and is still draft, requiring manual comparison to avoid duplicate work."
+  },
+  "ce1b33906ae41d87ca25366e7392dde974ff895547568d654c9e9ea8f3ba40fa": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue states 'max' missing from UI/CLI, but SDK already supports it; no contradiction.",
+      "PR #12973 overlaps but is draft and incomplete; no contradiction."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "apps/vscode/src/shared/storage/types.ts",
+      "apps/cli/src/utils/reasoning.ts",
+      "apps/vscode/proto/cline/state.proto (optional)",
+      "tests in providerReasoningControls.test.tsx, reasoning-options.test.ts, CLI reasoning.test.ts, shared reasoning-effort.test.ts"
+    ],
+    "risks": [
+      "Potential maintainer preference for per-model filtering instead of global whitelist addition.",
+      "Proto enum change may require regeneration and could affect gRPC paths.",
+      "Existing PR #12973 may be merged or updated, requiring coordination."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a test that verifies 'max' appears in the dropdown for models advertising it (e.g., deepseek-v4-flash).",
+      "Add a CLI test that '--reasoning-effort max' parses and runs.",
+      "Add a regression test that selecting 'max' on a model without max support degrades to nearest effort without API error.",
+      "Run existing reasoning-related unit tests and static checks."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a minimal global whitelist change vs. per-model filtering.",
+      "Whether the proto enum change is required for the fix or optional.",
+      "Whether PR #12973 will be updated and merged before a new PR."
+    ],
+    "why": "Issue provides a precise root cause (missing 'max' in UI/CLI whitelists while SDK already supports it), a concrete fix plan, and a clear validation path. Existing PR #12973 overlaps but is draft and incomplete, so the issue remains actionable."
   },
   "ce2f1d7934773197fae948ede5aa4ca42d3be52f7342950b1a9ef233f6933fce": {
     "confidence": 0.8,
@@ -42557,6 +42806,40 @@
       "Whether an existing open PR already addresses this issue (open PR lookup failed due to rate limit)"
     ],
     "why": "The issue provides a clear, reproducible server-side bug in the ServiceM8 toolkit response handler: successful writes return HTTP 200 with empty body and x-record-uuid header, but the handler unconditionally parses JSON and discards the header, causing false failure and missing record_uuid. However, the deterministic gate is HUMAN_REVIEW, and the open PR lookup failed due to rate limiting, so duplicate work cannot be excluded. The issue is labeled 'support' and the only comment is an automated triage note, so maintainer confirmation is needed."
+  },
+  "f9821d4fccf0a8d002f4c2ef5d682b4f6ce8ba6e1d16c42da86b5bf9e216c501": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #9478 is closed with changes requested but may still be relevant",
+      "PR #9501 is open and may overlap"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "packages/core/src/core/reasoning-effort.ts",
+      "OpenAI-compatible pipeline buildReasoningConfig",
+      "samplingParams passthrough path"
+    ],
+    "risks": [
+      "Fix may need to cover both clamp fallback and OpenAI-compatible passthrough path",
+      "Potential interaction with existing PR #9501 or #9478"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test asserting 'max' never reaches the wire for an endpoint that doesn't accept it",
+      "Test with samplingParams set to ensure reasoning config is merged or warning emitted"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer option 1, 2, or 3 from the issue",
+      "Exact provider supported tier list for OpenAI-compatible providers"
+    ],
+    "why": "Issue provides a clear root cause (clampReasoningEffort fallback includes 'max' and OpenAI-compatible path bypasses clamp), a concrete reproduction, and a preferred fix direction. Triage confirms the root cause and identifies an additional path (samplingParams early return) that must be covered. Multiple related PRs exist but none fully resolve the issue, so the contribution remains actionable."
   },
   "f9a49e2dace3f0b64e05377ff0015e010e2a0a1667c74cd1b1fcef16ead36edc": {
     "confidence": 0.8,

@@ -1,13 +1,13 @@
 {
-  "digest": "a3bc4411edb94b000267772869ef0581ac2720971b3b6114021fcf9f16335145",
-  "generatedAt": "2026-08-23T03:17:40.094660Z",
+  "digest": "b4494ab96355f823f555337a91719688c0cb38865719e1099c9538a7929f45ca",
+  "generatedAt": "2026-08-23T04:54:33.779592Z",
   "items": [
     {
       "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
       "actions": [],
       "baseRefName": "litellm_internal_staging",
       "baseSha": "d447be15b965a052e49a2d3c0b9f538d85c9d865",
-      "checkedAt": "2026-08-23T03:17:40.094660Z",
+      "checkedAt": "2026-08-23T04:54:33.779592Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -24,16 +24,57 @@
         ],
         "failingChecks": [],
         "headSha": "5d08d5e3096c1751f79905098b8b1c8d3dce5a44",
-        "maintainerEvents": [],
+        "maintainerEvents": [
+          {
+            "actorLogin": "greptile-apps[bot]",
+            "actorType": "Bot",
+            "authorAssociation": "CONTRIBUTOR",
+            "createdAt": "2026-08-09T21:36:59Z",
+            "eventId": "github:top-level-comment:BerriAI/litellm#36372:5233966950",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "BerriAI/litellm#36372",
+            "summary": "<h3>Greptile Summary</h3> Azure Responses input transformation now replaces empty or whitespace-only namespace-tool descriptions with the namespace name while preserving populated descriptions and other metadata. - Adds focused normalization helpers for `additional_tools` input items. - Adds regression coverage for empty, whitespace-only, and populated descriptions plus input immutability. <h3>Con",
+            "targetPrKey": "BerriAI/litellm#36372",
+            "targetRepo": "BerriAI/litellm",
+            "url": "https://github.com/BerriAI/litellm/pull/36372#issuecomment-5233966950"
+          },
+          {
+            "actorLogin": "codecov[bot]",
+            "actorType": "Bot",
+            "authorAssociation": "NONE",
+            "createdAt": "2026-08-09T21:51:02Z",
+            "eventId": "github:top-level-comment:BerriAI/litellm#36372:5234021899",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "BerriAI/litellm#36372",
+            "summary": "## [Codecov](https://app.codecov.io/gh/BerriAI/litellm/pull/36372?dropdown=coverage&src=pr&el=h1&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=BerriAI) Report :x: Patch coverage is `92.30769%` with `2 lines` in your changes missing coverage. Please review. | [Files with missing lines](https://app.codecov.io/gh/BerriAI/litellm/pull/36372?dropdown=covera",
+            "targetPrKey": "BerriAI/litellm#36372",
+            "targetRepo": "BerriAI/litellm",
+            "url": "https://github.com/BerriAI/litellm/pull/36372#issuecomment-5234021899"
+          },
+          {
+            "actorLogin": "codspeed-hq[bot]",
+            "actorType": "Bot",
+            "authorAssociation": "CONTRIBUTOR",
+            "createdAt": "2026-08-09T22:17:29Z",
+            "eventId": "github:top-level-comment:BerriAI/litellm#36372:5234128174",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "BerriAI/litellm#36372",
+            "summary": "<!-- __CODSPEED_PERFORMANCE_REPORT_COMMENT__ --> ## Merging this PR will **not alter performance** `✅ 31` untouched benchmarks --- <sub>Comparing <code>Oxygen56:bugfix/36366-azure-namespace-description</code> (5d08d5e) with <code>litellm_internal_staging</code> (f6b9518)</sub> <a href=\"https://app.codspeed.io/BerriAI/litellm/branches/Oxygen56%3Abugfix%2F36366-azure-namespace-description?utm_source",
+            "targetPrKey": "BerriAI/litellm#36372",
+            "targetRepo": "BerriAI/litellm",
+            "url": "https://github.com/BerriAI/litellm/pull/36372#issuecomment-5234128174"
+          }
+        ],
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "requestedChanges": [],
+        "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
       },
       "headSha": "5d08d5e3096c1751f79905098b8b1c8d3dce5a44",
       "key": "BerriAI/litellm#36372",
       "mergeConflict": false,
-      "mergeableState": "unknown",
+      "mergeableState": "blocked",
       "number": 36372,
       "repo": "BerriAI/litellm",
       "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
@@ -49,7 +90,7 @@
       ],
       "baseRefName": "litellm_internal_staging",
       "baseSha": "d447be15b965a052e49a2d3c0b9f538d85c9d865",
-      "checkedAt": "2026-08-23T03:17:40.094660Z",
+      "checkedAt": "2026-08-23T04:54:33.779592Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -76,11 +117,25 @@
             "opportunityKey": "BerriAI/litellm#36374",
             "targetPrKey": "BerriAI/litellm#36374",
             "targetRepo": "BerriAI/litellm"
+          },
+          {
+            "actorLogin": "greptile-apps[bot]",
+            "actorType": "Bot",
+            "authorAssociation": "CONTRIBUTOR",
+            "createdAt": "2026-08-09T22:29:56Z",
+            "eventId": "github:top-level-comment:BerriAI/litellm#36374:5234175611",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "BerriAI/litellm#36374",
+            "summary": "<h3>Greptile Summary</h3> The PR prevents unchanged stdio MCP server edits from clearing saved environment variables. - Prefills the environment JSON field from the existing server configuration. - Distinguishes omitted environment state from an explicitly cleared field during submission. - Adds regression coverage for unchanged saves, explicit clearing, and replacement values. <h3>Confidence Scor",
+            "targetPrKey": "BerriAI/litellm#36374",
+            "targetRepo": "BerriAI/litellm",
+            "url": "https://github.com/BerriAI/litellm/pull/36374#issuecomment-5234175611"
           }
         ],
         "mergeConflict": true,
         "mergeConflictPreparationVersion": "conflict_files_v1",
         "requestedChanges": [],
+        "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
       },
       "headSha": "29fcded639ff5cd5a7b6ef105bf3411699983dd8",
@@ -105,7 +160,7 @@
       ],
       "baseRefName": "litellm_internal_staging",
       "baseSha": "d447be15b965a052e49a2d3c0b9f538d85c9d865",
-      "checkedAt": "2026-08-23T03:17:40.094660Z",
+      "checkedAt": "2026-08-23T04:54:33.779592Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -191,10 +246,64 @@
           }
         ],
         "headSha": "f24a24547bc3300f86336d67ef54fb59c46ff67c",
-        "maintainerEvents": [],
+        "maintainerEvents": [
+          {
+            "actorLogin": "greptile-apps[bot]",
+            "actorType": "Bot",
+            "authorAssociation": "CONTRIBUTOR",
+            "createdAt": "2026-08-13T17:02:11Z",
+            "eventId": "github:top-level-comment:BerriAI/litellm#36791:5283863808",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "BerriAI/litellm#36791",
+            "summary": "<h3>Greptile Summary</h3> Adds pre-content fallback handling for Anthropic Messages streams and prevents provider or transport failures from being recorded as successful. - Introduces incremental Anthropic SSE frame decoding and error classification - Wraps Router Anthropic streams to retry configured fallback model groups before content is emitted - Suppresses pass-through success logging after S",
+            "targetPrKey": "BerriAI/litellm#36791",
+            "targetRepo": "BerriAI/litellm",
+            "url": "https://github.com/BerriAI/litellm/pull/36791#issuecomment-5283863808"
+          },
+          {
+            "actorLogin": "veria-ai[bot]",
+            "actorType": "Bot",
+            "authorAssociation": "CONTRIBUTOR",
+            "createdAt": "2026-08-13T17:04:46Z",
+            "eventId": "github:top-level-comment:BerriAI/litellm#36791:5283891627",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "BerriAI/litellm#36791",
+            "summary": "### PR overview This pull request updates the Anthropic messages streaming iterator so the router can fall back correctly when handling streamed responses. One security issue remains open: a custom upstream can withhold SSE frame separators and cause unbounded buffering, potentially exhausting memory and CPU. Exploitation requires control of the configured upstream, but buffer limits and stream te",
+            "targetPrKey": "BerriAI/litellm#36791",
+            "targetRepo": "BerriAI/litellm",
+            "url": "https://github.com/BerriAI/litellm/pull/36791#issuecomment-5283891627"
+          },
+          {
+            "actorLogin": "codecov[bot]",
+            "actorType": "Bot",
+            "authorAssociation": "NONE",
+            "createdAt": "2026-08-13T17:15:17Z",
+            "eventId": "github:top-level-comment:BerriAI/litellm#36791:5284002535",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "BerriAI/litellm#36791",
+            "summary": "## [Codecov](https://app.codecov.io/gh/BerriAI/litellm/pull/36791?dropdown=coverage&src=pr&el=h1&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=BerriAI) Report :x: Patch coverage is `88.01843%` with `26 lines` in your changes missing coverage. Please review. | [Files with missing lines](https://app.codecov.io/gh/BerriAI/litellm/pull/36791?dropdown=cover",
+            "targetPrKey": "BerriAI/litellm#36791",
+            "targetRepo": "BerriAI/litellm",
+            "url": "https://github.com/BerriAI/litellm/pull/36791#issuecomment-5284002535"
+          },
+          {
+            "actorLogin": "codspeed-hq[bot]",
+            "actorType": "Bot",
+            "authorAssociation": "CONTRIBUTOR",
+            "createdAt": "2026-08-13T17:41:16Z",
+            "eventId": "github:top-level-comment:BerriAI/litellm#36791:5284270911",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "BerriAI/litellm#36791",
+            "summary": "<!-- __CODSPEED_PERFORMANCE_REPORT_COMMENT__ --> ## Merging this PR will **not alter performance** `✅ 31` untouched benchmarks --- <sub>Comparing <code>Oxygen56:fix-24004-anthropic-messages-stream-fallback</code> (f24a245) with <code>litellm_internal_staging</code> (9d069f2)</sub> <a href=\"https://app.codspeed.io/BerriAI/litellm/branches/Oxygen56%3Afix-24004-anthropic-messages-stream-fallback?utm_",
+            "targetPrKey": "BerriAI/litellm#36791",
+            "targetRepo": "BerriAI/litellm",
+            "url": "https://github.com/BerriAI/litellm/pull/36791#issuecomment-5284270911"
+          }
+        ],
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "requestedChanges": [],
+        "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": [
           {
             "association": "CONTRIBUTOR",
@@ -254,7 +363,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "d723cc47ee43e5ca3c3c4ec2473f205d44acede2",
-      "checkedAt": "2026-08-23T03:17:40.094660Z",
+      "checkedAt": "2026-08-23T04:54:33.779592Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -274,10 +383,25 @@
         ],
         "failingChecks": [],
         "headSha": "a67c8e68a9adeeb04e56c78608534c00b3a3e319",
-        "maintainerEvents": [],
+        "maintainerEvents": [
+          {
+            "actorLogin": "changeset-bot[bot]",
+            "actorType": "Bot",
+            "authorAssociation": "NONE",
+            "createdAt": "2026-08-17T13:30:02Z",
+            "eventId": "github:top-level-comment:MoonshotAI/kimi-code#3004:5316724025",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "MoonshotAI/kimi-code#3004",
+            "summary": "### 🦋 Changeset detected Latest commit: a67c8e68a9adeeb04e56c78608534c00b3a3e319 **The changes in this PR will be included in the next version bump.** Not sure what this means? [Click here to learn what changesets are](https://changesets.dev/faq). [Click here if you're a maintainer who wants to add another changeset to this PR](https://github.com/Oxygen56/kimi-code/new/fix/2991-acp-scheduled-turn-",
+            "targetPrKey": "MoonshotAI/kimi-code#3004",
+            "targetRepo": "MoonshotAI/kimi-code",
+            "url": "https://github.com/MoonshotAI/kimi-code/pull/3004#issuecomment-5316724025"
+          }
+        ],
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "requestedChanges": [],
+        "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
       },
       "headSha": "a67c8e68a9adeeb04e56c78608534c00b3a3e319",
@@ -297,7 +421,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "944172f6c0d0f90fdc1921fd38c1dcae62c48592",
-      "checkedAt": "2026-08-23T03:17:40.094660Z",
+      "checkedAt": "2026-08-23T04:54:33.779592Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -331,6 +455,7 @@
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "requestedChanges": [],
+        "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
       },
       "headSha": "15b99c96808644db890e98796ef11453d37233f9",
@@ -346,11 +471,13 @@
       "url": "https://github.com/Oxygen56/fixtureforge/pull/1"
     },
     {
-      "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
-      "actions": [],
+      "actionDigest": "506f8794ddc23f9834eec75d43548c896d9a92c98fe30c81c9e2701382dcdcd0",
+      "actions": [
+        "PR 处于草稿状态"
+      ],
       "baseRefName": "main",
       "baseSha": "944172f6c0d0f90fdc1921fd38c1dcae62c48592",
-      "checkedAt": "2026-08-23T03:17:40.094660Z",
+      "checkedAt": "2026-08-23T04:54:33.779592Z",
       "ciStatus": "PASSED",
       "draft": true,
       "evidence": {
@@ -385,6 +512,7 @@
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "requestedChanges": [],
+        "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
       },
       "headSha": "a4703f01ac6c9011f3ac1f01845c6f459b9b0076",
@@ -393,9 +521,11 @@
       "mergeableState": "clean",
       "number": 2,
       "repo": "Oxygen56/fixtureforge",
-      "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
-      "taskActions": [],
-      "taskFollowupRequired": false,
+      "taskActionDigest": "0394c1a054654d2ffdc17726b29a06d8bee42bb22c93e9b3c4febc91f5833d57",
+      "taskActions": [
+        "PR 处于草稿状态"
+      ],
+      "taskFollowupRequired": true,
       "title": "feat: add ownership-aware adversarial evidence",
       "url": "https://github.com/Oxygen56/fixtureforge/pull/2"
     },
@@ -406,7 +536,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "16b2e712d198166c9359e77055b13bf2668bf5ae",
-      "checkedAt": "2026-08-23T03:17:40.094660Z",
+      "checkedAt": "2026-08-23T04:54:33.779592Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -443,11 +573,38 @@
             "opportunityKey": "agentscope-ai/QwenPaw#6825",
             "targetPrKey": "agentscope-ai/QwenPaw#6825",
             "targetRepo": "agentscope-ai/QwenPaw"
+          },
+          {
+            "actorLogin": "github-actions[bot]",
+            "actorType": "Bot",
+            "authorAssociation": "NONE",
+            "createdAt": "2026-08-08T07:48:34Z",
+            "eventId": "github:top-level-comment:agentscope-ai/QwenPaw#6825:5225193752",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "agentscope-ai/QwenPaw#6825",
+            "summary": "<div align=\"center\"> <img src=\"https://img.alicdn.com/imgextra/i2/O1CN01eSmIfy1hJImze8NN8_!!6000000004256-2-tps-1858-1858.png\" width=\"80\" height=\"80\" /> ## Welcome to QwenPaw! 🐾 </div> Hi @Oxygen56, thank you for your first Pull Request! 🎉 ### 🙌 Join Developer Community Thanks so much for your contribution! We'd love to invite you to join the official QwenPaw developer group! You can find the Disc",
+            "targetPrKey": "agentscope-ai/QwenPaw#6825",
+            "targetRepo": "agentscope-ai/QwenPaw",
+            "url": "https://github.com/agentscope-ai/QwenPaw/pull/6825#issuecomment-5225193752"
+          },
+          {
+            "actorLogin": "RerankerGuo",
+            "actorType": "User",
+            "authorAssociation": "CONTRIBUTOR",
+            "createdAt": "2026-08-08T08:05:18Z",
+            "eventId": "github:top-level-comment:agentscope-ai/QwenPaw#6825:5225251159",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "agentscope-ai/QwenPaw#6825",
+            "summary": "Independent validation passed at exact head `2f480ca99e72fe9e76b2ab3523bdc682334a2332` against current main `bacac7410cf2ac122dd892152beff8b03f38729f`. I first ran the PR's three lifecycle-wiring contracts unchanged against both revisions: ```text current main: HTTP float timeout -> not passed to ClientSession stdio float timeout -> not passed to ClientSession timedelta timeout -> not passed to Cl",
+            "targetPrKey": "agentscope-ai/QwenPaw#6825",
+            "targetRepo": "agentscope-ai/QwenPaw",
+            "url": "https://github.com/agentscope-ai/QwenPaw/pull/6825#issuecomment-5225251159"
           }
         ],
         "mergeConflict": true,
         "mergeConflictPreparationVersion": "conflict_files_v1",
         "requestedChanges": [],
+        "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
       },
       "headSha": "2f480ca99e72fe9e76b2ab3523bdc682334a2332",
@@ -465,11 +622,13 @@
       "url": "https://github.com/agentscope-ai/QwenPaw/pull/6825"
     },
     {
-      "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
-      "actions": [],
+      "actionDigest": "506f8794ddc23f9834eec75d43548c896d9a92c98fe30c81c9e2701382dcdcd0",
+      "actions": [
+        "PR 处于草稿状态"
+      ],
       "baseRefName": "main",
       "baseSha": "da00849f2c3db60b16edaf2371ae1d863f341ae2",
-      "checkedAt": "2026-08-23T03:17:40.094660Z",
+      "checkedAt": "2026-08-23T04:54:33.779592Z",
       "ciStatus": "PASSED",
       "draft": true,
       "evidence": {
@@ -487,10 +646,25 @@
         ],
         "failingChecks": [],
         "headSha": "688b6b306fafecb64595bfe83411abf536a69a9d",
-        "maintainerEvents": [],
+        "maintainerEvents": [
+          {
+            "actorLogin": "weike-zhang",
+            "actorType": "User",
+            "authorAssociation": "NONE",
+            "createdAt": "2026-08-22T13:53:23Z",
+            "eventId": "github:top-level-comment:agentscope-ai/agentscope#2397:5380759339",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "agentscope-ai/agentscope#2397",
+            "summary": "Thanks for this fix. One concern with a uniform `(bytes * 4 + 4) // 5` (~0.8 tokens/byte) is that it over-counts ASCII/English — the dominant content — by roughly 3×. Example: 135 bytes of English prose measures ~31 tokens with `cl100k_base` (~0.23 tokens/byte), but this formula returns ~108, so compaction would trigger ~3× early and waste a large share of the context window. A CJK-aware estimate ",
+            "targetPrKey": "agentscope-ai/agentscope#2397",
+            "targetRepo": "agentscope-ai/agentscope",
+            "url": "https://github.com/agentscope-ai/agentscope/pull/2397#issuecomment-5380759339"
+          }
+        ],
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "requestedChanges": [],
+        "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
       },
       "headSha": "688b6b306fafecb64595bfe83411abf536a69a9d",
@@ -499,9 +673,11 @@
       "mergeableState": "blocked",
       "number": 2397,
       "repo": "agentscope-ai/agentscope",
-      "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
-      "taskActions": [],
-      "taskFollowupRequired": false,
+      "taskActionDigest": "0394c1a054654d2ffdc17726b29a06d8bee42bb22c93e9b3c4febc91f5833d57",
+      "taskActions": [
+        "PR 处于草稿状态"
+      ],
+      "taskFollowupRequired": true,
       "title": "fix(model): use conservative fallback token estimate",
       "url": "https://github.com/agentscope-ai/agentscope/pull/2397"
     },
@@ -511,8 +687,8 @@
         "存在未解决审查线程"
       ],
       "baseRefName": "main",
-      "baseSha": "dbecec8bc31dec040e95ac4183dc4d4908664d1d",
-      "checkedAt": "2026-08-23T03:17:40.094660Z",
+      "baseSha": "bee2a6eca3b5f23d1c05061a3cebe575a438cf5f",
+      "checkedAt": "2026-08-23T04:54:33.779592Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -522,7 +698,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "dbecec8bc31dec040e95ac4183dc4d4908664d1d",
+        "baseSha": "bee2a6eca3b5f23d1c05061a3cebe575a438cf5f",
         "changedFiles": [
           "deploy/inference-gateway/epp/pkg/plugins/disagg/decode_scorer.go",
           "deploy/inference-gateway/epp/pkg/plugins/disagg/decode_scorer_test.go",
@@ -541,10 +717,64 @@
         ],
         "failingChecks": [],
         "headSha": "bfb560ea9403f47d3dc1450a40735bed1da32510",
-        "maintainerEvents": [],
+        "maintainerEvents": [
+          {
+            "actorLogin": "copy-pr-bot[bot]",
+            "actorType": "Bot",
+            "authorAssociation": "NONE",
+            "createdAt": "2026-08-09T10:06:53Z",
+            "eventId": "github:top-level-comment:ai-dynamo/dynamo#12907:5230948781",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "ai-dynamo/dynamo#12907",
+            "summary": "This pull request requires additional validation before any workflows can run on NVIDIA's runners. Pull request vetters can view their responsibilities [here](https://docs.gha-runners.nvidia.com/cpr/vetters). Contributors can view more details about this message [here](https://docs.gha-runners.nvidia.com/cpr/contributors).",
+            "targetPrKey": "ai-dynamo/dynamo#12907",
+            "targetRepo": "ai-dynamo/dynamo",
+            "url": "https://github.com/ai-dynamo/dynamo/pull/12907#issuecomment-5230948781"
+          },
+          {
+            "actorLogin": "github-actions[bot]",
+            "actorType": "Bot",
+            "authorAssociation": "CONTRIBUTOR",
+            "createdAt": "2026-08-09T10:06:58Z",
+            "eventId": "github:top-level-comment:ai-dynamo/dynamo#12907:5230949099",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "ai-dynamo/dynamo#12907",
+            "summary": "👋 Hi Oxygen56! Thank you for contributing to ai-dynamo/dynamo. Just a reminder: The `NVIDIA Test Github Validation` CI runs an essential subset of the testing framework to quickly catch errors.Your PR reviewers may elect to test the changes comprehensively before approving your changes. 🚀",
+            "targetPrKey": "ai-dynamo/dynamo#12907",
+            "targetRepo": "ai-dynamo/dynamo",
+            "url": "https://github.com/ai-dynamo/dynamo/pull/12907#issuecomment-5230949099"
+          },
+          {
+            "actorLogin": "datadog-official[bot]",
+            "actorType": "Bot",
+            "authorAssociation": "NONE",
+            "createdAt": "2026-08-09T10:11:43Z",
+            "eventId": "github:top-level-comment:ai-dynamo/dynamo#12907:5230967399",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "ai-dynamo/dynamo#12907",
+            "summary": "<a target='_blank' href='https://us3.datadoghq.com/ci/pipeline-executions?query=ci_level%3Ajob+%40ci.status%3Aerror+%40git.commit.sha%3A13dd2e2de2ab5c3ac741789f2b2b020fd2da2a3d&referrer=pr-comment&start=1786267447000'><picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://static.datadoghq.com/static/images/pr_comments/software_delivery/badges_header/pipelines-warning.svg\"/><img src=",
+            "targetPrKey": "ai-dynamo/dynamo#12907",
+            "targetRepo": "ai-dynamo/dynamo",
+            "url": "https://github.com/ai-dynamo/dynamo/pull/12907#issuecomment-5230967399"
+          },
+          {
+            "actorLogin": "coderabbitai[bot]",
+            "actorType": "Bot",
+            "authorAssociation": "CONTRIBUTOR",
+            "createdAt": "2026-08-09T10:12:23Z",
+            "eventId": "github:top-level-comment:ai-dynamo/dynamo#12907:5230969949",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "ai-dynamo/dynamo#12907",
+            "summary": "<!-- This is an auto-generated comment: summarize by coderabbit.ai --> <!-- review_stack_entry_start --> [![Review Change Stack](https://storage.googleapis.com/coderabbit_public_assets/review-stack-in-coderabbit-ui.svg)](https://app.coderabbit.ai/change-stack/ai-dynamo/dynamo/pull/12907?utm_source=github_walkthrough&utm_medium=github&utm_campaign=change_stack) <!-- review_stack_entry_end --> <!-- ",
+            "targetPrKey": "ai-dynamo/dynamo#12907",
+            "targetRepo": "ai-dynamo/dynamo",
+            "url": "https://github.com/ai-dynamo/dynamo/pull/12907#issuecomment-5230969949"
+          }
+        ],
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "requestedChanges": [],
+        "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": [
           {
             "association": "CONTRIBUTOR",
@@ -587,7 +817,7 @@
       "headSha": "bfb560ea9403f47d3dc1450a40735bed1da32510",
       "key": "ai-dynamo/dynamo#12907",
       "mergeConflict": false,
-      "mergeableState": "blocked",
+      "mergeableState": "unknown",
       "number": 12907,
       "repo": "ai-dynamo/dynamo",
       "taskActionDigest": "34c5006168ea2be5ef212113029018db3a3058a375acfd018fc6f32abbc0755d",
@@ -605,7 +835,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "542fefb3b94be87760b2513fff889b91bb5b6672",
-      "checkedAt": "2026-08-23T03:17:40.094660Z",
+      "checkedAt": "2026-08-23T04:54:33.779592Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -624,10 +854,25 @@
         ],
         "failingChecks": [],
         "headSha": "6862581deb82fcfcd9c993199109676bf4615f3a",
-        "maintainerEvents": [],
+        "maintainerEvents": [
+          {
+            "actorLogin": "Sri01728",
+            "actorType": "User",
+            "authorAssociation": "NONE",
+            "createdAt": "2026-08-14T20:58:06Z",
+            "eventId": "github:top-level-comment:anthropics/claude-agent-sdk-python#1008:5298106795",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "anthropics/claude-agent-sdk-python#1008",
+            "summary": "Hi @chrislloyd @qing-ant @ashwin-ant @dicksontsai , could you please review this PR or advise on the recommended approach? We're evaluating deferred tool continuation for human-in-the-loop approvals. Our intended design relies on in-process Python `PreToolUse` callbacks remaining enforced when a deferred session resumes. Based on #993, that path appears unsafe without this fix. Are settings-based ",
+            "targetPrKey": "anthropics/claude-agent-sdk-python#1008",
+            "targetRepo": "anthropics/claude-agent-sdk-python",
+            "url": "https://github.com/anthropics/claude-agent-sdk-python/pull/1008#issuecomment-5298106795"
+          }
+        ],
         "mergeConflict": true,
         "mergeConflictPreparationVersion": "conflict_files_v1",
         "requestedChanges": [],
+        "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
       },
       "headSha": "6862581deb82fcfcd9c993199109676bf4615f3a",
@@ -649,7 +894,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "cbff54d645d2cd8ee1f1c358a82f3f473588433d",
-      "checkedAt": "2026-08-23T03:17:40.094660Z",
+      "checkedAt": "2026-08-23T04:54:33.779592Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -687,11 +932,77 @@
             "opportunityKey": "areal-project/AReaL#1392",
             "targetPrKey": "areal-project/AReaL#1392",
             "targetRepo": "areal-project/AReaL"
+          },
+          {
+            "actorLogin": "HT-Yuan",
+            "actorType": "User",
+            "authorAssociation": "COLLABORATOR",
+            "createdAt": "2026-06-06T07:36:41Z",
+            "eventId": "github:top-level-comment:areal-project/AReaL#1392:4637841534",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "areal-project/AReaL#1392",
+            "summary": "LGTM，Thanks for your contribute! Please run 'pre-commit' before submit.",
+            "targetPrKey": "areal-project/AReaL#1392",
+            "targetRepo": "areal-project/AReaL",
+            "url": "https://github.com/areal-project/AReaL/pull/1392#issuecomment-4637841534"
+          },
+          {
+            "actorLogin": "TaoZex",
+            "actorType": "User",
+            "authorAssociation": "COLLABORATOR",
+            "createdAt": "2026-06-11T07:26:50Z",
+            "eventId": "github:top-level-comment:areal-project/AReaL#1392:4678187214",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "areal-project/AReaL#1392",
+            "summary": "It looks good to me. Thank you for your contribution! Have you verified the correctness after the fix? For example, by printing relevant logs or providing screenshots?",
+            "targetPrKey": "areal-project/AReaL#1392",
+            "targetRepo": "areal-project/AReaL",
+            "url": "https://github.com/areal-project/AReaL/pull/1392#issuecomment-4678187214"
+          },
+          {
+            "actorLogin": "github-actions[bot]",
+            "actorType": "Bot",
+            "authorAssociation": "NONE",
+            "createdAt": "2026-06-27T02:48:24Z",
+            "eventId": "github:top-level-comment:areal-project/AReaL#1392:4814839089",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "areal-project/AReaL#1392",
+            "summary": "This pull request has been automatically marked as stale because it has not had recent activity within the last 14 days. Please add a comment or push new commits to keep it active. Thank you for your contribution!",
+            "targetPrKey": "areal-project/AReaL#1392",
+            "targetRepo": "areal-project/AReaL",
+            "url": "https://github.com/areal-project/AReaL/pull/1392#issuecomment-4814839089"
+          },
+          {
+            "actorLogin": "github-actions[bot]",
+            "actorType": "Bot",
+            "authorAssociation": "NONE",
+            "createdAt": "2026-07-24T02:23:09Z",
+            "eventId": "github:top-level-comment:areal-project/AReaL#1392:5065528819",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "areal-project/AReaL#1392",
+            "summary": "This pull request has been automatically marked as stale because it has not had recent activity within the last 14 days. Please add a comment or push new commits to keep it active. Thank you for your contribution!",
+            "targetPrKey": "areal-project/AReaL#1392",
+            "targetRepo": "areal-project/AReaL",
+            "url": "https://github.com/areal-project/AReaL/pull/1392#issuecomment-5065528819"
+          },
+          {
+            "actorLogin": "github-actions[bot]",
+            "actorType": "Bot",
+            "authorAssociation": "NONE",
+            "createdAt": "2026-08-17T01:01:56Z",
+            "eventId": "github:top-level-comment:areal-project/AReaL#1392:5310654566",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "areal-project/AReaL#1392",
+            "summary": "This pull request has been automatically marked as stale because it has not had recent activity within the last 14 days. Please add a comment or push new commits to keep it active. Thank you for your contribution!",
+            "targetPrKey": "areal-project/AReaL#1392",
+            "targetRepo": "areal-project/AReaL",
+            "url": "https://github.com/areal-project/AReaL/pull/1392#issuecomment-5310654566"
           }
         ],
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "requestedChanges": [],
+        "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
       },
       "headSha": "bee29dd4ad46f0b5b7defc813dab06a2b7026c6a",
@@ -711,7 +1022,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "85ddbfedf609166b2d2c76c3d80506649fee82a9",
-      "checkedAt": "2026-08-23T03:17:40.094660Z",
+      "checkedAt": "2026-08-23T04:54:33.779592Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -730,10 +1041,25 @@
         ],
         "failingChecks": [],
         "headSha": "76c92cd0d77514ea0f0c145aacf4d75eccf87877",
-        "maintainerEvents": [],
+        "maintainerEvents": [
+          {
+            "actorLogin": "github-actions[bot]",
+            "actorType": "Bot",
+            "authorAssociation": "NONE",
+            "createdAt": "2026-08-16T02:29:05Z",
+            "eventId": "github:top-level-comment:browser-use/browser-use#4976:5305336148",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "browser-use/browser-use#4976",
+            "summary": "👋 This PR has been automatically marked as stale because it hasn't had activity for 45 days. **To keep this PR open:** - Rebase against the latest main branch - Address any review feedback or merge conflicts - Add a comment explaining the current status - Add the `work-in-progress` label if you're still actively working on this **This will be automatically closed in 14 days** if no further activit",
+            "targetPrKey": "browser-use/browser-use#4976",
+            "targetRepo": "browser-use/browser-use",
+            "url": "https://github.com/browser-use/browser-use/pull/4976#issuecomment-5305336148"
+          }
+        ],
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "requestedChanges": [],
+        "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
       },
       "headSha": "76c92cd0d77514ea0f0c145aacf4d75eccf87877",
@@ -756,7 +1082,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "a21633d53930abc5d62b8dbd6b608995f2ccb4b1",
-      "checkedAt": "2026-08-23T03:17:40.094660Z",
+      "checkedAt": "2026-08-23T04:54:33.779592Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -776,10 +1102,25 @@
         ],
         "failingChecks": [],
         "headSha": "d1f487c75c8b532ca56ed3dd8914398c5592eee6",
-        "maintainerEvents": [],
+        "maintainerEvents": [
+          {
+            "actorLogin": "changeset-bot[bot]",
+            "actorType": "Bot",
+            "authorAssociation": "NONE",
+            "createdAt": "2026-08-17T10:54:27Z",
+            "eventId": "github:top-level-comment:browserbase/stagehand#2751:5315112617",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "browserbase/stagehand#2751",
+            "summary": "### 🦋 Changeset detected Latest commit: d1f487c75c8b532ca56ed3dd8914398c5592eee6 **The changes in this PR will be included in the next version bump.** <details><summary>This PR includes changesets to release 11 packages</summary> | Name | Type | | ---------------------------------------------------------------- | ----- | | @browserbasehq/stagehand | Patch | | @browserbasehq/stagehand-python | Patc",
+            "targetPrKey": "browserbase/stagehand#2751",
+            "targetRepo": "browserbase/stagehand",
+            "url": "https://github.com/browserbase/stagehand/pull/2751#issuecomment-5315112617"
+          }
+        ],
         "mergeConflict": true,
         "mergeConflictPreparationVersion": "conflict_files_v1",
         "requestedChanges": [],
+        "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": [
           {
             "association": "CONTRIBUTOR",
@@ -821,7 +1162,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "4f836ae7d0ed29ece7ef4a2a478deb470fdd056e",
-      "checkedAt": "2026-08-23T03:17:40.094660Z",
+      "checkedAt": "2026-08-23T04:54:33.779592Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -838,10 +1179,25 @@
         ],
         "failingChecks": [],
         "headSha": "cf14b4143080c2975e352dc8789826a9542b46b1",
-        "maintainerEvents": [],
+        "maintainerEvents": [
+          {
+            "actorLogin": "greptile-apps[bot]",
+            "actorType": "Bot",
+            "authorAssociation": "CONTRIBUTOR",
+            "createdAt": "2026-08-08T08:16:49Z",
+            "eventId": "github:top-level-comment:cline/cline#13082:5225289483",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "cline/cline#13082",
+            "summary": "<!-- greptile-status --> PR author is not in the allowed authors list.",
+            "targetPrKey": "cline/cline#13082",
+            "targetRepo": "cline/cline",
+            "url": "https://github.com/cline/cline/pull/13082#issuecomment-5225289483"
+          }
+        ],
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "requestedChanges": [],
+        "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
       },
       "headSha": "cf14b4143080c2975e352dc8789826a9542b46b1",
@@ -861,7 +1217,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "4f836ae7d0ed29ece7ef4a2a478deb470fdd056e",
-      "checkedAt": "2026-08-23T03:17:40.094660Z",
+      "checkedAt": "2026-08-23T04:54:33.779592Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -878,10 +1234,25 @@
         ],
         "failingChecks": [],
         "headSha": "5010154331b2d6f19b409f8cb52cdb4d2819a30b",
-        "maintainerEvents": [],
+        "maintainerEvents": [
+          {
+            "actorLogin": "greptile-apps[bot]",
+            "actorType": "Bot",
+            "authorAssociation": "CONTRIBUTOR",
+            "createdAt": "2026-08-08T13:54:59Z",
+            "eventId": "github:top-level-comment:cline/cline#13088:5226409273",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "cline/cline#13088",
+            "summary": "<!-- greptile-status --> PR author is not in the allowed authors list.",
+            "targetPrKey": "cline/cline#13088",
+            "targetRepo": "cline/cline",
+            "url": "https://github.com/cline/cline/pull/13088#issuecomment-5226409273"
+          }
+        ],
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "requestedChanges": [],
+        "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
       },
       "headSha": "5010154331b2d6f19b409f8cb52cdb4d2819a30b",
@@ -901,7 +1272,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "4f836ae7d0ed29ece7ef4a2a478deb470fdd056e",
-      "checkedAt": "2026-08-23T03:17:40.094660Z",
+      "checkedAt": "2026-08-23T04:54:33.779592Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -918,10 +1289,25 @@
         ],
         "failingChecks": [],
         "headSha": "4dfca4899a0adcf9ebf99a5e39a10579e9859676",
-        "maintainerEvents": [],
+        "maintainerEvents": [
+          {
+            "actorLogin": "greptile-apps[bot]",
+            "actorType": "Bot",
+            "authorAssociation": "CONTRIBUTOR",
+            "createdAt": "2026-08-17T11:34:16Z",
+            "eventId": "github:top-level-comment:cline/cline#13303:5315491575",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "cline/cline#13303",
+            "summary": "<!-- greptile-status --> PR author is not in the allowed authors list.",
+            "targetPrKey": "cline/cline#13303",
+            "targetRepo": "cline/cline",
+            "url": "https://github.com/cline/cline/pull/13303#issuecomment-5315491575"
+          }
+        ],
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "requestedChanges": [],
+        "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
       },
       "headSha": "4dfca4899a0adcf9ebf99a5e39a10579e9859676",
@@ -943,7 +1329,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "4f836ae7d0ed29ece7ef4a2a478deb470fdd056e",
-      "checkedAt": "2026-08-23T03:17:40.094660Z",
+      "checkedAt": "2026-08-23T04:54:33.779592Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -1006,10 +1392,25 @@
           }
         ],
         "headSha": "ddc5222071e2fe4d401d834da675e527726b263a",
-        "maintainerEvents": [],
+        "maintainerEvents": [
+          {
+            "actorLogin": "greptile-apps[bot]",
+            "actorType": "Bot",
+            "authorAssociation": "CONTRIBUTOR",
+            "createdAt": "2026-08-17T15:03:21Z",
+            "eventId": "github:top-level-comment:cline/cline#13307:5317221906",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "cline/cline#13307",
+            "summary": "<!-- greptile-status --> PR author is not in the allowed authors list.",
+            "targetPrKey": "cline/cline#13307",
+            "targetRepo": "cline/cline",
+            "url": "https://github.com/cline/cline/pull/13307#issuecomment-5317221906"
+          }
+        ],
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "requestedChanges": [],
+        "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
       },
       "headSha": "ddc5222071e2fe4d401d834da675e527726b263a",
@@ -1027,11 +1428,13 @@
       "url": "https://github.com/cline/cline/pull/13307"
     },
     {
-      "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
-      "actions": [],
+      "actionDigest": "506f8794ddc23f9834eec75d43548c896d9a92c98fe30c81c9e2701382dcdcd0",
+      "actions": [
+        "PR 处于草稿状态"
+      ],
       "baseRefName": "main",
       "baseSha": "be5bfaff2b16d623a6c85a8e8f0a98d80f05899d",
-      "checkedAt": "2026-08-23T03:17:40.094660Z",
+      "checkedAt": "2026-08-23T04:54:33.779592Z",
       "ciStatus": "PASSED",
       "draft": true,
       "evidence": {
@@ -1054,6 +1457,7 @@
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "requestedChanges": [],
+        "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
       },
       "headSha": "654153167654291c93b93a051967dd4688c0a403",
@@ -1062,9 +1466,11 @@
       "mergeableState": "behind",
       "number": 127,
       "repo": "datahub-project/datahub-skills",
-      "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
-      "taskActions": [],
-      "taskFollowupRequired": false,
+      "taskActionDigest": "0394c1a054654d2ffdc17726b29a06d8bee42bb22c93e9b3c4febc91f5833d57",
+      "taskActions": [
+        "PR 处于草稿状态"
+      ],
+      "taskFollowupRequired": true,
       "title": "feat: add DataHub fixture generation skill",
       "url": "https://github.com/datahub-project/datahub-skills/pull/127"
     },
@@ -1075,7 +1481,7 @@
       ],
       "baseRefName": "main-v2",
       "baseSha": "b9cf32f81f8090b25084471dd84539fe421bc88b",
-      "checkedAt": "2026-08-23T03:17:40.094660Z",
+      "checkedAt": "2026-08-23T04:54:33.779592Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -1125,6 +1531,7 @@
         "mergeConflict": true,
         "mergeConflictPreparationVersion": "conflict_files_v1",
         "requestedChanges": [],
+        "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
       },
       "headSha": "6537ed4c478c435a1e99148ac7e124405eb3b7fb",
@@ -1146,7 +1553,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "e753651b7df26febe00bde2cb043225e644cd207",
-      "checkedAt": "2026-08-23T03:17:40.094660Z",
+      "checkedAt": "2026-08-23T04:54:33.779592Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -1194,11 +1601,51 @@
             "opportunityKey": "google/adk-python#6300",
             "targetPrKey": "google/adk-python#6300",
             "targetRepo": "google/adk-python"
+          },
+          {
+            "actorLogin": "rohityan",
+            "actorType": "User",
+            "authorAssociation": "COLLABORATOR",
+            "createdAt": "2026-07-08T22:05:24Z",
+            "eventId": "github:top-level-comment:google/adk-python#6300:4919634205",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "google/adk-python#6300",
+            "summary": "Hi @Oxygen56 , Thank you for your contribution! We appreciate you taking the time to submit this pull request. Your PR has been received by the team and is currently under review. We will provide feedback as soon as we have an update to share.",
+            "targetPrKey": "google/adk-python#6300",
+            "targetRepo": "google/adk-python",
+            "url": "https://github.com/google/adk-python/pull/6300#issuecomment-4919634205"
+          },
+          {
+            "actorLogin": "rohityan",
+            "actorType": "User",
+            "authorAssociation": "COLLABORATOR",
+            "createdAt": "2026-07-08T22:06:08Z",
+            "eventId": "github:top-level-comment:google/adk-python#6300:4919638875",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "google/adk-python#6300",
+            "summary": "Hi @wyf7107 , can you please review this. LGTM.",
+            "targetPrKey": "google/adk-python#6300",
+            "targetRepo": "google/adk-python",
+            "url": "https://github.com/google/adk-python/pull/6300#issuecomment-4919638875"
+          },
+          {
+            "actorLogin": "saransh-translucent",
+            "actorType": "User",
+            "authorAssociation": "NONE",
+            "createdAt": "2026-08-20T14:13:10Z",
+            "eventId": "github:top-level-comment:google/adk-python#6300:5357083509",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "google/adk-python#6300",
+            "summary": "+1, we're hitting this in production with `google-adk 2.7.0`. Downstream repro adds a bit of signal to the report in #6281: **Scenario.** Our on-disk skills (workbook editor, various document editors, a few querying skills) all ship SKILL.md and `references/` only — none have a `scripts/` directory. Over a recent 7-day window in one nonprod environment we saw **181/181** `run_skill_script` calls r",
+            "targetPrKey": "google/adk-python#6300",
+            "targetRepo": "google/adk-python",
+            "url": "https://github.com/google/adk-python/pull/6300#issuecomment-5357083509"
           }
         ],
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "requestedChanges": [],
+        "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
       },
       "headSha": "ef0a0bb17f5d9835d5632743240cc5981dd813e7",
@@ -1220,7 +1667,7 @@
       ],
       "baseRefName": "master",
       "baseSha": "07f3bd3953115e45791f2d77426720166b561ba9",
-      "checkedAt": "2026-08-23T03:17:40.094660Z",
+      "checkedAt": "2026-08-23T04:54:33.779592Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -1285,11 +1732,25 @@
             "opportunityKey": "kyegomez/swarms#1664",
             "targetPrKey": "kyegomez/swarms#1664",
             "targetRepo": "kyegomez/swarms"
+          },
+          {
+            "actorLogin": "github-actions[bot]",
+            "actorType": "Bot",
+            "authorAssociation": "NONE",
+            "createdAt": "2026-05-31T17:50:53Z",
+            "eventId": "github:top-level-comment:kyegomez/swarms#1664:4587555948",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "kyegomez/swarms#1664",
+            "summary": "Hello there, thank you for opening an PR ! 🙏🏻 The team was notified and they will get back to you asap.",
+            "targetPrKey": "kyegomez/swarms#1664",
+            "targetRepo": "kyegomez/swarms",
+            "url": "https://github.com/kyegomez/swarms/pull/1664#issuecomment-4587555948"
           }
         ],
         "mergeConflict": true,
         "mergeConflictPreparationVersion": "conflict_files_v1",
         "requestedChanges": [],
+        "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
       },
       "headSha": "f3b7fcae16c43c52a7ae12656e137642e3c0fa10",
@@ -1313,7 +1774,7 @@
       ],
       "baseRefName": "master",
       "baseSha": "07f3bd3953115e45791f2d77426720166b561ba9",
-      "checkedAt": "2026-08-23T03:17:40.094660Z",
+      "checkedAt": "2026-08-23T04:54:33.779592Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -1339,11 +1800,25 @@
             "opportunityKey": "kyegomez/swarms#1670",
             "targetPrKey": "kyegomez/swarms#1670",
             "targetRepo": "kyegomez/swarms"
+          },
+          {
+            "actorLogin": "github-actions[bot]",
+            "actorType": "Bot",
+            "authorAssociation": "NONE",
+            "createdAt": "2026-06-05T15:32:39Z",
+            "eventId": "github:top-level-comment:kyegomez/swarms#1670:4633114049",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "kyegomez/swarms#1670",
+            "summary": "Hello there, thank you for opening an PR ! 🙏🏻 The team was notified and they will get back to you asap.",
+            "targetPrKey": "kyegomez/swarms#1670",
+            "targetRepo": "kyegomez/swarms",
+            "url": "https://github.com/kyegomez/swarms/pull/1670#issuecomment-4633114049"
           }
         ],
         "mergeConflict": true,
         "mergeConflictPreparationVersion": "conflict_files_v1",
         "requestedChanges": [],
+        "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
       },
       "headSha": "eec9154fdc19c5aeca323ffeaed18fb95cd82be8",
@@ -1367,7 +1842,7 @@
       ],
       "baseRefName": "master",
       "baseSha": "07f3bd3953115e45791f2d77426720166b561ba9",
-      "checkedAt": "2026-08-23T03:17:40.094660Z",
+      "checkedAt": "2026-08-23T04:54:33.779592Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -1393,11 +1868,25 @@
             "opportunityKey": "kyegomez/swarms#1671",
             "targetPrKey": "kyegomez/swarms#1671",
             "targetRepo": "kyegomez/swarms"
+          },
+          {
+            "actorLogin": "github-actions[bot]",
+            "actorType": "Bot",
+            "authorAssociation": "NONE",
+            "createdAt": "2026-06-05T15:34:24Z",
+            "eventId": "github:top-level-comment:kyegomez/swarms#1671:4633126751",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "kyegomez/swarms#1671",
+            "summary": "Hello there, thank you for opening an PR ! 🙏🏻 The team was notified and they will get back to you asap.",
+            "targetPrKey": "kyegomez/swarms#1671",
+            "targetRepo": "kyegomez/swarms",
+            "url": "https://github.com/kyegomez/swarms/pull/1671#issuecomment-4633126751"
           }
         ],
         "mergeConflict": true,
         "mergeConflictPreparationVersion": "conflict_files_v1",
         "requestedChanges": [],
+        "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
       },
       "headSha": "37e8d3812aadc035cbda32c52592c8aabff35aab",
@@ -1423,7 +1912,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "09ef6b2b7119e35a6787fc249f916f8b47b28615",
-      "checkedAt": "2026-08-23T03:17:40.094660Z",
+      "checkedAt": "2026-08-23T04:54:33.779592Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -1457,10 +1946,25 @@
           }
         ],
         "headSha": "26bfaccd9cd3fb099ec990c89d7d2664bc9c33e8",
-        "maintainerEvents": [],
+        "maintainerEvents": [
+          {
+            "actorLogin": "coderabbitai[bot]",
+            "actorType": "Bot",
+            "authorAssociation": "CONTRIBUTOR",
+            "createdAt": "2026-08-08T17:50:58Z",
+            "eventId": "github:top-level-comment:langflow-ai/langflow#14470:5227362636",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "langflow-ai/langflow#14470",
+            "summary": "<!-- This is an auto-generated comment: summarize by coderabbit.ai --> <!-- review_stack_entry_start --> [![Review Change Stack](https://storage.googleapis.com/coderabbit_public_assets/review-stack-in-coderabbit-ui.svg)](https://app.coderabbit.ai/change-stack/langflow-ai/langflow/pull/14470?utm_source=github_walkthrough&utm_medium=github&utm_campaign=change_stack) <!-- review_stack_entry_end --> <",
+            "targetPrKey": "langflow-ai/langflow#14470",
+            "targetRepo": "langflow-ai/langflow",
+            "url": "https://github.com/langflow-ai/langflow/pull/14470#issuecomment-5227362636"
+          }
+        ],
         "mergeConflict": true,
         "mergeConflictPreparationVersion": "conflict_files_v1",
         "requestedChanges": [],
+        "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": [
           {
             "association": "CONTRIBUTOR",
@@ -1493,7 +1997,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "8d5b7865bd0521e75fe9ab1b260eeccc83f8a378",
-      "checkedAt": "2026-08-23T03:17:40.094660Z",
+      "checkedAt": "2026-08-23T04:54:33.779592Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -1514,6 +2018,7 @@
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "requestedChanges": [],
+        "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
       },
       "headSha": "9da34d15f8cd66576b58e047c87b028d4c60fd5a",
@@ -1535,7 +2040,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "d9d3fb6252f7ae9e7f8104edce7266f0782a813c",
-      "checkedAt": "2026-08-23T03:17:40.094660Z",
+      "checkedAt": "2026-08-23T04:54:33.779592Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -1572,11 +2077,25 @@
             "opportunityKey": "microsoft/agent-framework#7696",
             "targetPrKey": "microsoft/agent-framework#7696",
             "targetRepo": "microsoft/agent-framework"
+          },
+          {
+            "actorLogin": "github-actions[bot]",
+            "actorType": "Bot",
+            "authorAssociation": "CONTRIBUTOR",
+            "createdAt": "2026-08-17T20:07:08Z",
+            "eventId": "github:top-level-comment:microsoft/agent-framework#7696:5319663022",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "microsoft/agent-framework#7696",
+            "summary": "<!-- Pytest Coverage Comment: python-test-coverage-report --> <a href=\"https://github.com/microsoft/agent-framework/blob/3413e3546b6da56b9c0ac74b4d2cd3e0c890c2f6/README.md\"><img alt=\"Python Test Coverage\" src=\"https://img.shields.io/badge/Python Test Coverage-90%25-brightgreen.svg\" /></a><details><summary>Python Test Coverage Report • </summary><table><tr><th>File</th><th>Stmts</th><th>Miss</th><t",
+            "targetPrKey": "microsoft/agent-framework#7696",
+            "targetRepo": "microsoft/agent-framework",
+            "url": "https://github.com/microsoft/agent-framework/pull/7696#issuecomment-5319663022"
           }
         ],
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "requestedChanges": [],
+        "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": [
           {
             "association": "CONTRIBUTOR",
@@ -1608,7 +2127,7 @@
       "actions": [],
       "baseRefName": "master",
       "baseSha": "7c4d2733dc0521f0f1203f3664df305905a80095",
-      "checkedAt": "2026-08-23T03:17:40.094660Z",
+      "checkedAt": "2026-08-23T04:54:33.779592Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -1635,11 +2154,25 @@
             "opportunityKey": "openvinotoolkit/openvino#36146",
             "targetPrKey": "openvinotoolkit/openvino#36146",
             "targetRepo": "openvinotoolkit/openvino"
+          },
+          {
+            "actorLogin": "michalzx",
+            "actorType": "User",
+            "authorAssociation": "CONTRIBUTOR",
+            "createdAt": "2026-08-12T13:03:03Z",
+            "eventId": "github:top-level-comment:openvinotoolkit/openvino#36146:5267175892",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "openvinotoolkit/openvino#36146",
+            "summary": "@Oxygen56 Thank you for this update. I discussed the proposed `signed-by` approach with an internal expert, who agreed with it. Before merging, could you please apply the same modernization to the install selector so that both APT instruction surfaces remain consistent? Both should: - create `/etc/apt/keyrings` if needed; - store the dearmored key as `/etc/apt/keyrings/intel.gpg`; - use `signed-by",
+            "targetPrKey": "openvinotoolkit/openvino#36146",
+            "targetRepo": "openvinotoolkit/openvino",
+            "url": "https://github.com/openvinotoolkit/openvino/pull/36146#issuecomment-5267175892"
           }
         ],
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "requestedChanges": [],
+        "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
       },
       "headSha": "b48da3a82f21657b09483cadaaaf98ffc5e64a4a",
@@ -1659,7 +2192,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "acead0507d7de44e216d24533964106ca1d1d044",
-      "checkedAt": "2026-08-23T03:17:40.094660Z",
+      "checkedAt": "2026-08-23T04:54:33.779592Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -1681,6 +2214,7 @@
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "requestedChanges": [],
+        "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
       },
       "headSha": "5bd478bb42af296a8924a78f5c63d90d2436de9d",
@@ -1702,7 +2236,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "ddbb90e36f2d148c7982f6ed85b09d31cabf5944",
-      "checkedAt": "2026-08-23T03:17:40.094660Z",
+      "checkedAt": "2026-08-23T04:54:33.779592Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -1732,6 +2266,45 @@
             "opportunityKey": "plastic-labs/honcho#775",
             "targetPrKey": "plastic-labs/honcho#775",
             "targetRepo": "plastic-labs/honcho"
+          },
+          {
+            "actorLogin": "coderabbitai[bot]",
+            "actorType": "Bot",
+            "authorAssociation": "CONTRIBUTOR",
+            "createdAt": "2026-06-06T04:41:36Z",
+            "eventId": "github:top-level-comment:plastic-labs/honcho#775:4637407588",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "plastic-labs/honcho#775",
+            "summary": "<!-- This is an auto-generated comment: summarize by coderabbit.ai --> <!-- review_stack_entry_start --> [![Review Change Stack](https://storage.googleapis.com/coderabbit_public_assets/review-stack-in-coderabbit-ui.svg)](https://app.coderabbit.ai/change-stack/plastic-labs/honcho/pull/775?utm_source=github_walkthrough&utm_medium=github&utm_campaign=change_stack) <!-- review_stack_entry_end --> <!--",
+            "targetPrKey": "plastic-labs/honcho#775",
+            "targetRepo": "plastic-labs/honcho",
+            "url": "https://github.com/plastic-labs/honcho/pull/775#issuecomment-4637407588"
+          },
+          {
+            "actorLogin": "Rajat-Ahuja1997",
+            "actorType": "User",
+            "authorAssociation": "COLLABORATOR",
+            "createdAt": "2026-06-10T14:41:59Z",
+            "eventId": "github:top-level-comment:plastic-labs/honcho#775:4671428105",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "plastic-labs/honcho#775",
+            "summary": "> Hey @Rajat-Ahuja1997, pushed the changes per your feedback — added `custom_instructions` to `SummaryConfiguration` and switched `_create_and_save_summary` to read from `configuration.summary`. Ready for another look when you have time. not seeing any new changes on the branch?",
+            "targetPrKey": "plastic-labs/honcho#775",
+            "targetRepo": "plastic-labs/honcho",
+            "url": "https://github.com/plastic-labs/honcho/pull/775#issuecomment-4671428105"
+          },
+          {
+            "actorLogin": "leandrosampaio",
+            "actorType": "User",
+            "authorAssociation": "NONE",
+            "createdAt": "2026-08-20T10:31:26Z",
+            "eventId": "github:top-level-comment:plastic-labs/honcho#775:5354690347",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "plastic-labs/honcho#775",
+            "summary": "We’re experiencing the same issue in our self-hosted deployment with Brazilian Portuguese: workspace custom_instructions are respected by the Deriver, but session summaries still default to English. Looking forward to the fix.",
+            "targetPrKey": "plastic-labs/honcho#775",
+            "targetRepo": "plastic-labs/honcho",
+            "url": "https://github.com/plastic-labs/honcho/pull/775#issuecomment-5354690347"
           }
         ],
         "mergeConflict": false,
@@ -1744,6 +2317,7 @@
             "submittedAt": "2026-06-10T15:40:57Z"
           }
         ],
+        "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
       },
       "headSha": "93e3f2941a9b1991c45e8b7aca5dd302978d8893",
@@ -1767,7 +2341,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "679e7ecb64a2e09042b009b549b81dc0d0b983bb",
-      "checkedAt": "2026-08-23T03:17:40.094660Z",
+      "checkedAt": "2026-08-23T04:54:33.779592Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -1794,11 +2368,25 @@
             "opportunityKey": "promptfoo/promptfoo#10436",
             "targetPrKey": "promptfoo/promptfoo#10436",
             "targetRepo": "promptfoo/promptfoo"
+          },
+          {
+            "actorLogin": "codecov[bot]",
+            "actorType": "Bot",
+            "authorAssociation": "NONE",
+            "createdAt": "2026-08-18T23:29:07Z",
+            "eventId": "github:top-level-comment:promptfoo/promptfoo#10436:5335492861",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "promptfoo/promptfoo#10436",
+            "summary": "## [Codecov](https://app.codecov.io/gh/promptfoo/promptfoo/pull/10436?dropdown=coverage&src=pr&el=h1&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=promptfoo) Report :white_check_mark: All modified and coverable lines are covered by tests. :white_check_mark: Project coverage is 82.12%. Comparing base ([`c149fcf`](https://app.codecov.io/gh/promptfoo/prom",
+            "targetPrKey": "promptfoo/promptfoo#10436",
+            "targetRepo": "promptfoo/promptfoo",
+            "url": "https://github.com/promptfoo/promptfoo/pull/10436#issuecomment-5335492861"
           }
         ],
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "requestedChanges": [],
+        "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": [
           {
             "association": "NONE",
@@ -1823,7 +2411,7 @@
       "headSha": "6b51c134dbcb0852f821bd272298fd268a63707e",
       "key": "promptfoo/promptfoo#10436",
       "mergeConflict": false,
-      "mergeableState": "unknown",
+      "mergeableState": "behind",
       "number": 10436,
       "repo": "promptfoo/promptfoo",
       "taskActionDigest": "beaf20a00b53e6204bdd8d603dab1b224300da7c4d75daadc752ab24ae589895",
@@ -1839,7 +2427,7 @@
       "actions": [],
       "baseRefName": "develop",
       "baseSha": "29f9bb7161775cd807565fd3041eb2b7d1be071c",
-      "checkedAt": "2026-08-23T03:17:40.094660Z",
+      "checkedAt": "2026-08-23T04:54:33.779592Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -1865,10 +2453,25 @@
         ],
         "failingChecks": [],
         "headSha": "787b41dcab195d57d3666c36af56bfd4fff98aaa",
-        "maintainerEvents": [],
+        "maintainerEvents": [
+          {
+            "actorLogin": "CLAassistant",
+            "actorType": "User",
+            "authorAssociation": "NONE",
+            "createdAt": "2026-08-08T21:33:36Z",
+            "eventId": "github:top-level-comment:rtk-ai/rtk#3483:5228274944",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "rtk-ai/rtk#3483",
+            "summary": "[![CLA assistant check](https://cla-assistant.io/pull/badge/signed)](https://cla-assistant.io/rtk-ai/rtk?pullRequest=3483) <br/>All committers have signed the CLA.",
+            "targetPrKey": "rtk-ai/rtk#3483",
+            "targetRepo": "rtk-ai/rtk",
+            "url": "https://github.com/rtk-ai/rtk/pull/3483#issuecomment-5228274944"
+          }
+        ],
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "requestedChanges": [],
+        "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
       },
       "headSha": "787b41dcab195d57d3666c36af56bfd4fff98aaa",
@@ -1888,7 +2491,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "d8021225eb7e7b276d5ceb476b0a4650240f27f8",
-      "checkedAt": "2026-08-23T03:17:40.094660Z",
+      "checkedAt": "2026-08-23T04:54:33.779592Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -1906,10 +2509,25 @@
         ],
         "failingChecks": [],
         "headSha": "3fbd0449c3a1629b881dfb4e64a321df92182ab2",
-        "maintainerEvents": [],
+        "maintainerEvents": [
+          {
+            "actorLogin": "github-actions[bot]",
+            "actorType": "Bot",
+            "authorAssociation": "CONTRIBUTOR",
+            "createdAt": "2026-08-13T02:16:10Z",
+            "eventId": "github:top-level-comment:run-llama/llama_index#21892:5275149715",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "run-llama/llama_index#21892",
+            "summary": "This PR is stale because it has been open 50 days with no activity. Remove stale label or comment or this will be closed in 10 days.",
+            "targetPrKey": "run-llama/llama_index#21892",
+            "targetRepo": "run-llama/llama_index",
+            "url": "https://github.com/run-llama/llama_index/pull/21892#issuecomment-5275149715"
+          }
+        ],
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "requestedChanges": [],
+        "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
       },
       "headSha": "3fbd0449c3a1629b881dfb4e64a321df92182ab2",
@@ -1925,14 +2543,14 @@
       "url": "https://github.com/run-llama/llama_index/pull/21892"
     },
     {
-      "actionDigest": "6ba47ebe7a13f41228c7c3d6fdd6507406351a52e0275dbe9700542563ceee63",
+      "actionDigest": "5000148a20c7f2908c9efd86878316ed4d0ee50b5e8af3755c86ad4823202735",
       "actions": [
         "CI 检查失败",
         "分支存在合并冲突"
       ],
       "baseRefName": "main",
-      "baseSha": "bbbcbf9418f0d8fbea968d96f3b470f5b883bac3",
-      "checkedAt": "2026-08-23T03:17:40.094660Z",
+      "baseSha": "bd721907287608194d48252dd2b8fa62051cdd0c",
+      "checkedAt": "2026-08-23T04:54:33.779592Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -1942,7 +2560,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "bbbcbf9418f0d8fbea968d96f3b470f5b883bac3",
+        "baseSha": "bd721907287608194d48252dd2b8fa62051cdd0c",
         "changedFiles": [
           "python/sglang/srt/model_executor/model_runner.py",
           "test/registered/unit/model_executor/test_model_runner_decode_rows.py"
@@ -2158,11 +2776,38 @@
             "opportunityKey": "sgl-project/sglang#30554",
             "targetPrKey": "sgl-project/sglang#30554",
             "targetRepo": "sgl-project/sglang"
+          },
+          {
+            "actorLogin": "gemini-code-assist[bot]",
+            "actorType": "Bot",
+            "authorAssociation": "CONTRIBUTOR",
+            "createdAt": "2026-07-08T18:14:18Z",
+            "eventId": "github:top-level-comment:sgl-project/sglang#30554:4917859389",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "sgl-project/sglang#30554",
+            "summary": "> [!WARNING] > You have reached your daily quota limit. Please wait up to 24 hours and I will start processing your requests again!",
+            "targetPrKey": "sgl-project/sglang#30554",
+            "targetRepo": "sgl-project/sglang",
+            "url": "https://github.com/sgl-project/sglang/pull/30554#issuecomment-4917859389"
+          },
+          {
+            "actorLogin": "Deleter-D",
+            "actorType": "User",
+            "authorAssociation": "CONTRIBUTOR",
+            "createdAt": "2026-07-28T13:19:14Z",
+            "eventId": "github:top-level-comment:sgl-project/sglang#30554:5104661832",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "sgl-project/sglang#30554",
+            "summary": "Hi, just wanted to follow up on this PR. Do you have any plans or timeline for merging it? Thanks!",
+            "targetPrKey": "sgl-project/sglang#30554",
+            "targetRepo": "sgl-project/sglang",
+            "url": "https://github.com/sgl-project/sglang/pull/30554#issuecomment-5104661832"
           }
         ],
         "mergeConflict": true,
         "mergeConflictPreparationVersion": "conflict_files_v1",
         "requestedChanges": [],
+        "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
       },
       "headSha": "10cba90dbcbb50d7412e044386981e88d6e93783",
@@ -2171,7 +2816,7 @@
       "mergeableState": "unknown",
       "number": 30554,
       "repo": "sgl-project/sglang",
-      "taskActionDigest": "475b49c2ef59b1f6003c8f0dd04462f89c06b95a77ebe4bb087c6caeeae3a0a0",
+      "taskActionDigest": "e28d6a265130cb19a69fbc1abf421fad5425c5a9a6c0186c48a3d605ca86e0ec",
       "taskActions": [
         "分支存在合并冲突"
       ],
@@ -2180,14 +2825,14 @@
       "url": "https://github.com/sgl-project/sglang/pull/30554"
     },
     {
-      "actionDigest": "f6424a2828da1e5d29b405100ec1b8f542589518e04938996088ab23e0dfd1dd",
+      "actionDigest": "fb88ff02f8e009f66f5728559aaed16795fbb7a439cb37a86fdb55110b774b20",
       "actions": [
         "CI 检查失败",
         "分支存在合并冲突"
       ],
       "baseRefName": "main",
-      "baseSha": "bbbcbf9418f0d8fbea968d96f3b470f5b883bac3",
-      "checkedAt": "2026-08-23T03:17:40.094660Z",
+      "baseSha": "bd721907287608194d48252dd2b8fa62051cdd0c",
+      "checkedAt": "2026-08-23T04:54:33.779592Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -2197,7 +2842,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "bbbcbf9418f0d8fbea968d96f3b470f5b883bac3",
+        "baseSha": "bd721907287608194d48252dd2b8fa62051cdd0c",
         "changedFiles": [
           "python/sglang/srt/managers/io_struct.py",
           "python/sglang/srt/managers/tokenizer_manager.py",
@@ -2411,6 +3056,7 @@
         "mergeConflict": true,
         "mergeConflictPreparationVersion": "conflict_files_v1",
         "requestedChanges": [],
+        "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
       },
       "headSha": "8b46aad59b4be76dbc71d94db7ccd58f25a2152d",
@@ -2419,7 +3065,7 @@
       "mergeableState": "unknown",
       "number": 34138,
       "repo": "sgl-project/sglang",
-      "taskActionDigest": "7ff762cd256a10b89afea019226659a80f9e6a11f3928fe838b6d888ad243a79",
+      "taskActionDigest": "8da2eb8e27aea6c184faa60fb851de2fd96dd23669d0ca6bfc3bf0ea98e22ca0",
       "taskActions": [
         "分支存在合并冲突"
       ],
@@ -2433,8 +3079,8 @@
         "CI 检查失败"
       ],
       "baseRefName": "main",
-      "baseSha": "bbbcbf9418f0d8fbea968d96f3b470f5b883bac3",
-      "checkedAt": "2026-08-23T03:17:40.094660Z",
+      "baseSha": "bd721907287608194d48252dd2b8fa62051cdd0c",
+      "checkedAt": "2026-08-23T04:54:33.779592Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -2444,7 +3090,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "bbbcbf9418f0d8fbea968d96f3b470f5b883bac3",
+        "baseSha": "bd721907287608194d48252dd2b8fa62051cdd0c",
         "changedFiles": [
           "python/sglang/multimodal_gen/configs/sample/teacache.py",
           "python/sglang/multimodal_gen/runtime/cache/teacache.py",
@@ -2637,6 +3283,7 @@
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "requestedChanges": [],
+        "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
       },
       "headSha": "e2b5efeb1ef3d9fdcf57e47dea09fa06a4b1a2e3",
@@ -2657,8 +3304,8 @@
         "CI 检查失败"
       ],
       "baseRefName": "main",
-      "baseSha": "bbbcbf9418f0d8fbea968d96f3b470f5b883bac3",
-      "checkedAt": "2026-08-23T03:17:40.094660Z",
+      "baseSha": "bd721907287608194d48252dd2b8fa62051cdd0c",
+      "checkedAt": "2026-08-23T04:54:33.779592Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -2668,7 +3315,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "bbbcbf9418f0d8fbea968d96f3b470f5b883bac3",
+        "baseSha": "bd721907287608194d48252dd2b8fa62051cdd0c",
         "changedFiles": [
           "python/sglang/multimodal_gen/runtime/cache/spectrum.py",
           "python/sglang/multimodal_gen/test/unit/test_spectrum.py"
@@ -2859,6 +3506,7 @@
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "requestedChanges": [],
+        "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
       },
       "headSha": "fb8e3555c6179c0d5a6826c94351738bca4d8e01",
@@ -2879,8 +3527,8 @@
         "CI 检查失败"
       ],
       "baseRefName": "main",
-      "baseSha": "9dba2c9b374af3a47c1cef952195ee114bab94c7",
-      "checkedAt": "2026-08-23T03:17:40.094660Z",
+      "baseSha": "a3561ef8e49d3545c4078df43444beb4c98ae124",
+      "checkedAt": "2026-08-23T04:54:33.779592Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -2890,7 +3538,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "9dba2c9b374af3a47c1cef952195ee114bab94c7",
+        "baseSha": "a3561ef8e49d3545c4078df43444beb4c98ae124",
         "changedFiles": [
           "tests/v1/kv_connector/unit/test_invalid_blocks_correctness.py",
           "vllm/v1/core/sched/scheduler.py"
@@ -3027,11 +3675,25 @@
             "opportunityKey": "vllm-project/vllm#45146",
             "targetPrKey": "vllm-project/vllm#45146",
             "targetRepo": "vllm-project/vllm"
+          },
+          {
+            "actorLogin": "harjothkhara",
+            "actorType": "User",
+            "authorAssociation": "CONTRIBUTOR",
+            "createdAt": "2026-06-11T22:17:44Z",
+            "eventId": "github:top-level-comment:vllm-project/vllm#45146:4685575945",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "vllm-project/vllm#45146",
+            "summary": "Could you add a focused regression test for this path? The fix relies on resetting `num_output_placeholders` when `_update_requests_with_invalid_blocks()` rewinds `num_computed_tokens`, but the PR currently only includes code-flow analysis. A unit test can construct a request with `num_computed_tokens` past an invalid KV block and `num_output_placeholders = 1`, call `_update_requests_with_invalid_",
+            "targetPrKey": "vllm-project/vllm#45146",
+            "targetRepo": "vllm-project/vllm",
+            "url": "https://github.com/vllm-project/vllm/pull/45146#issuecomment-4685575945"
           }
         ],
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "requestedChanges": [],
+        "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
       },
       "headSha": "89d51d4b58aa3a13aa0343dbf590b1f18c64af8c",
@@ -3052,8 +3714,8 @@
         "CI 检查失败"
       ],
       "baseRefName": "main",
-      "baseSha": "9dba2c9b374af3a47c1cef952195ee114bab94c7",
-      "checkedAt": "2026-08-23T03:17:40.094660Z",
+      "baseSha": "a3561ef8e49d3545c4078df43444beb4c98ae124",
+      "checkedAt": "2026-08-23T04:54:33.779592Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -3063,7 +3725,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "9dba2c9b374af3a47c1cef952195ee114bab94c7",
+        "baseSha": "a3561ef8e49d3545c4078df43444beb4c98ae124",
         "changedFiles": [
           "tests/v1/kv_connector/unit/offloading_connector/test_scheduler.py",
           "vllm/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py"
@@ -3166,6 +3828,7 @@
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "requestedChanges": [],
+        "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
       },
       "headSha": "24d210e8105fcbc004ef78dbaf597bf8d5844a06",
@@ -3181,13 +3844,14 @@
       "url": "https://github.com/vllm-project/vllm/pull/52287"
     },
     {
-      "actionDigest": "479a5f28d156cde699a2cece8902ff9de0305b99c1ab1f7ae7174e66d009adb0",
+      "actionDigest": "caae2ca26ae769756c54707c538c3e263248c770e22b6bed26516c92ee56ce49",
       "actions": [
+        "PR 处于草稿状态",
         "CI 检查失败"
       ],
       "baseRefName": "main",
-      "baseSha": "9dba2c9b374af3a47c1cef952195ee114bab94c7",
-      "checkedAt": "2026-08-23T03:17:40.094660Z",
+      "baseSha": "a3561ef8e49d3545c4078df43444beb4c98ae124",
+      "checkedAt": "2026-08-23T04:54:33.779592Z",
       "ciStatus": "FAILED",
       "draft": true,
       "evidence": {
@@ -3197,7 +3861,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "9dba2c9b374af3a47c1cef952195ee114bab94c7",
+        "baseSha": "a3561ef8e49d3545c4078df43444beb4c98ae124",
         "changedFiles": [
           "tests/v1/kv_offload/cpu/test_gpu_worker.py",
           "vllm/v1/kv_offload/cpu/gpu_worker.py"
@@ -3223,6 +3887,7 @@
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "requestedChanges": [],
+        "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
       },
       "headSha": "3036472185bfcc23b0148fe3ae22666c6d379279",
@@ -3231,20 +3896,22 @@
       "mergeableState": "blocked",
       "number": 52296,
       "repo": "vllm-project/vllm",
-      "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
-      "taskActions": [],
-      "taskFollowupRequired": false,
+      "taskActionDigest": "0394c1a054654d2ffdc17726b29a06d8bee42bb22c93e9b3c4febc91f5833d57",
+      "taskActions": [
+        "PR 处于草稿状态"
+      ],
+      "taskFollowupRequired": true,
       "title": "[Bugfix][KV Offload] Coordinate mmap host registration",
       "url": "https://github.com/vllm-project/vllm/pull/52296"
     },
     {
-      "actionDigest": "bf39c483d4f18103199365c475ece26b585565528d80a17fd9482916da9ad947",
+      "actionDigest": "dcffe40ac2829c16137c142204f3cf6866a8645e6144824639c3ef30ccbe8172",
       "actions": [
         "分支存在合并冲突"
       ],
       "baseRefName": "main",
-      "baseSha": "9dba2c9b374af3a47c1cef952195ee114bab94c7",
-      "checkedAt": "2026-08-23T03:17:40.094660Z",
+      "baseSha": "a3561ef8e49d3545c4078df43444beb4c98ae124",
+      "checkedAt": "2026-08-23T04:54:33.779592Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -3254,7 +3921,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "9dba2c9b374af3a47c1cef952195ee114bab94c7",
+        "baseSha": "a3561ef8e49d3545c4078df43444beb4c98ae124",
         "changedFiles": [
           "tests/v1/structured_output/test_validation.py",
           "vllm/sampling_params.py",
@@ -3322,11 +3989,25 @@
             "opportunityKey": "vllm-project/vllm#52298",
             "targetPrKey": "vllm-project/vllm#52298",
             "targetRepo": "vllm-project/vllm"
+          },
+          {
+            "actorLogin": "mergify[bot]",
+            "actorType": "Bot",
+            "authorAssociation": "CONTRIBUTOR",
+            "createdAt": "2026-08-14T08:08:35Z",
+            "eventId": "github:top-level-comment:vllm-project/vllm#52298:5291040203",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "vllm-project/vllm#52298",
+            "summary": "This pull request has merge conflicts that must be resolved before it can be merged. Please rebase the PR, @Oxygen56. https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/working-with-forks/syncing-a-fork",
+            "targetPrKey": "vllm-project/vllm#52298",
+            "targetRepo": "vllm-project/vllm",
+            "url": "https://github.com/vllm-project/vllm/pull/52298#issuecomment-5291040203"
           }
         ],
         "mergeConflict": true,
         "mergeConflictPreparationVersion": "conflict_files_v1",
         "requestedChanges": [],
+        "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
       },
       "headSha": "f5b8dee33268bf8511784c94742d6ec33653a07d",
@@ -3335,7 +4016,7 @@
       "mergeableState": "dirty",
       "number": 52298,
       "repo": "vllm-project/vllm",
-      "taskActionDigest": "c66f92d62a0e152db4870d0988e19e82f134b3563baf0c207209889987a1c6fc",
+      "taskActionDigest": "fac99ce43fa5def82952510191f3a500c03b8ce4b37b5cda43170049d1ee226b",
       "taskActions": [
         "分支存在合并冲突"
       ],
