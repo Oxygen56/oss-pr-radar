@@ -1,8 +1,19 @@
 from __future__ import annotations
 
+import importlib.util
 from datetime import UTC, datetime
+from pathlib import Path
 
 from oss_pr_radar.agentscope_events import EventLane, GitHubIssuePoller, dispatch_once
+
+
+def _event_worker_module():
+    path = Path(__file__).parents[1] / "scripts" / "agentscope_event_worker.py"
+    spec = importlib.util.spec_from_file_location("agentscope_event_worker", path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    spec.loader.exec_module(module)
+    return module
 
 
 def _issue(number: int, updated: str, *, pr: bool = False) -> dict:
@@ -152,3 +163,22 @@ def test_active_oxygen_pr_details_are_polled_even_when_issue_gate_is_304(tmp_pat
     result = poller.poll()
     assert result.status == "ok"
     assert result.events[0]["prDetails"]["checks"]["check_runs"]
+
+
+def test_production_queue_snapshot_imports_pr_followup_once(tmp_path, monkeypatch):
+    worker = _event_worker_module()
+    monkeypatch.setattr(worker, "production_queue_snapshot", lambda _root: {
+        "prFollowups": [{"taskId": "task-1", "key": "agentscope-ai/agentscope#9"}],
+    })
+    monkeypatch.setattr(
+        worker.GitHubIssuePoller,
+        "poll",
+        lambda _self: type("Poll", (), {"events": (), "status": "not_modified"})(),
+    )
+    delivered = []
+    first = worker.run_once(tmp_path, deliver=delivered.append)
+    second = worker.run_once(tmp_path, deliver=delivered.append)
+    assert first["queueImported"] == 1
+    assert first["drain"]["delivered"] == 1
+    assert second["queueImported"] == 0
+    assert len(delivered) == 1

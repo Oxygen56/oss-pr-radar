@@ -406,6 +406,23 @@ def bind_runtime(
     return RuntimeBinding(runtime_root=runtime_root, code_root=active, release=manifest)
 
 
+def bind_verified_release(runtime_root: Path, code_root: Path) -> RuntimeBinding:
+    """Bind an explicitly pinned immutable release without changing current-release.
+
+    This is used by the independent AgentScope listener.  The release must be
+    a real child of ``runtime_root/releases`` and pass the complete manifest
+    verification; the active release pointer is intentionally not consulted.
+    """
+    runtime_root, releases, _state = validate_runtime_layout(runtime_root)
+    releases = _safe_directory(releases, label="runtime releases")
+    explicit = _validate_release_path(code_root, label="explicit event release")
+    explicit = explicit.resolve()
+    if explicit.parent != releases:
+        raise RuntimeError("explicit event release escapes the runtime releases directory")
+    manifest = verify_release(explicit)
+    return RuntimeBinding(runtime_root=runtime_root, code_root=explicit, release=manifest)
+
+
 def runtime_python(runtime_root: Path) -> Path:
     candidate = runtime_root.resolve() / ".venv" / "bin" / "python"
     return candidate if candidate.exists() else Path(sys.executable)

@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from oss_pr_radar.agentscope_events import EventLane, GitHubIssuePoller, dispatch_once  # noqa: E402
 from oss_pr_radar.ledger import RadarLedger  # noqa: E402
 from oss_pr_radar.local_publication import run_bridge  # noqa: E402
+from oss_pr_radar.release_binding import runtime_ledger_path  # noqa: E402
 
 
 def issue_handler_delivery(root: Path, lane: EventLane, event: dict) -> None:
@@ -45,6 +46,8 @@ def issue_handler_delivery(root: Path, lane: EventLane, event: dict) -> None:
         root,
         "agentscope-event-create",
         timeout=75,
+        code_root=ROOT,
+        inactive_release=True,
         extra_args=[
             "--event-id", event_id,
             "--event-key", key,
@@ -109,6 +112,30 @@ def reconcile_detached_receipts(root: Path, lane: EventLane) -> int:
     return updated
 
 
+def production_queue_snapshot(root: Path) -> dict:
+    """Read existing local durable work without invoking the shared workers."""
+    try:
+        ledger_path = runtime_ledger_path(root)
+        if not ledger_path.exists():
+            return {}
+        store = RadarLedger(ledger_path)
+        queue: dict = {
+            "intents": store.pending(),
+            "prFollowups": store.pr_followup_candidates(),
+            "followups": store.implementation_followup_candidates(),
+        }
+        slow_path = root / "state" / "slow-work-request.json"
+        try:
+            slow = json.loads(slow_path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, json.JSONDecodeError):
+            slow = {}
+        if isinstance(slow, dict) and slow.get("reasons"):
+            queue["slowWorkRequests"] = [slow]
+        return queue
+    except (OSError, RuntimeError, ValueError, TypeError):
+        return {}
+
+
 def bridge_delivery(root: Path, lane: EventLane, event: dict) -> None:
     """Use the existing serialized drain, whose bridge performs App Server turns."""
     payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
@@ -117,7 +144,7 @@ def bridge_delivery(root: Path, lane: EventLane, event: dict) -> None:
         if event.get("number") is not None
         else str(payload.get("key") or payload.get("opportunityKey") or payload.get("taskId") or "")
     )
-    ledger = RadarLedger(root / "state" / "radar_ledger.sqlite3")
+    ledger = RadarLedger(runtime_ledger_path(root))
     mapped = any(item.get("key") == key for item in ledger.pending())
     mapped = mapped or any(item.get("key") == key for item in ledger.pr_followup_candidates())
     mapped = mapped or any(item.get("key") == key for item in ledger.implementation_followup_candidates())
@@ -154,7 +181,12 @@ def run_once(root: Path, *, deliver=None, queue: dict | None = None) -> dict:
     receipts_reconciled = reconcile_detached_receipts(root, lane)
     poll = GitHubIssuePoller(state / "agentscope-poll.json")
     result = poll.poll()
-    queue_result = lane.import_queue(queue or {}) if queue else {"imported": 0, "woken": 0}
+    queue_payload = queue if queue is not None else production_queue_snapshot(root)
+    queue_result = (
+        lane.import_queue(queue_payload)
+        if queue_payload
+        else {"imported": 0, "woken": 0}
+    )
     # Reviews/CI and PR changes outrank issue discovery.  The worker does not
     # make a claim here; claim eligibility remains the existing bridge policy.
     inserted = 0
@@ -185,15 +217,7 @@ def main() -> int:
     parser.add_argument("--root", type=Path, required=True)
     args = parser.parse_args()
     try:
-        queue_path = args.root / "state" / "agentscope-event-queue.json"
-        try:
-            queue = json.loads(queue_path.read_text(encoding="utf-8"))
-            queue = queue if isinstance(queue, dict) else None
-        except (FileNotFoundError, OSError, json.JSONDecodeError):
-            queue = None
-        result = run_once(args.root, queue=queue)
-        if queue is not None and result.get("queueImported", 0) >= 0:
-            queue_path.unlink(missing_ok=True)
+        result = run_once(args.root)
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
         return 0
     except Exception as exc:
