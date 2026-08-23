@@ -15,6 +15,185 @@ def radar(tmp_path):
     )
 
 
+def test_issue_pr_link_relation_recognizes_completed_implementation_and_task():
+    repo = "higress-group/higress"
+    implementation = "The scoped implementation is open as PR #4542 awaiting maintainer review."
+    completed_task = """
+<!-- issue-spec:type=TASK id=TASK-4532002 version=1 -->
+Status: done
+Scope: verification
+Links:
+- PR: https://github.com/higress-group/higress/pull/4542
+"""
+
+    assert scanner_module.issue_body_pr_link_relation(implementation, repo, 4542) == "coverage"
+    assert scanner_module.issue_body_pr_link_relation(completed_task, repo, 4542) == "coverage"
+
+
+def test_explicit_non_covering_statement_wins_over_implementation_link():
+    context = (
+        "The implementation is open as PR #4542.\n"
+        "PR #4542 does not cover this failure path and is not a duplicate."
+    )
+
+    assert (
+        scanner_module.issue_body_pr_link_relation(
+            context,
+            "higress-group/higress",
+            4542,
+        )
+        == "non_covering"
+    )
+
+
+def test_task_coverage_is_bound_to_the_exact_pr_field():
+    context = """
+<!-- issue-spec:type=TASK id=TASK-1 version=1 -->
+Status: done
+Scope: verification
+Links:
+- PR: https://github.com/higress-group/higress/pull/4542
+- Related PR: https://github.com/higress-group/higress/pull/4543
+"""
+
+    assert (
+        scanner_module.issue_body_pr_link_relation(context, "higress-group/higress", 4542)
+        == "coverage"
+    )
+    assert (
+        scanner_module.issue_body_pr_link_relation(context, "higress-group/higress", 4543)
+        == "reference"
+    )
+
+
+def test_task_coverage_does_not_consume_a_later_issue_spec_block():
+    context = """
+<!-- issue-spec:type=TASK id=TASK-1 version=1 -->
+Status: done
+Scope: verification
+Links:
+- PR: N/A
+
+<!-- issue-spec:issue-update-summary version=1 -->
+- PR: https://github.com/a/b/pull/11
+"""
+
+    assert scanner_module.issue_body_pr_link_relation(context, "a/b", 11) == "reference"
+
+
+def test_non_covering_statement_is_bound_to_the_adjacent_pr():
+    context = "PR #10 does not cover the failing path; the implementation is open as PR #11."
+
+    assert scanner_module.issue_body_pr_link_relation(context, "a/b", 10) == "non_covering"
+    assert scanner_module.issue_body_pr_link_relation(context, "a/b", 11) == "coverage"
+
+
+def test_issue_link_provenance_survives_inventory_and_search_dedup(monkeypatch, tmp_path):
+    instance = radar(tmp_path)
+    repo = "higress-group/higress"
+    pr_url = "https://github.com/higress-group/higress/pull/4542"
+    pr_hit = {
+        "number": 4542,
+        "html_url": pr_url,
+        "title": "fix(hgctl): reject unapplied local-docker overlays",
+        "body": (
+            "Reject local-docker overlays before mutation. Approved Design: "
+            "https://github.com/higress-group/higress/issues/4532"
+        ),
+        "state": "open",
+        "updated_at": "2026-08-23T00:00:00Z",
+    }
+    pr_detail = {
+        "number": 4542,
+        "url": pr_url,
+        "title": pr_hit["title"],
+        "body": pr_hit["body"],
+        "state": "OPEN",
+        "isDraft": False,
+        "updatedAt": "2026-08-23T00:00:00Z",
+        "files": [
+            {"path": "hgctl/pkg/helm/common.go"},
+            {"path": "hgctl/pkg/helm/common_test.go"},
+            {"path": "hgctl/pkg/upgrade.go"},
+            {"path": "hgctl/pkg/upgrade_test.go"},
+        ],
+        "changedFiles": 4,
+        "additions": 333,
+        "deletions": 5,
+        "statusCheckRollup": [{"name": "go", "conclusion": "SUCCESS"}],
+        "reviewDecision": "REVIEW_REQUIRED",
+        "comments": [],
+        "closingIssuesReferences": [],
+    }
+    issue_context = """
+## Current Status
+The scoped implementation is open as PR #4542 awaiting maintainer review.
+
+## Scope
+- `hgctl/pkg/upgrade.go`
+- `hgctl/pkg/helm/common_test.go`
+
+<!-- issue-spec:type=TASK id=TASK-4532002 version=1 -->
+Status: done
+Scope: verification
+Links:
+- PR: https://github.com/higress-group/higress/pull/4542
+"""
+
+    monkeypatch.setattr(scanner_module, "gh_paginated", lambda *_args, **_kwargs: ([], None))
+    monkeypatch.setattr(scanner_module, "gh_list_page", lambda *_args, **_kwargs: ([pr_hit], None))
+    monkeypatch.setattr(scanner_module, "gh", lambda *_args, **_kwargs: (pr_hit, None))
+    monkeypatch.setattr(
+        instance, "search_issues", lambda *_args, **_kwargs: ({"items": [pr_hit]}, None)
+    )
+    monkeypatch.setattr(instance, "pr_detail", lambda *_args, **_kwargs: pr_detail)
+
+    result = instance.assess_open_prs(
+        repo,
+        4532,
+        "Design: Reject unapplied local-docker upgrade overlays before mutation",
+        issue_context,
+    )
+
+    assert result["status"] == "covered_strong"
+    assert result["best_url"] == pr_url
+    assert result["prs"][0]["issue_body_link"] is True
+    assert result["prs"][0]["issue_body_link_relation"] == "coverage"
+    assert result["prs"][0]["test_files"] == 2
+    assert "hgctl/pkg/upgrade.go" in result["prs"][0]["overlapping_paths"]
+
+
+def test_non_covering_issue_link_is_not_reintroduced_by_inventory_or_search(monkeypatch, tmp_path):
+    instance = radar(tmp_path)
+    pr_hit = {
+        "number": 4542,
+        "html_url": "https://github.com/higress-group/higress/pull/4542",
+        "title": "fix(hgctl): reject unapplied local-docker overlays",
+        "body": "A different local-docker failure path.",
+        "state": "open",
+    }
+    issue_context = (
+        "The implementation is open as PR #4542.\n"
+        "PR #4542 does not cover this failure path and is not a duplicate."
+    )
+
+    monkeypatch.setattr(scanner_module, "gh_paginated", lambda *_args, **_kwargs: ([], None))
+    monkeypatch.setattr(scanner_module, "gh_list_page", lambda *_args, **_kwargs: ([pr_hit], None))
+    monkeypatch.setattr(scanner_module, "gh", lambda *_args, **_kwargs: (pr_hit, None))
+    monkeypatch.setattr(
+        instance, "search_issues", lambda *_args, **_kwargs: ({"items": [pr_hit]}, None)
+    )
+
+    hits = instance.open_pr_hits(
+        "higress-group/higress",
+        4532,
+        "Reject unapplied local-docker upgrade overlays before mutation",
+        issue_context,
+    )
+
+    assert hits == []
+
+
 def test_cross_repo_timeline_pr_is_included_when_it_explicitly_fixes_issue(monkeypatch, tmp_path):
     instance = radar(tmp_path)
 

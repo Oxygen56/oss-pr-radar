@@ -902,11 +902,11 @@ FRONTEND_RENDERING_SYMPTOM_RE = re.compile(
     re.I,
 )
 ISSUE_CODE_PATH_RE = re.compile(
-    r"\b(?:[A-Za-z0-9_.-]+/)+(?:[A-Za-z0-9_.-]+\.(?:py|rs|ts|tsx|js|jsx|java|cs|cc|cpp|c|h|hpp))\b",
+    r"\b(?:[A-Za-z0-9_.-]+/)+(?:[A-Za-z0-9_.-]+\.(?:py|rs|go|ts|tsx|js|jsx|java|cs|cc|cpp|c|h|hpp))\b",
     re.I,
 )
 ISSUE_CODE_FILE_RE = re.compile(
-    r"(?<![A-Za-z0-9_.-])([A-Za-z0-9_-]+\.(?:py|rs|ts|tsx|js|jsx|java|cs|cc|cpp|c|h|hpp))(?![A-Za-z0-9_.-])",
+    r"(?<![A-Za-z0-9_.-])([A-Za-z0-9_-]+\.(?:py|rs|go|ts|tsx|js|jsx|java|cs|cc|cpp|c|h|hpp))(?![A-Za-z0-9_.-])",
     re.I,
 )
 ISSUE_SYMBOL_RE = re.compile(
@@ -921,17 +921,24 @@ GENERIC_CODE_BASENAMES = {
     "base.py",
     "cli.py",
     "client.py",
+    "client.go",
     "common.py",
+    "common.go",
     "config.py",
+    "config.go",
     "constants.py",
     "index.js",
     "index.ts",
     "main.py",
+    "main.go",
     "model.py",
     "server.py",
+    "server.go",
     "test.py",
     "types.ts",
+    "types.go",
     "utils.py",
+    "utils.go",
 }
 
 
@@ -1226,29 +1233,65 @@ def is_dependency_update_pr(hit: dict[str, Any]) -> bool:
 def issue_body_pr_link_relation(issue_context: str, repo: str, pr_num: int) -> str:
     """Classify an issue-body PR link as coverage, reference, or non-covering."""
 
-    pattern = re.compile(
-        rf"(?:https?://github\.com/{re.escape(repo)}/pull/{pr_num}\b|\bPR\s*#{pr_num}\b)",
+    current_pattern = re.compile(
+        rf"(?:https?://github\.com/{re.escape(repo)}/pull/{pr_num}\b|\bPR\s*#?{pr_num}\b)",
         re.I,
     )
-    matches = list(pattern.finditer(issue_context))
+    matches = list(current_pattern.finditer(issue_context))
     if not matches:
         return "reference"
 
+    snippets = [issue_context[max(0, match.start() - 500) : match.end() + 500] for match in matches]
+    any_pr_pattern = re.compile(
+        rf"(?:https?://github\.com/{re.escape(repo)}/pull/\d+\b|\bPR\s*#?\d+\b)",
+        re.I,
+    )
+    all_matches = list(any_pr_pattern.finditer(issue_context))
+    # Attribute a negative statement to the adjacent PR reference only. A
+    # nearby statement about a different PR must not poison this PR's link.
     for match in matches:
-        snippet = issue_context[max(0, match.start() - 500) : match.end() + 500]
+        next_reference = next(
+            (item.start() for item in all_matches if item.start() >= match.end()),
+            len(issue_context),
+        )
+        line_end = issue_context.find("\n", match.end())
+        if line_end < 0:
+            line_end = len(issue_context)
+        after = issue_context[match.end() : min(next_reference, line_end)]
+        line_start = issue_context.rfind("\n", 0, match.start()) + 1
+        previous_reference = max(
+            (item.end() for item in all_matches if item.end() <= match.start()),
+            default=line_start,
+        )
+        before = issue_context[max(line_start, previous_reference) : match.start()]
         if re.search(
             r"does(?:n['’]t| not)\s+(?:cover|address|fix|resolve)|"
-            r"not\s+(?:cover(?:ing)?|address(?:ing)?|fix(?:ing)?|resolv(?:e|ing))|"
-            r"different\s+(?:failure|scope|path|issue)|not\s+a\s+duplicate|"
-            r"did\s+not\s+find\s+(?:one|a\s+(?:pr|pull request))\s+covering",
-            snippet,
+            r"(?:is\s+)?not\s+(?:cover(?:ing)?|address(?:ing)?|fix(?:ing)?|resolv(?:e|ing))|"
+            r"(?:covers?|addresses?|fix(?:es)?|resolves?)\s+a\s+different\s+"
+            r"(?:failure|scope|path|issue)|(?:is\s+)?not\s+a\s+duplicate",
+            after,
+            re.I,
+        ) or re.search(
+            r"(?:not\s+(?:covered|addressed|fixed|resolved)\s+by)\s*$",
+            before,
             re.I,
         ):
             return "non_covering"
+
+    for match, snippet in zip(matches, snippets, strict=True):
         if re.search(
             rf"(?:fix(?:ed|es)?|implement(?:ed|s)?|address(?:ed|es)?|"
             rf"resolv(?:ed|es)?|cover(?:ed|s)?)\s*(?::|is\s+in|by|in)?\s*"
             rf"(?:\[?#?{pr_num}\]?|PR\s*#?{pr_num}|https?://github\.com/)",
+            snippet,
+            re.I,
+        ):
+            return "coverage"
+        if re.search(
+            rf"\b(?:implementation|fix|patch|repair)\s+(?:is\s+)?"
+            rf"(?:open(?:ed)?|submitted|available)\s+(?:as|in)\s*"
+            rf"(?:PR\s*#?{pr_num}\b|"
+            rf"https?://github\.com/{re.escape(repo)}/pull/{pr_num}\b)",
             snippet,
             re.I,
         ):
@@ -1264,6 +1307,24 @@ def issue_body_pr_link_relation(issue_context: str, repo: str, pr_num: int) -> s
             r".{0,500}(?:ref(?:er(?:ence)?)?\s+to|see)\s*$",
             snippet[: match.start() - max(0, match.start() - 500)],
             re.I | re.S,
+        ):
+            return "coverage"
+
+    task_block_pattern = re.compile(
+        r"<!--\s*issue-spec:type=TASK\b.*?(?=<!--\s*issue-spec:|\Z)",
+        re.I | re.S,
+    )
+    exact_task_pr = re.compile(
+        rf"(?im)^\s*-\s*PR\s*:\s*(?:"
+        rf"https?://github\.com/{re.escape(repo)}/pull/{pr_num}\b|"
+        rf"(?:PR\s*)?#?{pr_num}\b)\s*$"
+    )
+    for block_match in task_block_pattern.finditer(issue_context):
+        block = block_match.group(0)
+        if (
+            re.search(r"(?im)^\s*Status:\s*done\s*$", block)
+            and re.search(r"(?im)^\s*Scope:\s*(?:implementation|verification)\s*$", block)
+            and exact_task_pr.search(block)
         ):
             return "coverage"
     return "reference"
@@ -3009,6 +3070,43 @@ class Radar:
         hits_by_url: dict[str, dict[str, Any]] = {}
         self._last_open_pr_lookup_errors = []
 
+        def merge_hit(url: str, incoming: dict[str, Any]) -> None:
+            existing = hits_by_url.get(url)
+            if not existing:
+                hits_by_url[url] = dict(incoming)
+                return
+
+            merged = {**existing, **incoming}
+            for key in ("_linked_from_issue", "_issue_body_link", "_issue_body_reference"):
+                if key in existing or key in incoming:
+                    merged[key] = bool(existing.get(key) or incoming.get(key))
+
+            relations = {
+                str(value)
+                for value in (
+                    existing.get("_issue_body_link_relation"),
+                    incoming.get("_issue_body_link_relation"),
+                )
+                if value
+            }
+            for relation in ("non_covering", "coverage", "reference"):
+                if relation in relations:
+                    merged["_issue_body_link_relation"] = relation
+                    if relation == "non_covering":
+                        merged["_issue_body_link"] = False
+                    break
+
+            if "_semantic_overlap_count" in existing or "_semantic_overlap_count" in incoming:
+                merged["_semantic_overlap_count"] = max(
+                    int(existing.get("_semantic_overlap_count") or 0),
+                    int(incoming.get("_semantic_overlap_count") or 0),
+                )
+            if "_semantic_code_like" in existing or "_semantic_code_like" in incoming:
+                merged["_semantic_code_like"] = bool(
+                    existing.get("_semantic_code_like") or incoming.get("_semantic_code_like")
+                )
+            hits_by_url[url] = merged
+
         escaped_repo = re.escape(repo)
         issue_body_linked_numbers = {
             int(match)
@@ -3018,15 +3116,17 @@ class Radar:
                 re.I,
             )
         }
-        issue_body_link_relations = {
-            pr_num: issue_body_pr_link_relation(issue_context, repo, pr_num)
-            for pr_num in issue_body_linked_numbers
-        }
-        linked_numbers = set(issue_body_linked_numbers)
-        linked_numbers.update(
+        issue_body_pr_numbers = {
             int(match)
             for match in re.findall(r"\b(?:pr|pull request)\s*#(\d+)\b", issue_context, re.I)
-        )
+        }
+        explicit_issue_pr_numbers = issue_body_linked_numbers | issue_body_pr_numbers
+        issue_body_link_relations = {
+            pr_num: issue_body_pr_link_relation(issue_context, repo, pr_num)
+            for pr_num in explicit_issue_pr_numbers
+        }
+        linked_numbers = set(explicit_issue_pr_numbers)
+        timeline_events_by_number: dict[int, str] = {}
         timeline, timeline_error = gh_paginated(
             [
                 "api",
@@ -3051,7 +3151,12 @@ class Radar:
                 re.search(rf"github\.com/{re.escape(repo)}/pull/\d+", source_url, re.I)
             )
             if same_repo and "pull_request" in source_issue and source_issue.get("number"):
-                linked_numbers.add(int(source_issue["number"]))
+                source_num = int(source_issue["number"])
+                linked_numbers.add(source_num)
+                event_name = str(event.get("event") or "")
+                current_event = timeline_events_by_number.get(source_num, "")
+                if not current_event or event_name.casefold() == "connected":
+                    timeline_events_by_number[source_num] = event_name
             elif source_repo and source_match and "pull_request" in source_issue:
                 source_text = f"{source_issue.get('title') or ''}\n{source_issue.get('body') or ''}"
                 cross_repo_exact = str(event.get("event") or "").casefold() == "connected" or bool(
@@ -3063,12 +3168,16 @@ class Radar:
                     )
                 )
                 if cross_repo_exact:
-                    hits_by_url[source_url] = source_issue | {
-                        "number": int(source_match.group(2)),
-                        "_repo": source_repo,
-                        "_linked_from_issue": True,
-                        "_timeline_event": str(event.get("event") or ""),
-                    }
+                    merge_hit(
+                        source_url,
+                        source_issue
+                        | {
+                            "number": int(source_match.group(2)),
+                            "_repo": source_repo,
+                            "_linked_from_issue": True,
+                            "_timeline_event": str(event.get("event") or ""),
+                        },
+                    )
         linked_numbers.update(
             int(match)
             for groups in re.findall(
@@ -3101,19 +3210,23 @@ class Radar:
                 continue
             url = detail.get("html_url")
             if url:
-                hits_by_url[url] = {
-                    **detail,
-                    "number": pr_num,
-                    "html_url": url,
-                    "_linked_from_issue": (
-                        pr_num not in issue_body_linked_numbers
-                        or relation == "coverage"
-                        or detail_direct
-                    ),
-                    "_issue_body_link": relation == "coverage",
-                    "_issue_body_reference": pr_num in issue_body_linked_numbers,
-                    "_issue_body_link_relation": relation,
-                }
+                merge_hit(
+                    url,
+                    {
+                        **detail,
+                        "number": pr_num,
+                        "html_url": url,
+                        "_linked_from_issue": bool(
+                            pr_num in explicit_issue_pr_numbers
+                            or pr_num in timeline_events_by_number
+                            or detail_direct
+                        ),
+                        "_timeline_event": timeline_events_by_number.get(pr_num, ""),
+                        "_issue_body_link": relation == "coverage",
+                        "_issue_body_reference": pr_num in explicit_issue_pr_numbers,
+                        "_issue_body_link_relation": relation,
+                    },
+                )
 
         data, list_error = gh_list_page(
             [
@@ -3143,6 +3256,9 @@ class Radar:
                     re.I,
                 )
             )
+            hit_num = int(hit.get("number") or 0)
+            if issue_body_link_relations.get(hit_num) == "non_covering" and not direct:
+                continue
             if not direct and is_dependency_update_pr(hit):
                 continue
             overlap_count, code_like_overlap = semantic_overlap_strength(title, hit_text)
@@ -3150,11 +3266,14 @@ class Radar:
                 continue
             url = hit.get("html_url")
             if url:
-                hits_by_url[url] = {
-                    **hit,
-                    "_semantic_overlap_count": overlap_count,
-                    "_semantic_code_like": code_like_overlap,
-                }
+                merge_hit(
+                    url,
+                    {
+                        **hit,
+                        "_semantic_overlap_count": overlap_count,
+                        "_semantic_code_like": code_like_overlap,
+                    },
+                )
 
         title_semantic_terms = semantic_terms(title)
         technical_terms = [
@@ -3196,6 +3315,9 @@ class Radar:
                         re.I,
                     )
                 )
+                hit_num = int(hit.get("number") or 0)
+                if issue_body_link_relations.get(hit_num) == "non_covering" and not direct:
+                    continue
                 if not direct and is_dependency_update_pr(hit):
                     continue
                 overlap_count, code_like_overlap = semantic_overlap_strength(title, hit_text)
@@ -3203,11 +3325,14 @@ class Radar:
                     continue
                 url = hit.get("html_url")
                 if url:
-                    hits_by_url[url] = {
-                        **hit,
-                        "_semantic_overlap_count": overlap_count,
-                        "_semantic_code_like": code_like_overlap,
-                    }
+                    merge_hit(
+                        url,
+                        {
+                            **hit,
+                            "_semantic_overlap_count": overlap_count,
+                            "_semantic_code_like": code_like_overlap,
+                        },
+                    )
 
         return sorted(
             hits_by_url.values(),
@@ -3317,7 +3442,10 @@ class Radar:
             or reference_relation == "COVERAGE"
             or str(hit.get("_timeline_event") or "").casefold() == "connected"
         )
-        if reference_relation == "NON_COVERING_REFERENCE":
+        if (
+            issue_body_link_relation == "non_covering"
+            or reference_relation == "NON_COVERING_REFERENCE"
+        ):
             references_issue = False
 
         checks_value = detail.get("statusCheckRollup")
