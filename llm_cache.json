@@ -2001,6 +2001,37 @@
     ],
     "why": "The issue reports a reproducible NaN bug in FP8 multimodal inference with compilation enabled, but the root cause is not identified. The workaround (--enforce-eager) suggests a torch.compile/cudagraph interaction, but the exact mechanism (e.g., quantization numerics, graph capture, tensor parallel) is unclear. The issue is a bug report without a proposed fix or maintainer confirmation, and the track requires a concrete algorithm mechanism. The evidence shows no maintainer involvement or design confirmation, and the open PRs are unrelated. Thus, a clean implementation is not yet actionable without maintainer guidance or deeper investigation."
   },
+  "0d1b885f08ddfc0d403b2169b2dca32aacaddddba016644051de6c02c10896ef": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found in the supplied evidence."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "gpu_model_runner.py",
+      "MTP speculative decoding state update logic"
+    ],
+    "risks": [
+      "The fix may need to handle different batch sizes and chunked prefill interactions, requiring careful indexing adjustments.",
+      "Potential overlap with existing issues #50427 and #37035 may require coordination to avoid duplicate fixes."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproduction script with concurrency 4 and MTP enabled, verifying output correctness and absence of illegal memory access.",
+      "Add a regression test that runs MTP with num_speculative_tokens=2 and concurrency >=4, checking for corrupted output or crashes."
+    ],
+    "unknowns": [
+      "Exact code path causing the illegal memory access is not fully identified, but the issue provides sufficient clues for investigation."
+    ],
+    "why": "The issue provides a concrete, reproducible bug in MTP speculative decoding with a clear concurrency threshold, detailed corruption patterns, and multiple user confirmations. The root cause is localized to the V1 speculative decoding path in gpu_model_runner.py, with evidence pointing to a mixed-batch indexing issue. The fix is actionable and testable via a concurrency-based regression test."
+  },
   "0d385b09d9fff8e674fab9a786d17239e3d1d9995f453b01a12bf7652e30d614": {
     "confidence": 0.85,
     "contradictions": [],
@@ -4001,6 +4032,38 @@
       "Exact Chroma version and configuration in production environment"
     ],
     "why": "The issue clearly identifies an unbounded linked_memory_ids metadata array causing Chroma compaction failures, with a concrete reproducer and expected behavior. However, the supplied gate decision is HUMAN_REVIEW, and the open PR assessment indicates semantic overlap with PR #5497 that requires manual comparison. The track is llm_algorithm but the issue is primarily a data-structure/backend integration bug, not an algorithm mechanism; the algorithm evidence is weak (matched terms 'adapter' and 'sharding' are not central). Actionability is blocked by the need to compare with existing PRs and confirm design direction."
+  },
+  "1c0e91125d0b847395cf79734c117d45504842db9d351551303898cd19bc242d": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #8241 is marked as 'semantic_overlap_requires_review' but does not reference the issue and does not cover the root cause; issue comments indicate the PR reverted the test move, so overlap is limited to test file paths."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "deepspeed/module_inject/tp_plan_converter.py",
+      "tests/unit/v1/autotp/test_tp_plan_real_models.py"
+    ],
+    "risks": [
+      "Policy divergence: choosing option 1 (vocab-parallel) may require significant changes and could break existing replicated-tied behavior; option 2 (skip entry) may silently change semantics.",
+      "Dependency on transformers main version; fix must be compatible with both old and new transformers releases."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided Python reproducer with transformers main (>= 861f4c41) and 2 GPUs to confirm the ValueError; after fix, assert AutoTP initializes without error and tied embeddings behave per chosen policy (replicated or vocab-parallel).",
+      "Add a regression test in test_tp_plan_real_models.py for tied-embedding models with 'embedding_rowwise' in tp_plan."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer option 1, 2, or 3; the issue explicitly leaves this open.",
+      "Exact transformers version pinning strategy for CI."
+    ],
+    "why": "Issue provides a clear root cause (transformers main injects 'embedding_rowwise' into tp_plan for tied-embedding models, DeepSpeed's strict allowlist rejects it) and a concrete executable reproducer. The semantic note outlines policy options and the need for a deliberate fix. Although an open PR (#8241) overlaps in test paths, it does not cover the root cause, so the issue remains actionable."
   },
   "1c29c8f7c77e5baad1dea1341a1beb0eb1d72dc394531f00f270c11a4a5a1045": {
     "confidence": 0.7,
@@ -8776,6 +8839,37 @@
       "Whether cu_seq_lens_q is readily available at the revert point"
     ],
     "why": "Issue provides a precise root cause: revert_padding_free() uses strict decrease in position_ids to detect sequence boundaries, failing when a 1-token sequence is followed by another sequence (0->0). This leads to silent merging of sequences, causing InfoNCE sample misalignment and zero negative errors. The issue includes a minimal reproduction and suggests using explicit boundary info like cu_seq_lens_q. This is a concrete algorithmic bug in distributed training/kernel path with clear validation path."
+  },
+  "371f0611e45620d6eea6b294d55e5ecaa7e24b7fc9906a5ec76a9d94d9f98cb3": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Initial claim of policy-dependent zero hits was later corrected; priority policy was exonerated",
+      "Earlier reports of 'never hits' were revised to rare nonzero hits under load"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify _mamba_block_aligned_split in vllm/v1/core/sched/scheduler.py to use a full-attention block size for the Eagle back-off instead of the mamba-align block size",
+      "Add a regression test for align-mode prefix caching with MTP/Eagle speculative decoding"
+    ],
+    "risks": [
+      "Changing the back-off may affect correctness for FullAttn pruning under Eagle; needs maintainer review",
+      "Potential performance impact if the margin is insufficient for actual speculative decoding scenarios"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the CPU-only scheduler harness with use_eagle=True/False and a 4278-token prompt to verify chunk ends and prefix hits change from 1600 to 3200",
+      "Add a unit test in tests/v1/core/ that asserts the last cacheable position is not reduced by more than the full-attention block size in align mode"
+    ],
+    "unknowns": [
+      "Whether the fix should be applied to all speculative decoding methods or only MTP/Eagle",
+      "Exact maintainer preference for the back-off margin size"
+    ],
+    "why": "The issue and comments establish a concrete root cause: in align-mode prefix caching, the Eagle/MTP one-block back-off in _mamba_block_aligned_split reduces the last cacheable position by a full 1600-token block, preventing hits at deeper boundaries. This is confirmed by a CPU-only scheduler reproduction with real code paths and a clear differential test."
   },
   "373480ac81319d094f38682b2e1c173541a9fba7870b7dacafd5f06748dfd9e0": {
     "confidence": 0.7,
@@ -18520,6 +18614,35 @@
     ],
     "why": "Issue clearly identifies a security-relevant bug in a shared download path, with a verified repro and suggested fix direction. However, the deterministic gate requires HUMAN_REVIEW, and the existing PR #7162 is closed with CI failures, so maintainer confirmation is needed before starting new work."
   },
+  "6b59c16b04754442c73aa32fbdc1ea3af4bfb901f1ad25c0b1642278a498c93b": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found; the issue's ruled-out hypotheses are consistent with the evidence."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.algorithm_evidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "TurboQuant attention backend (turboquant_attn.py)",
+      "KV cache quantization path for turboquant_* dtypes",
+      "MTP speculative decoding integration with quantized KV"
+    ],
+    "risks": [
+      "Requires specific hardware (RTX 5090 sm120) which may not be available in CI; distinguishing numerical error from floating-point noise may need careful tolerance setting."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided command on sm120 hardware, then run a reference comparison using fp8 KV as baseline; add a regression test that checks for repetition collapse (max consecutive repeat > threshold) with turboquant KV and MTP K3 on a long prompt."
+    ],
+    "unknowns": [
+      "Exact root cause within the TurboQuant path (e.g., scaling or numerical precision) is not isolated; the issue notes a hypothesis but not confirmed."
+    ],
+    "why": "The issue provides a detailed, reproducible bug with clear root-cause evidence: MTP speculative decoding with turboquant KV cache on sm120 causes repetition collapse, while fp8 KV works. The report includes exact commands, a comparison table, and ruled-out hypotheses, establishing a concrete algorithmic/numerical defect. The track is llm_algorithm with mechanisms in model_architecture, numerics_quantization, and kernel_algorithm, and a validation path via reference comparison and regression tests is feasible."
+  },
   "6b5bb076f19fec9a33d91a0713756b61980f3f9780dc5aa3fad771eb478915df": {
     "confidence": 0.85,
     "contradictions": [],
@@ -24574,6 +24697,36 @@
       "Exact code location of transformResponse and whether maintainers have a preferred error handling pattern"
     ],
     "why": "The issue clearly identifies a failing CI integration due to an external endpoint returning HTTP 500, and promptfoo's error handling incorrectly assumes an OpenAI-style payload, causing a null dereference. This is a concrete bug with a reproducible curl command and a clear code path (transformResponse). No competing PR or issue exists, and the fix is actionable: improve error handling for non-OpenAI responses."
+  },
+  "8d2933539d1484c351a62aa4cb3e51aea76e5ff38fdbd756608634afd447b0d2": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #8241 is marked as NON_COVERING_REFERENCE but has semantic overlap; issue claims it left the global in place, which is consistent."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "deepspeed/sequence/layer.py",
+      "DistributedAttention",
+      "_SeqAllToAll",
+      "uneven_heads_all2all"
+    ],
+    "risks": [
+      "Backward path must restore head count from ctx; potential breakage of external imports of set/get_ulysses_num_kv_heads requiring shim."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test with two DistributedAttention instances having different head counts (e.g., 3 vs 2 over sp=2) running forward+backward in same process, verifying first instance's split unchanged."
+    ],
+    "unknowns": [
+      "Exact implementation details of per-model threading and whether maintainers prefer explicit constructor arg vs lazy capture."
+    ],
+    "why": "Issue clearly identifies a process-wide global causing incorrect tensor splitting for multiple models with different KV head counts, with a concrete root cause and a suggested fix mirroring an existing PR. Validation path includes a regression test with two models."
   },
   "8d3bc0daa5fdd6a6f487db5c4b0b91f45df029089f34bb68adaa5c9554ff0a44": {
     "confidence": 0.8,
@@ -37692,6 +37845,39 @@
       "Whether maintainers prefer a specific fix approach; existing PRs may already be close to a solution"
     ],
     "why": "Issue provides a clear root cause and deterministic repro for a Bedrock Converse 400 when forced tool_choice and parallel_tool_calls are combined. Existing PRs #32605 and #34888 overlap semantically but are stale and do not reference this issue; a materially better PR could address the forced-tool conflict and add regression tests."
+  },
+  "dc67b7794b12607a76226c16382168b7fee3a00f3985eb8853ded084b10b58d7": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue claims client_id/client_secret are never hydrated, but recent comment states the hydration path exists on the default branch."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "litellm/proxy/_experimental/mcp_server/outbound_credentials/adapter.py",
+      "litellm/proxy/_experimental/mcp_server/mcp_server_manager.py",
+      "litellm/proxy/_experimental/mcp_server/outbound_credentials/resolver.py"
+    ],
+    "risks": [
+      "The fix may duplicate existing functionality if PR #26871 already covers the hydration path.",
+      "Changes to scope handling could affect existing OAuth flows."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce the issue on the current default branch using the provided config.yaml and REST API registration, then verify that client_id/client_secret are correctly hydrated and the token endpoint accepts the request.",
+      "Add a regression test for env var resolution in mcp_servers config loader.",
+      "Add a test to ensure the scope parameter is not over-broad when using discovery."
+    ],
+    "unknowns": [
+      "Whether the current default branch fully resolves all three bugs described in the issue.",
+      "Whether the reported environment (main-stable image) is outdated relative to the fix."
+    ],
+    "why": "The issue provides a detailed root cause analysis with code anchors and a concrete reproduction path. However, recent comments indicate the reported bug may already be fixed on the default branch by merged PR #26871, which hydrates persisted credentials. This creates uncertainty about whether a new PR is needed, but the issue remains actionable for verification and potential additional fixes (e.g., env var resolution, scope handling)."
   },
   "dce7cfc8bee1655008e21d4ead2902ed8c265397eafd36072f0658b1ed203d09": {
     "confidence": 0.9,

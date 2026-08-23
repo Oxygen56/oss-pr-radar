@@ -1,8 +1,8 @@
 {
   "contractDigest": "0ffabde97bae00693068b61ed03087975ec1c57c989c591a2b43af8aa3ecf505",
   "decisionContractDigest": "bea3254376f7aced8aef5e8a7d060fa881c49ffefdc92fe1a0f5ba16740e04db",
-  "generatedAt": "2026-08-23T13:51:16.808737Z",
-  "intentCount": 2,
+  "generatedAt": "2026-08-23T14:49:36.896233Z",
+  "intentCount": 3,
   "intents": [
     {
       "actionabilityEvidence": {
@@ -46,7 +46,7 @@
       "decisionDigest": "c90af024c6934e5519d8fe104aec895db64a244b632ca4bf0f0e42861939028b",
       "defaultBranch": "master",
       "evidenceDigest": "110ead577488215cee73db76c7e6318df4b730a46713729cfeb0e41af21f93f7",
-      "expiresAt": "2026-08-23T15:51:16.808737Z",
+      "expiresAt": "2026-08-23T16:49:36.896233Z",
       "intentId": "03f8fe45cf876c6a52f14834f0bbe41661e1d2ebdcae7d3dfd71b9681c18f2fc",
       "issueNumber": 10302,
       "issueUpdatedAt": "2026-08-23T06:31:21Z",
@@ -223,14 +223,14 @@
       "promptDigest": "0ba799207ff90794c6ebbec8a336b975b8be27f7e5121ea698c9de80d1e5e0f7",
       "publicSubmissionAllowed": true,
       "publicationMode": "canary",
-      "renewedAt": "2026-08-23T13:51:16.808737Z",
+      "renewedAt": "2026-08-23T14:49:36.896233Z",
       "repo": "qdrant/qdrant",
       "runId": "scan-20260823T070557Z-c49f66aa3599",
       "scanGate": "ALLOW_TO_WORK",
       "scannerVersion": "oss_pr_radar_v52_recheck_pr_validation",
       "score": 11,
       "selectedBaseSha": "74f3e85b9473c62560006c043e13737ce6b48412",
-      "signature": "8570f53e57a9b7568d0305510808682de19e39e4593fd4bfb49001bef90557dc",
+      "signature": "df52d4f7cc0ed77a50d2e17e5da21bf6bb699c2ef03764cfac27c36766a6f677",
       "snapshotId": "939e00e65a4e0ddc7fc8008f229d44724aa26fcc6f4e62ca940678932e5a39ab",
       "sourceSha": "611e6754931f11c7c11cce8014238f2d2c5255c1",
       "status": "PENDING",
@@ -238,6 +238,335 @@
       "taskStage": "PREFLIGHT",
       "title": "Payload keyword index desynchronizes from stored payloads under concurrent set_payload by-filter",
       "track": "agent_ai_infra",
+      "version": "dispatch_intent_v7"
+    },
+    {
+      "actionabilityEvidence": {
+        "algorithm_wait_evidence": false,
+        "code_anchors": [
+          "vllm/v1/worker/gpu_model_runner.py",
+          "torch/cuda/streams.py",
+          "gpu_model_runner.py",
+          "streams.py",
+          "scheduler.py",
+          "turboquant_attn.py",
+          "llama.cpp",
+          "`fp8`"
+        ],
+        "dependency_confirmation": false,
+        "dependency_pr_numbers": [],
+        "design_confirmation": false,
+        "help_wanted": false,
+        "maintainer_active_investigation": false,
+        "maintainer_approved": false,
+        "maintainer_revalidation_requested": false,
+        "needs_confirmation": false,
+        "ownership_confirmation": false,
+        "probe_ready": true,
+        "public_repro_signals": 3,
+        "reproduction_evidence": [
+          "traceback_frame",
+          "ordered_steps",
+          "executable_command"
+        ],
+        "root_cause_signal": true,
+        "usage_confirmation": false,
+        "wait_reasons": []
+      },
+      "algorithmEvidence": {
+        "code_path_signal": true,
+        "curated_repo": false,
+        "depth": "high",
+        "experiment_signal": false,
+        "formula_signal": false,
+        "matched_terms": [
+          "attention",
+          "block size",
+          "fp8",
+          "quantized"
+        ],
+        "mechanism_count": 3,
+        "mechanisms": [
+          "model_architecture",
+          "numerics_quantization",
+          "kernel_algorithm"
+        ],
+        "operational_only": false,
+        "qualified": true,
+        "score": 9
+      },
+      "authorizationSource": "signed_live_revalidation_required",
+      "autoSpawn": true,
+      "autoSubmitAuthorized": false,
+      "category": "LOCAL_FIX_ONLY",
+      "contractDigest": "0ffabde97bae00693068b61ed03087975ec1c57c989c591a2b43af8aa3ecf505",
+      "decisionContractDigest": "bea3254376f7aced8aef5e8a7d060fa881c49ffefdc92fe1a0f5ba16740e04db",
+      "decisionDigest": "84939437f4d4440b99af91d7f20db664c38ac39a890c86e7dc56d2b9b9181255",
+      "defaultBranch": "main",
+      "evidenceDigest": "cc1b22c809ca3e145265849c0b836f88138aa6636cc8f6d0675e375e90ecbca0",
+      "expiresAt": "2026-08-23T16:49:36.896233Z",
+      "intentId": "58c6c1c71da639d72d16425ba71275d2c305606431d70833e52b886d15eba97b",
+      "issueNumber": 52475,
+      "issueUpdatedAt": "2026-08-15T22:36:17Z",
+      "issueUrl": "https://github.com/vllm-project/vllm/issues/52475",
+      "issuedAt": "2026-08-23T14:49:36.896233Z",
+      "key": "vllm-project/vllm#52475",
+      "llmReview": {
+        "confidence": 0.85,
+        "decision": "NEW_CLEAN_CANDIDATE",
+        "model": "deepseek-v4-flash",
+        "semanticSignal": "NO_OBJECTION",
+        "status": "ok",
+        "waitReason": null
+      },
+      "maturity": "mature",
+      "mode": "canary",
+      "nonce": "d058bcd2b9ed16856b8f50dc4d8bf3be",
+      "notify": true,
+      "policyDigest": "5c3ff74806b2f2e496e1ea0d76a1de5e30e38b4fce821d788a3836e42bb834f3",
+      "preTaskEvidence": {
+        "aiDisclosureConflict": true,
+        "assigneeDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "assignmentRequired": false,
+        "baseLookupStatus": "ok",
+        "baseSha": "b26039b09fc97aa00f095a99eda503b7dad594ec",
+        "codePathsPlan": [
+          "vllm/v1/worker/gpu_model_runner.py",
+          "torch/cuda/streams.py",
+          "gpu_model_runner.py",
+          "streams.py",
+          "scheduler.py",
+          "turboquant_attn.py",
+          "llama.cpp",
+          "vllm/config/scheduler.py",
+          "vllm/model_executor/models/llama.py",
+          "rust/src/metrics/src/scheduler.rs",
+          "vllm/model_executor/layers/quantization/fp8.py",
+          "vllm/v1/attention/backends/turboquant_attn.py",
+          "vllm/v1/core/sched/scheduler.py",
+          "vllm/model_executor/layers/fused_moe/oracle/fp8.py"
+        ],
+        "defaultBranch": "main",
+        "designDigest": "014c0ea27901d742664d033c73aba507178bb901e8ce7a485534e7669fe19240",
+        "duplicate": {
+          "best_score": 29,
+          "best_url": "https://github.com/vllm-project/vllm/pull/53406",
+          "components": {
+            "ciIsDiagnosticOnly": true,
+            "independentEvidence": {
+              "codeChange": true,
+              "keyPathCoverage": true,
+              "maintainerRecognition": false,
+              "tests": false
+            },
+            "rootCauseCoverage": false
+          },
+          "gaps": [
+            "缺少根因覆盖证据",
+            "缺少测试文件"
+          ],
+          "prs": [
+            {
+              "additions": 184,
+              "age_days": 0,
+              "author_association": "NONE",
+              "changed_files": 2,
+              "ci_competition_weight": 0,
+              "deletions": 16,
+              "gaps": [
+                "未明确 closing/reference 目标 issue"
+              ],
+              "ignored_nontechnical_failed_checks": [],
+              "is_draft": false,
+              "issue_body_link": false,
+              "issue_body_link_relation": "",
+              "maintainer_owned": false,
+              "material_competition_gaps": [],
+              "number": 53410,
+              "overlapping_paths": [
+                "vllm/v1/attention/backends/turboquant_attn.py"
+              ],
+              "reference_relation": "REFERENCE",
+              "references_issue": false,
+              "root_cause_coverage": false,
+              "rule_closed": false,
+              "score": 34,
+              "semantic_distinctive_overlap": [
+                "qwen3",
+                "qwen3_8_27b",
+                "sm120"
+              ],
+              "semantic_overlap": true,
+              "semantic_overlap_count": 7,
+              "state": "OPEN",
+              "strengths": [
+                "包含测试文件 1 个",
+                "CI 失败待归因，不作为竞争依据",
+                "近期仍活跃",
+                "标题/正文与 issue 关键词匹配"
+              ],
+              "technical_complete": false,
+              "technical_failed_checks": [
+                "pre-run-check",
+                "pre-run-check"
+              ],
+              "test_files": 1,
+              "title": "[Perf] TurboQuant: run spec-decode verify batches as decodes with FULL cudagraphs",
+              "url": "https://github.com/vllm-project/vllm/pull/53410"
+            },
+            {
+              "additions": 11,
+              "age_days": 0,
+              "author_association": "NONE",
+              "changed_files": 1,
+              "ci_competition_weight": 0,
+              "deletions": 1,
+              "gaps": [
+                "缺少测试文件"
+              ],
+              "ignored_nontechnical_failed_checks": [],
+              "is_draft": false,
+              "issue_body_link": false,
+              "issue_body_link_relation": "",
+              "maintainer_owned": false,
+              "material_competition_gaps": [
+                "缺少回归测试"
+              ],
+              "number": 53406,
+              "overlapping_paths": [
+                "vllm/v1/attention/backends/turboquant_attn.py"
+              ],
+              "reference_relation": "COVERAGE",
+              "references_issue": true,
+              "root_cause_coverage": false,
+              "rule_closed": false,
+              "score": 29,
+              "semantic_distinctive_overlap": [
+                "qwen3",
+                "qwen3_8_27b",
+                "sm120"
+              ],
+              "semantic_overlap": true,
+              "semantic_overlap_count": 9,
+              "state": "OPEN",
+              "strengths": [
+                "明确关联 issue",
+                "CI 失败待归因，不作为竞争依据",
+                "近期仍活跃",
+                "标题/正文与 issue 关键词匹配"
+              ],
+              "technical_complete": false,
+              "technical_failed_checks": [
+                "pre-run-check",
+                "pre-run-check"
+              ],
+              "test_files": 0,
+              "title": "[Bugfix] Do not FULL-capture spec-decode batches in TurboQuant attention backend",
+              "url": "https://github.com/vllm-project/vllm/pull/53406"
+            },
+            {
+              "additions": 32347,
+              "age_days": 0,
+              "author_association": "CONTRIBUTOR",
+              "changed_files": 221,
+              "ci_competition_weight": 0,
+              "deletions": 1477,
+              "gaps": [
+                "未明确 closing/reference 目标 issue",
+                "改动面偏大"
+              ],
+              "ignored_nontechnical_failed_checks": [],
+              "is_draft": false,
+              "issue_body_link": false,
+              "issue_body_link_relation": "",
+              "maintainer_owned": false,
+              "material_competition_gaps": [],
+              "number": 41834,
+              "overlapping_paths": [],
+              "reference_relation": "REFERENCE",
+              "references_issue": false,
+              "root_cause_coverage": false,
+              "rule_closed": false,
+              "score": 22,
+              "semantic_distinctive_overlap": [
+                "qwen3",
+                "sm120"
+              ],
+              "semantic_overlap": true,
+              "semantic_overlap_count": 7,
+              "state": "OPEN",
+              "strengths": [
+                "包含测试文件 68 个",
+                "CI 失败待归因，不作为竞争依据",
+                "近期仍活跃",
+                "标题/正文与 issue 关键词匹配"
+              ],
+              "technical_complete": false,
+              "technical_failed_checks": [
+                "pre-run-check",
+                "DCO"
+              ],
+              "test_files": 68,
+              "title": "[New Model][Nvidia] Add SM12x support for DeepSeek V4 Flash with essential fixes",
+              "url": "https://github.com/vllm-project/vllm/pull/41834"
+            }
+          ],
+          "status": "weak_pr_competition_possible",
+          "summary": "已有直接关联但证据不完整的 PR #53406：缺少测试文件；只有能补足根因、测试或关键路径覆盖时才值得竞争"
+        },
+        "duplicateDigest": "bfc7dcff5ba843c604edc2c71e82d2839cea86ddd7f2b060999c9ab8d5b20093",
+        "duplicateStatus": "weak_pr_competition_possible",
+        "issue": {
+          "assignees": [],
+          "state": "open"
+        },
+        "issueDigest": "47e3738af16bfe79c3f15f6a9bc9efedf3f137ef674a30d28038c642d47140b3",
+        "matureRepository": true,
+        "policy": {
+          "status": "ai_disclosure_conflict"
+        },
+        "probeRequired": true,
+        "reproductionPathPlan": true,
+        "schema": "pre_task_evidence_v1",
+        "validationPathPlan": true
+      },
+      "preTaskEvidenceDigest": "5e3e605acbca4e7b349706744bfd4ab949ee0f08dcca27daaa6f9986add3f822",
+      "preTaskGate": {
+        "allowed": true,
+        "baseSha": "b26039b09fc97aa00f095a99eda503b7dad594ec",
+        "classification": null,
+        "evidenceDigest": "5e3e605acbca4e7b349706744bfd4ab949ee0f08dcca27daaa6f9986add3f822",
+        "expected": {
+          "assigneeDigest": "",
+          "baseSha": "",
+          "designDigest": "",
+          "duplicateDigest": "",
+          "issueDigest": ""
+        },
+        "reason": "PRE_TASK_EVIDENCE_PASSED",
+        "reasons": [],
+        "schema": "pre_task_evidence_v1"
+      },
+      "probeLevel": "PENDING",
+      "probeProfile": null,
+      "probeRequired": true,
+      "promptDigest": "e43a6c9e4b2ea221b9136beb4d1d891f27fcb313cb589a702d251be98d79ec9f",
+      "publicSubmissionAllowed": false,
+      "publicationMode": "canary",
+      "repo": "vllm-project/vllm",
+      "runId": "scan-20260823T144546Z-aa3353a8870f",
+      "scanGate": "ALLOW_PRIVATE_WORK",
+      "scannerVersion": "oss_pr_radar_v52_recheck_pr_validation",
+      "score": 13,
+      "selectedBaseSha": "b26039b09fc97aa00f095a99eda503b7dad594ec",
+      "signature": "35ee178bf1dbb08a442ad6887ccba3271f811771dfed1fb0cdc40e3495ddad45",
+      "snapshotId": "3ac69f20404629166b3d5939677e53abb1859681d17acf5044b052f16ea6f113",
+      "sourceSha": "77ae77a6cdfbeb6bda0ba3febb90cde71d163633",
+      "status": "PENDING",
+      "submissionPolicy": "ai_disclosure_conflict",
+      "taskStage": "PREFLIGHT",
+      "title": "[Bug]: MTP speculative decoding produces repetition collapse with turboquant_* KV cache on sm120 (Qwen3.8-27B hybrid GDN)",
+      "track": "llm_algorithm",
       "version": "dispatch_intent_v7"
     },
     {
@@ -301,7 +630,7 @@
       "decisionDigest": "64bc0309add0a66d9c3313f3f04e3677eac949e3dba457c7380ae5a7cbb42855",
       "defaultBranch": "main",
       "evidenceDigest": "bc3ee803bf7241537bae6945408431c51f4fdc279e562438e322109b3a2dffeb",
-      "expiresAt": "2026-08-23T15:51:16.808737Z",
+      "expiresAt": "2026-08-23T16:49:36.896233Z",
       "intentId": "356937dcb0f43d13ce74b654f2bab2b6e037541d0320710b8a148a7048e4e602",
       "issueNumber": 53462,
       "issueUpdatedAt": "2026-08-23T13:42:27Z",
@@ -522,13 +851,14 @@
       "promptDigest": "d41f9fe50e902c8a2ab983fae95eb5e3477e9d80cb774f79fc0ee9bbb0887e7e",
       "publicSubmissionAllowed": false,
       "publicationMode": "canary",
+      "renewedAt": "2026-08-23T14:49:36.896233Z",
       "repo": "vllm-project/vllm",
       "runId": "scan-20260823T134855Z-0f744a076edd",
       "scanGate": "ALLOW_PRIVATE_WORK",
       "scannerVersion": "oss_pr_radar_v52_recheck_pr_validation",
       "score": 12,
       "selectedBaseSha": "b26039b09fc97aa00f095a99eda503b7dad594ec",
-      "signature": "ef1bc197eaf2558ade5a0ef6daeb6491c1b4fac9fbbe1e0b04137680d7679dea",
+      "signature": "a1d562394394999586c14b0b2759cfc06e5a50510fb11b569f6df0bf39130c98",
       "snapshotId": "902d83a267a84cb32f1ef9c7939f13f40b39eaa0a7d1c8899b6fae9f1acad9e3",
       "sourceSha": "77ae77a6cdfbeb6bda0ba3febb90cde71d163633",
       "status": "PENDING",
@@ -541,9 +871,9 @@
   ],
   "mode": "canary",
   "newIntentCount": 1,
-  "runId": "scan-20260823T134855Z-0f744a076edd",
+  "runId": "scan-20260823T144546Z-aa3353a8870f",
   "scannerVersion": "oss_pr_radar_v52_recheck_pr_validation",
-  "signature": "1697bf27c626a92473cfc5fe17825b005c9ff0475d2c65500dceecee03ef99ba",
+  "signature": "fe0305f52a23cf9749d8ce192c6fd24a450846ff04dedf9b77131bc892c56187",
   "sourceSha": "77ae77a6cdfbeb6bda0ba3febb90cde71d163633",
   "version": "dispatch_intents_v7"
 }
