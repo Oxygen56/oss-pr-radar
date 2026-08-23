@@ -40,6 +40,7 @@ RELEASE_ACTIVATION_JOURNAL = "release-activation.json"
 RUNTIME_SCHEMA = "runtime_health_v1"
 GIB = 1024**3
 REQUIRED_WORKERS = ("fast", "slow", "queue-importer")
+SLOW_INFLIGHT_MAX_SECONDS = 1800
 
 
 class RuntimeLockBusy(RuntimeError):
@@ -763,6 +764,7 @@ def _worker_health(
     now: float,
     max_success_age_seconds: int,
     max_queue_age_seconds: int,
+    max_inflight_seconds: int,
     max_failures: int,
 ) -> dict[str, Any]:
     success_field = "queueImportSuccessAt" if worker == "queue-importer" else "lastSuccessAt"
@@ -773,7 +775,33 @@ def _worker_health(
     success = _parse_epoch(state.get(success_field))
     issues: list[str] = []
     max_age = max_queue_age_seconds if worker == "queue-importer" else max_success_age_seconds
-    if success is None or now - success > max_age:
+    in_flight = worker == "slow" and state.get("inFlight") is True
+    attempt_started = _parse_epoch(state.get("attemptStartedAt"))
+    worker_pid_alive = False
+    if in_flight and state.get("workerPidAlive") is True:
+        recorded_pid = state.get("workerPid")
+        try:
+            recorded_pid = int(recorded_pid)
+        except (TypeError, ValueError):
+            recorded_pid = None
+        if (
+            isinstance(recorded_pid, int)
+            and not isinstance(recorded_pid, bool)
+            and recorded_pid > 0
+        ):
+            pid_evidence = pid_probe(
+                recorded_pid,
+                expected_fragment="slow_publication_worker.py",
+            )
+            worker_pid_alive = (
+                pid_evidence.get("alive") is True and pid_evidence.get("versionMatched") is True
+            )
+    if in_flight:
+        if not worker_pid_alive:
+            issues.append("INFLIGHT_PID_NOT_ALIVE")
+        elif attempt_started is None or now - attempt_started > max_inflight_seconds:
+            issues.append("INFLIGHT_TIMEOUT")
+    elif success is None or now - success > max_age:
         issues.append("RECENT_SUCCESS_MISSING_OR_STALE")
     if int(state.get(failure_field) or 0) >= max_failures:
         issues.append("CONSECUTIVE_FAILURES")
@@ -786,6 +814,10 @@ def _worker_health(
         "lastSuccessAt": state.get(success_field),
         "lastExitCode": state.get(exit_field),
         "consecutiveFailures": int(state.get(failure_field) or 0),
+        "inFlight": bool(state.get("inFlight")) if worker == "slow" else False,
+        "attemptStartedAt": state.get("attemptStartedAt") if worker == "slow" else None,
+        "workerPid": state.get("workerPid") if worker == "slow" else None,
+        "workerPidAlive": worker_pid_alive if worker == "slow" else None,
     }
 
 
@@ -795,6 +827,7 @@ def evaluate_health(
     now: float | None = None,
     max_success_age_seconds: int = 120,
     max_queue_age_seconds: int = 900,
+    max_inflight_seconds: int = SLOW_INFLIGHT_MAX_SECONDS,
     max_failures: int = 3,
     expected_release: str | None = None,
     expected_policy_digest: str | None = None,
@@ -816,6 +849,7 @@ def evaluate_health(
             now=current,
             max_success_age_seconds=max_success_age_seconds,
             max_queue_age_seconds=max_queue_age_seconds,
+            max_inflight_seconds=max_inflight_seconds,
             max_failures=max_failures,
         )
         workers[worker] = result

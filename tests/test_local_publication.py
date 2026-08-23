@@ -824,6 +824,56 @@ def test_slow_worker_persisted_backoff_first_run_records_fresh_health(tmp_path, 
     assert "slowNoopReason" not in slow
 
 
+def test_slow_worker_marks_runtime_inflight_and_clears_it_on_success(tmp_path):
+    observed = {}
+
+    def runner(_root: Path, operation: str):
+        if operation == "reproduction-probe":
+            health = json.loads(
+                (tmp_path / "state" / "runtime-health.json").read_text(encoding="utf-8")
+            )
+            observed.update(health["workers"]["slow"])
+            return {"ok": True, "errors": []}
+        if operation == "context-recover":
+            return {"ok": True, "verified": 0, "unavailable": [], "quarantined": [], "errors": []}
+        if operation == "ingest-results":
+            return {
+                "ok": True,
+                "ingested": [],
+                "publicationRequests": [],
+                "validationDeferred": [],
+                "ignored": [],
+                "errors": [],
+            }
+        if operation == "independent-review-run":
+            return {"ok": True, "updated": [], "errors": []}
+        if operation == "title-reconcile":
+            return {"ok": True, "renamed": [], "errors": []}
+        if operation == "cleanup-reconcile":
+            return {"ok": True, "archived": [], "errors": []}
+        if operation == "publication-run":
+            return {"ok": True, "published": [], "pending": [], "blocked": [], "errors": []}
+        if operation == "publication-feedback-list":
+            return {"ok": True, "candidates": [], "unresolved": [], "reconciled": []}
+        if operation == "recovery-list":
+            return {"ok": True, "recoverable": []}
+        raise AssertionError(operation)
+
+    result = slow_advance_once(tmp_path, runner=runner)
+
+    assert result["ok"] is True
+    assert observed["inFlight"] is True
+    assert observed["attemptStartedAt"]
+    assert observed["workerPid"] == os.getpid()
+    assert observed["workerPidAlive"] is True
+    health = json.loads((tmp_path / "state" / "runtime-health.json").read_text(encoding="utf-8"))
+    slow = health["workers"]["slow"]
+    assert slow["inFlight"] is False
+    assert slow["attemptStartedAt"] is None
+    assert slow["workerPid"] is None
+    assert slow["workerPidAlive"] is False
+
+
 def test_slow_worker_marks_terminal_missing_worktree_skip_as_success(monkeypatch, tmp_path):
     monkeypatch.setattr(
         "oss_pr_radar.local_publication.disk_snapshot", lambda _root: {"level": "ok"}

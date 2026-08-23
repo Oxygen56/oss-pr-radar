@@ -110,7 +110,11 @@ def test_audit_reports_pid_dash_with_nonzero_launchctl_exit():
 def test_collect_snapshot_reads_pid_and_version_from_fast_worker(tmp_path, monkeypatch):
     (tmp_path / "state").mkdir()
     (tmp_path / "state" / "runtime-health.json").write_text(
-        '{"workers":{"fast":{"pid":123,"pidAlive":true,"processVersionMatched":true}}}\n',
+        '{"workers":{'
+        '"fast":{"pid":123,"pidAlive":true,"processVersionMatched":true},'
+        '"slow":{"inFlight":true,"attemptStartedAt":"2999-01-01T00:00:00Z",'
+        '"workerPid":123,"workerPidAlive":true}'
+        "}}\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(
@@ -143,6 +147,43 @@ def test_collect_snapshot_reads_pid_and_version_from_fast_worker(tmp_path, monke
         "alive": True,
         "versionMatched": True,
     }
+    assert snapshot["state"]["workers"]["slow"]["workerPid"] == 123
+    assert snapshot["state"]["workers"]["slow"]["workerPidAlive"] is True
+
+
+def test_collect_snapshot_rejects_replacement_slow_pid(tmp_path, monkeypatch):
+    (tmp_path / "state").mkdir()
+    (tmp_path / "state" / "runtime-health.json").write_text(
+        '{"workers":{"slow":{"inFlight":true,"workerPid":123,"workerPidAlive":true}}}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "oss_pr_radar.runtime_audit.active_release_evidence",
+        lambda _root: {
+            "valid": True,
+            "releaseId": "release-a",
+            "policyDigest": "policy-a",
+        },
+    )
+    monkeypatch.setattr("oss_pr_radar.runtime_audit.disk_snapshot", lambda _root: {"level": "ok"})
+    monkeypatch.setattr(
+        "oss_pr_radar.runtime_audit.process_probe",
+        lambda pid, **_kwargs: {
+            "pid": pid,
+            "alive": True,
+            "versionMatched": True,
+            "releaseIdentityMatched": True,
+            "workingDirectoryMatched": True,
+        },
+    )
+
+    snapshot = collect_snapshot(
+        tmp_path,
+        launchctl_runner=lambda _label: "state = running\npid = 456\nlast exit code = 0\n",
+    )
+
+    assert snapshot["state"]["workers"]["slow"]["workerPid"] == 123
+    assert snapshot["state"]["workers"]["slow"]["workerPidAlive"] is False
 
 
 def test_collect_snapshot_uses_real_pids_and_detects_stale_runtime_pid(tmp_path):

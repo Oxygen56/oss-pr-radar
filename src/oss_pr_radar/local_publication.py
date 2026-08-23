@@ -23,6 +23,7 @@ from .runtime import (
     read_json,
     record_cycle,
     rotate_log,
+    update_worker_observation,
     utc_now,
     write_json,
 )
@@ -84,12 +85,41 @@ def _slow_worker_diagnostic(
 
 
 def _record_successful_slow_noop_cycle(root: Path, *, started_at: float) -> None:
-    record_cycle(
+    _record_slow_cycle(
         root,
-        worker="slow",
         ok=True,
         exit_code=0,
         started_at=started_at,
+    )
+
+
+def _record_slow_cycle(
+    root: Path,
+    *,
+    ok: bool,
+    exit_code: int,
+    started_at: float,
+    error_code: str | None = None,
+    **extra: Any,
+) -> dict[str, Any]:
+    """Record a terminal slow cycle and clear its active-run marker."""
+
+    extra.update(
+        {
+            "inFlight": False,
+            "attemptStartedAt": None,
+            "workerPid": None,
+            "workerPidAlive": False,
+        }
+    )
+    return record_cycle(
+        root,
+        worker="slow",
+        ok=ok,
+        exit_code=exit_code,
+        started_at=started_at,
+        error_code=error_code,
+        **extra,
     )
 
 
@@ -506,6 +536,7 @@ def slow_advance_once(
             delay = min(3600, 60 * (2 ** min(failures, 5)))
             retry_after = now + delay
             operation_id = f"{os.getpid()}-{time.time_ns()}"
+            attempt_started_at = utc_now()
             write_json(
                 backoff_path,
                 {
@@ -514,7 +545,7 @@ def slow_advance_once(
                     "backoffSeconds": delay,
                     "nextAttemptAt": retry_after,
                     "retryAfter": retry_after,
-                    "attemptStartedAt": utc_now(),
+                    "attemptStartedAt": attempt_started_at,
                     "inFlight": True,
                     "operationId": operation_id,
                 },
@@ -529,6 +560,14 @@ def slow_advance_once(
                     "retryAfter": retry_after,
                     "inFlight": True,
                 },
+            )
+            update_worker_observation(
+                root,
+                worker="slow",
+                inFlight=True,
+                attemptStartedAt=attempt_started_at,
+                workerPid=os.getpid(),
+                workerPidAlive=True,
             )
             try:
                 if disk["level"] == "stop":
@@ -576,9 +615,8 @@ def slow_advance_once(
                         "inFlight": False,
                     },
                 )
-                record_cycle(
+                _record_slow_cycle(
                     root,
-                    worker="slow",
                     ok=False,
                     exit_code=130 if isinstance(exc, KeyboardInterrupt) else 1,
                     started_at=started,
@@ -608,9 +646,8 @@ def slow_advance_once(
                     "operationId": backoff.get("operationId"),
                 },
             )
-            record_cycle(
+            _record_slow_cycle(
                 root,
-                worker="slow",
                 ok=ok,
                 exit_code=0 if ok else 1,
                 started_at=started,

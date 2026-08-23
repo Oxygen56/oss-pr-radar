@@ -401,6 +401,20 @@ def collect_snapshot(
     slow_launch = worker_processes.get("slow", {}).get("launchctl", {})
     slow_runtime = state_workers.get("slow") if isinstance(state_workers, dict) else {}
     slow_runtime = slow_runtime if isinstance(slow_runtime, dict) else {}
+    if slow_runtime.get("inFlight") is True:
+        observed_workers = dict(state_workers)
+        observed_slow = dict(slow_runtime)
+        recorded_pid = slow_runtime.get("workerPid")
+        current_pid = slow_launch.get("pid")
+        observed_slow["workerPidAlive"] = (
+            slow_runtime.get("workerPidAlive") is True
+            and recorded_pid == current_pid
+            and recorded_pid is not None
+            and worker_processes.get("slow", {}).get("process", {}).get("alive") is True
+        )
+        observed_workers["slow"] = observed_slow
+        state = dict(state)
+        state["workers"] = observed_workers
     if slow_launch.get("pid") is None and _raw_worker_success(slow_runtime, "slow"):
         slow_alive = None
     else:

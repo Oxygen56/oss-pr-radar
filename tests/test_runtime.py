@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import multiprocessing
+import os
 import time
 from pathlib import Path
 
@@ -190,6 +191,148 @@ def test_required_worker_failure_cannot_be_hidden_by_successful_worker():
     assert result["workers"]["fast"]["healthy"] is True
     assert result["workers"]["slow"]["healthy"] is False
     assert "slow:LAST_EXIT_NONZERO" in result["issues"]
+
+
+def test_health_does_not_mark_live_slow_cycle_stale_before_inflight_deadline(monkeypatch):
+    now = time.time()
+    monkeypatch.setattr(
+        "oss_pr_radar.runtime.pid_probe",
+        lambda pid, expected_fragment=None: {
+            "pid": pid,
+            "alive": pid == os.getpid(),
+            "versionMatched": expected_fragment == "slow_publication_worker.py",
+        },
+    )
+    state = {
+        "workers": {
+            worker: {
+                "lastSuccessAt": _iso(now - (600 if worker == "slow" else 10)),
+                "queueImportSuccessAt": _iso(now - 100),
+                "lastExitCode": 0,
+                "queueLastExitCode": 0,
+                "consecutiveFailures": 0,
+            }
+            for worker in ("fast", "slow", "queue-importer")
+        },
+        "deployment": {
+            "pendingPublicationEffects": 0,
+            "manifestVerified": True,
+            "deploymentDirty": False,
+            "releaseVersion": "release-a",
+            "policyDigest": "policy-a",
+        },
+    }
+    state["workers"]["slow"].update(
+        {
+            "inFlight": True,
+            "attemptStartedAt": _iso(now - 300),
+            "workerPid": os.getpid(),
+            "workerPidAlive": True,
+        }
+    )
+
+    result = evaluate_health(
+        state, now=now, expected_release="release-a", expected_policy_digest="policy-a"
+    )
+
+    assert result["healthy"] is True
+    assert result["workers"]["slow"]["inFlight"] is True
+    assert result["workers"]["slow"]["workerPidAlive"] is True
+    assert "slow:RECENT_SUCCESS_MISSING_OR_STALE" not in result["issues"]
+
+
+@pytest.mark.parametrize(
+    ("worker_pid_alive", "attempt_age", "issue", "command_matches", "observed_alive"),
+    [
+        (False, 300, "INFLIGHT_PID_NOT_ALIVE", True, False),
+        (True, 1801, "INFLIGHT_TIMEOUT", True, True),
+        (True, 300, "INFLIGHT_PID_NOT_ALIVE", False, False),
+    ],
+)
+def test_health_rejects_dead_or_overdue_slow_cycle(
+    monkeypatch, worker_pid_alive, attempt_age, issue, command_matches, observed_alive
+):
+    now = time.time()
+    monkeypatch.setattr(
+        "oss_pr_radar.runtime.pid_probe",
+        lambda pid, expected_fragment=None: {
+            "pid": pid,
+            "alive": pid == os.getpid(),
+            "versionMatched": command_matches and expected_fragment == "slow_publication_worker.py",
+        },
+    )
+    state = {
+        "workers": {
+            worker: {
+                "lastSuccessAt": _iso(now - 600),
+                "lastExitCode": 0,
+                "consecutiveFailures": 0,
+            }
+            for worker in ("fast", "slow", "queue-importer")
+        },
+        "deployment": {
+            "pendingPublicationEffects": 0,
+            "manifestVerified": True,
+            "deploymentDirty": False,
+            "releaseVersion": "release-a",
+            "policyDigest": "policy-a",
+        },
+    }
+    state["workers"]["slow"].update(
+        {
+            "inFlight": True,
+            "attemptStartedAt": _iso(now - attempt_age),
+            "workerPid": os.getpid(),
+            "workerPidAlive": worker_pid_alive,
+        }
+    )
+
+    result = evaluate_health(
+        state, now=now, expected_release="release-a", expected_policy_digest="policy-a"
+    )
+
+    assert result["healthy"] is False
+    assert f"slow:{issue}" in result["issues"]
+    assert result["workers"]["slow"]["workerPidAlive"] is observed_alive
+
+
+def test_health_rejects_nonexistent_recorded_slow_pid():
+    now = time.time()
+    state = {
+        "workers": {
+            worker: {
+                "lastSuccessAt": _iso(now - (600 if worker == "slow" else 10)),
+                "queueImportSuccessAt": _iso(now - 100),
+                "lastExitCode": 0,
+                "queueLastExitCode": 0,
+                "consecutiveFailures": 0,
+            }
+            for worker in ("fast", "slow", "queue-importer")
+        },
+        "deployment": {
+            "pendingPublicationEffects": 0,
+            "manifestVerified": True,
+            "deploymentDirty": False,
+            "releaseVersion": "release-a",
+            "policyDigest": "policy-a",
+        },
+    }
+    state["workers"]["slow"].update(
+        {
+            "inFlight": True,
+            "attemptStartedAt": _iso(now - 300),
+            "workerPid": 1_000_000_000,
+            "workerPidAlive": True,
+        }
+    )
+
+    result = evaluate_health(
+        state, now=now, expected_release="release-a", expected_policy_digest="policy-a"
+    )
+
+    assert result["healthy"] is False
+    assert "slow:INFLIGHT_PID_NOT_ALIVE" in result["issues"]
+    assert result["workers"]["slow"]["workerPidAlive"] is False
 
 
 def test_log_rotation_keeps_bounded_history(tmp_path: Path):
