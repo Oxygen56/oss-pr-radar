@@ -3391,6 +3391,33 @@
     ],
     "why": "Issue clearly identifies root cause: Codex filters env vars matching *KEY*, *SECRET*, *TOKEN* before MCP startup, and the plugin hardcodes MEM0_API_KEY. However, maintainers explicitly request design confirmation on the credential contract (rename vs. allowlist), and an existing PR #6792 partially addresses it but lacks tests. Work should wait for maintainer direction to avoid wasted effort."
   },
+  "15862c52f616627fc2b2f92582636d9d34632bb301ff3d5e0be492dd1b0134c5": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/model_executor/models/qwen3.py",
+      "vllm/collect_env.py",
+      "distributed training path for DFLASH2"
+    ],
+    "risks": [
+      "Potential overlap with issue #52735; need to confirm distinct root cause."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided command and small model, then compare DFLASH2 vs MTP behavior; add regression test for context caching in speculative decoding."
+    ],
+    "unknowns": [
+      "Exact root cause not yet identified; maintainer confirmation needed."
+    ],
+    "why": "The issue reports a concrete bug in DFLASH2 speculative decoding causing context reprocessing every reply, with a clear reproduction command and environment. The root cause is likely in the distributed training or attention mechanism, and the evidence includes code anchors and a validation path. No blocking unknowns or contradictions."
+  },
   "16045964d89e90bf4d67f7095d30ae9d1d336b59d58e85e4e28286e219a71163": {
     "confidence": 0.7,
     "contradictions": [],
@@ -11354,6 +11381,37 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue reports a reproducible CUDA graph capture crash in custom_all_reduce on Hopper TP=4, with a clear regression window and code-path anchors. However, the supplied gate is HUMAN_REVIEW and the open PR #46515 has semantic overlap with the same code path, requiring maintainer comparison before any new work. The root cause is not yet confirmed; a commenter suggests the fault may be deferred from an earlier async kernel, so the exact mechanism remains uncertain."
+  },
+  "453c9f5fcf99ce19a845f5f988421e860040d201e0af8ef01974ce2fc853ab41": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.algorithm_evidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "MoE backend selection logic",
+      "FlashInfer TRTLLM MoE kernel or FP8 block-scale quantization handling"
+    ],
+    "risks": [
+      "Potential overlap with open PR #49636 which adds opt-in FlashInfer moe_ep backend; may need coordination",
+      "Hardware requirement: NVIDIA GB200 GPUs may be needed for reproduction"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided curl command with default backend and with --moe-backend deep_gemm, assert logprobs match within tolerance",
+      "Add a unit test for the specific model configuration (DeepSeek V4 Pro Base) comparing next-token logprobs across backends"
+    ],
+    "unknowns": [
+      "Exact root cause in the FlashInfer TRTLLM backend (kernel vs. quantization) not yet pinpointed",
+      "Whether the issue is already fixed in a later version or by an existing PR"
+    ],
+    "why": "The issue identifies a concrete algorithmic bug: default MoE backend (FlashInfer TRTLLM) produces incorrect logprobs and degenerate sampling for DeepSeek V4 Pro Base, with a clear reproduction command and comparison to deep_gemm backend. Root cause is likely in the MoE kernel or quantization path (UE8M0 block-scale checkpoints), and the validation path is a numerical regression test comparing logprobs across backends."
   },
   "459265ef9b79956ca08c9c455729cfb06493a1ecc6c77ede699b2854dd1031ce": {
     "confidence": 0.8,
@@ -22657,6 +22715,38 @@
     "wait_reason": "ASSIGNMENT",
     "why": "Issue clearly describes a bug with a minimal repro and explicit contract question, but the repository requires assignment and the issue author requests maintainer confirmation before work. Existing PR #8584 is closed and weak, so a new PR could be viable after assignment."
   },
+  "7fd5b304ab2696f3ffcdd4fdf5c69d07f75c592b1d5d5b5a89f3fd66aadbf23f": {
+    "confidence": 0.85,
+    "contradictions": [
+      "One comment reports recovery on zen/v1, while another reports ongoing failure on zen/go/v1"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "Restore Ox Alpha tool adapter on zen/v1 and zen/go/v1 routes",
+      "Fix routing/migration issue for x-preview-f-free / ox-alpha-free model"
+    ],
+    "risks": [
+      "Potential maintainer preference for a different fix approach",
+      "Risk of introducing API behavior changes if fix is too broad"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use the provided curl command with tools array to reproduce the failure on both routes",
+      "Add regression test that sends a tool request to x-preview-f-free and asserts a valid tool_calls response",
+      "Run existing tool-related tests in packages/core and packages/opencode"
+    ],
+    "unknowns": [
+      "Exact root cause in the provider adapter or routing logic",
+      "Whether the Go route failure persists after the reported recovery on zen/v1"
+    ],
+    "why": "Issue provides a minimal curl repro, control models, and consistent failure pattern specific to the Ox Alpha free model's tool path. Recent comments confirm partial recovery on one route but persistent failure on the Go route, indicating actionable work remains."
+  },
   "7fd77c1dd723880d8e8cae13dd17cca142aa09064bf07e0529a5f98e55002058": {
     "confidence": 0.85,
     "contradictions": [],
@@ -22743,6 +22833,39 @@
       "Whether issue #17656 is truly duplicate and blocks this"
     ],
     "why": "Issue reports a concrete bug with clear reproduction and controls, but root cause is unconfirmed and likely in model packaging/chat template, not core engine. Existing PR #17679 is unrelated. Maintainer comment only references another issue, no assignment or design confirmation."
+  },
+  "7ff7773b7fe8bcd9f512872858448d343d396719075966b3312e7b6fb71539bb": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "hgctl/pkg/upgrade.go",
+      "hgctl/pkg/installer/standalone_agent.go",
+      "hgctl/pkg/installer/installer_docker.go",
+      "hgctl/pkg/helm/common_test.go",
+      "hgctl/pkg/upgrade_test.go"
+    ],
+    "risks": [
+      "Compatibility change: unsupported overlays change from silent acceptance to pre-mutation error",
+      "Comparison must use caller intent rather than defaulted values; tests must protect that boundary"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run `go test ./pkg/installer -count=1` and `go test ./... -count=1` from hgctl",
+      "Add deterministic command-level tests for gateway.httpPort, storage, Console, Helm values, global.install, and higressVersion rejection",
+      "Add installer-level fakes proving rejected input does not download, run, restart, or save a Profile",
+      "Capture controlled local-docker red/green run proving rejection before mutation and allowed/no-overlay success"
+    ],
+    "unknowns": [
+      "No material unknowns; implementation is already open as PR #4542 with tests and runtime evidence"
+    ],
+    "why": "The issue clearly identifies a root cause: the local-docker upgrade path merges overlays into a Profile before dispatch, but the standalone updater ignores ordinary Profile configuration, leading to false-success upgrades. The design specifies a concrete fix: preserve caller intent before defaulting, compute a structured field-path diff, and reject unsupported deltas before mutation. Maintainer approval and detailed verification evidence (including red/green runtime tests) are supplied."
   },
   "7ffc092f6097897ffb61cc4818a501139b39891f7517ecdc84cad0e0b33b9ad3": {
     "confidence": 0.7,
@@ -31249,6 +31372,33 @@
       "Whether the existing PR #14266 will be updated with tests"
     ],
     "why": "Issue clearly identifies a hardcoded :predict endpoint causing 400 errors for gemini-embedding-2 models, with a public repro. Existing PR #14266 addresses the same root cause but lacks tests, leaving room for a stronger PR with regression tests and broader coverage."
+  },
+  "b82d33744d53bd49bf37786a968dedaa15bb131bc1b9310c4133d4efdeba0abe": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "crates/goose-provider-types/src/formats/openai.rs",
+      "Add fallback logic for continuation chunks missing index, likely reusing positional fallback or matching by id/name",
+      "Add regression test for multi-chunk streaming without index"
+    ],
+    "risks": [
+      "Potential behavioral change in streaming accumulation could affect other providers; need to ensure fallback does not mis-associate chunks when multiple tool calls are in flight."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a unit test that streams a tool call across two chunks with index absent on both, asserting the final arguments are the concatenation of both fragments.",
+      "Run existing openai.rs tests to ensure no regressions."
+    ],
+    "unknowns": [
+      "Maintainer preference between positional fallback vs id/name matching; issue author offers to implement but awaits scoping."
+    ],
+    "why": "Issue clearly identifies a silent data-loss bug in streaming tool-call argument accumulation, with a concrete root cause (missing fallback for continuation chunks without index) and a proposed regression test. The code path is anchored in openai.rs, and the issue offers a clear validation path via a two-chunk streaming test."
   },
   "b83816b64d3244ec0883ba218fa5a9b67a389f12a69d297b3df19f53b12b02d9": {
     "confidence": 0.7,
@@ -40204,6 +40354,38 @@
       "Exact internal approval-key derivation mechanism, though issue points to likely location"
     ],
     "why": "Issue provides a minimal, self-contained repro with no external dependencies, clearly isolating the bug to the approval/resume path when a context is supplied. The root cause is likely in approval-key derivation or context handling during resume, and the issue explicitly rules out common red herrings. No competing PR exists, and the maintainer has not yet responded, but the evidence is strong enough to start work."
+  },
+  "e559a233716476565ce6dc3bd132e2fd861becf18770756f633aedbe2a82c08e": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #9478 is closed with changes requested but marked technical_complete; PR #9501 is open and may overlap"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "packages/core/src/core/reasoning-effort.ts",
+      "OpenAI-compatible pipeline buildReasoningConfig",
+      "settings persistence handling"
+    ],
+    "risks": [
+      "PR #9478 may be partially covering; need to ensure fix covers OpenAI-compatible passthrough path, not just clamp fallback",
+      "Potential interaction with samplingParams passthrough behavior (PR #3458) that can silently drop reasoning"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test asserting 'max' never reaches the wire for an endpoint that doesn't accept it",
+      "Reproduce with OpenAI-compatible provider and /effort max, verify no 400 and settings persistence does not break other sessions"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer option 1, 2, or 3; exact provider supported tier list retrieval mechanism"
+    ],
+    "why": "Issue provides a clear root cause (clampReasoningEffort fallback includes 'max', and OpenAI-compatible path bypasses clamp entirely), a concrete reproduction, and a preferred fix direction. Triage confirms the root cause and extends it to the OpenAI pipeline. No duplicate issue found; PR #9478 is closed with changes requested and does not cover the full root cause."
   },
   "e599d755b53abda60d81891603211574acaa239f4c986820a06d8e7221af0305": {
     "confidence": 0.7,
