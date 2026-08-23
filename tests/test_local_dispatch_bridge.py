@@ -6292,6 +6292,32 @@ def test_recovery_delivery_preserves_validation_followup_prompt():
     assert "只有在本轮结束后才能继续" in prompt
 
 
+def test_policy_recovery_delivery_keeps_the_exact_issue_identity(monkeypatch, tmp_path):
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute("CREATE TABLE threads (id TEXT, rollout_path TEXT)")
+        connection.execute("INSERT INTO threads VALUES (?,?)", ("thread-1", "rollout.jsonl"))
+
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(
+        MODULE,
+        "latest_terminal_thread_error",
+        lambda _path: {"code": "cyber_policy"},
+    )
+
+    prompt = MODULE._task_turn_prompt(
+        "recovery",
+        {
+            "issueUrl": "https://github.com/qdrant/qdrant/issues/10302",
+            "threadId": "thread-1",
+        },
+    )
+
+    assert prompt.startswith(MODULE.issue_prompt("https://github.com/qdrant/qdrant/issues/10302"))
+    assert "GPU" not in prompt
+    assert "不要访问网络" in prompt
+
+
 def test_validation_followup_prompt_translates_internal_gaps_for_the_user():
     reservation_digest = "a" * 64
     worktree_input_path = f".oss-pr-radar/validation-inputs/{reservation_digest}.json"
@@ -7644,7 +7670,11 @@ def test_recovery_reserve_rephrases_a_benign_policy_false_positive(monkeypatch, 
         )
     )
 
-    assert result["prompt"] == MODULE.BENIGN_POLICY_RECOVERY_PROMPT
+    assert result["prompt"] == MODULE.benign_policy_recovery_prompt(
+        "https://github.com/a/b/issues/1"
+    )
+    assert result["prompt"].startswith(MODULE.issue_prompt("https://github.com/a/b/issues/1"))
+    assert "GPU" not in result["prompt"]
     assert result["terminalError"]["code"] == "cyber_policy"
 
 
@@ -12419,6 +12449,106 @@ def test_validation_live_result_read_fails_if_worktree_parent_is_replaced(
         else outside_result
     )
     assert visible_outside_result.read_bytes() == b'{"outside": true}\n'
+
+
+def _empty_local_receipt_ledger(path):
+    with sqlite3.connect(path) as connection:
+        connection.execute("PRAGMA journal_mode=DELETE")
+        connection.executescript(
+            """
+            CREATE TABLE opportunities (
+                key TEXT PRIMARY KEY,
+                stage TEXT NOT NULL,
+                issue_url TEXT NOT NULL,
+                terminal_reason TEXT
+            );
+            CREATE TABLE intents (
+                intent_id TEXT PRIMARY KEY,
+                opportunity_key TEXT NOT NULL,
+                thread_id TEXT,
+                worktree_path TEXT,
+                status TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE task_quarantines (
+                opportunity_key TEXT NOT NULL,
+                status TEXT NOT NULL
+            );
+            CREATE TABLE publication_requests (
+                opportunity_key TEXT NOT NULL,
+                status TEXT NOT NULL
+            );
+            CREATE TABLE events (
+                id INTEGER PRIMARY KEY,
+                opportunity_key TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                dedupe_key TEXT NOT NULL,
+                payload_json TEXT NOT NULL
+            );
+            """
+        )
+
+
+def test_fast_receipt_uses_a_read_only_ledger_connection(tmp_path):
+    ledger_path = tmp_path / "ledger.sqlite3"
+    _empty_local_receipt_ledger(ledger_path)
+
+    result = MODULE.enqueue_local_receipts(ledger_path)
+
+    assert result["ok"] is True
+    with sqlite3.connect(ledger_path) as connection:
+        assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "delete"
+
+
+def test_fast_receipt_defers_on_a_busy_ledger_and_preserves_queue(tmp_path):
+    ledger_path = tmp_path / "ledger.sqlite3"
+    _empty_local_receipt_ledger(ledger_path)
+    queue_path = ledger_path.parent / "local-receipt-queue.json"
+    original_queue = {
+        "schemaVersion": "local_receipt_queue_v1",
+        "entries": {"old/key#1": {"digest": "d" * 64}},
+    }
+    queue_path.write_text(json.dumps(original_queue), encoding="utf-8")
+
+    lock = sqlite3.connect(ledger_path, isolation_level=None)
+    lock.execute("BEGIN EXCLUSIVE")
+    try:
+        result = MODULE.enqueue_local_receipts(ledger_path)
+    finally:
+        lock.execute("ROLLBACK")
+        lock.close()
+
+    assert result == {
+        "ok": True,
+        "deferred": True,
+        "deferredReason": "LEDGER_BUSY",
+        "queued": [],
+        "rejected": [],
+        "count": 1,
+        "scope": "local_receipt_registration_only",
+    }
+    assert json.loads(queue_path.read_text(encoding="utf-8")) == original_queue
+
+
+def test_fast_receipt_does_not_hide_non_busy_sqlite_errors(monkeypatch, tmp_path):
+    def fail_with_corruption(_store):
+        raise sqlite3.OperationalError("no such table: opportunities")
+
+    monkeypatch.setattr(RadarLedger, "local_receipt_candidates", fail_with_corruption)
+
+    with pytest.raises(sqlite3.OperationalError, match="no such table"):
+        MODULE.enqueue_local_receipts(tmp_path / "ledger.sqlite3")
+
+
+def test_fast_receipt_does_not_treat_arbitrary_busy_text_as_lock_contention(monkeypatch, tmp_path):
+    def fail_with_unrelated_busy_text(_store):
+        raise sqlite3.OperationalError("no such table: busy_jobs")
+
+    monkeypatch.setattr(RadarLedger, "local_receipt_candidates", fail_with_unrelated_busy_text)
+
+    with pytest.raises(sqlite3.OperationalError, match="no such table: busy_jobs"):
+        MODULE.enqueue_local_receipts(tmp_path / "ledger.sqlite3")
 
 
 @pytest.mark.parametrize("operation", ["ingest", "enqueue"])

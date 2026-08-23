@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Iterator
+from urllib.parse import quote
 
 from .action_guard import ledger_action_guard_root, opportunity_action_guard
 from .repo_probe import REPRODUCED_VALIDATED, verify_probe_receipt
@@ -172,17 +173,33 @@ class LedgerError(RuntimeError):
 
 
 class RadarLedger:
-    def __init__(self, path: Path):
+    READ_ONLY_BUSY_TIMEOUT_MS = 1_000
+
+    def __init__(self, path: Path, *, read_only: bool = False):
         self.path = path
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._initialize()
+        self.read_only = read_only
+        if not read_only:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self._initialize()
 
     def connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path, timeout=30, isolation_level=None)
+        if self.read_only:
+            uri = f"file:{quote(str(self.path.resolve()), safe='/')}?mode=ro"
+            connection = sqlite3.connect(
+                uri,
+                uri=True,
+                timeout=self.READ_ONLY_BUSY_TIMEOUT_MS / 1_000,
+                isolation_level=None,
+            )
+        else:
+            connection = sqlite3.connect(self.path, timeout=30, isolation_level=None)
         connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA journal_mode=WAL")
         connection.execute("PRAGMA foreign_keys=ON")
-        connection.execute("PRAGMA busy_timeout=30000")
+        connection.execute(
+            f"PRAGMA busy_timeout={self.READ_ONLY_BUSY_TIMEOUT_MS if self.read_only else 30000}"
+        )
+        if not self.read_only:
+            connection.execute("PRAGMA journal_mode=WAL")
         return connection
 
     @contextmanager

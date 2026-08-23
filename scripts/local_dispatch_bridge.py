@@ -341,13 +341,23 @@ IMMEDIATE_RECOVERY_ERROR_CODES = {
 }
 CODEX_USAGE_LIMIT_ERROR_CODE = "usage_limit_exceeded"
 CODEX_USAGE_LIMIT_RESUME_RE = re.compile(r"\btry again at\s+(.+?)(?:\.|$)", re.IGNORECASE)
-BENIGN_POLICY_RECOVERY_PROMPT = (
-    "这是一个普通开源软件的本地 GPU 张量生命周期修复续办，不是网络安全任务。"
-    "保留现有工作树和已完成改动，直接完成离线测试、独立复核以及 Workspace Result "
-    "Protocol 结构化交接；不要访问网络，不要执行公开操作。"
-    + END_RESULT_TURN_PROMPT
-    + PLAIN_LANGUAGE_STATUS_PROMPT
-)
+
+
+def benign_policy_recovery_prompt(issue_url: str) -> str:
+    """Resume a false-positive policy interruption without inventing task details."""
+
+    if not ISSUE_URL.fullmatch(issue_url):
+        raise RuntimeError("policy recovery has an invalid issue URL")
+    return (
+        f"{issue_prompt(issue_url)}\n\n"
+        "系统续跑：继续处理同一个开源软件 issue。读取当前任务上下文，保留现有工作树和"
+        "已完成改动，从上次中断处继续完成离线测试、独立复核以及 Workspace Result "
+        "Protocol 结构化交接；不要访问网络，不要执行公开操作。"
+        + END_RESULT_TURN_PROMPT
+        + PLAIN_LANGUAGE_STATUS_PROMPT
+    )
+
+
 VALIDATION_RECOVERY_PROMPT = (
     "系统续跑：继续验证同一个修复，你无需操作。不要创建新任务或重新实现。"
     "读取当前任务文件，只补仍缺少的验证；未完成的检查重新运行，不恢复旧进程。"
@@ -5592,7 +5602,7 @@ def _task_turn_prompt(delivery_kind: str, candidate: dict[str, Any]) -> str:
             connection.close()
         terminal_error = latest_terminal_thread_error(row[0] if row else None)
         if terminal_error and terminal_error.get("code") == "cyber_policy":
-            return BENIGN_POLICY_RECOVERY_PROMPT
+            return benign_policy_recovery_prompt(issue_url)
         return issue_prompt(issue_url)
     raise RuntimeError("unsupported task-turn delivery kind")
 
@@ -12992,13 +13002,39 @@ def enqueue_local_receipts(path: Path = LEDGER_PATH) -> dict[str, Any]:
     any controller-owned commit reconciliation remain slow-worker operations.
     """
 
-    store = ledger(path)
     queue_path = path.parent / "local-receipt-queue.json"
     previous = read_json(queue_path, missing={})
     entries = dict(previous.get("entries") or {}) if isinstance(previous, dict) else {}
+    store = RadarLedger(path, read_only=True)
     queued: list[dict[str, Any]] = []
     rejected: list[dict[str, str]] = []
-    for candidate in store.local_receipt_candidates():
+    try:
+        candidates = store.local_receipt_candidates()
+    except sqlite3.OperationalError as exc:
+        error_code = getattr(exc, "sqlite_errorcode", None)
+        base_error_code = error_code & 0xFF if isinstance(error_code, int) else None
+        detail = str(exc).strip().lower()
+        is_contention = base_error_code in {
+            sqlite3.SQLITE_BUSY,
+            sqlite3.SQLITE_LOCKED,
+        } or detail in {
+            "database is busy",
+            "database is locked",
+            "database table is locked",
+            "database schema is locked",
+        }
+        if is_contention:
+            return {
+                "ok": True,
+                "deferred": True,
+                "deferredReason": "LEDGER_BUSY",
+                "queued": [],
+                "rejected": [],
+                "count": len(entries),
+                "scope": "local_receipt_registration_only",
+            }
+        raise
+    for candidate in candidates:
         try:
             result = _read_task_result_bytes_if_present(candidate)
             if result is None:
@@ -14003,7 +14039,7 @@ def recovery_reserve(args: argparse.Namespace) -> dict[str, Any]:
     if candidate.get("recoveryKind") == "VALIDATION_FOLLOWUP_RESULT":
         prompt = VALIDATION_RECOVERY_PROMPT
     elif terminal_error and terminal_error.get("code") == "cyber_policy":
-        prompt = BENIGN_POLICY_RECOVERY_PROMPT
+        prompt = benign_policy_recovery_prompt(str(candidate["issueUrl"]))
     return {
         "ok": True,
         "threadId": candidate["threadId"],
