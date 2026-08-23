@@ -387,10 +387,7 @@ def build_projection(path: Path, *, source_commit: str | None = None) -> dict[st
             ):
                 continue
             opportunity_metadata = _json(opportunity["metadata_json"])
-            if (
-                task is None
-                and opportunity_metadata.get("originKind") == "LEGACY_HISTORY"
-            ):
+            if task is None and opportunity_metadata.get("originKind") == "LEGACY_HISTORY":
                 # Migrated legacy rows are retained only as non-authorizing
                 # audit history.  They become current again only if a real
                 # managed task is later bound to the opportunity.

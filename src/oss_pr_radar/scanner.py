@@ -1762,9 +1762,7 @@ def gh(args: list[str], timeout: int = 18) -> tuple[Any | None, str | None]:
             last_error = str(exc)[:200]
             proc = None
 
-        error_text = (
-            (proc.stderr or proc.stdout or "").strip() if proc is not None else last_error
-        )
+        error_text = (proc.stderr or proc.stdout or "").strip() if proc is not None else last_error
         connectivity_failure = proc is None or bool(
             proc.returncode and transient_re.search(error_text)
         )
@@ -1975,12 +1973,9 @@ def demote_failed_pre_task_gate(candidate: dict[str, Any], gate: dict[str, Any])
         and candidate.get("submission_policy") == "ai_disclosure_conflict"
         and candidate.get("public_submission_allowed") is False
     )
-    semantic_retry = (
-        gate.get("classification") != "state_drift"
-        and (
-            candidate.get("category") == "SEMANTIC_REVIEW_RETRY"
-            or candidate.get("gate_decision") == "RETRY_REQUIRED"
-        )
+    semantic_retry = gate.get("classification") != "state_drift" and (
+        candidate.get("category") == "SEMANTIC_REVIEW_RETRY"
+        or candidate.get("gate_decision") == "RETRY_REQUIRED"
     )
     if not private_conflict and not semantic_retry:
         candidate["category"] = "WAIT_MAINTAINER"

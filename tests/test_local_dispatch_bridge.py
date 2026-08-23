@@ -2268,9 +2268,7 @@ def test_remote_pr_lifecycle_only_advances_published_stage():
     assert MODULE.should_apply_pr_lifecycle_stage("CI_GREEN", "MAINTAINER_ACCEPTED") is True
     assert MODULE.should_apply_pr_lifecycle_stage("MAINTAINER_ACCEPTED", "PR_OPEN") is False
     assert (
-        MODULE.should_apply_pr_lifecycle_stage(
-            "MAINTAINER_ACCEPTED", "PR_OPEN", is_draft=True
-        )
+        MODULE.should_apply_pr_lifecycle_stage("MAINTAINER_ACCEPTED", "PR_OPEN", is_draft=True)
         is True
     )
 
@@ -4744,9 +4742,7 @@ def test_new_repo_clone_retries_transient_failure_after_cleaning_partial_clone(
     assert not list(tmp_path.glob(".large-repo.radar-clone-*"))
 
 
-def test_new_repo_clone_exhausts_transient_retries_and_cleans_partial_clone(
-    monkeypatch, tmp_path
-):
+def test_new_repo_clone_exhausts_transient_retries_and_cleans_partial_clone(monkeypatch, tmp_path):
     attempts = []
 
     def failing_command(args, cwd=None, timeout=300, stdin=None):
@@ -10387,9 +10383,7 @@ def test_existing_fix_ready_result_reopens_validation_after_failed_review(monkey
             }
         ],
     }
-    monkeypatch.setattr(
-        MODULE, "controller_review_result", lambda _root, _value: failed_review
-    )
+    monkeypatch.setattr(MODULE, "controller_review_result", lambda _root, _value: failed_review)
 
     result = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
 
@@ -10402,12 +10396,15 @@ def test_existing_fix_ready_result_reopens_validation_after_failed_review(monkey
             "missing": ["independent_review_passed"],
         }
     ]
-    assert store.task_context(
-        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
-    )["stage"] == "VALIDATION_PENDING"
-    assert MODULE.validation_followup_list(
-        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3")
-    )["candidates"][0]["missing"] == ["independent_review_passed"]
+    assert (
+        store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")[
+            "stage"
+        ]
+        == "VALIDATION_PENDING"
+    )
+    assert MODULE.validation_followup_list(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))[
+        "candidates"
+    ][0]["missing"] == ["independent_review_passed"]
     finalized = json.loads(result_path.read_text(encoding="utf-8"))
     assert finalized["quality"]["independent_review_passed"] is False
     assert finalized["independentReview"] == failed_review
@@ -14861,9 +14858,7 @@ def test_strong_existing_pr_terminalizes_obsolete_publication_task(monkeypatch, 
         lambda *_args, **_kwargs: pytest.fail("terminal duplicate must not publish"),
     )
 
-    result = MODULE.run_publication_queue(
-        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3")
-    )
+    result = MODULE.run_publication_queue(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
 
     assert result["ok"] is True
     assert result["blocked"] == [

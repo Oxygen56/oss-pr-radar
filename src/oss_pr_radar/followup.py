@@ -451,8 +451,8 @@ def collect_followup(
             )
             errors.append(f"{key}:comments:{comment_error or 'unavailable'}")
         else:
-            top_level_comment_events, unanswered_maintainer_comments = (
-                _top_level_comment_evidence(comments, author=author, repo=repo, number=number)
+            top_level_comment_events, unanswered_maintainer_comments = _top_level_comment_evidence(
+                comments, author=author, repo=repo, number=number
             )
         if review_threads is None:
             unresolved_review_threads = previous_evidence.get("unresolvedReviewThreads") or []

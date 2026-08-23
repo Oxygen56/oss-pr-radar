@@ -2520,11 +2520,7 @@ def sync_queue(path: Path = LEDGER_PATH) -> dict[str, Any]:
             else:
                 managed_followup = ManagedAdapter(ROOT, path).record_followup(
                     followup,
-                    {
-                        "run_id": (
-                            f"cloud-pr-followup:{followup.get('digest') or generated_at}"
-                        )
-                    },
+                    {"run_id": (f"cloud-pr-followup:{followup.get('digest') or generated_at}")},
                 )
                 followup_import = {
                     "status": "imported",
@@ -13596,9 +13592,7 @@ def pr_lifecycle_stage(value: dict[str, Any]) -> str:
     return "PR_OPEN"
 
 
-def should_apply_pr_lifecycle_stage(
-    current: str, remote: str, *, is_draft: bool = False
-) -> bool:
+def should_apply_pr_lifecycle_stage(current: str, remote: str, *, is_draft: bool = False) -> bool:
     """Keep local validation/update work authoritative until the PR is terminal."""
     if remote in TERMINAL_PR_STAGES:
         return current != remote
