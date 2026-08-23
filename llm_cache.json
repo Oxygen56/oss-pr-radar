@@ -466,6 +466,39 @@
     ],
     "why": "Issue provides a precise root cause (has_custom branch bypasses chunk_token_num, bare chars leak into split pattern), a reproducible script with expected vs actual output, and a clear minimal fix (Option A: merge segments via merge_paragraphs). The open PR #18556 already implements this with tests, but the issue itself is actionable and the bug is user-visible with high impact."
   },
+  "041256e7d2595579d13e76b663126db0762e866bb7e9b3a09f1f1fc178110525": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #8241 is marked as NON_COVERING but has semantic overlap; issue claims #8241 deliberately left the global in place, while PR summary suggests replacing process-wide globals with per-model AutoTPMeta."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "deepspeed/sequence/layer.py",
+      "DistributedAttention",
+      "single_all_to_all",
+      "uneven_heads_all2all",
+      "_SeqAllToAll.backward"
+    ],
+    "risks": [
+      "Potential overlap with PR #8241 which may partially address the issue; need to compare implementation boundaries.",
+      "Backward path must correctly restore head count from ctx; risk of subtle bugs in gradient computation."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test mirroring TestAutoTPMultipleModels: two DistributedAttention instances with different head counts (e.g., 3 vs 2 over sp=2) run forward+backward in same process; assert first instance's split unchanged after second is exercised."
+    ],
+    "unknowns": [
+      "Whether PR #8241 already fixes the Ulysses global or only AutoTP's tp_shard globals; need to inspect PR diff to confirm coverage."
+    ],
+    "why": "Issue identifies a concrete distributed-training invariant violation: process-wide global for Ulysses KV head count corrupts second model with different head count. Root cause is clear, code path anchored in layer.py, and validation path via multi-model regression test is concrete."
+  },
   "0427f9c5a4099ecc2b92bc99698c4480df23dd2d9d6e5bd6e88c410bf77c49cc": {
     "confidence": 0.85,
     "contradictions": [],
@@ -2142,6 +2175,41 @@
       "Exact logic in `_raise_if_model_fully_blocked` and whether it already considers fallbacks; maintainer preference on whether blocking should override fallbacks."
     ],
     "why": "The issue describes a clear bug: blocking all deployments of a model group causes the proxy to raise 'Model is blocked' before consulting the configured fallbacks, even when a healthy fallback deployment exists. The traceback points to `_raise_if_model_fully_blocked` in `route_llm_request.py`, which likely checks only the primary model group. This is a concrete, reproducible routing logic flaw with high user impact."
+  },
+  "0f57b44944b19f5a225c9516fa270b11568590d597a84a67576de2aa7ec98f92": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue claims client_id/client_secret never reach runtime, but recent comment says hydration already exists on default branch."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "mcp_server_manager.py",
+      "outbound_credentials/adapter.py",
+      "outbound_credentials/resolver.py",
+      "schema.prisma"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #36831 or merged PR #26871; need to verify current branch behavior before implementing.",
+      "Changing scope behavior may affect existing OAuth flows; need careful backward compatibility."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression tests for client_credentials hydration from DB and config.yaml, including os.environ/ resolution.",
+      "Add tests for scope parameter construction to ensure only configured scopes are sent.",
+      "Run existing mcp_server manager test suite (468 tests) and add new focused tests."
+    ],
+    "unknowns": [
+      "Whether the reported bugs are fully resolved on the current default branch, especially env var resolution and scope over-request.",
+      "Whether PR #36831 already addresses the root cause or only partially overlaps."
+    ],
+    "why": "Issue provides detailed root-cause analysis with code anchors and a concrete reproduction path. Recent comments indicate the hydration bug may already be fixed on the default branch, but the issue also identifies additional bugs (env var resolution, scope over-request) that remain actionable. The candidate is a valuable, actionable contribution opportunity."
   },
   "0f72b5c1bcbdc04106ba98a906ae3a6167dbaaaedf9c075c0be8f098c42abbc7": {
     "confidence": 0.85,
@@ -24889,6 +24957,35 @@
     ],
     "why": "The issue identifies a real algorithmic gap in prefix caching for hybrid SSM/Mamba models, with concrete reproduction metrics. However, a merged PR (#46384) already addresses the core limitation, and the issue's comments confirm the fix. The open PR assessment failed due to timeout, and the related issue audit also failed, leaving uncertainty about duplicate coverage. The deterministic gate requires HUMAN_REVIEW, and the submission policy conflicts with automatic disclosure."
   },
+  "8ec502340239907b345dd94841800c0c6dde771002d429ed9b6b6da23f9b208a": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "ToolRegistry tool filtering logic",
+      "webSearchEnabled function",
+      "provider configuration for websearch tool"
+    ],
+    "risks": [
+      "Potential maintainer preference for a different design (e.g., per-provider config vs. default enable)",
+      "Risk of duplicating existing PR #44343 if not differentiated"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that simulates a custom provider (e.g., Ollama) and asserts websearch is included when a websearch provider is configured",
+      "Run existing tool registry tests and integration tests for provider tool exposure"
+    ],
+    "unknowns": [
+      "Exact maintainer design preference for enabling websearch for custom providers"
+    ],
+    "why": "Issue provides a clear root cause (hardcoded provider whitelist in webSearchEnabled), concrete reproduction steps, and MITM evidence showing the tool is missing for custom providers. An open PR exists but lacks root-cause coverage, leaving room for a more complete fix."
+  },
   "8f4644df1c091e0c772b7c8497ca2329cec5b052aaaa95c49aecf58e2fd24cca": {
     "confidence": 0.7,
     "contradictions": [
@@ -33166,6 +33263,39 @@
       "Which exact condition in the apply_contextual chain blocks the contextual instantiation; the actual code path that computes the diagnostic for non-generic outer callees."
     ],
     "why": "The issue identifies a real regression with clear repro, but the root cause is still under investigation; a collaborator has already explored and eliminated several hypotheses, indicating the fix requires deeper inference work and design confirmation. The issue is unclaimed and no PR exists, but the complexity and need for maintainer input on the correct approach make it premature to start."
+  },
+  "c5dcad16e6dc6680e0a7d08a11f85616aa426084bcd63644a10cc3b94c84d1df": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #8241 is open and has semantic overlap but does not reference this issue; it may or may not fix the root cause."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "deepspeed/module_inject/tp_plan_converter.py",
+      "tests/unit/v1/autotp/test_tp_plan_real_models.py"
+    ],
+    "risks": [
+      "Policy divergence: choosing between replicating tied embeddings vs supporting vocab-parallel may require maintainer design decision.",
+      "Potential overlap with PR #8241 which touches similar test paths; need to ensure no duplicate work."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproducer with transformers main to confirm the ValueError, then after fix verify AutoTP initializes without error and tied embeddings behave as expected (replicated or vocab-parallel).",
+      "Add a regression test for tied-embedding models with 'embedding_rowwise' in tp_plan."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer option 1, 2, or 3 from the issue's semantic note.",
+      "Whether PR #8241 already addresses this issue in its changes."
+    ],
+    "why": "The issue clearly identifies a root cause: transformers main injects 'embedding_rowwise' into tp_plan for tied-embedding models, which DeepSpeed's strict allowlist rejects. It provides a concrete reproducer and discusses policy options. The track is llm_algorithm because it involves distributed training tensor parallelism semantics."
   },
   "c5e289015b57fa3fe1c82622c83efab13347e927e6564498eba70be9660f566f": {
     "confidence": 0.85,
