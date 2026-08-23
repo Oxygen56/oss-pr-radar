@@ -199,7 +199,7 @@ def activate_release(target: Path, release_id: str) -> dict[str, object]:
     return manifest
 
 
-def create_release(source: Path, target: Path) -> dict[str, object]:
+def create_release(source: Path, target: Path, *, activate: bool = True) -> dict[str, object]:
     source = source.absolute()
     target = target.absolute()
     if source == target or source in target.parents or target in source.parents:
@@ -234,7 +234,11 @@ def create_release(source: Path, target: Path) -> dict[str, object]:
         os.chmod(temporary / MANIFEST, 0o600)
         verify_release(temporary, require_directory_identity=False)
         temporary.replace(release)
-    activate_release(target, str(manifest["releaseId"]))
+    verified = verify_release(release)
+    if verified.get("manifestSha256") != manifest.get("manifestSha256"):
+        raise RuntimeError("release manifest changed after immutable build")
+    if activate:
+        activate_release(target, str(manifest["releaseId"]))
     return {
         "ok": True,
         "releaseId": manifest["releaseId"],
@@ -242,23 +246,29 @@ def create_release(source: Path, target: Path) -> dict[str, object]:
         "commit": commit,
         "manifestSha256": manifest["manifestSha256"],
         "reused": reused,
+        "activated": activate,
         "activePointer": str(target / RELEASE_POINTER),
         "preservedRoots": sorted(PRESERVED_ROOTS),
     }
 
 
-def deploy(source: Path, target: Path) -> dict[str, object]:
+def deploy(source: Path, target: Path, *, activate: bool = True) -> dict[str, object]:
     """Compatibility entry point: deploy now always means immutable release."""
 
-    return create_release(source, target)
+    return create_release(source, target, activate=activate)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", type=Path, default=ROOT)
     parser.add_argument("--target", type=Path, required=True)
+    parser.add_argument(
+        "--no-activate",
+        action="store_true",
+        help="build and verify the immutable release without changing current-release",
+    )
     args = parser.parse_args()
-    print(json.dumps(deploy(args.source, args.target), sort_keys=True))
+    print(json.dumps(deploy(args.source, args.target, activate=not args.no_activate), sort_keys=True))
 
 
 if __name__ == "__main__":

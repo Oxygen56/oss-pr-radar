@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -70,6 +71,74 @@ def test_deploy_creates_immutable_release_and_preserves_runtime_state(tmp_path):
     assert manifest["commit"] == result["commit"]
     assert manifest["manifestSha256"] == result["manifestSha256"]
     assert MODULE.verify_release(release)["releaseId"] == result["releaseId"]
+
+
+def test_create_release_without_activation_verifies_release_and_preserves_active_pointer(tmp_path):
+    source, target = make_repositories(tmp_path)
+    first = MODULE.deploy(source, target)
+    pointer_before = (target / MODULE.RELEASE_POINTER).resolve()
+    (source / "scripts" / "runner.py").write_text("VERSION = 3\n", encoding="utf-8")
+    git(source, "add", "scripts/runner.py")
+    git(
+        source,
+        "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+        "commit", "-m", "source-v3",
+    )
+
+    result = MODULE.create_release(source, target, activate=False)
+
+    release = Path(result["releasePath"])
+    assert result["activated"] is False
+    assert result["reused"] is False
+    assert release.is_dir()
+    assert MODULE.verify_release(release)["manifestSha256"] == result["manifestSha256"]
+    assert (target / MODULE.RELEASE_POINTER).resolve() == pointer_before
+    assert pointer_before.name == first["releaseId"]
+
+
+def test_create_release_verification_failure_preserves_active_pointer(tmp_path, monkeypatch):
+    source, target = make_repositories(tmp_path)
+    first = MODULE.deploy(source, target)
+    pointer_before = (target / MODULE.RELEASE_POINTER).resolve()
+    (source / "scripts" / "runner.py").write_text("VERSION = 3\n", encoding="utf-8")
+    git(source, "add", "scripts/runner.py")
+    git(
+        source,
+        "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+        "commit", "-m", "source-v3",
+    )
+    original_verify = MODULE.verify_release
+    calls = 0
+
+    def fail_after_manifest(path, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls >= 2:
+            raise RuntimeError("injected manifest verification failure")
+        return original_verify(path, **kwargs)
+
+    monkeypatch.setattr(MODULE, "verify_release", fail_after_manifest)
+    with pytest.raises(RuntimeError, match="injected manifest verification failure"):
+        MODULE.create_release(source, target, activate=False)
+    assert (target / MODULE.RELEASE_POINTER).resolve() == pointer_before
+    assert pointer_before.name == first["releaseId"]
+
+
+def test_cli_no_activate_builds_release_without_current_release_switch(tmp_path):
+    source, target = make_repositories(tmp_path)
+    completed = subprocess.run(
+        [
+            sys.executable, str(SCRIPT), "--source", str(source), "--target", str(target),
+            "--no-activate",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    result = json.loads(completed.stdout)
+    assert result["activated"] is False
+    assert Path(result["releasePath"]).is_dir()
+    assert not (target / MODULE.RELEASE_POINTER).exists()
 
 
 def test_deploy_records_release_identity_without_overwriting_worker_health(tmp_path):
