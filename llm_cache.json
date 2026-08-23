@@ -2548,6 +2548,33 @@
     ],
     "why": "Issue reports a clear bug with root cause and minimal repro, but the deterministic gate requires HUMAN_REVIEW and the repository has an AI disclosure policy that blocks automated action. Existing PR #50955 is weak (failed CI) and may be a competition opportunity, but maintainer confirmation is needed."
   },
+  "113ea4100d7da2e79ff9501a1cda4d7c98872d9e24d5c672b1639681b25fe21e": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Fix payload keyword index desynchronization under concurrent set_payload by filter",
+      "Add regression test using the provided reproducer"
+    ],
+    "risks": [
+      "Potential complexity in synchronizing index updates with concurrent writes",
+      "Risk of performance regression if fix introduces locking or serialization"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the attached repro_qdrant_index_desync.py against a patched build and verify RESULT: 0 mismatch",
+      "Add a Rust integration test that reproduces the race with large vectors and concurrent set_payload by filter"
+    ],
+    "unknowns": [
+      "Exact code path causing the desync is not identified; maintainer design preference unknown"
+    ],
+    "why": "Issue provides a concrete race condition with a reproducible script, clear expected behavior, and evidence of index desync under concurrent set_payload by filter. Root cause is localized to index maintenance during concurrent updates, with a clear validation path via the provided reproducer."
+  },
   "119bf7534e5c355339b9092314897a492800df9955a909d1a304878b167d28bd": {
     "confidence": 0.8,
     "contradictions": [],
@@ -3757,6 +3784,34 @@
       "Exact build system and platform support matrix for close_range() availability."
     ],
     "why": "The issue identifies a clear performance bug in subprocess spawning caused by an O(RLIMIT_NOFILE) close() loop, with a deterministic failing test and a concrete fix using close_range(). The proposed change is minimal, well-scoped, and directly addresses the root cause. No competing PR or related issue exists, and the maintainer has not expressed a conflicting preference."
+  },
+  "1b7c66d012d382ff5a72380a7b29f5a73b84be527139e775fa88caace9e9002d": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "LiteLLM ElevenLabs speech-to-text provider parameter forwarding",
+      "Add support for diarize, tag_audio_events, timestamps_granularity, num_speakers, diarization_threshold, detect_speaker_roles, language_code"
+    ],
+    "risks": [
+      "Potential maintainer preference for parameter whitelisting vs generic pass-through",
+      "Risk of breaking existing behavior if parameter names conflict with LiteLLM's own options"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a failing test that sends a multipart request with diarize=true and related fields to the ElevenLabs provider and asserts they are forwarded to the upstream API",
+      "Run targeted unit tests for the ElevenLabs speech-to-text provider"
+    ],
+    "unknowns": [
+      "Exact code location and current implementation of ElevenLabs speech-to-text provider in LiteLLM"
+    ],
+    "why": "Issue clearly identifies missing pass-through of ElevenLabs diarization parameters in LiteLLM's speech-to-text provider, with concrete expected fields and a reproducible request shape. No competing PR or duplicate issue found, and the issue remains open with confirmation that it is still broken."
   },
   "1ba8ba55a525ba4ec5911bdf810a6cd058fe4231da4ad21d78f3a52af4ae6ebd": {
     "confidence": 0.7,
@@ -13442,6 +13497,45 @@
     ],
     "why": "Issue reports a high-impact streaming tool-call truncation bug with a clear repro, but root cause is not isolated. Existing PR #6632 likely addresses the same code path but is not linked to the issue and lacks maintainer confirmation. Gate requires HUMAN_REVIEW."
   },
+  "52d11d8d2b5efeb3f3140d87c5b71907a0668902c84add7b88f646be47828f89": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The issue claims no related open PRs, but the open_pr_assessment lists three merged PRs with semantic overlap (score 62, 62, 32) that may already address parts of the problem."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/cloud/shared/src/db/repositories/__tests__/agent-sandboxes-stuck-provisioning-lock.integration.test.ts",
+      "packages/cloud/shared/src/lib/services/sandbox-provider-types.ts",
+      "packages/cloud/shared/src/lib/services/docker-sandbox-provider.ts",
+      "packages/cloud/shared/src/lib/services/__tests__/docker-sandbox-replacement-cleanup.test.ts",
+      "packages/cloud/shared/src/lib/services/headscale-integration.ts",
+      "packages/cloud/shared/src/lib/services/headscale-integration.test.ts",
+      "packages/cloud/shared/src/lib/services/containers/hetzner-client/registry.ts",
+      "packages/cloud/shared/src/lib/services/containers/hetzner-client/registry.test.ts"
+    ],
+    "risks": [
+      "Potential overlap with existing merged PRs #24195, #24203, #24204 that touch similar cloud billing/provisioning paths, though they are not directly linked to this issue.",
+      "Large scope may require careful sequencing to avoid unintended behavior changes in billing and provisioning."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression tests for selector permutations (newer Shared, older Dedicated, inverse order, soft-deleted/pool rows, equal timestamps) to ensure deterministic Dedicated target.",
+      "Add tests for fail-closed behavior at reader, route/service, enqueue, worker, warm-pool, lifecycle-CAS, payment, billing, and provider boundaries.",
+      "Run focused Bun 1.3.14 tests and package typecheck for affected packages."
+    ],
+    "unknowns": [
+      "Whether the merged PRs #24195, #24203, #24204 already cover some of the required fixes, which could reduce the remaining work."
+    ],
+    "why": "Issue clearly describes a root cause (non-deterministic provisioning selector and missing fail-closed Shared-tier boundaries) with concrete acceptance criteria and a validation path (focused tests at each boundary). The candidate is actionable and technically valuable."
+  },
   "52d78111c08f090705537e5d962c3063816ee8415d104e7d20f61a61684da72d": {
     "confidence": 0.7,
     "contradictions": [
@@ -14471,6 +14565,36 @@
       "Whether PR #12835 already addresses this exact issue"
     ],
     "why": "Issue clearly identifies a silent data-corruption bug in tool-call repair path with concrete repro and root cause. However, existing PR #12835 has semantic overlap and is still draft; maintainer design preference is unconfirmed. Gate requires HUMAN_REVIEW."
+  },
+  "57a30422b6c4876f8b70904d51cd8503297f52bcaca67cb223ca04f62c4f9502": {
+    "confidence": 0.85,
+    "contradictions": [
+      "No contradictions found in supplied evidence."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "infra/console.ts",
+      "packages/codemode/src/stdlib/console.ts",
+      "packages/core/src/tool/tools.ts",
+      "packages/opencode/src/session/tools.ts"
+    ],
+    "risks": [
+      "Potential maintainer design preference on API behavior changes; need to avoid expanding API behavior beyond the minimal fix."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use the provided curl reproduction to create a failing test for the Ox Alpha free model with tools, then run targeted unit tests and static checks on the affected packages."
+    ],
+    "unknowns": [
+      "Exact backend routing configuration or migration state for the Ox Alpha free model; whether maintainers have already started an internal fix."
+    ],
+    "why": "Issue provides a concrete, reproducible failure (curl commands) with clear evidence that the failure is specific to the Ox Alpha free model's tool path, not the key, route, or general tools handling. Root cause is likely a routing/migration issue for that backend, with code anchors in tool-related modules. The issue is actionable for a fix and validation."
   },
   "57c3c54411085929c2a2fb61d71a6c31972612d6379db7d08a70e3208c96c6d3": {
     "confidence": 0.8,
@@ -21914,6 +22038,38 @@
     ],
     "why": "The issue clearly describes a user-visible bug where CodeGraph configuration ignores the user's agent selection and modifies unselected agents' configs. It provides a concrete reproduction, traces the root cause to specific functions (InstallWithHome, detectedCodeGraphTargets, InjectCodeGraphGuidance) that use DiscoverInstalled instead of the selected AgentIDs, and suggests acceptance criteria. No competing PR or related issue exists, and the gate allows work. The fix is actionable: pass resolved AgentIDs through the installation flow and scope all CodeGraph operations to selected agents."
   },
+  "7f5c2f3deffe6e605173f2b7c5296a7c6a9e2b646fd0f8115e3a7d371dc1f1ad": {
+    "confidence": 0.8,
+    "contradictions": [
+      "The issue claims the bug is reproducible under load, but the sanitized payload did not reproduce on idle server, and the original private payload only failed under load. This inconsistency may affect test reliability."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/parser/gemma4.py",
+      "vllm/v1/engine",
+      "tool_choice enforcement logic",
+      "finish_reason computation"
+    ],
+    "risks": [
+      "The bug is content-dependent and may not reproduce on idle servers, making automated testing flaky. Need to simulate load or use a crafted prompt that reliably triggers the issue."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a regression test that sends a request with tool_choice='required' and a prompt that historically triggers prose-only output, asserting that the response contains at least one tool call and finish_reason is consistent. Use a small model and fixed seed to make it deterministic."
+    ],
+    "unknowns": [
+      "Exact root cause of the enforcement gap (whether it's in the parser, grammar, or sampling logic) is not fully identified. The issue references #53255 for the finish_reason part but not for the enforcement gap."
+    ],
+    "why": "Issue identifies a concrete bug in the gemma4 tool parser: tool_choice='required' does not enforce tool call generation, and finish_reason is incorrectly set to 'tool_calls' with empty tool_calls. Root cause is partially known (translation layer in #53255) and the enforcement gap is clearly described. The issue provides a reproduction methodology (loop script, payload variations) and a validation path (compare behavior under load, check finish_reason and tool_calls). This is a legitimate LLM algorithm bug in tool-calling logic, not mere plumbing."
+  },
   "7fb9b0128031ea27f0be98d838efbe1d19f949255acae565042e94e1471b2951": {
     "confidence": 0.85,
     "contradictions": [],
@@ -22878,6 +23034,39 @@
       "Exact instruction text and trial logs not provided; maintainer interest in implementing such a validation is unknown."
     ],
     "why": "Issue describes a probabilistic agent behavior where the model fabricates success without tool calls, but the root cause is upstream LLM behavior, not a clear code defect. The suggested fix (detect terminal answer with zero tool calls) is a feature/improvement requiring design confirmation. Existing PR #40000 overlaps in code path but targets a different issue (retaining tool call inputs/results), so it is not a direct competitor. The deterministic gate is HUMAN_REVIEW, and the issue lacks maintainer approval or design confirmation."
+  },
+  "8553370484bdafa63adf6f0467c93a1aa84f8a5711c31a35e2520f80c57bd1b5": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims Bug 1 root cause exists, but comments state it is fixed on default branch"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "MCP OAuth2 client_credentials hydration",
+      "config.yaml env resolution",
+      "OAuth2 scope handling"
+    ],
+    "risks": [
+      "Duplicate existing fix for Bug 1",
+      "Bug 2 and 3 may require deeper investigation"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Verify Bug 1 is fixed on current default branch with existing tests",
+      "Create minimal reproduction for Bug 2 timeout and Bug 3 scope issue"
+    ],
+    "unknowns": [
+      "Whether Bug 1 is actually resolved in the reported environment",
+      "Exact root cause for Bug 2 timeout",
+      "Exact scope selection logic for Bug 3"
+    ],
+    "why": "The issue reports multiple bugs, but recent comments indicate the primary root cause (Bug 1) is already fixed on the default branch by merged PR #26871. The remaining bugs (2 and 3) lack precise root-cause evidence and reproduction details, making actionability uncertain. The open PR #36831 may also overlap, requiring manual comparison."
   },
   "8556eeb81671e336a19d7392e0053167d83306c7a76847e035f4945ad1c0e8cb": {
     "confidence": 0.8,
