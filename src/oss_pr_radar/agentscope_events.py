@@ -406,25 +406,10 @@ class GitHubIssuePoller:
         labels = {str(label.get("name") or "").lower() for label in item.get("labels") or [] if isinstance(label, dict)}
         if item.get("pull_request"):
             author = str((item.get("user") or {}).get("login") or "").lower()
-            state = str(item.get("state") or "open").lower()
-            merge_state = str(item.get("mergeable_state") or "").lower()
-            try:
-                comments = int(item.get("comments") or 0)
-            except (TypeError, ValueError):
-                comments = 0
-            try:
-                review_comments = int(item.get("review_comments") or 0)
-            except (TypeError, ValueError):
-                review_comments = 0
-            return author == "oxygen56" or (
-                state == "open"
-                and (
-                    any(token in title for token in ("ci", "review", "conflict"))
-                    or comments > 0
-                    or review_comments > 0
-                    or merge_state in {"dirty", "blocked", "unknown"}
-                )
-            )
+            # Only Oxygen56's own PRs are event sources.  Other authors' PRs
+            # may be inspected during eligibility checks, but never wake the
+            # event lane merely because they have comments or conflicts.
+            return author == "oxygen56"
         if any(token in title or token in body for token in ("documentation", "docs:", "dependency", "bump ")):
             return False
         return bool({"bug", "feature", "enhancement", "help wanted", "good first issue", "code"} & labels) or any(

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import importlib.util
 import hashlib
+import importlib.util
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -337,3 +337,24 @@ def test_invalid_outcome_creates_durable_recovery_event(tmp_path):
     delivered = []
     assert dispatch_once(lane, delivered.append, limit=1)["delivered"] == 1
     assert delivered[0]["kind"] == "outcome_reconcile"
+
+
+def test_foreign_pr_is_not_an_event_source_and_closed_issue_is_noop(tmp_path):
+    worker = _event_worker_module()
+    foreign = _issue(77, "2026-08-23T00:00:00Z", pr=True) | {
+        "state": "open", "user": {"login": "another-contributor"},
+        "comments": 99, "mergeable_state": "blocked",
+    }
+    own_closed = _issue(78, "2026-08-23T00:00:00Z", pr=True) | {
+        "state": "closed", "user": {"login": "Oxygen56"},
+    }
+    assert worker.GitHubIssuePoller._is_relevant(foreign) is False
+    assert worker.GitHubIssuePoller._is_relevant(own_closed) is True
+    lane = EventLane(tmp_path / "events.db")
+    called = []
+    worker.run_bridge = lambda *_args, **_kwargs: called.append(True)
+    worker.issue_handler_delivery(tmp_path, lane, {
+        "eventId": "closed-ordinary", "repo": "agentscope-ai/agentscope", "number": 79,
+        "issue": {"number": 79, "state": "closed", "html_url": "https://github.com/agentscope-ai/agentscope/issues/79"},
+    })
+    assert called == []

@@ -112,6 +112,14 @@ def issue_handler_delivery(root: Path, lane: EventLane, event: dict, *, target: 
     """Start/resume the detached bridge worker and receipt its turn before ack."""
     target = target or _resolve_event_target(root, event)
     key = str(target.get("key") or f"{event.get('repo')}#{event.get('number')}")
+    issue = event.get("issue") if isinstance(event.get("issue"), dict) else {}
+    public_status = lane.public_status(key)
+    if str(issue.get("state") or "open").casefold() != "open" and public_status not in {"active", "watch_only"}:
+        # A closed ordinary issue is a no-op closeout, not a new public task.
+        return
+    if str(issue.get("state") or "open").casefold() != "open" and target.get("kind") == "issue":
+        target = dict(target)
+        target["kind"] = "issue_closeout"
     binding = lane.handler_thread(key)
     if binding is None and target.get("threadId"):
         binding = {"thread_id": str(target["threadId"])}
@@ -142,6 +150,11 @@ def issue_handler_delivery(root: Path, lane: EventLane, event: dict, *, target: 
             "This is an unmapped Oxygen56 PR review/CI/conflict observation. Do not claim an issue, reserve an opportunity, "
             "or create a new PR; record only actionable maintainer or CI follow-up. "
             "Before terminal completion, write one machine outcome: no_action, claimed_or_pr, or design_wait with publicKey and wait timestamps."
+        )
+    elif target.get("kind") == "issue_closeout":
+        prompt = (
+            f"Reconcile the closed AgentScope issue event {event['eventId']} for {key} in its existing thread. "
+            "Do not claim new work or create a PR. Record the terminal closeout and write one valid machine outcome."
         )
     else:
         prompt = (
