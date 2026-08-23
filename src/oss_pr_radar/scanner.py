@@ -1976,8 +1976,11 @@ def demote_failed_pre_task_gate(candidate: dict[str, Any], gate: dict[str, Any])
         and candidate.get("public_submission_allowed") is False
     )
     semantic_retry = (
-        candidate.get("category") == "SEMANTIC_REVIEW_RETRY"
-        or candidate.get("gate_decision") == "RETRY_REQUIRED"
+        gate.get("classification") != "state_drift"
+        and (
+            candidate.get("category") == "SEMANTIC_REVIEW_RETRY"
+            or candidate.get("gate_decision") == "RETRY_REQUIRED"
+        )
     )
     if not private_conflict and not semantic_retry:
         candidate["category"] = "WAIT_MAINTAINER"

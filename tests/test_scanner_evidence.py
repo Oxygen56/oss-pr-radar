@@ -106,6 +106,49 @@ def test_semantic_review_retry_with_successful_model_call_is_still_deferred():
     assert outcome["reason"] == "semantic_review_retry"
 
 
+def test_state_drift_overrides_algorithm_semantic_retry_before_report_validation():
+    gate = {
+        "allowed": False,
+        "classification": "state_drift",
+        "reason": "base_sha_changed",
+        "reasons": ["base_sha_changed", "semantic_retry"],
+    }
+    candidate = {
+        "repo": "deepspeedai/DeepSpeed",
+        "num": 8290,
+        "url": "https://github.com/deepspeedai/DeepSpeed/issues/8290",
+        "title": "Algorithm state changed after semantic review",
+        "issue_updated": "2026-08-23T00:00:00Z",
+        "policy_digest": "policy-digest",
+        "track": "llm_algorithm",
+        "category": "SEMANTIC_REVIEW_RETRY",
+        "gate_decision": "RETRY_REQUIRED",
+        "auto_spawn": False,
+        "notify": False,
+        "maturity": "exploration",
+        "actionability_evidence": {
+            "needs_confirmation": True,
+            "wait_reasons": ["DEPENDENCY"],
+        },
+        "algorithm_evidence": {
+            "score": 5,
+            "mechanism_count": 2,
+            "qualified": False,
+            "code_path_signal": True,
+            "operational_only": False,
+        },
+        "llm_review": {"status": "ok", "semanticSignal": "RETRY"},
+        "preTaskGate": gate,
+    }
+
+    scanner.demote_failed_pre_task_gate(candidate, gate)
+
+    assert candidate["category"] == "WAIT_MAINTAINER"
+    assert candidate["gate_decision"] == "HUMAN_REVIEW"
+    assert candidate_issue_outcome(candidate)["classification"] == "state_drift"
+    validate_report({"scan_ok": True, "candidate_details": [candidate]})
+
+
 def test_old_budget_rechecks_expire_but_future_issue_updates_can_rearm():
     now = datetime(2026, 8, 15, tzinfo=UTC)
     seen = {
