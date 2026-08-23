@@ -15,6 +15,8 @@ from pathlib import Path
 ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+from oss_pr_radar.local_publication import SERVICE_PATH  # noqa: E402
+
 LABEL = "com.oss-pr-radar.agentscope-events"
 
 
@@ -48,7 +50,7 @@ def spec(
         "RunAtLoad": True,
         "StandardOutPath": str(log / "agentscope-events.log"),
         "StandardErrorPath": str(log / "agentscope-events.error.log"),
-        "EnvironmentVariables": {"PYTHONUNBUFFERED": "1", "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"},
+        "EnvironmentVariables": {"PYTHONUNBUFFERED": "1", "PATH": SERVICE_PATH},
     }
 
 
